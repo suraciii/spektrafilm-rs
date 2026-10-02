@@ -61,7 +61,9 @@ jobs:
 
       - name: Build pinned LibRaw 0.22.0
         shell: msys2 {0}
-        run: bash scripts/build_windows_libraw.sh "$RUNNER_TEMP/libraw-022"
+        run: |
+          bash scripts/build_windows_libraw.sh "$RUNNER_TEMP/libraw-022"
+          printf 'SPEKTRAFILM_UCRT_PREFIX=%s\n' "$(cygpath -m /ucrt64)" >> "$GITHUB_ENV"
 
       - name: Install matching Rust target
         shell: pwsh
@@ -71,13 +73,14 @@ jobs:
         shell: pwsh
         run: |
           $nativePrefix = Join-Path $env:RUNNER_TEMP 'libraw-022'
-          $env:PATH = "$nativePrefix\bin;C:\msys64\ucrt64\bin;" + $env:PATH
+          $ucrtPrefix = $env:SPEKTRAFILM_UCRT_PREFIX
+          $env:PATH = "$nativePrefix\bin;$ucrtPrefix\bin;" + $env:PATH
           $env:CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu"
           $env:CC = "gcc"
           $env:CXX = "g++"
           $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "gcc"
-          $env:PKG_CONFIG_PATH = "$nativePrefix\lib\pkgconfig;C:\msys64\ucrt64\lib\pkgconfig"
-          $env:PKG_CONFIG = "C:\msys64\ucrt64\bin\pkgconf.exe"
+          $env:PKG_CONFIG_PATH = "$nativePrefix\lib\pkgconfig;$ucrtPrefix\lib\pkgconfig"
+          $env:PKG_CONFIG = Join-Path $ucrtPrefix 'bin\pkgconf.exe'
           $env:PKG_CONFIG_ALLOW_CROSS = "1"
           $env:SPEKTRAFILM_NATIVE_PREFIX = $nativePrefix
           $env:SPEKTRAFILM_RELEASE_SUBDIR = "x86_64-pc-windows-gnu\release"

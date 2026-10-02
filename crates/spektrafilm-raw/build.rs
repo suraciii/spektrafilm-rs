@@ -66,6 +66,7 @@ fn link_libraw(library: &pkg_config::Library) {
     }
     for name in &library.libs {
         if name != "raw" && !(msvc && ["m", "c", "pthread"].contains(&name.as_str())) {
+            let name = if apple && name == "stdc++" { "c++" } else { name.as_str() };
             println!("cargo:rustc-link-lib={name}");
         }
     }
