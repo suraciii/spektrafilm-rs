@@ -121,6 +121,12 @@ pub fn convert_image(image: &ImageBuf, source: &str, source_encoded: bool, desti
     use rayon::prelude::*;
     let source = resolve(source).map_err(ImageIoError::InvalidColorSpace)?;
     let destination = resolve(destination).map_err(ImageIoError::InvalidColorSpace)?;
+    // Pinned Python skips the transform entirely when the saving space and
+    // encoding already match the output layer (controller.py save guard).
+    // Re-running the 4-digit sRGB round trip would shift pixels by ~2e-5.
+    if source.name == destination.name && source_encoded == destination_encoded {
+        return Ok(image.clone());
+    }
     let matrix = conversion_matrix(source, destination);
     let mut output = image.clone();
     output.data.par_chunks_exact_mut(3).for_each(|pixel| {

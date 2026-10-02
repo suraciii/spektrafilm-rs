@@ -27,3 +27,18 @@ fn integer_boundary_truncates_and_float_formats_preserve_headroom() {
     assert!(!unsupported.exists());
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn saving_into_the_output_space_and_encoding_is_a_bit_exact_no_op() {
+    // The 4-digit IEC sRGB matrices are not exact inverses of each other, so a
+    // same-space round trip shifts pixels by ~2e-5. The pinned Python save path
+    // skips the transform when the saving space and encoding already match the
+    // output layer; the export must do the same.
+    let samples = [0.0, 0.09846869, 0.34267145, 1.0, 0.6001501387, 0.019607843];
+    let image = ImageBuf::from_data(2, 1, samples.iter().copied().map(from_f64).collect());
+    for encoded in [false, true] {
+        let converted = image_io::convert_image(&image, "sRGB", encoded, "sRGB", encoded).unwrap();
+        assert_eq!(converted.data, image.data);
+    }
+}
+

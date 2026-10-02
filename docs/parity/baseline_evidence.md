@@ -164,6 +164,11 @@ Independent executed checks establish:
 - All 265 LUT topology, stock and transport cases passed the stored Python
   reference comparison. Generic CUBE, Lumix CUBE, 3DL and Hald PNG also passed
   independent format readers, including axis order and ties-to-even quantization.
+- The rebuilt f64 CLI passed 112 QA scenario comparisons across all four LUT
+  topologies and seven print selections: zero metric drifts and zero status
+  mismatches at 1e-5 relative tolerance with a 1e-7 absolute floor. Upstream
+  FAIL and INFO results remain unchanged. QA artifact registration, offline
+  HTML references and the delivered ZIP contents passed independent checks.
 - Nine seeded 256×256 grain cases matched every pixel exactly. Dark fast
   texture uses a 67,108,864-sample aggregate: mean relative errors
   [0.00007035, 0.00157755, 0.00519272] and standard-deviation relative errors
@@ -178,16 +183,33 @@ Independent executed checks establish:
   restart, layers, float inspection, Save, actual CPU export, cancellation and
   closing during export. Cancel/close left no exporter child or temporary JSON.
 - A relocated Linux package started the GUI and processed a floating TIFF
-  with EXIF/IPTC/XMP/ICC preservation. Real RAW decoding passed all eight
+  with EXIF/IPTC/XMP/ICC preservation. Its identity export reproduced the input
+  buffer exactly and its 32-bit float export of the pinned midgray spectral
+  reference matched within 6.635e-9 against the 1e-6 budget. Real RAW decoding
+  passed all eight
   camera/white-balance cases exactly, both before and after relocation, including
   a known Lensfun correction. The rebuilt consumers load LibRaw 0.22's actual
   `libraw.so.24`; its selected link artifact prevents system-header ABI mismatch.
+  The final DIR-corrected Linux package passed the same portable image/RAW/GUI
+  smoke under Xvfb with a clean environment. Windows and macOS execution still
+  await activation of the fork's GitHub Actions workflows; PR #18 remains a
+  draft and acceptance issue #17 and parent issue #1 remain open.
+- Saving into the output layer's own colour space and encoding is now a
+  bit-exact copy, matching the pinned Python save guard
+  (`spektrafilm_gui/controller.py:354-369`). Previously the export ran the
+  4-digit IEC sRGB matrices as a round trip even when nothing needed
+  converting: a 4×4 gradient probe measured up to 2.293e-5 drift between the
+  saved 32-bit TIFF and the pipeline buffer. Against the pinned midgray
+  reference the raw f64 buffer is 4.864e-10 off and the saved 32-bit TIFF
+  6.635e-9 off; recomputing the old round trip with the same matrices gives
+  9.503e-6. `crates/spektrafilm-core/tests/image_io.rs` pins the no-op and
+  fails on the pre-fix code.
 - The actual wgpu adapter exercised 224 space/encoding/effect routes. Maximum
   arithmetic error was 0.0001019144361 and maximum mean error 0.000004945424654
   against CPU f64. Grain used the faithful CPU sampler; its preview differences
   were measured separately (maximum 0.00083358). Repeated half-sample reflection
   now matches CPU FIR boundaries in WGSL and CUDA Gaussian kernels. CUDA was
-  not executed on this host. The full workspace passed 188 tests.
+  not executed on this host. The full workspace passed 189 tests.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

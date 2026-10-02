@@ -15,6 +15,8 @@ Files:
 | `py_reference.py` | Pinned Python driver — fixtures + per-tap f64 dumps (core imports only) |
 | `run_parity.py` | Orchestrator — preflight, Rust f64 CLI, per-stage/final max+mean report |
 | `gen_matrix.py` | Regenerates `docs/parity/parity_matrix.json` (live asset hashing) |
+| `lut_acceptance.py` | Real CLI LUT bakes, pinned QA/format comparisons, OCIO processors and delivered artifact checks |
+| `package_smoke.py` | Installed image/metadata/RAW paths and packaged GUI startup |
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
@@ -134,6 +136,35 @@ target/release/spektrafilm-f64 process \
   the harness neither renames grain controls nor drops debug/tap fields.
 - Stochastic appearance (layered grain, glare) is judged by the
   `statistical_texture` moment budget, not per-pixel equality.
+
+## LUT and package acceptance
+
+Install the pinned Python LUT creator dependencies and `opencolorio` alongside
+the reference runtime. The Linux CI gate runs the full runtime catalog and:
+
+```bash
+python scripts/parity/lut_acceptance.py \
+    --cli target/release/spektrafilm-f64 --data-dir data \
+    --evidence-dir target/lut-acceptance
+```
+
+The LUT gate compares numeric QA metrics and the original PASS/FAIL/INFO
+statuses independently. An upstream quality failure remains a failure in the
+delivered QA report; acceptance requires the same result as the pinned Python
+implementation. Relative tolerance is `1e-5` with a `1e-7` absolute floor.
+Independent format readers and OCIO processors exercise the delivered files.
+
+All three package jobs run `package_smoke.py` against installed executables
+and bundled data. Linux GUI startup uses Xvfb. Windows/macOS acceptance still
+requires actual successful workflow execution; adding the gate is not evidence
+that those packages run.
+
+The package smoke exports the pinned 0.3.4 bare-chain midgray through the real
+spectral assets and compares the saved 32-bit TIFF against the recorded Python
+result within `1e-6`. Saving into the output layer's own colour space and
+encoding is a bit-exact copy of the pipeline buffer — the pinned Python save
+guard skips the transform there, and re-running the 4-digit IEC sRGB matrices
+would shift pixels by ~2e-5 (`crates/spektrafilm-core/src/image_io.rs`).
 
 ## History
 

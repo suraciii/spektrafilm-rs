@@ -68,7 +68,7 @@ jobs:
           cargo test --workspace --features precision-f64
           if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
-          python scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --gui dist/spektrafilm-windows-x64/spektrafilm-gui.exe --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
+          python scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --gui dist/spektrafilm-windows-x64/spektrafilm-gui.exe --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
           if ($LASTEXITCODE -ne 0) { throw "Package smoke failed" }
 
       - name: Preserve package smoke evidence
@@ -101,13 +101,34 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install package smoke dependencies
+      - name: Install Python reference interpreter
+        id: reference-python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      - name: Install Python image bindings
-        run: python -m pip install numpy OpenImageIO exiv2 colour-science==0.4.7
+      - name: Checkout pinned Python 0.3.4 reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference="$RUNNER_TEMP/spektrafilm-python"
+          git init "$reference"
+          git -C "$reference" remote add origin https://github.com/andreavolpato/spektrafilm.git
+          git -C "$reference" fetch --depth 1 origin 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc
+          git -C "$reference" checkout --detach FETCH_HEAD
+
+      - name: Install pinned reference runtime and LUT dependencies
+        id: reference-runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install \
+            'numpy~=2.4' 'scipy~=1.17' 'colour-science~=0.4.6' \
+            'scikit-image~=0.26' 'matplotlib~=3.10' 'opt-einsum~=3.4.0' \
+            'numba~=0.64' 'OpenImageIO~=3.1.11' 'pyfftw~=0.15.0' \
+            'rawpy~=0.26.1' 'exiv2~=0.18.1' 'lensfunpy~=1.18.0' \
+            'markdown~=3.7' 'opencolorio~=2.5'
+          python -m pip install --no-deps -e "$RUNNER_TEMP/spektrafilm-python"
 
       - name: Install native build dependencies
         shell: bash
@@ -136,6 +157,7 @@ jobs:
           cp COPYRIGHT LICENSE.CDDL LICENSE.LGPL "$prefix/share/doc/libraw/"
 
       - name: Build release binaries
+        id: build-release
         shell: bash
         run: |
           set -euo pipefail
@@ -145,6 +167,43 @@ jobs:
           cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64
 
+      - name: Run full pinned Python runtime parity
+        shell: bash
+        env:
+          SPEKTRAFILM_PY_REPO: ${{ runner.temp }}/spektrafilm-python
+          SPEKTRAFILM_PY: ${{ steps.reference-python.outputs.python-path }}
+          SPEKTRAFILM_RS_BIN: ${{ github.workspace }}/target/release/spektrafilm-f64
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}"
+          python scripts/parity/run_parity.py --out-root "$RUNNER_TEMP/parity"
+
+      - name: Run LUT artifact acceptance
+        if: ${{ !cancelled() && steps.build-release.outcome == 'success' && steps.reference-runtime.outcome == 'success' }}
+        shell: bash
+        env:
+          SPEKTRAFILM_PY_REPO: ${{ runner.temp }}/spektrafilm-python
+          SPEKTRAFILM_PY: ${{ steps.reference-python.outputs.python-path }}
+          SPEKTRAFILM_RS_BIN: ${{ github.workspace }}/target/release/spektrafilm-f64
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}"
+          python scripts/parity/lut_acceptance.py --cli target/release/spektrafilm-f64 --data-dir data --evidence-dir "$RUNNER_TEMP/lut-acceptance"
+
+      - name: Preserve runtime parity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-parity-linux-x64
+          path: ${{ runner.temp }}/parity
+
+      - name: Preserve LUT acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lut-acceptance-linux-x64
+          path: ${{ runner.temp }}/lut-acceptance
+
       - name: Package portable directory
         shell: bash
         run: |
@@ -152,7 +211,7 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           BUILD_TARGET_DIR=target RELEASE_SUBDIR=release \
             bash scripts/package_linux_app.sh
-          xvfb-run -a python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --gui dist/spektrafilm-linux-x64/bin/spektrafilm-gui --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
+          xvfb-run -a python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --gui dist/spektrafilm-linux-x64/bin/spektrafilm-gui --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
         if: always()
@@ -203,7 +262,7 @@ jobs:
         run: |
           cargo test --workspace --features precision-f64
           bash scripts/package_macos_app.sh
-          python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --gui dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-gui --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
+          python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --gui dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-gui --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
         if: always()
