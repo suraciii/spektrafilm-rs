@@ -31,7 +31,7 @@ binary_rpaths() {
     metadata="$(otool -l "$1")" || fail "cannot inspect load commands in $1"
     printf '%s\n' "$metadata" | awk '
         $1 == "cmd" { rpath = ($2 == "LC_RPATH") }
-        rpath && $1 == "path" { sub(/^.*path /, ""); sub(/ \(offset.*$/, ""); print; rpath = 0 }
+        rpath && $1 == "path" { sub(/^[[:space:]]*path /, ""); sub(/ \(offset.*$/, ""); print; rpath = 0 }
     '
 }
 

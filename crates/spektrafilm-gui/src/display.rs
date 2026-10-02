@@ -285,8 +285,8 @@ pub fn virtual_paper_back(size: [usize;2]) -> DisplayRaster {
 #[cfg(windows)]
 pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> {
     use std::{ffi::c_void, os::windows::ffi::OsStringExt};
-    #[link(name="user32")] extern "system" { fn GetDC(hwnd: *mut c_void) -> *mut c_void; fn ReleaseDC(hwnd: *mut c_void,dc: *mut c_void) -> i32; }
-    #[link(name="gdi32")] extern "system" { fn GetICMProfileW(dc: *mut c_void,size: *mut u32,path: *mut u16) -> i32; }
+    #[link(name="user32")] unsafe extern "system" { fn GetDC(hwnd: *mut c_void) -> *mut c_void; fn ReleaseDC(hwnd: *mut c_void,dc: *mut c_void) -> i32; }
+    #[link(name="gdi32")] unsafe extern "system" { fn GetICMProfileW(dc: *mut c_void,size: *mut u32,path: *mut u16) -> i32; }
     unsafe {
         let dc=GetDC(std::ptr::null_mut()); if dc.is_null() { return Err("Cannot acquire Windows display context".into()); }
         let mut len=0; GetICMProfileW(dc,&mut len,std::ptr::null_mut());
