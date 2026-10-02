@@ -6,8 +6,8 @@ use rayon::prelude::*;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::colorspace;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{from_f32, from_f64, to_f32};
-use spektrafilm_math::spectral::{self, TcLut};
+use spektrafilm_math::precision::{from_f32, from_f64, to_f64};
+use spektrafilm_math::spectral::TcLut;
 use std::time::Instant;
 
 use crate::params::RuntimeParams;
@@ -23,80 +23,79 @@ fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
     }
 }
 
-/// Compute pixel size in micrometers from film format and image dimensions.
-pub fn pixel_size_um(film_format_mm: f32, width: u32, height: u32) -> f32 {
-    film_format_mm * 1000.0 / width.max(height) as f32
-}
-
 /// Auto-exposure compensation, Python-compatible
 /// (`spektrafilm/utils/autoexposure.py`).
 ///
 /// Python downsamples the image to ≤ 256 px on the long edge using
-/// `skimage.transform.rescale(order=0)` (nearest neighbour) before
-/// measuring (`small_preview`), then meters luminance Y with one of
-/// several patterns. We mirror that — the downsample is what makes the
-/// metered mean Python-parity-compatible; measuring on the full-res
-/// image gives a different pixel set and shifts the resulting EV by
-/// tenths of a stop.
+/// `skimage.transform.rescale(order=0)` before measuring
+/// (`small_preview`). Scikit-image's default `anti_aliasing=True` fires
+/// for order 0 as well: a Gaussian (`sigma = max(0, (factor-1)/2)` per
+/// axis, mirror boundary) is applied to the float source *before* the
+/// nearest sampling. The CCTF decode happens after that downsample,
+/// inside `colour.RGB_to_XYZ` — never on the full source — so `cctf`
+/// decodes the sampled preview pixels here.
 ///
 /// `method` selects the metering pattern: `average`, `median`,
 /// `center_weighted`, `partial`, `matrix`, `multi_zone`,
 /// `highlight_weighted`. Anything else meters a flat 1.0 (0 EV), matching
 /// the Python `else` branch.
-pub fn measure_autoexposure_ev(image: &ImageBuf, rgb_to_xyz: &[[f32; 3]; 3], method: &str) -> f32 {
+///
+/// The whole chain — preview, Y matrix, meter, `/0.184`, `log2` EV —
+/// stays f64 like Python's float64 pipeline; only GPU boundaries round
+/// to f32.
+pub fn measure_autoexposure_ev(
+    image: &ImageBuf,
+    rgb_to_xyz: &[[f64; 3]; 3],
+    cctf: Option<colorspace::Cctf>,
+    method: &str,
+) -> f64 {
     const MAX_SIZE: usize = 256;
     let w = image.width as usize;
     let h = image.height as usize;
     let max_dim = w.max(h);
-    // skimage.rescale(scale, order=0) with scale = MAX/max_dim:
-    // output shape = round(orig * scale); each output pixel takes the
-    // nearest source via iy = round((oy + 0.5) / scale - 0.5)
-    // (scipy.ndimage.zoom convention).
-    let (sw, sh, ix, iy) = if max_dim > MAX_SIZE {
-        let scale = (MAX_SIZE as f64) / (max_dim as f64);
-        let sw = ((w as f64) * scale).round() as usize;
-        let sh = ((h as f64) * scale).round() as usize;
-        // skimage rounds each axis independently, so the effective per-axis
-        // scale is src_dim/out_dim — which differs from the global `scale` on
-        // the short edge (e.g. 200/171 vs 300/256). Sample at the pixel centre
-        // (skimage `warp` convention): src = round((o + 0.5)·src/out − 0.5).
-        let map = |out_dim: usize, src_dim: usize| -> Vec<usize> {
-            let axis_scale = src_dim as f64 / out_dim as f64;
-            (0..out_dim)
-                .map(|o| {
-                    let f = ((o as f64 + 0.5) * axis_scale - 0.5).round() as isize;
-                    f.clamp(0, src_dim as isize - 1) as usize
-                })
-                .collect()
-        };
-        (sw, sh, map(sw, w), map(sh, h))
+    // Python `small_preview`: `rescale(order=0)` with scale
+    // MAX_SIZE/max_dim. Each output pixel takes the nearest antialiased
+    // source via `floor((o+0.5)·src/out)` (`ndi.zoom(grid_mode=True,
+    // order=0)`); skimage rounds each axis independently, so the effective
+    // per-axis factor is src_dim/out_dim — which differs from the global
+    // scale on the short edge (e.g. 200/171 vs 300/256). Long edge ≤ 256
+    // keeps the source itself as the preview.
+    let (preview, sw, sh) = if max_dim > MAX_SIZE {
+        let scale = MAX_SIZE as f64 / max_dim as f64;
+        spektrafilm_math::resize::rescale_nearest0(image, scale)
+            .expect("small_preview scale is 256/max_dim with max_dim > 256")
     } else {
-        let ix: Vec<usize> = (0..w).collect();
-        let iy: Vec<usize> = (0..h).collect();
-        (w, h, ix, iy)
+        (
+            image.data.iter().map(|&v| to_f64(v)).collect::<Vec<f64>>(),
+            w,
+            h,
+        )
     };
 
-    // Downsampled luminance grid (row-major, sw × sh).
-    let (ix, iy) = (&ix, &iy);
-    let lum: Vec<f64> = (0..sh)
-        .into_par_iter()
-        .flat_map_iter(|y| {
-            let row_off = iy[y] * w * 3;
-            (0..sw).map(move |x| {
-                let idx = row_off + ix[x] * 3;
-                (rgb_to_xyz[1][0] * to_f32(image.data[idx])
-                    + rgb_to_xyz[1][1] * to_f32(image.data[idx + 1])
-                    + rgb_to_xyz[1][2] * to_f32(image.data[idx + 2])) as f64
-            })
+    // Downsampled luminance grid (row-major, sw × sh): decode the sampled
+    // pixels, then Y = rgb_to_xyz[1] · rgb, all f64.
+    let decode = |v: f64| cctf.map_or(v, |c| colorspace::cctf_decode(v, c));
+    let m = rgb_to_xyz[1];
+    let lum: Vec<f64> = preview
+        .par_chunks_exact(3)
+        .map(|px| {
+            let (r, g, b) = (decode(px[0]), decode(px[1]), decode(px[2]));
+            m[0] * r + m[1] * g + m[2] * b
         })
         .collect();
 
     let metered = meter_luminance(&lum, sw, sh, method);
-    let exposure = (metered / 0.184) as f32;
-    if exposure <= 0.0 || exposure.is_infinite() {
+    let exposure = metered / 0.184;
+    // Upstream final lines: `ev = -np.log2(exposure)`; only an infinite
+    // EV clamps to 0.0 (with a warning) — a negative exposure yields NaN
+    // and propagates, exactly like `np.log2`.
+    let ev = -exposure.log2();
+    if ev.is_infinite() {
+        tracing::warn!(
+            "Autoexposure is Inf. Setting autoexposure compensation to 0 EV."
+        );
         return 0.0;
     }
-    let ev = -exposure.log2();
     tracing::info!(
         sw = sw,
         sh = sh,
@@ -107,6 +106,18 @@ pub fn measure_autoexposure_ev(image: &ImageBuf, rgb_to_xyz: &[[f32; 3]; 3], met
         "autoexposure"
     );
     ev
+}
+
+/// Meter the auto-exposure EV for `image` using the input color space
+/// and metering method configured in `params`. Python meters on the
+/// full input in `_preprocess`, before `crop_and_rescale`; the ≤256 px
+/// preview downsample and the CCTF decode both happen inside the meter
+/// (decode after the preview, like upstream).
+pub fn meter_autoexposure_ev(image: &ImageBuf, params: &RuntimeParams) -> f64 {
+    let space = colorspace::resolve(&params.io.input_color_space).expect("validated input color space");
+    let rgb_to_xyz = space.matrix_rgb_to_xyz;
+    let cctf = params.io.input_cctf_decoding.then_some(space.cctf);
+    measure_autoexposure_ev(image, &rgb_to_xyz, cctf, &params.camera.auto_exposure_method)
 }
 
 /// Normalized pixel coordinate along an axis: `(i/dim - 0.5) * (dim/maxdim)`,
@@ -277,6 +288,13 @@ fn apply_mallett_matrix(image: &ImageBuf, m: &[[f64; 3]; 3]) -> ImageBuf {
 /// Dispatches on the configured upsampler: the Mallett2019 per-pixel matrix
 /// (when `mallett_core` is set), the full Hanatos2025 spectral path (when a
 /// TC LUT is provided), or a simplified RGB → log10 fallback.
+///
+/// `pixel_size_um` is the working-geometry pitch derived by
+/// [`crate::resizing::crop_and_rescale`] from the full (pre-crop)
+/// image; `ae_ev` is the auto-exposure EV metered on the full input
+/// (Python meters before crop/resize and scales the encoded source in
+/// `_preprocess`; `Pipeline::apply_autoexposure` owns that multiply, so
+/// this in-stage scaling stays a no-op for pipeline callers).
 #[allow(clippy::too_many_arguments)]
 pub fn expose(
     image: &ImageBuf,
@@ -287,21 +305,27 @@ pub fn expose(
     mallett_core: Option<&[[f64; 3]; 3]>,
     front_illuminant: &[f32],
     bw_filming_correction: f64,
+    pixel_size_um: f64,
+    ae_ev: f64,
 ) -> ImageBuf {
-    let pix_um = pixel_size_um(params.camera.film_format_mm, image.width, image.height);
-    let rgb_to_xyz = input_colorspace_to_xyz(&params.io.input_color_space);
+    let pix_um = pixel_size_um as f32;
+    let input_space = colorspace::resolve(&params.io.input_color_space)
+        .expect("input color space must be validated before filming");
 
-    // Auto-exposure
+    // Auto-exposure EV is metered upstream on the full input (the meter
+    // previews/decodes internally in `small_preview` order).
     let mut rgb = image.clone();
-    if params.camera.auto_exposure {
-        let ae_ev = measure_autoexposure_ev(&rgb, &rgb_to_xyz, &params.camera.auto_exposure_method);
-        let scale = from_f32(2.0f32.powf(ae_ev));
-        rgb.data.par_iter_mut().for_each(|v| *v *= scale);
+    if params.io.input_cctf_decoding {
+        rgb.data.par_iter_mut().for_each(|v| {
+            *v = from_f64(colorspace::cctf_decode(to_f64(*v), input_space.cctf));
+        });
     }
 
-    // Exposure compensation
-    let exp_comp = from_f32(2.0f32.powf(params.camera.exposure_compensation_ev));
-    rgb.data.par_iter_mut().for_each(|v| *v *= exp_comp);
+    // Auto-exposure scales linear irradiance after metering decoded luminance.
+    if params.camera.auto_exposure {
+        let scale = from_f64(2.0f64.powf(ae_ev));
+        rgb.data.par_iter_mut().for_each(|v| *v *= scale);
+    }
 
     // RGB → film raw exposure
     let mut raw = if let Some(core) = mallett_core {
@@ -323,6 +347,10 @@ pub fn expose(
         rgb.clone()
     };
 
+    // Python applies camera compensation to film raw, before optical effects.
+    let exp_comp = from_f32(2.0f32.powf(params.camera.exposure_compensation_ev));
+    raw.data.par_iter_mut().for_each(|v| *v *= exp_comp);
+
     // Order mirrors Python filming: boost → diffusion → lens_blur → halation.
 
     // Highlight boost: reconstruct pre-clip highlight irradiance before the
@@ -338,20 +366,24 @@ pub fn expose(
     }
 
     // Diffusion filter (camera): lens diffusion-filter PSF on linear raw.
-    // GPU uses a downsampled sum-of-Gaussians (fast preview); CPU keeps the
-    // exact FFT convolution (export parity).
+    // Preview and export use the exact sampled PSF convolution.
     let df = &params.camera.diffusion_filter;
     if df.active {
         let dm = df.to_model();
+        // An invalid family is rejected by `RuntimeParams::validate` /
+        // `Pipeline::new_with_spectral` before any stage runs; reaching
+        // this point with an unknown family is a programming error.
         raw = if backend.is_gpu() {
             spektrafilm_model::diffusion::apply_diffusion_filter_blur(
                 &raw,
                 &dm,
-                pix_um as f64,
+                pixel_size_um,
                 backend,
             )
+            .expect("camera diffusion filter family validated at pipeline entry")
         } else {
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&raw, &dm, pix_um as f64)
+            spektrafilm_model::diffusion::apply_diffusion_filter_um(&raw, &dm, pixel_size_um)
+                .expect("camera diffusion filter family validated at pipeline entry")
         };
     }
 
@@ -408,21 +440,22 @@ pub fn expose(
 }
 
 /// Develop: log_raw → density_cmy via density curves + DIR couplers + grain.
+///
+/// `pixel_size_um` is the working-geometry pitch from
+/// [`crate::resizing::crop_and_rescale`] (Python's
+/// `ResizingService.pixel_size_um`).
 pub fn develop(
     log_raw: &ImageBuf,
     film: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
+    pixel_size_um: f64,
 ) -> ImageBuf {
     let stage_timings = stage_timings_enabled();
-    let pix_um = pixel_size_um(params.camera.film_format_mm, log_raw.width, log_raw.height);
+    let pix_um = pixel_size_um as f32;
     // f64 chain for Python parity — curves are f64 in the profile JSON.
     let log_exposure_f64 = film.log_exposure_f64();
     let density_curves_f64 = film.density_curves_f64();
-    // f32 versions kept for DIR couplers (still f32 API) and grain (legacy).
-    let log_exposure = &film.log_exposure_f32();
-    let density_curves = &film.density_curves_f32();
-    let norm_curves = spektrafilm_model::density_curves::normalize_density_curves(density_curves);
     let gamma = params.film_render.density_curve_gamma;
 
     // Filming.develop uses NORMALIZED curves (Python `develop` subtracts nanmin).
@@ -449,8 +482,8 @@ pub fn develop(
             &density_cmy,
             log_raw,
             pix_um,
-            log_exposure,
-            density_curves,
+            &log_exposure_f64,
+            &density_curves_f64,
             &matrix,
             dir.amount,
             dir.diffusion_size_um,
@@ -463,7 +496,12 @@ pub fn develop(
         print_stage_timing(stage_timings, "filming_develop.dir_couplers", t);
     }
 
-    // Grain
+    // Grain — Python `apply_grain` dispatch (model/grain.py):
+    // `sublayers_active == false` keeps the composite-density sampler,
+    // `true` runs the layered model on the interpolated sublayer densities.
+    // `n_sub_layers` is only consumed by the composite path (the layered
+    // model always samples the profile's 3 emulsion sublayers) and
+    // `use_fast_stats` only by the layered path, exactly like upstream.
     let grain = &params.film_render.grain;
     if grain.active {
         let t = Instant::now();
@@ -474,57 +512,107 @@ pub fn develop(
         let norm_curves_f64 = spektrafilm_model::density_curves::normalize_density_curves_f64(
             &film.density_curves_f64(),
         );
-        let density_max = spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
-        density_cmy = spektrafilm_model::grain::apply_grain_to_density(
-            &density_cmy,
-            pix_um,
-            grain.agx_particle_area_um2,
-            grain.agx_particle_scale,
-            grain.density_min,
-            density_max,
-            grain.uniformity,
-            grain.blur,
-            grain.n_sub_layers,
-            grain.monochrome,
-            backend,
-        );
+        if grain.sublayers_active {
+            // Python `apply_grain_to_density_layers`: sublayer densities
+            // come from interpolating the composite density against the
+            // (normalized) composite curve, the layer maxima from the RAW
+            // `density_curves_layers` tensor — upstream normalizes only
+            // the composite curves before this call.
+            let layers_tensor = film.density_curves_layers_f64();
+            assert!(
+                !layers_tensor.is_empty(),
+                "grain.sublayers_active requires the film profile to provide \
+                 density_curves_layers ([n][3 sublayers][3 channels]); profile '{}' \
+                 has none — disable sublayers_active or fix the profile",
+                film.info.stock.as_deref().unwrap_or("<unnamed>"),
+            );
+            let density_cmy_layers =
+                spektrafilm_model::density_curves::interp_density_cmy_layers(
+                    &density_cmy,
+                    &norm_curves_f64,
+                    &layers_tensor,
+                    film.is_positive(),
+                );
+            let density_max_layers =
+                spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
+            assert!(
+                density_max_layers.iter().all(|row| row.iter().all(|&v| v > 0.0)),
+                "grain.sublayers_active requires positive per-sublayer density \
+                 maxima; profile '{}' yields zero maxima (empty or all-zero \
+                 density_curves_layers)",
+                film.info.stock.as_deref().unwrap_or("<unnamed>"),
+            );
+            density_cmy = spektrafilm_model::grain::apply_grain_to_density_layers(
+                &density_cmy_layers,
+                &density_max_layers,
+                density_cmy.width,
+                density_cmy.height,
+                pixel_size_um,
+                grain.particle_area_um2,
+                grain.particle_scale,
+                grain.particle_scale_layers,
+                grain.density_min,
+                grain.uniformity,
+                grain.blur,
+                grain.blur_dye_clouds_um,
+                grain.micro_structure,
+                grain.monochrome,
+                params.settings.use_fast_stats,
+                backend,
+            );
+        } else {
+            let density_max =
+                spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
+            density_cmy = spektrafilm_model::grain::apply_grain_to_density(
+                &density_cmy,
+                pixel_size_um,
+                grain.particle_area_um2,
+                grain.particle_scale,
+                grain.density_min,
+                density_max,
+                grain.uniformity,
+                grain.blur,
+                grain.n_sub_layers,
+                grain.monochrome,
+                backend,
+            );
+        }
         print_stage_timing(stage_timings, "filming_develop.grain", t);
     }
 
     density_cmy
 }
 
-/// Full filming stage: expose + develop.
+/// Full filming stage: expose + develop on an already-prepared working
+/// image. Geometry (crop/upscale) is the caller's responsibility — see
+/// [`crate::resizing::crop_and_rescale`]; the pixel pitch passed here
+/// must be the one derived from the full input.
 pub fn process(
     image: &ImageBuf,
     film: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
     tc_lut: Option<&TcLut>,
+    pixel_size_um: f64,
 ) -> ImageBuf {
     let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
-    let log_raw = expose(image, film, params, backend, tc_lut, None, ref_illuminant, 1.0);
-    develop(&log_raw, film, params, backend)
+    let ae_ev = meter_autoexposure_ev(image, params);
+    let log_raw = expose(
+        image,
+        film,
+        params,
+        backend,
+        tc_lut,
+        None,
+        ref_illuminant,
+        1.0,
+        pixel_size_um,
+        ae_ev,
+    );
+    develop(&log_raw, film, params, backend, pixel_size_um)
 }
 
-pub fn input_colorspace_to_xyz(name: &str) -> [[f32; 3]; 3] {
-    match name {
-        "sRGB" => colorspace::SRGB_TO_XYZ,
-        "ProPhoto RGB" => colorspace::PROPHOTO_TO_XYZ,
-        "Rec. 2020" | "Rec2020" | "ITU-R BT.2020" => colorspace::REC2020_TO_XYZ,
-        "ACES2065-1" => colorspace::ACES_TO_XYZ,
-        _ => colorspace::PROPHOTO_TO_XYZ,
-    }
-}
-
-pub(crate) fn select_illuminant(name: &str) -> &'static [f32] {
-    match name {
-        "D50" => &spectral::ILLUMINANT_D50,
-        "D55" => &spectral::ILLUMINANT_D55,
-        "D65" => &spectral::ILLUMINANT_D65,
-        _ => &spectral::ILLUMINANT_D55,
-    }
-}
+use crate::spectral_service::select_illuminant;
 
 #[cfg(test)]
 mod tests {
@@ -561,7 +649,7 @@ mod tests {
     #[test]
     fn autoexposure_methods_match_python_reference() {
         let img = synthetic_image();
-        let rgb_to_xyz = input_colorspace_to_xyz("sRGB");
+        let rgb_to_xyz = colorspace::resolve("sRGB").expect("registered space").matrix_rgb_to_xyz;
         let cases = [
             ("average", -1.427705567203),
             ("median", -1.308011314552),
@@ -572,9 +660,9 @@ mod tests {
             ("highlight_weighted", -1.783882472180),
         ];
         for (method, expected) in cases {
-            let ev = measure_autoexposure_ev(&img, &rgb_to_xyz, method);
+            let ev = measure_autoexposure_ev(&img, &rgb_to_xyz, None, method);
             assert!(
-                (ev as f64 - expected).abs() < 1e-5,
+                (ev - expected).abs() < 1e-5,
                 "method {method}: got {ev}, expected {expected}",
             );
         }
@@ -585,8 +673,260 @@ mod tests {
     #[test]
     fn autoexposure_unknown_method_is_zero_ev() {
         let img = synthetic_image();
-        let rgb_to_xyz = input_colorspace_to_xyz("sRGB");
-        let ev = measure_autoexposure_ev(&img, &rgb_to_xyz, "bogus");
+        let rgb_to_xyz = colorspace::resolve("sRGB").expect("registered space").matrix_rgb_to_xyz;
+        let ev = measure_autoexposure_ev(&img, &rgb_to_xyz, None, "bogus");
         assert_eq!(ev, 0.0);
+    }
+
+    #[cfg(test)]
+    mod grain_dispatch {
+        use super::super::*;
+        use crate::params::RuntimeParams;
+        use crate::profile::{self, Profile};
+        use spektrafilm_gpu::cpu_backend::CpuBackend;
+        use spektrafilm_math::image::ImageBuf;
+        use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
+
+        fn data_dir() -> std::path::PathBuf {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("data")
+        }
+
+        fn portra() -> Option<Profile> {
+            let path = data_dir().join("profiles/kodak_portra_400.json");
+            if !path.exists() {
+                eprintln!("Skipping test — profile not found at {}", path.display());
+                return None;
+            }
+            Some(profile::load_profile(&path).unwrap())
+        }
+
+        /// Small log-exposure image spread across the curve axis.
+        fn log_raw() -> ImageBuf {
+            let (w, h) = (16usize, 12usize);
+            let mut data = Vec::with_capacity(w * h * 3);
+            for y in 0..h {
+                for x in 0..w {
+                    let t = (x + y * w) as f64 / (w * h) as f64;
+                    data.push(from_f64(-3.5 + 3.0 * t));
+                    data.push(from_f64(-3.2 + 3.0 * t));
+                    data.push(from_f64(-2.9 + 3.0 * t));
+                }
+            }
+            ImageBuf {
+                width: w as u32,
+                height: h as u32,
+                data,
+            }
+        }
+
+        fn base_params() -> RuntimeParams {
+            let mut params = RuntimeParams::default();
+            params.film_render.dir_couplers.active = false;
+            params.film_render.halation.active = false;
+            // The small test images would otherwise imply ~2 mm pixels and
+            // wash the particle noise out; 0.192 mm over the 16 px long
+            // edge gives a realistic 12 µm pixel.
+            params.camera.film_format_mm = 0.192;
+            params
+        }
+
+        fn ch_mean(img: &ImageBuf, ch: usize) -> f64 {
+            img.pixels().map(|px| to_f64(px[ch])).sum::<f64>() / img.pixel_count() as f64
+        }
+
+        /// Grain off: develop must return the plain density interpolation
+        /// (deterministic LUT-mode bypass — Python's `lut_mode` forces
+        /// `grain.active = False`, and the non-spatial film behavior is
+        /// untouched).
+        #[test]
+        fn grain_disabled_is_density_identity() {
+            let Some(film) = portra() else { return };
+            let backend = CpuBackend;
+            let mut params = base_params();
+            params.film_render.grain.active = false;
+            let log_raw = log_raw();
+
+            let out = develop(&log_raw, &film, &params, &backend, 12.0);
+
+            let norm = spektrafilm_model::density_curves::normalize_density_curves_f64(
+                &film.density_curves_f64(),
+            );
+            let expected = backend.density_curve_interp(
+                &log_raw,
+                &film.log_exposure_f64(),
+                &norm,
+                params.film_render.density_curve_gamma as f64,
+            );
+            assert_eq!(out.data, expected.data);
+        }
+
+        /// The sublayer toggle must switch models: layered and composite
+        /// outputs differ, and each is deterministic across runs.
+        #[test]
+        fn sublayers_toggle_switches_models() {
+            let Some(film) = portra() else { return };
+            let backend = CpuBackend;
+            let log_raw = log_raw();
+            let mut params = base_params();
+            params.film_render.grain.sublayers_active = true;
+            let layered = develop(&log_raw, &film, &params, &backend, 12.0);
+            let layered_again = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_eq!(layered.data, layered_again.data);
+
+            params.film_render.grain.sublayers_active = false;
+            let composite = develop(&log_raw, &film, &params, &backend, 12.0);
+            let composite_again = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_eq!(composite.data, composite_again.data);
+            assert_ne!(layered.data, composite.data);
+        }
+
+        /// `n_sub_layers` is a composite-path control (upstream consumes it
+        /// only in `apply_grain_to_density`): 1 vs 3 sub-layers must differ
+        /// there, and must not touch the layered path.
+        #[test]
+        fn n_sub_layers_is_composite_only() {
+            let Some(film) = portra() else { return };
+            let backend = CpuBackend;
+            let log_raw = log_raw();
+
+            let mut params = base_params();
+            params.film_render.grain.sublayers_active = false;
+            params.film_render.grain.n_sub_layers = 1;
+            let one = develop(&log_raw, &film, &params, &backend, 12.0);
+            params.film_render.grain.n_sub_layers = 3;
+            let three = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_ne!(one.data, three.data);
+
+            params.film_render.grain.sublayers_active = true;
+            params.film_render.grain.n_sub_layers = 1;
+            let l1 = develop(&log_raw, &film, &params, &backend, 12.0);
+            params.film_render.grain.n_sub_layers = 4;
+            let l4 = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_eq!(l1.data, l4.data);
+        }
+
+        /// `use_fast_stats` switches the layered sampler's RNG regime:
+        /// different texture, same statistical center (bounded comparison
+        /// — bit parity is impossible for upstream's numba kernels).
+        #[test]
+        fn use_fast_stats_switches_regime() {
+            let Some(film) = portra() else { return };
+            let backend = CpuBackend;
+            let log_raw = log_raw();
+            let mut params = base_params();
+            params.film_render.grain.blur = 0.0; // raw particle field
+            params.film_render.grain.blur_dye_clouds_um = 0.0;
+
+            params.settings.use_fast_stats = false;
+            let scipy = develop(&log_raw, &film, &params, &backend, 12.0);
+            params.settings.use_fast_stats = true;
+            let fast = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_ne!(scipy.data, fast.data);
+            for ch in 0..3 {
+                assert!(
+                    (ch_mean(&scipy, ch) - ch_mean(&fast, ch)).abs() < 0.1,
+                    "ch {ch}: {} vs {}",
+                    ch_mean(&scipy, ch),
+                    ch_mean(&fast, ch)
+                );
+            }
+        }
+
+        /// Positive colour profiles reach the layered path through the
+        /// negated-axis branch of `interp_density_cmy_layers` (upstream
+        /// `-density_cmy` / `-density_curves` lookup): output stays finite
+        /// and the negated lookup decorrelates it from the negative-profile
+        /// run of the same input.
+        #[test]
+        fn layered_grain_positive_profile_runs_negated_axis() {
+            let path = data_dir().join("profiles/fujifilm_provia_100f.json");
+            if !path.exists() {
+                eprintln!("Skipping test — profile not found at {}", path.display());
+                return;
+            }
+            let film = profile::load_profile(&path).unwrap();
+            assert!(film.is_positive());
+            let backend = CpuBackend;
+            let params = base_params();
+            let log_raw = log_raw();
+
+            let out = develop(&log_raw, &film, &params, &backend, 12.0);
+            let again = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert!(out.data.iter().all(|v| v.is_finite()));
+            assert_eq!(out.data, again.data);
+            // Densities came out of the curve tables (not the raw log
+            // exposure), and grain actually fired.
+            assert_ne!(out.data, log_raw.data);
+        }
+
+        /// Layered grain on a profile without layer curves fails with an
+        /// actionable message instead of producing garbage — Python's
+        /// `np.nanmax` on the empty tensor raises for the same condition.
+        #[test]
+        #[should_panic(expected = "grain.sublayers_active requires the film profile")]
+        fn sublayers_without_layer_curves_fails() {
+            let Some(mut film) = portra() else { return };
+            film.data.density_curves_layers.clear();
+            let backend = CpuBackend;
+            let params = base_params();
+            let _ = develop(&log_raw(), &film, &params, &backend, 12.0);
+        }
+
+        /// A monochrome (B&W) film runs the layered path with one shared
+        /// noise field: identical per-channel input stays identical after
+        /// grain (regression coverage for the Rust-only B&W addition; not
+        /// part of the 0.3.4 baseline).
+        #[test]
+        fn layered_grain_monochrome_keeps_channels_equal() {
+            let path = data_dir().join("profiles/kodak_doublex.json");
+            if !path.exists() {
+                eprintln!("Skipping test — profile not found at {}", path.display());
+                return;
+            }
+            let film = profile::resolve_for_render(
+                profile::load_profile(&path).unwrap(),
+                None,
+            );
+            let backend = CpuBackend;
+            let mut params = base_params();
+            // Mirror `Pipeline::apply_film_specific_params`: monochrome
+            // flag + channel-0-flattened per-channel grain tuples, so the
+            // broadcast 3-channel engine runs one shared noise field.
+            params.film_render.grain.monochrome = true;
+            let g = &mut params.film_render.grain;
+            g.particle_scale = [g.particle_scale[0]; 3];
+            g.density_min = [g.density_min[0]; 3];
+            g.uniformity = [g.uniformity[0]; 3];
+            g.blur = 0.0;
+            g.blur_dye_clouds_um = 0.0;
+            // 8 px long edge at 0.096 mm → 12 µm pixels.
+            params.camera.film_format_mm = 0.096;
+
+            // Identical per-channel log exposure → identical densities.
+            let (w, h) = (8usize, 8usize);
+            let mut data = Vec::with_capacity(w * h * 3);
+            for i in 0..w * h {
+                let t = i as f64 / (w * h) as f64;
+                let v = from_f64(-3.0 + 2.5 * t);
+                data.extend_from_slice(&[v, v, v]);
+            }
+            let log_raw = ImageBuf {
+                width: w as u32,
+                height: h as u32,
+                data,
+            };
+
+            let out = develop(&log_raw, &film, &params, &backend, 12.0);
+            let c0: Vec<Scalar> = out.pixels().map(|px| px[0]).collect();
+            let c1: Vec<Scalar> = out.pixels().map(|px| px[1]).collect();
+            let c2: Vec<Scalar> = out.pixels().map(|px| px[2]).collect();
+            assert_eq!(c0, c1);
+            assert_eq!(c0, c2);
+        }
     }
 }

@@ -160,6 +160,7 @@ pub fn expose_calibrated(
     exposure_factor: f64,
     preflash: [f64; 3],
     bw_print_correction: f64,
+    pixel_size_um: f64,
 ) -> ImageBuf {
     // Python parity — `channel_density` and `base_density` are f64 in the profile JSON.
     let channel_density: Vec<[f64; 3]> = film
@@ -256,21 +257,23 @@ pub fn expose_calibrated(
                 *out = spektrafilm_math::precision::from_f64(raw * print_exposure * bw);
             }
         });
-        let pix_um = crate::stages::filming::pixel_size_um(
-            params.camera.film_format_mm,
-            lin.width,
-            lin.height,
-        );
+        // Python uses the ResizingService pitch (from the full input),
+        // not one re-derived from the current buffer dimensions.
         let dm = edf.to_model();
+        // An invalid family is rejected by `RuntimeParams::validate` /
+        // `Pipeline::new_with_spectral` before any stage runs; reaching
+        // this point with an unknown family is a programming error.
         lin = if backend.is_gpu() {
             spektrafilm_model::diffusion::apply_diffusion_filter_blur(
                 &lin,
                 &dm,
-                pix_um as f64,
+                pixel_size_um,
                 backend,
             )
+            .expect("enlarger diffusion filter family validated at pipeline entry")
         } else {
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&lin, &dm, pix_um as f64)
+            spektrafilm_model::diffusion::apply_diffusion_filter_um(&lin, &dm, pixel_size_um)
+                .expect("enlarger diffusion filter family validated at pipeline entry")
         };
         lin.data.par_iter_mut().for_each(|v| {
             let x = *v as f64;
@@ -332,7 +335,9 @@ pub fn develop(
     )
 }
 
-/// Full printing stage with pre-calibrated enlarger.
+/// Full printing stage with pre-calibrated enlarger. `pixel_size_um`
+/// is the working-geometry pitch from
+/// [`crate::resizing::crop_and_rescale`].
 #[allow(clippy::too_many_arguments)]
 pub fn process_with_calibration(
     cmy_film: &ImageBuf,
@@ -344,6 +349,7 @@ pub fn process_with_calibration(
     exposure_factor: f64,
     preflash: [f64; 3],
     bw_print_correction: f64,
+    pixel_size_um: f64,
 ) -> ImageBuf {
     let log_raw = expose_calibrated(
         cmy_film,
@@ -355,7 +361,11 @@ pub fn process_with_calibration(
         exposure_factor,
         preflash,
         bw_print_correction,
+        pixel_size_um,
     );
+    // Parity-harness probe: mirrors Python's `log_e_print` topology tap
+    // (`scripts/parity/run_parity.py` sets the env var).
+    crate::pipeline::dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &log_raw);
     develop(&log_raw, print, params, backend)
 }
 

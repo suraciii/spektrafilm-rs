@@ -37,7 +37,7 @@ mod integration_tests {
         let img = ImageBuf::from_data(8, 8, vec![from_f64(0.184); 8 * 8 * 3]);
 
         let pipeline = Pipeline::new(film, print, params);
-        let result = pipeline.process(img, &backend);
+        let result = pipeline.process(img, &backend).unwrap();
 
         assert_eq!(result.width, 8);
         assert_eq!(result.height, 8);
@@ -74,7 +74,7 @@ mod integration_tests {
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir);
         match pipeline {
             Ok(p) => {
-                let result = p.process(img, &backend);
+                let result = p.process(img, &backend).unwrap();
                 let mean: Scalar =
                     result.data.iter().copied().sum::<Scalar>() / result.data.len() as Scalar;
                 eprintln!("Spectral pipeline output mean: {mean}");
@@ -130,7 +130,7 @@ mod integration_tests {
 
         // 1×1 midgray.
         let img = ImageBuf::from_data(1, 1, vec![from_f64(0.184); 3]);
-        let out = pipeline.process(img, &backend);
+        let out = pipeline.process(img, &backend).unwrap();
         let want = [
             0.17518024973220059,
             0.17883059767931708,
@@ -152,7 +152,7 @@ mod integration_tests {
             .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
             .collect();
         let img = ImageBuf::from_data(w, h, data);
-        let out = pipeline.process(img, &backend);
+        let out = pipeline.process(img, &backend).unwrap();
         #[rustfmt::skip]
         let want: [[f64; 3]; 16] = [
             [0.030140578894842104, 0.10482173080681569, 0.16323263024872359],
@@ -206,7 +206,7 @@ mod integration_tests {
         let img = ImageBuf::from_data(4, 4, vec![from_f64(0.184); 4 * 4 * 3]);
 
         let pipeline = Pipeline::new(film, print, params);
-        let result = pipeline.process(img, &backend);
+        let result = pipeline.process(img, &backend).unwrap();
         let mean: Scalar =
             result.data.iter().copied().sum::<Scalar>() / result.data.len() as Scalar;
         assert!(mean > from_f64(0.01), "film scan near-black: mean={mean}");
@@ -246,7 +246,7 @@ mod integration_tests {
             [0.12, 0.08, 0.06],
             "GUI-style with_params must preserve positive-film DIR parameters"
         );
-        let result = pipeline.process(img, &backend);
+        let result = pipeline.process(img, &backend).unwrap();
         let mut clipped_low = 0usize;
         let mut clipped_high = 0usize;
         for c in 0..3 {
@@ -315,12 +315,12 @@ mod debug_tests {
         let img = ImageBuf::from_data(1, 1, vec![gray, gray, gray]);
         eprintln!("Input: {:?}", img.get(0, 0));
 
-        let ref_illuminant = stages::filming::select_illuminant(&film.info.reference_illuminant);
+        let ref_illuminant = crate::spectral_service::select_illuminant(&film.info.reference_illuminant);
         let log_raw =
-            stages::filming::expose(&img, &film, &params, &backend, None, None, ref_illuminant, 1.0);
+            stages::filming::expose(&img, &film, &params, &backend, None, None, ref_illuminant, 1.0, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1), 0.0);
         eprintln!("log_raw: {:?}", log_raw.get(0, 0));
 
-        let density_cmy = stages::filming::develop(&log_raw, &film, &params, &backend);
+        let density_cmy = stages::filming::develop(&log_raw, &film, &params, &backend, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1));
         eprintln!("density_cmy: {:?}", density_cmy.get(0, 0));
 
         // Use simplified printing path for debug trace
@@ -336,5 +336,238 @@ mod debug_tests {
             &crate::gamut_compression::OutputGamutCompress::identity(),
         );
         eprintln!("rgb_out: {:?}", rgb_out.get(0, 0));
+    }
+}
+
+/// Focused coverage for issue #8 (0.3.4 scan/glare/effect semantics):
+/// direct-film glare disable, print glare effect, halation/DIR presets,
+/// preflash in the print B/W references, morph defaults and params
+/// validation.
+#[cfg(test)]
+mod scan_semantics_tests {
+    use crate::color_reference::ColorReference;
+    use crate::params::RuntimeParams;
+    use crate::pipeline::Pipeline;
+    use crate::profile;
+    use spektrafilm_gpu::cpu_backend::CpuBackend;
+    use spektrafilm_math::image::ImageBuf;
+    use spektrafilm_math::precision::{from_f64, to_f64};
+    use std::path::Path;
+
+    fn data_dir() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data")
+    }
+
+    fn quiet_params() -> RuntimeParams {
+        // Stochastic/spatial film effects off so the only moving part in
+        // each comparison is the control under test.
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.camera.auto_exposure = false;
+        params
+    }
+
+    fn flat_image(n: u32) -> ImageBuf {
+        ImageBuf::from_data(n, n, vec![from_f64(0.3); (n * n * 3) as usize])
+    }
+
+    fn max_diff(a: &ImageBuf, b: &ImageBuf) -> f64 {
+        a.data
+            .iter()
+            .zip(b.data.iter())
+            .map(|(x, y)| (to_f64(*x) - to_f64(*y)).abs())
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn film_render_glare_cannot_change_direct_film_scan() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let backend = CpuBackend;
+        let img = flat_image(8);
+
+        let mut quiet = quiet_params();
+        quiet.io.scan_film = true;
+        let base = Pipeline::new(film.clone(), film.clone(), quiet.clone())
+            .process(img.clone(), &backend).unwrap();
+
+        // Crank film_render.glare far past its normal range — upstream 0.3.4
+        // sets `glare = None` on the scan_film path, so the output must be
+        // bit-identical.
+        quiet.film_render.glare.active = true;
+        quiet.film_render.glare.percent = 0.9;
+        quiet.film_render.glare.roughness = 1.5;
+        quiet.film_render.glare.blur = 2.0;
+        let loud = Pipeline::new(film.clone(), film, quiet).process(img, &backend).unwrap();
+
+        assert_eq!(
+            max_diff(&base, &loud),
+            0.0,
+            "film_render.glare leaked into a direct-film scan"
+        );
+    }
+
+    #[test]
+    fn print_glare_changes_print_scan() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let backend = CpuBackend;
+        let img = flat_image(16);
+
+        let mut low = quiet_params();
+        low.print_render.glare.active = true;
+        low.print_render.glare.percent = 0.01;
+        low.print_render.glare.roughness = 0.0;
+        low.print_render.glare.blur = 0.0;
+        let out_low =
+            Pipeline::new(film.clone(), print.clone(), low.clone()).process(img.clone(), &backend).unwrap();
+
+        let mut high = low;
+        high.print_render.glare.percent = 0.15;
+        let out_high = Pipeline::new(film, print, high).process(img, &backend).unwrap();
+
+        let diff = max_diff(&out_low, &out_high);
+        assert!(
+            diff > 1e-4,
+            "print_render.glare had no effect on the print scan (max diff {diff})"
+        );
+        // Glare adds illuminant light: the bright-glare render must not be
+        // darker anywhere on this flat field.
+        let any_darker = out_high
+            .data
+            .iter()
+            .zip(out_low.data.iter())
+            .any(|(h, l)| to_f64(*h) < to_f64(*l) - 1e-6);
+        assert!(!any_darker, "glare darkened pixels — wrong sign");
+    }
+
+    #[test]
+    fn halation_presets_follow_use_and_antihalation_tags() {
+        let dir = data_dir();
+        // kodak_portra_400: (still, strong) film → 65 μm / weak red halo.
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let pipeline = Pipeline::new_with_spectral(film, print.clone(), RuntimeParams::default(), &dir)
+            .expect("spectral pipeline");
+        let h = &pipeline.params.film_render.halation;
+        assert_eq!(h.halation_first_sigma_um, [65.0, 65.0, 65.0]);
+        assert_eq!(h.halation_strength, [0.015, 0.005, 0.0]);
+
+        // kodak_vision3_250d: (cine, strong) film → PET backing, 50 μm.
+        let film = profile::load_profile_by_name(&dir, "kodak_vision3_250d").unwrap();
+        let pipeline = Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir)
+            .expect("spectral pipeline");
+        let h = &pipeline.params.film_render.halation;
+        assert_eq!(h.halation_first_sigma_um, [50.0, 50.0, 50.0]);
+        assert_eq!(h.halation_strength, [0.015, 0.005, 0.0]);
+    }
+
+    #[test]
+    fn slide_stock_dir_overrides_velvia_and_provia() {
+        let dir = data_dir();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        for (stock, same, r_gb) in [
+            ("fujifilm_velvia_100", [0.108, 0.072, 0.054], [0.108, 0.054]),
+            ("fujifilm_provia_100f", [0.156, 0.104, 0.078], [0.156, 0.078]),
+        ] {
+            let film = profile::load_profile_by_name(&dir, stock).unwrap();
+            let pipeline =
+                Pipeline::new_with_spectral(film, print.clone(), RuntimeParams::default(), &dir)
+                    .expect("spectral pipeline");
+            let dir_c = &pipeline.params.film_render.dir_couplers;
+            assert_eq!(dir_c.gamma_samelayer_rgb, same, "{stock} same-layer gamma");
+            assert_eq!(dir_c.gamma_interlayer_r_to_gb, r_gb, "{stock} interlayer");
+        }
+    }
+
+    #[test]
+    fn preflash_shifts_print_black_white_references() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = quiet_params();
+        params.scanner.white_correction = true;
+        params.scanner.black_correction = true;
+        let pipeline =
+            Pipeline::new_with_spectral(film, print, params, &dir).expect("spectral pipeline");
+        let zero = ColorReference::compute(
+            &pipeline.film,
+            &pipeline.print,
+            &pipeline.params,
+            pipeline.print_illuminant_slice(),
+            pipeline.print_exposure_factor(),
+            [0.0; 3],
+        );
+        let flashed = ColorReference::compute(
+            &pipeline.film,
+            &pipeline.print,
+            &pipeline.params,
+            pipeline.print_illuminant_slice(),
+            pipeline.print_exposure_factor(),
+            [0.05; 3],
+        );
+        let (m0, q0) = zero.xyz_remap().expect("print path builds a remap");
+        let (m1, q1) = flashed.xyz_remap().expect("print path builds a remap");
+        assert!(
+            (m0 - m1).abs() > 1e-9 || (q0 - q1).abs() > 1e-9,
+            "preflash must flow into the B/W reference log-raws (m {m0} vs {m1})"
+        );
+    }
+
+    #[test]
+    fn print_morph_defaults_active_like_upstream() {
+        // Upstream 0.3.4 `PrintCurvesMorphParams.active` defaults to True;
+        // a params file that omits the key must get the same default.
+        assert!(RuntimeParams::default()
+            .print_render
+            .density_curves_morph
+            .active);
+        let parsed: RuntimeParams =
+            serde_json::from_str(r#"{"print_render": {"density_curves_morph": {}}}"#).unwrap();
+        assert!(parsed.print_render.density_curves_morph.active);
+    }
+
+    #[test]
+    fn params_validate_rejects_only_effective_bad_families() {
+        assert!(RuntimeParams::default().validate().is_ok());
+
+        let mut params = RuntimeParams::default();
+        params.camera.diffusion_filter.active = true;
+        params.camera.diffusion_filter.strength = 0.5;
+        params.camera.diffusion_filter.filter_family = "black_promist".into();
+        assert!(params.validate().is_err());
+
+        // Ineffective filters never reach the family check (Python's
+        // early return in apply_diffusion_filter_um).
+        params.camera.diffusion_filter.strength = 0.0;
+        assert!(params.validate().is_ok());
+        params.camera.diffusion_filter.strength = 0.5;
+        params.camera.diffusion_filter.spatial_scale = 0.0;
+        assert!(params.validate().is_ok());
+
+        let mut params = RuntimeParams::default();
+        params.enlarger.diffusion_filter.active = true;
+        params.enlarger.diffusion_filter.filter_family = "golden_glow".into();
+        assert!(params.validate().is_err());
+    }
+
+    #[test]
+    fn new_with_spectral_rejects_bad_family_before_building() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.camera.diffusion_filter.active = true;
+        params.camera.diffusion_filter.filter_family = "nope".into();
+        let err = Pipeline::new_with_spectral(film, print, params, &dir).err().expect("effective unknown filter must fail");
+        assert!(err.contains("unknown diffusion filter family"));
     }
 }

@@ -11,7 +11,6 @@ precision-f64 = []
 [dependencies]
 rayon.workspace = true
 rand.workspace = true
-rand_distr.workspace = true
 byteorder.workspace = true
 thiserror.workspace = true
 half = "2.7"

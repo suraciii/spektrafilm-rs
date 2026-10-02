@@ -57,7 +57,7 @@ extern "C" __global__ void scan_spectral(
     float g = m[3] * xyz_x + m[4] * xyz_y + m[5] * xyz_z;
     float b = m[6] * xyz_x + m[7] * xyz_y + m[8] * xyz_z;
 
-    output_rgb[base]     = fminf(fmaxf(r, 0.0f), 1.0f);
-    output_rgb[base + 1] = fminf(fmaxf(g, 0.0f), 1.0f);
-    output_rgb[base + 2] = fminf(fmaxf(b, 0.0f), 1.0f);
+    output_rgb[base]     = r;
+    output_rgb[base + 1] = g;
+    output_rgb[base + 2] = b;
 }

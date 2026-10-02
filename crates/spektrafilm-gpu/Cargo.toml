@@ -30,7 +30,7 @@ accelerate-src = "0.3"
 [target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 cblas = "0.4"
 blas-src = { version = "0.10", features = ["openblas"] }
-openblas-src = "0.10"
+openblas-src = { version = "0.10", features = ["system"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

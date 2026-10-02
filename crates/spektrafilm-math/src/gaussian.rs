@@ -1,30 +1,27 @@
 use crate::image::ImageBuf;
-use crate::precision::{Scalar, ZERO, from_f32, from_f64};
+use crate::precision::{Scalar, ZERO, from_f64};
 use rayon::prelude::*;
 
 /// Separable Gaussian blur on an ImageBuf.
 ///
-/// Uses FIR convolution for small sigma (<= 3.0) and recursive IIR
-/// (Young-van Vliet) for larger sigma. Each channel is processed independently.
-/// Processes rows in parallel via rayon.
-/// Single-channel 2D Gaussian blur. Same separable FIR (σ ≤ 3) +
-/// Young-van Vliet IIR (σ > 3) dispatch as `gaussian_blur`, just on a
-/// `Vec<Scalar>` of length `w * h`. Used by callers that need
-/// per-channel σ — extracting channels and processing each
-/// independently avoids the 3x-redundant work of blurring a 3-channel
-/// ImageBuf where all channels are identical.
-pub fn gaussian_blur_channel(data: &[Scalar], w: u32, h: u32, sigma: f32) -> Vec<Scalar> {
+/// Uses reflect-boundary FIR for sigma < 3 and sample-replicating
+/// Young-van Vliet IIR for sigma >= 3, matching Python's dispatch.
+/// Each channel is processed independently with rayon.
+/// Single-channel form for callers with per-channel sigma values.
+pub fn gaussian_blur_channel(data: &[Scalar], w: u32, h: u32, sigma: impl Into<f64>) -> Vec<Scalar> {
     let wu = w as usize;
     let hu = h as usize;
     assert_eq!(data.len(), wu * hu);
+    let sigma = sigma.into();
     if sigma <= 0.0 {
         return data.to_vec();
     }
-    let sigma_s = from_f32(sigma);
+    let sigma_s = from_f64(sigma);
     let mut chan = data.to_vec();
     let mut tmp = vec![ZERO; wu * hu];
-    blur_1d_parallel(&chan, &mut tmp, wu, hu, sigma_s, true);
-    blur_1d_parallel(&tmp, &mut chan, wu, hu, sigma_s, false);
+    let horizontal_first = sigma >= 3.0;
+    blur_1d_parallel(&chan, &mut tmp, wu, hu, sigma_s, horizontal_first);
+    blur_1d_parallel(&tmp, &mut chan, wu, hu, sigma_s, !horizontal_first);
     chan
 }
 
@@ -38,15 +35,15 @@ pub fn exponential_filter_channel(
     data: &[Scalar],
     w: u32,
     h: u32,
-    decay_constant: f32,
+    decay_constant: impl Into<f64>,
 ) -> Vec<Scalar> {
     // Python `_EXPONENTIAL_GAUSSIAN_FITS[3]` — amplitude, σ / decay.
     const FIT: [(f64, f64); 3] = [(0.1633, 0.5360), (0.6496, 1.5236), (0.1870, 2.7684)];
     let n = data.len();
     let mut result = vec![ZERO; n];
-    let decay_f64 = decay_constant as f64;
+    let decay_f64 = decay_constant.into();
     for &(amp, ratio) in &FIT {
-        let sigma_k = (ratio * decay_f64) as f32;
+        let sigma_k = ratio * decay_f64;
         let component = gaussian_blur_channel(data, w, h, sigma_k);
         let amp_s = from_f64(amp);
         for (r, &v) in result.iter_mut().zip(component.iter()) {
@@ -56,24 +53,25 @@ pub fn exponential_filter_channel(
     result
 }
 
-pub fn gaussian_blur(img: &ImageBuf, sigma: f32) -> ImageBuf {
+pub fn gaussian_blur(img: &ImageBuf, sigma: impl Into<f64>) -> ImageBuf {
+    let sigma = sigma.into();
     if sigma <= 0.0 {
         return img.clone();
     }
 
     let w = img.width as usize;
     let h = img.height as usize;
-    let sigma_s = from_f32(sigma);
+    let sigma_s = from_f64(sigma);
 
     // Process each channel separately for cache-friendly access
     let mut channels: Vec<Vec<Scalar>> = (0..3).map(|c| img.extract_channel(c)).collect();
 
     channels.par_iter_mut().for_each(|chan| {
-        // Horizontal pass
         let mut tmp = vec![ZERO; w * h];
-        blur_1d_parallel(chan, &mut tmp, w, h, sigma_s, true);
-        // Vertical pass
-        blur_1d_parallel(&tmp, chan, w, h, sigma_s, false);
+        // Python FIR is vertical then horizontal; IIR uses the reverse order.
+        let horizontal_first = sigma >= 3.0;
+        blur_1d_parallel(chan, &mut tmp, w, h, sigma_s, horizontal_first);
+        blur_1d_parallel(&tmp, chan, w, h, sigma_s, !horizontal_first);
     });
 
     let mut out = ImageBuf::new(img.width, img.height);
@@ -130,9 +128,7 @@ fn fir_blur_1d(
                 for x in 0..w {
                     let mut sum = ZERO;
                     for (ki, &kv) in kernel.iter().enumerate() {
-                        let sx = (x as isize + ki as isize - radius as isize)
-                            .max(0)
-                            .min(w as isize - 1) as usize;
+                        let sx = reflect_index(x as isize + ki as isize - radius as isize, w);
                         sum += row_src[sx] * kv;
                     }
                     row_dst[x] = sum;
@@ -145,14 +141,23 @@ fn fir_blur_1d(
                 for x in 0..w {
                     let mut sum = ZERO;
                     for (ki, &kv) in kernel.iter().enumerate() {
-                        let sy = (y as isize + ki as isize - radius as isize)
-                            .max(0)
-                            .min(h as isize - 1) as usize;
+                        let sy = reflect_index(y as isize + ki as isize - radius as isize, h);
                         sum += src[sy * w + x] * kv;
                     }
                     row_dst[x] = sum;
                 }
             });
+    }
+}
+
+/// Half-sample symmetric reflection, including kernels wider than the image.
+fn reflect_index(index: isize, length: usize) -> usize {
+    let period = 2 * length as isize;
+    let folded = index.rem_euclid(period);
+    if folded < length as isize {
+        folded as usize
+    } else {
+        (period - 1 - folded) as usize
     }
 }
 
@@ -180,10 +185,13 @@ fn iir_blur_1d(
 
     let b0 =
         from_f64(1.57825) + from_f64(2.44413) * q + from_f64(1.4281) * q2 + from_f64(0.422205) * q3;
-    let b1 = (from_f64(2.44413) * q + from_f64(2.85619) * q2 + from_f64(1.26661) * q3) / b0;
-    let b2 = -(from_f64(1.4281) * q2 + from_f64(1.26661) * q3) / b0;
-    let b3 = (from_f64(0.422205) * q3) / b0;
-    let a = from_f64(1.0) - b1 - b2 - b3;
+    let b1_raw = from_f64(2.44413) * q + from_f64(2.85619) * q2 + from_f64(1.26661) * q3;
+    let b2_raw = -(from_f64(1.4281) * q2 + from_f64(1.26661) * q3);
+    let b3_raw = from_f64(0.422205) * q3;
+    let a = from_f64(1.0) - (b1_raw + b2_raw + b3_raw) / b0;
+    let b1 = b1_raw / b0;
+    let b2 = b2_raw / b0;
+    let b3 = b3_raw / b0;
 
     if horizontal {
         dst.par_chunks_exact_mut(w)
@@ -276,11 +284,12 @@ fn iir_filter_row(
 fn make_gaussian_kernel(sigma: Scalar, radius: usize) -> Vec<Scalar> {
     let size = 2 * radius + 1;
     let mut kernel = Vec::with_capacity(size);
-    let s2 = from_f64(2.0) * sigma * sigma;
+    let half = from_f64(-0.5);
 
     for i in 0..size {
         let x = from_f64(i as f64) - from_f64(radius as f64);
-        kernel.push((-x * x / s2).exp());
+        let scaled = x / sigma;
+        kernel.push((half * (scaled * scaled)).exp());
     }
 
     let sum: Scalar = kernel.iter().sum();
@@ -315,6 +324,17 @@ mod tests {
         let out = gaussian_blur(&img, 2.0);
         for (a, b) in img.data.iter().zip(out.data.iter()) {
             assert!((a - b).abs() < from_f64(1e-4), "expected {a}, got {b}");
+        }
+    }
+
+    #[test]
+    fn fir_reflects_repeatedly_on_narrow_images() {
+        // Pinned Python fast_gaussian_filter([[0, 1]], 1.2): radius 4
+        // extends beyond both edges repeatedly, including the singleton axis.
+        let out = gaussian_blur_channel(&[ZERO, from_f64(1.0)], 2, 1, 1.2f64);
+        let expected = [0.41537666378143734, 0.5846233362185624];
+        for (actual, expected) in out.iter().zip(expected) {
+            assert!((*actual - from_f64(expected)).abs() < from_f64(1e-6));
         }
     }
 }

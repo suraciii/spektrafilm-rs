@@ -18,7 +18,6 @@
 //!   * `rk_binomial_inversion`— inverse CDF (n·p ≤ 30)
 //!   * `rk_binomial_btpe`     — Kachitvichyanukul-Schmeiser BTPE (n·p > 30)
 
-use rand::RngCore as _;
 use rand_mt::Mt;
 
 /// Numpy's `rk_double`: build a 53-bit double from two MT19937 outputs.
@@ -78,6 +77,90 @@ impl GaussRng {
                 self.has_gauss = true;
                 return f * x2;
             }
+        }
+    }
+}
+
+/// Python `spektrafilm.utils.fast_stats.fast_poisson` — the approximate
+/// sampler selected by `settings.use_fast_stats`. Draws from the same
+/// MT19937 stream as [`rk_poisson`] (`np.random.rand` / `np.random.randn`
+/// on the shared global state), but replaces the exact algorithms with
+/// cheap approximations: Knuth's multiplication-of-uniforms for λ < 30 and
+/// a normal approximation above it. Not bit-exact with the scipy path —
+/// that is the point of the flag (the Python GUI enables it by default
+/// through `params_mapper`).
+///
+/// Note: `np.round` uses banker's rounding on exact `.5` ties where Rust's
+/// `f64::round` rounds half away from zero; the tie cases have measure
+/// zero for continuous lam + sqrt(lam)·z draws.
+pub fn fast_poisson(g: &mut GaussRng, lam: f64) -> u64 {
+    if lam <= 0.0 {
+        0
+    } else if lam < 30.0 {
+        // Knuth: L = exp(-lam); multiply uniforms until the product drops
+        // below L; the count of draws minus one is the variate.
+        let l = (-lam).exp();
+        let mut p = 1.0f64;
+        let mut k = 0i64;
+        while p > l {
+            k += 1;
+            p *= rk_double(&mut g.rng);
+        }
+        (k - 1) as u64
+    } else {
+        let z = g.gauss();
+        let sample = lam + lam.sqrt() * z;
+        let sample_int = sample.round() as i64;
+        if sample_int < 0 {
+            0
+        } else {
+            sample_int as u64
+        }
+    }
+}
+
+/// Python `spektrafilm.utils.fast_stats.fast_binomial` — the approximate
+/// binomial selected by `settings.use_fast_stats`: direct coin-flips for
+/// n < 25, a normal approximation when n·p·(1−p) > 10, and an inverse-CDF
+/// walk otherwise. Draws from the shared MT19937 stream like
+/// [`fast_poisson`].
+pub fn fast_binomial(g: &mut GaussRng, n: u64, p: f64) -> u64 {
+    if p <= 0.0 {
+        0
+    } else if p >= 1.0 {
+        n
+    } else if n < 25 {
+        let mut count = 0u64;
+        for _ in 0..n {
+            if rk_double(&mut g.rng) < p {
+                count += 1;
+            }
+        }
+        count
+    } else {
+        let nf = n as f64;
+        let mean = nf * p;
+        let var = mean * (1.0 - p);
+        if var > 10.0 {
+            let z = g.gauss();
+            let approx = (mean + var.sqrt() * z).round();
+            approx.clamp(0.0, nf) as u64
+        } else {
+            // Inverse CDF: walk the pmf from k=0 until the cdf passes a
+            // uniform draw; the last k whose mass was accumulated is the
+            // variate (Python returns k - 1 after the post-increment loop).
+            let u = rk_double(&mut g.rng);
+            let mut cdf = 0.0f64;
+            let mut prob = (1.0 - p).powf(nf);
+            let mut k = 0i64;
+            while cdf < u && k <= n as i64 {
+                cdf += prob;
+                if k < n as i64 {
+                    prob *= (nf - k as f64) / (k as f64 + 1.0) * (p / (1.0 - p));
+                }
+                k += 1;
+            }
+            (k - 1) as u64
         }
     }
 }

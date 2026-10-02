@@ -128,23 +128,13 @@ pub trait ComputeBackend: Send + Sync {
 
     /// Optional fused fast-path: runs filming + printing + scanning as a single
     /// GPU-resident command buffer (one upload at start, one readback at end).
-    /// Returns `None` to fall back to per-stage trait methods. CPU backend
-    /// always returns `None`; wgpu implements it.
+    /// Returns linear RGB, or `None` to fall back to per-stage trait methods.
+    /// The caller applies the destination transfer curve on the CPU without clipping.
     fn try_run_film_chain(&self, _params: &FilmChainParams<'_>) -> Option<ImageBuf> {
         None
     }
 
-    /// True when `try_run_film_chain` returns the same post-scan output that
-    /// `Pipeline::apply_post_scan` would produce (final clamp and optional
-    /// sRGB encoding). Backends default to returning linear RGB and letting
-    /// the pipeline apply the final CPU pass.
-    fn resident_chain_applies_post_scan(&self) -> bool {
-        false
-    }
-
-    /// True for f32 GPU backends where effects may trade exactness for
-    /// speed (the diffusion filter uses a downsampled sum-of-Gaussians
-    /// instead of the exact FFT convolution). CPU keeps the exact path.
+    /// True for GPU compute backends.
     fn is_gpu(&self) -> bool {
         false
     }
@@ -207,16 +197,14 @@ pub struct FilmChainParams<'a> {
     /// blur + per-channel illuminant offset.
     pub glare: Option<GlareGpuParams>,
     /// Optional output gamut compression pass — applied after glare on
-    /// the final RGB buffer, before unsharp (matching the CPU scanning
-    /// order). When set, scan_spectral skips its [0,1] clamp so the
-    /// compressor sees the out-of-gamut values it needs.
+    /// the final linear RGB buffer, before unsharp (matching CPU scanning).
     pub gamut: Option<GamutGpuParams<'a>>,
     /// Optional unsharp mask pass — applied after glare (last step
     /// before readback). Blur σ in pixels + amount scalar; both come
     /// from `scanner.unsharp_mask`.
     pub unsharp: Option<UnsharpGpuParams>,
     /// Optional camera lens Gaussian blur on the raw film exposure buffer,
-    /// after camera diffusion and before halation.
+    /// before halation.
     pub camera_lens_blur_px: Option<f32>,
     /// Optional scanner lens Gaussian blur on the final RGB buffer, after
     /// glare/gamut compression and before unsharp.
@@ -224,21 +212,29 @@ pub struct FilmChainParams<'a> {
     /// Optional highlight reconstruction on the raw film exposure buffer,
     /// immediately after the front pass and before optical scatter.
     pub highlight_boost: Option<HighlightBoostGpuParams>,
-    /// Optional camera lens diffusion filter — applied on the raw film
-    /// exposure buffer right after hanatos2025, before halation (matching
-    /// the CPU filming order). A downsampled sum-of-Gaussians; see
-    /// `DiffusionGpuPlan`.
-    pub diffusion: Option<DiffusionGpuPlan>,
-    /// Optional enlarger diffusion filter. Applied in the print stage on
-    /// linear print raw between print_spectral and print density curves.
-    pub enlarger_diffusion: Option<DiffusionGpuPlan>,
-    /// The print_exposure × B&W printing correction scalar. Used by CUDA
-    /// when `enlarger_diffusion` is active so it can preserve the CPU
-    /// print-stage ordering around preflash.
-    pub print_exposure_scale: f64,
-    /// Whether the final output should be sRGB-encoded after clamping. Mirrors
-    /// `RuntimeParams::io.output_cctf_encoding`.
-    pub output_cctf_encoding: bool,
+}
+
+/// GPU FIR kernels support a maximum 256-pixel half-width.
+pub(crate) fn gpu_blur_supported(sigma: f32) -> bool {
+    sigma.is_finite() && (3.0 * sigma.max(0.0)).ceil() <= 256.0
+}
+
+impl FilmChainParams<'_> {
+    pub(crate) fn gpu_blurs_supported(&self) -> bool {
+        let supports = gpu_blur_supported;
+        self.camera_lens_blur_px.is_none_or(supports)
+            && self.scanner_lens_blur_px.is_none_or(supports)
+            && self.unsharp.is_none_or(|p| supports(p.sigma_px))
+            && self.grain.is_none_or(|p| supports(p.grain_blur))
+            && self.glare.is_none_or(|p| supports(p.blur_px))
+            && self.dir_couplers.is_none_or(|p| {
+                supports(p.diffusion_size_px) && supports(p.diffusion_tail_px)
+            })
+            && self.halation.is_none_or(|p| {
+                supports(p.scatter_core_px) && supports(p.scatter_tail_px)
+                    && supports(p.halation_first_sigma_px * (p.halation_n_bounces as f32).sqrt())
+            })
+    }
 }
 
 /// RGB → film-raw front pass of the GPU-resident chain. Both variants are
@@ -255,22 +251,6 @@ pub enum FrontPass<'a> {
     /// Mallett2019 reflectance-basis upsampling: one rgb → raw 3×3 matmul
     /// (`core · M_cs`, see `spektrafilm-core/src/mallett.rs`).
     Mallett2019 { matrix: [[f64; 3]; 3] },
-}
-
-/// Pre-computed plan for the GPU-resident diffusion filter. The per-channel
-/// PSF is decomposed into Gaussian components (3 per PSF sub-component) and
-/// the whole scattered field is computed on an image downsampled by `d` so
-/// the blur σ stay small. `sigmas`/`coeffs` are parallel: component `i`
-/// blurs the downsampled image at `sigmas[i]` (working-resolution px) and
-/// adds `coeffs[i]` (per-channel) into the accumulator.
-#[derive(Debug, Clone)]
-pub struct DiffusionGpuPlan {
-    pub d: u32,
-    pub small_w: u32,
-    pub small_h: u32,
-    pub p_s: f32,
-    pub sigmas: Vec<f32>,
-    pub coeffs: Vec<[f32; 3]>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -397,17 +377,21 @@ pub struct Lut3D {
     pub data: Vec<f32>,
 }
 
-/// Select the best available backend at runtime.
-///
-/// Honors `SPEKTRAFILM_BACKEND=cpu|cuda|wgpu` when the requested backend is compiled in.
-/// Useful for benchmarking and for f64 mode where the GPU shaders truncate to f32.
+/// Select the available compute backend. Reference f64 builds default to CPU.
+/// Explicit `SPEKTRAFILM_BACKEND=cuda|wgpu` requests select f32 preview arithmetic,
+/// including in an f64 binary. Unavailable requests report a faithful CPU fallback.
 pub fn select_backend() -> Box<dyn ComputeBackend> {
     let requested = std::env::var("SPEKTRAFILM_BACKEND")
         .ok()
         .map(|v| v.to_ascii_lowercase());
+    #[cfg(feature = "precision-f64")]
+    if requested.is_none() {
+        tracing::info!(precision = "f64", "using CPU reference backend");
+        return Box::new(cpu_backend::CpuBackend);
+    }
 
     if requested.as_deref() == Some("cpu") {
-        tracing::info!("using CPU backend");
+        tracing::info!(backend = cpu_backend::CpuBackend.name(), "using CPU backend");
         return Box::new(cpu_backend::CpuBackend);
     }
 
@@ -415,7 +399,7 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     {
         if requested.as_deref() == Some("cuda") {
             if let Some(cuda) = cuda_backend::CudaBackend::new() {
-                tracing::info!("using CUDA GPU backend");
+                tracing::info!(precision = "f32", reference = false, "using CUDA preview backend");
                 return Box::new(cuda);
             }
             tracing::warn!("CUDA backend requested but unavailable; falling back");
@@ -427,11 +411,15 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
         tracing::warn!("CUDA backend requested but spektrafilm-gpu was built without cuda-backend");
     }
 
+    #[cfg(not(feature = "wgpu-backend"))]
+    if requested.as_deref() == Some("wgpu") {
+        tracing::warn!("wgpu backend requested but spektrafilm-gpu was built without wgpu-backend");
+    }
     #[cfg(feature = "wgpu-backend")]
     {
         if requested.as_deref().is_none() || requested.as_deref() == Some("wgpu") {
             if let Some(gpu) = wgpu_backend::WgpuBackend::new() {
-                tracing::info!("using wgpu GPU backend");
+                tracing::info!(precision = "f32", reference = false, "using wgpu preview backend");
                 return Box::new(gpu);
             }
             if requested.as_deref() == Some("wgpu") {
@@ -439,6 +427,6 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
             }
         }
     }
-    tracing::info!("using CPU backend");
+    tracing::info!(backend = cpu_backend::CpuBackend.name(), "using CPU backend");
     Box::new(cpu_backend::CpuBackend)
 }

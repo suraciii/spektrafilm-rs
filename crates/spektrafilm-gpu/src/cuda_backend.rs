@@ -1,10 +1,9 @@
 //! Native CUDA backend.
 //!
 //! This is intentionally feature-gated. The resident CUDA path currently
-//! covers the preview chain: front pass, highlight boost, camera diffusion,
-//! camera lens blur, halation, DIR couplers, grain, density curves, enlarger
-//! diffusion, print/scan spectral reductions, glare, output gamut compression,
-//! scanner lens blur, unsharp, and one readback.
+//! covers the preview chain: front pass, highlight boost, camera lens blur,
+//! halation, DIR couplers, grain, density curves, print/scan spectral reductions,
+//! glare, output gamut compression, scanner lens blur, unsharp, and one readback.
 
 use std::sync::Arc;
 
@@ -120,10 +119,6 @@ __device__ __forceinline__ float exp10_fast(float x) {
     return exp2f(x * 3.32192809488736234787f);
 }
 
-__device__ __forceinline__ float srgb_encode_fast(float x) {
-    x = fminf(fmaxf(x, 0.0f), 1.0f);
-    return x <= 0.0031308f ? 12.92f * x : 1.055f * powf(x, 0.4166666666666667f) - 0.055f;
-}
 
 __device__ float mitchell(float t) {
     float at = fabsf(t);
@@ -329,31 +324,6 @@ extern "C" __global__ void highlight_boost_kernel(
     }
 }
 
-extern "C" __global__ void log_to_linear_scaled_kernel(
-    float* __restrict__ data,
-    unsigned int n_pixels,
-    float scale
-) {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (gid >= n_pixels) return;
-    unsigned int base = gid * 3u;
-    data[base] = exp10_fast(data[base]) * scale;
-    data[base + 1u] = exp10_fast(data[base + 1u]) * scale;
-    data[base + 2u] = exp10_fast(data[base + 2u]) * scale;
-}
-
-extern "C" __global__ void linear_to_log10_outer_kernel(
-    float* __restrict__ data,
-    unsigned int n_pixels
-) {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (gid >= n_pixels) return;
-    unsigned int base = gid * 3u;
-    data[base] = log10f(fmaxf(data[base], 0.0f) + 1e-10f);
-    data[base + 1u] = log10f(fmaxf(data[base + 1u], 0.0f) + 1e-10f);
-    data[base + 2u] = log10f(fmaxf(data[base + 2u], 0.0f) + 1e-10f);
-}
-
 __device__ float interp_density_channel(
     float xq,
     float gamma_inv,
@@ -420,7 +390,6 @@ extern "C" __global__ void scan_spectral_kernel(
     float bw_m,
     float bw_q,
     unsigned int bw_enable,
-    unsigned int skip_clamp,
     const float* __restrict__ channel_density,
     const float* __restrict__ base_density,
     const float* __restrict__ illuminant,
@@ -471,31 +440,8 @@ extern "C" __global__ void scan_spectral_kernel(
     output_rgb[base + 2u] =
         xyz_to_rgb[6] * xyz_x + xyz_to_rgb[7] * xyz_y + xyz_to_rgb[8] * xyz_z;
 
-    if (skip_clamp == 0u) {
-        output_rgb[base] = fminf(fmaxf(output_rgb[base], 0.0f), 1.0f);
-        output_rgb[base + 1u] = fminf(fmaxf(output_rgb[base + 1u], 0.0f), 1.0f);
-        output_rgb[base + 2u] = fminf(fmaxf(output_rgb[base + 2u], 0.0f), 1.0f);
-    }
 }
 
-extern "C" __global__ void post_scan_kernel(
-    float* __restrict__ rgb,
-    unsigned int n_pixels,
-    unsigned int output_cctf_encoding
-) {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (gid >= n_pixels) return;
-    unsigned int base = gid * 3u;
-    if (output_cctf_encoding != 0u) {
-        rgb[base] = srgb_encode_fast(rgb[base]);
-        rgb[base + 1u] = srgb_encode_fast(rgb[base + 1u]);
-        rgb[base + 2u] = srgb_encode_fast(rgb[base + 2u]);
-    } else {
-        rgb[base] = fminf(fmaxf(rgb[base], 0.0f), 1.0f);
-        rgb[base + 1u] = fminf(fmaxf(rgb[base + 1u], 0.0f), 1.0f);
-        rgb[base + 2u] = fminf(fmaxf(rgb[base + 2u], 0.0f), 1.0f);
-    }
-}
 
 extern "C" __global__ void print_spectral_kernel(
     const float* __restrict__ density_cmy,
@@ -560,8 +506,10 @@ extern "C" __global__ void gaussian_blur_h_kernel(
     unsigned int ksize = radius * 2u + 1u;
     for (unsigned int k = 0u; k < ksize; k++) {
         int sx_i = (int)x + (int)k - (int)radius;
-        if (sx_i < 0) sx_i = 0;
-        if (sx_i >= w_i) sx_i = w_i - 1;
+        // CPU FIR uses repeated half-sample reflection, including width 1.
+        int period = 2 * w_i;
+        int folded = ((sx_i % period) + period) % period;
+        sx_i = folded < w_i ? folded : period - 1 - folded;
         unsigned int base = (y * width + (unsigned int)sx_i) * 3u;
         float kw = kernel[k];
         sr += kw * input[base];
@@ -590,8 +538,9 @@ extern "C" __global__ void gaussian_blur_v_kernel(
     unsigned int ksize = radius * 2u + 1u;
     for (unsigned int k = 0u; k < ksize; k++) {
         int sy_i = (int)y + (int)k - (int)radius;
-        if (sy_i < 0) sy_i = 0;
-        if (sy_i >= h_i) sy_i = h_i - 1;
+        int period = 2 * h_i;
+        int folded = ((sy_i % period) + period) % period;
+        sy_i = folded < h_i ? folded : period - 1 - folded;
         unsigned int base = ((unsigned int)sy_i * width + x) * 3u;
         float kw = kernel[k];
         sr += kw * input[base];
@@ -602,71 +551,6 @@ extern "C" __global__ void gaussian_blur_v_kernel(
     output[out] = sr;
     output[out + 1u] = sg;
     output[out + 2u] = sb;
-}
-
-extern "C" __global__ void downsample_area_kernel(
-    const float* __restrict__ input,
-    unsigned int in_w,
-    unsigned int in_h,
-    unsigned int out_w,
-    unsigned int out_h,
-    unsigned int factor,
-    float* __restrict__ output
-) {
-    unsigned int sx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int sy = blockIdx.y * blockDim.y + threadIdx.y;
-    if (sx >= out_w || sy >= out_h) return;
-    unsigned int x0 = sx * factor;
-    unsigned int y0 = sy * factor;
-    unsigned int x1 = min(x0 + factor, in_w);
-    unsigned int y1 = min(y0 + factor, in_h);
-    float r = 0.0f, g = 0.0f, b = 0.0f, cnt = 0.0f;
-    for (unsigned int yy = y0; yy < y1; yy++) {
-        for (unsigned int xx = x0; xx < x1; xx++) {
-            unsigned int i = (yy * in_w + xx) * 3u;
-            r += input[i];
-            g += input[i + 1u];
-            b += input[i + 2u];
-            cnt += 1.0f;
-        }
-    }
-    float inv = 1.0f / fmaxf(cnt, 1.0f);
-    unsigned int o = (sy * out_w + sx) * 3u;
-    output[o] = r * inv;
-    output[o + 1u] = g * inv;
-    output[o + 2u] = b * inv;
-}
-
-extern "C" __global__ void upsample_bilinear_kernel(
-    const float* __restrict__ input,
-    unsigned int in_w,
-    unsigned int in_h,
-    unsigned int out_w,
-    unsigned int out_h,
-    float inv_factor,
-    float* __restrict__ output
-) {
-    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= out_w || y >= out_h) return;
-    float max_x = (float)(in_w - 1u);
-    float max_y = (float)(in_h - 1u);
-    float fx = fminf(fmaxf(((float)x + 0.5f) * inv_factor - 0.5f, 0.0f), max_x);
-    float fy = fminf(fmaxf(((float)y + 0.5f) * inv_factor - 0.5f, 0.0f), max_y);
-    unsigned int x0 = (unsigned int)floorf(fx);
-    unsigned int y0 = (unsigned int)floorf(fy);
-    unsigned int x1 = min(x0 + 1u, in_w - 1u);
-    unsigned int y1 = min(y0 + 1u, in_h - 1u);
-    float wx = fx - floorf(fx);
-    float wy = fy - floorf(fy);
-    unsigned int o = (y * out_w + x) * 3u;
-    for (unsigned int c = 0u; c < 3u; c++) {
-        float top = input[(y0 * in_w + x0) * 3u + c] * (1.0f - wx)
-                  + input[(y0 * in_w + x1) * 3u + c] * wx;
-        float bot = input[(y1 * in_w + x0) * 3u + c] * (1.0f - wx)
-                  + input[(y1 * in_w + x1) * 3u + c] * wx;
-        output[o + c] = top * (1.0f - wy) + bot * wy;
-    }
 }
 
 extern "C" __global__ void scatter_mix_kernel(
@@ -1151,15 +1035,11 @@ pub struct CudaBackend {
     log10_kernel: CudaFunction,
     max_reduce_kernel: CudaFunction,
     highlight_boost_kernel: CudaFunction,
-    log_to_linear_scaled_kernel: CudaFunction,
-    linear_to_log10_outer_kernel: CudaFunction,
     density_kernel: CudaFunction,
     scan_kernel: CudaFunction,
     print_kernel: CudaFunction,
     blur_h_kernel: CudaFunction,
     blur_v_kernel: CudaFunction,
-    downsample_kernel: CudaFunction,
-    upsample_kernel: CudaFunction,
     scatter_mix_kernel: CudaFunction,
     add_scaled_kernel: CudaFunction,
     add_scaled_pc_kernel: CudaFunction,
@@ -1170,7 +1050,6 @@ pub struct CudaBackend {
     grain_kernel: CudaFunction,
     dir_matmul_kernel: CudaFunction,
     gamut_kernel: CudaFunction,
-    post_scan_kernel: CudaFunction,
     device_name: String,
 }
 
@@ -1190,17 +1069,11 @@ impl CudaBackend {
         let log10_kernel = module.load_function("log10_inplace_kernel").ok()?;
         let max_reduce_kernel = module.load_function("max_reduce_kernel").ok()?;
         let highlight_boost_kernel = module.load_function("highlight_boost_kernel").ok()?;
-        let log_to_linear_scaled_kernel =
-            module.load_function("log_to_linear_scaled_kernel").ok()?;
-        let linear_to_log10_outer_kernel =
-            module.load_function("linear_to_log10_outer_kernel").ok()?;
         let density_kernel = module.load_function("density_curve_interp_kernel").ok()?;
         let scan_kernel = module.load_function("scan_spectral_kernel").ok()?;
         let print_kernel = module.load_function("print_spectral_kernel").ok()?;
         let blur_h_kernel = module.load_function("gaussian_blur_h_kernel").ok()?;
         let blur_v_kernel = module.load_function("gaussian_blur_v_kernel").ok()?;
-        let downsample_kernel = module.load_function("downsample_area_kernel").ok()?;
-        let upsample_kernel = module.load_function("upsample_bilinear_kernel").ok()?;
         let scatter_mix_kernel = module.load_function("scatter_mix_kernel").ok()?;
         let add_scaled_kernel = module.load_function("add_scaled_kernel").ok()?;
         let add_scaled_pc_kernel = module.load_function("add_scaled_per_channel_kernel").ok()?;
@@ -1211,11 +1084,10 @@ impl CudaBackend {
         let grain_kernel = module.load_function("grain_kernel").ok()?;
         let dir_matmul_kernel = module.load_function("dir_matmul_kernel").ok()?;
         let gamut_kernel = module.load_function("gamut_compress_kernel").ok()?;
-        let post_scan_kernel = module.load_function("post_scan_kernel").ok()?;
         let device_name = ctx
             .name()
-            .map(|name| format!("CUDA ({name})"))
-            .unwrap_or_else(|_| format!("CUDA (device {ordinal})"));
+            .map(|name| format!("CUDA f32 preview ({name})"))
+            .unwrap_or_else(|_| format!("CUDA f32 preview (device {ordinal})"));
 
         Some(Self {
             stream,
@@ -1225,15 +1097,11 @@ impl CudaBackend {
             log10_kernel,
             max_reduce_kernel,
             highlight_boost_kernel,
-            log_to_linear_scaled_kernel,
-            linear_to_log10_outer_kernel,
             density_kernel,
             scan_kernel,
             print_kernel,
             blur_h_kernel,
             blur_v_kernel,
-            downsample_kernel,
-            upsample_kernel,
             scatter_mix_kernel,
             add_scaled_kernel,
             add_scaled_pc_kernel,
@@ -1244,7 +1112,6 @@ impl CudaBackend {
             grain_kernel,
             dir_matmul_kernel,
             gamut_kernel,
-            post_scan_kernel,
             device_name,
         })
     }
@@ -1314,25 +1181,6 @@ impl CudaBackend {
         Ok(())
     }
 
-    fn add_scaled_per_channel(
-        &self,
-        src: &CudaSlice<f32>,
-        n_pixels: u32,
-        scale: [f32; 3],
-        dst: &mut CudaSlice<f32>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut launch = self.stream.launch_builder(&self.add_scaled_pc_kernel);
-        launch
-            .arg(src)
-            .arg(&n_pixels)
-            .arg(&scale[0])
-            .arg(&scale[1])
-            .arg(&scale[2])
-            .arg(dst);
-        unsafe { launch.launch(LaunchConfig::for_num_elems(n_pixels)) }?;
-        Ok(())
-    }
-
     fn launch_max_reduce(
         &self,
         src: &CudaSlice<f32>,
@@ -1387,90 +1235,6 @@ impl CudaBackend {
             .arg(&hp.boost_range)
             .arg(&hp.protect_ev);
         unsafe { launch.launch(LaunchConfig::for_num_elems(n_values)) }?;
-        Ok(())
-    }
-
-    fn log_to_linear_scaled_device(
-        &self,
-        img: &mut CudaSlice<f32>,
-        n_pixels: u32,
-        scale: f32,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut launch = self.stream.launch_builder(&self.log_to_linear_scaled_kernel);
-        launch.arg(img).arg(&n_pixels).arg(&scale);
-        unsafe { launch.launch(LaunchConfig::for_num_elems(n_pixels)) }?;
-        Ok(())
-    }
-
-    fn linear_to_log10_outer_device(
-        &self,
-        img: &mut CudaSlice<f32>,
-        n_pixels: u32,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut launch = self.stream.launch_builder(&self.linear_to_log10_outer_kernel);
-        launch.arg(img).arg(&n_pixels);
-        unsafe { launch.launch(LaunchConfig::for_num_elems(n_pixels)) }?;
-        Ok(())
-    }
-
-    fn run_diffusion_device(
-        &self,
-        img: &mut CudaSlice<f32>,
-        width: u32,
-        height: u32,
-        plan: &crate::DiffusionGpuPlan,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let n_full = width * height;
-        let n_small = plan.small_w * plan.small_h;
-        let mut small_in = self.alloc_f32(n_small as usize * 3)?;
-        let mut small_mid = self.alloc_f32(n_small as usize * 3)?;
-        let mut small_out = self.alloc_f32(n_small as usize * 3)?;
-        let mut small_acc = self.stream.alloc_zeros::<f32>(n_small as usize * 3)?;
-        let mut upsampled = self.alloc_f32(n_full as usize * 3)?;
-
-        {
-            let mut launch = self.stream.launch_builder(&self.downsample_kernel);
-            launch
-                .arg(&mut *img)
-                .arg(&width)
-                .arg(&height)
-                .arg(&plan.small_w)
-                .arg(&plan.small_h)
-                .arg(&plan.d)
-                .arg(&mut small_in);
-            unsafe { launch.launch(launch_2d(plan.small_w, plan.small_h)) }?;
-        }
-
-        for (&sigma, &coeff) in plan.sigmas.iter().zip(plan.coeffs.iter()) {
-            self.blur_device(
-                &small_in,
-                &mut small_mid,
-                &mut small_out,
-                plan.small_w,
-                plan.small_h,
-                sigma,
-            )?;
-            self.add_scaled_per_channel(&small_out, n_small, coeff, &mut small_acc)?;
-        }
-
-        {
-            let inv_factor = 1.0f32 / plan.d as f32;
-            let mut launch = self.stream.launch_builder(&self.upsample_kernel);
-            launch
-                .arg(&small_acc)
-                .arg(&plan.small_w)
-                .arg(&plan.small_h)
-                .arg(&width)
-                .arg(&height)
-                .arg(&inv_factor)
-                .arg(&mut upsampled);
-            unsafe { launch.launch(launch_2d(width, height)) }?;
-        }
-
-        let mut mixed = self.alloc_f32(n_full as usize * 3)?;
-        self.add_scaled(img, n_full, 1.0 - plan.p_s, true, &mut mixed)?;
-        self.add_scaled(&upsampled, n_full, plan.p_s, false, &mut mixed)?;
-        std::mem::swap(img, &mut mixed);
         Ok(())
     }
 
@@ -1691,18 +1455,6 @@ impl CudaBackend {
         Ok(())
     }
 
-    fn run_post_scan_device(
-        &self,
-        img: &mut CudaSlice<f32>,
-        n_pixels: u32,
-        output_cctf_encoding: bool,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let encode = if output_cctf_encoding { 1u32 } else { 0u32 };
-        let mut launch = self.stream.launch_builder(&self.post_scan_kernel);
-        launch.arg(img).arg(&n_pixels).arg(&encode);
-        unsafe { launch.launch(LaunchConfig::for_num_elems(n_pixels)) }?;
-        Ok(())
-    }
 
     fn run_dir_device(
         &self,
@@ -1829,7 +1581,6 @@ impl CudaBackend {
         let bw_m = 1.0f32;
         let bw_q = 0.0f32;
         let bw_enable = 0u32;
-        let skip_clamp = 1u32;
         let mut launch = self.stream.launch_builder(&self.scan_kernel);
         launch
             .arg(&input_dev)
@@ -1840,7 +1591,6 @@ impl CudaBackend {
             .arg(&bw_m)
             .arg(&bw_q)
             .arg(&bw_enable)
-            .arg(&skip_clamp)
             .arg(&cd_dev)
             .arg(&bd_dev)
             .arg(&illu_dev)
@@ -1954,10 +1704,6 @@ impl CudaBackend {
             self.run_highlight_boost_device(&mut buf_b, n_pixels, hp)?;
         }
 
-        if let Some(dp) = p.diffusion.as_ref() {
-            self.run_diffusion_device(&mut buf_b, image.width, image.height, dp)?;
-        }
-
         if let Some(sigma) = p.camera_lens_blur_px {
             if sigma > 0.0 {
                 let mut blurred = self.alloc_f32(n_pixels as usize * 3)?;
@@ -2035,13 +1781,7 @@ impl CudaBackend {
             let print_illu_dev = self.stream.clone_htod(&print_illu_f32)?;
             let print_sens_dev = self.stream.clone_htod(&print_sens_f32)?;
             let print_n_wl = p.film_channel_density.len() as u32;
-            let has_enlarger_diffusion = p.enlarger_diffusion.is_some();
-            let print_exposure_scale = p.print_exposure_scale as f32;
-            let print_norm = if has_enlarger_diffusion && print_exposure_scale != 0.0 {
-                (p.print_normalization_factor / p.print_exposure_scale) as f32
-            } else {
-                p.print_normalization_factor as f32
-            };
+            let print_norm = p.print_normalization_factor as f32;
             let preflash_r = p.preflash[0] as f32;
             let preflash_g = p.preflash[1] as f32;
             let preflash_b = p.preflash[2] as f32;
@@ -2061,12 +1801,6 @@ impl CudaBackend {
                     .arg(&print_sens_dev)
                     .arg(&mut buf_b);
                 unsafe { launch.launch(LaunchConfig::for_num_elems(n_pixels)) }?;
-            }
-
-            if let Some(dp) = p.enlarger_diffusion.as_ref() {
-                self.log_to_linear_scaled_device(&mut buf_b, n_pixels, print_exposure_scale)?;
-                self.run_diffusion_device(&mut buf_b, image.width, image.height, dp)?;
-                self.linear_to_log10_outer_device(&mut buf_b, n_pixels)?;
             }
 
             let print_log_exp_f32: Vec<f32> =
@@ -2120,7 +1854,6 @@ impl CudaBackend {
             Some((m, q)) => (m as f32, q as f32, 1u32),
             None => (1.0f32, 0.0f32, 0u32),
         };
-        let skip_clamp = 0u32;
         {
             let mut launch = self.stream.launch_builder(&self.scan_kernel);
             launch
@@ -2132,7 +1865,6 @@ impl CudaBackend {
                 .arg(&bw_m)
                 .arg(&bw_q)
                 .arg(&bw_enable)
-                .arg(&skip_clamp)
                 .arg(&scan_cd_dev)
                 .arg(&scan_bd_dev)
                 .arg(&view_illu_dev)
@@ -2170,7 +1902,6 @@ impl CudaBackend {
             self.run_unsharp_device(&mut buf_b, &mut buf_a, image.width, image.height, up)?;
         }
 
-        self.run_post_scan_device(&mut buf_b, n_pixels, p.output_cctf_encoding)?;
 
         let out = self.stream.clone_dtoh(&buf_b)?;
         Ok(Some(ImageBuf::from_data(
@@ -2281,6 +2012,10 @@ impl ComputeBackend for CudaBackend {
     }
 
     fn try_run_film_chain(&self, params: &FilmChainParams<'_>) -> Option<ImageBuf> {
+        if !params.gpu_blurs_supported() {
+            tracing::info!(execution = "per_stage_cpu_blur", "resident blur exceeds CUDA FIR support");
+            return None;
+        }
         match self.run_film_chain_resident(params) {
             Ok(out) => out,
             Err(e) => {
@@ -2290,9 +2025,6 @@ impl ComputeBackend for CudaBackend {
         }
     }
 
-    fn resident_chain_applies_post_scan(&self) -> bool {
-        true
-    }
 
     fn is_gpu(&self) -> bool {
         true

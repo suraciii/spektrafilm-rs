@@ -1,0 +1,513 @@
+#!/usr/bin/env python3
+"""Generate docs/parity/parity_matrix.json — the machine-readable 0.3.4
+parity inventory.
+
+Curated sections (runtime fields, GUI actions, LUT-creator color-space
+registry, image/RAW workflows, known gaps, budgets) mirror the pinned
+Python source at 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc against the
+audited Rust baseline 9dd59b0380194b93686aaa230a8bb9680aa270a4. Bundled
+assets are hashed live from both trees so ``match`` claims are real
+evidence, not assertions.
+
+Re-run after either tree changes:
+
+    python3 scripts/parity/gen_matrix.py
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+import hashlib
+import json
+import platform
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parent.parent
+PY_REPO = Path("/home/szf/repos/spektrafilm")
+PY_COMMIT = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
+RS_COMMIT = "9dd59b0380194b93686aaa230a8bb9680aa270a4"
+
+S = "supported"
+UNREAD = "accepted_but_unread"
+ABSENT = "absent_from_rust"
+NOOP = "noop_upstream"
+RUST_ONLY = "rust_only_extra"
+DIVERGENT = "divergent"
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Runtime field inventory — Python params_schema.py vs Rust params.rs +
+# read-site greps over crates/spektrafilm-core (status verified 2026-10-02).
+# ---------------------------------------------------------------------------
+RUNTIME_FIELDS = {
+    "camera": {
+        "exposure_compensation_ev": (S, None, "filming expose + print factor_midgray_comp"),
+        "auto_exposure": (S, None, "filming.rs:296 measure_autoexposure_ev"),
+        "auto_exposure_method": (S, None, "all 7 metering patterns ported; unknown -> 1.0 EV on both sides"),
+        "lens_blur_um": (S, None, "filming.rs:359 apply_gaussian_blur_um"),
+        "film_format_mm": (S, None, "pixel_size_um derivation"),
+        "filter_uv": (UNREAD, 5, "parsed by Rust params but never read; Python band-passes sensitivity (filming.py:99-104)"),
+        "filter_ir": (UNREAD, 5, "same band-pass path as filter_uv"),
+        "diffusion_filter.active": (S, None, "model/diffusion.rs port"),
+        "diffusion_filter.filter_family": (S, None, ""),
+        "diffusion_filter.strength": (S, None, ""),
+        "diffusion_filter.spatial_scale": (S, None, ""),
+        "diffusion_filter.halo_warmth": (S, None, ""),
+        "diffusion_filter.core_intensity": (S, None, ""),
+        "diffusion_filter.core_size": (S, None, ""),
+        "diffusion_filter.halo_intensity": (S, None, ""),
+        "diffusion_filter.halo_size": (S, None, ""),
+        "diffusion_filter.bloom_intensity": (S, None, ""),
+        "diffusion_filter.bloom_size": (S, None, ""),
+    },
+    "enlarger": {
+        "illuminant": (S, None, "enlarger.rs dichroic filtering"),
+        "print_exposure": (S, None, ""),
+        "print_exposure_compensation": (S, None, "factor_midgray_comp branch"),
+        "normalize_print_exposure": (S, None, ""),
+        "y_filter_shift": (S, None, ""),
+        "m_filter_shift": (S, None, ""),
+        "y_filter_neutral": (S, None, "database lookup, f64 preserved"),
+        "m_filter_neutral": (S, None, ""),
+        "c_filter_neutral": (S, None, ""),
+        "lens_blur": (NOOP, None, "never applied by any Python 0.3.4 stage (only zeroed in digest); Rust matches by not reading it"),
+        "diffusion_filter": (S, None, "printing expose applies enlarger diffusion"),
+        "preflash_exposure": (S, None, "compute_preflash_raw"),
+        "preflash_y_filter_shift": (S, None, ""),
+        "preflash_m_filter_shift": (S, None, ""),
+    },
+    "scanner": {
+        "lens_blur": (S, None, "scanning.rs:348"),
+        "white_correction": (S, None, "color_reference luminance remap"),
+        "black_correction": (S, None, ""),
+        "white_level": (S, None, ""),
+        "black_level": (S, None, ""),
+        "unsharp_mask": (S, None, "scanning.rs:353"),
+    },
+    "film_render": {
+        "density_curve_gamma": (S, None, ""),
+        "grain.active": (S, None, ""),
+        "grain.sublayers_active": (UNREAD, 6, "layered grain path unported; density_curves_layers parsed but unused"),
+        "grain.particle_area_um2": (S, None, "renamed agx_particle_area_um2 in Rust; f64 preserved"),
+        "grain.particle_scale": (S, None, "renamed agx_particle_scale"),
+        "grain.particle_scale_layers": (UNREAD, 6, "layers-only knob"),
+        "grain.density_min": (S, None, ""),
+        "grain.uniformity": (S, None, ""),
+        "grain.blur": (S, None, ""),
+        "grain.blur_dye_clouds_um": (UNREAD, 6, "layers-only knob"),
+        "grain.micro_structure": (UNREAD, 6, "add_micro_structure unported"),
+        "grain.n_sub_layers": (S, None, ""),
+        "halation.active": (S, None, ""),
+        "halation.scatter_amount": (S, None, ""),
+        "halation.scatter_spatial_scale": (S, None, ""),
+        "halation.halation_amount": (S, None, ""),
+        "halation.halation_spatial_scale": (S, None, ""),
+        "halation.scatter_core_um": (S, None, ""),
+        "halation.scatter_tail_um": (S, None, ""),
+        "halation.scatter_tail_weight": (S, None, ""),
+        "halation.boost_ev": (S, None, ""),
+        "halation.boost_range": (S, None, ""),
+        "halation.protect_ev": (S, None, ""),
+        "halation.halation_strength": (DIVERGENT, 3, "digest _apply_halation_preset seeds per-stock presets in Python; Rust keeps schema defaults"),
+        "halation.halation_first_sigma_um": (DIVERGENT, 3, "same preset seeding"),
+        "halation.halation_n_bounces": (S, None, ""),
+        "halation.halation_bounce_decay": (S, None, ""),
+        "halation.halation_renormalize": (S, None, ""),
+        "dir_couplers.active": (S, None, ""),
+        "dir_couplers.amount": (S, None, "filming.rs:455"),
+        "dir_couplers.inhibition_samelayer": (S, None, ""),
+        "dir_couplers.inhibition_interlayer": (S, None, ""),
+        "dir_couplers.gamma_samelayer_rgb": (DIVERGENT, 3, "generic positive/negative presets ported; velvia_100/provia_100f stock overrides missing"),
+        "dir_couplers.gamma_interlayer_r_to_gb": (DIVERGENT, 3, "same stock overrides"),
+        "dir_couplers.gamma_interlayer_g_to_rb": (DIVERGENT, 3, ""),
+        "dir_couplers.gamma_interlayer_b_to_rg": (DIVERGENT, 3, ""),
+        "dir_couplers.diffusion_size_um": (S, None, ""),
+        "dir_couplers.diffusion_tail_um": (S, None, ""),
+        "dir_couplers.diffusion_tail_weight": (S, None, ""),
+        "glare.active": (DIVERGENT, 8, "upstream never applies film_render.glare (print path uses print_render.glare; scan_film passes None); Rust applies it on scan_film with fixed seed 42"),
+        "glare.percent": (DIVERGENT, 8, "same scan_film divergence"),
+        "glare.roughness": (DIVERGENT, 8, ""),
+        "glare.blur": (DIVERGENT, 8, ""),
+    },
+    "print_render": {
+        "glare.active": (S, None, "print-path glare; RNG stream differs (Rust seed 42 vs Python np.random continuation) — statistical budget"),
+        "glare.percent": (S, None, ""),
+        "glare.roughness": (S, None, ""),
+        "glare.blur": (S, None, ""),
+        "density_curves_morph.active": (S, None, "print_morph.rs"),
+        "density_curves_morph.gamma_factor": (S, None, ""),
+        "density_curves_morph.gamma_factor_fast": (S, None, ""),
+        "density_curves_morph.gamma_factor_slow": (S, None, ""),
+        "density_curves_morph.gamma_factor_red": (S, None, ""),
+        "density_curves_morph.gamma_factor_green": (S, None, ""),
+        "density_curves_morph.gamma_factor_blue": (S, None, ""),
+        "density_curves_morph.developer_exhaustion": (S, None, ""),
+    },
+    "io": {
+        "input_color_space": (DIVERGENT, 4, "Rust supports sRGB/ProPhoto/Rec2020/ACES2065-1 then SILENTLY falls back to ProPhoto (filming.rs:516); Python accepts any colour-science name and errors on unknown"),
+        "input_cctf_decoding": (UNREAD, 4, "never read by Rust core"),
+        "output_color_space": (DIVERGENT, 4, "same 4-space support, silent sRGB fallback (scanning.rs:455)"),
+        "output_cctf_encoding": (DIVERGENT, 4, "Rust clamps to [0,1] on BOTH branches (scanning.rs:385-389); Python 0.3.4 _apply_cctf_encoding never clips"),
+        "input_gamut_compress.active": (S, None, "implicit: algorithm!='off'"),
+        "input_gamut_compress.algorithm": (DIVERGENT, 4, "'xy' ported; 'oklch' errors in Rust vs supported in Python"),
+        "input_gamut_compress.knee": (S, None, ""),
+        "output_gamut_compress.algorithm": (DIVERGENT, 4, "off/oklch/cam16ucs/aces_rgc ported; jzazbz+oklrab and non-sRGB output fall back to identity with a logged error"),
+        "output_gamut_compress.knee": (S, None, ""),
+        "output_gamut_compress.lightness_compression": (S, None, ""),
+        "crop": (UNREAD, 7, "never read by Rust core; Python crops in preprocess before filming"),
+        "crop_center": (UNREAD, 7, ""),
+        "crop_size": (UNREAD, 7, ""),
+        "upscale_factor": (DIVERGENT, 7, "Rust rescales BEFORE auto-exposure (pipeline.rs:470); Python preprocesses AE then crop/rescale — order matters when both are active"),
+        "scan_film": (DIVERGENT, 8, "topology supported; glare semantics differ (see film_render.glare)"),
+    },
+    "debug": {
+        "deactivate_spatial_effects": (ABSENT, 3, "whole DebugParams group missing from Rust RuntimeParams"),
+        "deactivate_stochastic_effects": (ABSENT, 3, ""),
+        "print_timings": (ABSENT, 3, ""),
+        "lut_mode": (ABSENT, 3, "LUT-sampling regime digest unported"),
+    },
+    "taps": {
+        "inject": (ABSENT, 3, "whole TapsParams group missing; Rust has no named-tap injection/collection API"),
+        "collect": (ABSENT, 3, ""),
+    },
+    "settings": {
+        "rgb_to_raw_method": (DIVERGENT, 3, "hanatos2025+mallett2019 supported; unknown errors on both sides; Rust adds arctic2026alpha02 beyond 0.3.4"),
+        "apply_hanatos2025_adaptation_window": (S, None, "compute_tc_lut_with_window"),
+        "apply_hanatos2025_adaptation_surface": (UNREAD, 5, "surface correction never applied in Rust tc_lut build"),
+        "spectral_gaussian_blur": (UNREAD, 5, ""),
+        "use_enlarger_lut": (UNREAD, 3, "printing always evaluates the direct spectral path"),
+        "use_scanner_lut": (S, None, "scanning.rs:243 scan_spectral_via_lut"),
+        "lut_resolution": (UNREAD, 3, "Rust hardcodes 17^3; the param is never read"),
+        "use_fast_stats": (UNREAD, 6, "numba fast poisson/binomial path; Rust always uses the exact ports"),
+        "preview_max_size": (UNREAD, 3, "core never reads it; Rust GUI has its own rescale"),
+        "preview_mode": (UNREAD, 3, "no digest step in Rust"),
+        "neutral_print_filters_from_database": (S, None, "neutral_filters.rs"),
+        "use_cat16": (RUST_ONLY, None, "Python hard-codes CAT16; Rust exposes a CAT02 escape hatch (default matches 0.3.4)"),
+    },
+}
+
+# ---------------------------------------------------------------------------
+# GUI actions — spektrafilm_gui/controller.py handlers wired in app.py:225-242.
+# ---------------------------------------------------------------------------
+GUI_ACTIONS = [
+    ("load_input_image", "open a raster image via OIIO with ICC/metadata", ABSENT, 9),
+    ("load_raw_image", "RAW decode via rawpy+lensfun (WB modes, TCA/vignetting)", ABSENT, 10),
+    ("rotate_input_image_clockwise", "quarter-turn input layer", ABSENT, 12),
+    ("rotate_input_image_counterclockwise", "quarter-turn input layer", ABSENT, 12),
+    ("apply_profile_defaults", "film/paper selection re-syncs stock defaults", DIVERGENT, 3),
+    ("apply_film_profile_defaults", "film stock change re-applies stock specifics", DIVERGENT, 3),
+    ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
+    ("run_scan", "full-resolution simulation", ABSENT, 12),
+    ("request_auto_preview", "auto-preview wiring for every editor", DIVERGENT, 11),
+    ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
+    ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
+    ("set_output_interpolation_mode", "output layer interpolation mode", ABSENT, 12),
+    ("refresh_preview_cache", "recompute cached preview", ABSENT, 12),
+    ("save_output_layer", "save with format/ICC/metadata preservation", ABSENT, 9),
+    ("save_current_as_default", "GUI state persisted as startup default", ABSENT, 11),
+    ("save_current_state_to_file", "GUI state export", ABSENT, 11),
+    ("load_state_from_file", "GUI state import", ABSENT, 11),
+    ("restore_factory_default", "reset persisted state", ABSENT, 11),
+    ("show_startup_placeholder", "startup placeholder layer", ABSENT, 11),
+    ("virtual_photo_paper", "photo-paper presentation frame + watermark asset", ABSENT, 12),
+    ("polaroid_animation", "development animation", ABSENT, 12),
+]
+
+# ---------------------------------------------------------------------------
+# LUT-creator color-space registry — spektrafilm_lut_creator/color_spaces.py.
+# role () = registry-only (silenced as bundle input pending shaper support).
+# ---------------------------------------------------------------------------
+LUT_REGISTRY = [
+    # name, kind, roles, rust_status, owner
+    ("ACES2065-1", "linear", [], ABSENT, 14),
+    ("ACEScg", "linear", [], ABSENT, 14),
+    ("Rec.709 Linear", "linear", [], ABSENT, 14),
+    ("Rec.2020 Linear", "linear", [], ABSENT, 14),
+    ("ProPhoto Linear", "linear", [], ABSENT, 14),
+    ("sRGB Linear", "linear", [], ABSENT, 14),
+    ("sRGB", "encoded_sdr", ["input", "output"], ABSENT, 14),
+    ("Rec.709", "encoded_sdr", ["input", "output"], ABSENT, 14),
+    ("Display P3", "encoded_sdr", ["input", "output"], ABSENT, 14),
+    ("Rec.2020", "encoded_sdr", ["input", "output"], ABSENT, 14),
+    ("DCI-P3", "encoded_sdr", ["input", "output"], ABSENT, 14),
+    ("Adobe RGB", "encoded_sdr", ["input", "output"], ABSENT, 14),
+    ("ACEScct", "log", ["input"], ABSENT, 14),
+    ("ACEScc", "log", ["input"], ABSENT, 14),
+    ("ARRI LogC3 (EI800)", "log", ["input"], ABSENT, 14),
+    ("ARRI LogC4", "log", ["input"], ABSENT, 14),
+    ("Sony S-Log3", "log", ["input"], ABSENT, 14),
+    ("Sony S-Log3 (S-Gamut3.Cine)", "log", ["input"], ABSENT, 14),
+    ("Panasonic V-Log", "log", ["input"], ABSENT, 14),
+    ("Fujifilm F-Log", "log", ["input"], ABSENT, 14),
+    ("Fujifilm F-Log2", "log", ["input"], ABSENT, 14),
+    ("Canon Log 3", "log", ["input"], ABSENT, 14),
+    ("RED Log3G10", "log", ["input"], ABSENT, 14),
+    ("DaVinci Intermediate", "log", ["input"], ABSENT, 14),
+    ("Apple Log", "log", ["input"], ABSENT, 14),
+    ("Blackmagic Film Gen 5", "log", ["input"], ABSENT, 14),
+    ("Nikon N-Log", "log", ["input"], ABSENT, 14),
+    ("DJI D-Log", "log", ["input"], ABSENT, 14),
+    ("Rec.2100 PQ", "log", ["input", "output"], ABSENT, 14),
+    ("Rec.2100 HLG", "log", ["input", "output"], ABSENT, 14),
+    ("P3-D65 Linear", "linear", [], ABSENT, 14),
+    ("P3-D65 PQ", "log", ["input", "output"], ABSENT, 14),
+]
+
+# ---------------------------------------------------------------------------
+# Image / RAW workflows.
+# ---------------------------------------------------------------------------
+WORKFLOWS = [
+    ("raster_load_oiio", "load_image_oiio: TIFF/EXR/PNG/JPEG + linear colorspace attribute", ABSENT, 9),
+    ("raster_save_oiio", "save_image_oiio: jpg/png uint8, tif 8/16/32-bit float, bit_depth control", DIVERGENT, 9),
+    ("icc_embed", "_load_icc_profile: 166 bundled ellelstone/saucecontrol profiles embedded on save", ABSENT, 9),
+    ("metadata_preservation", "read/write_image_metadata via exiv2 (EXIF/XMP)", ABSENT, 9),
+    ("raw_decode", "load_and_process_raw_file: rawpy demosaic, no auto brightening, ACES2065-1 out", DIVERGENT, 10),
+    ("raw_white_balance", "as_shot/daylight/tungsten/custom (temperature+tint) modes", ABSENT, 10),
+    ("raw_lensfun", "vignetting/TCA/distortion/geometry/scale corrections from EXIF-matched lens", ABSENT, 10),
+    ("preview_resize", "resize_for_preview: skimage order=1 anti-aliased, max_size=preview_max_size", DIVERGENT, 16),
+    ("lut_export_cube", "spektrafilm-lut CLI: bundles, delivery targets, OCIO emission, QA", ABSENT, 13),
+]
+
+# ---------------------------------------------------------------------------
+# Known gaps (beyond field-level) with owning issues.
+# ---------------------------------------------------------------------------
+KNOWN_GAPS = [
+    {"gap": "layered grain develop path (interp_density_cmy_layers + apply_grain_to_density_layers)",
+     "owner_issue": 6, "evidence": "Python model/grain.py:193-213; Rust parses density_curves_layers (profile.rs:124) but no stage reads it"},
+    {"gap": "wrong CUBE LUT constructor: CLI export-lut uses the simplified non-spectral Pipeline::new with glare/unsharp left active",
+     "owner_issue": 13, "evidence": "crates/spektrafilm-cli/src/main.rs:368-375 vs Python lut_mode digest (params_builder.py:99-118)"},
+    {"gap": "digest_params step absent: preview_mode/lut_mode/deactivate_spatial/deactivate_stochastic zeroing unported",
+     "owner_issue": 3, "evidence": "params_builder.py:75-144 has no Rust counterpart; Pipeline::new_with_spectral only applies film specifics + neutral filters"},
+    {"gap": "stock-specific DIR presets (velvia_100, provia_100f) and halation use/antihalation presets",
+     "owner_issue": 3, "evidence": "params_builder.py:199-252 vs pipeline.rs:55-94"},
+    {"gap": "direct-scan glare: Python passes glare=None on scan_film; Rust applies film_render.glare (seed 42)",
+     "owner_issue": 8, "evidence": "scanning.py:54-55 vs scanning.rs:284-288,325-333"},
+    {"gap": "output clip semantics: Rust clamps [0,1] when output_cctf_encoding=False; Python never clips",
+     "owner_issue": 4, "evidence": "scanning.rs:385-389 vs scanning.py:130-139"},
+    {"gap": "unsupported color spaces silently fall back (input->ProPhoto, output->sRGB) instead of erroring",
+     "owner_issue": 4, "evidence": "filming.rs:510-518 _ => PROPHOTO_TO_XYZ; scanning.rs:449-456 _ => XYZ_TO_SRGB_F64"},
+    {"gap": "jzazbz/oklrab output gamut + perceptual compression on non-sRGB output fall back to identity",
+     "owner_issue": 4, "evidence": "gamut_compression.rs:267-293 error-and-identity branches"},
+    {"gap": "enlarger LUT reduction (use_enlarger_lut) unported; lut_resolution param unread",
+     "owner_issue": 3, "evidence": "printing.py:46-52 vs printing.rs (no use_lut branch)"},
+    {"gap": "crop + AE order: Rust rescales before AE; Python AEs before crop/rescale",
+     "owner_issue": 7, "evidence": "pipeline.rs:462-471 vs pipeline.py:191-195"},
+    {"gap": "glare RNG stream: Rust fixed seed 42 vs Python continued np.random stream (statistical parity only)",
+     "owner_issue": 8, "evidence": "scanning.rs:331 comment; model/glare.py via fast_stats np.random"},
+    {"gap": "ICC profiles (166 files) + SPEKTRAFILM_LICENSE.txt not bundled in the Rust tree",
+     "owner_issue": 9, "evidence": "src/spektrafilm/data/icc vs data/ (Rust) directory listing"},
+    {"gap": "RAW white-balance modes and lensfun corrections; Rust GUI/CLI use rawler with as-shot only",
+     "owner_issue": 10, "evidence": "raw_file_processor.py:372-438 vs cli/src/main.rs load_raw"},
+]
+
+BUDGETS = {
+    "arithmetic": {"max_abs": 1e-6,
+                   "provenance": "2026-09-30 audit: 4x4 bare chain max abs 1.14e-8 f64; shipped test budget 1e-6 (stages/mod.rs:127)"},
+    "arithmetic_spatial": {"max_abs": 5e-5,
+                           "provenance": "provisional target for FFT/interp-heavy deterministic stages; measure on first harness run"},
+    "lut_reduction": {"max_abs": 1e-5,
+                      "provenance": "provisional target for PCHIP LUT-reduced paths (claimed bit-parity kernels); measure on first run"},
+    "rng_stream": {"max_abs": 1e-6,
+                   "provenance": "seeded streams (grain seeds 0/1/2); Rust ports the legacy np.random generators; measure on first run"},
+    "statistical_texture": {"mean_rel": 0.01, "std_rel": 0.05,
+                            "provenance": "moment-level budget for stochastic appearance (grain layers, glare); per-pixel equality not applicable"},
+    "file_fidelity": {"max_lsb_8bit": 1, "max_lsb_16bit": 1,
+                      "provenance": "encoded-output compare: decoded pixels within +/-1 LSB; exact byte equality NOT required (different encoders)"},
+    "preview": {"mean_abs": 2e-2, "note": "preview approximation budget",
+                "provenance": "provisional: Python skimage order=1 anti-aliased downscale vs Rust GUI rescale; owner issue #16"},
+}
+
+
+def asset_inventory():
+    """Hash-compare every bundled Python 0.3.4 data file against the Rust tree."""
+    py_data = PY_REPO / "src" / "spektrafilm" / "data"
+    rs_data = REPO_ROOT / "data"
+    assets = []
+    for path in sorted(py_data.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(py_data)
+        rs_path = rs_data / rel
+        entry = {
+            "path": f"data/{rel}",
+            "py_sha256": sha256(path),
+        }
+        if rs_path.exists():
+            entry["rs_sha256"] = sha256(rs_path)
+            entry["match"] = entry["py_sha256"] == entry["rs_sha256"]
+            if not entry["match"] and rel.name == "neutral_print_filters.json":
+                py_db = json.loads(path.read_text())
+                rs_db = json.loads(rs_path.read_text())
+                shared_ok = all(rs_db.get(k) == v for k, v in py_db.items())
+                extra = sorted(set(rs_db) - set(py_db))
+                entry["match"] = False
+                entry["detail"] = (f"verified superset: all {len(py_db)} upstream papers "
+                                   f"byte-identical ({shared_ok}); Rust adds extra papers "
+                                   f"{extra} for its B&W stocks (upstream entries unchanged)")
+        else:
+            entry["rs_sha256"] = None
+            entry["match"] = False
+            entry["detail"] = "missing from Rust data/ tree"
+        assets.append(entry)
+
+    rust_extra = []
+    for path in sorted(rs_data.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(rs_data)
+        if not (py_data / rel).exists():
+            rust_extra.append(f"data/{rel}")
+
+    return assets, rust_extra
+
+def integration_entry(status, owner, notes, source):
+    return {
+        "rust_status": status if status in (NOOP, RUST_ONLY) else "implemented_unverified",
+        "owner_issue": owner,
+        "implementation_source": source,
+        "verification": "Fresh consumer-visible evidence required; implementation status is not a parity pass.",
+        "audit_baseline": {"rust_status": status, "notes": notes},
+    }
+
+
+def report_evidence(path):
+    from scenarios import expand_scenarios
+    catalog = {row["name"]: row for row in expand_scenarios(PY_REPO)}
+    if not path.exists():
+        return {"status": "pending_fresh_execution", "report_path": str(path),
+                "catalog_rows": len(catalog), "rows": []}
+    report = json.loads(path.read_text())
+    pins = report.get("pins", {})
+    environment = report.get("environment", {})
+    reference = environment.get("reference_environment", {})
+    if pins.get("python_commit") != PY_COMMIT or pins.get("python_version") != "0.3.4":
+        sys.exit(f"Refusing report with incorrect Python pin: {path}")
+    if (report.get("unsupported") or not environment.get("rust_bin")
+            or not reference.get("dependencies") or not reference.get("numpy_blas")
+            or not reference.get("python_version") or not reference.get("architecture")):
+        sys.exit(f"Refusing report without complete runnable environment provenance: {path}")
+    rows = report.get("rows", [])
+    names = [row["scenario"] for row in rows]
+    if len(names) != len(set(names)) or set(names) - set(catalog):
+        sys.exit(f"Refusing duplicate or unknown scenario evidence: {path}")
+    counts = dict(Counter(row["status"] for row in rows))
+    complete = set(names) == set(catalog)
+    verified = []
+    for row in rows:
+        if row["status"] != "pass":
+            continue
+        scenario = catalog[row["scenario"]]
+        if row.get("budget") != scenario["budget"]:
+            sys.exit(f"Refusing stale scenario budget: {row['scenario']}")
+        if scenario.get("expect_reject"):
+            valid = row.get("rust_rejected") and not row.get("artifact_produced")
+        else:
+            taps = row.get("taps", {})
+            valid = set(taps) == set(scenario["taps"]) and all(
+                tap.get("within_budget") is True for tap in taps.values())
+        if not valid:
+            sys.exit(f"Refusing passing row without complete evidence: {row['scenario']}")
+        verified.append(row["scenario"])
+    return {"status": "verified_catalog" if complete and len(verified) == len(catalog)
+            else "partial_or_failed_evidence", "report_path": str(path.resolve()),
+            "catalog_rows": len(catalog), "reported_rows": len(rows), "counts": counts,
+            "verified_scenarios": verified, "pins": pins, "environment": environment,
+            "rows": rows,
+            "scope": "Only these exercised scenarios and tap budgets are verified; no universal field or backend parity claim."}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report", type=Path,
+                        default=REPO_ROOT / "target/parity/parity_report.json")
+    args = parser.parse_args()
+    evidence = report_evidence(args.report)
+    head = subprocess.run(["git", "-C", str(PY_REPO), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    if head != PY_COMMIT:
+        sys.exit(f"Python repo at {head}, expected {PY_COMMIT}")
+
+    rs_head = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+
+    assets, rust_extra = asset_inventory()
+    matched = sum(1 for a in assets if a["match"])
+    superset = [a for a in assets
+                if not a["match"] and "superset" in a.get("detail", "")]
+    missing = [a["path"] for a in assets if a["rs_sha256"] is None]
+    differing = [a["path"] for a in assets if a["rs_sha256"] is not None
+                 and not a["match"] and "superset" not in a.get("detail", "")]
+
+    matrix = {
+        "schema": "spektrafilm-parity-matrix/1",
+        "generated": {
+            "python_commit": PY_COMMIT,
+            "python_version": "0.3.4",
+            "rust_commit": rs_head,
+            "rust_audited_baseline": RS_COMMIT,
+            "python_platform": platform.platform(),
+            "python_version_runtime": platform.python_version(),
+            "note": "Current implementation inventory and historical audited statuses are separate. Fresh execution determines parity; implementation is not a passing result.",
+        },
+        "runtime_fields": {
+            group: {
+                field: integration_entry(status, owner, notes,
+                    "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs")
+                for field, (status, owner, notes) in fields.items()
+            }
+            for group, fields in RUNTIME_FIELDS.items()
+        },
+        "gui_actions": {
+            action: {"description": desc, **integration_entry(status, owner, "", "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
+            for action, desc, status, owner in GUI_ACTIONS
+        },
+        "lut_registry": {
+            name: {"kind": kind, "roles": roles,
+                   **integration_entry(status, owner, "", "crates/spektrafilm-core/src/lut_transport.rs; lut_delivery.rs; lut_formats.rs")}
+            for name, kind, roles, status, owner in LUT_REGISTRY
+        },
+        "workflows": {
+            name: {"description": desc, **integration_entry(status, owner, "", "crates/spektrafilm-core/src/image_io.rs; crates/spektrafilm-raw/; crates/spektrafilm-cli/src/lut.rs")}
+            for name, desc, status, owner in WORKFLOWS
+        },
+        "assets": {
+            "summary": {
+                "python_files": len(assets),
+                "byte_identical": matched,
+                "verified_superset": len(superset),
+                "missing_from_rust": missing,
+                "differing_from_python": differing,
+                "rust_only_extras": rust_extra,
+            },
+            "entries": assets,
+        },
+        "audit_baseline_gaps": KNOWN_GAPS,
+        "known_gaps": [{"gap": "Pinned Python bundled asset missing", "path": path,
+                        "owner_issue": 9, "evidence": "Live sha256 inventory"} for path in missing],
+        "verification_status": evidence["status"],
+        "differential_evidence": evidence,
+        "budgets": BUDGETS,
+        "scenario_status": f"{evidence['catalog_rows']} expanded rows; exercised scenario and tap evidence is recorded under differential_evidence.",
+    }
+
+    out = REPO_ROOT / "docs" / "parity" / "parity_matrix.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(matrix, indent=2) + "\n")
+    print(f"wrote {out}")
+    print(f"assets: {matched}/{len(assets)} byte-identical, "
+          f"{len(superset)} verified superset, {len(missing)} missing")
+    print(f"rust-only extras: {rust_extra}")
+
+
+if __name__ == "__main__":
+    main()

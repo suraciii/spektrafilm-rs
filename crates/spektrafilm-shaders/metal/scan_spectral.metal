@@ -52,7 +52,7 @@ kernel void scan_spectral(
 
     float3 rgb = params.xyz_to_rgb * xyz;
 
-    output_rgb[base]     = clamp(rgb.x, 0.0f, 1.0f);
-    output_rgb[base + 1] = clamp(rgb.y, 0.0f, 1.0f);
-    output_rgb[base + 2] = clamp(rgb.z, 0.0f, 1.0f);
+    output_rgb[base]     = rgb.x;
+    output_rgb[base + 1] = rgb.y;
+    output_rgb[base + 2] = rgb.z;
 }

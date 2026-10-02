@@ -1,11 +1,9 @@
 // Viewing glare simulation.
 // Adds a small fraction of randomized blurred illuminant to simulate surface reflections.
 
-use rand::SeedableRng;
-use rand::rngs::StdRng;
-use rand_distr::{Distribution, LogNormal};
-use spektrafilm_math::gaussian;
+use spektrafilm_math::gaussian::gaussian_blur_channel;
 use spektrafilm_math::image::ImageBuf;
+use spektrafilm_math::numpy_rng::GaussRng;
 use spektrafilm_math::precision::{Scalar, from_f32, from_f64};
 
 /// Generate the per-pixel glare_amount field (lognormal sampled, then blurred, then /100).
@@ -15,7 +13,10 @@ use spektrafilm_math::precision::{Scalar, from_f32, from_f64};
 ///   σ = sqrt( ln(1 + (s²/m²)) )
 ///   μ = ln(m) - σ²/2
 ///
-/// Spatial blur uses our 2D gaussian filter; the result is divided by 100 (CC-style fraction).
+/// Uses NumPy's legacy normal sampler with an explicit reproducible seed. The
+/// upstream JIT kernel uses unseeded thread-local streams, so its texture is
+/// comparable statistically rather than pixel-for-pixel. Spatial blur uses the
+/// same scalar Gaussian filter, and the result is divided by 100.
 pub fn compute_random_glare_amount(
     width: u32,
     height: u32,
@@ -29,26 +30,27 @@ pub fn compute_random_glare_amount(
         return vec![Scalar::default(); n_pixels];
     }
     let m = percent as f64;
-    let s = (roughness * percent) as f64;
+    let s = roughness as f64 * m;
     let sigma2 = (1.0 + (s * s) / (m * m)).ln();
     let sigma = sigma2.sqrt();
     let mu = m.ln() - sigma2 / 2.0;
-    let dist = LogNormal::new(mu, sigma).unwrap_or_else(|_| LogNormal::new(0.0, 1.0).unwrap());
-    let mut rng = StdRng::seed_from_u64(seed);
+    let mut rng = GaussRng::new(seed as u32);
 
+    // The upstream fast_lognormal kernel skips normal draws below this
+    // threshold, including zero roughness.
     let mut glare: Vec<Scalar> = (0..n_pixels)
-        .map(|_| from_f64(dist.sample(&mut rng)))
+        .map(|_| {
+            let value = if sigma < 1e-6 {
+                mu.exp()
+            } else {
+                (mu + sigma * rng.gauss()).exp()
+            };
+            from_f64(value)
+        })
         .collect();
 
     if blur > 0.0 {
-        // 2D gaussian filter via our 3-channel image kernel; broadcast scalar field to RGB.
-        let mut img = ImageBuf::from_data(
-            width,
-            height,
-            glare.iter().flat_map(|&v| [v, v, v]).collect(),
-        );
-        img = gaussian::gaussian_blur(&img, blur);
-        glare = img.extract_channel(0);
+        glare = gaussian_blur_channel(&glare, width, height, blur);
     }
 
     // Divide by 100 (CC-style fraction).
@@ -98,45 +100,50 @@ pub fn add_glare(
         return xyz.clone();
     }
 
-    let n_pixels = xyz.pixel_count();
-    let amount = percent;
-    let sigma = roughness * amount;
-
-    // Generate random glare amount per pixel
-    let mu = (amount as f64).ln() - 0.5 * (sigma as f64 / amount as f64).powi(2).ln_1p();
-    let s = ((sigma as f64 / amount as f64).powi(2).ln_1p()).sqrt();
-    let dist = LogNormal::new(mu, s).unwrap_or_else(|_| LogNormal::new(0.0, 1.0).unwrap());
-    let mut rng = StdRng::seed_from_u64(42);
-
-    let mut glare_map: Vec<Scalar> = (0..n_pixels)
-        .map(|_| from_f64(dist.sample(&mut rng)))
-        .collect();
-
-    // Blur the glare map
-    if blur > 0.0 {
-        let mut glare_img = ImageBuf::from_data(
-            xyz.width,
-            xyz.height,
-            glare_map.iter().flat_map(|&v| [v, v, v]).collect(),
-        );
-        glare_img = gaussian::gaussian_blur(&glare_img, blur);
-        glare_map = glare_img.extract_channel(0);
-    }
-
-    // Apply: xyz += glare_amount * illuminant_xyz / 100
-    let illum = [
-        from_f32(illuminant_xyz[0]),
-        from_f32(illuminant_xyz[1]),
-        from_f32(illuminant_xyz[2]),
-    ];
-    let inv100 = from_f64(1.0 / 100.0);
+    let glare_amount = compute_random_glare_amount(
+        xyz.width,
+        xyz.height,
+        percent,
+        roughness,
+        blur,
+        0,
+    );
+    let illum = illuminant_xyz.map(from_f32);
     let mut result = xyz.clone();
-    for (i, px) in result.pixels_mut().enumerate() {
-        let g = glare_map[i] * inv100;
-        px[0] += g * illum[0];
-        px[1] += g * illum[1];
-        px[2] += g * illum[2];
-    }
+    add_glare_with_amount(&mut result, &glare_amount, illum);
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seeded_glare_matches_numpy_normal_stream() {
+        // Upstream fast_lognormal.py_func after np.random.seed(0), with
+        // the same float32 public parameters promoted before multiplication.
+        let expected = [
+            0.00205799574328467,
+            0.0010805333829014246,
+            0.0014201538343492563,
+            0.0025779203241936516,
+        ];
+        let actual = compute_random_glare_amount(2, 2, 0.1, 0.5, 0.0, 0);
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            assert!((actual - from_f64(expected)).abs() < from_f64(1e-9));
+        }
+    }
+
+    #[test]
+    fn subthreshold_glare_is_independent_of_seed() {
+        for roughness in [0.0, 1e-7] {
+            let first = compute_random_glare_amount(2, 2, 0.1, roughness, 0.0, 0);
+            let second = compute_random_glare_amount(2, 2, 0.1, roughness, 0.0, 42);
+            assert_eq!(first, second);
+            for value in first {
+                assert!((value - from_f64(0.001)).abs() < from_f64(1e-9));
+            }
+        }
+    }
 }

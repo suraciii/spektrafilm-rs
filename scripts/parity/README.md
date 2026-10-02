@@ -1,61 +1,146 @@
 # Python ↔ Rust parity harness
 
-Side-by-side comparison tooling against the Python reference
-implementation in `/Users/sasha/Desktop/spektrafilm`.
+Differential tooling against the **pinned** Python reference
+`spektrafilm` 0.3.4 at commit `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`
+(local checkout `/home/szf/repos/spektrafilm`) and the audited Rust
+baseline `9dd59b0380194b93686aaa230a8bb9680aa270a4`. There is no 0.3.4
+release tag — the commit is the pin; the harness verifies it before
+measuring anything.
 
-## One-time setup
+Files:
 
-Python 3.13 + a venv with the spektrafilm reference deps:
+| File | Purpose |
+|------|---------|
+| `scenarios.py` | Shared scenario catalog + budgets (single source of truth) |
+| `py_reference.py` | Pinned Python driver — fixtures + per-tap f64 dumps (core imports only) |
+| `run_parity.py` | Orchestrator — preflight, Rust f64 CLI, per-stage/final max+mean report |
+| `gen_matrix.py` | Regenerates `docs/parity/parity_matrix.json` (live asset hashing) |
+
+Evidence, budgets and provenance live in
+[`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
+the machine-readable inventory is
+[`docs/parity/parity_matrix.json`](../../docs/parity/parity_matrix.json).
+
+## Reference environment (one-time setup)
+
+Python 3.13 venv with the 0.3.4 runtime stack (core only — the GUI and
+LUT-creator packages are installed by the project's default extras but are
+never imported by the driver; `py_reference.py` asserts this at exit):
 
 ```bash
-brew install python@3.13
-/opt/homebrew/bin/python3.13 -m venv /tmp/spektravenv
-/tmp/spektravenv/bin/pip install --upgrade pip setuptools wheel
-/tmp/spektravenv/bin/pip install --prefer-binary numpy scipy colour-science \
-    scikit-image opt-einsum lmfit Pillow numba rawpy PyYAML OpenImageIO \
-    exiv2 pyfftw lensfunpy
-/tmp/spektravenv/bin/pip install --no-deps -e /Users/sasha/Desktop/spektrafilm
+python3.13 -m venv /tmp/spektrafilm-034-venv
+/tmp/spektrafilm-034-venv/bin/pip install --upgrade pip setuptools wheel
+/tmp/spektrafilm-034-venv/bin/pip install --prefer-binary \
+    "numpy~=2.4" "scipy~=1.17" "colour-science~=0.4.6" "scikit-image~=0.26" \
+    "matplotlib~=3.10" "opt-einsum~=3.4.0" "numba~=0.64" \
+    "OpenImageIO~=3.1.11" "pyfftw~=0.15.0" "rawpy~=0.26.1" \
+    "exiv2~=0.18.1" "lensfunpy~=1.18.0"
+git -C /home/szf/repos/spektrafilm checkout 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc
+/tmp/spektrafilm-034-venv/bin/pip install --no-deps -e /home/szf/repos/spektrafilm
 ```
 
-## Scripts
+The pinned venv import probe is now usable. The integration owner builds
+the f64 binary and runs the complete catalog; missing prerequisites always
+produce unsupported evidence and exit 2.
 
-- `spektra_compare.py <raw.dng> <out_dir> [film] [paper] [max_dim]`
-  Decodes the RAW via rawpy → linear ACES2065-1, downsamples to
-  `max_dim` (default 1500 px on the long edge) so Python doesn't OOM at
-  full resolution, saves the downsampled image as a linear-float TIFF,
-  and renders it through the Python pipeline. Prints the suggested Rust
-  CLI invocation to render the same TIFF.
+Rust side (f64 precision is a cargo feature):
 
-- `py_stages.py`
-  Per-stage dump for 5 hard-coded test colors. Prints `raw`, `log_raw`,
-  `film dens`, and `final RGB` after running through Python's
-  SimulationPipeline. Pair with the `rs_stages` probe binary (kept in
-  `/tmp/cmp/rs_stages.rs` during the diagnostic session) for a stage-by-
-  stage comparison.
+```bash
+cargo build -p spektrafilm-cli --features precision-f64 \
+    --bin spektrafilm-f64 --release
+```
 
-## Current findings (session ending 2026-05-23)
+Override locations with `SPEKTRAFILM_PY`, `SPEKTRAFILM_PY_REPO` and
+`SPEKTRAFILM_RS_BIN` if they differ from the defaults.
 
-Tested on `IMG_8096.dng` downsampled to 1500 px, kodak_gold_200 +
-fujifilm_crystal_archive_typeii, all effects off, AE off:
+## Running the matrix
 
-| Stage                                | Match status                  |
-|--------------------------------------|-------------------------------|
-| `build_rgb_to_adapted_xyz` matrix    | bit-identical to 7 decimals   |
-| Hanatos2025 spectral upsampling       | bit-identical to 6 decimals   |
-| log10 + film density curve interp    | bit-identical                 |
-| Scan-film mode (skip print + scan)   | 1/255 quantization only       |
-| Full chain with printing             | mean 5/255 drift, max 14/255  |
+```bash
+# full matrix (Python fixtures → Rust f64 CLI → per-stage/final report)
+SPEKTRAFILM_PY=/tmp/spektrafilm-034-venv/bin/python \
+SPEKTRAFILM_RS_BIN="$PWD/target/release/spektrafilm-f64" \
+python3 scripts/parity/run_parity.py --out-root target/parity-fresh
 
-**Conclusion:** the drift is entirely in the **print stage** (between
-the film density CMY output and the print density CMY output). The most
-likely culprits are:
+# catalog only
+python3 scripts/parity/run_parity.py --list
 
-- `apply_database_neutral_print_filters` neutral filter values
-- `compute_exposure_factor` print exposure normalization
-- The spectral integration through the film dyes + enlarger illuminant
-  + print sensitivities
-- The print density curve interpolation
+# single scenario (e.g. the preserved 4x4 bare chain)
+python3 scripts/parity/run_parity.py --only bare_chain_4x4
 
-Verified the c/m/y neutral filter values match Python exactly:
-`0.0 / 76.95409743164727 / 82.69937618751322` for kodak_gold_200 +
-fujifilm_crystal_archive_typeii + TH-KG3.
+# existing Python fixtures must live at <out-root>/fixtures/<scenario>/
+python3 scripts/parity/run_parity.py --rust-only --out-root target/parity
+
+# checkpoint state when a prerequisite is missing: writes explicit
+# `unsupported` evidence rows and exits 2 — never a passing skip
+python3 scripts/parity/run_parity.py --record-unsupported
+```
+
+Exit codes: `0` every current row within its unchanged budget; `1` budget
+failure, missing tap or invalid run; `2` unsupported prerequisites. Original
+gap descriptions live under `audit_baseline` and never excuse current drift.
+
+Per-scenario artifacts land in `target/parity/fixtures/<scenario>/`:
+For manually generated references, pass `py_reference.py --out-dir
+<out-root>/fixtures`; `run_parity.py --out-root <out-root> --rust-only`
+expects that exact directory. A reference root named `python` needs an
+explicit `fixtures` alias before running the Rust comparison.
+
+
+- `input.tif` — shared float32 linear fixture (both sides read this file);
+- `py_<tap>.f64` / `rs_<tap>.f64` — little-endian f64 dumps per topology
+  tap (`log_e_film`, `cmy_film`, `log_e_print`, `cmy_print`, `rgb_out`);
+- `rs_params.json` — the exact Rust param overrides sent to the CLI.
+
+Python produces taps through `SimulationPipeline.process(collect=...)`
+(named topology taps, `runtime/topology.py`). Rust produces them through
+env-probe hooks in the core pipeline (`SPEKTRAFILM_DUMP_FILM_LOG_RAW`,
+`SPEKTRAFILM_DUMP_FILM_DENSITY`, `SPEKTRAFILM_DUMP_PRINT_LOG_RAW`,
+`SPEKTRAFILM_DUMP_PRINT_DENSITY`) plus `--raw-out` for the final buffer,
+with `SPEKTRAFILM_BACKEND=cpu` so the dumps are produced by the same CPU
+code path the arithmetic budgets describe.
+
+## Regenerating reference fixtures by hand
+
+```bash
+/tmp/spektrafilm-034-venv/bin/python scripts/parity/py_reference.py \
+    --repo /home/szf/repos/spektrafilm \
+    --out-dir target/parity/fixtures --all
+
+# then, per scenario, the Rust side with dumps:
+SPEKTRAFILM_BACKEND=cpu \
+SPEKTRAFILM_DUMP_FILM_LOG_RAW=target/parity/fixtures/bare_chain_4x4/rs_log_e_film.f64 \
+SPEKTRAFILM_DUMP_FILM_DENSITY=target/parity/fixtures/bare_chain_4x4/rs_cmy_film.f64 \
+SPEKTRAFILM_DUMP_PRINT_LOG_RAW=target/parity/fixtures/bare_chain_4x4/rs_log_e_print.f64 \
+SPEKTRAFILM_DUMP_PRINT_DENSITY=target/parity/fixtures/bare_chain_4x4/rs_cmy_print.f64 \
+target/release/spektrafilm-f64 process \
+    target/parity/fixtures/bare_chain_4x4/input.tif \
+    -o target/parity/fixtures/bare_chain_4x4/rs_out.png \
+    --film kodak_portra_400 --paper kodak_portra_endura \
+    --params target/parity/fixtures/bare_chain_4x4/rs_params.json \
+    --raw-out target/parity/fixtures/bare_chain_4x4/rs_rgb_out.f64 \
+    --data-dir data
+```
+
+`run_parity.py` automates exactly this invocation for every scenario.
+
+## Interpretation rules
+
+- **expected_parity** rows must meet their budget; failures block.
+- Original gap observations are retained under **audit_baseline**. Current
+  migrated scenarios require parity and exceeding their budget blocks.
+- **historical** rows guard the preserved 4×4 bare-chain evidence
+  (≈1.14e-8 measured 2026-09-30; see `docs/parity/baseline_evidence.md`).
+- Canonical Python parameter names reach strict Rust validation unchanged;
+  the harness neither renames grain controls nor drops debug/tap fields.
+- Stochastic appearance (layered grain, glare) is judged by the
+  `statistical_texture` moment budget, not per-pixel equality.
+
+## History
+
+The previous session-scoped probes (`spektra_compare.py`, `py_stages.py`,
+`py_bisect.py`, `rs_bisect.rs`) hard-coded a developer machine
+(`/Users/sasha/...`, `/tmp/cmp/...`) and were superseded by this harness at
+commit time. Their findings (print-stage drift root causes: neutral
+filters, exposure normalization, spectral integration, curve interpolation)
+are now covered by the tap-level comparison and the calibration notes in
+`crates/spektrafilm-core/src/pipeline.rs`.

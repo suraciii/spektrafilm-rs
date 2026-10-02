@@ -2,8 +2,10 @@
 ///
 /// Maps log exposure → density for each CMY channel using the
 /// per-profile density curve tables.
+use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::interp;
+use spektrafilm_math::precision::{Scalar, ONE, ZERO, from_f64};
 
 /// Interpolate density from log exposure for a single pixel value.
 #[inline]
@@ -145,6 +147,112 @@ pub fn max_density_f64(curves: &[[f64; 3]]) -> [f64; 3] {
     max
 }
 
+/// Per-sublayer density maxima from the raw layer tensor, Python
+/// `np.nanmax(density_curves_layers, axis=0)`: max over the exposure
+/// axis, keeping the `[sublayer][channel]` layout.
+pub fn density_max_layers_f64(layers: &[[[f64; 3]; 3]]) -> [[f64; 3]; 3] {
+    let mut max = [[f64::NEG_INFINITY; 3]; 3];
+    for knot in layers {
+        for sl in 0..3 {
+            for ch in 0..3 {
+                let v = knot[sl][ch];
+                if v.is_finite() && v > max[sl][ch] {
+                    max[sl][ch] = v;
+                }
+            }
+        }
+    }
+    max
+}
+
+/// Split a composite CMY density image into per-sublayer densities.
+///
+/// Port of Python `interp_density_cmy_layers`: for each channel, the
+/// composite density is the lookup key against the normalized composite
+/// curve `density_curves[:, ch]`, and each sublayer reads its own curve
+/// column `density_curves_layers[:, sl, ch]`. Positive films negate both
+/// the image values and the x-axis (density decreases as exposure rises on
+/// positives, so the axis only ascends once flipped); the y-tables stay
+/// raw, exactly like upstream.
+///
+/// Returns `[sublayer][channel]` planes of `w * h` values. The
+/// interpolation is linear in y, so sublayer densities of a profile whose
+/// layer curves sum to the composite curve sum back to the composite
+/// density at every pixel.
+pub fn interp_density_cmy_layers(
+    density_cmy: &ImageBuf,
+    density_curves: &[[f64; 3]],
+    density_curves_layers: &[[[f64; 3]; 3]],
+    positive_film: bool,
+) -> [[Vec<Scalar>; 3]; 3] {
+    assert!(!density_curves.is_empty(), "density_curves must be non-empty");
+    assert_eq!(
+        density_curves_layers.len(),
+        density_curves.len(),
+        "density_curves_layers must share the exposure axis with density_curves"
+    );
+    let k = density_curves.len();
+    let n = density_cmy.pixel_count();
+    let mut planes = std::array::from_fn(|_| std::array::from_fn(|_| vec![ZERO; n]));
+
+    for ch in 0..3 {
+        // x-axis per channel, negated for positive films — Python passes
+        // `-density_curves[:, ch]` with `-density_cmy` for the lookup.
+        let sign = if positive_film { -1.0 } else { 1.0 };
+        let xa: Vec<Scalar> = density_curves
+            .iter()
+            .map(|&row| from_f64(row[ch] * sign))
+            .collect();
+        let inv_dx: Vec<Scalar> = (0..k - 1)
+            .map(|i| {
+                let dx = xa[i + 1] - xa[i];
+                if dx != ZERO {
+                    1.0 / dx
+                } else {
+                    ZERO
+                }
+            })
+            .collect();
+
+        // Locate once per pixel, then interpolate every sublayer against
+        // the same bracket. Matches `fast_interp`'s endpoint clamping and
+        // searchsorted(side='right') - 1 bracketing.
+        let x_col: Vec<Scalar> = density_cmy
+            .pixels()
+            .map(|px| if positive_film { -px[ch] } else { px[ch] })
+            .collect();
+        let located: Vec<(usize, Scalar)> = x_col
+            .par_iter()
+            .map(|&x| {
+                if x <= xa[0] {
+                    (0usize, ZERO)
+                } else if x >= xa[k - 1] {
+                    (k - 2, ONE)
+                } else {
+                    let idx = xa.partition_point(|&v| v <= x);
+                    let low = if idx > 0 { idx - 1 } else { 0 };
+                    let t = (x - xa[low]) * inv_dx[low];
+                    (low, t)
+                }
+            })
+            .collect();
+
+        for sl in 0..3 {
+            let plane = &mut planes[sl][ch];
+            located
+                .par_iter()
+                .zip(plane.par_iter_mut())
+                .for_each(|(&(low, t), out)| {
+                    let y0 = from_f64(density_curves_layers[low][sl][ch]);
+                    let y1 = from_f64(density_curves_layers[low + 1][sl][ch]);
+                    *out = y0 + t * (y1 - y0);
+                });
+        }
+    }
+
+    planes
+}
+
 fn extract_col(data: &[[f32; 3]], c: usize) -> Vec<f32> {
     data.iter().map(|row| row[c]).collect()
 }
@@ -182,5 +290,111 @@ mod tests {
         let curves = vec![[0.1, 0.2, 0.3], [2.0, 1.5, 1.0], [1.5, 1.8, 0.8]];
         let max = max_density(&curves);
         assert_eq!(max, [2.0, 1.8, 1.0]);
+    }
+
+    #[test]
+    fn test_interp_density_cmy_layers_sums_to_composite() {
+        // Layer curves that exactly partition the composite curve: the
+        // interpolation is linear in y, so the sublayer split must sum back
+        // to the composite density at every pixel (between knots too).
+        let composite: Vec<[f64; 3]> = (0..=4)
+            .map(|i| {
+                let v = i as f64 * 0.5;
+                [v, v * 0.8, v * 1.1]
+            })
+            .collect();
+        let layers: Vec<[[f64; 3]; 3]> = composite
+            .iter()
+            .map(|&row| {
+                [
+                    [row[0] * 0.2, row[1] * 0.5, row[2] * 0.3],
+                    [row[0] * 0.3, row[1] * 0.2, row[2] * 0.3],
+                    [row[0] * 0.5, row[1] * 0.3, row[2] * 0.4],
+                ]
+            })
+            .collect();
+
+        let mut img = ImageBuf::new(6, 4);
+        for y in 0..4u32 {
+            for x in 0..6u32 {
+                let t = (x + y * 6) as f64 / 24.0;
+                img.set(x, y, [from_f64(t * 2.0), from_f64(t * 1.6), from_f64(t * 2.2)]);
+            }
+        }
+
+        let planes = interp_density_cmy_layers(&img, &composite, &layers, false);
+        for (i, px) in img.pixels().enumerate() {
+            for ch in 0..3 {
+                let sum: Scalar = (0..3).map(|sl| planes[sl][ch][i]).sum();
+                assert!(
+                    (sum - px[ch]).abs() < from_f64(1e-6),
+                    "pixel {i} ch {ch}: sum {sum} vs {}",
+                    px[ch]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_interp_density_cmy_layers_positive_negates_axis() {
+        // Positive films negate the lookup key and the x-axis; the y-tables
+        // stay raw. Check sublayer 0 against a hand-rolled negated lookup.
+        let composite: Vec<[f64; 3]> = (0..=3)
+            .map(|i| {
+                let v = i as f64 * 0.5;
+                [1.0 - v, 1.2 - v, 0.8 - v] // descending, ascending once negated
+            })
+            .collect();
+        let layers: Vec<[[f64; 3]; 3]> = composite
+            .iter()
+            .map(|&row| {
+                [
+                    [row[0] * 0.25, row[1] * 0.5, row[2] * 0.1],
+                    [row[0] * 0.35, row[1] * 0.2, row[2] * 0.3],
+                    [row[0] * 0.40, row[1] * 0.3, row[2] * 0.6],
+                ]
+            })
+            .collect();
+
+        let mut img = ImageBuf::new(4, 2);
+        for y in 0..2u32 {
+            for x in 0..4u32 {
+                let t = (x + y * 4) as f64 / 8.0;
+                img.set(x, y, [from_f64(0.1 + t), from_f64(0.3 + t), from_f64(0.0 + t)]);
+            }
+        }
+
+        let pos = interp_density_cmy_layers(&img, &composite, &layers, true);
+        for (i, px) in img.pixels().enumerate() {
+            for ch in 0..3 {
+                let x = -(px[ch] as f64);
+                let xa: Vec<f64> = composite.iter().map(|r| -r[ch]).collect();
+                let expect = if x <= xa[0] {
+                    layers[0][0][ch]
+                } else if x >= xa[xa.len() - 1] {
+                    layers[xa.len() - 1][0][ch]
+                } else {
+                    let idx = xa.partition_point(|&v| v <= x);
+                    let low = idx.saturating_sub(1);
+                    let t = (x - xa[low]) / (xa[low + 1] - xa[low]);
+                    layers[low][0][ch] + t * (layers[low + 1][0][ch] - layers[low][0][ch])
+                };
+                assert!(
+                    (pos[0][ch][i] - from_f64(expect)).abs() < from_f64(1e-6),
+                    "pixel {i} ch {ch}: {} vs {expect}",
+                    pos[0][ch][i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_density_max_layers_f64() {
+        let layers = vec![
+            [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]],
+            [[1.1, 0.1, 0.2], [0.3, 1.4, 0.5], [0.6, 0.7, 1.8]],
+        ];
+        let max = density_max_layers_f64(&layers);
+        assert_eq!(max, [[1.1, 0.2, 0.3], [0.4, 1.4, 0.6], [0.7, 0.8, 1.8]]);
     }
 }
