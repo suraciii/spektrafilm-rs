@@ -383,6 +383,22 @@ class Desktop(X11):
             import ctypes
             from ctypes import wintypes
             self.ctypes, self.types, self.os = ctypes, wintypes, ctypes.windll.user32
+            self.os.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+            self.os.SetCursorPos.restype = wintypes.BOOL
+            class MOUSEINPUT(ctypes.Structure):
+                _fields_ = [('dx', ctypes.c_long), ('dy', ctypes.c_long),
+                            ('mouseData', ctypes.c_ulong), ('dwFlags', ctypes.c_ulong),
+                            ('time', ctypes.c_ulong), ('dwExtraInfo', ctypes.c_size_t)]
+            class INPUTUNION(ctypes.Union):
+                _fields_ = [('mi', MOUSEINPUT)]
+            class INPUT(ctypes.Structure):
+                _anonymous_ = ('input',)
+                _fields_ = [('type', wintypes.DWORD), ('input', INPUTUNION)]
+            self.input_type = INPUT
+            self.mouse_input = MOUSEINPUT
+            self.os.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+            self.os.SendInput.restype = wintypes.UINT
+            self.mouse_wheel_flag = 0x0800
             # HWND is pointer-sized; ctypes' default int conversion truncates
             # handles on 64-bit Windows without explicit argument signatures.
             for name in ('ShowWindow', 'SetForegroundWindow', 'GetWindowTextW',
@@ -468,8 +484,11 @@ class Desktop(X11):
         try:
             record['accessibility'] = self.apple('''set report to ""
 repeat with w in windows
+    set w to contents of w
     set report to report & "WINDOW " & (name of w as text) & " | " & (subrole of w as text) & " | position=" & (position of w as text) & " | size=" & (size of w as text) & linefeed
-    repeat with element in entire contents of w
+    set elements to (get entire contents of w)
+    repeat with elementReference in elements
+        set element to contents of elementReference
         try
             set report to report & (role of element as text) & " | " & (description of element as text)
             try
@@ -575,16 +594,30 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
         cropped = shot.crop((int(x * sx), int(y * sy), int((x + width) * sx), int((y + height) * sy)))
         return cropped.resize((width, height)), dict(left=x, top=y, width=width, height=height)
 
+    def send_wheel(self, delta):
+        event = self.input_type()
+        event.type = 0  # INPUT_MOUSE
+        event.mi = self.mouse_input(mouseData=delta, dwFlags=self.mouse_wheel_flag)
+        require(self.os.SendInput(1, self.ctypes.byref(event), self.ctypes.sizeof(event)) == 1,
+                'Windows rejected native mouse wheel input')
+
     def xd(self, *args, check=True):
         if args[0] == 'mousemove':
             x, y, _, _ = self.bounds()
-            self.input.moveTo(x + int(args[-2]), y + int(args[-1]))
+            target = (x + int(args[-2]), y + int(args[-1]))
+            if sys.platform == 'win32':
+                require(self.os.SetCursorPos(*target), 'Windows rejected native cursor movement')
+            else:
+                self.input.moveTo(*target)
         elif args[0] == 'click':
             button = int(args[-1])
             count = int(args[args.index('--repeat') + 1]) if '--repeat' in args else 1
             if button in (4, 5):
                 for _ in range(count):
-                    self.input.scroll(1 if button == 4 else -1)
+                    if sys.platform == 'win32':
+                        self.send_wheel(120 if button == 4 else -120)
+                    else:
+                        self.input.scroll(1 if button == 4 else -1)
                     time.sleep(.02)
             else:
                 self.input.click(clicks=count, interval=.01)
@@ -599,7 +632,9 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             return self.apple('''repeat with i from 1 to count windows
     set w to window i
     if exists sheet 1 of w then
-        repeat with element in entire contents of sheet 1 of w
+        set sheetElements to (get entire contents of sheet 1 of w)
+        repeat with elementReference in sheetElements
+            set element to contents of elementReference
             if role of element is "AXButton" then
                 if name of element is "Save" or name of element is "Open" then return "sheet 1 of window " & i
             end if
@@ -609,7 +644,9 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
     if panelSubrole is "AXDialog" or panelSubrole is "AXSystemDialog" or name of w is not "spektrafilm" then
         set hasAction to false
         set hasCancel to false
-        repeat with element in entire contents of w
+        set windowElements to (get entire contents of w)
+        repeat with elementReference in windowElements
+            set element to contents of elementReference
             if role of element is "AXButton" then
                 if name of element is "Save" or name of element is "Open" then set hasAction to true
                 if name of element is "Cancel" then set hasCancel to true
@@ -662,11 +699,13 @@ return ""''') or None
                 if save:
                     self.apple(f'''set candidates to {{}}
 set nameField to missing value
-repeat with element in entire contents of {chooser}
+set chooserElements to (get entire contents of {chooser})
+repeat with elementReference in chooserElements
+    set element to contents of elementReference
     if role of element is "AXTextField" then
-        set end of candidates to contents of element
+        set end of candidates to element
         try
-            if description of element contains "Save As" then set nameField to contents of element
+            if description of element contains "Save As" then set nameField to element
         end try
     end if
 end repeat
