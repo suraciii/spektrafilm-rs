@@ -92,13 +92,18 @@ class X11:
 
     def read(self):
         image, bbox = self.image()
-        from PIL import ImageOps
+        from PIL import ImageOps, ImageStat
         lines = []
-        # Large bright viewer areas distort full-window OCR. Segment the dark
-        # sidebar from the viewer, invert and binarize for pale egui labels.
+        # Segment the sidebar from the viewer and normalize each region to
+        # dark text on a light background, including native light themes.
+        def normalize(region):
+            grayscale = ImageOps.grayscale(region)
+            background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
+            return ImageOps.invert(grayscale) if ImageStat.Stat(background).median[0] < 128 else grayscale
+
         for offset, region in ((0, image.crop((0, 0, 1060, image.height))),
                                (1060, image.crop((1060, 0, image.width, image.height)))):
-            prepared = ImageOps.invert(ImageOps.grayscale(region))
+            prepared = normalize(region)
             if offset:
                 prepared = prepared.point(lambda value: 255 if value > 190 else 0)
             data = self.ocr.image_to_data(prepared.resize((region.width * 3, region.height * 3)),
@@ -111,7 +116,7 @@ class X11:
                                                          data['width'][i] / 3, data['height'][i] / 3))
             lines.extend(grouped.values())
         region = image.crop((1170, 315, 1240, 350))
-        data = self.ocr.image_to_data(ImageOps.invert(ImageOps.grayscale(region)).resize((420, 210)),
+        data = self.ocr.image_to_data(normalize(region).resize((420, 210)),
                                       config='--psm 7', output_type=self.ocr.Output.DICT, timeout=15)
         cancel = [(text, 1170 + data['left'][i] / 6, 315 + data['top'][i] / 6,
                    data['width'][i] / 6, data['height'][i] / 6)
@@ -119,7 +124,7 @@ class X11:
         if cancel:
             lines.append(cancel)
         region = image.crop((1060, image.height - 15, image.width, image.height))
-        data = self.ocr.image_to_data(ImageOps.invert(ImageOps.grayscale(region)).resize((region.width * 6, 90)),
+        data = self.ocr.image_to_data(normalize(region).resize((region.width * 6, 90)),
                                       config='--psm 7', output_type=self.ocr.Output.DICT, timeout=15)
         status = [(text, 1060 + data['left'][i] / 6, image.height - 15 + data['top'][i] / 6,
                    data['width'][i] / 6, data['height'][i] / 6)
@@ -609,7 +614,12 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         env.pop(key, None)
     env.update(SPEKTRAFILM_CONFIG_DIR=str(root / 'config'), XDG_CACHE_HOME=str(root / 'cache'),
                XDG_CONFIG_HOME=str(root / 'config'), HOME=str(root / 'home'),
-               TMPDIR=str(root / 'temp'), SPEKTRAFILM_GUI_RENDERER='glow')
+               TMPDIR=str(root / 'temp'))
+    env.pop('SPEKTRAFILM_GUI_RENDERER', None)
+    if sys.platform.startswith('linux'):
+        env['SPEKTRAFILM_GUI_RENDERER'] = 'glow'
+    elif sys.platform == 'win32':
+        env['SPEKTRAFILM_GUI_RENDERER'] = 'wgpu'
     env.update(TEMP=str(root / 'temp'), TMP=str(root / 'temp'),
                LOCALAPPDATA=str(root / 'cache'), APPDATA=str(root / 'config'))
     # Keep native/OCR dependencies on PATH; observed child hash enforces provenance.
