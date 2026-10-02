@@ -121,7 +121,7 @@ struct Metadata {
 Metadata read_metadata(const char* path) {
     try {
         auto image = Exiv2::ImageFactory::open(path);
-        if (!image) return {};
+        if (!image.get()) return {};
         image->readMetadata();
         const auto& exif = image->exifData();
         const auto text = [&](const char* key) {

@@ -281,9 +281,14 @@ function New-EmbedManifest {
 $repo = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 
 function Copy-NativeBundle([string]$Destination) {
-    if (-not $NativePrefix) { $script:NativePrefix = (& pkg-config --variable=prefix lensfun).Trim() }
-    if (-not (Test-Path -LiteralPath (Join-Path $NativePrefix "bin"))) {
-        throw "NativePrefix must contain the target native bin directory (LibRaw >= 0.22, OpenImageIO, Exiv2, Lensfun, GLib)."
+    $systemPrefix = (& pkg-config --variable=prefix lensfun).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $systemPrefix) { throw "Cannot discover the UCRT64 native prefix from Lensfun." }
+    if (-not $NativePrefix) { $script:NativePrefix = $systemPrefix }
+    $nativePrefixes = @($NativePrefix, $systemPrefix) | Select-Object -Unique
+    foreach ($prefix in $nativePrefixes) {
+        if (-not (Test-Path -LiteralPath (Join-Path $prefix "bin"))) {
+            throw "Native prefix bin directory missing: $prefix"
+        }
     }
     if (-not $LensfunDatabase) {
         $dataRoot = (& pkg-config --variable=datadir lensfun).Trim()
@@ -303,8 +308,12 @@ function Copy-NativeBundle([string]$Destination) {
             $dll = $Matches[1]
             if ($seen.ContainsKey($dll.ToLowerInvariant())) { continue }
             $seen[$dll.ToLowerInvariant()] = $true
-            $source = Join-Path (Join-Path $NativePrefix "bin") $dll
-            if (Test-Path -LiteralPath $source) {
+            $source = $null
+            foreach ($prefix in $nativePrefixes) {
+                $candidate = Join-Path (Join-Path $prefix "bin") $dll
+                if (Test-Path -LiteralPath $candidate) { $source = $candidate; break }
+            }
+            if ($source) {
                 $target = Join-Path $Destination $dll
                 Copy-Item -LiteralPath $source -Destination $target
                 $queue.Enqueue((Resolve-Path -LiteralPath $target).Path)
@@ -313,11 +322,19 @@ function Copy-NativeBundle([string]$Destination) {
             } else { throw "Unresolved native dependency $dll imported by $binary" }
         }
     }
-    $licenseRoot = Join-Path $NativePrefix "share\licenses"
-    if (-not (Test-Path -LiteralPath $licenseRoot)) { throw "Native license directory missing: $licenseRoot" }
     $licenses = Join-Path $Destination "licenses"
-    New-Item -ItemType Directory -Force -Path $licenses | Out-Null
-    Copy-Item -LiteralPath $licenseRoot -Destination (Join-Path $licenses "native") -Recurse
+    $licenseRoot = Join-Path $licenses "native"
+    New-Item -ItemType Directory -Force -Path $licenseRoot | Out-Null
+    foreach ($prefix in $nativePrefixes) {
+        $sourceRoot = Join-Path $prefix "share\licenses"
+        if (-not (Test-Path -LiteralPath $sourceRoot)) { throw "Native license directory missing: $sourceRoot" }
+        foreach ($entry in (Get-ChildItem -LiteralPath $sourceRoot)) {
+            $target = Join-Path $licenseRoot $entry.Name
+            if (-not (Test-Path -LiteralPath $target)) {
+                Copy-Item -LiteralPath $entry.FullName -Destination $target -Recurse
+            }
+        }
+    }
     foreach ($package in @("libraw", "openimageio", "exiv2", "lensfun", "glib2")) {
         if (-not (Get-ChildItem -LiteralPath $licenseRoot -Directory | Where-Object { $_.Name -like "*$package*" })) {
             throw "Required native license missing for $package"

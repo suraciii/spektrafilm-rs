@@ -31,7 +31,14 @@ jobs:
           python-version: '3.13'
 
       - name: Install Python image bindings
-        run: python -m pip install numpy OpenImageIO exiv2 colour-science==0.4.7
+        run: python -m pip install numpy OpenImageIO exiv2 colour-science==0.4.7 opencolorio mss Pillow pytesseract psutil pyautogui
+
+      - name: Install desktop OCR engine
+        shell: pwsh
+        run: |
+          choco install tesseract --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Tesseract installation failed" }
+          "C:\Program Files\Tesseract-OCR" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install native toolchain and dependencies
         uses: msys2/setup-msys2@v2
         with:
@@ -41,11 +48,20 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-binutils
             mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-libraw
+            make
+            curl
+            tar
+            mingw-w64-ucrt-x86_64-libjpeg-turbo
+            mingw-w64-ucrt-x86_64-lcms2
+            mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-lensfun
             mingw-w64-ucrt-x86_64-exiv2
             mingw-w64-ucrt-x86_64-glib2
             mingw-w64-ucrt-x86_64-openimageio
+
+      - name: Build pinned LibRaw 0.22.0
+        shell: msys2 {0}
+        run: bash scripts/build_windows_libraw.sh "$RUNNER_TEMP/libraw-022"
 
       - name: Install matching Rust target
         shell: pwsh
@@ -54,14 +70,15 @@ jobs:
       - name: Package native application
         shell: pwsh
         run: |
-          $env:PATH = "C:\msys64\ucrt64\bin;" + $env:PATH
+          $nativePrefix = Join-Path $env:RUNNER_TEMP 'libraw-022'
+          $env:PATH = "$nativePrefix\bin;C:\msys64\ucrt64\bin;" + $env:PATH
           $env:CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu"
           $env:CC = "gcc"
           $env:CXX = "g++"
           $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "gcc"
-          $env:PKG_CONFIG_PATH = "C:\msys64\ucrt64\lib\pkgconfig"
+          $env:PKG_CONFIG_PATH = "$nativePrefix\lib\pkgconfig;C:\msys64\ucrt64\lib\pkgconfig"
           $env:PKG_CONFIG_ALLOW_CROSS = "1"
-          $env:SPEKTRAFILM_NATIVE_PREFIX = "C:\msys64\ucrt64"
+          $env:SPEKTRAFILM_NATIVE_PREFIX = $nativePrefix
           $env:SPEKTRAFILM_RELEASE_SUBDIR = "x86_64-pc-windows-gnu\release"
           pkg-config --atleast-version=0.22.0 libraw
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
@@ -129,6 +146,7 @@ jobs:
             'rawpy~=0.26.1' 'exiv2~=0.18.1' 'lensfunpy~=1.18.0' \
             'markdown~=3.7' 'opencolorio~=2.5'
           python -m pip install --no-deps -e "$RUNNER_TEMP/spektrafilm-python"
+          python -m pip install mss Pillow pytesseract psutil pyautogui
 
       - name: Install native build dependencies
         shell: bash
@@ -138,7 +156,8 @@ jobs:
             build-essential patchelf pkg-config curl ca-certificates \
             libgtk-3-dev libudev-dev libxkbcommon-dev libxkbcommon-x11-0 \
             liblensfun-dev libexiv2-dev libglib2.0-dev libopenimageio-dev \
-            libjpeg-dev zlib1g-dev liblcms2-dev libopenblas-dev xvfb xauth
+            libjpeg-dev zlib1g-dev liblcms2-dev libopenblas-dev xvfb xauth \
+            openbox xdotool xclip x11-utils zenity tesseract-ocr
 
       - name: Build pinned LibRaw 0.22.0
         shell: bash
@@ -211,7 +230,7 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           BUILD_TARGET_DIR=target RELEASE_SUBDIR=release \
             bash scripts/package_linux_app.sh
-          xvfb-run -a python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --gui dist/spektrafilm-linux-x64/bin/spektrafilm-gui --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
+          xvfb-run -a -s '-screen 0 1600x1000x24' python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --gui dist/spektrafilm-linux-x64/bin/spektrafilm-gui --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
         if: always()
@@ -249,12 +268,12 @@ jobs:
           python-version: '3.13'
 
       - name: Install Python image bindings
-        run: python -m pip install numpy OpenImageIO exiv2 colour-science==0.4.7
+        run: python -m pip install numpy OpenImageIO exiv2 colour-science==0.4.7 opencolorio mss Pillow pytesseract psutil pyautogui
 
       - name: Install native dependencies
         shell: bash
         run: |
-          brew install libraw lensfun exiv2 glib openimageio pkg-config
+          brew install libraw lensfun exiv2 glib openimageio pkg-config tesseract
           pkg-config --atleast-version=0.22.0 libraw
 
       - name: Package app bundle
