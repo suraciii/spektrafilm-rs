@@ -77,10 +77,11 @@ jobs:
           $env:CXX = "g++"
           $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "gcc"
           $env:PKG_CONFIG_PATH = "$nativePrefix\lib\pkgconfig;C:\msys64\ucrt64\lib\pkgconfig"
+          $env:PKG_CONFIG = "C:\msys64\ucrt64\bin\pkgconf.exe"
           $env:PKG_CONFIG_ALLOW_CROSS = "1"
           $env:SPEKTRAFILM_NATIVE_PREFIX = $nativePrefix
           $env:SPEKTRAFILM_RELEASE_SUBDIR = "x86_64-pc-windows-gnu\release"
-          pkg-config --atleast-version=0.22.0 libraw
+          & $env:PKG_CONFIG --atleast-version=0.22.0 libraw
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
           cargo test --workspace --features precision-f64
           if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }

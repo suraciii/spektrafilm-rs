@@ -38,7 +38,11 @@ fn link_libraw(library: &pkg_config::Library) {
     // Cargo merges native search paths across crates. Give this link artifact a
     // unique name so OpenImageIO's system -L cannot select an older LibRaw ABI.
     // The shared library's SONAME/install name still controls runtime loading.
-    let filename = format!("spektrafilm_selected_{}", selected.file_name().unwrap().to_string_lossy());
+    let filename = if apple {
+        format!("libspektrafilm_selected_raw.{}", if is_static { "a" } else { "dylib" })
+    } else {
+        format!("spektrafilm_selected_{}", selected.file_name().unwrap().to_string_lossy())
+    };
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
     let staged = out.join(&filename);
     if staged.exists() || staged.symlink_metadata().is_ok() {
@@ -50,8 +54,13 @@ fn link_libraw(library: &pkg_config::Library) {
     fs::copy(&selected, &staged).expect("stage selected LibRaw import library");
     println!("cargo:rerun-if-changed={}", selected.display());
     println!("cargo:rustc-link-search=native={}", out.display());
-    let name = if apple || msvc { staged.to_string_lossy().into_owned() } else { filename };
-    println!("cargo:rustc-link-lib={}:+verbatim={name}", if is_static { "static" } else { "dylib" });
+    let kind = if is_static { "static" } else { "dylib" };
+    if apple {
+        println!("cargo:rustc-link-lib={kind}=spektrafilm_selected_raw");
+    } else {
+        let name = if msvc { staged.to_string_lossy().into_owned() } else { filename };
+        println!("cargo:rustc-link-lib={kind}:+verbatim={name}");
+    }
     for path in &library.link_paths {
         println!("cargo:rustc-link-search=native={}", path.display());
     }

@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$pkgConfig = if ($env:PKG_CONFIG) { $env:PKG_CONFIG } else { "pkg-config" }
 
 function Write-U16([System.IO.BinaryWriter]$Writer, [int]$Value) {
     $Writer.Write([uint16]$Value)
@@ -281,7 +282,7 @@ function New-EmbedManifest {
 $repo = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 
 function Copy-NativeBundle([string]$Destination) {
-    $systemPrefix = (& pkg-config --variable=prefix lensfun).Trim()
+    $systemPrefix = (& $pkgConfig --variable=prefix lensfun).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $systemPrefix) { throw "Cannot discover the UCRT64 native prefix from Lensfun." }
     if (-not $NativePrefix) { $script:NativePrefix = $systemPrefix }
     $nativePrefixes = @($NativePrefix, $systemPrefix) | Select-Object -Unique
@@ -291,7 +292,7 @@ function Copy-NativeBundle([string]$Destination) {
         }
     }
     if (-not $LensfunDatabase) {
-        $dataRoot = (& pkg-config --variable=datadir lensfun).Trim()
+        $dataRoot = (& $pkgConfig --variable=datadir lensfun).Trim()
         $script:LensfunDatabase = Join-Path $dataRoot "lensfun\version_1"
     }
     if (-not (Test-Path -LiteralPath $LensfunDatabase)) { throw "Lensfun database missing: $LensfunDatabase" }
@@ -350,10 +351,10 @@ $iconPath = Join-Path $repo "target\packaging\spektrafilm.ico"
 
 Push-Location $repo
 try {
-    & pkg-config --atleast-version=0.22.0 libraw
+    & $pkgConfig --atleast-version=0.22.0 libraw
     if ($LASTEXITCODE -ne 0) { throw "Native LibRaw >= 0.22.0 is required for reference RAW parity." }
     foreach ($package in @("OpenImageIO", "exiv2", "lensfun", "glib-2.0")) {
-        & pkg-config --exists $package
+        & $pkgConfig --exists $package
         if ($LASTEXITCODE -ne 0) { throw "Native development package missing: $package" }
     }
     New-AppIcon -Source $IconSource -Destination $iconPath
