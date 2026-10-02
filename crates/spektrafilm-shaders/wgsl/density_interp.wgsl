@@ -17,9 +17,9 @@ struct Params {
 @group(0) @binding(2) var<storage, read> density_table: array<f32>;     // [table_len*3]
 @group(0) @binding(3) var<storage, read_write> density_out: array<f32>; // [H*W*3]
 
-@compute @workgroup_size(1024)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let pixel_idx = gid.x;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
+    let pixel_idx = gid.x + gid.y * grid.x * 256u;
     let total_pixels = params.width * params.height;
     if pixel_idx >= total_pixels {
         return;

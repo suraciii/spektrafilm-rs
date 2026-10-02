@@ -236,6 +236,15 @@ Independent executed checks establish:
   LibRaw below 0.22. The fixes retain the native contracts: get() pointer checks,
   installed-header-based fmt/Imath include discovery, and checksum-pinned UCRT64
   LibRaw 0.22 build with merged native dependency/license packaging.
+- Workflow 37055584083 exposed adapter workgroup limits below 1024, GLib's
+  Homebrew-installed SPDX license filename, and a partially written output after
+  native Cancel. Linear GPU kernels now use portable workgroups and a two-dimensional
+  dispatch grid. The integrated workspace passed 192 tests after these repairs.
+  The license collector includes installed SPDX-named full license texts.
+- Export writes a guarded sibling staging file and publishes it atomically only
+  after the UI accepts successful completion without cancellation. The rebuilt
+  Linux package passed the full native GUI/RAW/LUT smoke, including real in-flight
+  Cancel and close with no output, child or staged-image/state-JSON residue.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

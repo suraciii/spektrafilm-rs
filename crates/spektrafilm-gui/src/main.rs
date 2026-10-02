@@ -291,12 +291,12 @@ struct RenderResult {
 
 /// One in-flight f64 export. The worker thread owns the child
 /// process and polls `cancel` in its wait loop. On completion the
-/// worker sends `Ok(elapsed_seconds, output_filename)` or `Err(msg)`;
-/// `Err("cancelled")` is also produced when the cancel flag is set.
+/// worker sends the staged image with `Ok(elapsed_seconds, output_filename)`
+/// or `Err(msg)`. The UI publishes it only if cancellation was not requested.
 /// The join handle is held so we can `join()` after consuming the
 /// message and on `on_exit` to drain the worker before the process dies.
 struct ExportJob {
-    rx: mpsc::Receiver<Result<(f32, String), String>>,
+    rx: mpsc::Receiver<Result<(f32, String, TempPath), String>>,
     handle: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
     started_at: Instant,
@@ -863,7 +863,7 @@ impl App {
                     .unwrap_or("(file)")
                     .to_string();
                 let msg = match res {
-                    Ok(()) => Ok((started_at.elapsed().as_secs_f32(), name)),
+                    Ok(staged) => Ok((started_at.elapsed().as_secs_f32(), name, staged)),
                     Err(e) => Err(format!("{e:#}")),
                 };
                 let _ = tx.send(msg);
@@ -922,9 +922,14 @@ impl App {
         if let Some(h) = job.handle.take() {
             let _ = h.join();
         }
+        let cancelled = job.cancel.load(Ordering::SeqCst);
         self.export_job = None;
         self.status = match msg {
-            Ok((secs, name)) => format!("Exported (f64 CPU) {name} in {secs:.1} s"),
+            Ok((_, _, _)) if cancelled => "Export cancelled.".into(),
+            Ok((secs, name, staged)) => match staged.publish() {
+                Ok(()) => format!("Exported (f64 CPU) {name} in {secs:.1} s"),
+                Err(e) => format!("Export error: {e:#}"),
+            },
             Err(e) if e.contains("cancelled") => "Export cancelled.".into(),
             Err(e) => format!("Export error: {e}"),
         };
@@ -2033,11 +2038,17 @@ fn which_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// RAII guard so the params tempfile is unlinked on every code path
-/// (early `?` return, panic during `Command::output`, normal exit).
-/// Without this, a failed `serde_json::to_writer` or a panic mid-spawn
-/// would leak user-state JSON into the OS temp dir.
-struct TempPath(PathBuf);
+/// Removes export state and staged images on cancellation, failure, or close.
+/// A staged image keeps its destination so only the UI can publish completion.
+struct TempPath(PathBuf, Option<PathBuf>);
+
+impl TempPath {
+    fn publish(self) -> Result<()> {
+        let destination = self.1.as_ref().context("missing export destination")?;
+        std::fs::rename(&self.0, destination)
+            .with_context(|| format!("publishing export {}", destination.display()))
+    }
+}
 
 impl Drop for TempPath {
     fn drop(&mut self) {
@@ -2063,7 +2074,7 @@ fn run_f64_export(
     save_depth: BitDepth,
     gui_state: &serde_json::Value,
     cancel: &AtomicBool,
-) -> Result<()> {
+) -> Result<TempPath> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -2071,7 +2082,15 @@ fn run_f64_export(
     let temp = TempPath(std::env::temp_dir().join(format!(
         "spektrafilm-export-{}-{nanos}.json",
         std::process::id()
-    )));
+    )), None);
+    // Preserve the extension for CLI format selection and keep staging on
+    // the destination filesystem so publication is one atomic rename.
+    let staged_name = format!(
+        "spektrafilm-export-{}-{nanos}.{}",
+        std::process::id(),
+        output.extension().and_then(|s| s.to_str()).unwrap_or("png")
+    );
+    let staged = TempPath(output.with_file_name(staged_name), Some(output.to_path_buf()));
     {
         let f = std::fs::File::create(&temp.0)
             .with_context(|| format!("creating params tempfile {}", temp.0.display()))?;
@@ -2087,7 +2106,7 @@ fn run_f64_export(
         .arg("process")
         .arg(input)
         .arg("-o")
-        .arg(output)
+        .arg(&staged.0)
         .arg("--bit-depth")
         .arg(save_depth.bits().to_string())
         .arg("--film")
@@ -2129,13 +2148,21 @@ fn run_f64_export(
     // Poll loop. 100 ms is responsive to a Cancel click without
     // burning CPU while the export grinds through CPU f64 math.
     let status = loop {
-        if let Some(s) = child.try_wait().context("waiting for f64 CLI")? {
-            break s;
-        }
+        let completed = match child.try_wait() {
+            Ok(status) => status,
+            Err(e) => {
+                let _ = child.kill();
+                child.wait().context("reaping f64 CLI after wait failure")?;
+                return Err(e).context("waiting for f64 CLI");
+            }
+        };
         if cancel.load(Ordering::SeqCst) {
             let _ = child.kill();
-            let _ = child.wait();
+            child.wait().context("reaping cancelled f64 CLI")?;
             anyhow::bail!("cancelled");
+        }
+        if let Some(status) = completed {
+            break status;
         }
         std::thread::sleep(Duration::from_millis(100));
     };
@@ -2162,7 +2189,7 @@ fn run_f64_export(
             }
         );
     }
-    Ok(())
+    Ok(staged)
 }
 
 /// macOS only: walk from the eframe `RawWindowHandle` down to the

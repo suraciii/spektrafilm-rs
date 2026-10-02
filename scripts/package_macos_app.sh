@@ -207,7 +207,13 @@ bundle_native_licenses() {
         (( seen == 0 )) || continue
         roots+=("$root")
         found=0
+        # Homebrew installs resolved metafiles under their target basename:
+        # https://github.com/Homebrew/brew/blob/2170a64c0ff9549d78a9b48b26217d9fd17f6a2d/Library/Homebrew/extend/pathname.rb#L375
+        # GLib 2.88.3 COPYING -> LICENSES/LGPL-2.1-or-later.txt therefore
+        # becomes LGPL-2.1-or-later.txt at the keg root. Include SPDX filenames
+        # and LICENSES directories, copying readable symlinks as full text.
         while IFS= read -r -d '' file; do
+            [[ -f "$file" && -s "$file" ]] || continue
             case "$(basename "$file")" in
                 [Rr][Ee][Aa][Dd][Mm][Ee]*)
                     awk 'tolower($0) ~ /license|copyright/ { found = 1 } END { exit !found }' "$file" || continue
@@ -217,7 +223,7 @@ bundle_native_licenses() {
             mkdir -p "$output/$formula/$(dirname "$relative")"
             cp "$file" "$output/$formula/$relative"
             found=1
-        done < <(find "$root" -type f \( -iname '*LICENSE*' -o -iname '*COPYING*' -o -iname '*COPYRIGHT*' -o -iname 'README*' \) -print0)
+        done < <(find "$root" \( -type f -o -type l \) \( -iname '*LICENSE*' -o -iname '*LICENCE*' -o -iname '*COPYING*' -o -iname '*COPYRIGHT*' -o -iname '*GPL*.txt' -o -iname 'Apache-*.txt' -o -iname 'MIT.txt' -o -iname 'BSD-*.txt' -o -iname 'MPL-*.txt' -o -iname 'ISC.txt' -o -iname 'CC0-*.txt' -o -iname 'CC-BY-*.txt' -o -ipath '*/LICENSES/*' -o -iname 'README*' \) -print0)
         # Keep the installed formula's SPDX declaration and source provenance as well.
         if [[ -d "$root/.brew" ]]; then cp -R "$root/.brew" "$output/$formula/"; fi
         (( found == 1 )) || fail "missing native license files for $formula ($root)"

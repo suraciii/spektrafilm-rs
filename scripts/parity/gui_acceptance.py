@@ -168,6 +168,8 @@ class X11:
                 self.snap('control-' + label.replace(' ', '-'), image, lines)
                 return matches[0]
         x, y = wait_for(locate, f'visible control {label}', 20)
+        if label == 'Cancel':
+            self.require_export_in_flight('Cancel')
         self.xd('mousemove', '--window', self.window, int(x), int(y))
         self.xd('click', 1)
         time.sleep(.15)
@@ -275,6 +277,7 @@ class X11:
                             executable = Path(child.exe())
                             created = child.create_time()
                             self.children[child.pid] = created
+                            self.current_export_child = (child.pid, created)
                             actual_hash = hashlib.sha256(executable.read_bytes()).hexdigest()
                             require(actual_hash == self.exporter_hash,
                                     f'GUI discovered exporter outside delivered package: {executable}')
@@ -298,6 +301,16 @@ class X11:
         if self.watch_error:
             raise self.watch_error
 
+    def require_export_in_flight(self, action):
+        pid, created = self.current_export_child
+        try:
+            child = self.psutil.Process(pid)
+            alive = child.create_time() == created and child.is_running() and child.status() != self.psutil.STATUS_ZOMBIE
+        except self.psutil.NoSuchProcess:
+            alive = False
+        require(alive, f'{action} did not target an actual in-flight export child: {pid}')
+        self.records.append({'in_flight_export_action': action, 'export_child_pid': pid})
+
     def no_children(self):
         def gone():
             for pid, created in self.children.items():
@@ -311,8 +324,10 @@ class X11:
         wait_for(gone, 'export children reaped', 15)
         self.records.append({'export_children_reaped': list(self.children)})
 
-    def close(self):
+    def close(self, exporting=False):
         self.xd('windowactivate', '--sync', self.window)
+        if exporting:
+            self.require_export_in_flight('close')
         self.xd('key', 'alt+F4')
         self.proc.wait(timeout=30)
         require(self.proc.returncode == 0, f'GUI closed with status {self.proc.returncode}')
@@ -559,8 +574,10 @@ class Desktop(X11):
         self.input.press('enter')
         wait_for(lambda: not self.dialog_visible(), 'native chooser accepted path', 20)
 
-    def close(self):
+    def close(self, exporting=False):
         self.focus()
+        if exporting:
+            self.require_export_in_flight('close')
         self.input.hotkey('command', 'q') if sys.platform == 'darwin' else self.input.hotkey('alt', 'f4')
         self.proc.wait(timeout=30)
         require(self.proc.returncode == 0, f'GUI close status {self.proc.returncode}')
@@ -721,13 +738,15 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.wait_text(r'Export cancelled', 'cancelled-export', timeout=30)
         driver.no_children()
         require(not cancelled.exists(), 'Cancelled export left an output image')
+        leftovers = list(root.rglob('spektrafilm-export-*'))
+        require(not leftovers, f'Cancelled export temporary files survived: {leftovers}')
         closed = root / 'closed.exr'
         driver.file_action('Export', closed, True)
         driver.capture_export_child(exporter)
         driver.snap('close-export-in-flight')
-        driver.close()
+        driver.close(exporting=True)
         require(not closed.exists(), 'Closing in-flight export left an output image')
-        leftovers = list((root / 'temp').rglob('spektrafilm-export-*'))
+        leftovers = list(root.rglob('spektrafilm-export-*'))
         require(not leftovers, f'Export temporary files survived: {leftovers}')
         driver.records.append({'startup_restore': True, 'raw_input_space': 'ACES2065-1',
                                'cancel_output_absent': True, 'close_output_absent': True,

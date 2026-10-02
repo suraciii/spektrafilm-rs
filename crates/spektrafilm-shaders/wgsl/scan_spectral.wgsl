@@ -30,9 +30,9 @@ struct Params {
 @group(0) @binding(7) var<storage, read> cmf_z: array<f32>;             // [N_WL]
 @group(0) @binding(8) var<storage, read_write> output_rgb: array<f32>;  // [H*W*3]
 
-@compute @workgroup_size(1024)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let pixel_idx = gid.x;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
+    let pixel_idx = gid.x + gid.y * grid.x * 256u;
     let total_pixels = params.width * params.height;
     if pixel_idx >= total_pixels {
         return;
