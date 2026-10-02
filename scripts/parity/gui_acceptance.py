@@ -583,7 +583,9 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             button = int(args[-1])
             count = int(args[args.index('--repeat') + 1]) if '--repeat' in args else 1
             if button in (4, 5):
-                self.input.scroll(count * (1 if button == 4 else -1))
+                for _ in range(count):
+                    self.input.scroll(1 if button == 4 else -1)
+                    time.sleep(.02)
             else:
                 self.input.click(clicks=count, interval=.01)
         else:
@@ -603,8 +605,8 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             end if
         end repeat
     end if
-    set kind to subrole of w
-    if kind is "AXDialog" or kind is "AXSystemDialog" or name of w is not "spektrafilm" then
+    set panelSubrole to subrole of w
+    if panelSubrole is "AXDialog" or panelSubrole is "AXSystemDialog" or name of w is not "spektrafilm" then
         set hasAction to false
         set hasCancel to false
         repeat with element in entire contents of w
