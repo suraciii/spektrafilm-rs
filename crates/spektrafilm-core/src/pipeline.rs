@@ -57,15 +57,6 @@ use crate::profile::Profile;
 use crate::spectral_service;
 use crate::stages;
 
-fn apply_film_specific_params(film: &Profile, params: &mut RuntimeParams) {
-    // Stock-specific overrides (DIR couplers, halation preset, slide-film
-    // retunes) + the B&W engine-layout broadcast. Kept on the construction
-    // and rebuild paths so a caller that hands over undigested user params
-    // still gets the stock behaviour; `params_builder::digest_params`
-    // applies the same constants, so the double application is idempotent.
-    crate::params_builder::apply_film_specifics(params, film);
-    crate::params_builder::broadcast_monochrome_layout(film, params);
-}
 
 #[derive(Clone)]
 pub struct Pipeline {
@@ -131,7 +122,7 @@ impl Pipeline {
     pub fn with_params(mut self, params: RuntimeParams) -> Self {
         let mut params = params;
         params.validate_color().expect("invalid colour configuration");
-        apply_film_specific_params(&self.film, &mut params);
+        crate::params_builder::broadcast_monochrome_layout(&self.film, &mut params);
         if spectral_controls_key(&self.params) != spectral_controls_key(&params) {
             if let Some(data_dir) = self.data_dir.clone() {
                 match Self::new_with_spectral(
@@ -184,6 +175,7 @@ fn spectral_controls_key(params: &RuntimeParams) -> SpectralControlsKey {
         use_cat16: params.settings.use_cat16,
         filter_uv: params.camera.filter_uv,
         filter_ir: params.camera.filter_ir,
+        input_gamut_active: params.io.input_gamut_compress.active,
         input_gamut_algorithm: params.io.input_gamut_compress.algorithm.clone(),
         input_gamut_knee: params.io.input_gamut_compress.knee,
     }
@@ -198,6 +190,7 @@ struct SpectralControlsKey {
     use_cat16: bool,
     filter_uv: [f32; 3],
     filter_ir: [f32; 3],
+    input_gamut_active: bool,
     input_gamut_algorithm: String,
     input_gamut_knee: [f32; 3],
 }
@@ -217,6 +210,8 @@ impl Pipeline {
         // an unresolved family would read development-time columns as
         // R/G/B channels.
         let film = crate::profile::resolve_for_render(film, params.film_render.development_time);
+        let mut params = params;
+        crate::params_builder::broadcast_monochrome_layout(&film, &mut params);
         let print = crate::profile::resolve_for_render(print, params.print_render.development_time);
         let print_illuminant = enlarger::enlarger_filtered_illuminant_f64(
             &params.enlarger.illuminant,
@@ -262,13 +257,9 @@ impl Pipeline {
         let film = crate::profile::resolve_for_render(film, params.film_render.development_time);
         let print = crate::profile::resolve_for_render(print, params.print_render.development_time);
 
-        // Python parity: mirror `_apply_film_specifics` in
-        // `spektrafilm/runtime/params_builder.py`. Python applies these
-        // overrides inside `digest_params()` before the pipeline runs,
-        // so a fresh `RuntimeParams::default()` does NOT match what
-        // Python uses. The DIR-coupler gammas in particular differ
-        // between positive and negative films.
-        apply_film_specific_params(&film, &mut params);
+        // Stock defaults belong to profile selection / digest_params, so
+        // construction preserves later user edits and debug deactivation.
+        crate::params_builder::broadcast_monochrome_layout(&film, &mut params);
 
         // Python parity: look up per-(print, illuminant, film) neutral filter values from
         // the JSON database — matches `apply_database_neutral_print_filters`. Defaults to
@@ -741,15 +732,14 @@ impl Pipeline {
     /// Process an image with explicit pipeline taps — the Rust spelling of
     /// upstream `SimulationPipeline.process(image, inject, collect)`.
     ///
-    /// `inject`/`collect` of `None` mean the defaults (`rgb_in` /
-    /// `rgb_out`). Injecting at `log_e_film` or later bypasses the camera
+    /// Omitted endpoints use persistent `params.taps`, then `rgb_in` /
+    /// `rgb_out`. Injecting at `log_e_film` or later bypasses the camera
     /// (and film) stages upstream of the injection point; collecting at
     /// `cmy_film` returns film densities instead of final RGB. Invalid or
     /// unreachable pairs fail with the upstream error text.
     ///
-    /// The fused GPU-resident fast path is bypassed whenever a tap is set:
-    /// taps need the per-stage boundaries, and the resident chain fuses
-    /// them. Default taps keep [`Pipeline::process`] on the fast path.
+    /// Nondefault endpoints use per-stage boundaries. The normal end-to-end
+    /// pair retains the fused GPU-resident path and full-input preparation.
     pub fn process_with_taps(
         &self,
         image: ImageBuf,
@@ -757,8 +747,19 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<ImageBuf, String> {
-        let inject = inject.unwrap_or(Tap::RgbIn);
-        let collect = collect.unwrap_or(Tap::RgbOut);
+        let inject = match inject {
+            Some(tap) => tap,
+            None => self.params.taps.inject.as_deref().map(Tap::parse)
+                .transpose()?.unwrap_or(Tap::RgbIn),
+        };
+        let collect = match collect {
+            Some(tap) => tap,
+            None => self.params.taps.collect.as_deref().map(Tap::parse)
+                .transpose()?.unwrap_or(Tap::RgbOut),
+        };
+        if inject == Tap::RgbIn && collect == Tap::RgbOut {
+            return self.process_full(image, backend);
+        }
         tracing::info!(inject = inject.name(), collect = collect.name(), "pipeline: start");
         let color_ref = crate::color_reference::ColorReference::compute(
             &self.film,
@@ -772,6 +773,10 @@ impl Pipeline {
     }
 
     pub fn process(&self, image: ImageBuf, backend: &dyn ComputeBackend) -> Result<ImageBuf, String> {
+        self.process_with_taps(image, backend, None, None)
+    }
+
+    fn process_full(&self, image: ImageBuf, backend: &dyn ComputeBackend) -> Result<ImageBuf, String> {
         let stage_timings = stage_timings_enabled();
         let ae_ev = self.meter_autoexposure(&image);
         let image = self.apply_autoexposure(image, ae_ev);
@@ -851,6 +856,13 @@ impl Pipeline {
         image: &ImageBuf,
         backend: &dyn ComputeBackend,
     ) -> Result<Option<ImageBuf>, String> {
+        let inject = self.params.taps.inject.as_deref().map(Tap::parse)
+            .transpose()?.unwrap_or(Tap::RgbIn);
+        let collect = self.params.taps.collect.as_deref().map(Tap::parse)
+            .transpose()?.unwrap_or(Tap::RgbOut);
+        if inject != Tap::RgbIn || collect != Tap::RgbOut {
+            return Ok(None);
+        }
         if self.tc_lut.is_none() && self.mallett_core.is_none() {
             return Ok(None);
         }
@@ -1507,5 +1519,86 @@ mod spectral_invalidation_tests {
             base_lut,
             "non-spectral change must not rebuild the TC LUT"
         );
+    }
+
+    #[test]
+    fn stock_edits_survive_construction_updates_and_spectral_rebuild() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "fujifilm_velvia_100").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let seeded = crate::params_builder::digest_params(RuntimeParams::default(), &film, &print, None, true);
+        let mut edited = seeded;
+        edited.film_render.halation.halation_strength = [0.3, 0.2, 0.1];
+        edited.film_render.halation.halation_first_sigma_um = [13.0, 17.0, 23.0];
+        edited.film_render.dir_couplers.gamma_samelayer_rgb = [0.9, 0.8, 0.7];
+        edited.film_render.dir_couplers.gamma_interlayer_r_to_gb = [0.4, 0.3];
+        let params = crate::params_builder::digest_params(edited, &film, &print, None, false);
+        let mut pipeline = Pipeline::new_with_spectral(film, print, params.clone(), &dir).unwrap();
+        assert_eq!(pipeline.params.film_render.halation.halation_strength, [0.3, 0.2, 0.1]);
+        assert_eq!(pipeline.params.film_render.halation.halation_first_sigma_um, [13.0, 17.0, 23.0]);
+        assert_eq!(pipeline.params.film_render.dir_couplers.gamma_samelayer_rgb, [0.9, 0.8, 0.7]);
+        for rebuild in [false, true] {
+            let mut updated = params.clone();
+            if rebuild { updated.settings.spectral_gaussian_blur = 8.0; }
+            pipeline = pipeline.with_params(updated);
+            assert_eq!(pipeline.params.film_render.halation.halation_strength, [0.3, 0.2, 0.1]);
+            assert_eq!(pipeline.params.film_render.halation.halation_first_sigma_um, [13.0, 17.0, 23.0]);
+            assert_eq!(pipeline.params.film_render.dir_couplers.gamma_samelayer_rgb, [0.9, 0.8, 0.7]);
+            assert_eq!(pipeline.params.film_render.dir_couplers.gamma_interlayer_r_to_gb, [0.4, 0.3]);
+        }
+        let mut deactivated = params;
+        deactivated.debug.deactivate_spatial_effects = true;
+        let deactivated = crate::params_builder::digest_params(deactivated, &pipeline.film, &pipeline.print, None, false);
+        let pipeline = pipeline.with_params(deactivated);
+        assert_eq!(pipeline.params.film_render.halation.halation_first_sigma_um, [0.0; 3]);
+    }
+
+    #[test]
+    fn input_gamut_active_toggle_matches_fresh_lut() {
+        let base = build();
+        let mut updated = base.clone();
+        for active in [false, true] {
+            let mut params = base.params.clone();
+            params.io.input_gamut_compress.active = active;
+            let rebuilt = updated.with_params(params.clone());
+            let fresh = Pipeline::new_with_spectral(base.film.clone(), base.print.clone(), params, &data_dir()).unwrap();
+            assert_eq!(lut_data(&rebuilt), lut_data(&fresh));
+            assert_eq!(rebuilt.print_exposure_factor(), fresh.print_exposure_factor());
+            if !active { assert_ne!(lut_data(&rebuilt), lut_data(&base)); }
+            updated = rebuilt;
+        }
+    }
+
+    #[test]
+    fn persistent_taps_and_explicit_precedence_follow_topology() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.debug.lut_mode = true;
+        params.io.crop = true;
+        params.io.crop_size = [0.5, 0.5];
+        params.taps.inject = Some("log_e_film".into());
+        params.taps.collect = Some("cmy_film".into());
+        let params = crate::params_builder::digest_params(params, &film, &print, None, true);
+        let pipeline = Pipeline::new(film, print, params);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(8, 8, vec![from_f64(-1.0); 8 * 8 * 3]);
+        let expected = pipeline.process_with_taps(image.clone(), &backend, Some(Tap::LogEFilm), Some(Tap::CmyFilm)).unwrap();
+        assert_eq!(pipeline.process(image.clone(), &backend).unwrap().data, expected.data);
+        assert_eq!(pipeline.process_with_taps(image.clone(), &backend, None, None).unwrap().data, expected.data);
+        let unchanged = pipeline.process_with_taps(image.clone(), &backend, None, Some(Tap::LogEFilm)).unwrap();
+        assert_eq!(unchanged.data, image.data);
+        let unchanged = pipeline.process_with_taps(image.clone(), &backend, Some(Tap::CmyFilm), None).unwrap();
+        assert_eq!(unchanged.data, image.data);
+        assert_eq!((expected.width, expected.height), (8, 8));
+        assert!(pipeline.process_resident_borrowed(&image, &backend).unwrap().is_none());
+        let image = ImageBuf::from_data(8, 8, vec![from_f64(0.184); 8 * 8 * 3]);
+        let normal = pipeline.process_with_taps(image.clone(), &backend, Some(Tap::RgbIn), Some(Tap::RgbOut)).unwrap();
+        assert_eq!((normal.width, normal.height), (4, 4));
+        let mut params = pipeline.params.clone();
+        params.taps = Default::default();
+        let default = pipeline.with_params(params).process(image, &backend).unwrap();
+        assert_eq!(normal.data, default.data);
     }
 }

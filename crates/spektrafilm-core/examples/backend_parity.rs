@@ -1,6 +1,6 @@
 // Run after integrating geometry and central color semantics.
 // cargo run -p spektrafilm-core --example backend_parity --features precision-f64 -- data
-use spektrafilm_core::{params::RuntimeParams, pipeline::Pipeline, profile};
+use spektrafilm_core::{params::{RuntimeParams, Tap}, pipeline::Pipeline, profile};
 use spektrafilm_gpu::{ComputeBackend, cpu_backend::CpuBackend, wgpu_backend::WgpuBackend};
 use spektrafilm_math::{image::ImageBuf, precision::{from_f64, to_f64}};
 use std::path::PathBuf;
@@ -79,7 +79,11 @@ fn main() -> Result<(), String> {
                 }
                 let pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p, &dir)?;
                 let reference = pipeline.process_with_taps(input.clone(), &cpu, None, None)?;
-                let stages = pipeline.process_with_taps(input.clone(), &gpu, None, None)?;
+                // Split immediately before scanning to force stage dispatch while
+                // preserving full-input metering and physical pitch upstream.
+                let scan_input = if pipeline.params.io.scan_film { Tap::CmyFilm } else { Tap::CmyPrint };
+                let densities = pipeline.process_with_taps(input.clone(), &gpu, Some(Tap::RgbIn), Some(scan_input))?;
+                let stages = pipeline.process_with_taps(densities, &gpu, Some(scan_input), Some(Tap::RgbOut))?;
                 let routed = pipeline.process(input.clone(), &gpu)?;
                 let resident = pipeline.process_resident_borrowed(&input, &gpu)?;
                 if resident.is_some() != resident_expected { return Err(format!("{space}/{encoded}/{case}: unexpected resident route")); }

@@ -222,6 +222,7 @@ mod integration_tests {
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
         params.camera.auto_exposure = false;
+        let params = crate::params_builder::digest_params(params, &film, &print, None, true);
 
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
         let mut data = Vec::with_capacity(64 * 64 * 3);
@@ -237,15 +238,6 @@ mod integration_tests {
         let pipeline = Pipeline::new_with_spectral(film, print, params.clone(), &dir)
             .unwrap()
             .with_params(params);
-        assert_eq!(
-            pipeline
-                .params
-                .film_render
-                .dir_couplers
-                .gamma_samelayer_rgb,
-            [0.12, 0.08, 0.06],
-            "GUI-style with_params must preserve positive-film DIR parameters"
-        );
         let result = pipeline.process(img, &backend).unwrap();
         let mut clipped_low = 0usize;
         let mut clipped_high = 0usize;
@@ -449,44 +441,6 @@ mod scan_semantics_tests {
         assert!(!any_darker, "glare darkened pixels — wrong sign");
     }
 
-    #[test]
-    fn halation_presets_follow_use_and_antihalation_tags() {
-        let dir = data_dir();
-        // kodak_portra_400: (still, strong) film → 65 μm / weak red halo.
-        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let pipeline = Pipeline::new_with_spectral(film, print.clone(), RuntimeParams::default(), &dir)
-            .expect("spectral pipeline");
-        let h = &pipeline.params.film_render.halation;
-        assert_eq!(h.halation_first_sigma_um, [65.0, 65.0, 65.0]);
-        assert_eq!(h.halation_strength, [0.015, 0.005, 0.0]);
-
-        // kodak_vision3_250d: (cine, strong) film → PET backing, 50 μm.
-        let film = profile::load_profile_by_name(&dir, "kodak_vision3_250d").unwrap();
-        let pipeline = Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir)
-            .expect("spectral pipeline");
-        let h = &pipeline.params.film_render.halation;
-        assert_eq!(h.halation_first_sigma_um, [50.0, 50.0, 50.0]);
-        assert_eq!(h.halation_strength, [0.015, 0.005, 0.0]);
-    }
-
-    #[test]
-    fn slide_stock_dir_overrides_velvia_and_provia() {
-        let dir = data_dir();
-        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        for (stock, same, r_gb) in [
-            ("fujifilm_velvia_100", [0.108, 0.072, 0.054], [0.108, 0.054]),
-            ("fujifilm_provia_100f", [0.156, 0.104, 0.078], [0.156, 0.078]),
-        ] {
-            let film = profile::load_profile_by_name(&dir, stock).unwrap();
-            let pipeline =
-                Pipeline::new_with_spectral(film, print.clone(), RuntimeParams::default(), &dir)
-                    .expect("spectral pipeline");
-            let dir_c = &pipeline.params.film_render.dir_couplers;
-            assert_eq!(dir_c.gamma_samelayer_rgb, same, "{stock} same-layer gamma");
-            assert_eq!(dir_c.gamma_interlayer_r_to_gb, r_gb, "{stock} interlayer");
-        }
-    }
 
     #[test]
     fn preflash_shifts_print_black_white_references() {
@@ -520,19 +474,6 @@ mod scan_semantics_tests {
             (m0 - m1).abs() > 1e-9 || (q0 - q1).abs() > 1e-9,
             "preflash must flow into the B/W reference log-raws (m {m0} vs {m1})"
         );
-    }
-
-    #[test]
-    fn print_morph_defaults_active_like_upstream() {
-        // Upstream 0.3.4 `PrintCurvesMorphParams.active` defaults to True;
-        // a params file that omits the key must get the same default.
-        assert!(RuntimeParams::default()
-            .print_render
-            .density_curves_morph
-            .active);
-        let parsed: RuntimeParams =
-            serde_json::from_str(r#"{"print_render": {"density_curves_morph": {}}}"#).unwrap();
-        assert!(parsed.print_render.density_curves_morph.active);
     }
 
     #[test]

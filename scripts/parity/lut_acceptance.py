@@ -382,6 +382,61 @@ def run(args, report):
         case["ocio_lattices"] = ocio_lattices
         case["ocio"] = compare_ocio(ocio_root, ocio_spec, ocio_delivered, root / "python-ocio" / f"{ocio_name}.ocio")
     require(report["scenario_count"] == 112, f"expected 112 QA scenarios, got {report['scenario_count']}")
+    from spektrafilm.utils.gamut_compression import InputGamutCompressSpec
+    report["input_gamut_overrides"] = []
+    report["override_scenario_count"] = 0
+    for algorithm, active in (("xy", False), ("oklch", True)):
+        name = f"qa_input_{algorithm}_{'active' if active else 'disabled'}"
+        spec_path = root / f"{name}.toml"
+        spec_path.write_text(
+            f'name = "{name}"\nfilm_profile = "{FILM}"\n'
+            f'print_profiles = ["{PRINTS[0]}"]\n'
+            'input_color_space = "sRGB"\noutput_color_space = "sRGB"\n'
+            'topology = "1lut"\nresolution = 17\n'
+            '[input_gamut_compress]\n'
+            f'active = {str(active).lower()}\nalgorithm = "{algorithm}"\n'
+            'knee = [0.0, 1.0, 6.0]\n')
+        command([cli, "lut", "build", "--from", spec_path, "--qa",
+                 "--out", bundles, "--data-dir", data], root / f"{name}.log", report)
+        folder = bundles / name
+        meta = json.loads((folder / "bundle.json").read_text())
+        spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS[:1],
+                          input_color_space="sRGB", output_color_space="sRGB",
+                          topology="1lut", resolution=17, name=name,
+                          input_gamut_compress=InputGamutCompressSpec(active=active, algorithm=algorithm),
+                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+        expected = BundleBuilder(spec).build()
+        luts = [(m["path"], get_format("cube").read(folder / m["path"])) for m in meta["luts"]]
+        require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts],
+                f"{name}: LUT paths drift")
+        lattices = [{"path": path, **max_error(actual.table, py.table, 2e-6, f"{name}/{path}")}
+                    for (path, actual), (_, py) in zip(luts, expected.luts)]
+        wires = dataclasses.replace(expected.meta.wires, **{
+            key: None if value is None else type(getattr(expected.meta.wires, key))(**value)
+            for key, value in meta["wires"].items()})
+        delivered = Bundle(luts=luts, meta=dataclasses.replace(expected.meta, wires=wires,
+                           luts=tuple(LutFileMeta(**{k: m[k] for k in fields}) for m in meta["luts"])))
+        qa = json.loads((folder / "qa" / "report.json").read_text())
+        comparisons = compare_qa(folder, spec, delivered, qa, [0], root / "python-qa" / name)
+        diagnostics = [r for r in qa["prints"][0]["results"]
+                       if r["name"] in ("input_gamut_compression_preview", "input_gamut_compression_smoothness")]
+        require(len(diagnostics) == 2, f"{name}: missing input-compression diagnostics")
+        for diagnostic in diagnostics:
+            require(diagnostic["summary"]["active"] is active
+                    and diagnostic["summary"]["algorithm"] == algorithm,
+                    f"{name}: TOML compression override ignored")
+        if not active:
+            smooth = diagnostics[1]["summary"]
+            expected_step = 0.6 * math.sin(math.pi / 720)
+            require(abs(smooth["worst_step"] - expected_step) < 1e-12
+                    and abs(smooth["median_step"] - expected_step) < 1e-12
+                    and abs(smooth["worst_over_median_step"] - 1.0) < 1e-12,
+                    f"{name}: disabled compression changed the smoothness ring")
+        report["input_gamut_overrides"].append({"name": name, "algorithm": algorithm, "active": active,
+                                              "lattices": lattices, "qa": comparisons,
+                                              "artifacts": check_artifacts(folder, meta, qa)})
+        report["override_scenario_count"] += len(comparisons)
+    require(report["override_scenario_count"] == 32, "expected 32 additional override QA scenarios")
     name = "lumix"
     command([cli, "lut", "build", "--name", name, "--film", FILM, "--print", PRINTS[0],
              "--input", "Panasonic V-Log", "--output", "sRGB", "--resolution", "4",

@@ -1,8 +1,10 @@
 #include <OpenImageIO/imageio.h>
+#include <OpenImageIO/half.h>
 #include <exiv2/exiv2.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <memory>
@@ -11,6 +13,32 @@
 
 namespace {
 struct Metadata { Exiv2::ExifData exif; Exiv2::IptcData iptc; Exiv2::XmpData xmp; };
+// Imath's half constructor and OIIO's conversion both pass through float.
+// Round binary64 directly, like numpy astype(float16), using integer bits so
+// halfway cases use ties-to-even regardless of the floating-point environment.
+uint16_t double_to_half_bits(double value) {
+    uint64_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const uint16_t sign = uint16_t((bits >> 48) & 0x8000);
+    const unsigned exponent_bits = unsigned((bits >> 52) & 0x7ff);
+    const uint64_t fraction = bits & 0x000fffffffffffffULL;
+    if (exponent_bits == 0x7ff)
+        return uint16_t(sign | 0x7c00 | (fraction ? ((fraction >> 42) | 0x0200) : 0));
+    const int exponent = int(exponent_bits) - 1023;
+    if (exponent < -25) return sign;
+    if (exponent > 15) return uint16_t(sign | 0x7c00);
+    const uint64_t significand = fraction | (uint64_t(1) << 52);
+    const unsigned shift = exponent < -14 ? unsigned(28 - exponent) : 42;
+    uint64_t rounded = significand >> shift;
+    const uint64_t remainder = significand & ((uint64_t(1) << shift) - 1);
+    const uint64_t midpoint = uint64_t(1) << (shift - 1);
+    if (remainder > midpoint || (remainder == midpoint && (rounded & 1))) ++rounded;
+    // A rounding carry naturally crosses the subnormal/normal boundary or
+    // turns the largest finite exponent into infinity at the overflow midpoint.
+    const uint16_t magnitude = exponent < -14 ? uint16_t(rounded)
+        : uint16_t(((exponent + 15) << 10) + rounded - 1024);
+    return uint16_t(sign | magnitude);
+}
 void error(char** target, const std::string& text) {
     if (!target) return;
     *target = static_cast<char*>(std::malloc(text.size() + 1));
@@ -72,8 +100,12 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
             std::vector<uint16_t> data(count);
             for (size_t i=0; i<count; ++i) data[i] = uint16_t(std::isnan(samples[i]) ? 0 : std::clamp(samples[i], 0.0, 1.0) * 65535.0);
             ok = output->write_image(type, data.data());
+        } else if (type == OIIO::TypeDesc::HALF) {
+            std::vector<half> data(count);
+            for (size_t i=0; i<count; ++i) data[i].setBits(double_to_half_bits(samples[i]));
+            ok = output->write_image(type, data.data());
         } else {
-            // Explicit float32 conversion matches upstream before OIIO half conversion.
+            // Float32 exports retain the upstream explicit float32 conversion.
             std::vector<float> data(samples, samples + count);
             ok = output->write_image(OIIO::TypeDesc::FLOAT, data.data());
         }

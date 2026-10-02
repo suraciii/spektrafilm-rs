@@ -21,7 +21,7 @@ use crate::params::InputGamutCompressParams;
 /// CIE 1931 2° visible spectral locus as a closed xy polygon, sampled at 5 nm
 /// from 380 to 700 nm (65 vertices + the first repeated). Mirrors upstream
 /// `spectral_locus_xy()`; the CMFs are the same colour-science values.
-fn spectral_locus_xy() -> Vec<[f64; 2]> {
+pub(crate) fn spectral_locus_xy() -> Vec<[f64; 2]> {
     // Wavelengths 380..=700 step 5 → indices 0..65 of the 380..780 grid.
     const N: usize = 65;
     let mut poly = Vec::with_capacity(N + 1);
@@ -292,7 +292,10 @@ impl InputGamutCompress {
 
     /// Compress a single xy chromaticity per the configured algorithm.
     /// Mirrors upstream `compress_xy` (identity when inactive).
-    fn compress_xy(&self, xy: [f64; 2], white_xy: [f64; 2]) -> [f64; 2] {
+    pub(crate) fn compress_xy(&self, xy: [f64; 2], white_xy: [f64; 2]) -> [f64; 2] {
+        if !self.active {
+            return xy;
+        }
         match self.algorithm {
             Algorithm::Xy => compress_xy_radial(xy, white_xy, self.knee, &self.locus),
             Algorithm::Oklch => {
@@ -377,6 +380,16 @@ mod tests {
             active,
             algorithm: algorithm.into(),
             knee: [0.0, 1.0, 6.0],
+        }
+    }
+
+    #[test]
+    fn disabled_algorithms_preserve_out_of_locus_chromaticities() {
+        for algorithm in ["xy", "oklch"] {
+            let compressor = InputGamutCompress::build(&params(algorithm, false)).unwrap();
+            for xy in [[0.8, 0.2], [0.05, 0.02], [0.15, 0.8]] {
+                assert_eq!(compressor.compress_xy(xy, [0.33243, 0.34744]), xy);
+            }
         }
     }
 

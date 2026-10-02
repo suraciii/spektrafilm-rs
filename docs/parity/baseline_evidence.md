@@ -191,9 +191,9 @@ Independent executed checks establish:
   a known Lensfun correction. The rebuilt consumers load LibRaw 0.22's actual
   `libraw.so.24`; its selected link artifact prevents system-header ABI mismatch.
   The final DIR-corrected Linux package passed the same portable image/RAW/GUI
-  smoke under Xvfb with a clean environment. Windows and macOS execution still
-  await activation of the fork's GitHub Actions workflows; PR #18 remains a
-  draft and acceptance issue #17 and parent issue #1 remain open.
+  smoke under Xvfb with a clean environment. The fork's Release workflow is now
+  active; Windows/macOS installed-workflow acceptance remains unverified.
+  PR #18 remains a draft, and acceptance issues #17/#1 remain open.
 - Saving into the output layer's own colour space and encoding is now a
   bit-exact copy, matching the pinned Python save guard
   (`spektrafilm_gui/controller.py:354-369`). Previously the export ran the
@@ -210,6 +210,20 @@ Independent executed checks establish:
   were measured separately (maximum 0.00083358). Repeated half-sample reflection
   now matches CPU FIR boundaries in WGSL and CUDA Gaussian kernels. CUDA was
   not executed on this host. The full workspace passed 189 tests.
+- Review corrections preserve explicitly edited stock halation/DIR parameters
+  across construction and updates, include input-compression activation in the
+  spectral cache key, and resolve omitted endpoints from persistent taps.
+  Nested print morph configuration defaults inactive, matching pinned Python.
+  The corrected release CLI passed all 68 fresh runtime differential scenarios.
+- EXR16 rounds retained f64 samples directly to binary16, eliminating the f32
+  intermediate. Actual EXR16/EXR32/TIFF32 write/read regressions cover signed
+  midpoint neighbors, tie parity, subnormals, overflow, zero, NaN and infinity.
+  `1.00048828125 + 1e-10` now saves as `1.0009765625`, matching numpy float16.
+- Input-compression QA shares the selected runtime compressor and respects its
+  activation switch. The corrected CLI passed the original 112 pinned QA
+  comparisons plus 32 additional comparisons for disabled xy and active oklch,
+  with unchanged metric budgets, status semantics, offline artifact and OCIO checks.
+  The integrated precision-f64 workspace passed 192 tests after these corrections.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

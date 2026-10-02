@@ -486,7 +486,7 @@ pub struct PrintRenderingParams {
     pub development_time: Option<f64>,
     #[serde(default)]
     pub glare: GlareParams,
-    #[serde(default)]
+    #[serde(default = "default_print_density_curves_morph", deserialize_with = "deserialize_print_density_curves_morph")]
     pub density_curves_morph: PrintCurvesMorphParams,
 }
 
@@ -496,18 +496,32 @@ impl Default for PrintRenderingParams {
             density_curve_gamma: 1.0,
             development_time: None,
             glare: GlareParams::default(),
-            density_curves_morph: PrintCurvesMorphParams::default(),
+            density_curves_morph: default_print_density_curves_morph(),
         }
     }
 }
 
+fn default_print_density_curves_morph() -> PrintCurvesMorphParams {
+    PrintCurvesMorphParams { active: false, ..PrintCurvesMorphParams::default() }
+}
+
+fn deserialize_print_density_curves_morph<'de, D>(deserializer: D) -> Result<PrintCurvesMorphParams, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut value = serde_json::Value::deserialize(deserializer)?;
+    if let Some(object) = value.as_object_mut() {
+        object.entry("active").or_insert(serde_json::Value::Bool(false));
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+
 /// User-facing controls for the s023 print density-curve morph (see
 /// `crate::print_morph`). Kept in f64 — the morph is a parity-sensitive f64
-/// computation. `active` defaults to `true`, matching upstream 0.3.4's
-/// `PrintCurvesMorphParams` dataclass (`utils/morph_curves.py`); the print
-/// develop always evaluates the profile's fitted `density_curves_model`
-/// when one is present, and `active` only turns on the coupled-gamma
-/// morphing of that model (identity at the default knobs).
+/// computation. The standalone helper defaults `active` to `true`, matching
+/// upstream `PrintCurvesMorphParams`; nested print-render controls default
+/// it to `false`, matching `PrintRenderingParams`. Development still evaluates
+/// a profile's fitted model when present; `active` controls coupled-gamma morphing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintCurvesMorphParams {
