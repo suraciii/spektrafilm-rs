@@ -455,8 +455,46 @@ class Desktop(X11):
     def apple(self, body):
         script = f'tell application "System Events" to tell (first application process whose unix id is {self.proc.pid})\n{body}\nend tell'
         result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True, timeout=15)
-        require(result.returncode == 0, 'macOS Accessibility/Automation permission required: ' + result.stderr)
+        if result.returncode:
+            self.records.append({'macos_applescript_error': result.stderr.strip(),
+                                 'applescript': body, 'stdout': result.stdout.strip()})
+        require(result.returncode == 0,
+                f'macOS accessibility command failed ({result.returncode}): {result.stderr.strip()}')
         return result.stdout.strip()
+
+    def mac_diagnostics(self, stage):
+        """Keep native AX evidence even when window cropping or OCR fails."""
+        record = {'macos_accessibility_stage': stage}
+        try:
+            record['accessibility'] = self.apple('''set report to ""
+repeat with w in windows
+    set report to report & "WINDOW " & (name of w as text) & " | " & (subrole of w as text) & " | position=" & (position of w as text) & " | size=" & (size of w as text) & linefeed
+    repeat with element in entire contents of w
+        try
+            set report to report & (role of element as text) & " | " & (description of element as text)
+            try
+                set report to report & " | name=" & (name of element as text)
+            end try
+            try
+                set report to report & " | value=" & (value of element as text)
+            end try
+            try
+                set report to report & " | identifier=" & (value of attribute "AXIdentifier" of element as text)
+            end try
+            set report to report & linefeed
+        end try
+    end repeat
+end repeat
+return report''')
+        except Exception as error:
+            record['accessibility_error'] = str(error)
+        try:
+            target = self.root / f'{len(self.records):02d}-macos-{stage}.png'
+            self.input.screenshot().save(target)
+            record['screenshot'] = target.name
+        except Exception as error:
+            record['screenshot_error'] = str(error)
+        self.records.append(record)
 
     def windows(self):
         found = []
@@ -483,7 +521,7 @@ class Desktop(X11):
         def ready():
             require(self.proc.poll() is None, 'GUI exited; see gui.log')
             if sys.platform == 'darwin':
-                return 1 if int(self.apple('count windows')) else None
+                return 1 if self.apple('get exists (first window whose name is "spektrafilm")') == 'true' else None
             for hwnd in self.windows():
                 title = self.ctypes.create_unicode_buffer(256)
                 self.os.GetWindowTextW(hwnd, title, 256)
@@ -492,7 +530,7 @@ class Desktop(X11):
         self.window = wait_for(ready, 'native desktop window', 45)
         self.focus()
         if sys.platform == 'darwin':
-            self.apple('set position of window 1 to {0, 30}\nset size of window 1 to {1400, 900}')
+            self.apple('set w to first window whose name is "spektrafilm"\nset position of w to {0, 30}\nset size of w to {1400, 900}')
         else:
             rect = self.types.RECT(0, 0, 1400, 900)
             self.os.AdjustWindowRect(self.ctypes.byref(rect), self.os.GetWindowLongW(self.window, -16), False)
@@ -502,8 +540,17 @@ class Desktop(X11):
 
     def bounds(self):
         if sys.platform == 'darwin':
-            values = [int(v) for v in re.findall(r'-?\d+', self.apple('get {position, size} of window 1'))]
-            require(len(values) == 4, f'Unexpected macOS window bounds: {values}')
+            # The modal rfd panel becomes window 1. Keep OCR and coordinates on
+            # the application window, and serialize AX pairs explicitly rather
+            # than relying on AppleScript's nested-list coercion.
+            raw = self.apple('''set w to first window whose name is "spektrafilm"
+set p to position of w
+set s to size of w
+return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text) & "," & (item 1 of s as integer as text) & "," & (item 2 of s as integer as text)''')
+            values = [int(v) for v in raw.split(',')]
+            if len(values) != 4 or values[2] <= 0 or values[3] <= 0:
+                self.mac_diagnostics('invalid-bounds')
+                raise RuntimeError(f'Unexpected macOS window bounds: {raw}')
             return values
         rect, point = self.types.RECT(), self.types.POINT(0, 0)
         self.os.GetClientRect(self.window, self.ctypes.byref(rect))
@@ -512,10 +559,19 @@ class Desktop(X11):
 
     def image(self):
         require(self.proc.poll() is None, 'GUI exited; see gui.log')
-        x, y, width, height = self.bounds()
+        try:
+            x, y, width, height = self.bounds()
+        except Exception:
+            if sys.platform == 'darwin':
+                self.mac_diagnostics('window-bounds-failure')
+            raise
         shot = self.input.screenshot()
         sw, sh = self.input.size()
         sx, sy = shot.width / sw, shot.height / sh
+        if width <= 0 or height <= 0:
+            if sys.platform == 'darwin':
+                self.mac_diagnostics('invalid-image-bounds')
+            raise RuntimeError(f'Invalid native screenshot bounds: {(x, y, width, height)}')
         cropped = shot.crop((int(x * sx), int(y * sy), int((x + width) * sx), int((y + height) * sy)))
         return cropped.resize((width, height)), dict(left=x, top=y, width=width, height=height)
 
@@ -536,7 +592,31 @@ class Desktop(X11):
 
     def dialog_visible(self):
         if sys.platform == 'darwin':
-            return self.apple('get exists sheet 1 of window 1') == 'true'
+            # Synchronous rfd dialogs without set_parent use runModal(), so
+            # NSSavePanel/NSOpenPanel are standalone AXDialog windows.
+            return self.apple('''repeat with i from 1 to count windows
+    set w to window i
+    if exists sheet 1 of w then
+        repeat with element in entire contents of sheet 1 of w
+            if role of element is "AXButton" then
+                if name of element is "Save" or name of element is "Open" then return "sheet 1 of window " & i
+            end if
+        end repeat
+    end if
+    set kind to subrole of w
+    if kind is "AXDialog" or kind is "AXSystemDialog" or name of w is not "spektrafilm" then
+        set hasAction to false
+        set hasCancel to false
+        repeat with element in entire contents of w
+            if role of element is "AXButton" then
+                if name of element is "Save" or name of element is "Open" then set hasAction to true
+                if name of element is "Cancel" then set hasCancel to true
+            end if
+        end repeat
+        if hasAction and hasCancel then return "window " & i
+    end if
+end repeat
+return ""''') or None
         for hwnd in self.windows():
             name = self.ctypes.create_unicode_buffer(256)
             self.os.GetClassNameW(hwnd, name, 256)
@@ -556,28 +636,53 @@ class Desktop(X11):
             self.input.hotkey('ctrl', 'v')
 
     def dialog(self, path, save=False):
-        chooser = wait_for(self.dialog_visible, 'native file chooser', 25)
-        if sys.platform == 'win32':
-            self.os.SetForegroundWindow(chooser)
-        target = self.root / f'{len(self.records):02d}-native-file-chooser.png'
-        self.input.screenshot().save(target)
-        self.records.append({'surface': 'native-file-chooser', 'screenshot': target.name,
-                             'requested_path': str(path), 'save': save})
-        if sys.platform == 'darwin':
-            self.input.hotkey('command', 'shift', 'g')
-            time.sleep(.3)
-            self.input.hotkey('command', 'a')
-            self.paste(path.parent if save else path)
+        try:
+            chooser = wait_for(self.dialog_visible, 'native file chooser', 25)
+            if sys.platform == 'win32':
+                self.os.SetForegroundWindow(chooser)
+            target = self.root / f'{len(self.records):02d}-native-file-chooser.png'
+            self.input.screenshot().save(target)
+            self.records.append({'surface': 'native-file-chooser', 'screenshot': target.name,
+                                 'requested_path': str(path), 'save': save, 'chooser': chooser})
+            if sys.platform == 'darwin':
+                self.mac_diagnostics('file-chooser')
+                self.input.hotkey('command', 'shift', 'g')
+                time.sleep(.3)
+                self.input.hotkey('command', 'a')
+                self.paste(path.parent if save else path)
+                self.input.press('enter')
+                # Go to Folder is its own sheet, including on a standalone
+                # NSSavePanel. Do not write the name until that sheet closes.
+                def navigated():
+                    current = self.dialog_visible()
+                    return current if current and self.apple(f'get exists sheet 1 of {current}') == 'false' else None
+                chooser = wait_for(navigated, 'macOS Go to Folder accepted path', 15)
+                if save:
+                    self.apple(f'''set candidates to {{}}
+set nameField to missing value
+repeat with element in entire contents of {chooser}
+    if role of element is "AXTextField" then
+        set end of candidates to contents of element
+        try
+            if description of element contains "Save As" then set nameField to contents of element
+        end try
+    end if
+end repeat
+if nameField is missing value and (count candidates) is 1 then set nameField to item 1 of candidates
+if nameField is missing value then error ("Cannot identify Save As field; AXTextField count=" & (count candidates))
+set focused of nameField to true''')
+                    self.input.hotkey('command', 'a')
+                    self.paste(path.name)
+            else:
+                self.input.hotkey('alt', 'n')
+                self.input.hotkey('ctrl', 'a')
+                self.paste(path)
             self.input.press('enter')
-            time.sleep(.4)
-            if save:
-                self.apple(f'set value of text field 1 of sheet 1 of window 1 to {json.dumps(path.name)}')
-        else:
-            self.input.hotkey('alt', 'n')
-            self.input.hotkey('ctrl', 'a')
-            self.paste(path)
-        self.input.press('enter')
-        wait_for(lambda: not self.dialog_visible(), 'native chooser accepted path', 20)
+            wait_for(lambda: not self.dialog_visible(), 'native chooser accepted path', 20)
+        except Exception:
+            if sys.platform == 'darwin':
+                self.mac_diagnostics('file-chooser-failure')
+            raise
 
     def close(self, exporting=False):
         self.focus()
