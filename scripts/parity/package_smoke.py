@@ -6,7 +6,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import time
+from gui_acceptance import accept_gui
+from lut_acceptance import check_artifacts, local_file
 import urllib.request
 
 import exiv2
@@ -22,6 +23,7 @@ def main():
     parser.add_argument('--gui', type=Path)
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--evidence-dir', type=Path, required=True)
+    parser.add_argument('--raw-fixture', type=Path, help='Existing pinned KDC fixture; SHA256 is still required')
     args = parser.parse_args()
     cli, helper, data, evidence = (value.resolve() for value in
                                  (args.cli, args.raw_helper, args.data_dir, args.evidence_dir))
@@ -131,7 +133,8 @@ def main():
     raw = evidence / 'kodak.KDC'
     url = 'https://raw.githubusercontent.com/letmaik/rawpy/main/test/RAW_KODAK_DC50_%C3%A9.KDC'
     expected_hash = '37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc'
-    raw.write_bytes(urllib.request.urlopen(url, timeout=60).read())
+    raw.write_bytes(args.raw_fixture.read_bytes() if args.raw_fixture else
+                    urllib.request.urlopen(url, timeout=60).read())
     assert hashlib.sha256(raw.read_bytes()).hexdigest() == expected_hash
     raw_output = evidence / 'raw.tif'
     result = subprocess.run([str(helper), str(raw), str(raw_output), '--lens-correction'],
@@ -147,25 +150,48 @@ def main():
     assert np.isfinite(decoded).all() and float(decoded.max() - decoded.min()) > 0.1
     observations.append({'raw_source': url, 'raw_sha256': expected_hash,
                          'raw_shape': list(decoded.shape), 'decoder': result.stderr.strip()})
+    # Build through the delivered f64 executable; verify the complete offline
+    # bundle, archive and an actual OCIO CPU processor against delivered LUTs.
+    import PyOpenColorIO as ocio
+    bundle_root = evidence / 'installed-luts'
+    name = 'package_acceptance'
+    result = subprocess.run([
+        str(exporter), 'lut', 'build', '--name', name, '--film', 'kodak_portra_400',
+        '--print', 'kodak_portra_endura', '--input', 'sRGB', '--output', 'sRGB',
+        '--topology', '3lut', '--resolution', '17', '--ocio-config', '--qa',
+        '--container', 'zip', '--out', str(bundle_root), '--data-dir', str(data)],
+        cwd=evidence, env=environment, capture_output=True, text=True, timeout=600)
+    (evidence / 'installed-lut.log').write_text(result.stdout + result.stderr)
+    assert result.returncode == 0, result.stderr
+    bundle = bundle_root / name
+    meta = json.loads((bundle / 'bundle.json').read_text())
+    qa = json.loads((bundle / 'qa/report.json').read_text())
+    artifact_evidence = check_artifacts(bundle, meta, qa, archive_required=True)
+    assert qa['prints'] and all(entry['results'] for entry in qa['prints']), 'Empty delivered QA'
+    # Scenario FAIL is part of the upstream QA report contract. Verify status
+    # aggregation, rather than hiding it or treating every diagnostic as PASS.
+    expected_passed = all(item['passed'] is not False
+                          for entry in qa['prints'] for item in entry['results'])
+    assert qa['passed'] is expected_passed, 'Delivered QA hides failed scenarios'
+    config = ocio.Config.CreateFromFile(str(local_file(bundle, 'config.ocio')))
+    config.validate()
+    processor_count = 0
+    for display in config.getDisplays():
+        for view in config.getViews(display):
+            processor = config.getProcessor('sRGB', display, view,
+                                           ocio.TRANSFORM_DIR_FORWARD).getDefaultCPUProcessor()
+            for pixel in ([0., 0., 0.], [.18, .18, .18], [.1, .5, .9], [1., 1., 1.]):
+                assert np.isfinite(processor.applyRGB(pixel)).all(), (display, view)
+            processor_count += 1
+    assert processor_count > 0, 'No delivered OCIO display/view processors'
+    observations.append({'installed_lut_exporter': str(exporter),
+                         'bundle': str(bundle), 'artifacts': artifact_evidence,
+                         'ocio_processors': processor_count, 'qa_report_passed': qa['passed']})
     if args.gui:
-        gui_path = args.gui.resolve()
-        with (evidence / 'gui.log').open('w') as log:
-            process = subprocess.Popen([str(gui_path)], cwd=evidence, env=environment,
-                                       stdout=log, stderr=subprocess.STDOUT)
-            try:
-                time.sleep(10)
-                assert process.poll() is None, f'Packaged GUI exited during startup; see {evidence / "gui.log"}'
-                observations.append({'gui': str(gui_path), 'running_after_seconds': 10})
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=10)
+        observations.append(accept_gui(args.gui.resolve(), exporter, source, raw,
+                                       evidence, environment))
     (evidence / 'observations.json').write_text(json.dumps(observations, indent=2) + '\n')
-    print('PASS package image depths, float headroom, EXIF/IPTC/XMP/ICC, spectral export, errors and real RAW decode')
+    print('PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA and native GUI acceptance')
 
 
 if __name__ == '__main__':

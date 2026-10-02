@@ -224,6 +224,18 @@ Independent executed checks establish:
   comparisons plus 32 additional comparisons for disabled xy and active oklch,
   with unchanged metric budgets, status semantics, offline artifact and OCIO checks.
   The integrated precision-f64 workspace passed 192 tests after these corrections.
+- The new external Linux package GUI gate passed real native window and file
+  chooser operations under Xvfb: standard/RAW loading and preview, input/output
+  raster comparison, Auto exposure and float-depth edits, state save/load and
+  restart restoration, float save, actual bundled f64 export, Cancel and closing
+  in flight. Observed exporter executable hashes match installed native payloads;
+  cancelled/closed exports left no output, child process or temporary JSON.
+  Windows/macOS drivers exist but have no passing target-platform evidence yet.
+- The first real three-platform workflow exposed Ubuntu Exiv2 auto_ptr predicate
+  incompatibility, Homebrew OIIO's missing external fmt include path, and MSYS2
+  LibRaw below 0.22. The fixes retain the native contracts: get() pointer checks,
+  installed-header-based fmt/Imath include discovery, and checksum-pinned UCRT64
+  LibRaw 0.22 build with merged native dependency/license packaging.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

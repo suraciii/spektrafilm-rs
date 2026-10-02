@@ -16,7 +16,7 @@ Files:
 | `run_parity.py` | Orchestrator — preflight, Rust f64 CLI, per-stage/final max+mean report |
 | `gen_matrix.py` | Regenerates `docs/parity/parity_matrix.json` (live asset hashing) |
 | `lut_acceptance.py` | Real CLI LUT bakes, pinned QA/format comparisons, OCIO processors and delivered artifact checks |
-| `package_smoke.py` | Installed image/metadata/RAW paths and packaged GUI startup |
+| `package_smoke.py` | Installed image/metadata/RAW paths, LUT/OCIO/QA delivery and actual native GUI operations |
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
@@ -153,11 +153,25 @@ statuses independently. An upstream quality failure remains a failure in the
 delivered QA report; acceptance requires the same result as the pinned Python
 implementation. Relative tolerance is `1e-5` with a `1e-7` absolute floor.
 Independent format readers and OCIO processors exercise the delivered files.
+The same gate compares 32 additional diagnostic results for disabled xy and
+active oklch input compression, separately from the 112 baseline results.
+
 
 All three package jobs run `package_smoke.py` against installed executables
-and bundled data. Linux GUI startup uses Xvfb. Windows/macOS acceptance still
-requires actual successful workflow execution; adding the gate is not evidence
-that those packages run.
+and bundled data. The native GUI driver operates real windows and file dialogs,
+records screenshots, saves/restores state across restart, decodes RAW, saves a
+float image, observes the bundled f64 exporter, and checks Cancel/window-close
+child cleanup. Linux uses Xvfb with a 1600×1000 screen. Windows/macOS acceptance
+requires actual successful workflow execution; installing a driver is not
+evidence that those packages run.
+
+Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
+engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo and zenity. Package
+smoke also builds a ZIP bundle through the installed exporter, checks offline
+report references and artifacts, and executes its delivered OCIO processors.
+`--raw-fixture PATH` reuses the pinned Kodak KDC download when network access
+is unavailable; the same required SHA256 check runs before decoding.
+
 
 The package smoke exports the pinned 0.3.4 bare-chain midgray through the real
 spectral assets and compares the saved 32-bit TIFF against the recorded Python
