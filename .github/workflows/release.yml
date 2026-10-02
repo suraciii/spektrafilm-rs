@@ -89,7 +89,7 @@ jobs:
           cargo test --workspace --features precision-f64
           if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
-          python scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --gui dist/spektrafilm-windows-x64/spektrafilm-gui.exe --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
+          & "$env:pythonLocation\python.exe" scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --gui dist/spektrafilm-windows-x64/spektrafilm-gui.exe --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
           if ($LASTEXITCODE -ne 0) { throw "Package smoke failed" }
 
       - name: Preserve package smoke evidence
@@ -277,8 +277,16 @@ jobs:
       - name: Install native dependencies
         shell: bash
         run: |
-          brew install libraw lensfun exiv2 glib openimageio pkg-config tesseract
+          brew install libraw lensfun exiv2 glib openimageio pkg-config tesseract displayplacer
           pkg-config --atleast-version=0.22.0 libraw
+
+      - name: Configure native acceptance display
+        shell: bash
+        run: |
+          displayplacer list
+          display_id="$(displayplacer list | awk '/Persistent screen id:/ {print $4; exit}')"
+          displayplacer "id:$display_id res:1600x1200 scaling:off origin:(0,0) degree:0"
+          displayplacer list
 
       - name: Package app bundle
         shell: bash
