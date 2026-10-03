@@ -687,14 +687,14 @@ return ""''') or None
                 self.mac_diagnostics('file-chooser')
                 self.input.hotkey('command', 'shift', 'g')
                 time.sleep(.3)
-                self.apple(f'''set goToElements to (get entire contents of sheet 1 of {chooser})
+                self.apple(f'''set goToElements to (get entire contents of {chooser})
+set goToFields to {{}}
 repeat with elementReference in goToElements
     set element to contents of elementReference
-    if role of element is "AXTextField" then
-        set focused of element to true
-        exit repeat
-    end if
-end repeat''')
+    if role of element is "AXTextField" then set end of goToFields to element
+end repeat
+if (count goToFields) is 0 then error "Go to Folder text field not found"
+set focused of item (count goToFields) of goToFields to true''')
                 self.input.hotkey('command', 'a')
                 self.paste(path.parent if save else path)
                 self.input.press('enter')
