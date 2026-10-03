@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DiffusionFilterParams {
     #[serde(default)]
     pub active: bool,
@@ -68,6 +69,7 @@ impl Default for DiffusionFilterParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CameraParams {
     #[serde(default)]
     pub exposure_compensation_ev: f32,
@@ -103,6 +105,7 @@ impl Default for CameraParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EnlargerParams {
     #[serde(default = "default_th_kg3")]
     pub illuminant: String,
@@ -156,6 +159,7 @@ impl Default for EnlargerParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScannerParams {
     #[serde(default)]
     pub lens_blur: f32,
@@ -168,7 +172,7 @@ pub struct ScannerParams {
     #[serde(default = "default_001")]
     pub black_level: f32,
     #[serde(default = "default_unsharp")]
-    pub unsharp_mask: [f32; 2],
+    pub unsharp_mask: [f64; 2],
 }
 
 impl Default for ScannerParams {
@@ -185,6 +189,7 @@ impl Default for ScannerParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GrainParams {
     #[serde(default = "default_true")]
     pub active: bool,
@@ -193,12 +198,14 @@ pub struct GrainParams {
     // f64 to preserve Python JSON precision through the Poisson/Binomial
     // RNG pipeline — the f32 truncation of these values shifts the
     // Poisson lambda by ~5e-8 and produces a different RNG stream.
+    // Field names mirror upstream 0.3.4 `GrainParams` exactly
+    // (`particle_area_um2` / `particle_scale` / `particle_scale_layers`).
     #[serde(default = "default_02_f64")]
-    pub agx_particle_area_um2: f64,
+    pub particle_area_um2: f64,
     #[serde(default = "default_particle_scale_f64")]
-    pub agx_particle_scale: [f64; 3],
+    pub particle_scale: [f64; 3],
     #[serde(default = "default_particle_scale_layers_f64")]
-    pub agx_particle_scale_layers: [f64; 3],
+    pub particle_scale_layers: [f64; 3],
     #[serde(default = "default_density_min_f64")]
     pub density_min: [f64; 3],
     #[serde(default = "default_uniformity_f64")]
@@ -239,9 +246,9 @@ impl Default for GrainParams {
         Self {
             active: true,
             sublayers_active: true,
-            agx_particle_area_um2: 0.2,
-            agx_particle_scale: [1.6, 1.6, 3.2],
-            agx_particle_scale_layers: [2.0, 1.0, 0.5],
+            particle_area_um2: 0.2,
+            particle_scale: [1.6, 1.6, 3.2],
+            particle_scale_layers: [2.0, 1.0, 0.5],
             density_min: [0.03, 0.03, 0.03],
             uniformity: [0.97, 0.99, 0.97],
             blur: 0.65,
@@ -254,6 +261,7 @@ impl Default for GrainParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HalationParams {
     #[serde(default = "default_true")]
     pub active: bool,
@@ -338,6 +346,7 @@ impl Default for HalationParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DirCouplersParams {
     #[serde(default = "default_true")]
     pub active: bool,
@@ -409,6 +418,7 @@ impl Default for DirCouplersParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GlareParams {
     #[serde(default = "default_true")]
     pub active: bool,
@@ -432,6 +442,7 @@ impl Default for GlareParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilmRenderingParams {
     #[serde(default = "default_one")]
     pub density_curve_gamma: f32,
@@ -465,6 +476,7 @@ impl Default for FilmRenderingParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PrintRenderingParams {
     #[serde(default = "default_one")]
     pub density_curve_gamma: f32,
@@ -474,7 +486,7 @@ pub struct PrintRenderingParams {
     pub development_time: Option<f64>,
     #[serde(default)]
     pub glare: GlareParams,
-    #[serde(default)]
+    #[serde(default = "default_print_density_curves_morph", deserialize_with = "deserialize_print_density_curves_morph")]
     pub density_curves_morph: PrintCurvesMorphParams,
 }
 
@@ -484,20 +496,36 @@ impl Default for PrintRenderingParams {
             density_curve_gamma: 1.0,
             development_time: None,
             glare: GlareParams::default(),
-            density_curves_morph: PrintCurvesMorphParams::default(),
+            density_curves_morph: default_print_density_curves_morph(),
         }
     }
 }
 
+fn default_print_density_curves_morph() -> PrintCurvesMorphParams {
+    PrintCurvesMorphParams { active: false, ..PrintCurvesMorphParams::default() }
+}
+
+fn deserialize_print_density_curves_morph<'de, D>(deserializer: D) -> Result<PrintCurvesMorphParams, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut value = serde_json::Value::deserialize(deserializer)?;
+    if let Some(object) = value.as_object_mut() {
+        object.entry("active").or_insert(serde_json::Value::Bool(false));
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+
 /// User-facing controls for the s023 print density-curve morph (see
 /// `crate::print_morph`). Kept in f64 — the morph is a parity-sensitive f64
-/// computation. `active` defaults to `false`, matching upstream 0.3.4 — but
-/// note that (also matching upstream) the print develop always evaluates the
-/// profile's fitted `density_curves_model` when one is present; `active` only
-/// enables the coupled-gamma morphing of that model.
+/// computation. The standalone helper defaults `active` to `true`, matching
+/// upstream `PrintCurvesMorphParams`; nested print-render controls default
+/// it to `false`, matching `PrintRenderingParams`. Development still evaluates
+/// a profile's fitted model when present; `active` controls coupled-gamma morphing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PrintCurvesMorphParams {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub active: bool,
     #[serde(default = "default_one_f64")]
     pub gamma_factor: f64,
@@ -518,7 +546,7 @@ pub struct PrintCurvesMorphParams {
 impl Default for PrintCurvesMorphParams {
     fn default() -> Self {
         Self {
-            active: false,
+            active: true,
             gamma_factor: 1.0,
             gamma_factor_fast: 1.0,
             gamma_factor_slow: 1.0,
@@ -531,6 +559,7 @@ impl Default for PrintCurvesMorphParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IoParams {
     #[serde(default = "default_prophoto")]
     pub input_color_space: String,
@@ -543,11 +572,11 @@ pub struct IoParams {
     #[serde(default)]
     pub crop: bool,
     #[serde(default = "default_crop_center")]
-    pub crop_center: [f32; 2],
+    pub crop_center: [f64; 2],
     #[serde(default = "default_crop_size")]
-    pub crop_size: [f32; 2],
-    #[serde(default = "default_one")]
-    pub upscale_factor: f32,
+    pub crop_size: [f64; 2],
+    #[serde(default = "default_one_f64")]
+    pub upscale_factor: f64,
     #[serde(default)]
     pub scan_film: bool,
     #[serde(default)]
@@ -576,11 +605,16 @@ impl Default for IoParams {
 
 /// Input gamut compression config — mirrors upstream `InputGamutCompressSpec`.
 /// Baked into the tc_lut at build time, so the per-pixel path stays
-/// compression-agnostic. `"xy"` (the default, matching upstream 0.3.4) applies
-/// the ACES-RGC-style radial compression toward the spectral locus;
-/// `algorithm = "off"` passes input chromaticities through unchanged.
+/// compression-agnostic. `active` (default true) is the upstream on/off flag;
+/// `algorithm` selects `"xy"` (the production default — ACES-RGC-style radial
+/// compression toward the spectral locus) or `"oklch"` (CSS-Color-4-style
+/// chroma reduction around the film reference illuminant, kept for
+/// inspection / per-bundle override).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InputGamutCompressParams {
+    #[serde(default = "default_true")]
+    pub active: bool,
     #[serde(default = "default_xy")]
     pub algorithm: String,
     #[serde(default = "default_gamut_knee")]
@@ -590,6 +624,7 @@ pub struct InputGamutCompressParams {
 impl Default for InputGamutCompressParams {
     fn default() -> Self {
         Self {
+            active: true,
             algorithm: "xy".into(),
             knee: [0.0, 1.0, 6.0],
         }
@@ -601,6 +636,7 @@ impl Default for InputGamutCompressParams {
 /// chroma knee + one-sided lightness roll-off; `"off"` passes RGB through
 /// unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutputGamutCompressParams {
     #[serde(default = "default_cam16ucs")]
     pub algorithm: String,
@@ -634,6 +670,7 @@ fn default_gamut_lightness() -> Option<[f32; 3]> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SettingsParams {
     #[serde(default = "default_hanatos")]
     pub rgb_to_raw_method: String,
@@ -684,8 +721,174 @@ impl Default for SettingsParams {
     }
 }
 
-/// Top-level runtime parameters. Combines all sub-parameter groups.
+
+/// Debug switches — mirrors upstream 0.3.4 `DebugParams`.
+///
+/// `lut_mode` promotes the spatial/stochastic deactivation and disables the
+/// image-aware adjustments (auto-exposure, print-exposure compensation,
+/// highlight boost, scanner corrections) at digest time; the promoted flags
+/// are visible on the digested params (see `params_builder::digest_params`).
+///
+/// `print_timings` is accepted, serialized and honored as a declared field
+/// but is a no-op at digest time — upstream 0.3.4 declares it without ever
+/// reading it (timing output goes through the `Simulator.print_timings()`
+/// call-site flag instead), so it is preserved as an upstream no-op.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugParams {
+    #[serde(default)]
+    pub deactivate_spatial_effects: bool,
+    #[serde(default)]
+    pub deactivate_stochastic_effects: bool,
+    #[serde(default)]
+    pub print_timings: bool,
+    #[serde(default)]
+    pub lut_mode: bool,
+}
+
+impl Default for DebugParams {
+    fn default() -> Self {
+        Self {
+            deactivate_spatial_effects: false,
+            deactivate_stochastic_effects: false,
+            print_timings: false,
+            lut_mode: false,
+        }
+    }
+}
+
+/// Pipeline tap configuration — mirrors upstream 0.3.4 `TapsParams`.
+///
+/// `inject` and `collect` name the entry and exit points in the pipeline
+/// topology (`rgb_in`, `rgb_pre`, `log_e_film`, `cmy_film`, `log_e_print`,
+/// `cmy_print`, `rgb_out`). Defaults of `None` mean "normal end-to-end run"
+/// (inject at `rgb_in`, collect at `rgb_out`); call-site overrides passed to
+/// `Pipeline::process_with_taps` win over these persistent values.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TapsParams {
+    #[serde(default)]
+    pub inject: Option<String>,
+    #[serde(default)]
+    pub collect: Option<String>,
+}
+
+/// Named pipeline boundary — the Rust spelling of upstream `Tap`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tap {
+    RgbIn,
+    RgbPre,
+    LogEFilm,
+    CmyFilm,
+    LogEPrint,
+    CmyPrint,
+    RgbOut,
+}
+
+impl Tap {
+    /// Parse a wire tap name. Errors mirror upstream's "unknown tap" and
+    /// "no node path" failures: the message lists every valid name so a
+    /// typo in a params file is immediately actionable.
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name {
+            "rgb_in" => Ok(Self::RgbIn),
+            "rgb_pre" => Ok(Self::RgbPre),
+            "log_e_film" => Ok(Self::LogEFilm),
+            "cmy_film" => Ok(Self::CmyFilm),
+            "log_e_print" => Ok(Self::LogEPrint),
+            "cmy_print" => Ok(Self::CmyPrint),
+            "rgb_out" => Ok(Self::RgbOut),
+            other => Err(format!(
+                "unknown tap {other:?}: valid taps are rgb_in, rgb_pre, log_e_film, \
+                 cmy_film, log_e_print, cmy_print, rgb_out"
+            )),
+        }
+    }
+
+    /// The wire name (upstream `Tap` attribute values).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::RgbIn => "rgb_in",
+            Self::RgbPre => "rgb_pre",
+            Self::LogEFilm => "log_e_film",
+            Self::CmyFilm => "cmy_film",
+            Self::LogEPrint => "log_e_print",
+            Self::CmyPrint => "cmy_print",
+            Self::RgbOut => "rgb_out",
+        }
+    }
+}
+
+impl RuntimeParams {
+    /// Validate enum-like string fields against the values the engine
+    /// actually implements. Mirrors the upstream failures that Python
+    /// raises for unknown color spaces (`colour` `KeyError`), unknown
+    /// `rgb_to_raw_method` (`ValueError` in `FilmingStage`), unknown
+    /// gamut algorithms (`ValueError` in the specs' `__post_init__`),
+    /// unknown diffusion filter families (`ValueError` in
+    /// `apply_diffusion_filter_um`) and unknown tap names — all surfaced
+    /// *before* any artifact is produced. Returns the first failure.
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_color()?;
+        if !matches!(
+            self.settings.rgb_to_raw_method.as_str(),
+            "hanatos2025" | "mallett2019" | "arctic2026alpha02"
+        ) {
+            return Err(format!(
+                "settings.rgb_to_raw_method: unsupported method {:?}; supported: \
+                 hanatos2025, mallett2019",
+                self.settings.rgb_to_raw_method
+            ));
+        }
+        if !matches!(
+            self.enlarger.illuminant.as_str(),
+            "TH-KG3" | "D50" | "D55" | "D65"
+        ) {
+            return Err(format!(
+                "enlarger.illuminant: unsupported illuminant {:?}; supported: \
+                 TH-KG3, D50, D55, D65",
+                self.enlarger.illuminant
+            ));
+        }
+        const FILTER_FAMILIES: &str =
+            "glimmerglass, black_pro_mist, pro_mist, cinebloom";
+        for (label, df) in [
+            (
+                "camera.diffusion_filter.filter_family",
+                &self.camera.diffusion_filter,
+            ),
+            (
+                "enlarger.diffusion_filter.filter_family",
+                &self.enlarger.diffusion_filter,
+            ),
+        ] {
+            if df.active && df.strength > 0.0 && df.spatial_scale > 0.0
+                && !matches!(
+                    df.filter_family.as_str(),
+                    "glimmerglass" | "black_pro_mist" | "pro_mist" | "cinebloom"
+                ) {
+                return Err(format!(
+                    "{label}: unknown diffusion filter family {:?}; available: \
+                     {FILTER_FAMILIES}",
+                    df.filter_family
+                ));
+            }
+        }
+        if let Some(t) = self.taps.inject.as_deref() {
+            Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
+        }
+        if let Some(t) = self.taps.collect.as_deref() {
+            Tap::parse(t).map_err(|e| format!("taps.collect: {e}"))?;
+        }
+        Ok(())
+    }
+}
+/// Top-level runtime parameters. Combines all sub-parameter groups.
+///
+/// Mirrors upstream 0.3.4 `RuntimePhotoParams` minus the `film` / `print`
+/// profile objects (Rust passes `Profile` values alongside the params).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeParams {
     #[serde(default)]
     pub camera: CameraParams,
@@ -701,6 +904,10 @@ pub struct RuntimeParams {
     pub io: IoParams,
     #[serde(default)]
     pub settings: SettingsParams,
+    #[serde(default)]
+    pub debug: DebugParams,
+    #[serde(default)]
+    pub taps: TapsParams,
 }
 
 impl Default for RuntimeParams {
@@ -713,7 +920,26 @@ impl Default for RuntimeParams {
             print_render: PrintRenderingParams::default(),
             io: IoParams::default(),
             settings: SettingsParams::default(),
+            debug: DebugParams::default(),
+            taps: TapsParams::default(),
         }
+    }
+}
+
+impl RuntimeParams {
+    /// Resolve colour transforms and reject unsupported gamut configurations
+    /// before the pipeline can produce an image or LUT.
+    pub fn validate_color(&self) -> Result<(), String> {
+        spektrafilm_math::colorspace::resolve(&self.io.input_color_space)
+            .map_err(|e| format!("io.input_color_space: {e}"))?;
+        spektrafilm_math::colorspace::resolve(&self.io.output_color_space)
+            .map_err(|e| format!("io.output_color_space: {e}"))?;
+        crate::input_gamut::InputGamutCompress::build(&self.io.input_gamut_compress)?;
+        crate::gamut_compression::OutputGamutCompress::build(
+            &self.io.output_gamut_compress,
+            &self.io.output_color_space,
+        )?;
+        Ok(())
     }
 }
 
@@ -757,23 +983,8 @@ fn default_098() -> f32 {
 fn default_001() -> f32 {
     0.01
 }
-fn default_unsharp() -> [f32; 2] {
+fn default_unsharp() -> [f64; 2] {
     [0.7, 0.7]
-}
-fn default_02() -> f32 {
-    0.2
-}
-fn default_particle_scale() -> [f32; 3] {
-    [0.8, 1.0, 2.0]
-}
-fn default_particle_scale_layers() -> [f32; 3] {
-    [2.5, 1.0, 0.5]
-}
-fn default_density_min() -> [f32; 3] {
-    [0.07, 0.08, 0.12]
-}
-fn default_uniformity() -> [f32; 3] {
-    [0.97, 0.97, 0.99]
 }
 fn default_065() -> f32 {
     0.65
@@ -784,50 +995,14 @@ fn default_micro_structure() -> [f32; 2] {
 fn default_1i() -> u32 {
     1
 }
-fn default_scatter_core() -> [f32; 3] {
-    [2.2, 2.0, 1.6]
-}
-fn default_scatter_tail() -> [f32; 3] {
-    [9.3, 9.7, 9.1]
-}
-fn default_scatter_tail_weight() -> [f32; 3] {
-    [0.78, 0.65, 0.67]
-}
 fn default_03() -> f32 {
     0.3
 }
 fn default_4() -> f32 {
     4.0
 }
-fn default_halation_strength() -> [f32; 3] {
-    [0.05, 0.015, 0.0]
-}
-fn default_halation_sigma() -> [f32; 3] {
-    [65.0, 65.0, 65.0]
-}
 fn default_3i() -> u32 {
     3
-}
-fn default_gamma_same() -> [f32; 3] {
-    [0.341, 0.324, 0.273]
-}
-fn default_gamma_r_gb() -> [f32; 2] {
-    [0.355, 0.305]
-}
-fn default_gamma_g_rb() -> [f32; 2] {
-    [0.154, 0.358]
-}
-fn default_gamma_b_rg() -> [f32; 2] {
-    [0.171, 0.225]
-}
-fn default_20() -> f32 {
-    20.0
-}
-fn default_200() -> f32 {
-    200.0
-}
-fn default_006() -> f32 {
-    0.06
 }
 fn default_003() -> f32 {
     0.03
@@ -841,10 +1016,10 @@ fn default_prophoto() -> String {
 fn default_srgb() -> String {
     "sRGB".into()
 }
-fn default_crop_center() -> [f32; 2] {
+fn default_crop_center() -> [f64; 2] {
     [0.5, 0.5]
 }
-fn default_crop_size() -> [f32; 2] {
+fn default_crop_size() -> [f64; 2] {
     [0.1, 0.1]
 }
 fn default_hanatos() -> String {

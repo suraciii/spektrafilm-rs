@@ -1,11 +1,14 @@
 param(
-    [string]$IconSource = "C:\Users\syntxbench\Downloads\photo_2026-06-10_17-59-14.jpg",
+    [string]$IconSource = "assets\spektrafilm-icon.jpg",
     [string]$BuildTargetDir = "target\windows-app",
     [string]$DistDir = "dist\spektrafilm-windows-cuda",
-    [switch]$Aio
+    [switch]$Aio,
+    [string]$NativePrefix = $env:SPEKTRAFILM_NATIVE_PREFIX,
+    [string]$LensfunDatabase = $env:SPEKTRAFILM_LENSFUN_DATABASE
 )
 
 $ErrorActionPreference = "Stop"
+$pkgConfig = if ($env:PKG_CONFIG) { $env:PKG_CONFIG } else { "pkg-config" }
 
 function Write-U16([System.IO.BinaryWriter]$Writer, [int]$Value) {
     $Writer.Write([uint16]$Value)
@@ -277,16 +280,94 @@ function New-EmbedManifest {
 }
 
 $repo = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
+
+function Copy-NativeBundle([string]$Destination) {
+    $systemPrefix = (& $pkgConfig --variable=prefix lensfun).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $systemPrefix) { throw "Cannot discover the UCRT64 native prefix from Lensfun." }
+    if (-not $NativePrefix) { $script:NativePrefix = $systemPrefix }
+    $nativePrefixes = @($NativePrefix, $systemPrefix) | Select-Object -Unique
+    foreach ($prefix in $nativePrefixes) {
+        if (-not (Test-Path -LiteralPath (Join-Path $prefix "bin"))) {
+            throw "Native prefix bin directory missing: $prefix"
+        }
+    }
+    if (-not $LensfunDatabase) {
+        $dataRoot = (& $pkgConfig --variable=datadir lensfun).Trim()
+        $script:LensfunDatabase = Join-Path $dataRoot "lensfun\version_1"
+    }
+    if (-not (Test-Path -LiteralPath $LensfunDatabase)) { throw "Lensfun database missing: $LensfunDatabase" }
+    Copy-Item -LiteralPath $LensfunDatabase -Destination (Join-Path $Destination "lensfun") -Recurse
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    Get-ChildItem -LiteralPath $Destination -Filter *.exe | ForEach-Object { $queue.Enqueue($_.FullName) }
+    $seen = @{}
+    while ($queue.Count -gt 0) {
+        $binary = $queue.Dequeue()
+        $imports = & objdump -p $binary
+        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect DLL imports: $binary" }
+        foreach ($line in $imports) {
+            if ($line -notmatch 'DLL Name:\s*(\S+)') { continue }
+            $dll = $Matches[1]
+            if ($seen.ContainsKey($dll.ToLowerInvariant())) { continue }
+            $seen[$dll.ToLowerInvariant()] = $true
+            $source = $null
+            foreach ($prefix in $nativePrefixes) {
+                $candidate = Join-Path (Join-Path $prefix "bin") $dll
+                if (Test-Path -LiteralPath $candidate) { $source = $candidate; break }
+            }
+            if ($source) {
+                $target = Join-Path $Destination $dll
+                Copy-Item -LiteralPath $source -Destination $target
+                $queue.Enqueue((Resolve-Path -LiteralPath $target).Path)
+            } elseif ($dll -match '^(api-ms-|ext-ms-)' -or (Test-Path -LiteralPath (Join-Path $env:SystemRoot "System32\$dll"))) {
+                continue
+            } else { throw "Unresolved native dependency $dll imported by $binary" }
+        }
+    }
+    $licenses = Join-Path $Destination "licenses"
+    $licenseRoot = Join-Path $licenses "native"
+    New-Item -ItemType Directory -Force -Path $licenseRoot | Out-Null
+    foreach ($prefix in $nativePrefixes) {
+        $sourceRoot = Join-Path $prefix "share\licenses"
+        if (-not (Test-Path -LiteralPath $sourceRoot)) { throw "Native license directory missing: $sourceRoot" }
+        foreach ($entry in (Get-ChildItem -LiteralPath $sourceRoot)) {
+            $target = Join-Path $licenseRoot $entry.Name
+            if (-not (Test-Path -LiteralPath $target)) {
+                Copy-Item -LiteralPath $entry.FullName -Destination $target -Recurse
+            }
+        }
+    }
+    foreach ($package in @("libraw", "openimageio", "exiv2", "lensfun", "glib2")) {
+        if (-not (Get-ChildItem -LiteralPath $licenseRoot -Directory | Where-Object { $_.Name -like "*$package*" })) {
+            throw "Required native license missing for $package"
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $licenseRoot "lensfun\LICENSE-data"))) {
+        throw "Lensfun database CC BY-SA 3.0 license text missing: lensfun/LICENSE-data"
+    }
+    Copy-Item -LiteralPath "licenses\lensfun-cc-by-sa-3.0.txt" -Destination (Join-Path $licenses "lensfun-database-CC-BY-SA-3.0.txt")
+    Copy-Item -LiteralPath "LICENSE" -Destination (Join-Path $licenses "spektrafilm-GPL-3.0.txt")
+}
 $iconPath = Join-Path $repo "target\packaging\spektrafilm.ico"
 
 Push-Location $repo
 try {
+    & $pkgConfig --atleast-version=0.22.0 libraw
+    if ($LASTEXITCODE -ne 0) { throw "Native LibRaw >= 0.22.0 is required for reference RAW parity." }
+    foreach ($package in @("OpenImageIO", "exiv2", "lensfun", "glib-2.0")) {
+        & $pkgConfig --exists $package
+        if ($LASTEXITCODE -ne 0) { throw "Native development package missing: $package" }
+    }
     New-AppIcon -Source $IconSource -Destination $iconPath
+    foreach ($binary in @("spektrafilm", "decode_raw_gui")) {
+        cargo build --release -p spektrafilm-cli --bin $binary --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building $binary" }
+    }
 
     if ($Aio) {
         cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
 
-        $releaseDir = Join-Path $BuildTargetDir "release"
+        $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $manifestPath = Join-Path $repo "target\packaging\embedded_bundle.rs"
         New-EmbedManifest -DataDir "data" -F64Exe (Join-Path $releaseDir "spektrafilm-f64.exe") -Destination $manifestPath
 
@@ -294,6 +375,7 @@ try {
         try {
             $env:SPEKTRAFILM_EMBED_MANIFEST = (Resolve-Path -LiteralPath $manifestPath).Path
             cargo build --release -p spektrafilm-gui --features spektrafilm-gpu/cuda-backend --target-dir $BuildTargetDir
+            if ($LASTEXITCODE -ne 0) { throw "Failed building embedded GUI" }
         } finally {
             if ($null -eq $oldEmbed) {
                 Remove-Item Env:\SPEKTRAFILM_EMBED_MANIFEST -ErrorAction SilentlyContinue
@@ -317,7 +399,8 @@ spektrafilm-rs Windows AIO
 
 Run spektrafilm-gui-aio.exe.
 
-This single exe embeds:
+This executable embeds application assets and the CPU f64 exporter;
+the adjacent native DLLs, external exporter, helper and Lensfun database are required.
 - application data/profiles/LUTs
 - arctic2026alpha02 assets
 - spektrafilm-f64.exe for CPU f64 Export
@@ -334,9 +417,11 @@ Backends:
         Write-Host "Icon:         $(Resolve-Path -LiteralPath $iconPath)"
     } else {
         cargo build --release -p spektrafilm-gui --features spektrafilm-gpu/cuda-backend --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building GUI" }
         cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
 
-        $releaseDir = Join-Path $BuildTargetDir "release"
+        $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $guiExe = Join-Path $releaseDir "spektrafilm-gui.exe"
         Set-ExeIcon -ExePath $guiExe -IconPath $iconPath
 
@@ -353,6 +438,15 @@ Backends:
         Write-Host "Packaged: $(Resolve-Path -LiteralPath $DistDir)"
         Write-Host "Icon:     $(Resolve-Path -LiteralPath $iconPath)"
     }
+    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui")) {
+        Copy-Item -LiteralPath (Join-Path $releaseDir "$binary.exe") -Destination (Join-Path $DistDir "$binary.exe") -Force
+    }
+    Copy-NativeBundle $DistDir
+    if (-not $Aio) {
+        "Run spektrafilm-gui.exe. Keep all executables, native DLLs, licenses, data and lensfun together. RAW requires the bundled LibRaw >= 0.22.0. The decode_raw_gui helper writes linear ACES float TIFF." |
+            Set-Content -Encoding UTF8 (Join-Path $DistDir "README.txt")
+    }
+    Compress-Archive -Path (Join-Path $DistDir "*") -DestinationPath "$DistDir.zip" -Force
 } finally {
     Pop-Location
 }

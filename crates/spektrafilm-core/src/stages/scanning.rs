@@ -11,6 +11,7 @@ use spektrafilm_math::spectral;
 
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
+use crate::spectral_service::select_illuminant_f64;
 
 /// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy grid.
 /// Same layout as the enlarger LUT helper in `printing.rs`.
@@ -178,11 +179,7 @@ pub fn scan(
         .collect();
     let base_density: Vec<f64> = profile.data.base_density.clone();
 
-    let illuminant_f32 = select_illuminant(&profile.info.viewing_illuminant);
-    // Use the full-precision f64 illuminant — the f32 → f64 promotion of
-    // the f32 constants drops ~7 digits per sample and accumulates ~5e-6
-    // of drift in the scan stage after the 81-wavelength reduction.
-    let illuminant: Vec<f64> = select_illuminant_f64(&profile.info.viewing_illuminant).to_vec();
+    let illuminant = select_illuminant_f64(&profile.info.viewing_illuminant);
     let n_wl = illuminant
         .len()
         .min(channel_density.len())
@@ -224,9 +221,13 @@ pub fn scan(
     let vx = illu_xyz_runtime[0] / sum_xyz;
     let vy = illu_xyz_runtime[1] / sum_xyz;
     let viewing_white = [vx / vy, 1.0f64, (1.0 - vx - vy) / vy];
-    let output_white = spectral::colorspace_white_xyz_f64(&params.io.output_color_space);
-    let adapt = colorspace::chromatic_adaptation_matrix_f64(viewing_white, output_white);
-    let base_xyz_to_rgb = output_colorspace_from_xyz_f64(&params.io.output_color_space);
+    let output_space = colorspace::resolve(&params.io.output_color_space)
+        .expect("output color space must be validated before scanning");
+    let adapt = colorspace::chromatic_adaptation_matrix_f64(
+        viewing_white,
+        output_space.whitepoint_xyz(),
+    );
+    let base_xyz_to_rgb = output_space.matrix_xyz_to_rgb;
 
     // Dispatch spectral integration to backend (GPU or CPU). The backend
     // applies the two matrices in sequence — we pass them separately.
@@ -281,19 +282,22 @@ pub fn scan(
     // glare in RGB space by pre-multiplying the illuminant XYZ through the same matrix.
     //   Python: rgb = M @ (xyz + g*illu) = M@xyz + g*(M@illu)
     //   Rust:   rgb = M @ xyz; then rgb += g * (M@illu)
-    let glare = if params.io.scan_film {
-        &params.film_render.glare
-    } else {
-        &params.print_render.glare
-    };
-    if glare.active && glare.percent > 0.0 {
+    //
+    // Python 0.3.4 `ScanningStage._density_to_rgb` sets `glare = None` on the
+    // `io.scan_film` path — direct-film scans get no viewing glare, and
+    // `film_render.glare` is never read anywhere upstream. Only the print
+    // path consumes `print_render.glare` (scan_film=false).
+    let glare = (!params.io.scan_film)
+        .then(|| &params.print_render.glare)
+        .filter(|g| g.active && g.percent > 0.0);
+    if let Some(glare) = glare {
         // Illuminant XYZ (Y=1) from the SPD (matches Python `contract('k,kl->l', illu, CMFs)/norm`).
         // Use the unnormalized integration here — the scaling cancels because we apply M next.
         let mut illu_xyz = [0.0f64; 3];
         for i in 0..n_wl {
-            illu_xyz[0] += illuminant[i] * spectral::CMF_X[i] as f64;
-            illu_xyz[1] += illuminant[i] * spectral::CMF_Y[i] as f64;
-            illu_xyz[2] += illuminant[i] * spectral::CMF_Z[i] as f64;
+            illu_xyz[0] += illuminant[i] * spectral::CMF_X_F64[i];
+            illu_xyz[1] += illuminant[i] * spectral::CMF_Y_F64[i];
+            illu_xyz[2] += illuminant[i] * spectral::CMF_Z_F64[i];
         }
         for c in 0..3 {
             illu_xyz[c] /= normalization;
@@ -328,7 +332,7 @@ pub fn scan(
             glare.percent,
             glare.roughness,
             glare.blur,
-            42, // fixed seed for reproducible parity tests; Python uses np.random which differs
+            0,
         );
         spektrafilm_model::glare::add_glare_with_amount(&mut rgb, &glare_amount, glare_rgb_offset);
     }
@@ -356,65 +360,22 @@ pub fn scan(
             spektrafilm_model::diffusion::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
-    // CCTF encoding + clip.
-    //
-    // Python's `_apply_cctf_encoding_and_clip` calls
-    // `colour.RGB_to_RGB(rgb, output_cs, output_cs, apply_cctf_encoding=True)`,
-    // which — even when src == dst — runs `vecmul(M, rgb)` with
-    // `M = matrix_RGB_to_RGB(src, dst, 'CAT02')`. With same src/dst
-    // M should be identity but in f64 it has off-diagonals around 1e-5
-    // (because colour-science's sRGB matrix is 4-decimal-rounded so the
-    // inverse round-trip isn't exact). This nudges every RGB pixel by
-    // ~1e-5 before encoding. We replicate it so the scan-stage output
-    // matches Python bit-for-bit.
-    let zero = from_f64(0.0);
-    let one = from_f64(1.0);
+    // Match colour.RGB_to_RGB(cs, cs): apply the stored same-space matrix
+    // roundtrip and destination CCTF. Preserve values outside [0, 1] for
+    // formats and later consumers that support extended range.
     if params.io.output_cctf_encoding {
-        let m = rgb_to_rgb_identity_matrix(&params.io.output_color_space);
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-            let r = px[0] as f64;
-            let g = px[1] as f64;
-            let b = px[2] as f64;
-            let r2 = m[0][0] * r + m[0][1] * g + m[0][2] * b;
-            let g2 = m[1][0] * r + m[1][1] * g + m[1][2] * b;
-            let b2 = m[2][0] * r + m[2][1] * g + m[2][2] * b;
-            px[0] = spektrafilm_math::precision::srgb_encode(from_f64(r2).clamp(zero, one));
-            px[1] = spektrafilm_math::precision::srgb_encode(from_f64(g2).clamp(zero, one));
-            px[2] = spektrafilm_math::precision::srgb_encode(from_f64(b2).clamp(zero, one));
+            let encoded = colorspace::encode_rgb(
+                [px[0] as f64, px[1] as f64, px[2] as f64],
+                output_space,
+            );
+            px[0] = from_f64(encoded[0]);
+            px[1] = from_f64(encoded[1]);
+            px[2] = from_f64(encoded[2]);
         });
-    } else {
-        rgb.data
-            .par_iter_mut()
-            .for_each(|v| *v = (*v).clamp(zero, one));
     }
 
     rgb
-}
-
-/// Replicate Python `colour.matrix_RGB_to_RGB(cs, cs, 'CAT02')` —
-/// returns the redundant near-identity matrix that colour-science
-/// computes when src == dst. The result is `M_xyz_to_rgb @ M_rgb_to_xyz`
-/// (CAT02 collapses to identity when src/dst whites match), but the
-/// product of 4-decimal-rounded sRGB matrices isn't exactly the
-/// identity in f64.
-fn rgb_to_rgb_identity_matrix(name: &str) -> [[f64; 3]; 3] {
-    let xyz_to_rgb = output_colorspace_from_xyz_f64(name);
-    let rgb_to_xyz = match name {
-        "sRGB" => colorspace::SRGB_TO_XYZ_F64,
-        "ProPhoto RGB" => colorspace::PROPHOTO_TO_XYZ_F64,
-        "Rec. 2020" | "Rec2020" | "ITU-R BT.2020" => colorspace::REC2020_TO_XYZ_F64,
-        "ACES2065-1" => colorspace::ACES_TO_XYZ_F64,
-        _ => colorspace::SRGB_TO_XYZ_F64,
-    };
-    let mut m = [[0.0f64; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            m[i][j] = xyz_to_rgb[i][0] * rgb_to_xyz[0][j]
-                + xyz_to_rgb[i][1] * rgb_to_xyz[1][j]
-                + xyz_to_rgb[i][2] * rgb_to_xyz[2][j];
-        }
-    }
-    m
 }
 
 pub fn process(
@@ -428,30 +389,4 @@ pub fn process(
     scan(density_cmy, profile, params, backend, color_ref, gamut)
 }
 
-fn select_illuminant(name: &str) -> &'static [f32] {
-    match name {
-        "D50" => &spectral::ILLUMINANT_D50,
-        "D55" => &spectral::ILLUMINANT_D55,
-        "D65" => &spectral::ILLUMINANT_D65,
-        _ => &spectral::ILLUMINANT_D50,
-    }
-}
 
-pub fn select_illuminant_f64(name: &str) -> &'static [f64] {
-    match name {
-        "D50" => &spectral::ILLUMINANT_D50_F64,
-        "D55" => &spectral::ILLUMINANT_D55_F64,
-        "D65" => &spectral::ILLUMINANT_D65_F64,
-        _ => &spectral::ILLUMINANT_D50_F64,
-    }
-}
-
-fn output_colorspace_from_xyz_f64(name: &str) -> [[f64; 3]; 3] {
-    match name {
-        "sRGB" => colorspace::XYZ_TO_SRGB_F64,
-        "ProPhoto RGB" => colorspace::XYZ_TO_PROPHOTO_F64,
-        "Rec. 2020" | "Rec2020" | "ITU-R BT.2020" => colorspace::XYZ_TO_REC2020_F64,
-        "ACES2065-1" => colorspace::XYZ_TO_ACES_F64,
-        _ => colorspace::XYZ_TO_SRGB_F64,
-    }
-}

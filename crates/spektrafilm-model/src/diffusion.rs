@@ -2,21 +2,23 @@
 
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, ZERO, from_f32, from_f64};
+use spektrafilm_math::precision::{Scalar, ZERO, from_f64};
 
-/// Apply unsharp mask to an image. `backend` provides the Gaussian blur
-/// implementation (CPU rayon or wgpu compute shader).
+/// Apply Python's unsharp mask with the faithful CPU Gaussian filter.
+/// Keep sigma and amount in f64 before conversion to the image scalar type.
 pub fn apply_unsharp_mask(
     image: &ImageBuf,
-    sigma: f32,
-    amount: f32,
-    backend: &dyn ComputeBackend,
+    sigma: impl Into<f64>,
+    amount: impl Into<f64>,
+    _backend: &dyn ComputeBackend,
 ) -> ImageBuf {
+    let sigma = sigma.into();
+    let amount = amount.into();
     if sigma <= 0.0 || amount <= 0.0 {
         return image.clone();
     }
-    let blurred = backend.gaussian_blur(image, sigma);
-    let amount_s = from_f32(amount);
+    let blurred = spektrafilm_math::gaussian::gaussian_blur(image, sigma);
+    let amount_s = from_f64(amount);
     let mut result = image.clone();
     for (r, (o, b)) in result
         .data
@@ -104,11 +106,8 @@ pub fn apply_halation_um(
             if sigma_c_px_f64 <= 0.0 && lambda_t_px_f64 <= 0.0 {
                 continue;
             }
-            // gaussian_blur/exponential_filter take f32 sigma — narrow at the
-            // boundary (the kernel itself produces the same bits for any
-            // f32-representable sigma, this is just so we don't break the API).
-            let sigma_c_px = sigma_c_px_f64.max(1e-6) as f32;
-            let lambda_t_px = lambda_t_px_f64.max(1e-6) as f32;
+            let sigma_c_px = sigma_c_px_f64.max(1e-6);
+            let lambda_t_px = lambda_t_px_f64.max(1e-6);
             let core = gaussian_blur_channel(&channels[c], w, h, sigma_c_px);
             let tail = exponential_filter_channel(&channels[c], w, h, lambda_t_px);
             let one = from_f64(1.0);
@@ -152,7 +151,7 @@ pub fn apply_halation_um(
             }
             let mut hb = vec![ZERO; n_pix];
             for (k, &wk) in decay.iter().enumerate() {
-                let sigma_k = (sigma_first_px_f64 * ((k as f64) + 1.0).sqrt()).max(1e-6) as f32;
+                let sigma_k = (sigma_first_px_f64 * ((k as f64) + 1.0).sqrt()).max(1e-6);
                 let blurred = gaussian_blur_channel(&channels[c], w, h, sigma_k);
                 let wk_s = from_f64(wk);
                 for i in 0..n_pix {
@@ -350,6 +349,32 @@ fn family_shape(family: &str) -> Option<FamilyShape> {
         _ => return None,
     };
     Some(s)
+}
+
+/// The four valid diffusion-filter families (Python
+/// `_DIFFUSION_FILTER_SHAPES` keys / `DIFFUSION_FILTER_FAMILIES`).
+pub const VALID_FAMILIES: [&str; 4] = [
+    "glimmerglass",
+    "black_pro_mist",
+    "pro_mist",
+    "cinebloom",
+];
+
+/// Reject an unknown diffusion-filter family with an actionable error.
+/// Python 0.3.4 raises
+/// `ValueError(f"Unknown diffusion filter family: {family!r}; "
+///            f"available: {list(_DIFFUSION_FILTER_SHAPES)}")`
+/// from `apply_diffusion_filter_um`; this mirrors it for the Result-based
+/// Rust API so a malformed family can never silently pass through as a
+/// no-op.
+pub fn validate_family(family: &str) -> Result<(), String> {
+    if VALID_FAMILIES.contains(&family) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Unknown diffusion filter family: '{family}'; available: {VALID_FAMILIES:?}"
+        ))
+    }
 }
 
 /// Apply per-group intensity (weight) and size (lambda) multipliers, then
@@ -571,22 +596,24 @@ fn diffusion_filter_psf(
 
 /// Apply a lens diffusion-filter PSF to an RGB image. Port of Python's
 /// `apply_diffusion_filter_um`. Returns the input unchanged when the filter
-/// is effectively a no-op (strength/spatial_scale ≤ 0, p_s ≤ 0, or an
-/// unknown family). `pixel_size_um` is the image-plane sampling pitch.
+/// is effectively a no-op (strength/spatial_scale ≤ 0 or p_s ≤ 0); an
+/// unknown family is an `Err` — Python 0.3.4 raises `ValueError` there
+/// instead of silently passing the image through. `pixel_size_um` is the
+/// image-plane sampling pitch.
 pub fn apply_diffusion_filter_um(
     image: &ImageBuf,
     df: &DiffusionFilter,
     pixel_size_um: f64,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     if df.strength <= 0.0 || df.spatial_scale <= 0.0 {
-        return image.clone();
+        return Ok(image.clone());
     }
-    let Some(base) = family_shape(df.family) else {
-        return image.clone();
-    };
+    validate_family(df.family)?;
+    // `validate_family` only passes for the four known family keys.
+    let base = family_shape(df.family).expect("validated family");
     let p_s = strength_to_scatter(df.strength, base.total_gain);
     if p_s <= 0.0 {
-        return image.clone();
+        return Ok(image.clone());
     }
     let cfg = resolve_family_cfg(base, df);
 
@@ -612,7 +639,7 @@ pub fn apply_diffusion_filter_um(
             .collect();
         out.write_channel(c, &mixed);
     }
-    out
+    Ok(out)
 }
 
 /// Highlight-boost tone curve. Port of Python `boost_highlights`
@@ -668,238 +695,238 @@ pub fn boost_highlights(
     out
 }
 
-/// Downsample an image by an integer factor via box (area) averaging.
-fn downsample_area(img: &ImageBuf, d: usize) -> ImageBuf {
-    use rayon::prelude::*;
-    let w = img.width as usize;
-    let h = img.height as usize;
-    let sw = w.div_ceil(d);
-    let sh = h.div_ceil(d);
-    let mut out = vec![ZERO; sw * sh * 3];
-    out.par_chunks_mut(sw * 3)
-        .enumerate()
-        .for_each(|(sy, row)| {
-            for sx in 0..sw {
-                let mut acc = [0.0f64; 3];
-                let mut cnt = 0.0f64;
-                for yy in (sy * d)..((sy + 1) * d).min(h) {
-                    for xx in (sx * d)..((sx + 1) * d).min(w) {
-                        let i = (yy * w + xx) * 3;
-                        acc[0] += img.data[i] as f64;
-                        acc[1] += img.data[i + 1] as f64;
-                        acc[2] += img.data[i + 2] as f64;
-                        cnt += 1.0;
-                    }
-                }
-                for c in 0..3 {
-                    row[sx * 3 + c] = from_f64(acc[c] / cnt);
-                }
-            }
-        });
-    ImageBuf::from_data(sw as u32, sh as u32, out)
-}
-
-/// Bilinear upsample a small interleaved-RGB f64 buffer to `out_w × out_h`,
-/// inverting the `downsample_area` block mapping (sample centre at
-/// `(x + 0.5)/d − 0.5` in small-pixel coords).
-fn upsample_bilinear(
-    small: &[f64],
-    sw: usize,
-    sh: usize,
-    out_w: usize,
-    out_h: usize,
-    d: usize,
-) -> Vec<f64> {
-    use rayon::prelude::*;
-    let sample = |sx: usize, sy: usize, c: usize| small[(sy * sw + sx) * 3 + c];
-    let mut out = vec![0.0f64; out_w * out_h * 3];
-    out.par_chunks_mut(out_w * 3)
-        .enumerate()
-        .for_each(|(y, row)| {
-            let fy = ((y as f64 + 0.5) / d as f64 - 0.5).clamp(0.0, (sh - 1) as f64);
-            let y0 = fy.floor() as usize;
-            let y1 = (y0 + 1).min(sh - 1);
-            let wy = fy - y0 as f64;
-            for x in 0..out_w {
-                let fx = ((x as f64 + 0.5) / d as f64 - 0.5).clamp(0.0, (sw - 1) as f64);
-                let x0 = fx.floor() as usize;
-                let x1 = (x0 + 1).min(sw - 1);
-                let wx = fx - x0 as f64;
-                for c in 0..3 {
-                    let top = sample(x0, y0, c) * (1.0 - wx) + sample(x1, y0, c) * wx;
-                    let bot = sample(x0, y1, c) * (1.0 - wx) + sample(x1, y1, c) * wx;
-                    row[x * 3 + c] = top * (1.0 - wy) + bot * wy;
-                }
-            }
-        });
-    out
-}
-
-/// Max working-resolution σ for the sum-of-Gaussians path; the downsample
-/// factor is `ceil(σ_max / SIGMA_CAP)` so every blur stays at or below it.
-const DIFFUSION_SIGMA_CAP: f64 = 32.0;
-
-/// 3-Gaussian fit of a 2D exponential (matches `exponential_filter_channel`).
-const DIFFUSION_EXP_FIT: [(f64, f64); 3] = [(0.1633, 0.5360), (0.6496, 1.5236), (0.1870, 2.7684)];
-
-/// Decompose the (resolved) diffusion PSF into Gaussian blur components.
-/// Returns parallel vectors of (full-resolution σ in px, per-channel
-/// coefficient); each PSF sub-component exponential contributes 3 Gaussians.
-/// Shared by the CPU-blur and GPU-resident-plan paths.
-fn diffusion_components(
-    cfg: &FamilyShape,
-    df: &DiffusionFilter,
-    pixel_size_um: f64,
-) -> (Vec<f64>, Vec<[f64; 3]>) {
-    let spatial_scale = df.spatial_scale.max(1e-6);
-    let (core_l, core_w) = expand_group(&cfg.core, false);
-    let (halo_l, halo_w) = expand_group(&cfg.halo, false);
-    let (bloom_l, bloom_w) = expand_group(&cfg.bloom, true);
-    let effective_warmth = cfg.halo_warmth_base + df.halo_warmth;
-    let halo_per_ch = halo_channel_weights(&halo_w, effective_warmth);
-
-    let to_px = |l: f64| l * spatial_scale / pixel_size_um;
-    let mut sigmas: Vec<f64> = Vec::new();
-    let mut coeffs: Vec<[f64; 3]> = Vec::new();
-    let mut push = |lambda: f64, cc: [f64; 3]| {
-        let lpx = to_px(lambda);
-        for (amp, ratio) in DIFFUSION_EXP_FIT {
-            sigmas.push(ratio * lpx);
-            coeffs.push([cc[0] * amp, cc[1] * amp, cc[2] * amp]);
-        }
-    };
-    for (k, &lam) in core_l.iter().enumerate() {
-        let c = cfg.w_c * core_w[k];
-        push(lam, [c, c, c]);
-    }
-    for (k, &lam) in bloom_l.iter().enumerate() {
-        let c = cfg.w_b * bloom_w[k];
-        push(lam, [c, c, c]);
-    }
-    for (k, &lam) in halo_l.iter().enumerate() {
-        push(
-            lam,
-            [
-                cfg.w_h * halo_per_ch[0][k],
-                cfg.w_h * halo_per_ch[1][k],
-                cfg.w_h * halo_per_ch[2][k],
-            ],
-        );
-    }
-    (sigmas, coeffs)
-}
-
-/// Build the GPU-resident diffusion plan (downsample factor, working dims,
-/// p_s, and the working-resolution σ + per-channel coefficient lists) for a
-/// `width × height` image. Returns `None` when the filter is a no-op
-/// (inactive / p_s ≤ 0 / unknown family). The GPU resident chain consumes
-/// this; the math mirrors `apply_diffusion_filter_blur` exactly.
-pub fn diffusion_gpu_plan(
-    df: &DiffusionFilter,
-    pixel_size_um: f64,
-    width: u32,
-    height: u32,
-) -> Option<spektrafilm_gpu::DiffusionGpuPlan> {
-    if df.strength <= 0.0 || df.spatial_scale <= 0.0 {
-        return None;
-    }
-    let base = family_shape(df.family)?;
-    let p_s = strength_to_scatter(df.strength, base.total_gain);
-    if p_s <= 0.0 {
-        return None;
-    }
-    let cfg = resolve_family_cfg(base, df);
-    let (sigmas_full, coeffs) = diffusion_components(&cfg, df, pixel_size_um);
-    let sigma_max = sigmas_full.iter().cloned().fold(0.0f64, f64::max);
-    let d = ((sigma_max / DIFFUSION_SIGMA_CAP).ceil() as usize).max(1);
-
-    Some(spektrafilm_gpu::DiffusionGpuPlan {
-        d: d as u32,
-        small_w: (width as usize).div_ceil(d) as u32,
-        small_h: (height as usize).div_ceil(d) as u32,
-        p_s: p_s as f32,
-        sigmas: sigmas_full.iter().map(|&s| (s / d as f64) as f32).collect(),
-        coeffs: coeffs
-            .iter()
-            .map(|c| [c[0] as f32, c[1] as f32, c[2] as f32])
-            .collect(),
-    })
-}
-
-/// GPU-friendly diffusion filter via sum-of-Gaussians, computed at a
-/// downsampled working resolution so the blur kernels stay small.
+/// Apply diffusion during backend-driven previews using the faithful CPU PSF.
 ///
-/// Each PSF sub-component exponential is approximated by the same
-/// 3-Gaussian fit `exponential_filter_channel` uses, making the per-channel
-/// kernel a weighted sum of Gaussian blurs. Because the halo/bloom are
-/// low-frequency, the whole scattered field `K_s * img` is computed on an
-/// image downsampled by `d = ceil(σ_max / 32)` (so every blur σ ≤ ~32 px →
-/// bounded FIR kernels and tiny buffers), then bilinearly upsampled and
-/// mixed `(1−p_s)·img + p_s·upsample(K_s*img_small)`. Visually matches the
-/// exact-FFT CPU path for the dominant glow; the only loss is a slight
-/// softening of the (small-weight) sharp core inside the scattered
-/// fraction when `d > 1`. Used for the live GPU preview; CPU export keeps
-/// the exact FFT path.
+/// The former downsampled sum-of-Gaussians approximation changed the source
+/// sampling, finite PSF normalisation, and boundary handling. Until a backend
+/// implements the same discrete PSF and reflect convolution, previews use
+/// `apply_diffusion_filter_um`, matching the CPU export path.
 pub fn apply_diffusion_filter_blur(
     image: &ImageBuf,
     df: &DiffusionFilter,
     pixel_size_um: f64,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
-    use rayon::prelude::*;
-    if df.strength <= 0.0 || df.spatial_scale <= 0.0 {
-        return image.clone();
-    }
-    let Some(base) = family_shape(df.family) else {
-        return image.clone();
-    };
-    let p_s = strength_to_scatter(df.strength, base.total_gain);
-    if p_s <= 0.0 {
-        return image.clone();
-    }
-    let cfg = resolve_family_cfg(base, df);
-    let (sigmas_full, coeffs) = diffusion_components(&cfg, df, pixel_size_um);
+) -> Result<ImageBuf, String> {
+    tracing::debug!(
+        backend = backend.name(),
+        family = df.family,
+        "diffusion filter: using faithful CPU PSF fallback"
+    );
+    apply_diffusion_filter_um(image, df, pixel_size_um)
+}
 
-    // Downsample factor so the largest σ at working resolution ≤ the cap.
-    let sigma_max = sigmas_full.iter().cloned().fold(0.0f64, f64::max);
-    let d = ((sigma_max / DIFFUSION_SIGMA_CAP).ceil() as usize).max(1);
+#[cfg(test)]
+mod family_tests {
+    use super::*;
 
-    let work = if d > 1 {
-        downsample_area(image, d)
-    } else {
-        image.clone()
-    };
-    let sigmas_work: Vec<f32> = sigmas_full.iter().map(|&s| (s / d as f64) as f32).collect();
-    let blurs = backend.gaussian_blur_multi(&work, &sigmas_work);
-
-    // Accumulate the scattered field at working resolution.
-    let nwork = work.data.len();
-    let mut acc = vec![0.0f64; nwork];
-    for (blur, cf) in blurs.iter().zip(coeffs.iter()) {
-        acc.par_chunks_mut(3)
-            .zip(blur.data.par_chunks(3))
-            .for_each(|(a, b)| {
-                a[0] += cf[0] * (b[0] as f64);
-                a[1] += cf[1] * (b[1] as f64);
-                a[2] += cf[2] * (b[2] as f64);
-            });
+    fn df(family: &str, strength: f64) -> DiffusionFilter<'_> {
+        DiffusionFilter {
+            family,
+            strength,
+            spatial_scale: 1.0,
+            halo_warmth: 0.0,
+            core_intensity: 1.0,
+            core_size: 1.0,
+            halo_intensity: 1.0,
+            halo_size: 1.0,
+            bloom_intensity: 1.0,
+            bloom_size: 1.0,
+        }
     }
 
-    let w = image.width as usize;
-    let h = image.height as usize;
-    let scattered = if d > 1 {
-        upsample_bilinear(&acc, work.width as usize, work.height as usize, w, h, d)
-    } else {
-        acc
-    };
+    fn ramp(n: usize) -> ImageBuf {
+        // A 32×32 ramp with a bright corner block — exercises the halo/bloom
+        // tails as well as the core.
+        let mut data = Vec::with_capacity(n * n * 3);
+        for y in 0..n {
+            for x in 0..n {
+                let v = (x.max(y) as f64 / (n as f64 - 1.0)).min(1.0);
+                let hot = if x >= n - 8 && y < 8 { 1.0 } else { v * 0.3 };
+                data.push(from_f64(hot));
+                data.push(from_f64(hot * 0.9));
+                data.push(from_f64(hot * 0.8));
+            }
+        }
+        ImageBuf::from_data(n as u32, n as u32, data)
+    }
 
-    let mut out = image.clone();
-    out.data
-        .par_iter_mut()
-        .zip(image.data.par_iter())
-        .zip(scattered.par_iter())
-        .for_each(|((o, &orig), &s)| {
-            *o = from_f64((1.0 - p_s) * (orig as f64) + p_s * s);
-        });
-    out
+    #[test]
+    fn validate_family_matches_python_families() {
+        for f in VALID_FAMILIES {
+            assert!(validate_family(f).is_ok(), "{f} must be valid");
+        }
+        for bad in ["black_promist", "", "Black Pro Mist", "golden_glow"] {
+            let err = validate_family(bad).unwrap_err();
+            assert!(
+                err.starts_with("Unknown diffusion filter family: '"),
+                "message should mirror Python's ValueError, got: {err}"
+            );
+            assert!(err.contains("glimmerglass"), "must list the available families");
+        }
+    }
+
+    #[test]
+    fn unknown_family_errors_instead_of_passing_through() {
+        // Python 0.3.4 raises ValueError for an effective filter with an
+        // unknown family — the image must NOT come back unchanged.
+        let img = ramp(32);
+        let e = apply_diffusion_filter_um(&img, &df("black_promist", 0.5), 10.0).unwrap_err();
+        assert!(e.contains("Unknown diffusion filter family"));
+        let e = apply_diffusion_filter_blur(
+            &img,
+            &df("black_promist", 0.5),
+            10.0,
+            &spektrafilm_gpu::cpu_backend::CpuBackend,
+        )
+        .unwrap_err();
+        assert!(e.contains("Unknown diffusion filter family"));
+    }
+
+    #[test]
+    fn ineffective_filter_never_reaches_the_family_check() {
+        // Python returns the image before the family lookup when
+        // strength/spatial_scale ≤ 0 — a bogus name must not error there.
+        let img = ramp(32);
+        let mut f = df("black_promist", 0.0);
+        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+        assert_eq!(out.data.len(), img.data.len());
+        f.strength = 0.5;
+        f.spatial_scale = 0.0;
+        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+        assert_eq!(out.data.len(), img.data.len());
+    }
+
+    #[test]
+    fn all_four_families_scatter_and_stay_distinct() {
+        let img = ramp(32);
+        let mut outputs = Vec::new();
+        for family in VALID_FAMILIES {
+            let out = apply_diffusion_filter_um(&img, &df(family, 1.0), 10.0)
+                .unwrap_or_else(|e| panic!("{family}: {e}"));
+            // The filter must actually scatter: at least some pixel moves.
+            let max_shift = out
+                .data
+                .iter()
+                .zip(img.data.iter())
+                .map(|(a, b)| (spektrafilm_math::precision::to_f64(*a)
+                    - spektrafilm_math::precision::to_f64(*b))
+                .abs())
+                .fold(0.0f64, f64::max);
+            assert!(
+                max_shift > 1e-3,
+                "{family} did nothing (max shift {max_shift})"
+            );
+            outputs.push((family, out));
+        }
+        for (i, (fa, oa)) in outputs.iter().enumerate() {
+            for (fb, ob) in outputs.iter().skip(i + 1) {
+                let max_diff = oa
+                    .data
+                    .iter()
+                    .zip(ob.data.iter())
+                    .map(|(a, b)| (spektrafilm_math::precision::to_f64(*a)
+                        - spektrafilm_math::precision::to_f64(*b))
+                    .abs())
+                    .fold(0.0f64, f64::max);
+                assert!(
+                    max_diff > 1e-4,
+                    "families {fa} and {fb} produced the same output"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn uniform_image_is_energy_conserving() {
+        // (1−p_s)·c + p_s·(K_s∗c) = c for a PSF that sums to one per
+        // channel — the model's energy-conservation invariant (Python
+        // `_strength_to_scatter` docstring). Small spatial_scale keeps the
+        // kernel inside the radius cap so truncation loss is negligible.
+        let n = 48usize;
+        let img = ImageBuf::from_data(n as u32, n as u32, vec![from_f64(0.37); n * n * 3]);
+        for family in VALID_FAMILIES {
+            let mut f = df(family, 1.0);
+            f.spatial_scale = 0.02;
+            let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+            let max_diff = out
+                .data
+                .iter()
+                .map(|v| (spektrafilm_math::precision::to_f64(*v) - 0.37).abs())
+                .fold(0.0f64, f64::max);
+            assert!(
+                max_diff < 2e-3,
+                "{family} broke energy conservation on a uniform field ({max_diff})"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod preview_parity_tests {
+    use super::*;
+
+    #[test]
+    fn preview_cpu_fallback_preserves_pinned_python_hotspot_diffusion() {
+        // A bright corner exercises the discrete core and reflected halo/bloom
+        // boundaries. Compare with Python 0.3.4 FFT samples from commit
+        // 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc, retaining the 0.005 budget.
+        let n = 48usize;
+        let mut data = Vec::with_capacity(n * n * 3);
+        for y in 0..n {
+            for x in 0..n {
+                let v = (x.max(y) as f64 / (n as f64 - 1.0)).min(1.0);
+                let hot = if x >= n - 12 && y < 12 { 1.0 } else { v * 0.3 };
+                data.push(from_f64(hot));
+                data.push(from_f64(hot * 0.9));
+                data.push(from_f64(hot * 0.8));
+            }
+        }
+        let img = ImageBuf::from_data(n as u32, n as u32, data);
+        let df = DiffusionFilter {
+            family: "black_pro_mist",
+            strength: 1.0,
+            spatial_scale: 0.05,
+            halo_warmth: 0.0,
+            core_intensity: 1.0,
+            core_size: 1.0,
+            halo_intensity: 1.0,
+            halo_size: 1.0,
+            bloom_intensity: 1.0,
+            bloom_size: 1.0,
+        };
+        let preview = apply_diffusion_filter_blur(
+            &img,
+            &df,
+            10.0,
+            &spektrafilm_gpu::cpu_backend::CpuBackend,
+        )
+        .unwrap();
+        // (x, y, RGB): dark/hot corners, both sides of the hotspot boundary,
+        // its inner corner (the former approximation's maximum-error pixel),
+        // the surrounding ramp, and the opposite image edges.
+        let expected = [
+            (0, 0, [0.0001656748356651663, 0.00011847992803590178, 0.00006887024631659705]),
+            (47, 0, [0.9999611456128636, 0.8999656676998947, 0.7999702399825238]),
+            (35, 0, [0.22733680364241327, 0.20389738797708928, 0.18040232965255765]),
+            (36, 0, [0.9959659137605512, 0.897091112168781, 0.7982732190282742]),
+            (35, 11, [0.22599846102267726, 0.20297636539409727, 0.17992097812422198]),
+            (36, 11, [0.9933886879364295, 0.8951923565049538, 0.7970861067471279]),
+            (36, 12, [0.23237456842784404, 0.20871619741761965, 0.18502464005050112]),
+            (47, 12, [0.303522512644374, 0.27253741571669504, 0.24150242300582822]),
+            (24, 24, [0.15327507540634389, 0.13793224324917236, 0.12258820284520613]),
+            (0, 47, [0.2998862907538783, 0.2699192696864028, 0.23995395227045013]),
+            (47, 47, [0.29993825634342175, 0.2699570193008415, 0.2399767747872168]),
+        ];
+        let mut max_diff = 0.0f64;
+        for (x, y, rgb) in expected {
+            for (c, reference) in rgb.into_iter().enumerate() {
+                let actual = spektrafilm_math::precision::to_f64(preview.data[(y * n + x) * 3 + c]);
+                max_diff = max_diff.max((actual - reference).abs());
+            }
+        }
+        assert!(
+            max_diff < 5e-3,
+            "preview CPU diffusion fallback differs from pinned Python FFT samples ({max_diff})"
+        );
+    }
 }

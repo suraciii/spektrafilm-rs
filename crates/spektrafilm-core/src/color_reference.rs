@@ -35,7 +35,7 @@ use spektrafilm_math::spectral::{self, CMF_Y_F64};
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 use crate::stages::printing::compute_single_pixel_raw;
-use crate::stages::scanning::select_illuminant_f64;
+use crate::spectral_service::select_illuminant_f64;
 
 /// Pre-computed scanner exposure correction for the active stocks/params.
 #[derive(Clone, Copy, Debug)]
@@ -100,6 +100,7 @@ impl ColorReference {
         params: &RuntimeParams,
         print_illuminant: &[f64],
         print_exposure_factor: f64,
+        preflash: [f64; 3],
     ) -> Self {
         let white_corr = params.scanner.white_correction;
         let black_corr = params.scanner.black_correction;
@@ -115,6 +116,7 @@ impl ColorReference {
                 params,
                 print_illuminant,
                 print_exposure_factor,
+                preflash,
                 white_corr,
                 black_corr,
             )
@@ -193,6 +195,9 @@ impl ColorReference {
     /// the references are *print* densities. The correction shifts the
     /// *printing* raw exposure. Mirrors the `in_print=True` branch of
     /// `_update_cmy_black_white_references` + `black_white_printing_exposure_correction`.
+    /// `preflash` is the constant raw preflash exposure Python's
+    /// `_film_cmy_to_print_log_raw` adds before the inner log10 — the
+    /// reference log-raws include it exactly like the image path.
     #[allow(clippy::too_many_arguments)]
     fn compute_print(
         film: &Profile,
@@ -200,6 +205,7 @@ impl ColorReference {
         params: &RuntimeParams,
         print_illuminant: &[f64],
         print_exposure_factor: f64,
+        preflash: [f64; 3],
         white_corr: bool,
         black_corr: bool,
     ) -> Self {
@@ -210,8 +216,9 @@ impl ColorReference {
         let film_curves = film.density_curves_f64();
         let cmy_film_white = nanmax_per_channel(&film_curves);
 
-        // Enlarger spectral exposure of those references
-        // (`_film_cmy_to_print_log_raw`, sans the unported preflash term).
+        // Enlarger spectral exposure of those references — the same
+        // `_film_cmy_to_print_log_raw` the printing stage uses, including
+        // its constant preflash term (`raw += preflash` before the log10).
         let film_channel_density = profile_channel_density(film);
         let film_base_density = film.data.base_density.clone();
         let print_sensitivity = profile_sensitivity(print);
@@ -233,7 +240,8 @@ impl ColorReference {
             );
             let mut out = [0.0f64; 3];
             for c in 0..3 {
-                out[c] = ((raw[c] * print_exposure_factor).max(0.0) + 1e-10).log10();
+                out[c] = ((raw[c] * print_exposure_factor + preflash[c]).max(0.0) + 1e-10)
+                    .log10();
             }
             out
         };
@@ -534,6 +542,7 @@ mod parity_tests {
             &pipeline.params,
             pipeline.print_illuminant_slice(),
             pipeline.print_exposure_factor(),
+            pipeline.preflash_raw(),
         );
 
         assert!(cref.has_remap(), "print path must build a luminance remap");

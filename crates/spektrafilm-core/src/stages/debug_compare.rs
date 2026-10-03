@@ -84,7 +84,7 @@ mod tests {
             })
             .collect();
 
-        let tc_lut = spectral_service::compute_tc_lut(&spectra_lut, &sensitivity);
+        let tc_lut = spectral_service::compute_tc_lut(&spectra_lut.to_f64_cube(), &sensitivity);
         eprintln!("TC LUT size: {}x{}", tc_lut.size, tc_lut.size);
         let center = tc_lut.size / 2;
         let center_val = [
@@ -132,7 +132,8 @@ mod tests {
 
         // Step 5: Full midgray chain for exposure factor comparison
         let spectra_lut = crate::spectral_service::load_spectra_lut(&data_dir()).unwrap();
-        let tc_lut_unnorm = crate::spectral_service::compute_tc_lut(&spectra_lut, &sensitivity);
+        let tc_lut_unnorm =
+            crate::spectral_service::compute_tc_lut(&spectra_lut.to_f64_cube(), &sensitivity);
         // Normalize by green at gray tc
         let lut_x_g = tc.0 * (tc_lut_unnorm.size - 1) as f64;
         let lut_y_g = tc.1 * (tc_lut_unnorm.size - 1) as f64;
@@ -231,7 +232,7 @@ mod tests {
             })
             .collect();
         let spectra_lut = spectral_service::load_spectra_lut(&dir).unwrap();
-        let tc_lut = spectral_service::compute_tc_lut(&spectra_lut, &sensitivity);
+        let tc_lut = spectral_service::compute_tc_lut(&spectra_lut.to_f64_cube(), &sensitivity);
         let _params = RuntimeParams::default();
         let rgb_to_adapted = build_rgb_to_adapted_xyz("sRGB", &ILLUMINANT_D55, false);
 
@@ -356,8 +357,10 @@ mod tests {
             &backend,
             pipeline.tc_lut(),
             None,
-            crate::stages::filming::select_illuminant(&pipeline.film.info.reference_illuminant),
+            crate::spectral_service::select_illuminant(&pipeline.film.info.reference_illuminant),
             1.0,
+            crate::resizing::pixel_size_um(pipeline.params.camera.film_format_mm, 1, 1),
+            0.0,
         );
         check(
             "log_e_film",
@@ -370,7 +373,7 @@ mod tests {
         );
 
         let density_cmy =
-            crate::stages::filming::develop(&log_raw, &pipeline.film, &pipeline.params, &backend);
+            crate::stages::filming::develop(&log_raw, &pipeline.film, &pipeline.params, &backend, crate::resizing::pixel_size_um(pipeline.params.camera.film_format_mm, 1, 1));
         check(
             "cmy_film",
             density_cmy.get(0, 0),
@@ -391,6 +394,7 @@ mod tests {
             pipeline.print_exposure_factor(),
             pipeline.preflash_raw(),
             1.0,
+            crate::resizing::pixel_size_um(pipeline.params.camera.film_format_mm, 1, 1),
         );
         check(
             "log_e_print",

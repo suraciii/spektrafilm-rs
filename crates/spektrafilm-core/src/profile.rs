@@ -341,6 +341,34 @@ impl Profile {
             })
             .collect()
     }
+
+    /// Per-sublayer density curves in the Python layout
+    /// `density_curves_layers[k, sublayer, channel]`, as
+    /// `[exposure][3 sublayers][3 channels]` f64 (the layered-grain path
+    /// reads the raw f64 profile values — `np.nanmax` and the interpolation
+    /// both run at full precision upstream). Empty when the profile carries
+    /// no layer curves; missing entries read as 0.0 like the deserializer.
+    pub fn density_curves_layers_f64(&self) -> Vec<[[f64; 3]; 3]> {
+        self.data
+            .density_curves_layers
+            .iter()
+            .map(|row| {
+                let mut out = [[0.0f64; 3]; 3];
+                for (sl, layer) in row.iter().enumerate() {
+                    if sl >= 3 {
+                        break;
+                    }
+                    for (ch, v) in layer.iter().enumerate() {
+                        if ch >= 3 {
+                            break;
+                        }
+                        out[sl][ch] = *v;
+                    }
+                }
+                out
+            })
+            .collect()
+    }
 }
 
 /// Load a profile from a JSON file on disk.
@@ -437,12 +465,16 @@ pub fn resolve_for_render(mut profile: Profile, development_time: Option<f64>) -
         model.sigmas = pick(&model.sigmas);
     }
     // Layers are n_le × n_layers × n_times on B&W families (upstream slices
-    // `[:, :, idx]`). Unconsumed by the runtime today, but collapse anyway so
-    // no future consumer reads the stale family.
+    // `[:, :, idx]`). Collapse the family, then broadcast the single
+    // channel onto the engine's 3-channel layout (same convention as
+    // `density_curves` below) so the layered-grain path — which indexes
+    // `density_curves_layers[k, sublayer, channel]` — reads replicated
+    // columns, mirroring how the composite curves are broadcast.
     for layer_row in &mut d.density_curves_layers {
         for layer in layer_row.iter_mut() {
             let i = idx.min(layer.len().saturating_sub(1));
-            *layer = vec![layer.get(i).copied().unwrap_or(0.0)];
+            let v = layer.get(i).copied().unwrap_or(0.0);
+            *layer = vec![v, v, v];
         }
     }
     if !d.development_time.is_empty() {
@@ -597,9 +629,40 @@ mod tests {
                 .iter()
                 .all(|row| row.len() == 3 && row[1] == 0.0 && row[2] == 0.0)
         );
+        // Layer curves: the chosen development-time column, replicated
+        // across the 3 engine channels ([k][sublayer][channel]).
+        assert!(
+            r.data
+                .density_curves_layers
+                .iter()
+                .all(|row| row.iter().all(|l| l.len() == 3 && l[0] == l[1] && l[1] == l[2]))
+        );
+        let layers = r.density_curves_layers_f64();
+        assert_eq!(layers.len(), 256);
+        let v = r.data.density_curves_layers[0][0][0];
+        assert_eq!(layers[0][0], [v, v, v]);
         let model = r.data.density_curves_model.as_ref().unwrap();
         assert_eq!(model.n_channels(), 3);
         assert_eq!(model.centers[0], model.centers[1]);
+    }
+
+    /// Colour profiles expose their layer tensor in the Python
+    /// `[k, sublayer, channel]` layout through the f64 accessor.
+    #[test]
+    fn density_curves_layers_f64_maps_colour_layout() {
+        let Some(p) = data_profile("kodak_portra_400") else {
+            return;
+        };
+        let layers = p.density_curves_layers_f64();
+        assert_eq!(layers.len(), p.data.density_curves_layers.len());
+        assert_eq!(layers.len(), 256);
+        for k in [0usize, 100, 255] {
+            for sl in 0..3 {
+                for ch in 0..3 {
+                    assert_eq!(layers[k][sl][ch], p.data.density_curves_layers[k][sl][ch]);
+                }
+            }
+        }
     }
 
     /// Colour profiles pass through `resolve_for_render` untouched.

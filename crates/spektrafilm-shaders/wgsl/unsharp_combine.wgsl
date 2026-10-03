@@ -17,9 +17,9 @@ struct Params {
 @group(0) @binding(2) var<storage, read> b_buf: array<f32>;
 @group(0) @binding(3) var<storage, read_write> out_buf: array<f32>;
 
-@compute @workgroup_size(1024)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
+    let idx = gid.x + gid.y * grid.x * 256u;
     if idx >= params.n_pixels { return; }
     let base = idx * 3u;
     let k1 = 1.0 + params.amount;

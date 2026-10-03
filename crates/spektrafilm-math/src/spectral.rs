@@ -689,50 +689,26 @@ const D65_ILLUMINANT_XYZ_F64: [f64; 3] = [0.95042966940215057, 1.0, 1.0888005470
 /// Get the native white point XYZ for a named colorspace.
 /// Uses xy chromaticity → XYZ conversion to match Python colour-science exactly.
 pub fn colorspace_white_xyz(name: &str) -> [f32; 3] {
-    match name {
-        // sRGB: whitepoint xy = (0.3127, 0.329) per colour-science
-        "sRGB" => colorspace::xy_to_xyz(0.3127, 0.329),
-        // ProPhoto: whitepoint = D50 xy = (0.3457, 0.3585)
-        "ProPhoto RGB" => colorspace::xy_to_xyz(0.3457, 0.3585),
-        // Rec.2020: whitepoint = D65 xy = (0.3127, 0.329)
-        "Rec. 2020" | "Rec2020" | "ITU-R BT.2020" => colorspace::xy_to_xyz(0.3127, 0.329),
-        // ACES: whitepoint xy = (0.32168, 0.33767)
-        "ACES2065-1" => colorspace::xy_to_xyz(0.32168, 0.33767),
-        _ => colorspace::xy_to_xyz(0.3457, 0.3585), // ProPhoto default
-    }
+    colorspace_white_xyz_f64(name).map(|v| v as f32)
 }
 
 /// f64 variant: native white point XYZ for a named colorspace.
 pub fn colorspace_white_xyz_f64(name: &str) -> [f64; 3] {
-    match name {
-        "sRGB" => colorspace::xy_to_xyz_f64(0.3127, 0.329),
-        "ProPhoto RGB" => colorspace::xy_to_xyz_f64(0.3457, 0.3585),
-        "Rec. 2020" | "Rec2020" | "ITU-R BT.2020" => colorspace::xy_to_xyz_f64(0.3127, 0.329),
-        "ACES2065-1" => colorspace::xy_to_xyz_f64(0.32168, 0.33767),
-        _ => colorspace::xy_to_xyz_f64(0.3457, 0.3585),
-    }
+    colorspace::resolve(name)
+        .expect("input color space must be validated before spectral conversion")
+        .whitepoint_xyz()
 }
 
 /// Get the RGB→XYZ matrix for a named colorspace.
 pub fn colorspace_to_xyz(name: &str) -> [[f32; 3]; 3] {
-    match name {
-        "sRGB" => colorspace::SRGB_TO_XYZ,
-        "ProPhoto RGB" => colorspace::PROPHOTO_TO_XYZ,
-        "Rec. 2020" | "Rec2020" | "ITU-R BT.2020" => colorspace::REC2020_TO_XYZ,
-        "ACES2065-1" => colorspace::ACES_TO_XYZ,
-        _ => colorspace::PROPHOTO_TO_XYZ,
-    }
+    colorspace_to_xyz_f64(name).map(|row| row.map(|v| v as f32))
 }
 
 /// f64 variant: RGB→XYZ matrix for a named colorspace.
 pub fn colorspace_to_xyz_f64(name: &str) -> [[f64; 3]; 3] {
-    match name {
-        "sRGB" => colorspace::SRGB_TO_XYZ_F64,
-        "ProPhoto RGB" => colorspace::PROPHOTO_TO_XYZ_F64,
-        "Rec. 2020" | "Rec2020" | "ITU-R BT.2020" => colorspace::REC2020_TO_XYZ_F64,
-        "ACES2065-1" => colorspace::ACES_TO_XYZ_F64,
-        _ => colorspace::PROPHOTO_TO_XYZ_F64,
-    }
+    colorspace::resolve(name)
+        .expect("input color space must be validated before spectral conversion")
+        .matrix_rgb_to_xyz
 }
 
 /// Compute the reference illuminant's XYZ (for CAT02 target white).
@@ -791,6 +767,17 @@ pub fn illuminant_xyz_f64(illuminant: &[f32]) -> [f64; 3] {
         }
         if (illuminant[0] - ILLUMINANT_D50[0]).abs() < 1e-6 {
             return D50_ILLUMINANT_XYZ_F64;
+        }
+        // Pinned profile illuminants use the same full-precision integration
+        // as daylight; avoid the f32 SPD/CMF fallback for their whitepoints.
+        if (illuminant[0] - 0.04429086048707871_f32).abs() < 1e-6 {
+            return [1.1046024645024972, 1.0, 0.3460799808452583];
+        }
+        if (illuminant[0] - 0.27115487737678473_f32).abs() < 1e-6 {
+            return [1.0088938481866863, 1.0, 0.5023956615783846];
+        }
+        if (illuminant[0] - 0.2003553567372573_f32).abs() < 1e-6 {
+            return [0.9470897881286421, 1.0, 1.0571900691589708];
         }
     }
 

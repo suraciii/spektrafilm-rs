@@ -1,5 +1,6 @@
 // Separable Gaussian blur — vertical pass.
 // Pairs with `gaussian_blur_h.wgsl`. Reads a column, writes one pixel.
+// Boundaries use half-sample reflection, matching the CPU FIR Gaussian.
 
 struct Params {
     width: u32,
@@ -27,7 +28,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var k = 0u; k < kernel_size; k++) {
         let dy = i32(k) - i32(params.radius);
         let sy_signed = i32(y) + dy;
-        let sy = u32(clamp(sy_signed, 0i, h_i32 - 1i));
+        let period = 2i * h_i32;
+        let folded = ((sy_signed % period) + period) % period;
+        let sy = u32(select(period - 1i - folded, folded, folded < h_i32));
         let idx = (sy * params.width + x) * 3u;
         let w = kernel_buf[k];
         sum.x += w * input[idx];

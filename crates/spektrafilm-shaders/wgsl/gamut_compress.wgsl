@@ -1,9 +1,9 @@
 // Output gamut compression — GPU port of
 // `spektrafilm-core/src/gamut_compression.rs` (`OutputGamutCompress::compress`).
 //
-// Runs in-place on the scan output RGB (linear, UNCLAMPED — scan_spectral
-// must skip its clamp when this pass is active, since compression needs the
-// out-of-gamut values). Mode selects the algorithm; the perceptual modes
+// Runs in-place on the unclipped linear scan output RGB. Compression needs
+// negative and above-one values preserved by scan_spectral. Mode selects the
+// algorithm; the perceptual modes
 // share the baked `C_max(L, h)` table uploaded by the CPU:
 //   0 = aces_rgc   (per-channel Reinhard knee, no table)
 //   1 = oklch      (OkLab chroma reduction)
@@ -303,9 +303,9 @@ fn compress_perceptual(rgb: vec3<f32>) -> vec3<f32> {
     return mv(XYZ2RGB_R0, XYZ2RGB_R1, XYZ2RGB_R2, xyz_new);
 }
 
-@compute @workgroup_size(1024)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let pixel_idx = gid.x;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
+    let pixel_idx = gid.x + gid.y * grid.x * 256u;
     if pixel_idx >= params.n_pixels {
         return;
     }

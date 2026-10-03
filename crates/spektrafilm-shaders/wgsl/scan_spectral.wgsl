@@ -16,9 +16,7 @@ struct Params {
     // B&W/slide scanner luminance remap: x=m, y=q, z=enable (0/1).
     // Mirrors ColorReference::xyz_scale — clip(m*Y+q, 0, 1)/(Y+1e-10) on the
     // pre-matrix scan XYZ. Identity (skipped) when z==0.
-    // w=skip_clamp (0/1): when 1 the output is NOT clamped to [0,1] —
-    // required when output gamut compression follows (it needs the
-    // out-of-gamut values; the CPU scan path never clamps here either).
+    // w is reserved; scanning preserves the full floating-point RGB range.
     bw: vec4<f32>,
 }
 
@@ -32,9 +30,9 @@ struct Params {
 @group(0) @binding(7) var<storage, read> cmf_z: array<f32>;             // [N_WL]
 @group(0) @binding(8) var<storage, read_write> output_rgb: array<f32>;  // [H*W*3]
 
-@compute @workgroup_size(1024)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let pixel_idx = gid.x;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
+    let pixel_idx = gid.x + gid.y * grid.x * 256u;
     let total_pixels = params.width * params.height;
     if pixel_idx >= total_pixels {
         return;
@@ -78,13 +76,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // XYZ → RGB via matrix multiply
     let rgb = params.xyz_to_rgb * xyz;
 
-    if params.bw.w != 0.0 {
-        output_rgb[base] = rgb.x;
-        output_rgb[base + 1u] = rgb.y;
-        output_rgb[base + 2u] = rgb.z;
-    } else {
-        output_rgb[base] = clamp(rgb.x, 0.0, 1.0);
-        output_rgb[base + 1u] = clamp(rgb.y, 0.0, 1.0);
-        output_rgb[base + 2u] = clamp(rgb.z, 0.0, 1.0);
-    }
+    output_rgb[base] = rgb.x;
+    output_rgb[base + 1u] = rgb.y;
+    output_rgb[base + 2u] = rgb.z;
 }

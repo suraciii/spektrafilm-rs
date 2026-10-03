@@ -63,9 +63,9 @@ fn standard_normal(state: ptr<function, u32>) -> f32 {
     return r * cos(6.28318530717958647 * u2);
 }
 
-@compute @workgroup_size(1024)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
+    let idx = gid.x + gid.y * grid.x * 256u;
     if idx >= params.n_pixels { return; }
     let base = idx * 3u;
 

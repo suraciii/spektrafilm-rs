@@ -178,7 +178,11 @@ impl ComputeBackend for CpuBackend {
     }
 
     fn name(&self) -> &str {
-        "CPU (rayon)"
+        if cfg!(feature = "precision-f64") {
+            "CPU (f64 reference, rayon)"
+        } else {
+            "CPU (f32, rayon)"
+        }
     }
 }
 
