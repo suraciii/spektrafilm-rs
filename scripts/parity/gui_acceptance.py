@@ -731,7 +731,7 @@ if nameField is missing value and (count candidates) is 1 then set nameField to 
 if nameField is missing value then error ("Cannot identify Save As field; AXTextField count=" & (count candidates))
 set focused of nameField to true''')
                     self.input.hotkey('command', 'a')
-                    self.paste(path.name)
+                    self.input.write(path.name, interval=.002)
             else:
                 self.input.hotkey('alt', 'n')
                 self.input.hotkey('ctrl', 'a')
