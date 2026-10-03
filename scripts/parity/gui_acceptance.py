@@ -687,6 +687,8 @@ return ""''') or None
                 self.mac_diagnostics('file-chooser')
                 self.input.hotkey('command', 'shift', 'g')
                 time.sleep(.3)
+                # NSSavePanel's Go to Folder field is centered in the modal sheet.
+                self.input.click(780, 298)
                 self.apple(f'''set goToElements to (get entire contents of {chooser})
 set goToFields to {{}}
 repeat with elementReference in goToElements
