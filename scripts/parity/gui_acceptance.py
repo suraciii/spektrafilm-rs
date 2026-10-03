@@ -687,6 +687,14 @@ return ""''') or None
                 self.mac_diagnostics('file-chooser')
                 self.input.hotkey('command', 'shift', 'g')
                 time.sleep(.3)
+                self.apple(f'''set goToElements to (get entire contents of sheet 1 of {chooser})
+repeat with elementReference in goToElements
+    set element to contents of elementReference
+    if role of element is "AXTextField" then
+        set focused of element to true
+        exit repeat
+    end if
+end repeat''')
                 self.input.hotkey('command', 'a')
                 self.paste(path.parent if save else path)
                 self.input.press('enter')
