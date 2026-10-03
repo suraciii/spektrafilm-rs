@@ -707,7 +707,7 @@ end repeat
 if (count goToFields) is 0 then error "Go to Folder text field not found"
 set focused of item 1 of goToFields to true''')
                 self.input.hotkey('command', 'a')
-                self.paste(path.parent if save else path)
+                self.input.write(str(path.parent if save else path), interval=.002)
                 self.input.press('enter')
                 # Go to Folder is its own sheet, including on a standalone
                 # NSSavePanel. Do not write the name until that sheet closes.
