@@ -141,7 +141,7 @@ class X11:
         for line in lines:
             for start in range(len(line)):
                 words = [re.sub(r'[^a-z0-9]', '', w[0].lower()) for w in line[start:start + len(wanted)]]
-                if words == wanted or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']):
+                if words == wanted or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']) or (label.lower() == '16 bit' and words == ['16', 'bir']):
                     selected = line[start:start + len(wanted)]
                     x = selected[0][1]
                     if right and x < 1000:
@@ -723,7 +723,7 @@ repeat with elementReference in chooserElements
     if role of element is "AXTextField" then
         set end of candidates to element
         try
-            if description of element contains "Save As" then set nameField to element
+            if (description of element contains "Save As") or (name of element contains "Save As") then set nameField to element
         end try
     end if
 end repeat
