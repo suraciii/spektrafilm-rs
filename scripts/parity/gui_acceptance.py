@@ -691,10 +691,19 @@ return ""''') or None
 set goToFields to {{}}
 repeat with elementReference in goToElements
     set element to contents of elementReference
-    if role of element is "AXTextField" then set end of goToFields to element
+    if role of element is "AXTextField" then
+        try
+            set fieldDescription to description of element as text
+        on error
+            set fieldDescription to ""
+        end try
+        if fieldDescription does not contain "Save As" and fieldDescription does not contain "Tags" then
+            set end of goToFields to element
+        end if
+    end if
 end repeat
 if (count goToFields) is 0 then error "Go to Folder text field not found"
-set focused of item (count goToFields) of goToFields to true''')
+set focused of item 1 of goToFields to true''')
                 self.input.hotkey('command', 'a')
                 self.paste(path.parent if save else path)
                 self.input.press('enter')
