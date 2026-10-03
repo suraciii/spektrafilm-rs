@@ -105,7 +105,7 @@ class X11:
                                (1060, image.crop((1060, 0, image.width, image.height)))):
             prepared = normalize(region)
             if offset:
-                prepared = prepared.point(lambda value: 255 if value > 230 else 0)
+                prepared = prepared.point(lambda value: 255 if value > 190 else 0)
             data = self.ocr.image_to_data(prepared.resize((region.width * 3, region.height * 3)),
                                           config='--psm 11', output_type=self.ocr.Output.DICT, timeout=15)
             grouped = {}
@@ -141,7 +141,7 @@ class X11:
         for line in lines:
             for start in range(len(line)):
                 words = [re.sub(r'[^a-z0-9]', '', w[0].lower()) for w in line[start:start + len(wanted)]]
-                if words == wanted:
+                if words == wanted or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']):
                     selected = line[start:start + len(wanted)]
                     x = selected[0][1]
                     if right and x < 1000:
