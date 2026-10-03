@@ -105,7 +105,7 @@ class X11:
                                (1060, image.crop((1060, 0, image.width, image.height)))):
             prepared = normalize(region)
             if offset:
-                prepared = prepared.point(lambda value: 255 if value > 190 else 0)
+                prepared = prepared.point(lambda value: 255 if value > 230 else 0)
             data = self.ocr.image_to_data(prepared.resize((region.width * 3, region.height * 3)),
                                           config='--psm 11', output_type=self.ocr.Output.DICT, timeout=15)
             grouped = {}
@@ -693,8 +693,7 @@ return ""''') or None
                 # Go to Folder is its own sheet, including on a standalone
                 # NSSavePanel. Do not write the name until that sheet closes.
                 def navigated():
-                    current = self.dialog_visible()
-                    return current if current and self.apple(f'get exists sheet 1 of {current}') == 'false' else None
+                    return self.apple(f'not (exists sheet 1 of {chooser})') == 'true'
                 chooser = wait_for(navigated, 'macOS Go to Folder accepted path', 15)
                 if save:
                     self.apple(f'''set candidates to {{}}
