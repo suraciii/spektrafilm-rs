@@ -712,7 +712,7 @@ set focused of item 1 of goToFields to true''')
                 # Go to Folder is its own sheet, including on a standalone
                 # NSSavePanel. Do not write the name until that sheet closes.
                 def navigated():
-                    return self.apple(f'not (exists sheet 1 of {chooser})') == 'true'
+                    return self.apple(f'if not (exists sheet 1 of {chooser}) then return "{chooser}"') or None
                 chooser = wait_for(navigated, 'macOS Go to Folder accepted path', 15)
                 if save:
                     self.apple(f'''set candidates to {{}}
