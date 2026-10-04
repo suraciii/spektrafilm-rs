@@ -169,8 +169,8 @@ requires actual successful workflow execution; installing a driver is not
 evidence that those packages run.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
-engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo and zenity. Package
-smoke also builds a ZIP bundle through the installed exporter, checks offline
+engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo, zenity and
+ffmpeg. Package smoke also builds a ZIP bundle through the installed exporter, checks offline
 report references and artifacts, and executes its delivered OCIO processors.
 `package_smoke.py` requires `--package-root` and writes `package_report.json`
 next to `observations.json`. It records the Rust HEAD, pinned reference commit,
