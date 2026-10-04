@@ -39,9 +39,12 @@ cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektraf
 cargo build --release -p spektrafilm-cli --bin decode_raw_gui
 ```
 
-The GUI auto-detects the f64 binary via `$SPEKTRAFILM_F64_CLI`, then `spektrafilm-f64` on `PATH`, then next to its own executable, then `target/release/spektrafilm-f64`.
+This produces:
 
-Windows builds use the WGSL/wgpu backend by default. The CPU fallback path avoids requiring a system OpenBLAS install on Windows, while macOS and Unix-like targets still use native BLAS providers.
+- `target/release/spektrafilm-gui` — desktop GUI;
+- `target/release/spektrafilm` — fast f32 CLI;
+- `target/release/spektrafilm-f64` — CPU reference exporter;
+- `target/release/decode_raw_gui` — RAW decoder used by GUI export.
 
 RAW decoding requires native **LibRaw ≥ 0.22.0**, **Lensfun**, **Exiv2**, and **GLib** development packages plus a C++17 compiler and `pkg-config`. On Debian/Ubuntu install `libraw-dev liblensfun-dev libexiv2-dev libglib2.0-dev pkg-config`; if the distribution supplies LibRaw 0.21, build the official 0.22.0 release into a local prefix and prepend its `lib/pkgconfig` to `PKG_CONFIG_PATH` (and its `lib` to the runtime library search path). On macOS use `brew install libraw lensfun exiv2 glib pkg-config`. Windows builds need a matching native toolchain and these libraries built for it (for example through MSYS2 UCRT64); set `PKG_CONFIG_PATH` to their `.pc` directories. Cross compilation requires target-specific pkg-config paths and libraries. Missing dependencies or older LibRaw fail the build explicitly; measured Kodak DC50 pixels differ on LibRaw 0.21.5, while 0.22.0 matches the pinned rawpy decoder exactly.
 
@@ -66,6 +69,30 @@ The public Canon EOS 40D sRAW CR2 fixture also matches all four modes at zero ma
 The rebuilt f64 CLI and its relocated Linux archive also passed eight fresh RAW comparisons against the pinned Python loader: all four white-balance modes on Kodak 768×512 with missing-lens correction, and Canon 1944×1296 with injected known-lens EXIF. The unbounded `rgb_in` boundary matched exactly (maximum and mean absolute error zero). The relocated RAW helper independently matched Kodak pixels exactly under a clean environment; the packaged GUI launched under Xvfb and prepared-image export preserved EXIF/IPTC/XMP and ICC bytes.
 
 WGSL is the default GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`. An experimental native CUDA backend can be built with `--features spektrafilm-gpu/cuda-backend` and selected with `SPEKTRAFILM_BACKEND=cuda`. It uses CUDA 12 driver/NVRTC bindings through dynamic loading, so the NVIDIA driver and NVRTC runtime DLLs must be available. Set `SPEKTRAFILM_CUDA_DEVICE=1` (or another zero-based index) to pick a non-default CUDA device. Both GPU paths have a resident preview implementation: front pass, highlight boost, camera diffusion, camera lens blur, halation, DIR couplers, grain, density curves, enlarger diffusion, print/scan spectral reductions, glare, output gamut compression, scanner lens blur, unsharp, and one readback.
+The `just` command surface also covers packaging and per-user installation:
+
+```bash
+just build
+just check
+just test
+just ci
+just package
+just install
+```
+
+`just package` creates a self-contained directory and archive under `dist/`.
+`just install` installs without administrator privileges. On Unix-like systems
+it uses `$XDG_DATA_HOME/spektrafilm` (default:
+`~/.local/share/spektrafilm`; macOS uses
+`~/Library/Application Support/Spektrafilm`) and creates command links under
+`~/.local/bin`. On Windows it installs under
+`%LOCALAPPDATA%\Spektrafilm`; set `SPEKTRAFILM_INSTALL_ROOT` to override the
+application directory. The Windows install directory is not added to `PATH`
+automatically.
+
+`just package-macos-app` creates the native macOS `.app` bundle.
+`just package-windows-aio` creates the existing Windows self-contained AIO
+executable.
 
 ## Usage
 

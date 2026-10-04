@@ -116,7 +116,6 @@ struct WorkflowOptions {
     print_channel_swap: String,
 }
 
-
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -142,6 +141,7 @@ fn main() -> Result<()> {
             iters,
             data_dir,
         } => {
+            let data_dir = resolve_data_dir(data_dir);
             cmd_process(
                 &input,
                 &output,
@@ -158,6 +158,7 @@ fn main() -> Result<()> {
             )?;
         }
         Commands::ListProfiles { data_dir } => {
+            let data_dir = resolve_data_dir(data_dir);
             cmd_list_profiles(&data_dir);
         }
         Commands::Lut { command } => lut::run(command)?,
