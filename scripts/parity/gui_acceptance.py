@@ -288,6 +288,10 @@ class X11:
             if label == 'Cancel':
                 self.require_export_in_flight('Cancel')
             x, y = fixed[label]
+            if sys.platform == 'darwin' and y < 300:
+                # AX window bounds include the 30px macOS title bar; the
+                # fixed points above are content-relative Linux coordinates.
+                y += 30
             if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view'):
                 _, _, lines = self.read()
                 matches = self.match(lines, '100%', False)
@@ -314,7 +318,8 @@ class X11:
     def tab(self, name):
         positions = {'MAIN': 1070, 'FILM': 1110, 'PRINT': 1160, 'ADVANCED': 1230, 'CONFIG': 1295}
         require(name in positions, f'Unknown GUI tab: {name}')
-        self.xd('mousemove', '--window', self.window, positions[name], 40)
+        y = 40 + (30 if sys.platform == 'darwin' else 0)
+        self.xd('mousemove', '--window', self.window, positions[name], y)
         self.xd('click', 1)
         time.sleep(.8)
         self.scroll(False)
@@ -599,11 +604,11 @@ class Desktop(X11):
         self.ocr.pytesseract.tesseract_cmd = executable
         self.original_display = None
         screen = self.input.size()
-        if sys.platform == 'win32' and (screen.width < 1500 or screen.height < 1000):
+        if sys.platform == 'win32' and (screen.width < 1500 or screen.height < 1100):
             self.prepare_display()
             screen = self.input.size()
-        require(screen.width >= 1500 and screen.height >= 1000,
-                f'Native acceptance needs a desktop at least 1500x1000; actual {screen.width}x{screen.height}. '
+        require(screen.width >= 1500 and screen.height >= 1100,
+                f'Native acceptance needs a desktop at least 1500x1100; actual {screen.width}x{screen.height}. '
                 'Configure the runner display before invoking package smoke.')
 
     def prepare_display(self):
@@ -626,10 +631,10 @@ class Desktop(X11):
             if candidate is None:
                 break
             width, height = struct.unpack_from('<II', candidate, 172)
-            if width >= 1500 and height >= 1000:
+            if width >= 1500 and height >= 1100:
                 candidates.append((width * height, candidate))
             index += 1
-        require(candidates, 'Windows display exposes no supported mode at least 1500x1000')
+        require(candidates, 'Windows display exposes no supported mode at least 1500x1100')
         selected = min(candidates, key=lambda item: item[0])[1]
         require(self.os.ChangeDisplaySettingsW(selected, 4) == 0,
                 'Windows refused the temporary desktop display resolution')
