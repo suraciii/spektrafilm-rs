@@ -134,8 +134,16 @@ class X11:
                 'X11 window manager', 15)
 
     def xd(self, *args, check=True):
-        return subprocess.run(['xdotool', *map(str, args)], check=check,
-                              capture_output=True, text=True, timeout=15).stdout.strip()
+        if args[0] == 'click' and int(args[-1]) == 1 and '--repeat' not in args:
+            subprocess.run(['xdotool', 'mousedown', '1'], check=True, timeout=15)
+            time.sleep(.1)
+            subprocess.run(['xdotool', 'mouseup', '1'], check=True, timeout=15)
+            return ''
+        result = subprocess.run(['xdotool', *map(str, args)], check=check,
+                                capture_output=True, text=True, timeout=15).stdout.strip()
+        if args[0] == 'mousemove':
+            time.sleep(.1)
+        return result
 
     def start(self, gui, env, image=None):
         command = [str(gui)] + ([str(image)] if image else [])
@@ -795,6 +803,7 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
                 require(self.os.SetCursorPos(*target), 'Windows rejected native cursor movement')
             else:
                 self.input.moveTo(*target)
+            time.sleep(.1)
         elif args[0] == 'click':
             button = int(args[-1])
             count = int(args[args.index('--repeat') + 1]) if '--repeat' in args else 1
@@ -877,7 +886,7 @@ return ""''') or None
                 if save:
                     self.apple(f'''set candidates to {{}}
 set nameField to missing value
-set chooserElements to text fields of {chooser}
+set chooserElements to (get entire contents of {chooser})
 repeat with elementReference in chooserElements
     set element to contents of elementReference
     if role of element is "AXTextField" then
