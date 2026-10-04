@@ -309,7 +309,7 @@ class X11:
                 matches = self.match(lines, label, right)
                 footer = [point for point in matches if point[1] > image.height - 50]
                 require(footer, f'Footer control not visible: {label}')
-                x, y = map(int, footer[-1])
+                x, y = map(int, min(footer, key=lambda point: point[0]))
             self.xd('mousemove', '--window', self.window, x, y)
             self.xd('click', 1)
             time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back', '18% gray', 'Reveal', 'Crossfade') else .15)
