@@ -92,7 +92,7 @@ jobs:
           $tesseractPrefix = Join-Path $env:ProgramFiles 'Tesseract-OCR'
           $env:PATH = "$tesseractPrefix;" + $env:PATH
           $env:TESSDATA_PREFIX = Join-Path $tesseractPrefix 'tessdata'
-          & "$env:pythonLocation\python.exe" scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --gui dist/spektrafilm-windows-x64/spektrafilm-gui.exe --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
+          & "$env:pythonLocation\python.exe" scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --gui dist/spektrafilm-windows-x64/spektrafilm-gui.exe --package-root dist/spektrafilm-windows-x64 --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
           if ($LASTEXITCODE -ne 0) { throw "Package smoke failed" }
 
       - name: Preserve package smoke evidence
@@ -237,7 +237,7 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           BUILD_TARGET_DIR=target RELEASE_SUBDIR=release \
             bash scripts/package_linux_app.sh
-          xvfb-run -a -s '-screen 0 1600x1000x24' python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --gui dist/spektrafilm-linux-x64/bin/spektrafilm-gui --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
+          xvfb-run -a -s '-screen 0 1600x1000x24' python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --gui dist/spektrafilm-linux-x64/bin/spektrafilm-gui --package-root dist/spektrafilm-linux-x64 --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
         if: always()
@@ -296,7 +296,7 @@ jobs:
         run: |
           cargo test --workspace --features precision-f64
           bash scripts/package_macos_app.sh
-          python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --gui dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-gui --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
+          python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --gui dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
         if: always()

@@ -172,6 +172,11 @@ Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
 engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo and zenity. Package
 smoke also builds a ZIP bundle through the installed exporter, checks offline
 report references and artifacts, and executes its delivered OCIO processors.
+`package_smoke.py` requires `--package-root` and writes `package_report.json`
+next to `observations.json`. It records the Rust HEAD, pinned reference commit,
+platform, worktree status, a deterministic package-tree SHA256, each delivered
+binary SHA256 and the observed scenario results. A passing smoke command without
+that provenance is not publication evidence.
 For a single local gate, provide the built f64 CLI and portable package:
 
 ```bash

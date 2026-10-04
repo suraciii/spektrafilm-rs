@@ -113,6 +113,7 @@ def main() -> int:
         "--cli", str(cli), "--exporter", str(exporter),
         "--raw-helper", str(raw_helper), "--gui", str(gui),
         "--data-dir", str(package_data),
+        "--package-root", str(package_root),
         "--evidence-dir", str(out_root / "package"),
     ]
     if args.raw_fixture:

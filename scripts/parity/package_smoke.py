@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 from gui_acceptance import accept_gui
 from lut_acceptance import check_artifacts, local_file
@@ -14,6 +15,50 @@ import exiv2
 import numpy as np
 import OpenImageIO as oiio
 
+REFERENCE_COMMIT = '3bb2c2d2801ff68b92019cf1dbcbb133d60832bc'
+
+
+def _sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _package_tree_sha256(root):
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob('*') if item.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b'\0')
+        digest.update(bytes.fromhex(_sha256(path)))
+    return digest.hexdigest()
+
+
+def _rust_provenance():
+    repo = Path(__file__).resolve().parents[2]
+    commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
+                            capture_output=True, text=True, check=True).stdout.strip()
+    dirty = bool(subprocess.run(['git', 'diff', '--name-only', 'HEAD'], cwd=repo,
+                                capture_output=True, text=True, check=True).stdout.strip())
+    return commit, dirty
+
+
+def _write_provenance(evidence, package_root, binaries, observations):
+    commit, dirty = _rust_provenance()
+    (evidence / 'observations.json').write_text(
+        json.dumps(observations, indent=2) + '\n')
+    report = {
+        'status': 'pass',
+        'rust_commit': commit,
+        'rust_worktree_dirty': dirty,
+        'reference_commit': REFERENCE_COMMIT,
+        'platform': platform.platform(),
+        'package_root': str(package_root),
+        'package_tree_sha256': _package_tree_sha256(package_root),
+        'binaries': {label: {'path': str(path), 'sha256': _sha256(path)}
+                     for label, path in binaries.items()},
+        'scenario_count': len(observations),
+        'scenario_results': observations,
+    }
+    (evidence / 'package_report.json').write_text(
+        json.dumps(report, indent=2) + '\n')
 
 def main():
     parser = argparse.ArgumentParser()
@@ -21,16 +66,20 @@ def main():
     parser.add_argument('--exporter', type=Path, required=True)
     parser.add_argument('--raw-helper', type=Path, required=True)
     parser.add_argument('--gui', type=Path)
+    parser.add_argument('--package-root', type=Path, required=True)
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--raw-fixture', type=Path, help='Existing pinned KDC fixture; SHA256 is still required')
     args = parser.parse_args()
     cli, helper, data, evidence = (value.resolve() for value in
                                  (args.cli, args.raw_helper, args.data_dir, args.evidence_dir))
+    exporter = args.exporter.resolve()
+    package_root = args.package_root.resolve()
+    if not package_root.is_dir():
+        raise SystemExit(f'package root not found: {package_root}')
     evidence.mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ, SPEKTRAFILM_BACKEND='cpu')
     environment.pop('LD_LIBRARY_PATH', None)
-    exporter = args.exporter.resolve()
     source = evidence / 'source.tif'
     pixels = np.array([[[-0.25, 0.5, 1.25], [0.1, 0.499, 0.01]]], dtype=np.float32)
     # The pinned Python save guard skips the transform when the saving space and
@@ -190,7 +239,11 @@ def main():
     if args.gui:
         observations.append(accept_gui(args.gui.resolve(), exporter, source, raw,
                                        evidence, environment))
-    (evidence / 'observations.json').write_text(json.dumps(observations, indent=2) + '\n')
+    _write_provenance(
+        evidence, package_root,
+        {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
+         **({'gui': args.gui.resolve()} if args.gui else {})},
+        observations)
     print('PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA and native GUI acceptance')
 
 
