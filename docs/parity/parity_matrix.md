@@ -65,10 +65,22 @@ Historical baseline failures remain metadata and never excuse current drift.
 
 The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; all other rows retain their unverified status.
 
-Current Linux evidence is `/tmp/spektrafilm-current-package-evidence-3/gui-acceptance/observations.json`.
-Scan-for-print forced settings/restoration, Input interpolation isolation,
-preview-size refresh/full-resolution Export and persistent RAW correction status
-passed in the native run. Nonlinear toe fitting and interactive scientific plots
-remain explicitly separate research API scope.
+- Current Linux evidence is `/tmp/spektrafilm-current-package-evidence-3/gui-acceptance/observations.json`;
+  the current local native smoke at Rust `8bdd7fe` passed all named GUI,
+  RAW, export and cleanup assertions. CI workflow `37226896580` then
+  passed the packaged Windows x64 and Linux x64 gates at Rust `9f52fc2`.
+- Platform acceptance status at that commit:
 
-The evidence is platform-specific. Linux Xvfb does not verify a physical monitor ICC profile or Windows/macOS window interaction. A rotated export's native TIFF staging write cannot be interrupted; cancellation is checked around it and temporary files are removed before the worker finishes.
+  | Platform | Result | Evidence |
+  |----------|--------|----------|
+  | Linux x64 | pass | runtime parity, LUT and package smoke; package report records a dirty worktree |
+  | Windows x64 | pass | package smoke, native dialogs, profile selection and cleanup |
+  | macOS | incomplete | chooser/profile/slider paths pass; Reveal transition-frame assertion fails |
+
+  macOS remains explicitly unverified for the full GUI acceptance contract.
+  This matrix does not convert a partial desktop run into a pass.
+- Scan-for-print forced settings/restoration, Input interpolation isolation,
+  preview-size refresh/full-resolution Export and persistent RAW correction status
+  passed in the native Linux run. Nonlinear toe fitting and interactive scientific
+  plots remain explicitly separate research API scope.
+- The evidence is platform-specific. Linux Xvfb does not verify a physical monitor ICC profile or Windows/macOS window interaction. A rotated export's native TIFF staging write cannot be interrupted; cancellation is checked around it and temporary files are removed before the worker finishes.

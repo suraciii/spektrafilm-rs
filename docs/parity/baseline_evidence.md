@@ -190,10 +190,18 @@ Independent executed checks establish:
   camera/white-balance cases exactly, both before and after relocation, including
   a known Lensfun correction. The rebuilt consumers load LibRaw 0.22's actual
   `libraw.so.24`; its selected link artifact prevents system-header ABI mismatch.
-  The final DIR-corrected Linux package passed the same portable image/RAW/GUI
-  smoke under Xvfb with a clean environment. The fork's Release workflow is now
-  active; Windows/macOS installed-workflow acceptance remains unverified.
-  PR #18 remains a draft, and acceptance issues #17/#1 remain open.
+- The latest cross-platform package workflow is pinned to Rust `9f52fc2`
+  and Python `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc` (workflow
+  `37226896580`). Windows package smoke passed with a clean worktree;
+  Linux runtime parity, LUT acceptance and package smoke passed, although
+  its package report recorded a dirty worktree after the Python run.
+  macOS reached the viewer transition scenario but failed the assertion
+  `Reveal did not produce observable transition frames`; it is not a
+  platform acceptance pass.
+- Earlier platform repairs are retained in commits `8bdd7fe` and `85376a8`;
+  they fixed macOS native path entry/profile selection and the white-border
+  slider coordinate. No further desktop-driver retries are warranted
+  without a reproducible macOS transition-frame failure.
 - Saving into the output layer's own colour space and encoding is now a
   bit-exact copy, matching the pinned Python save guard
   (`spektrafilm_gui/controller.py:354-369`). Previously the export ran the
@@ -224,13 +232,13 @@ Independent executed checks establish:
   comparisons plus 32 additional comparisons for disabled xy and active oklch,
   with unchanged metric budgets, status semantics, offline artifact and OCIO checks.
   The integrated precision-f64 workspace passed 192 tests after these corrections.
-- The new external Linux package GUI gate passed real native window and file
-  chooser operations under Xvfb: standard/RAW loading and preview, input/output
-  raster comparison, Auto exposure and float-depth edits, state save/load and
-  restart restoration, float save, actual bundled f64 export, Cancel and closing
-  in flight. Observed exporter executable hashes match installed native payloads;
-  cancelled/closed exports left no output, child process or temporary JSON.
-  Windows/macOS drivers exist but have no passing target-platform evidence yet.
+- The latest three-platform workflow (`37226896580`, Rust `9f52fc2`) passed
+  Windows x64 package smoke and Linux x64 runtime parity, LUT acceptance and
+  package smoke. The Windows report is clean; Linux's report is valid but
+  records `rust_worktree_dirty: true` after Python generated tracked bytecode.
+  macOS completed chooser, profile, slider and preceding viewer assertions,
+  then failed only at `Reveal did not produce observable transition frames`.
+  This is an incomplete macOS acceptance result, not a passing platform row.
 - The first real three-platform workflow exposed Ubuntu Exiv2 auto_ptr predicate
   incompatibility, Homebrew OIIO's missing external fmt include path, and MSYS2
   LibRaw below 0.22. The fixes retain the native contracts: get() pointer checks,
