@@ -293,7 +293,6 @@ class X11:
             'reset view': (328, 963),
             '16 bit': (1100, 175),
             '32 bit': (1100, 243),
-            'Cancel': (1185, 155),
         }
         if label in fixed:
             if label == 'Cancel':
@@ -328,10 +327,13 @@ class X11:
         time.sleep(.15)
 
     def tab(self, name):
-        positions = {'MAIN': 1070, 'FILM': 1110, 'PRINT': 1160, 'ADVANCED': 1230, 'CONFIG': 1295}
-        require(name in positions, f'Unknown GUI tab: {name}')
-        y = 40 + (30 if sys.platform == 'darwin' else 0)
-        self.xd('mousemove', '--window', self.window, positions[name], y)
+        require(name in ('MAIN', 'FILM', 'PRINT', 'ADVANCED', 'CONFIG'), f'Unknown GUI tab: {name}')
+        def locate():
+            _, _, lines = self.read()
+            matches = self.match(lines, name, True)
+            return min(matches, key=lambda point: point[1]) if matches else None
+        x, y = wait_for(locate, f'visible sidebar tab {name}', 20)
+        self.xd('mousemove', '--window', self.window, int(x), int(y))
         self.xd('click', 1)
         time.sleep(.8)
         self.scroll(False)
@@ -898,9 +900,8 @@ repeat with elementReference in chooserElements
 end repeat
 if nameField is missing value and (count candidates) is 1 then set nameField to item 1 of candidates
 if nameField is missing value then error ("Cannot identify Save As field; AXTextField count=" & (count candidates))
-set focused of nameField to true''')
-                    self.input.hotkey('command', 'a')
-                    self.input.write(path.name, interval=.002)
+set focused of nameField to true
+set value of nameField to {json.dumps(path.name)}''')
             else:
                 self.input.hotkey('alt', 'n')
                 self.input.hotkey('ctrl', 'a')
