@@ -119,14 +119,28 @@ def main() -> int:
     if args.raw_fixture:
         package_command += ["--raw-fixture", str(args.raw_fixture.resolve())]
     checked("package smoke", package_command, "package-smoke.log")
-
+    package_report_path = out_root / "package" / "package_report.json"
+    if not package_report_path.is_file():
+        raise SystemExit(f"package smoke omitted provenance: {package_report_path}")
+    package_report = json.loads(package_report_path.read_text(encoding="utf-8"))
+    rust_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    if package_report.get("rust_commit") != rust_commit:
+        raise SystemExit("package smoke provenance does not match the Rust HEAD")
     report = {"status": "pass", "rust_bin": str(rust_bin),
               "rust_bin_sha256": hashlib.sha256(rust_bin.read_bytes()).hexdigest(),
-              "rust_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+              "rust_commit": rust_commit,
               "rust_worktree_dirty": bool(subprocess.check_output(["git", "diff", "--name-only", "HEAD"], cwd=ROOT, text=True).strip()),
               "platform": platform.platform(),
               "reference_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
               "data_dir": str(data_dir), "package_root": str(package_root),
+              "package_provenance": {
+                  "report": str(package_report_path),
+                  "sha256": hashlib.sha256(package_report_path.read_bytes()).hexdigest(),
+                  "package_tree_sha256": package_report["package_tree_sha256"],
+                  "binaries": package_report["binaries"],
+                  "scenario_count": package_report["scenario_count"],
+              },
               "commands": commands}
     (out_root / "report.json").write_text(json.dumps(report, indent=2) + "\n",
                                            encoding="utf-8")
