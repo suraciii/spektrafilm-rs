@@ -293,6 +293,7 @@ class X11:
             'reset view': (328, 963),
             '16 bit': (1100, 175),
             '32 bit': (1100, 243),
+            'Cancel': (1180, 155),
         }
         if label in fixed:
             if label == 'Cancel':
@@ -304,11 +305,8 @@ class X11:
                 y += 30
             if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view',
                          'Preview', 'Scan'):
-                image, _, lines = self.read()
-                matches = self.match(lines, label, label in ('Preview', 'Scan'))
-                footer = [point for point in matches if point[1] > image.height - 50]
-                require(footer, f'Footer control not visible: {label}')
-                x, y = map(int, min(footer, key=lambda point: point[0]))
+                image, _ = self.image()
+                y = image.height - 17
             self.xd('mousemove', '--window', self.window, x, y)
             self.xd('click', 1)
             time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back', '18% gray', 'Reveal', 'Crossfade') else .15)
