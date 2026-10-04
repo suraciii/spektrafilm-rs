@@ -160,13 +160,16 @@ The same gate compares 32 additional diagnostic results for disabled xy and
 active oklch input compression, separately from the 112 baseline results.
 
 
-All three package jobs run `package_smoke.py` against installed executables
-and bundled data. The native GUI driver operates real windows and file dialogs,
-records screenshots, saves/restores state across restart, decodes RAW, saves a
-float image, observes the bundled f64 exporter, and checks Cancel/window-close
-child cleanup. Linux uses Xvfb with a 1600×1000 screen. Windows/macOS acceptance
-requires actual successful workflow execution; installing a driver is not
-evidence that those packages run.
+The package smoke command always covers installed image/metadata/RAW paths,
+LUT/OCIO/QA delivery and binary provenance. Native GUI acceptance is optional:
+pass `--gui` only for a real desktop/Xvfb run. The release workflow currently
+omits `--gui` by design, so its three package jobs do not claim GUI coverage;
+the GUI driver remains available as a separate, explicit evidence command.
+When enabled, the driver operates real windows and file dialogs, records
+screenshots, saves/restores state across restart, decodes RAW, saves a float
+image, observes the bundled f64 exporter, and checks Cancel/window-close child
+cleanup. Linux GUI runs use Xvfb; Windows/macOS GUI runs require a real
+interactive desktop and platform permissions.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
 engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo, zenity and

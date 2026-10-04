@@ -65,11 +65,16 @@ Historical baseline failures remain metadata and never excuse current drift.
 
 The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; all other rows retain their unverified status.
 
-- Current Linux evidence is `/tmp/spektrafilm-current-package-evidence-3/gui-acceptance/observations.json`;
-  the current local native smoke at Rust `8bdd7fe` passed all named GUI,
-  RAW, export and cleanup assertions. CI workflow `37226896580` then
-  passed the packaged Windows x64 and Linux x64 gates at Rust `9f52fc2`.
-- Platform acceptance status at that commit:
+The current release workflow deliberately runs the package gate without
+`--gui` on Linux, Windows and macOS. Those package results cover CLI/RAW/IO,
+LUT/OCIO/QA and provenance only; they do not change native GUI rows or the
+platform-specific GUI evidence below.
+
+- Current Linux GUI evidence is `/tmp/spektrafilm-current-package-evidence-3/gui-acceptance/observations.json`;
+  the local native smoke at Rust `8bdd7fe` passed all named GUI, RAW, export and
+  cleanup assertions. Historical CI workflow `37226896580` passed the packaged
+  Windows x64 and Linux x64 gates at Rust `9f52fc2`.
+- Platform acceptance status for that historical native run:
 
   | Platform | Result | Evidence |
   |----------|--------|----------|
@@ -78,7 +83,8 @@ The native driver exercises the five sidebar tabs, persistent Preview/Scan contr
   | macOS | incomplete | chooser/profile/slider paths pass; Reveal transition-frame assertion fails |
 
   macOS remains explicitly unverified for the full GUI acceptance contract.
-  This matrix does not convert a partial desktop run into a pass.
+  The release package gate does not convert this partial desktop run into a
+  pass.
 - Scan-for-print forced settings/restoration, Input interpolation isolation,
   preview-size refresh/full-resolution Export and persistent RAW correction status
   passed in the native Linux run. Nonlinear toe fitting and interactive scientific

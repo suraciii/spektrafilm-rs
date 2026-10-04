@@ -198,6 +198,11 @@ Independent executed checks establish:
   macOS reached the viewer transition scenario but failed the assertion
   `Reveal did not produce observable transition frames`; it is not a
   platform acceptance pass.
+- The release workflow now invokes `package_smoke.py` without `--gui` on all
+  three platforms and no longer installs or configures GUI-only acceptance
+  dependencies. Its package result intentionally excludes native desktop
+  interaction; the historical GUI results above remain evidence, not a release
+  pass.
 - Earlier platform repairs are retained in commits `8bdd7fe` and `85376a8`;
   they fixed macOS native path entry/profile selection and the white-border
   slider coordinate. No further desktop-driver retries are warranted

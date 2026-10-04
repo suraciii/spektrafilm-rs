@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import platform
 import subprocess
-from gui_acceptance import accept_gui
 from lut_acceptance import check_artifacts, local_file
 import urllib.request
 
@@ -237,6 +236,7 @@ def main():
                          'bundle': str(bundle), 'artifacts': artifact_evidence,
                          'ocio_processors': processor_count, 'qa_report_passed': qa['passed']})
     if args.gui:
+        from gui_acceptance import accept_gui
         observations.append(accept_gui(args.gui.resolve(), exporter, source, raw,
                                        evidence, environment))
     _write_provenance(
@@ -244,7 +244,8 @@ def main():
         {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
          **({'gui': args.gui.resolve()} if args.gui else {})},
         observations)
-    print('PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA and native GUI acceptance')
+    gui_suffix = ' and native GUI acceptance' if args.gui else ''
+    print(f'PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA{gui_suffix}')
 
 
 if __name__ == '__main__':
