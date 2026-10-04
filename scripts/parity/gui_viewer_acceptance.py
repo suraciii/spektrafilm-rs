@@ -6,7 +6,7 @@ import copy
 import json
 from pathlib import Path
 import re
-import time
+import sys
 
 import numpy as np
 
@@ -89,9 +89,10 @@ def _drag_white_border(driver):
     image, _, _ = driver.read()
     _require(image.width >= 1460 and image.height >= 980,
              "White-border probe requires the pinned 1460x980 window")
-    driver.xd("mousemove", "--window", driver.window, 1240, 158)
+    y = 158 + (30 if sys.platform == "darwin" else 0)
+    driver.xd("mousemove", "--window", driver.window, 1240, y)
     driver.xd("mousedown", 1)
-    driver.xd("mousemove", "--window", driver.window, 1290, 158)
+    driver.xd("mousemove", "--window", driver.window, 1290, y)
     driver.xd("mouseup", 1)
     time.sleep(0.25)
     return image
