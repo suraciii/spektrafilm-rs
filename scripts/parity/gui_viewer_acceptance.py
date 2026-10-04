@@ -111,7 +111,7 @@ def _select_profile(driver, label, option):
     _click_combo(driver, label)
     time.sleep(.5)
     driver.xd('mousemove', '--window', driver.window, 1200, 420)
-    for _ in range(20):
+    for _ in range(25):
         image, _, lines = driver.read()
         matches = driver.match(lines, option, True)
         if matches:
