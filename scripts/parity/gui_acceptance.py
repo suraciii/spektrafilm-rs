@@ -148,7 +148,8 @@ class X11:
         self.xd('windowactivate', '--sync', self.window)
         with self.mss.mss() as screen:
             desktop = screen.monitors[0]
-        self.xd('windowsize', '--sync', self.window, 1460, min(980, desktop['height'] - 60))
+        require(desktop['height'] >= 1000, 'Native GUI probe requires a desktop at least 1000px high')
+        self.xd('windowsize', '--sync', self.window, 1460, 980)
         self.xd('windowmove', '--sync', self.window, 0, 0)
         wait_for(lambda: self.match(self.read()[2], 'MAIN', True)
                  and self.match(self.read()[2], 'Open', True), 'rendered native MAIN controls', 30)
@@ -810,6 +811,13 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
                     time.sleep(.08)
                     self.input.mouseUp()
                     time.sleep(.08)
+        elif args[0] in ('mousedown', 'mouseup'):
+            require(int(args[-1]) == 1, 'Native slider drag requires the left mouse button')
+            if args[0] == 'mousedown':
+                self.input.mouseDown()
+            else:
+                self.input.mouseUp()
+            time.sleep(.08)
         else:
             raise RuntimeError(f'Unsupported desktop input: {args}')
         return ''
