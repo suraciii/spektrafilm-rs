@@ -89,8 +89,10 @@ def _drag_white_border(driver):
     image, _, _ = driver.read()
     _require(image.width >= 1460 and image.height >= 980,
              "White-border probe requires the pinned 1460x980 window")
+    driver.xd("mousemove", "--window", driver.window, 1240, 158)
+    driver.xd("mousedown", 1)
     driver.xd("mousemove", "--window", driver.window, 1290, 158)
-    driver.xd("click", 1)
+    driver.xd("mouseup", 1)
     time.sleep(0.25)
     return image
 
@@ -196,6 +198,32 @@ def accept_viewer(driver, root, state, pixels, exporter):
     source = root / "standard.tif"
     _require(source.is_file(), f"Viewer acceptance source is missing: {source}")
     records = []
+    small_preview_state = copy.deepcopy(state)
+    small_preview_state.setdefault("display", {})["preview_max_size"] = 128
+    small_preview_state["display"].update({"viewer_layer": "input", "crossfade": False})
+    small_preview_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "input", "crossfade": False})
+    small_preview_path = _state_path(root, "viewer-small-preview.json", small_preview_state)
+    _load_state(driver, small_preview_path, "viewer-small-preview")
+    driver.tab("CONFIG")
+    driver.click("Input", False)
+    small_input, _ = _record_snap(driver, records, "viewer-small-input-raster")
+    large_preview_state = copy.deepcopy(small_preview_state)
+    large_preview_state["display"]["preview_max_size"] = 256
+    large_preview_path = _state_path(root, "viewer-large-preview.json", large_preview_state)
+    _load_state(driver, large_preview_path, "viewer-large-preview")
+    driver.tab("CONFIG")
+    driver.click("Input", False)
+    large_input, _ = _record_snap(driver, records, "viewer-large-input-raster")
+    preview_delta = float(np.mean(np.abs(np.asarray(_viewer_crop(small_input), dtype=np.float32) -
+                                         np.asarray(_viewer_crop(large_input), dtype=np.float32))))
+    _require(preview_delta > 0.01, "Preview max size did not refresh Input raster")
+    full_export = _export(driver, root, exporter, "viewer-preview-resolution-export.exr")
+    from gui_acceptance import read_image
+    _require(read_image(full_export).shape[:2] == np.asarray(pixels).shape[:2],
+             "Input preview raster size reduced full-resolution Export")
+    records.append({"scenario": "preview_size_isolation", "input_pixel_change": preview_delta,
+                    "assertion": "Input preview refreshes; Export retains source dimensions"})
+    _load_state(driver, _state_path(root, "viewer-reset-after-preview.json", state), "viewer-reset-after-preview")
     baseline = _state_path(root, "viewer-baseline.json", copy.deepcopy(state))
 
     driver.tab("CONFIG")
@@ -236,7 +264,22 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "spline36_screenshot": records[-1]["screenshot"],
                     "mean_abs_pixel_change": interpolation_delta})
     _require(interpolation_delta > 0.01, "Nearest and spline36 did not produce different viewer pixels")
-
+    driver.click("Input", False)
+    driver.click("spline36", False)
+    driver.click("nearest", False)
+    input_nearest_image, _ = _record_snap(driver, records, "viewer-input-nearest")
+    driver.click("nearest", False)
+    driver.click("spline36", False)
+    input_spline_image, _ = _record_snap(driver, records, "viewer-input-spline36")
+    input_interpolation_delta = float(np.mean(np.abs(
+        np.asarray(_viewer_crop(input_nearest_image), dtype=np.float32) -
+        np.asarray(_viewer_crop(input_spline_image), dtype=np.float32))))
+    records.append({"scenario": "interpolation_isolation",
+                    "action": "select Input and switch Output interpolation",
+                    "assertion": "Input pixels are unchanged by Output interpolation",
+                    "mean_abs_pixel_change": input_interpolation_delta})
+    _require(input_interpolation_delta < 2.0,
+             "Output interpolation changed Input viewer pixels")
     driver.click("18% gray", False)
     gray_image, _ = _record_snap(driver, records, "viewer-gray-canvas-toggled")
     gray = np.asarray(_viewer_crop(gray_image), dtype=np.float32)

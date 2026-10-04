@@ -222,21 +222,26 @@ class X11:
         matches = []
         for line in lines:
             for start in range(len(line)):
-                words = [re.sub(r'[^a-z0-9]', '', w[0].lower()) for w in line[start:start + len(wanted)]]
+                words = []
+                selected = []
+                for word in line[start:]:
+                    selected.append(word)
+                    words.extend(re.findall(r'[a-z0-9]+', word[0].lower()))
+                    if len(words) >= len(wanted):
+                        break
                 equivalent = words == wanted or (
                     len(words) == len(wanted)
                     and all(word == expected or word in aliases.get(expected, set())
                             for word, expected in zip(words, wanted))
                 )
                 if equivalent or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']) or (label.lower() == '16 bit' and words == ['16', 'bir']):
-                    selected = line[start:start + len(wanted)]
                     x = selected[0][1]
                     if right and x < 1000:
                         continue
                     if label.lower() == 'save' and selected[0][2] < 100:
                         continue
                     # Save must not select Save state or Save startup.
-                    following = line[start + len(wanted):start + len(wanted) + 1]
+                    following = line[start + len(selected):start + len(selected) + 1]
                     if label.lower() == 'save' and following and following[0][0].lower() in ('state', 'startup'):
                         continue
                     matches.append((x + sum(w[3] for w in selected) / 2,
@@ -1006,6 +1011,52 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         metadata.xmpData()['Xmp.dc.description'] = 'GUI rotation description'
         metadata.writeMetadata()
         driver.file_action('Open', standard)
+        scan_before = root / 'scan-for-print-before.json'
+        driver.file_action('Save state', scan_before, True)
+        wait_for(scan_before.is_file, 'scan-for-print baseline state', 20)
+        baseline_state = json.loads(scan_before.read_text())
+        baseline_scan = {'scanner': baseline_state.get('scanner', {}),
+                         'glare': baseline_state.get('glare', {})}
+        driver.click('Scan-for-print')
+        driver.rendered('scan-for-print-on')
+        scan_on = root / 'scan-for-print-on.json'
+        driver.file_action('Save state', scan_on, True)
+        wait_for(scan_on.is_file, 'scan-for-print enabled state', 20)
+        enabled_state = json.loads(scan_on.read_text())
+        enabled_scan = {'scanner': enabled_state.get('scanner', {}),
+                        'glare': enabled_state.get('glare', {})}
+        require(enabled_scan['scanner'].get('white_correction') is True and
+                enabled_scan['scanner'].get('black_correction') is True and
+                enabled_scan['glare'].get('active') is False,
+                'Scan-for-print did not force correction/glare settings')
+        driver.click('Scan-for-print')
+        driver.rendered('scan-for-print-off')
+        scan_after = root / 'scan-for-print-after.json'
+        driver.file_action('Save state', scan_after, True)
+        wait_for(scan_after.is_file, 'scan-for-print restored state', 20)
+        restored_state = json.loads(scan_after.read_text())
+        restored_scan = {'scanner': restored_state.get('scanner', {}),
+                         'glare': restored_state.get('glare', {})}
+        require(restored_scan == baseline_scan,
+                'Scan-for-print did not restore exact pre-toggle settings')
+        driver.records.append({'scenario': 'scan_for_print',
+                               'assertion': 'forced settings and exact restoration',
+                               'baseline': baseline_scan, 'forced': enabled_scan,
+                               'restored': restored_scan})
+        driver.file_action('Load state', scan_on)
+        driver.rendered('scan-for-print-loaded-state')
+        driver.click('Scan-for-print')
+        driver.rendered('scan-for-print-loaded-toggle')
+        loaded_toggle = root / 'scan-for-print-loaded-toggle.json'
+        driver.file_action('Save state', loaded_toggle, True)
+        wait_for(loaded_toggle.is_file, 'scan-for-print loaded toggle state', 20)
+        loaded_state = json.loads(loaded_toggle.read_text())
+        require(loaded_state['scanner']['white_correction'] is True and
+                loaded_state['scanner']['black_correction'] is True and
+                loaded_state['glare']['active'] is False,
+                'Loaded state retained the transient scan-for-print snapshot')
+        driver.file_action('Load state', scan_before)
+        driver.rendered('scan-for-print-baseline-restored')
         driver.click('Preview')
         driver.rendered('explicit-preview')
         driver.click('Scan')
@@ -1158,6 +1209,12 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         shutil.copyfile(raw, raw_input)
         driver.file_action('Open', raw_input)
         driver.rendered('raw-image-preview')
+        driver.tab('CONFIG')
+        driver.scroll(False)
+        driver.wait_text(r'Lens correction (?:not applied|applied)',
+                         'raw-lens-correction-status', timeout=20)
+        driver.records.append({'scenario': 'raw_status',
+                               'assertion': 'native window reports lens correction result'})
         driver.file_action('Save state', root / 'raw-state.json', True)
         wait_for((root / 'raw-state.json').is_file, 'RAW state', 20)
         raw_state = json.loads((root / 'raw-state.json').read_text())

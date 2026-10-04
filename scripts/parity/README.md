@@ -172,6 +172,24 @@ Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
 engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo and zenity. Package
 smoke also builds a ZIP bundle through the installed exporter, checks offline
 report references and artifacts, and executes its delivered OCIO processors.
+For a single local gate, provide the built f64 CLI and portable package:
+
+```bash
+xvfb-run -a -s '-screen 0 1600x1000x24' python3 scripts/parity/run_all.py \
+  --rust-bin target/release/spektrafilm-f64 \
+  --data-dir data \
+  --package-root dist/spektrafilm-linux-x64 \
+  --out-root target/acceptance
+```
+
+The wrapper runs the existing runtime parity, LUT acceptance, and package smoke
+checks without adding another test framework. It fails on missing prerequisites
+or on the first failed check and writes command logs plus `report.json`.
+The wrapper uses `SPEKTRAFILM_PY` for installed package acceptance and defaults
+to the pinned reference venv; `SPEKTRAFILM_PY_REPO` defaults to the sibling
+checkout. Supply both variables on CI or when using another checkout. Final
+reports record the Rust HEAD, executable SHA256, platform and reference pin.
+
 `--raw-fixture PATH` reuses the pinned Kodak KDC download when network access
 is unavailable; the same required SHA256 check runs before decoding.
 

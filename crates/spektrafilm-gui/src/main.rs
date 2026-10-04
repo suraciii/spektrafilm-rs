@@ -25,6 +25,13 @@ mod display;
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
 const IN_FLIGHT_REPAINT: Duration = Duration::from_millis(16);
+const IMAGE_FILE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "tif", "tiff", "exr",
+    // Keep this list in lockstep with image_io::is_raw.
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef",
+    "srw", "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef", "kdc", "ari", "bay", "dcr",
+    "drf", "erf", "fff", "k25", "mos", "ptx",
+];
 
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt()
@@ -240,8 +247,12 @@ struct App {
     gui_state: state::GuiState,
     force_preview: bool,
     full_scan_requested: bool,
+    /// Original correction switches captured while Scan-for-print is active.
+    /// This transient workflow state is deliberately excluded from persistence.
+    scan_for_print_snapshot: Option<(bool, bool, bool)>,
     image_path: Option<PathBuf>,
     image: Option<Arc<ImageBuf>>,
+    raw_lens_info: Option<String>,
     /// Number of quarter turns applied to the in-memory input relative to the
     /// file on disk. Export uses the rotated buffer when this is non-zero.
     input_rotation: i32,
@@ -370,9 +381,11 @@ impl App {
             gui_state,
             force_preview: false,
             full_scan_requested: false,
+            scan_for_print_snapshot: None,
             image_path: None,
-            image: None,
             input_rotation: 0,
+            image: None,
+            raw_lens_info: None,
             source_metadata: None,
             save_depth,
             output_image: None,
@@ -427,6 +440,8 @@ impl App {
         self.params = params;
         self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
         self.gui_state = state;
+        self.scan_for_print_snapshot = None;
+        self.raw_lens_info = None;
         self.pipeline_cache_key = None;
         self.pipeline_cache = None;
         self.dirty = true;
@@ -438,13 +453,13 @@ impl App {
 
     fn refresh_viewing_artifacts(&mut self) {
         if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding) {
+            match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
                 Ok(raster) => self.viewer.replace_input_display(raster),
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
         }
         if let Some(output) = self.output_image.as_ref() {
-            match display::output_display_raster(output,&self.output_color_space,self.output_cctf_encoding,self.viewer.settings.use_display_transform,self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new)) {
+            match display::output_display_raster(output,&self.output_color_space,self.output_cctf_encoding,self.viewer.settings.use_display_transform,self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new),self.params.settings.preview_max_size as usize) {
                 Ok((raster,status)) => { self.viewer.replace_output_display(raster); self.viewer.transform_status=status; }
                 Err(e) => self.status = format!("Viewer display error: {e}"),
             }
@@ -478,8 +493,33 @@ impl App {
         });
     }
 
+    fn toggle_scan_for_print(&mut self) {
+        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
+            self.params.scanner.white_correction = white;
+            self.params.scanner.black_correction = black;
+            self.params.print_render.glare.active = glare;
+        } else {
+            self.scan_for_print_snapshot = Some((
+                self.params.scanner.white_correction,
+                self.params.scanner.black_correction,
+                self.params.print_render.glare.active,
+            ));
+            self.params.scanner.white_correction = true;
+            self.params.scanner.black_correction = true;
+            self.params.print_render.glare.active = false;
+        }
+        self.pipeline_cache_key = None;
+        self.pipeline_cache = None;
+        self.dirty = true;
+        self.force_preview = true;
+    }
+
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            let scan_label = if self.scan_for_print_snapshot.is_some() { "Scan-for-print: ON" } else { "Scan-for-print" };
+            if ui.button(scan_label).clicked() {
+                self.toggle_scan_for_print();
+            }
             if ui.button("Preview").clicked() {
                 self.dirty = true;
                 self.force_preview = true;
@@ -526,6 +566,7 @@ impl App {
             let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir);
             self.params = spektrafilm_core::params_builder::digest_params(params,&film,&paper,Some(&database),true);
             self.params.io.scan_film = film.is_positive();
+            self.scan_for_print_snapshot = None;
             self.pipeline_cache_key = None;
             self.pipeline_cache = None;
             Ok(())
@@ -536,6 +577,7 @@ impl App {
     fn load_image_from_path(&mut self, path: &Path) {
         let t = Instant::now();
         let raw = image_io::is_raw(path);
+        let mut raw_lens_info = None;
         let loaded = if raw {
             let settings = &self.gui_state.sections["load_raw"];
             let options = spektrafilm_raw::RawOptions {
@@ -549,8 +591,9 @@ impl App {
                 tint: settings["tint"].as_f64(),
                 lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
             };
-            spektrafilm_raw::load(path, &options).map(|result| LoadedImage {
-                image: result.image, metadata: image_io::read_metadata(path),
+            spektrafilm_raw::load(path, &options).map(|result| {
+                raw_lens_info = Some(result.lens_info);
+                LoadedImage { image: result.image, metadata: image_io::read_metadata(path) }
             }).map_err(anyhow::Error::msg)
         } else { image_io::load(path).map_err(anyhow::Error::from) };
         match loaded {
@@ -568,8 +611,15 @@ impl App {
                     (img.pixel_count() as f64 / 1e6),
                     t.elapsed().as_secs_f32() * 1000.0
                 );
+                self.raw_lens_info = raw_lens_info;
+                if raw {
+                    match self.raw_lens_info.as_deref() {
+                        Some(info) if !info.is_empty() => self.status.push_str(&format!("; Lens correction applied ({info})")),
+                        _ => self.status.push_str("; Lens correction not applied"),
+                    }
+                }
                 self.image = Some(Arc::new(img));
-                match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding) {
+                match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
                     Ok(raster) => self.viewer.set_input(raster,[self.image.as_ref().unwrap().width as usize,self.image.as_ref().unwrap().height as usize]),
                     Err(e) => self.status = format!("Viewer input error: {e}"),
                 }
@@ -594,7 +644,7 @@ impl App {
         self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
         self.output_image = None;
         if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(image, &self.params.io.input_color_space, self.params.io.input_cctf_decoding) {
+            match display::input_display_raster(image, &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
                 Ok(raster) => self.viewer.set_input(raster, [image.width as usize, image.height as usize]),
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
@@ -708,7 +758,7 @@ impl App {
                     let output = pipeline.process(working_image, backend.as_ref())?;
                     let render_ms = t.elapsed().as_secs_f32() * 1000.0;
                     let t_preview = Instant::now();
-                    let (preview, display_status) = display::output_display_raster(&output,&pipeline.params.io.output_color_space,pipeline.params.io.output_cctf_encoding,display_enabled,display_profile.as_deref())?;
+                    let (preview, display_status) = display::output_display_raster(&output,&pipeline.params.io.output_color_space,pipeline.params.io.output_cctf_encoding,display_enabled,display_profile.as_deref(),pipeline.params.settings.preview_max_size as usize)?;
                     let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                     let worker_total_ms = t_total.elapsed().as_secs_f32() * 1000.0;
                     Ok(RenderResult {
@@ -1034,7 +1084,7 @@ impl App {
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding);
+        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size);
         let changes = controls::show(
             ui,
             &mut self.params,
@@ -1054,12 +1104,7 @@ impl App {
                 if let Some(path) = self.file_dialog("load")
                     .add_filter(
                         "Image",
-                        &[
-                            "jpg", "jpeg", "png", "tif", "tiff", "exr", // standard
-                            "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf",
-                            "rw2", "pef", "srw", "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef",
-                            "kdc",
-                        ],
+                        IMAGE_FILE_EXTENSIONS,
                     )
                     .pick_file()
                 {
@@ -1818,7 +1863,10 @@ impl App {
         ));
         ui.monospace(format!("backend: {}", self.backend.name()));
         ui.label(egui::RichText::new(&self.status).small());
-        if input_view_before != (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding) { self.refresh_viewing_artifacts(); }
+        if let Some(info) = self.raw_lens_info.as_deref() {
+            ui.label(if info.is_empty() { "Lens correction not applied".to_owned() } else { format!("Lens correction applied ({info})") });
+        }
+        if input_view_before != (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size) { self.refresh_viewing_artifacts(); }
     }
 }
 

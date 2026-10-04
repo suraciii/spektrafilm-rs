@@ -187,6 +187,7 @@ impl Viewer {
         let center=rect.center()+self.pan; let border=Rect::from_center_size(center,padded*scale); let paper_rect=Rect::from_center_size(center,bounds*scale);
         if self.paper.is_none() { let size=self.input_size.unwrap_or([3,2]); let long=size[0].max(size[1]).max(1); let raster_size=[(size[0] as f64*1024.0/long as f64).round().max(1.0) as usize,(size[1] as f64*1024.0/long as f64).round().max(1.0) as usize]; self.paper=Some(virtual_paper_back(raster_size)); }
         let layer=self.settings.layer;
+        let interpolation=match layer { ViewLayer::Output => self.settings.interpolation, ViewLayer::Input => Interpolation::Nearest, ViewLayer::PaperBack => Interpolation::Spline36 };
         let selected=match layer { ViewLayer::Input => self.input.as_ref(), ViewLayer::Output => self.output.as_ref(), ViewLayer::PaperBack => self.paper.as_ref() };
         let source_size=match layer { ViewLayer::Input => self.input_size, ViewLayer::Output => self.output_size, ViewLayer::PaperBack => self.input_size };
         let image_world=if layer==ViewLayer::Output { fitted_world_size(source_size.unwrap_or([1,1]),bounds) } else { bounds };
@@ -194,7 +195,7 @@ impl Viewer {
         let now=ui.input(|i| i.time); let mut frame=0;
         if let Some(t)=self.transition.as_ref() { let count=if t.polaroid.is_some() { 50 } else { 10 }; frame=((now-t.start)/0.032).floor().max(0.0) as usize; if frame>=count { self.transition=None; frame=0; } else { ui.ctx().request_repaint_after(Duration::from_millis(32)); } }
         let texture_size=[(rect.width()*dpi).ceil().clamp(1.0,2048.0) as usize,(rect.height()*dpi).ceil().clamp(1.0,2048.0) as usize];
-        let key=vec![self.revision,layer as u64,self.settings.interpolation as u64,self.settings.gray_18_canvas as u64,padding.to_bits() as u64,self.zoom.to_bits() as u64,self.zoom_percent.map(f32::to_bits).unwrap_or(0) as u64,self.pan.x.to_bits() as u64,self.pan.y.to_bits() as u64,rect.width().to_bits() as u64,rect.height().to_bits() as u64,texture_size[0] as u64,texture_size[1] as u64,frame as u64,self.transition.is_some() as u64];
+        let key=vec![self.revision,layer as u64,interpolation as u64,self.settings.gray_18_canvas as u64,padding.to_bits() as u64,self.zoom.to_bits() as u64,self.zoom_percent.map(f32::to_bits).unwrap_or(0) as u64,self.pan.x.to_bits() as u64,self.pan.y.to_bits() as u64,rect.width().to_bits() as u64,rect.height().to_bits() as u64,texture_size[0] as u64,texture_size[1] as u64,frame as u64,self.transition.is_some() as u64];
         if self.cache_key.as_ref()!=Some(&key) {
             let animation=if layer==ViewLayer::Output { self.transition.as_ref().and_then(|t| t.polaroid.as_ref()).map(|p| p.frame(frame as f32/49.0)) } else { None };
             let raster=animation.as_ref().or(selected);
@@ -204,7 +205,7 @@ impl Viewer {
                 let p=Pos2::new(rect.min.x+(x as f32+0.5)*rect.width()/texture_size[0] as f32,rect.min.y+(y as f32+0.5)*rect.height()/texture_size[1] as f32);
                 let mut color=if border.contains(p) { Color32::WHITE } else { gray };
                 if paper_rect.contains(p) && !image_rect.contains(p) { if let Some(paper)=self.paper.as_ref() { color=pack(sample_rect(paper,p,paper_rect,Interpolation::Spline36)); } }
-                if image_rect.contains(p) { if let Some(raster)=raster { let mut rgb=sample_rect(raster,p,image_rect,self.settings.interpolation); if layer==ViewLayer::Output { if let Some(previous)=self.transition.as_ref().and_then(|t| t.previous.as_ref()) { let a=frame as f32/10.0; let old=sample_rect(previous,p,image_rect,self.settings.interpolation); for c in 0..3 { rgb[c]=old[c].clamp(0.0,1.0)*(1.0-a)+rgb[c].clamp(0.0,1.0)*a; } } } color=pack(rgb); } } pixels.push(color);
+                if image_rect.contains(p) { if let Some(raster)=raster { let mut rgb=sample_rect(raster,p,image_rect,interpolation); if layer==ViewLayer::Output { if let Some(previous)=self.transition.as_ref().and_then(|t| t.previous.as_ref()) { let a=frame as f32/10.0; let old=sample_rect(previous,p,image_rect,interpolation); for c in 0..3 { rgb[c]=old[c].clamp(0.0,1.0)*(1.0-a)+rgb[c].clamp(0.0,1.0)*a; } } } color=pack(rgb); } } pixels.push(color);
             } }
             let image=egui::ColorImage { size: texture_size, pixels };
             if let Some(texture)=self.texture.as_mut() { texture.set(image,TextureOptions::NEAREST); } else { self.texture=Some(ui.ctx().load_texture("viewer-presentation",image,TextureOptions::NEAREST)); }
@@ -351,11 +352,12 @@ pub fn prepare_display_raster(raw_output: DisplayRaster, srgb_preview: Option<Di
 
 /// Capped disposable float raster; sampling happens before color conversion.
 /// Full-resolution pipeline buffers remain borrowed and never get copied here.
-fn capped_raster(image: &ImageBuf) -> Result<DisplayRaster,String> {
+/// Create a disposable viewer raster bounded by the caller's preview size.
+fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<DisplayRaster,String> {
     if image.width==0 || image.height==0 { return Err("Cannot view an empty image".into()); }
-    const MAX_EDGE: usize=2048;
-    let w=image.width as usize; let h=image.height as usize; let factor=(MAX_EDGE as f64/w.max(h) as f64).min(1.0);
-    let size=[(w as f64*factor).round().max(1.0) as usize,(h as f64*factor).round().max(1.0) as usize];
+    let max_edge=max_edge.max(1);
+    let w=image.width as usize; let h=image.height as usize; let factor=(max_edge as f64/w.max(h) as f64).min(1.0);
+    let size=[((w as f64*factor).round() as usize).max(1),((h as f64*factor).round() as usize).max(1)];
     let mut rgb=Vec::with_capacity(size[0]*size[1]);
     for y in 0..size[1] { let sy=((y as f64+0.5)*h as f64/size[1] as f64-0.5).clamp(0.0,(h-1) as f64);let y0=sy.floor() as usize;let y1=(y0+1).min(h-1);let fy=sy-y0 as f64;
         for x in 0..size[0] { let sx=((x as f64+0.5)*w as f64/size[0] as f64-0.5).clamp(0.0,(w-1) as f64);let x0=sx.floor() as usize;let x1=(x0+1).min(w-1);let fx=sx-x0 as f64;
@@ -364,14 +366,14 @@ fn capped_raster(image: &ImageBuf) -> Result<DisplayRaster,String> {
     }
     DisplayRaster::new(size,rgb)
 }
-pub fn input_display_raster(image: &ImageBuf, space: &str, decode: bool) -> Result<DisplayRaster,String> {
+pub fn input_display_raster(image: &ImageBuf, space: &str, decode: bool, max_edge: usize) -> Result<DisplayRaster,String> {
     use spektrafilm_math::colorspace::{resolve,display_matrix,display_rgb};
-    let space=resolve(space)?;let matrix=display_matrix(space);let raw=capped_raster(image)?;
+    let space=resolve(space)?;let matrix=display_matrix(space);let raw=capped_raster(image,max_edge)?;
     DisplayRaster::new(raw.size,raw.rgb.iter().map(|p| display_rgb(p.map(|v| v as f64),space,decode,&matrix).map(|v| v.clamp(0.0,1.0) as f32)).collect())
 }
-pub fn output_display_raster(image: &ImageBuf, space: &str, encoded: bool, enabled: bool, profile: Option<&std::path::Path>) -> Result<(DisplayRaster,String),String> {
-    let raw=capped_raster(image)?;
-    #[cfg(windows)] let srgb=if enabled { Some(input_display_raster(image,space,encoded)?) } else { None };
+pub fn output_display_raster(image: &ImageBuf, space: &str, encoded: bool, enabled: bool, profile: Option<&std::path::Path>, max_edge: usize) -> Result<(DisplayRaster,String),String> {
+    let raw=capped_raster(image,max_edge)?;
+    #[cfg(windows)] let srgb=if enabled { Some(input_display_raster(image,space,encoded,max_edge)?) } else { None };
     #[cfg(not(windows))] let srgb={ let _=(space,encoded);None };
     Ok(prepare_display_raster(raw,srgb,enabled,profile))
 }

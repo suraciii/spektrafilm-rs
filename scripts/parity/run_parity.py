@@ -27,10 +27,9 @@ exact fix — never a silent skip):
 from __future__ import annotations
 
 import argparse
-import json
 import hashlib
-import shutil
 import platform
+import json
 import math
 import os
 import struct
@@ -132,10 +131,8 @@ def preflight_rust() -> dict:
         )
     return {"rust_bin": str(RS_BIN.resolve()),
             "rust_bin_sha256": hashlib.sha256(RS_BIN.read_bytes()).hexdigest(),
-            "rust_commit": subprocess.check_output(["git", "rev-parse", "HEAD"],
-                                                   cwd=REPO_ROOT, text=True).strip(),
-            "rust_worktree_dirty": bool(subprocess.check_output(
-                ["git", "diff", "--name-only", "HEAD"], cwd=REPO_ROOT, text=True).strip()),
+            "rust_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip(),
+            "rust_worktree_dirty": bool(subprocess.check_output(["git", "diff", "--name-only", "HEAD"], cwd=REPO_ROOT, text=True).strip()),
             "platform": platform.platform()}
 
 
@@ -227,7 +224,7 @@ def run_rust(scn: dict, out_dir: Path, fixtures: Path) -> subprocess.CompletedPr
         import tempfile
         archive = Path(tempfile.mkdtemp(prefix="spektrafilm-parity-history-"))
         for path in prior:
-            shutil.move(str(path), str(archive / path.name))
+            path.rename(archive / path.name)
     params_tree = nested_params(scn["params"])
     params_file = out_dir / "rs_params.json"
     params_file.write_text(json.dumps(params_tree, indent=2))
