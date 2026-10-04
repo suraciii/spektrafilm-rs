@@ -327,13 +327,10 @@ class X11:
         time.sleep(.15)
 
     def tab(self, name):
-        require(name in ('MAIN', 'FILM', 'PRINT', 'ADVANCED', 'CONFIG'), f'Unknown GUI tab: {name}')
-        def locate():
-            _, _, lines = self.read()
-            matches = self.match(lines, name, True)
-            return min(matches, key=lambda point: point[1]) if matches else None
-        x, y = wait_for(locate, f'visible sidebar tab {name}', 20)
-        self.xd('mousemove', '--window', self.window, int(x), int(y))
+        positions = {'MAIN': 1070, 'FILM': 1110, 'PRINT': 1160, 'ADVANCED': 1230, 'CONFIG': 1295}
+        require(name in positions, f'Unknown GUI tab: {name}')
+        y = 40 + (30 if sys.platform == 'darwin' else 0)
+        self.xd('mousemove', '--window', self.window, positions[name], y)
         self.xd('click', 1)
         time.sleep(.8)
         self.scroll(False)
