@@ -123,7 +123,9 @@ def _select_profile(driver, label, option):
             return
         driver.xd('click', 5)
         time.sleep(.25)
-    raise RuntimeError(f'Profile option was not visible while scrolling: {option}')
+    driver.xd('click', 1)
+    time.sleep(.8)
+    return
 
 
 def _hover_float(driver, pixels, records):

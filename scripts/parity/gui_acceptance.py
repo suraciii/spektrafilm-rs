@@ -871,9 +871,9 @@ return ""''') or None
                 wait_for(
                     lambda: self.apple(f'get exists sheet 1 of {chooser}') == 'true',
                     'macOS Go to Folder sheet', 15)
-                self.apple(f'set focused of text field 1 of sheet 1 of {chooser} to true')
-                self.input.hotkey('command', 'a')
-                self.paste(path.parent if save else path)
+                self.apple(
+                    f'set value of text field 1 of sheet 1 of {chooser} to '
+                    f'{json.dumps(str(path.parent if save else path))}')
                 self.input.press('enter')
                 # Go to Folder is its own sheet, including on a standalone
                 # NSSavePanel. Do not write the name until that sheet closes.
