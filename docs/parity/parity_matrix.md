@@ -70,7 +70,10 @@ The current release workflow deliberately runs the package gate without
 LUT/OCIO/QA and provenance only; they do not change native GUI rows or the
 platform-specific GUI evidence below.
 
-- Current Linux GUI evidence is `/tmp/spektrafilm-current-package-evidence-3/gui-acceptance/observations.json`;
+- Latest non-GUI package workflow `37242896312` at Rust
+  `79b98c9927b3b74e6183695890a5cdc3e979739c` passed Windows, macOS and Linux
+  package smoke. It intentionally contributes no GUI rows.
+- Historical Linux GUI evidence is `/tmp/spektrafilm-current-package-evidence-3/gui-acceptance/observations.json`;
   the local native smoke at Rust `8bdd7fe` passed all named GUI, RAW, export and
   cleanup assertions. Historical CI workflow `37226896580` passed the packaged
   Windows x64 and Linux x64 gates at Rust `9f52fc2`.

@@ -190,14 +190,18 @@ Independent executed checks establish:
   camera/white-balance cases exactly, both before and after relocation, including
   a known Lensfun correction. The rebuilt consumers load LibRaw 0.22's actual
   `libraw.so.24`; its selected link artifact prevents system-header ABI mismatch.
-- The latest cross-platform package workflow is pinned to Rust `9f52fc2`
-  and Python `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc` (workflow
-  `37226896580`). Windows package smoke passed with a clean worktree;
-  Linux runtime parity, LUT acceptance and package smoke passed, although
-  its package report recorded a dirty worktree after the Python run.
-  macOS reached the viewer transition scenario but failed the assertion
-  `Reveal did not produce observable transition frames`; it is not a
-  platform acceptance pass.
+- The latest non-GUI cross-platform package workflow is pinned to Rust
+  `79b98c9927b3b74e6183695890a5cdc3e979739c` and Python
+  `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc` (workflow `37242896312`).
+  Windows, macOS and Linux package smoke all passed. Windows and macOS
+  reports were clean; Linux recorded the known Python-generated worktree
+  bytecode change. Each report covered six package scenarios; the spectral
+  maximum absolute error was `6.634529148286106e-9` against the `1e-6`
+  budget.
+- The preceding GUI-enabled workflow `37226896580` passed Windows package
+  smoke and Linux runtime/LUT/package gates, but macOS failed
+  `Reveal did not produce observable transition frames`; that historical
+  desktop result remains explicitly incomplete.
 - The release workflow now invokes `package_smoke.py` without `--gui` on all
   three platforms and no longer installs or configures GUI-only acceptance
   dependencies. Its package result intentionally excludes native desktop
