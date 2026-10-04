@@ -425,13 +425,61 @@ def report_evidence(path):
             "rows": rows,
             "scope": "Only these exercised scenarios and tap budgets are verified; no universal field or backend parity claim."}
 
+def gui_evidence(path):
+    if path is None:
+        return {"status": "pending_fresh_execution"}
+    records = json.loads(path.read_text())
+    if not isinstance(records, list) or not records or not any(
+            row.get("startup_restore") is True and row.get("raw_input_space") == "ACES2065-1"
+            and row.get("cancel_output_absent") is True and row.get("close_output_absent") is True
+            and row.get("export_temp_files") == [] for row in records):
+        sys.exit(f"Refusing incomplete native GUI evidence: {path}")
+    if any("failure" in row for row in records):
+        sys.exit(f"Refusing failed GUI evidence: {path}")
+    required = {"paper_back", "interpolation", "gray_canvas", "white_border", "reveal", "crossfade",
+                "float_inspection", "display_output_isolation", "profile_selection", "non_srgb"}
+    observed = {row.get("scenario") for row in records}
+    if required - observed:
+        sys.exit(f"Refusing GUI evidence missing viewer scenarios: {sorted(required - observed)}")
+    return {"status": "measured_scenarios", "report_path": str(path.resolve()),
+            "report_sha256": sha256(path), "records": records,
+            "scope": "Only named assertions and screenshots in this native run are measured; other actions remain unverified."}
+
+def gui_action_entry(action, desc, status, owner, evidence):
+    entry = {"description": desc, **integration_entry(status, owner, "",
+        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
+    keys = {
+        "rotate_input_image_clockwise": "rotated_input_max_error",
+        "rotate_input_image_counterclockwise": "rotation_pixel_bounds",
+        "load_raw_image": "raw_input_space",
+        "save_current_as_default": "startup_restore",
+        "restore_factory_default": "factory_reset",
+    }
+    scenarios = {
+        "set_output_interpolation_mode": "interpolation", "set_gray_18_canvas": "gray_canvas",
+        "virtual_photo_paper": "paper_back", "polaroid_animation": "reveal",
+        "save_output_layer": "display_output_isolation",
+    }
+    rows = [row for row in evidence.get("records", [])
+            if (action in keys and keys[action] in row)
+            or (action in scenarios and row.get("scenario") == scenarios[action])]
+    if rows:
+        entry.update(rust_status="verified_exercised_path",
+                     verification="Named native-window assertions only; see measured_evidence.",
+                     measured_evidence=rows, evidence_report_sha256=evidence["report_sha256"])
+    return entry
+
+
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path,
                         default=REPO_ROOT / "target/parity/parity_report.json")
+    parser.add_argument("--gui-report", type=Path)
     args = parser.parse_args()
     evidence = report_evidence(args.report)
+    native_gui = gui_evidence(args.gui_report)
     head = subprocess.run(["git", "-C", str(PY_REPO), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
     if head != PY_COMMIT:
@@ -468,7 +516,7 @@ def main() -> None:
             for group, fields in RUNTIME_FIELDS.items()
         },
         "gui_actions": {
-            action: {"description": desc, **integration_entry(status, owner, "", "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
+            action: gui_action_entry(action, desc, status, owner, native_gui)
             for action, desc, status, owner in GUI_ACTIONS
         },
         "lut_registry": {
@@ -496,6 +544,7 @@ def main() -> None:
                         "owner_issue": 9, "evidence": "Live sha256 inventory"} for path in missing],
         "verification_status": evidence["status"],
         "differential_evidence": evidence,
+        "gui_evidence": native_gui,
         "budgets": BUDGETS,
         "scenario_status": f"{evidence['catalog_rows']} expanded rows; exercised scenario and tap evidence is recorded under differential_evidence.",
     }

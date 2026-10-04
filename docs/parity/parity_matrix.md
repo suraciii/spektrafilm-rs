@@ -60,3 +60,9 @@ metrics and reference environment are embedded under `differential_evidence`
 in the machine-readable matrix. This verifies those scenarios; isolated
 dark-grain regimes and other unexercised controls require their own evidence.
 Historical baseline failures remain metadata and never excuse current drift.
+
+## Native GUI evidence
+
+The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; all other rows retain their unverified status.
+
+The evidence is platform-specific. Linux Xvfb does not verify a physical monitor ICC profile or Windows/macOS window interaction. A rotated export's native TIFF staging write cannot be interrupted; cancellation is checked around it and temporary files are removed before the worker finishes.

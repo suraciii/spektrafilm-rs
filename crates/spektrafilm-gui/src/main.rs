@@ -242,6 +242,9 @@ struct App {
     full_scan_requested: bool,
     image_path: Option<PathBuf>,
     image: Option<Arc<ImageBuf>>,
+    /// Number of quarter turns applied to the in-memory input relative to the
+    /// file on disk. Export uses the rotated buffer when this is non-zero.
+    input_rotation: i32,
     source_metadata: Option<ImageMetadata>,
     save_depth: BitDepth,
     /// Last rendered pipeline output (post sRGB encode + clip). Retained
@@ -369,6 +372,7 @@ impl App {
             full_scan_requested: false,
             image_path: None,
             image: None,
+            input_rotation: 0,
             source_metadata: None,
             save_depth,
             output_image: None,
@@ -556,6 +560,7 @@ impl App {
                     self.params.io.input_cctf_decoding = false;
                 }
                 self.source_metadata = metadata;
+                self.input_rotation = 0;
                 self.status = format!(
                     "Loaded {} × {} ({:.1} MP) in {:.0} ms",
                     img.width,
@@ -576,6 +581,38 @@ impl App {
                 self.status = format!("Load error: {e:#}");
             }
         }
+    }
+
+    fn rotate_input_image(&mut self, clockwise: bool) {
+        let Some(image) = self.image.as_ref() else {
+            self.status = "Load an image before rotating.".into();
+            return;
+        };
+        let quarter_turns = if clockwise { -1 } else { 1 };
+        let rotated = image.rotated_quarter_turns(quarter_turns);
+        self.image = Some(Arc::new(rotated));
+        self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
+        self.output_image = None;
+        if let Some(image) = self.image.as_ref() {
+            match display::input_display_raster(image, &self.params.io.input_color_space, self.params.io.input_cctf_decoding) {
+                Ok(raster) => self.viewer.set_input(raster, [image.width as usize, image.height as usize]),
+                Err(e) => self.status = format!("Viewer input error: {e}"),
+            }
+        }
+        self.dirty = true;
+        self.force_preview = true;
+        self.status = format!(
+            "Rotated input {}°",
+            self.input_rotation as i32 * 90
+        );
+    }
+
+    fn rotate_input_image_clockwise(&mut self) {
+        self.rotate_input_image(true);
+    }
+
+    fn rotate_input_image_counterclockwise(&mut self) {
+        self.rotate_input_image(false);
     }
 
     fn preview_pipeline(
@@ -875,6 +912,10 @@ impl App {
         let data_dir = self.data_dir.clone();
         let save_depth = self.save_depth;
         let export_state = self.gui_state.sections.clone();
+        let rotated_input = (self.input_rotation != 0).then(|| (
+            Arc::clone(self.image.as_ref().expect("export requires loaded image")),
+            self.source_metadata.clone(),
+        ));
         let (tx, rx) = mpsc::channel();
         let ctx_for_worker = ctx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -883,9 +924,27 @@ impl App {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-export".into())
             .spawn(move || {
-                let res = run_f64_export(
+                let res = (|| -> Result<_> {
+                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
+                    let rotated_input_guard = if let Some((image, metadata)) = rotated_input {
+                        let nanos = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+                        let guard = TempPath(std::env::temp_dir().join(format!(
+                            "spektrafilm-export-input-{}-{nanos}.tif", std::process::id()
+                        )), None);
+                        image_io::save(&guard.0, &image, SaveOptions {
+                            depth: BitDepth::ThirtyTwo,
+                            color_space: &params.io.input_color_space,
+                            cctf_encoding: params.io.input_cctf_decoding,
+                        }, metadata.as_ref())?;
+                        Some(guard)
+                    } else { None };
+                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
+                    let input_for_export = rotated_input_guard.as_ref()
+                        .map(|guard| guard.0.as_path()).unwrap_or(&input_path);
+                    run_f64_export(
                     &cli_path,
-                    &input_path,
+                    input_for_export,
                     &out_path,
                     &film,
                     &paper,
@@ -894,7 +953,8 @@ impl App {
                     save_depth,
                     &export_state,
                     &cancel_for_worker,
-                );
+                )
+                })();
                 let name = out_path
                     .file_name()
                     .and_then(|s| s.to_str())
@@ -974,18 +1034,7 @@ impl App {
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.heading("spektrafilm");
-        ui.add_space(6.0);
         let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding);
-        ui.horizontal_wrapped(|ui| {
-            for tab in GuiTab::ALL {
-                ui.selectable_value(&mut self.gui_tab, tab, tab.label());
-            }
-        });
-        ui.separator();
-        if self.gui_tab == GuiTab::Config {
-            self.state_toolbar(ui);
-        }
         let changes = controls::show(
             ui,
             &mut self.params,
@@ -1742,7 +1791,6 @@ impl App {
                 self.refresh_viewing_artifacts();
             }
         }
-        self.simulation_action_bar(ui);
         // ── Metrics ─────────────────────────────────────────────────────
         ui.add_space(10.0);
         ui.separator();
@@ -1821,17 +1869,58 @@ impl eframe::App for App {
             .resizable(false)
             .exact_width(420.0)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.controls_panel(ui, ctx));
+                ui.heading("spektrafilm");
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    for tab in GuiTab::ALL {
+                        ui.selectable_value(&mut self.gui_tab, tab, tab.label());
+                    }
+                });
+                ui.separator();
+                if self.gui_tab == GuiTab::Config {
+                    self.state_toolbar(ui);
+                    ui.separator();
+                }
+                let scroll_height = (ui.available_height() - 36.0).max(1.0);
+                ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("controls-scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.controls_panel(ui, ctx));
+                });
+                ui.separator();
+                self.simulation_action_bar(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.viewer.show(ui,self.image.as_deref(),self.output_image.as_ref());
-            ui.separator();
-            ui.horizontal(|ui| {
+            egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("ccw rotate").clicked() {
+                    self.rotate_input_image_counterclockwise();
+                    ui.ctx().request_repaint();
+                }
+                if ui.button("cw rotate").clicked() {
+                    self.rotate_input_image_clockwise();
+                    ui.ctx().request_repaint();
+                }
+                for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
+                    if ui.button(label).clicked() {
+                        self.viewer.set_zoom_percent(percent);
+                        ui.ctx().request_repaint();
+                    }
+                }
                 if ui.button("reset view").clicked() {
                     self.viewer.reset_view();
+                    ui.ctx().request_repaint();
                 }
-                ui.label(format!("{} · zoom {:.2}×", self.status, self.viewer.zoom));
+                let zoom = self.viewer.zoom_percent().map_or_else(
+                    || format!("{:.0}% fit", self.viewer.zoom * 100.0),
+                    |percent| format!("{percent:.0}%"),
+                );
+                ui.label(format!("{} · zoom {zoom}", self.status));
             });
+            });
+            self.viewer.layer_controls(ui);
+            self.viewer.show(ui,self.image.as_deref(),self.output_image.as_ref());
         });
 
         // Accept drag-and-dropped image files.

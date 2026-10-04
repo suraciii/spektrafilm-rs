@@ -17,11 +17,14 @@ Files:
 | `gen_matrix.py` | Regenerates `docs/parity/parity_matrix.json` (live asset hashing) |
 | `lut_acceptance.py` | Real CLI LUT bakes, pinned QA/format comparisons, OCIO processors and delivered artifact checks |
 | `package_smoke.py` | Installed image/metadata/RAW paths, LUT/OCIO/QA delivery and actual native GUI operations |
+| `gui_viewer_acceptance.py` | Native viewer controls, float probes, animation frames, profile/non-sRGB paths and Save/Export isolation |
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
 the machine-readable inventory is
 [`docs/parity/parity_matrix.json`](../../docs/parity/parity_matrix.json).
+
+Pass `--gui-report path/to/gui-acceptance/observations.json` to `gen_matrix.py` to retain the executed native GUI records and their SHA256 alongside the spectral report. A failed or incomplete GUI report is rejected. Each named scenario remains scoped to its actual assertions; Linux desktop evidence does not establish Windows/macOS display behavior.
 
 ## Reference environment (one-time setup)
 
