@@ -11,6 +11,7 @@ pub mod lut_delivery;
 pub mod lut_formats;
 pub mod lut_ocio;
 pub mod lut_qa;
+pub mod measurement;
 pub mod neutral_filters;
 pub mod params;
 pub mod params_builder;

@@ -11,6 +11,12 @@ use crate::lut_baker::{normalize_stock, Bundle, BundleMeta, LutFileMeta, Topolog
 use crate::lut_delivery::ArtifactReference;
 use crate::lut_transport;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OcioEmission {
+    Written(ArtifactReference),
+    Skipped { reason: String },
+}
+
 const REFERENCE: &str = "ACES2065-1";
 fn invalid(message: impl Into<String>) -> io::Error { io::Error::new(ErrorKind::InvalidInput, message.into()) }
 fn quote(value: &str) -> String {
@@ -113,10 +119,17 @@ fn chain_for_print<'a>(root: &Path, meta: &'a BundleMeta, print: &str) -> io::Re
 /// `write_bundle_files`, append the returned reference, then finalize delivery.
 /// Rejects unsupported transports, invalid boundary wires and absent LUTs
 /// before writing config.ocio. Multiple delivery formats select the Cube copy.
-pub fn emit(root: &Path, bundle: &Bundle, meta: &BundleMeta) -> io::Result<Vec<ArtifactReference>> {
+pub fn emit(root: &Path, bundle: &Bundle, meta: &BundleMeta) -> io::Result<OcioEmission> {
+    for (label, name) in [("input", bundle.spec.input_color_space.as_str()), ("output", bundle.spec.output_color_space.as_str())] {
+        if let Err(error) = builtins(name) {
+            return Ok(OcioEmission::Skipped {
+                reason: format!("{label} color space {name:?} has no supported OCIO BuiltinTransform ({error})"),
+            });
+        }
+    }
     let text = render(root, bundle, meta)?;
     fs::write(root.join("config.ocio"), text)?;
-    Ok(vec![ArtifactReference { path: "config.ocio".into(), kind: "ocio_config".into(), description: "Standalone OCIO 2 config with film/print colorspaces and normalized intermediate taps".into() }])
+    Ok(OcioEmission::Written(ArtifactReference { path: "config.ocio".into(), kind: "ocio_config".into(), description: "Standalone OCIO 2 config with film/print colorspaces and normalized intermediate taps".into() }))
 }
 fn render(root: &Path, bundle: &Bundle, meta: &BundleMeta) -> io::Result<String> {
     let spec = &bundle.spec;

@@ -50,7 +50,7 @@ pub fn validate_target(spec: &BundleSpec) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactReference { pub path: String, pub kind: String, pub description: String }
 #[derive(Debug, Clone, Default)]
 pub struct DeliveryOptions { pub formats: Vec<LutFormat>, pub zip: bool, pub extra_artifacts: Vec<ArtifactReference> }
@@ -161,13 +161,40 @@ pub fn bundle_readme_text(meta: &BundleMeta) -> String {
     s
 }
 
+pub fn append_quality_summary(root: &Path, report: &crate::lut_qa::QaReport) -> Result<()> {
+    let mut text = fs::read_to_string(root.join("README.md"))?;
+    if let Some((prefix, _)) = text.split_once("\n## Quality\n") {
+        text = prefix.to_owned();
+    }
+    text.push_str("\n## Quality\n\n");
+    text.push_str(&format!("Status: **{}**. Reference: Python 0.3.4 commit `{}`. Backend: `{}` / {}.\n\n", if report.passed {"PASS"} else {"FAIL"}, report.reference_commit, report.backend, report.precision));
+    text.push_str("| Print | Scenario | Status |\n|---|---|---|\n");
+    for print in &report.prints {
+        for scenario in &print.results {
+            text.push_str(&format!("| {} | {} | {} |\n", print.print_name, scenario.name, match scenario.passed { Some(true) => "PASS", Some(false) => "FAIL", None => "INFO" }));
+        }
+    }
+    fs::write(root.join("README.md"), text)?;
+    Ok(())
+}
+
 /// Rewrite sidecars after OCIO/QA append their references; archive the full tree.
 pub fn finalize_bundle(root: &Path, meta: &BundleMeta, zip: bool) -> Result<PathBuf> {
-    for path in meta.luts.iter().map(|l|l.path.as_str()).chain(meta.artifacts.iter().filter_map(|a|a.get("path").and_then(|p|p.as_str()))) {
+    for path in meta.luts.iter().map(|l| l.path.as_str()).chain(meta.artifacts.iter().filter_map(|a| a.get("path").and_then(|p| p.as_str()))) {
         ensure!(root.join(relative_path(path)?).is_file(), "missing referenced bundle artifact {path:?}");
     }
-    fs::write(root.join("bundle.json"), serde_json::to_vec_pretty(meta)?)?;
-    fs::write(root.join("README.md"), bundle_readme_text(meta))?;
+    let mut metadata = serde_json::to_vec_pretty(meta)?;
+    metadata.push(b'\n');
+    fs::write(root.join("bundle.json"), metadata)?;
+    let old_readme = fs::read_to_string(root.join("README.md")).ok();
+    let mut readme = bundle_readme_text(meta);
+    if let Some(old) = old_readme {
+        if let Some(quality) = old.split_once("\n## Quality\n").map(|(_, section)| section) {
+            readme.push_str("\n## Quality\n");
+            readme.push_str(quality);
+        }
+    }
+    fs::write(root.join("README.md"), readme)?;
     if !zip { return Ok(root.to_owned()); }
     let archive = root.with_extension("zip");
     let file = fs::File::create(&archive)?;
@@ -211,6 +238,8 @@ mod tests {
         let root=temp_root("formats"); let bundle=fixture(None);
         let options=DeliveryOptions{formats:vec![LutFormat::Cube,LutFormat::ThreeDl,LutFormat::HaldPng],zip:true,extra_artifacts:vec![]};
         let meta=write_bundle(&bundle,&root,&options).unwrap();
+        let delivered: BundleMeta = serde_json::from_slice(&fs::read(root.join("bundle.json")).unwrap()).unwrap();
+        assert_eq!(delivered.luts.iter().map(|l| &l.path).collect::<Vec<_>>(), meta.luts.iter().map(|l| &l.path).collect::<Vec<_>>());
         assert_eq!(fs::read(root.join(LICENSE_FILENAME)).unwrap(),SOURCE_LICENSE);
         assert_eq!(meta.luts.len(),3);
         for file in &meta.luts {
@@ -221,6 +250,11 @@ mod tests {
         let archive_path=root.with_extension("zip");
         let mut archive=zip::ZipArchive::new(fs::File::open(&archive_path).unwrap()).unwrap();
         let prefix=root.file_name().unwrap().to_str().unwrap();
+        let mut archived_metadata = archive.by_name(&format!("{prefix}/bundle.json")).unwrap();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut archived_metadata, &mut bytes).unwrap();
+        assert_eq!(bytes, fs::read(root.join("bundle.json")).unwrap());
+        drop(archived_metadata);
         for path in meta.luts.iter().map(|l|l.path.as_str()).chain(meta.artifacts.iter().filter_map(|a|a["path"].as_str())) { assert!(archive.by_name(&format!("{prefix}/{path}")).is_ok()); }
         assert_eq!(meta.provenance["author"],"Andrea Volpato");
         assert!(meta.provenance["license"].contains("CC BY-SA 4.0"));
@@ -236,6 +270,7 @@ mod tests {
         assert_eq!(lines[2],"LUT_3D_SIZE 4");
         assert_eq!(text.lines().filter(|l|l.starts_with('#')).count(),1);
         assert!(root.join(format!("{}.NOTICE.txt",meta.luts[0].path)).is_file());
+        assert!(!root.with_extension("zip").exists());
         let mut invalid=bundle.spec.clone(); invalid.input_color_space="sRGB".into();
         assert!(validate_target(&invalid).is_err());
         invalid=bundle.spec.clone(); invalid.output_color_space="Display P3".into();

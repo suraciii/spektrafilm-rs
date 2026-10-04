@@ -145,11 +145,16 @@ fn build(args: BuildArgs) -> Result<()> {
     let out = args.out.join(&bundle.spec.name);
     let mut meta = lut_delivery::write_bundle_files(&bundle, &out, &DeliveryOptions::default())?;
     if bundle.spec.ocio_config {
-        for artifact in spektrafilm_core::lut_ocio::emit(&out, &bundle, &meta)? {
-            lut_delivery::append_artifact(&mut meta, artifact)?;
+        match spektrafilm_core::lut_ocio::emit(&out, &bundle, &meta)? {
+            spektrafilm_core::lut_ocio::OcioEmission::Written(artifact) => {
+                lut_delivery::append_artifact(&mut meta, artifact)?;
+            }
+            spektrafilm_core::lut_ocio::OcioEmission::Skipped { reason } => {
+                println!("[ocio] SKIP: {reason}");
+            }
         }
     }
-    if bundle.spec.qa || bundle.spec.qa_print_index.is_some() {
+    if bundle.spec.qa {
         let qa_root = out.join("qa");
         let report = spektrafilm_core::lut_qa::run(&bundle, &args.data_dir, backend.as_ref(), &qa_root)
             .map_err(anyhow::Error::msg)?;
@@ -160,6 +165,7 @@ fn build(args: BuildArgs) -> Result<()> {
                 description: "Pinned Python 0.3.4 LUT quality assessment".into(),
             })?;
         }
+        lut_delivery::append_quality_summary(&out, &report)?;
         println!("[qa] {}", if report.passed { "PASS" } else { "FAIL" });
     }
     lut_delivery::finalize_bundle(&out, &meta, bundle.spec.container == "zip")?;

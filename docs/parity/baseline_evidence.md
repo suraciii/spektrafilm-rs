@@ -245,6 +245,36 @@ Independent executed checks establish:
   after the UI accepts successful completion without cancellation. The rebuilt
   Linux package passed the full native GUI/RAW/LUT smoke, including real in-flight
   Cancel and close with no output, child or staged-image/state-JSON residue.
+- Current calibration updates rebuild the print exposure factor when camera EV,
+  print compensation/normalization or illuminant/filter calibration inputs change.
+  The workspace regression compares updated pipelines with freshly constructed
+  pipelines across EV -2 through +2.
+- The current release CLI passed all 68 runtime differential rows in
+  `/tmp/spektrafilm-current-parity/parity_report.json`. LUT artifact acceptance
+  passed 112 topology QA comparisons, 32 input-compression override comparisons,
+  six F-Log/F-Log2/N-Log/ProPhoto/PQ/HLG bundle comparisons, OCIO processors and
+  public format/transport probes in `/tmp/spektrafilm-lut-current-3/report.json`.
+  Unsupported optional OCIO mappings explicitly skip configuration emission;
+  `qa_print_index` alone does not enable QA. Scenario errors remain named failed
+  rows while later measurements continue. Finalization preserves the README
+  Quality table, writes `bundle.json`, and creates ZIPs only when requested.
+  Scientific QA failures at coarse resolution match Python's reported failures;
+  acceptance verifies the results and statuses rather than requiring every LUT
+  quality metric to pass.
+- Profile serialization preserves missing spectral samples as JSON null and
+  saves a suffixed copy without mutating the caller. Parametric curves retain
+  the upstream formula. The public gamma/slope helpers use linear-cost
+  not-a-knot spline construction; a seven-sample cubic smoke matched SciPy
+  gamma `[3.103978836041295, 3.1039788360412963, 3.6538466942740713]`
+  and slopes `[3.21, 3.21, 3.21]`. Nonlinear density-min fitting and plotting
+  remain independent research APIs outside product parity.
+- The final workspace passed 197 tests. The relocated portable Linux package
+  passed installed image/metadata/RAW/LUT/OCIO/QA and native GUI acceptance at
+  `/tmp/spektrafilm-current-package-evidence-3`. Native assertions include
+  Scan-for-print force/restore/state reset, Input interpolation isolation,
+  preview-limit refresh with full-resolution Export, persistent RAW lens status,
+  animation, display/save isolation and actual in-flight Cancel/close cleanup.
+  Windows/macOS remain governed by their CI evidence, not Linux screenshots.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

@@ -208,6 +208,7 @@ GUI_ACTIONS = [
     ("apply_film_profile_defaults", "film stock change re-applies stock specifics", DIVERGENT, 3),
     ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
     ("run_scan", "full-resolution simulation", ABSENT, 12),
+    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", ABSENT, 12),
     ("request_auto_preview", "auto-preview wiring for every editor", DIVERGENT, 11),
     ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
     ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
@@ -459,6 +460,7 @@ def gui_action_entry(action, desc, status, owner, evidence):
         "set_output_interpolation_mode": "interpolation", "set_gray_18_canvas": "gray_canvas",
         "virtual_photo_paper": "paper_back", "polaroid_animation": "reveal",
         "save_output_layer": "display_output_isolation",
+        "scan_for_print": "scan_for_print", "load_raw_image": "raw_status",
     }
     rows = [row for row in evidence.get("records", [])
             if (action in keys and keys[action] in row)

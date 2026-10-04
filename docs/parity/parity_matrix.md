@@ -2,7 +2,7 @@
 
 Machine-readable source of truth: [`parity_matrix.json`](parity_matrix.json)
 (regenerate with `python3 scripts/parity/gen_matrix.py --report
-/tmp/spektrafilm-parity-fresh/parity_report.json`). This page separates the
+/tmp/spektrafilm-current-parity/parity_report.json`). This page separates the
 original audited state from current integration contracts. Field entries
 retain implementation provenance without claiming universal coverage;
 `differential_evidence` records the exercised scenarios and tap metrics.
@@ -54,7 +54,7 @@ paper-as-film rejection checks. Preview evidence separates arithmetic
 digestion with glare disabled from stochastic 512² glare moments under
 the unchanged 1% mean / 5% standard-deviation budgets.
 
-The final report `/tmp/spektrafilm-parity-fresh/parity_report.json` passes
+The current report `/tmp/spektrafilm-current-parity/parity_report.json` passes
 all 68 exercised rows with no unsupported prerequisites. Full per-tap
 metrics and reference environment are embedded under `differential_evidence`
 in the machine-readable matrix. This verifies those scenarios; isolated
@@ -64,5 +64,11 @@ Historical baseline failures remain metadata and never excuse current drift.
 ## Native GUI evidence
 
 The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; all other rows retain their unverified status.
+
+Current Linux evidence is `/tmp/spektrafilm-current-package-evidence-3/gui-acceptance/observations.json`.
+Scan-for-print forced settings/restoration, Input interpolation isolation,
+preview-size refresh/full-resolution Export and persistent RAW correction status
+passed in the native run. Nonlinear toe fitting and interactive scientific plots
+remain explicitly separate research API scope.
 
 The evidence is platform-specific. Linux Xvfb does not verify a physical monitor ICC profile or Windows/macOS window interaction. A rotated export's native TIFF staging write cannot be interrupted; cancellation is checked around it and temporary files are removed before the worker finishes.

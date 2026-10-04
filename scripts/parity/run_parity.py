@@ -27,6 +27,8 @@ exact fix — never a silent skip):
 from __future__ import annotations
 
 import argparse
+import hashlib
+import platform
 import json
 import math
 import os
@@ -127,7 +129,11 @@ def preflight_rust() -> dict:
             f"cargo build -p spektrafilm-cli --features precision-f64 "
             f"--bin spektrafilm-f64 --release   (run from {REPO_ROOT})"
         )
-    return {"rust_bin": str(RS_BIN)}
+    return {"rust_bin": str(RS_BIN.resolve()),
+            "rust_bin_sha256": hashlib.sha256(RS_BIN.read_bytes()).hexdigest(),
+            "rust_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip(),
+            "rust_worktree_dirty": bool(subprocess.check_output(["git", "diff", "--name-only", "HEAD"], cwd=REPO_ROOT, text=True).strip()),
+            "platform": platform.platform()}
 
 
 def expand_scenarios() -> list[dict]:

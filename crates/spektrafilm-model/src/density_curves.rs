@@ -257,6 +257,45 @@ fn extract_col(data: &[[f32; 3]], c: usize) -> Vec<f32> {
     data.iter().map(|row| row[c]).collect()
 }
 
+
+/// Generate the three-channel parametric H-D curves used by the upstream
+/// profile-authoring API.
+///
+/// This is the direct sum-of-softplus model from
+/// `model/parametric.py`; `log_exposure` is returned in its input order.
+pub fn parametric_density_curves_model(
+    log_exposure: &[f64],
+    gamma: [f64; 3],
+    log_exposure_0: [f64; 3],
+    density_max: [f64; 3],
+    toe_size: [f64; 3],
+    shoulder_size: [f64; 3],
+) -> Vec<[f64; 3]> {
+    log_exposure
+        .iter()
+        .map(|&x| {
+            std::array::from_fn(|channel| {
+                let toe = gamma[channel]
+                    * toe_size[channel]
+                    * (1.0
+                        + 10.0f64.powf(
+                            (x - log_exposure_0[channel]) / toe_size[channel],
+                        ))
+                    .log10();
+                let shoulder = gamma[channel]
+                    * shoulder_size[channel]
+                    * (1.0
+                        + 10.0f64.powf(
+                            (x - log_exposure_0[channel] - density_max[channel] / gamma[channel])
+                                / shoulder_size[channel],
+                        ))
+                    .log10();
+                toe - shoulder
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +435,29 @@ mod tests {
         ];
         let max = density_max_layers_f64(&layers);
         assert_eq!(max, [[1.1, 0.2, 0.3], [0.4, 1.4, 0.6], [0.7, 0.8, 1.8]]);
+    }
+
+    #[test]
+    fn parametric_model_is_monotonic_and_near_zero_in_toe() {
+        let x: Vec<f64> = (-60..=20).map(|v| v as f64 / 10.0).collect();
+        let curves = parametric_density_curves_model(
+            &x,
+            [0.6, 0.65, 0.7],
+            [-1.0, -1.1, -0.9],
+            [2.2, 2.0, 1.8],
+            [0.3, 0.3, 0.3],
+            [0.5, 0.5, 0.5],
+        );
+        assert!(curves[0].iter().all(|value| value.abs() < 1e-10));
+        for channel in 0..3 {
+            for pair in curves.windows(2) {
+                assert!(
+                    pair[1][channel] + 1e-14 >= pair[0][channel],
+                    "channel {channel} decreased beyond floating-point tolerance: {} -> {}",
+                    pair[0][channel],
+                    pair[1][channel]
+                );
+            }
+        }
     }
 }

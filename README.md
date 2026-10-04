@@ -117,7 +117,8 @@ executable.
 - **Save startup default / Restore factory default** — persist the current controls, or remove that default and restore Kodak Gold 200 + Kodak Supra Endura. Startup files live in the platform configuration directory (`SPEKTRAFILM_CONFIG_DIR` overrides it); Rust-only runtime/viewer settings use the explicit `rust.version = 1` extension. File-dialog directories persist separately.
 - **Preview** — explicitly update the preview when auto-preview is disabled. Crop, spectral adaptation/blur, UV/IR, layered grain and both diffusion filters apply to the runtime, with the chosen preview long-edge limit.
 - **Scan** — render the original-resolution image with spatial and stochastic effects; **Preview** uses the configured long-edge limit and preview digestion.
-- **Viewer** — switch Input / Output / Paper back; choose nearest, linear, cubic, spline16, spline36, Lanczos or Blackman sampling. The canvas is the pinned 18% gray (`#767676`) or black, with normalized white padding and the upstream paper watermark. Reveal and crossfade affect the disposable viewing frame; hovering reports the original floating RGB pixel.
+- **Scan-for-print** — temporarily enable scanner white/black corrections and disable print glare. Toggle again to restore all three previous values. Loading state or changing profiles clears the transient snapshot.
+- **Viewer** — switch Input / Output / Paper back; choose nearest, linear, cubic, spline16, spline36, Lanczos or Blackman sampling for Output. Input retains the upstream nearest interpolation; Paper back uses spline36. The configured preview limit bounds disposable Input/Output rasters. The canvas is the pinned 18% gray (`#767676`) or black, with normalized white padding and the upstream paper watermark. Reveal and crossfade affect the disposable viewing frame; hovering reports the original floating RGB pixel.
 - **Display transform / Display ICC…** — on Windows, discover the primary display ICC profile or choose a profile and apply it only to the viewer. Without an available display transform the output is viewed in its selected output space; the input/reference is converted to encoded sRGB.
 - **Launch state** — `spektrafilm-gui IMAGE --state GUI_STATE.json` loads a deterministic state for repeatable sessions. `SPEKTRAFILM_GUI_STATE` provides the same startup override.
 
@@ -258,6 +259,16 @@ Grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (default, matc
 Both composite and layered grain use the CPU sampler during GPU preview. The resident composite shader approximates every Poisson/binomial draw by a normal distribution, including dark/highlight pixels with low binomial variance; those valid cases require the faithful CPU distribution. Grain-active rendering explicitly selects the per-stage path rather than claiming GPU grain parity.
 
 The LUT path (`use_enlarger_lut` + `use_scanner_lut`) ports Python's PCHIP 3D interpolation (`crates/spektrafilm-math/src/pchip3d.rs` ↔ `spektrafilm/utils/fast_interp_lut.py`). The executed f64 LUT-reduction scenarios passed the **1e-5** maximum absolute-error budget; the 265 delivered LUT stock/topology/transport cases passed independent Python comparisons.
+
+Rust profile authoring supports `profile::save_profile`, preserving JSON nulls
+and leaving the source profile unchanged, and
+`density_curves::parametric_density_curves_model`. The `measurement` module
+provides not-a-knot cubic gamma inversion and local exposure slopes with
+explicit errors for invalid samples. Python research utilities
+for nonlinear toe fitting (`measure_density_min(control_plot=...)`) and
+interactive plotting remain a separate developer API scope: no runtime,
+GUI or LUT Creator code calls them. They are not included in the user-feature
+parity claim.
 
 ## Performance
 

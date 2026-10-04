@@ -116,14 +116,16 @@ impl Pipeline {
     /// (camera-filtered) sensitivity. Reusing the stale LUT would silently
     /// ignore the new UV/IR filters, blur and surface settings.
     ///
-    /// For all other params the calibration is reused, so callers must keep
-    /// the remaining calibration-affecting inputs (profiles, enlarger
-    /// settings, exposure compensation) unchanged, as before.
+    /// Calibration-affecting runtime controls are detected and rebuilt from
+    /// the spectral source data when available; unrelated params reuse it.
     pub fn with_params(mut self, params: RuntimeParams) -> Self {
         let mut params = params;
         params.validate_color().expect("invalid colour configuration");
         crate::params_builder::broadcast_monochrome_layout(&self.film, &mut params);
-        if spectral_controls_key(&self.params) != spectral_controls_key(&params) {
+        let spectral_changed = spectral_controls_key(&self.params) != spectral_controls_key(&params);
+        let calibration_changed =
+            calibration_controls_key(&self.params) != calibration_controls_key(&params);
+        if spectral_changed || calibration_changed {
             if let Some(data_dir) = self.data_dir.clone() {
                 match Self::new_with_spectral(
                     self.film.clone(),
@@ -132,18 +134,11 @@ impl Pipeline {
                     &data_dir,
                 ) {
                     Ok(rebuilt) => return rebuilt,
-                    // The same data_dir/profiles built successfully before;
-                    // only a corrupted data directory can get here. Keep the
-                    // old front-end and surface the failure rather than panic
-                    // inside a GUI render path.
                     Err(e) => tracing::error!(
                         error = %e,
-                        "spectral rebuild on settings change failed; keeping stale LUT"
+                        "pipeline rebuild on spectral/calibration change failed; keeping stale calibration"
                     ),
                 }
-            } else {
-                // Pipeline without a spectral front-end (`Pipeline::new`):
-                // nothing to invalidate.
             }
         }
         self.output_gamut = crate::gamut_compression::OutputGamutCompress::build(
@@ -152,6 +147,42 @@ impl Pipeline {
         ).expect("validated output gamut configuration");
         self.params = params;
         self
+    }
+}
+
+/// Parameters read while constructing derived print calibration data.
+#[derive(Debug, Clone, PartialEq)]
+struct CalibrationControlsKey {
+    exposure_compensation_ev: f32,
+    print_exposure_compensation: bool,
+    normalize_print_exposure: bool,
+    illuminant: String,
+    y_filter_shift: f32,
+    m_filter_shift: f32,
+    y_filter_neutral: f32,
+    m_filter_neutral: f32,
+    c_filter_neutral: f32,
+    preflash_exposure: f32,
+    preflash_y_filter_shift: f32,
+    preflash_m_filter_shift: f32,
+    neutral_print_filters_from_database: bool,
+}
+
+fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
+    CalibrationControlsKey {
+        exposure_compensation_ev: params.camera.exposure_compensation_ev,
+        print_exposure_compensation: params.enlarger.print_exposure_compensation,
+        normalize_print_exposure: params.enlarger.normalize_print_exposure,
+        illuminant: params.enlarger.illuminant.clone(),
+        y_filter_shift: params.enlarger.y_filter_shift,
+        m_filter_shift: params.enlarger.m_filter_shift,
+        y_filter_neutral: params.enlarger.y_filter_neutral,
+        m_filter_neutral: params.enlarger.m_filter_neutral,
+        c_filter_neutral: params.enlarger.c_filter_neutral,
+        preflash_exposure: params.enlarger.preflash_exposure,
+        preflash_y_filter_shift: params.enlarger.preflash_y_filter_shift,
+        preflash_m_filter_shift: params.enlarger.preflash_m_filter_shift,
+        neutral_print_filters_from_database: params.settings.neutral_print_filters_from_database,
     }
 }
 
@@ -1551,6 +1582,37 @@ mod spectral_invalidation_tests {
         let deactivated = crate::params_builder::digest_params(deactivated, &pipeline.film, &pipeline.print, None, false);
         let pipeline = pipeline.with_params(deactivated);
         assert_eq!(pipeline.params.film_render.halation.halation_first_sigma_um, [0.0; 3]);
+    }
+
+    #[test]
+    fn with_params_recalibrates_print_exposure_for_camera_ev() {
+        let dir = data_dir();
+        let base = build();
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(8, 8, vec![from_f64(0.184); 8 * 8 * 3]);
+
+        for ev in [-2.0f32, -1.0, 0.0, 1.0, 2.0] {
+            let mut params = base.params.clone();
+            params.camera.exposure_compensation_ev = ev;
+            let updated = base.clone().with_params(params.clone());
+            let fresh =
+                Pipeline::new_with_spectral(base.film.clone(), base.print.clone(), params, &dir)
+                    .unwrap();
+
+            assert!(
+                (updated.print_exposure_factor() - fresh.print_exposure_factor()).abs() < 1e-12,
+                "EV {ev}: stale print exposure factor"
+            );
+            let updated_output = updated.process(image.clone(), &backend).unwrap();
+            let fresh_output = fresh.process(image.clone(), &backend).unwrap();
+            assert_eq!(updated_output.data.len(), fresh_output.data.len());
+            for (actual, expected) in updated_output.data.iter().zip(&fresh_output.data) {
+                assert!(
+                    (*actual as f64 - *expected as f64).abs() < 1e-5,
+                    "EV {ev}: output mismatch ({actual} vs {expected})"
+                );
+            }
+        }
     }
 
     #[test]
