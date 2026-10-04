@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>spektrafilm GUI 0.3.4 产品对齐计划</title>
+  <style>
+    :root { --bg:#11151b; --panel:#1b222c; --panel2:#232d39; --text:#eef3f8; --muted:#a9b5c2; --accent:#72d6c3; --warn:#f4bd69; --line:#394858; --good:#9ee493; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--text); background:radial-gradient(circle at top left,#1d3440 0,#11151b 42%); font:15px/1.55 Inter,ui-sans-serif,system-ui,sans-serif; }
+    main { max-width:1180px; margin:0 auto; padding:42px 24px 72px; }
+    h1,h2,h3 { line-height:1.2; margin:0 0 12px; }
+    h1 { font-size:34px; letter-spacing:-.03em; }
+    h2 { font-size:22px; margin-top:36px; }
+    h3 { font-size:16px; }
+    p { margin:8px 0; color:var(--muted); }
+    .eyebrow { color:var(--accent); text-transform:uppercase; letter-spacing:.14em; font-size:12px; font-weight:700; }
+    .lead { max-width:850px; font-size:18px; margin:14px 0 24px; }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+    .card { background:rgba(27,34,44,.9); border:1px solid var(--line); border-radius:12px; padding:18px; box-shadow:0 10px 30px #0002; }
+    .card strong { color:var(--text); }
+    .badge { display:inline-block; border:1px solid #4c6d70; color:var(--accent); border-radius:999px; padding:2px 9px; font-size:12px; margin-bottom:10px; }
+    .flow { display:grid; grid-template-columns:repeat(3,1fr); gap:0; margin:18px 0; }
+    .step { position:relative; min-height:150px; padding:20px 22px; background:var(--panel); border:1px solid var(--line); }
+    .step:not(:last-child)::after { content:'→'; position:absolute; right:-14px; top:50%; transform:translateY(-50%); z-index:2; width:28px; height:28px; border-radius:50%; background:var(--accent); color:#10211f; text-align:center; font-weight:800; line-height:28px; }
+    .step:first-child { border-radius:12px 0 0 12px; }
+    .step:last-child { border-radius:0 12px 12px 0; }
+    .num { color:var(--accent); font-size:24px; font-weight:800; }
+    .shell { display:grid; grid-template-columns:minmax(0,1fr) 390px; min-height:360px; background:#0c1015; border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+    .viewer { padding:22px; display:flex; flex-direction:column; justify-content:space-between; background:linear-gradient(145deg,#5b5b5b,#767676 48%,#31363b); }
+    .viewer-frame { min-height:240px; display:grid; place-items:center; color:#dbe5ea; border:1px dashed #cbd4d855; border-radius:8px; background:#4b4e51aa; }
+    .status { padding-top:16px; font-size:13px; color:#eef3f8; border-top:1px solid #ffffff33; }
+    .side { padding:14px; background:var(--panel); }
+    .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+    .tab { padding:7px 10px; border:1px solid var(--line); border-radius:6px; font-size:12px; color:var(--muted); }
+    .tab.active { background:var(--accent); color:#10211f; border-color:var(--accent); font-weight:800; }
+    .section { padding:12px; border:1px solid var(--line); border-radius:8px; margin:8px 0; background:var(--panel2); }
+    .action { margin-top:14px; padding:11px; background:#102b2b; border:1px solid #397c73; border-radius:8px; color:var(--accent); font-weight:700; text-align:center; }
+    table { width:100%; border-collapse:collapse; background:rgba(27,34,44,.85); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    th,td { text-align:left; vertical-align:top; padding:12px 14px; border-bottom:1px solid var(--line); }
+    th { color:var(--accent); font-size:13px; }
+    td { color:var(--muted); }
+    tr:last-child td { border-bottom:0; }
+    .status-good { color:var(--good); font-weight:700; }
+    .status-warn { color:var(--warn); font-weight:700; }
+    ul { margin:8px 0 0 18px; padding:0; color:var(--muted); }
+    li { margin:5px 0; }
+    code { color:#c8f5ed; background:#0b1618; padding:1px 5px; border-radius:4px; }
+    .footer { margin-top:34px; color:#778594; font-size:13px; }
+    @media (max-width:780px) { .grid,.flow { grid-template-columns:1fr; } .step:first-child,.step:last-child { border-radius:12px; } .step:not(:last-child)::after { right:auto; left:50%; top:auto; bottom:-16px; transform:translateX(-50%) rotate(90deg); } .step { margin-bottom:14px; } .shell { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Product design / pinned Python 0.3.4</div>
+  <h1>Rust GUI 产品对齐计划</h1>
+  <p class="lead">目标不是复制 Napari 的实现，而是让用户在 Rust GUI 中以同样的工作流完成“加载 → 调参 → 预览/扫描 → 检查 → 保存/导出”，并保持显示状态、运行状态和输出状态不混淆。</p>
+
+  <section class="grid">
+    <div class="card"><span class="badge">用户任务</span><h3>完成一张照片</h3><p>用户应始终知道当前输入、当前模拟结果、当前查看层，以及下一步是 PREVIEW、SCAN 还是 SAVE/EXPORT。</p></div>
+    <div class="card"><span class="badge">产品原则</span><h3>中央查看，右侧控制</h3><p>中央 viewer 保持稳定；右侧 sidebar 负责分组控件；底部 action bar 负责会改变运行结果的动作。</p></div>
+    <div class="card"><span class="badge">边界</span><h3>显示不污染输出</h3><p>ICC、插值、白边、纸背和动画只作用于 viewer artifact，不得改变保存或 f64 export 的像素。</p></div>
+  </section>
+
+  <h2>核心用户流程</h2>
+  <div class="flow">
+    <div class="step"><div class="num">01</div><h3>Load / Configure</h3><p>MAIN → Open、Input image、RAW、Profiles、Exposure、Crop。</p></div>
+    <div class="step"><div class="num">02</div><h3>Simulate / Compare</h3><p>Preview 或 Scan；Input / Output / Paper back 切换；查看浮点像素和状态。</p></div>
+    <div class="step"><div class="num">03</div><h3>Save / Export</h3><p>选择 saving color/depth 后 Save；需要参考精度时 Export 到 f64 CPU。</p></div>
+  </div>
+
+  <h2>目标信息架构</h2>
+  <div class="shell">
+    <div class="viewer">
+      <div class="viewer-frame">Input / Output / Paper back viewer<br>zoom · pan · interpolation · gray canvas · white border</div>
+      <div class="status">status · selected layer · zoom · reset view</div>
+    </div>
+    <div class="side">
+      <div class="tabs"><span class="tab active">MAIN</span><span class="tab">FILM</span><span class="tab">PRINT</span><span class="tab">ADVANCED</span><span class="tab">CONFIG</span></div>
+      <div class="section"><strong>当前 tab 的控件组</strong><br><span style="color:#a9b5c2">File / Profiles / Exposure / Crop / RAW / Output</span></div>
+      <div class="section"><strong>状态持久化</strong><br><span style="color:#a9b5c2">Save state · Load state · startup default · factory reset</span></div>
+      <div class="action">PREVIEW　　SCAN</div>
+    </div>
+  </div>
+
+  <h2>状态边界</h2>
+  <table>
+    <thead><tr><th>状态域</th><th>拥有者</th><th>规则</th><th>验收信号</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Pipeline state</strong></td><td>Runtime params + selected profiles</td><td>改变后按 Auto preview/debounce 触发；Preview/Scan 使用同一份有效参数。</td><td>输出尺寸、状态文本和输出像素随参数变化。</td></tr>
+      <tr><td><strong>Viewer state</strong></td><td>Display settings + transient raster</td><td>Input/Output/Paper back、ICC、interpolation、white padding、reveal/crossfade 不写入输出。</td><td>viewer 改动不改变 Save/Export 文件。</td></tr>
+      <tr><td><strong>Persistence state</strong></td><td>GUI JSON + Rust extension</td><td>上游 section 语义保持兼容；Rust 专属字段置于显式版本扩展中。</td><td>保存、重启、加载、factory reset 后设置可预测。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>实施路线</h2>
+  <table>
+    <thead><tr><th>阶段</th><th>范围</th><th>交付物</th><th>优先级</th></tr></thead>
+    <tbody>
+      <tr><td>Phase A</td><td>Shell / layout parity</td><td>五个 sidebar tabs、420px sidebar、CONFIG display/state、全 tab action bar、viewer status footer。</td><td class="status-good">已落地/正在合并</td></tr>
+      <tr><td>Phase B</td><td>Viewer interaction parity</td><td>ccw/cw rotate、精确 100/200/400% zoom、reset view、layer presentation 的一致语义。</td><td class="status-warn">P1</td></tr>
+      <tr><td>Phase C</td><td>Consumer evidence</td><td>截图、pixel probe、state round-trip、Save/Export isolation、代表性 RAW/非方形图像场景。</td><td class="status-warn">P1</td></tr>
+      <tr><td>Phase D</td><td>Matrix/document closure</td><td>更新 parity matrix、README、Issue #11/#12/#17 的实际证据和剩余差异。</td><td class="status-warn">P1</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Issue 切分原则</h2>
+  <ul>
+    <li>本产品 issue 只拥有用户可观察的 workflow、layout、interaction 和验收标准。</li>
+    <li>GUI state/persistence 继续引用 #11；viewer/display/paper presentation 继续引用 #12；最终证据门禁归 #17。</li>
+    <li>不引入新的 GUI toolkit；继续使用 egui/wgpu 和当前异步 worker。</li>
+    <li>不把“编译通过”当作 GUI parity 证据；必须执行真实窗口和改变路径。</li>
+  </ul>
+
+  <p class="footer">Evidence basis: pinned Python GUI commit <code>3bb2c2d2801ff68b92019cf1dbcbb133d60832bc</code>; local references <code>src/spektrafilm_gui/app.py</code>, <code>controller.py</code>, <code>napari_layout.py</code>, <code>widget_sections.py</code>.</p>
+</main>
+</body>
+</html>

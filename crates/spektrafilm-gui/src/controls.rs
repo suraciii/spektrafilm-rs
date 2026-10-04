@@ -30,14 +30,17 @@ pub struct ChangeFlags {
 /// `simulation` sections. Saving controls do not modify simulation output;
 /// export must read simulation.saving_color_space/saving_cctf_encoding.
 /// Preview-size edits update params but wait for Update, matching upstream.
-pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value) -> ChangeFlags {
+pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value, tab: &str) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
     ui.push_id("supplemental_controls", |ui| {
+        if tab == "MAIN" {
         ui.collapsing("Crop", |ui| {
             flags.runtime_changed |= ui.checkbox(&mut params.io.crop, "Crop").changed();
             flags.runtime_changed |= tuple(ui, "Crop center (x, y)", &mut params.io.crop_center, 0.0, 1.0, 0.01);
             flags.runtime_changed |= tuple(ui, "Crop size (x, y)", &mut params.io.crop_size, 0.0, 1.0, 0.01);
         });
+        }
+        if tab == "ADVANCED" {
         ui.collapsing("Spectral adaptation", |ui| {
             flags.runtime_changed |= ui.checkbox(&mut params.settings.apply_hanatos2025_adaptation_window, "Hanatos2025 adaptation window").changed();
             flags.runtime_changed |= ui.checkbox(&mut params.settings.apply_hanatos2025_adaptation_surface, "Hanatos2025 adaptation surface").changed();
@@ -45,12 +48,16 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value) -> Chan
             flags.runtime_changed |= tuple(ui, "Input gamut knee (threshold, limit, power)", &mut params.io.input_gamut_compress.knee, 0.0, f64::INFINITY, 0.05);
             flags.runtime_changed |= tuple(ui, "Output gamut knee (threshold, limit, power)", &mut params.io.output_gamut_compress.knee, 0.0, f64::INFINITY, 0.05);
         });
+        }
+        if tab == "MAIN" {
         ui.collapsing("Camera UV / IR filters", |ui| {
             ui.label("Each filter: strength, cutoff wavelength (nm), transition width (nm).");
             flags.runtime_changed |= filter(ui, "UV filter", &mut params.camera.filter_uv);
             flags.runtime_changed |= filter(ui, "IR filter", &mut params.camera.filter_ir);
             flags.runtime_changed |= number(ui, "Camera diffusion core size", &mut params.camera.diffusion_filter.core_size, 0.1, 4.0, 0.05);
         });
+        }
+        if tab == "FILM" {
         ui.collapsing("Layered grain details", |ui| {
             let grain = &mut params.film_render.grain;
             flags.runtime_changed |= tuple(ui, "Particle scale (R, G, B)", &mut grain.particle_scale, 0.0, f64::INFINITY, 0.05);
@@ -59,6 +66,8 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value) -> Chan
             flags.runtime_changed |= tuple(ui, "Uniformity (R, G, B)", &mut grain.uniformity, 0.0, 1.0, 0.01);
             flags.runtime_changed |= tuple(ui, "Micro structure (blur µm, clump nm)", &mut grain.micro_structure, 0.0, f64::INFINITY, 0.1);
         });
+        }
+        if tab == "FILM" {
         ui.collapsing("Advanced halation", |ui| {
             let halation = &mut params.film_render.halation;
             flags.runtime_changed |= number(ui, "Highlight boost (EV)", &mut halation.boost_ev, 0.0, f64::INFINITY, 0.5);
@@ -70,6 +79,8 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value) -> Chan
             flags.runtime_changed |= tuple(ui, "Halation strength (R, G, B)", &mut halation.halation_strength, 0.0, f64::INFINITY, 0.005);
             flags.runtime_changed |= tuple(ui, "First bounce sigma (R, G, B; µm)", &mut halation.halation_first_sigma_um, 0.0, f64::INFINITY, 1.0);
         });
+        }
+        if tab == "FILM" {
         ui.collapsing("Advanced DIR couplers", |ui| {
             let couplers = &mut params.film_render.dir_couplers;
             flags.runtime_changed |= number(ui, "Same-layer inhibition", &mut couplers.inhibition_samelayer, 0.0, f64::INFINITY, 0.05);
@@ -79,23 +90,33 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value) -> Chan
             flags.runtime_changed |= tuple(ui, "Gamma G → (R, B)", &mut couplers.gamma_interlayer_g_to_rb, 0.0, f64::INFINITY, 0.02);
             flags.runtime_changed |= tuple(ui, "Gamma B → (R, G)", &mut couplers.gamma_interlayer_b_to_rg, 0.0, f64::INFINITY, 0.02);
         });
+        }
+        if tab == "PRINT" {
         ui.collapsing("Enlarger details", |ui| {
             flags.runtime_changed |= choice(ui, "Print illuminant", &mut params.enlarger.illuminant, &["TH-KG3", "D50", "D55", "D65"]);
             flags.runtime_changed |= ui.checkbox(&mut params.enlarger.print_exposure_compensation, "Print auto compensation").changed();
             flags.runtime_changed |= number(ui, "Enlarger lens blur (px)", &mut params.enlarger.lens_blur, 0.0, f64::INFINITY, 0.05);
             flags.runtime_changed |= number(ui, "Film density curve gamma", &mut params.film_render.density_curve_gamma, 0.0, f64::INFINITY, 0.05);
         });
+        }
+        if tab == "PRINT" {
         ui.collapsing("Enlarger diffusion", |ui| {
             flags.runtime_changed |= diffusion(ui, &mut params.enlarger.diffusion_filter);
         });
+        }
+        if tab == "ADVANCED" {
         ui.collapsing("Experimental channel swaps", |ui| {
             flags.runtime_changed |= extra_channels(ui, extras, "film_channel_swap", "Film channel swap (R, G, B)");
             flags.runtime_changed |= extra_channels(ui, extras, "print_channel_swap", "Print channel swap (R, G, B)");
         });
+        }
+        if tab == "PRINT" {
         ui.collapsing("Saving color", |ui| {
             flags.display_changed |= extra_choice(ui, extras, "simulation", "saving_color_space", "Saving color space", "sRGB", COLOR_SPACES);
             flags.display_changed |= extra_bool(ui, extras, "simulation", "saving_cctf_encoding", "Saving CCTF encoding", true);
         });
+        }
+        if tab == "MAIN" {
         ui.collapsing("Preview workflow", |ui| {
             flags.display_changed |= extra_bool(ui, extras, "simulation", "auto_preview", "Auto preview", true);
             if number(ui, "Preview max size (px)", &mut params.settings.preview_max_size, 128.0, u32::MAX as f64, 128.0) {
@@ -104,6 +125,8 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value) -> Chan
             }
             flags.preview_requested |= ui.button("Update preview").clicked();
         });
+        }
+        if tab == "MAIN" {
         ui.collapsing("Import RAW", |ui| {
             flags.raw_reload |= extra_choice(ui, extras, "load_raw", "white_balance", "White balance", "as_shot", &["as_shot", "daylight", "tungsten", "custom"]);
             let custom = extras["load_raw"]["white_balance"].as_str() == Some("custom");
@@ -114,6 +137,7 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value) -> Chan
             flags.raw_reload |= extra_bool(ui, extras, "load_raw", "lens_correction", "Lensfun lens correction", false);
             flags.raw_reload |= ui.button("Reprocess RAW").clicked();
         });
+        }
     });
     flags
 }

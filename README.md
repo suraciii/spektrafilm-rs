@@ -102,9 +102,10 @@ executable.
 ./target/release/spektrafilm-gui [optional/path/to/image.orf]
 ```
 
+- **Sidebar workflow** — the Rust GUI follows the upstream sidebar tabs: **MAIN** (load, input image, profiles, exposure, crop, preview/RAW, scanner, enlarger and output), **FILM** (halation, DIR couplers, diffusion and grain), **PRINT** (glare, print curves, enlarger details/diffusion and saving color), **ADVANCED** (spectral/color controls), and **CONFIG** (state persistence and display controls). Preview/Scan stays available below every tab.
 - **Open…** — load standard images or camera RAW. RAW processing uses LibRaw and exposes as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction; RAW enters the runtime as linear ACES2065-1.
-- **Sliders** — exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, output. All live-updating against the GPU preview.
-- **Profiles** — film stock and print paper combo boxes; picking a film auto-selects its paired paper (`target_print` in the profile).
+- **Input image / Profiles** — choose input/output color workflow, film stock and print paper. Picking a film auto-selects its paired paper (`target_print` in the profile).
+- **Sliders** — exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger and output. Changes follow the selected sidebar tab and update the GPU preview according to Auto preview.
 - **Zoom** — scroll wheel or trackpad pinch over the preview (cursor-anchored), click-drag to pan, double-click to reset.
 - **Export…** — re-runs the pipeline at f64 precision on the CPU and writes a PNG/TIFF/JPEG. Status bar shows elapsed time; **Cancel** kills the child cleanly. Closing the GUI mid-export also kills the child (no orphans).
 - **Save…** — convert retained floating output into the independently selected saving color space and transfer encoding, then save at the selected bit depth. Viewer borders, watermark and display ICC transforms stay out of saved pixels.
