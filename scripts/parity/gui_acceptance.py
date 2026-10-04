@@ -305,7 +305,7 @@ class X11:
             if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view',
                          'Preview', 'Scan'):
                 image, _, lines = self.read()
-                matches = self.match(lines, label, right)
+                matches = self.match(lines, label, label in ('Preview', 'Scan'))
                 footer = [point for point in matches if point[1] > image.height - 50]
                 require(footer, f'Footer control not visible: {label}')
                 x, y = map(int, min(footer, key=lambda point: point[0]))
