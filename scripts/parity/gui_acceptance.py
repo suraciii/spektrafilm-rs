@@ -146,8 +146,10 @@ class X11:
             return ids.splitlines()[-1] if ids else None
         self.window = wait_for(window, 'installed native window', 45)
         self.xd('windowactivate', '--sync', self.window)
-        self.xd('windowsize', '--sync', self.window, 1460, 980)
-        self.xd('windowmove', '--sync', self.window, 0, 30)
+        with self.mss.mss() as screen:
+            desktop = screen.monitors[0]
+        self.xd('windowsize', '--sync', self.window, 1460, min(980, desktop['height'] - 60))
+        self.xd('windowmove', '--sync', self.window, 0, 0)
         wait_for(lambda: self.match(self.read()[2], 'MAIN', True)
                  and self.match(self.read()[2], 'Open', True), 'rendered native MAIN controls', 30)
 
@@ -292,12 +294,13 @@ class X11:
                 # AX window bounds include the 30px macOS title bar; the
                 # fixed points above are content-relative Linux coordinates.
                 y += 30
-            if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view'):
-                _, _, lines = self.read()
-                matches = self.match(lines, '100%', False)
-                footer = [point for point in matches if point[1] > 850 and point[0] < 400]
-                if footer:
-                    y = int(footer[-1][1])
+            if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view',
+                         'Preview', 'Scan'):
+                image, _, lines = self.read()
+                matches = self.match(lines, label, right)
+                footer = [point for point in matches if point[1] > image.height - 50]
+                require(footer, f'Footer control not visible: {label}')
+                x, y = map(int, footer[-1])
             self.xd('mousemove', '--window', self.window, x, y)
             self.xd('click', 1)
             time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back', '18% gray', 'Reveal', 'Crossfade') else .15)
@@ -802,7 +805,11 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
                         self.input.scroll(1 if button == 4 else -1)
                     time.sleep(.02)
             else:
-                self.input.click(clicks=count, interval=.01)
+                for _ in range(count):
+                    self.input.mouseDown()
+                    time.sleep(.08)
+                    self.input.mouseUp()
+                    time.sleep(.08)
         else:
             raise RuntimeError(f'Unsupported desktop input: {args}')
         return ''
@@ -813,29 +820,9 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             # NSSavePanel/NSOpenPanel are standalone AXDialog windows.
             return self.apple('''repeat with i from 1 to count windows
     set w to window i
-    if exists sheet 1 of w then
-        set sheetElements to (get entire contents of sheet 1 of w)
-        repeat with elementReference in sheetElements
-            set element to contents of elementReference
-            if role of element is "AXButton" then
-                if name of element is "Save" or name of element is "Open" then return "sheet 1 of window " & i
-            end if
-        end repeat
-    end if
+    if exists sheet 1 of w then return "sheet 1 of window " & i
     set panelSubrole to subrole of w
-    if panelSubrole is "AXDialog" or panelSubrole is "AXSystemDialog" or name of w is not "spektrafilm" then
-        set hasAction to false
-        set hasCancel to false
-        set windowElements to (get entire contents of w)
-        repeat with elementReference in windowElements
-            set element to contents of elementReference
-            if role of element is "AXButton" then
-                if name of element is "Save" or name of element is "Open" then set hasAction to true
-                if name of element is "Cancel" then set hasCancel to true
-            end if
-        end repeat
-        if hasAction and hasCancel then return "window " & i
-    end if
+    if panelSubrole is "AXDialog" or panelSubrole is "AXSystemDialog" then return "window " & i
 end repeat
 return ""''') or None
         for hwnd in self.windows():
@@ -866,28 +853,11 @@ return ""''') or None
             self.records.append({'surface': 'native-file-chooser', 'screenshot': target.name,
                                  'requested_path': str(path), 'save': save, 'chooser': chooser})
             if sys.platform == 'darwin':
-                self.mac_diagnostics('file-chooser')
                 self.input.hotkey('command', 'shift', 'g')
-                time.sleep(.3)
-                # NSSavePanel's Go to Folder field is centered in the modal sheet.
-                self.input.click(780, 298)
-                self.apple(f'''set goToElements to (get entire contents of {chooser})
-set goToFields to {{}}
-repeat with elementReference in goToElements
-    set element to contents of elementReference
-    if role of element is "AXTextField" then
-        try
-            set fieldDescription to description of element as text
-        on error
-            set fieldDescription to ""
-        end try
-        if fieldDescription does not contain "Save As" and fieldDescription does not contain "Tags" then
-            set end of goToFields to element
-        end if
-    end if
-end repeat
-if (count goToFields) is 0 then error "Go to Folder text field not found"
-set focused of item 1 of goToFields to true''')
+                wait_for(
+                    lambda: self.apple(f'get exists sheet 1 of {chooser}') == 'true',
+                    'macOS Go to Folder sheet', 15)
+                self.apple(f'set focused of text field 1 of sheet 1 of {chooser} to true')
                 self.input.hotkey('command', 'a')
                 self.input.write(str(path.parent if save else path), interval=.002)
                 self.input.press('enter')
@@ -899,7 +869,7 @@ set focused of item 1 of goToFields to true''')
                 if save:
                     self.apple(f'''set candidates to {{}}
 set nameField to missing value
-set chooserElements to (get entire contents of {chooser})
+set chooserElements to text fields of {chooser}
 repeat with elementReference in chooserElements
     set element to contents of elementReference
     if role of element is "AXTextField" then
