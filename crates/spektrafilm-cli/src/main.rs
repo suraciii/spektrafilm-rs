@@ -81,6 +81,26 @@ enum Commands {
         data_dir: PathBuf,
     },
 }
+fn resolve_data_dir(data_dir: PathBuf) -> PathBuf {
+    if data_dir != Path::new("data") {
+        return data_dir;
+    }
+
+    if let Some(path) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
+        return PathBuf::from(path);
+    }
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        let bundled = parent.join("data");
+        if bundled.is_dir() {
+            return bundled;
+        }
+    }
+
+    data_dir
+}
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -105,6 +125,7 @@ fn main() -> Result<()> {
             iters,
             data_dir,
         } => {
+            let data_dir = resolve_data_dir(data_dir);
             cmd_process(
                 &input,
                 &output,
@@ -119,6 +140,7 @@ fn main() -> Result<()> {
             )?;
         }
         Commands::ListProfiles { data_dir } => {
+            let data_dir = resolve_data_dir(data_dir);
             cmd_list_profiles(&data_dir);
         }
         Commands::ExportLut {
@@ -128,6 +150,7 @@ fn main() -> Result<()> {
             output,
             data_dir,
         } => {
+            let data_dir = resolve_data_dir(data_dir);
             cmd_export_lut(&film, paper.as_deref(), size, &output, &data_dir)?;
         }
     }

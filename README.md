@@ -18,33 +18,91 @@ The same spectral integration the original Python project does (RGB → film dye
 
 ## Build
 
-Requires Rust stable (≥ 1.80) and the standard system toolchain.
+The repository provides a cross-platform [`just`](https://github.com/casey/just)
+command surface. Install `just` with your platform package manager or with
+`cargo install just`.
+
+Requirements:
+
+- Rust stable 1.85 or newer;
+- the standard native build tools for the target platform;
+- `just`;
+
+Build all default release binaries with the portable wgpu/WGSL backend:
 
 ```bash
-git clone <this-repo> && cd spektrafilm-rs
-
-# GUI (wgpu/Metal preview, eframe)
-cargo build --release -p spektrafilm-gui
-
-# f32 CLI — fast batch processor, defaults to GPU backend
-cargo build --release -p spektrafilm-cli
-
-# f32 CLI with experimental native CUDA backend option
-cargo build --release -p spektrafilm-cli --features spektrafilm-gpu/cuda-backend
-
-# f64 CLI — reference precision (CPU only; WGSL has no f64)
-cargo build --release --features precision-f64 -p spektrafilm-cli
-cp target/release/spektrafilm target/release/spektrafilm-f64
-
-# Helper used by the GUI's Export button — bit-identical RAW decode
-cargo build --release -p spektrafilm-cli --bin decode_raw_gui
+just build
 ```
 
-The GUI auto-detects the f64 binary via `$SPEKTRAFILM_F64_CLI`, then `spektrafilm-f64` on `PATH`, then next to its own executable, then `target/release/spektrafilm-f64`.
+This produces:
 
-Windows builds use the WGSL/wgpu backend by default. The CPU fallback path avoids requiring a system OpenBLAS install on Windows, while macOS and Unix-like targets still use native BLAS providers.
+- `target/release/spektrafilm-gui` — desktop GUI;
+- `target/release/spektrafilm` — fast f32 CLI;
+- `target/release/spektrafilm-f64` — CPU reference exporter;
+- `target/release/decode_raw_gui` — RAW decoder used by GUI export.
 
-WGSL is the default GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`. An experimental native CUDA backend can be built with `--features spektrafilm-gpu/cuda-backend` and selected with `SPEKTRAFILM_BACKEND=cuda`. It uses CUDA 12 driver/NVRTC bindings through dynamic loading, so the NVIDIA driver and NVRTC runtime DLLs must be available. Set `SPEKTRAFILM_CUDA_DEVICE=1` (or another zero-based index) to pick a non-default CUDA device. Both GPU paths have a resident preview implementation: front pass, highlight boost, camera diffusion, camera lens blur, halation, DIR couplers, grain, density curves, enlarger diffusion, print/scan spectral reductions, glare, output gamut compression, scanner lens blur, unsharp, and one readback.
+Other common commands:
+
+```bash
+just check                 # Cargo workspace check
+just test                  # Workspace tests with precision-f64 enabled
+just ci                    # check + test
+just package               # Portable directory and archive under dist/
+just install               # Per-user install, including data/profiles
+```
+
+`just install` does not require administrator privileges. On Unix-like systems
+it installs the application under `$XDG_DATA_HOME/spektrafilm` (default:
+`~/.local/share/spektrafilm`; macOS uses
+`~/Library/Application Support/Spektrafilm`) and creates command links under
+`~/.local/bin`. On Windows it installs under
+`%LOCALAPPDATA%\Spektrafilm`. Set `SPEKTRAFILM_INSTALL_ROOT` to override the
+application directory. The Windows install directory is not added to `PATH`
+automatically.
+
+The default GPU build is portable across Windows, macOS, and Linux:
+
+```bash
+just build
+```
+
+For the optional native CUDA backend on NVIDIA systems:
+
+```bash
+just build-cuda
+```
+
+`build-cuda` requires the CUDA 12 driver/NVRTC runtime and is not available on
+modern macOS builds. `just package-macos-app` creates the native macOS `.app`
+bundle. `just package-windows-aio` creates the existing Windows self-contained
+AIO executable.
+
+The equivalent direct Cargo commands remain available:
+
+```bash
+cargo build --locked --release -p spektrafilm-gui
+cargo build --locked --release -p spektrafilm-cli --bin spektrafilm
+cargo build --locked --release -p spektrafilm-cli \
+    --bin spektrafilm-f64 --features precision-f64
+cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui
+```
+
+The GUI auto-detects the f64 binary via `$SPEKTRAFILM_F64_CLI`, then
+`spektrafilm-f64` on `PATH`, then next to its own executable, then
+`target/release/spektrafilm-f64`.
+
+Windows builds use the WGSL/wgpu backend by default. The CPU fallback path
+avoids requiring a system OpenBLAS install on Windows, while macOS and
+Unix-like targets still use native BLAS providers.
+
+WGSL is the default GPU backend and can be selected explicitly with
+`SPEKTRAFILM_BACKEND=wgpu`. The optional CUDA backend can be selected with
+`SPEKTRAFILM_BACKEND=cuda`. Set `SPEKTRAFILM_CUDA_DEVICE=1` (or another
+zero-based index) to pick a non-default CUDA device. Both GPU paths have a
+resident preview implementation: front pass, highlight boost, camera
+diffusion, camera lens blur, halation, DIR couplers, grain, density curves,
+enlarger diffusion, print/scan spectral reductions, glare, output gamut
+compression, scanner lens blur, unsharp, and one readback.
 
 ## Usage
 
