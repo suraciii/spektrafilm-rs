@@ -206,6 +206,7 @@ fn main() -> Result<()> {
             output,
             data_dir,
         } => {
+            let data_dir = resolve_data_dir(data_dir);
             lut::export_lut(&film, paper.as_deref(), size, &output, &data_dir)?;
         }
         Commands::Describe { format } => {
@@ -851,6 +852,25 @@ fn cmd_list_profiles(data_dir: &Path) {
 
 
 
+
+fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
+    let mut candidates = vec![explicit.clone()];
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("data"));
+            candidates.push(dir.join("..").join("share").join("data"));
+            candidates.push(dir.join("..").join("Resources").join("data"));
+        }
+    }
+    candidates.push(PathBuf::from("data"));
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        candidates.push(PathBuf::from(manifest).join("..").join("..").join("data"));
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_dir())
+        .unwrap_or(explicit)
+}
 
 fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {
     if selection == "none" { return Ok(()); }
