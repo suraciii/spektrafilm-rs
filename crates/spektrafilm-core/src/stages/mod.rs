@@ -237,7 +237,8 @@ mod integration_tests {
 
         let pipeline = Pipeline::new_with_spectral(film, print, params.clone(), &dir)
             .unwrap()
-            .with_params(params);
+            .with_params(params)
+            .unwrap();
         let result = pipeline.process(img, &backend).unwrap();
         let mut clipped_low = 0usize;
         let mut clipped_high = 0usize;
@@ -316,7 +317,7 @@ mod debug_tests {
         eprintln!("density_cmy: {:?}", density_cmy.get(0, 0));
 
         // Use simplified printing path for debug trace
-        let printed = stages::printing::process(&density_cmy, &film, &print, &params, &backend);
+        let printed = stages::printing::process(&density_cmy, &film, &print, &params, &backend).unwrap();
         eprintln!("density_print: {:?}", printed.get(0, 0));
         let density_print = printed;
         let rgb_out = stages::scanning::scan(

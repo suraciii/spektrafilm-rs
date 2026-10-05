@@ -169,7 +169,7 @@ fn main() -> Result<()> {
             output,
             data_dir,
         } => {
-            lut::export_lut(&film, paper.as_deref(), size, &output, &data_dir)?;
+            lut::export_lut(&film, paper.as_deref(), size, &output, &resolve_data_dir(data_dir))?;
         }
     }
 
@@ -243,7 +243,7 @@ fn cmd_process(
     // Digest to the static runtime form (0.3.4 order: database neutral
     // filters, preview deactivation, stock-specific overrides, debug
     // switches). `new_with_spectral` re-applies the idempotent parts.
-    let neutral_db = NeutralFilters::load(data_dir);
+    let neutral_db = NeutralFilters::load(data_dir).map_err(anyhow::Error::msg)?;
     let inject = params
         .taps
         .inject
@@ -436,11 +436,12 @@ fn cmd_list_profiles(data_dir: &Path) {
 
 
 
-fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
+pub(crate) fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
     let mut candidates = vec![explicit.clone()];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("data"));
+            candidates.push(dir.join("..").join("share").join("data"));
             candidates.push(dir.join("..").join("Resources").join("data"));
         }
     }

@@ -554,7 +554,8 @@ impl App {
         params.settings.preview_mode = preview;
         let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
         let paper = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
-        let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir);
+        let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
+            .map_err(anyhow::Error::msg)?;
         Ok(spektrafilm_core::params_builder::digest_params(params, &film, &paper, Some(&database), false))
     }
 
@@ -563,7 +564,8 @@ impl App {
             let params = self.current_state()?.runtime_params()?;
             let film = profile::load_profile_by_name(&self.data_dir,&self.film_name)?;
             let paper = profile::load_profile_by_name(&self.data_dir,&self.print_name)?;
-            let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir);
+            let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
+                .map_err(anyhow::Error::msg)?;
             self.params = spektrafilm_core::params_builder::digest_params(params,&film,&paper,Some(&database),true);
             self.params.io.scan_film = film.is_positive();
             self.scan_for_print_snapshot = None;
@@ -676,7 +678,7 @@ impl App {
         if self.pipeline_cache_key.as_deref() == Some(key.as_str())
             && let Some(pipeline) = self.pipeline_cache.as_ref()
         {
-            return Ok((pipeline.clone().with_params(params.clone()), t.elapsed().as_secs_f32() * 1000.0));
+            return Ok((pipeline.clone().with_params(params.clone())?, t.elapsed().as_secs_f32() * 1000.0));
         }
 
         let mut film = profile::load_profile_by_name(&self.data_dir, film_name)
@@ -753,7 +755,7 @@ impl App {
                         spektrafilm_core::params_builder::resize_for_preview(&image, params.settings.preview_max_size)
                     } else { (*image).clone() };
                     let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
-                    let pipeline = pipeline_template.with_params(params);
+                    let pipeline = pipeline_template.with_params(params)?;
                     let t = Instant::now();
                     let output = pipeline.process(working_image, backend.as_ref())?;
                     let render_ms = t.elapsed().as_secs_f32() * 1000.0;

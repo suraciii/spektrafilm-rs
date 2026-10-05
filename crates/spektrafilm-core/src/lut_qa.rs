@@ -144,7 +144,7 @@ fn tetra(lut:&Lut,p:[f64;3])->[f64;3]{
 fn make_pipeline(bundle:&Bundle,print:&str,input:&ColorSpaceEntry,output:&ColorSpaceEntry,data:&Path,unbounded:bool)->Result<Pipeline,String>{
     let film=profile::load_profile_by_name(data,&bundle.spec.film_profile).map_err(|e|e.to_string())?;let paper=profile::load_profile_by_name(data,print).map_err(|e|e.to_string())?;
     let mut params=RuntimeParams::default();params.debug.lut_mode=true;params.io.input_color_space=input.primaries.into();params.io.output_color_space=output.primaries.into();params.io.input_cctf_decoding=false;params.io.output_cctf_encoding=false;params.io.input_gamut_compress=bundle.spec.input_gamut_compress.clone();params.io.output_gamut_compress=bundle.spec.output_gamut_compress.clone();if unbounded{params.io.output_gamut_compress.algorithm="off".into();}
-    params.validate()?;let neutral=NeutralFilters::load(data);let params=digest_params(params,&film,&paper,Some(&neutral),true);Pipeline::new_with_spectral(film,paper,params,data)
+    params.validate()?;let neutral=NeutralFilters::load(data)?;let params=digest_params(params,&film,&paper,Some(&neutral),true);Pipeline::new_with_spectral(film,paper,params,data)
 }
 fn process_linear(pipe:&Pipeline,samples:&[[f64;3]],backend:&dyn ComputeBackend)->Result<Vec<[f64;3]>,String>{
     let data=samples.iter().flatten().map(|&v|from_f64(v as f32 as f64)).collect();let out=pipe.process_with_taps(ImageBuf::from_data(samples.len() as u32,1,data),backend,Some(Tap::RgbIn),Some(Tap::RgbOut))?;

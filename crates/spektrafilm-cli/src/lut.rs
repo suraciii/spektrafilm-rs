@@ -78,8 +78,14 @@ pub(crate) struct BuildArgs {
 
 pub(crate) fn run(command: LutCommand) -> Result<()> {
     match command {
-        LutCommand::Build(args) => build(args),
-        LutCommand::List { kind, data_dir } => list(kind, &data_dir),
+        LutCommand::Build(mut args) => {
+            args.data_dir = crate::resolve_data_dir(args.data_dir);
+            build(args)
+        }
+        LutCommand::List { kind, data_dir } => {
+            let data_dir = crate::resolve_data_dir(data_dir);
+            list(kind, &data_dir)
+        }
     }
 }
 

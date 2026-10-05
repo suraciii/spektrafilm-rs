@@ -187,6 +187,10 @@ SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build \
 ./target/release/spektrafilm lut build --from bundle.toml \
     --resolution 65 --out build/lut_bundles --data-dir data
 ```
+The CLI also resolves the packaged `../share/data` directory for `lut` and
+`export-lut` when invoked outside the package directory. Profile metadata and
+array dimensions are validated before construction; present but malformed
+neutral-filter JSON is an error rather than an empty-database fallback.
 
 TOML fields match the typed `spektrafilm_core::lut_baker::BundleSpec`; supplied
 CLI flags override file values. A minimal spec is:

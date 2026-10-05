@@ -230,7 +230,7 @@ impl BundleBuilder {
         spec.normalize()?;
         let input = lut_transport::resolve(&spec.input_color_space)?;
         let output = lut_transport::resolve(&spec.output_color_space)?;
-        let neutral = NeutralFilters::load(data_dir);
+        let neutral = NeutralFilters::load(data_dir)?;
         let first = make_pipeline(&spec, &spec.print_profiles[0], input, output, data_dir, &neutral)?;
         let wires = measure_wires(&first, &spec, input, backend)?;
         let mut luts = Vec::new();

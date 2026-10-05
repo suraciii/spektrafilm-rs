@@ -411,7 +411,8 @@ mod tests {
             &pipeline.print,
             &pipeline.params,
             &backend,
-        );
+        )
+        .unwrap();
         check(
             "cmy_print",
             density_print.get(0, 0),
