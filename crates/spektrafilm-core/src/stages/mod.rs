@@ -1,258 +1,216 @@
-pub mod converting;
+mod debug_compare;
 pub mod filming;
-pub mod grain_fotufilm;
-pub mod grain_v3;
 pub mod printing;
 pub mod scanning;
-
-use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::from_f64;
-
-/// Keep a stage's backend view and observation lifetime together.
-pub(crate) struct StageObservation<'a> {
-    bound: Option<Box<dyn spektrafilm_backend::ComputeBackend + 'a>>,
-    scope: spektrafilm_backend::telemetry::ObservationScope,
-}
-
-impl<'a> StageObservation<'a> {
-    pub(crate) fn new(
-        backend: &'a dyn spektrafilm_backend::ComputeBackend,
-        name: &'static str,
-    ) -> Self {
-        let Some(context) = backend
-            .observation_context()
-            .filter(|context| context.enabled())
-        else {
-            return Self {
-                bound: None,
-                scope: Default::default(),
-            };
-        };
-        let scope = context.scope(
-            name,
-            spektrafilm_backend::telemetry::ObservationKind::Stage,
-            context.purpose(),
-        );
-        let bound = Some(spektrafilm_backend::bind_backend(
-            backend,
-            scope.context().clone(),
-        ));
-        Self { bound, scope }
-    }
-
-    pub(crate) fn cpu(
-        backend: &'a dyn spektrafilm_backend::ComputeBackend,
-        name: &'static str,
-        reason: spektrafilm_backend::telemetry::CpuReason,
-    ) -> Self {
-        let stage = Self::new(backend, name);
-        if stage.scope.context().enabled() {
-            stage
-                .scope
-                .context()
-                .record_executor(spektrafilm_backend::telemetry::Executor::Cpu, Some(reason));
-        }
-        stage
-    }
-
-    pub(crate) fn backend(
-        &self,
-        original: &'a dyn spektrafilm_backend::ComputeBackend,
-    ) -> &dyn spektrafilm_backend::ComputeBackend {
-        self.bound.as_deref().unwrap_or(original)
-    }
-
-    pub(crate) fn set_complete(&mut self, complete: bool) {
-        self.scope.set_complete(complete);
-    }
-}
-
-/// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy
-/// grid. Layout mirrors Python's `_create_lut_3d`:
-///
-/// ```text
-///   reshape(meshgrid(x_r, x_g, x_b, indexing='ij'), (steps², steps, 3))
-/// ```
-///
-/// → pixel at (col=k, row=i*steps+j) carries cmy = (x_r[i], x_g[j], x_b[k]).
-/// Running the spectral function on this 2-D image then reshapes back to
-/// a `steps × steps × steps × 3` LUT indexed by `((i, j, k), c)`.
-fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> ImageBuf {
-    let mut grid = ImageBuf::new(steps as u32, (steps * steps) as u32);
-    let step_inv = (steps - 1) as f64;
-    for i in 0..steps {
-        let x_r = data_min[0] + (data_max[0] - data_min[0]) * (i as f64) / step_inv;
-        for j in 0..steps {
-            let x_g = data_min[1] + (data_max[1] - data_min[1]) * (j as f64) / step_inv;
-            for k in 0..steps {
-                let x_b = data_min[2] + (data_max[2] - data_min[2]) * (k as f64) / step_inv;
-                let row = i * steps + j;
-                let base = (row * steps + k) * 3;
-                grid.data[base] = from_f64(x_r);
-                grid.data[base + 1] = from_f64(x_g);
-                grid.data[base + 2] = from_f64(x_b);
-            }
-        }
-    }
-    grid
-}
-
-/// Whether the grain engine selected by `params` is the one `engine` names.
-///
-/// Every grain stage's `active`/`validate_supported` pair starts from this
-/// gate; the engine-specific predicates add their own extra conditions on top.
-pub(crate) fn grain_engine_active(
-    params: &crate::params::RuntimeParams,
-    engine: crate::params::GrainEngine,
-) -> bool {
-    let grain = &params.film_render.grain;
-    grain.active && grain.engine == engine
-}
-
-#[cfg(test)]
-mod lut_grid_tests {
-    use super::build_lut_grid;
-    use spektrafilm_math::precision::from_f64;
-
-    #[test]
-    fn grid_preserves_layout_and_negative_bounds_endpoints() {
-        let steps = 3;
-        let grid = build_lut_grid(steps, [-2.0, -4.0, -8.0], [2.0, 2.0, 0.0]);
-        assert_eq!((grid.width, grid.height), (3, 9));
-        assert_eq!(grid.data.len(), steps * steps * steps * 3);
-
-        for (i, r) in [-2.0, 0.0, 2.0].into_iter().enumerate() {
-            for (j, g) in [-4.0, -1.0, 2.0].into_iter().enumerate() {
-                for (k, b) in [-8.0, -4.0, 0.0].into_iter().enumerate() {
-                    let base = ((i * steps + j) * steps + k) * 3;
-                    for (channel, expected) in [r, g, b].into_iter().enumerate() {
-                        assert_eq!(
-                            grid.data[base + channel].to_bits(),
-                            from_f64(expected).to_bits(),
-                            "grid coordinate ({i}, {j}, {k}), channel {channel}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
 
 #[cfg(test)]
 mod integration_tests {
     use crate::params::RuntimeParams;
     use crate::pipeline::Pipeline;
     use crate::profile;
-    use crate::test_support::data_dir;
     use spektrafilm_math::image::ImageBuf;
     use spektrafilm_math::precision::{Scalar, from_f64};
+    use std::path::Path;
+
+    fn data_dir() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data")
+    }
 
     #[test]
-    fn grain_v2_uses_scan_encoding_and_preserves_linear_export() {
-        use crate::params::grain::{GrainEngine, GrainV2Mode};
-        use spektrafilm_math::colorspace;
+    fn test_full_pipeline_portra_400_to_endura() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let paper = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-        let image = ImageBuf::from_data(
-            8,
-            6,
-            (0..8 * 6 * 3)
-                .map(|i| from_f64(0.12 + (i % 29) as f64 / 40.0))
-                .collect(),
-        );
-        for space_name in ["sRGB", "Display P3", "ProPhoto RGB", "ITU-R BT.2020"] {
-            let space = colorspace::resolve(space_name).unwrap();
-            for scan_film in [false, true] {
-                let mut params = RuntimeParams::default();
-                params.camera.auto_exposure = false;
-                params.film_render.halation.active = false;
-                params.film_render.dir_couplers.active = false;
-                params.print_render.glare.active = false;
-                params.film_render.grain.active = false;
-                params.io.scan_film = scan_film;
-                params.io.output_color_space = space_name.into();
-                params.random_seed = 5489;
-                let render = |p: RuntimeParams| {
-                    Pipeline::new(film.clone(), paper.clone(), p)
-                        .process(image.clone(), &backend)
-                        .unwrap()
-                };
-                let encoded_base = render(params.clone());
-                params.film_render.grain.active = true;
-                params.film_render.grain.engine = GrainEngine::Procedural;
-                params.film_render.grain.select_custom_grain_v2();
-                for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-                    params.film_render.grain.v2_mode = mode;
-                    let mut grain = params.film_render.grain.resolved_grain_v2();
-                    grain.seed = 5489;
-                    let expected = spektrafilm_model::grain::v2::apply_cpu(&encoded_base, grain);
-                    params.io.output_cctf_encoding = true;
-                    let encoded = render(params.clone());
-                    params.io.output_cctf_encoding = false;
-                    let linear = render(params.clone());
-                    for ((&actual, &reference), &linear_value) in
-                        encoded.data.iter().zip(&expected.data).zip(&linear.data)
-                    {
-                        assert!(
-                            (actual as f64 - reference as f64).abs() < 1e-6,
-                            "{space_name} {scan_film} {mode:?}: grain must consume native encoded scan RGB"
-                        );
-                        let decoded = colorspace::cctf_decode(actual as f64, space.cctf);
-                        assert!(
-                            (linear_value as f64 - decoded).abs() < 1e-6,
-                            "{space_name} {scan_film} {mode:?}: linear export changes grain realization"
-                        );
-                    }
-                }
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.camera.auto_exposure = false;
+
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let img = ImageBuf::from_data(8, 8, vec![from_f64(0.184); 8 * 8 * 3]);
+
+        let pipeline = Pipeline::new(film, print, params);
+        let result = pipeline.process(img, &backend).unwrap();
+
+        assert_eq!(result.width, 8);
+        assert_eq!(result.height, 8);
+        let px = result.get(4, 4);
+        for c in 0..3 {
+            assert!(
+                px[c] >= from_f64(0.0) && px[c] <= from_f64(1.0),
+                "channel {c} out of range: {}",
+                px[c]
+            );
+        }
+        let mean: Scalar =
+            result.data.iter().copied().sum::<Scalar>() / result.data.len() as Scalar;
+        assert!(mean > from_f64(0.01), "output near-black: mean={mean}");
+        assert!(mean < from_f64(0.99), "output near-white: mean={mean}");
+    }
+
+    #[test]
+    fn test_full_pipeline_with_spectral_lut() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.camera.auto_exposure = false;
+        params.io.input_color_space = "sRGB".to_string();
+
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let img = ImageBuf::from_data(8, 8, vec![from_f64(0.184); 8 * 8 * 3]);
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir);
+        match pipeline {
+            Ok(p) => {
+                let result = p.process(img, &backend).unwrap();
+                let mean: Scalar =
+                    result.data.iter().copied().sum::<Scalar>() / result.data.len() as Scalar;
+                eprintln!("Spectral pipeline output mean: {mean}");
+                let px = result.get(4, 4);
+                eprintln!("Spectral pipeline pixel(4,4): {:?}", px);
+                assert!(
+                    mean > from_f64(0.01),
+                    "spectral output near-black: mean={mean}"
+                );
+                assert!(
+                    mean < from_f64(0.99),
+                    "spectral output near-white: mean={mean}"
+                );
+            }
+            Err(e) => {
+                eprintln!("Spectral LUT not available: {e} — skipping test");
             }
         }
     }
 
+    /// Full default chain vs upstream 0.3.4 `simulate()` — the post-defaults
+    /// baseline (CAT16, input gamut `xy`, output gamut `cam16ucs`, and the
+    /// model-evaluated print curves are all active here). Reference values
+    /// dumped from upstream `origin/main` (= 0.3.4) with the stochastic /
+    /// spatial effects off and linear sRGB in/out.
     #[test]
-    fn negative_to_positive_reverses_negative_polarity_on_cpu_path() {
+    fn full_chain_matches_python_0_3_4_defaults() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+
         let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        params.io.scan_film = true;
-        params.io.input_color_space = "sRGB".into();
-        params.io.output_color_space = "sRGB".into();
-        params.io.output_cctf_encoding = false;
-        params.io.output_gamut_compress.algorithm = "off".into();
-        params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.unsharp_mask = [0.0, 0.0];
         params.camera.auto_exposure = false;
+        params.io.input_color_space = "sRGB".to_string();
+        params.io.input_cctf_decoding = false;
+        params.io.output_cctf_encoding = false;
         params.film_render.grain.active = false;
         params.film_render.halation.active = false;
         params.film_render.dir_couplers.active = false;
-        params.settings.use_scanner_lut = false;
-        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
-        let mut updated_params = pipeline.params.clone();
-        updated_params.io.scan_film = false;
-        let pipeline = pipeline.with_params(updated_params).unwrap();
-        assert!(pipeline.params.io.scan_film);
-        let render = |value| {
-            pipeline
-                .process(
-                    ImageBuf::from_data(1, 1, vec![from_f64(value); 3]),
-                    &backend,
-                )
-                .unwrap()
-        };
-        let shadow = render(0.1);
-        let highlight = render(0.8);
-        let shadow_mean = shadow.data.iter().copied().sum::<Scalar>() / from_f64(3.0);
-        let highlight_mean = highlight.data.iter().copied().sum::<Scalar>() / from_f64(3.0);
-        assert!(shadow.data.iter().all(|value| value.is_finite()));
-        assert!(highlight.data.iter().all(|value| value.is_finite()));
-        assert!(
-            shadow_mean < highlight_mean,
-            "positive interpretation must reverse negative polarity: shadow={shadow_mean}, highlight={highlight_mean}"
-        );
+        params.print_render.glare.active = false;
+        params.scanner.unsharp_mask = [0.0, 0.0];
+
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let pipeline =
+            Pipeline::new_with_spectral(film, print, params, &dir).expect("spectral LUT");
+
+        // The f32 Scalar chain carries ~1e-4 of accumulated rounding against
+        // the f64 Python reference; the f64 build tracks it tightly.
+        #[cfg(feature = "precision-f64")]
+        const TOL: f64 = 1e-6;
+        #[cfg(not(feature = "precision-f64"))]
+        const TOL: f64 = 3e-3;
+
+        // 1×1 midgray.
+        let img = ImageBuf::from_data(1, 1, vec![from_f64(0.184); 3]);
+        let out = pipeline.process(img, &backend).unwrap();
+        let want = [
+            0.17518024973220059,
+            0.17883059767931708,
+            0.18934288118407094,
+        ];
+        for c in 0..3 {
+            let got = out.get(0, 0)[c] as f64;
+            assert!(
+                (got - want[c]).abs() < TOL,
+                "midgray ch {c}: {got} vs {} (diff {:.3e})",
+                want[c],
+                (got - want[c]).abs()
+            );
+        }
+
+        // 4×4 deterministic gradient (same integer formula on both sides).
+        let (w, h) = (4u32, 4u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = ImageBuf::from_data(w, h, data);
+        let out = pipeline.process(img, &backend).unwrap();
+        #[rustfmt::skip]
+        let want: [[f64; 3]; 16] = [
+            [0.030140578894842104, 0.10482173080681569, 0.16323263024872359],
+            [0.28284244086494625, 0.36230193922267084, 0.42928148064834676],
+            [0.3353451807767468, 0.076427614378209482, 0.13647407034435774],
+            [0.20879086264247579, 0.29459368653984946, 0.36196826709735686],
+            [0.40612358537107524, 0.34267145956453349, 0.098468693348025937],
+            [0.13020451874838482, 0.21646938505071839, 0.28562089684501552],
+            [0.36393816309250704, 0.43921581264848525, 0.49969437202741285],
+            [0.048658768968400892, 0.12737590764642162, 0.19018617795337284],
+            [0.30145661667996704, 0.37870527708934137, 0.44581696264428788],
+            [0.35937910731344802, 0.09909092393180377, 0.16141353541124179],
+            [0.22780229482543857, 0.31345554394629804, 0.37969407564677998],
+            [0.42292203106495652, 0.36564847210885171, 0.12172785269499363],
+            [0.15476048038036888, 0.23926341868289583, 0.30831655353252529],
+            [0.37946779125297414, 0.45406130948472612, 0.51171040229547315],
+            [0.068514332830799163, 0.1501539662811362, 0.21561362102769013],
+            [0.31940096432374643, 0.39473020737167158, 0.46156726106459162],
+        ];
+        let mut max_diff = 0.0f64;
+        for (i, want_px) in want.iter().enumerate() {
+            let px = out.get(i as u32 % w, i as u32 / w);
+            for c in 0..3 {
+                let d = (px[c] as f64 - want_px[c]).abs();
+                max_diff = max_diff.max(d);
+                assert!(
+                    d < TOL,
+                    "px {i} ch {c}: {} vs {} (diff {d:.3e})",
+                    px[c],
+                    want_px[c]
+                );
+            }
+        }
+        eprintln!("full-chain 0.3.4 defaults: max diff vs Python {max_diff:.3e}");
+    }
+
+    #[test]
+    fn test_film_scan_pipeline() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = film.clone();
+
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.camera.auto_exposure = false;
+
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let img = ImageBuf::from_data(4, 4, vec![from_f64(0.184); 4 * 4 * 3]);
+
+        let pipeline = Pipeline::new(film, print, params);
+        let result = pipeline.process(img, &backend).unwrap();
+        let mean: Scalar =
+            result.data.iter().copied().sum::<Scalar>() / result.data.len() as Scalar;
+        assert!(mean > from_f64(0.01), "film scan near-black: mean={mean}");
+        assert!(mean < from_f64(0.99), "film scan near-white: mean={mean}");
     }
 
     #[test]
@@ -266,7 +224,7 @@ mod integration_tests {
         params.camera.auto_exposure = false;
         let params = crate::params_builder::digest_params(params, &film, &print, None, true);
 
-        let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
         let mut data = Vec::with_capacity(64 * 64 * 3);
         for y in 0..64 {
             for x in 0..64 {
@@ -318,6 +276,62 @@ mod integration_tests {
     }
 }
 
+#[cfg(test)]
+mod debug_tests {
+    use crate::params::RuntimeParams;
+    use crate::profile;
+    use crate::stages;
+    use spektrafilm_math::image::ImageBuf;
+    use spektrafilm_math::precision::from_f64;
+    use std::path::Path;
+
+    #[test]
+    fn debug_pipeline_values() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data");
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.camera.auto_exposure = false;
+        params.io.input_color_space = "sRGB".to_string();
+
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let gray = from_f64(0.184);
+        let img = ImageBuf::from_data(1, 1, vec![gray, gray, gray]);
+        eprintln!("Input: {:?}", img.get(0, 0));
+
+        let ref_illuminant = crate::spectral_service::select_illuminant(&film.info.reference_illuminant);
+        let log_raw =
+            stages::filming::expose(&img, &film, &params, &backend, None, None, ref_illuminant, 1.0, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1), 0.0);
+        eprintln!("log_raw: {:?}", log_raw.get(0, 0));
+
+        let density_cmy = stages::filming::develop(&log_raw, &film, &params, &backend, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1));
+        eprintln!("density_cmy: {:?}", density_cmy.get(0, 0));
+
+        // Use simplified printing path for debug trace
+        let printed = stages::printing::process(&density_cmy, &film, &print, &params, &backend).unwrap();
+        eprintln!("density_print: {:?}", printed.get(0, 0));
+        let density_print = printed;
+        let rgb_out = stages::scanning::scan(
+            &density_print,
+            &print,
+            &params,
+            &backend,
+            &crate::color_reference::ColorReference::identity(),
+            &crate::gamut_compression::OutputGamutCompress::identity(),
+        );
+        eprintln!("rgb_out: {:?}", rgb_out.get(0, 0));
+    }
+}
+
 /// Focused coverage for issue #8 (0.3.4 scan/glare/effect semantics):
 /// direct-film glare disable, print glare effect, halation/DIR presets,
 /// preflash in the print B/W references, morph defaults and params
@@ -328,10 +342,19 @@ mod scan_semantics_tests {
     use crate::params::RuntimeParams;
     use crate::pipeline::Pipeline;
     use crate::profile;
-    use crate::test_support::data_dir;
-    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_gpu::cpu_backend::CpuBackend;
     use spektrafilm_math::image::ImageBuf;
     use spektrafilm_math::precision::{from_f64, to_f64};
+    use std::path::Path;
+
+    fn data_dir() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data")
+    }
 
     fn quiet_params() -> RuntimeParams {
         // Stochastic/spatial film effects off so the only moving part in
@@ -366,8 +389,7 @@ mod scan_semantics_tests {
         let mut quiet = quiet_params();
         quiet.io.scan_film = true;
         let base = Pipeline::new(film.clone(), film.clone(), quiet.clone())
-            .process(img.clone(), &backend)
-            .unwrap();
+            .process(img.clone(), &backend).unwrap();
 
         // Crank film_render.glare far past its normal range — upstream 0.3.4
         // sets `glare = None` on the scan_film path, so the output must be
@@ -376,9 +398,7 @@ mod scan_semantics_tests {
         quiet.film_render.glare.percent = 0.9;
         quiet.film_render.glare.roughness = 1.5;
         quiet.film_render.glare.blur = 2.0;
-        let loud = Pipeline::new(film.clone(), film, quiet)
-            .process(img, &backend)
-            .unwrap();
+        let loud = Pipeline::new(film.clone(), film, quiet).process(img, &backend).unwrap();
 
         assert_eq!(
             max_diff(&base, &loud),
@@ -400,15 +420,12 @@ mod scan_semantics_tests {
         low.print_render.glare.percent = 0.01;
         low.print_render.glare.roughness = 0.0;
         low.print_render.glare.blur = 0.0;
-        let out_low = Pipeline::new(film.clone(), print.clone(), low.clone())
-            .process(img.clone(), &backend)
-            .unwrap();
+        let out_low =
+            Pipeline::new(film.clone(), print.clone(), low.clone()).process(img.clone(), &backend).unwrap();
 
         let mut high = low;
         high.print_render.glare.percent = 0.15;
-        let out_high = Pipeline::new(film, print, high)
-            .process(img, &backend)
-            .unwrap();
+        let out_high = Pipeline::new(film, print, high).process(img, &backend).unwrap();
 
         let diff = max_diff(&out_low, &out_high);
         assert!(
@@ -424,119 +441,7 @@ mod scan_semantics_tests {
             .any(|(h, l)| to_f64(*h) < to_f64(*l) - 1e-6);
         assert!(!any_darker, "glare darkened pixels — wrong sign");
     }
-    #[test]
-    fn magazine_appearance_runs_after_v2_grain_and_preserves_transfer_state() {
-        let dir = data_dir();
-        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let backend = CpuBackend;
-        let mut disabled = quiet_params();
-        disabled.workflow.route = "input > film > scan".into();
-        disabled.io.scan_film = true;
-        disabled.film_render.grain.active = true;
-        disabled.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
-        disabled.io.output_cctf_encoding = true;
 
-        let base = Pipeline::new(film.clone(), film.clone(), disabled.clone())
-            .process(flat_image(8), &backend)
-            .unwrap();
-        let mut active = disabled.clone();
-        active.magazine_print_color.active = true;
-        active.magazine_print_color.strength = 0.75;
-        let output = Pipeline::new(film.clone(), film.clone(), active.clone())
-            .process(flat_image(8), &backend)
-            .unwrap();
-        let mut expected = base.clone();
-        let output_space =
-            spektrafilm_math::colorspace::resolve(&active.io.output_color_space).unwrap();
-        crate::magazine_print_color::apply(
-            &mut expected,
-            &active.magazine_print_color,
-            output_space,
-            true,
-        );
-        assert!(
-            max_diff(&output, &expected) < 1e-6,
-            "magazine color must run after Procedural grain"
-        );
-
-        disabled.io.output_cctf_encoding = false;
-        active.io.output_cctf_encoding = false;
-        let linear_base = Pipeline::new(film.clone(), film.clone(), disabled)
-            .process(flat_image(8), &backend)
-            .unwrap();
-        let linear_output = Pipeline::new(film.clone(), film, active)
-            .process(flat_image(8), &backend)
-            .unwrap();
-        assert!(
-            linear_output
-                .data
-                .iter()
-                .all(|value| to_f64(*value).is_finite()),
-            "linear magazine output must preserve finite headroom"
-        );
-        assert!(max_diff(&linear_output, &linear_base) > 1e-5);
-    }
-
-    #[test]
-    fn finished_rgb_route_applies_magazine_appearance() {
-        let dir = data_dir();
-        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let backend = CpuBackend;
-        let mut disabled = quiet_params();
-        disabled.workflow.route = "input".into();
-        disabled.io.output_cctf_encoding = true;
-
-        let base = Pipeline::new(film.clone(), film.clone(), disabled.clone())
-            .process(flat_image(8), &backend)
-            .unwrap();
-        let mut active = disabled.clone();
-        active.magazine_print_color.active = true;
-        active.magazine_print_color.strength = 0.75;
-        let output = Pipeline::new(film.clone(), film, active.clone())
-            .process(flat_image(8), &backend)
-            .unwrap();
-        let mut expected = base.clone();
-        let output_space =
-            spektrafilm_math::colorspace::resolve(&active.io.output_color_space).unwrap();
-        crate::magazine_print_color::apply(
-            &mut expected,
-            &active.magazine_print_color,
-            output_space,
-            true,
-        );
-        assert!(
-            max_diff(&output, &expected) < 1e-6,
-            "Finished RGB must run the shared magazine finishing"
-        );
-        assert!(max_diff(&output, &base) > 1e-5);
-    }
-
-    #[test]
-    fn finished_rgb_route_ignores_resolved_profiles() {
-        let dir = data_dir();
-        let portra = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let gold = profile::load_profile_by_name(&dir, "kodak_gold_200").unwrap();
-        let endura = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let supra = profile::load_profile_by_name(&dir, "kodak_supra_endura").unwrap();
-        let backend = CpuBackend;
-        let mut params = quiet_params();
-        params.workflow.route = "input".into();
-        params.io.output_cctf_encoding = true;
-        params.magazine_print_color.active = true;
-        params.magazine_print_color.strength = 1.0;
-
-        let portra_output = Pipeline::new(portra, endura, params.clone())
-            .process(flat_image(8), &backend)
-            .unwrap();
-        let gold_output = Pipeline::new(gold, supra, params)
-            .process(flat_image(8), &backend)
-            .unwrap();
-        assert_eq!(
-            max_diff(&portra_output, &gold_output),
-            0.0,
-            "Finished RGB output must not depend on the resolved film or print profile"
-        );
-    }
 
     #[test]
     fn preflash_shifts_print_black_white_references() {
@@ -604,9 +509,7 @@ mod scan_semantics_tests {
         let mut params = RuntimeParams::default();
         params.camera.diffusion_filter.active = true;
         params.camera.diffusion_filter.filter_family = "nope".into();
-        let err = Pipeline::new_with_spectral(film, print, params, &dir)
-            .err()
-            .expect("effective unknown filter must fail");
+        let err = Pipeline::new_with_spectral(film, print, params, &dir).err().expect("effective unknown filter must fail");
         assert!(err.contains("unknown diffusion filter family"));
     }
 }

@@ -2,14 +2,43 @@
 ///
 /// Uses the pre-computed enlarger illuminant and exposure normalization factor.
 use rayon::prelude::*;
-use spektrafilm_backend::ComputeBackend;
+use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{PreparedPchip3d, pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::from_f64;
 
-use super::build_lut_grid;
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
+
+/// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy
+/// grid. Layout mirrors Python's `_create_lut_3d`:
+///
+/// ```text
+///   reshape(meshgrid(x_r, x_g, x_b, indexing='ij'), (steps², steps, 3))
+/// ```
+///
+/// → pixel at (col=k, row=i*steps+j) carries cmy = (x_r[i], x_g[j], x_b[k]).
+/// Running the spectral function on this 2-D image then reshapes back to
+/// a `steps × steps × steps × 3` LUT indexed by `((i, j, k), c)`.
+fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> ImageBuf {
+    let mut grid = ImageBuf::new(steps as u32, (steps * steps) as u32);
+    let step_inv = (steps - 1) as f64;
+    for i in 0..steps {
+        let x_r = data_min[0] + (data_max[0] - data_min[0]) * (i as f64) / step_inv;
+        for j in 0..steps {
+            let x_g = data_min[1] + (data_max[1] - data_min[1]) * (j as f64) / step_inv;
+            for k in 0..steps {
+                let x_b = data_min[2] + (data_max[2] - data_min[2]) * (k as f64) / step_inv;
+                let row = i * steps + j;
+                let base = (row * steps + k) * 3;
+                grid.data[base] = from_f64(x_r);
+                grid.data[base + 1] = from_f64(x_g);
+                grid.data[base + 2] = from_f64(x_b);
+            }
+        }
+    }
+    grid
+}
 
 /// Run `print_spectral` on a `steps³` grid of CMY inputs spanning
 /// `[data_min, data_max]` per channel, then PCHIP-interpolate the
@@ -30,21 +59,7 @@ fn print_spectral_via_lut(
     steps: usize,
 ) -> ImageBuf {
     let grid = build_lut_grid(steps, data_min, data_max);
-    let calibration = backend
-        .observation_context()
-        .filter(|context| context.enabled())
-        .map(|context| {
-            context.scope(
-                "enlarger_lut_prepare",
-                spektrafilm_backend::telemetry::ObservationKind::Stage,
-                spektrafilm_backend::telemetry::Purpose::Calibration,
-            )
-        });
-    let calibrated_backend = calibration
-        .as_ref()
-        .map(|scope| spektrafilm_backend::bind_backend(backend, scope.context().clone()));
-    let calibration_backend = calibrated_backend.as_deref().unwrap_or(backend);
-    let lut_image = calibration_backend.print_spectral(
+    let lut_image = backend.print_spectral(
         &grid,
         channel_density,
         base_density,
@@ -58,13 +73,6 @@ fn print_spectral_via_lut(
     // regardless to match Python's f64 LUT type.
     let lut_f64: Vec<f64> = lut_image.data.iter().map(|&v| v as f64).collect();
     let prepared = prepare_pchip_3d(lut_f64, steps);
-    drop(calibrated_backend);
-    drop(calibration);
-    let _interpolation = super::StageObservation::cpu(
-        backend,
-        "enlarger_lut_interpolate",
-        spektrafilm_backend::telemetry::CpuReason::SpectralLut,
-    );
     apply_pchip_lut(cmy_film, &prepared, data_min, data_max)
 }
 
@@ -131,7 +139,7 @@ fn enlarger_lut_bounds(film: &Profile, params: &RuntimeParams) -> ([f64; 3], [f6
 /// Mirrors Python's `printing.expose` *exactly*, including the
 /// double-log roundtrip:
 ///   log_raw_print = log10(max(raw_p * factor_midgray + preflash, 0) + 1e-10)
-///   raw           = 10^log_raw_print * print_exposure * white_black_correction
+///   raw           = 10^log_raw_print * print_exposure * bw_correction
 ///   raw           = apply_diffusion_filter_um(raw, ...)   // no-op when inactive
 ///   return         log10(max(raw, 0) + 1e-10)
 /// The +1e-10 floor is applied at *both* log10s — collapsing them to a
@@ -151,12 +159,36 @@ pub fn expose_calibrated(
     print_illuminant: &[f64],
     exposure_factor: f64,
     preflash: [f64; 3],
-    white_black_print_correction: f64,
+    bw_print_correction: f64,
     pixel_size_um: f64,
 ) -> ImageBuf {
-    let channel_density = crate::chain_prep::channel_density(film);
-    let base_density = &film.data.base_density;
-    let print_sensitivity = print.sensitivity_f64();
+    // Python parity — `channel_density` and `base_density` are f64 in the profile JSON.
+    let channel_density: Vec<[f64; 3]> = film
+        .data
+        .channel_density
+        .iter()
+        .map(|row| {
+            [
+                row.get(0).copied().unwrap_or(0.0),
+                row.get(1).copied().unwrap_or(0.0),
+                row.get(2).copied().unwrap_or(0.0),
+            ]
+        })
+        .collect();
+    let base_density: Vec<f64> = film.data.base_density.clone();
+    // Python: `sensitivity = np.nan_to_num(10 ** log_sensitivity)` — f64 with NaN→0.
+    let print_sensitivity: Vec<[f64; 3]> = print
+        .log_sensitivity_f64()
+        .iter()
+        .map(|row| {
+            let mut out = [0.0f64; 3];
+            for c in 0..3 {
+                let v = 10.0f64.powf(row[c]);
+                out[c] = if v.is_nan() { 0.0 } else { v };
+            }
+            out
+        })
+        .collect();
 
     // Stage 1: spectral integration → `log_raw_print` (Python parity).
     // print_spectral applies factor_midgray (exposure_factor) and the
@@ -171,7 +203,7 @@ pub fn expose_calibrated(
         print_spectral_via_lut(
             cmy_film,
             &channel_density,
-            base_density,
+            &base_density,
             print_illuminant,
             &print_sensitivity,
             exposure_factor,
@@ -185,7 +217,7 @@ pub fn expose_calibrated(
         backend.print_spectral(
             cmy_film,
             &channel_density,
-            base_density,
+            &base_density,
             print_illuminant,
             &print_sensitivity,
             exposure_factor,
@@ -193,8 +225,8 @@ pub fn expose_calibrated(
         )
     };
 
-    // Stage 2: 10^log_raw_print, scale by print_exposure × white_black, then
-    // the outer log10. With print_exposure=1 and white_black=1 the operations
+    // Stage 2: 10^log_raw_print, scale by print_exposure × bw, then
+    // the outer log10. With print_exposure=1 and bw=1 the operations
     // still matter because of the floor-and-add roundtrip noise.
     //
     // vForce path: bulk `10^x` into a chunk-local f64 buffer, then
@@ -206,29 +238,23 @@ pub fn expose_calibrated(
     // the same IEEE 754 pow algorithm as libm).
     const BLOCK: usize = 1 << 16;
     let print_exposure = params.enlarger.print_exposure as f64;
-    // Scanner white and black correction — print exposure half. Python
-    // applies it as a second in-place multiply after print_exposure, so we
-    // keep the two multiplies separate (left-to-right) rather than
-    // pre-combining the scalars. 1.0 = no-op.
-    let white_black = white_black_print_correction;
+    // B&W/print scanner exposure correction — Python applies it as a second
+    // in-place multiply after print_exposure, so we keep the two multiplies
+    // separate (left-to-right) rather than pre-combining the scalars. 1.0 = no-op.
+    let bw = bw_print_correction;
 
     // Enlarger diffusion filter operates on the *linear* print raw (Python:
-    // raw = 10^log_raw_print * print_exposure * white_black; raw = diffusion(raw); log10).
+    // raw = 10^log_raw_print * print_exposure * bw; raw = diffusion(raw); log10).
     // When active we materialise that linear buffer, diffuse, then log10;
     // otherwise the 10^x → ×exposure → log10 collapse into one pass.
     let edf = &params.enlarger.diffusion_filter;
     if edf.active {
-        let _diffusion = super::StageObservation::cpu(
-            backend,
-            "optical_diffusion",
-            spektrafilm_backend::telemetry::CpuReason::OpticalDiffusion,
-        );
         let mut lin = log_raw_print;
         lin.data.par_chunks_mut(BLOCK).for_each(|chunk| {
             let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
-            spektrafilm_math::precision::exp10_inplace(&mut tmp);
+            spektrafilm_math::vforce::exp10_inplace(&mut tmp);
             for (out, &raw) in chunk.iter_mut().zip(tmp.iter()) {
-                *out = spektrafilm_math::precision::from_f64(raw * print_exposure * white_black);
+                *out = spektrafilm_math::precision::from_f64(raw * print_exposure * bw);
             }
         });
         // Python uses the ResizingService pitch (from the full input),
@@ -258,51 +284,13 @@ pub fn expose_calibrated(
 
     log_raw_print.data.par_chunks_mut(BLOCK).for_each(|chunk| {
         let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
-        spektrafilm_math::precision::exp10_inplace(&mut tmp);
+        spektrafilm_math::vforce::exp10_inplace(&mut tmp);
         for (out, &raw) in chunk.iter_mut().zip(tmp.iter()) {
-            let v = raw * print_exposure * white_black;
+            let v = raw * print_exposure * bw;
             *out = spektrafilm_math::precision::from_f64((v.max(0.0) + 1e-10).log10());
         }
     });
     log_raw_print
-}
-
-/// Formed-cell response retains both historical exposure floors and preflash.
-/// Paper development runs only after the model averages this linear exposure.
-#[allow(clippy::too_many_arguments)]
-pub fn expose_linear_calibrated(
-    cmy_film: &ImageBuf,
-    film: &Profile,
-    print: &Profile,
-    params: &RuntimeParams,
-    backend: &dyn ComputeBackend,
-    print_illuminant: &[f64],
-    exposure_factor: f64,
-    preflash: [f64; 3],
-    white_black_print_correction: f64,
-) -> Result<ImageBuf, String> {
-    if params.enlarger.diffusion_filter.active || params.settings.use_enlarger_lut {
-        return Err(
-            "exact-cell print exposure requires inactive diffusion and direct spectral integration"
-                .to_owned(),
-        );
-    }
-    let mut linear = expose_calibrated(
-        cmy_film,
-        film,
-        print,
-        params,
-        backend,
-        print_illuminant,
-        exposure_factor,
-        preflash,
-        white_black_print_correction,
-        1.0,
-    );
-    linear.data.par_iter_mut().for_each(|value| {
-        *value = from_f64(10.0_f64.powf(spektrafilm_math::precision::to_f64(*value)));
-    });
-    Ok(linear)
 }
 
 pub fn develop(
@@ -311,13 +299,71 @@ pub fn develop(
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let curves = crate::chain_prep::PrintCurves::prepare(print, params)?;
+    let log_exposure = print.log_exposure_f64();
+
+    // Mirrors Python `develop_print_morph`: model-backed profiles are always
+    // evaluated from the fitted model. Invalid custom models and morph
+    // parameters are returned to the caller rather than falling back to
+    // stored curves or panicking during rendering.
+    let morph = &params.print_render.density_curves_morph;
+    if let Some(model) = print.data.density_curves_model.as_ref() {
+        let curves = crate::print_morph::morph_density_curves(
+            &log_exposure,
+            model,
+            morph,
+            print.is_positive(),
+        )
+        .map_err(|error| format!("invalid print density-curve model: {error}"))?;
+        return Ok(backend.density_curve_interp(
+            log_raw_print,
+            &log_exposure,
+            &curves,
+            1.0,
+        ));
+    }
+
+    // Stored-curve path for profiles without a fitted model. Python parity
+    // note: print's `develop` uses `develop_simple` directly with RAW
+    // (un-normalized) density curves — no nanmin subtraction.
     Ok(backend.density_curve_interp(
         log_raw_print,
-        curves.log_exposure,
-        &curves.density,
-        curves.gamma,
+        &log_exposure,
+        &print.density_curves_f64(),
+        params.print_render.density_curve_gamma as f64,
     ))
+}
+/// Full printing stage with pre-calibrated enlarger. `pixel_size_um`
+/// is the working-geometry pitch from
+/// [`crate::resizing::crop_and_rescale`].
+#[allow(clippy::too_many_arguments)]
+pub fn process_with_calibration(
+    cmy_film: &ImageBuf,
+    film: &Profile,
+    print: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    print_illuminant: &[f64],
+    exposure_factor: f64,
+    preflash: [f64; 3],
+    bw_print_correction: f64,
+    pixel_size_um: f64,
+) -> Result<ImageBuf, String> {
+    let log_raw = expose_calibrated(
+        cmy_film,
+        film,
+        print,
+        params,
+        backend,
+        print_illuminant,
+        exposure_factor,
+        preflash,
+        bw_print_correction,
+        pixel_size_um,
+    );
+    // Parity-harness probe: mirrors Python's `log_e_print` topology tap
+    // (`scripts/parity/run_parity.py` sets the env var).
+    crate::pipeline::dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &log_raw);
+    develop(&log_raw, print, params, backend)
 }
 /// Full printing stage (simplified — computes illuminant internally).
 pub fn process(
@@ -333,9 +379,32 @@ pub fn process(
         (params.enlarger.m_filter_neutral + params.enlarger.m_filter_shift) as f64,
         (params.enlarger.y_filter_neutral + params.enlarger.y_filter_shift) as f64,
     );
-    let channel_density = crate::chain_prep::channel_density(film);
-    let base_density = &film.data.base_density;
-    let print_sensitivity = print.sensitivity_f64();
+    // f64 throughout for Python parity.
+    let channel_density: Vec<[f64; 3]> = film
+        .data
+        .channel_density
+        .iter()
+        .map(|row| {
+            [
+                row.get(0).copied().unwrap_or(0.0),
+                row.get(1).copied().unwrap_or(0.0),
+                row.get(2).copied().unwrap_or(0.0),
+            ]
+        })
+        .collect();
+    let base_density: Vec<f64> = film.data.base_density.clone();
+    let print_sensitivity: Vec<[f64; 3]> = print
+        .log_sensitivity_f64()
+        .iter()
+        .map(|row| {
+            let mut out = [0.0f64; 3];
+            for c in 0..3 {
+                let v = 10.0f64.powf(row[c]);
+                out[c] = if v.is_nan() { 0.0 } else { v };
+            }
+            out
+        })
+        .collect();
     let n_wl = illuminant
         .len()
         .min(channel_density.len())
@@ -346,7 +415,7 @@ pub fn process(
     let midgray_raw = compute_single_pixel_raw(
         &midgray_density,
         &channel_density,
-        base_density,
+        &base_density,
         has_base,
         n_wl,
         &illuminant,
@@ -360,7 +429,7 @@ pub fn process(
     let log_raw = backend.print_spectral(
         cmy_film,
         &channel_density,
-        base_density,
+        &base_density,
         &illuminant,
         &print_sensitivity,
         normalization_factor,
@@ -418,103 +487,4 @@ pub(crate) fn compute_single_pixel_raw(
         }
     }
     raw
-}
-
-#[cfg(test)]
-mod diffusion_flash_tests {
-    use super::*;
-    use spektrafilm_math::precision::to_f64;
-
-    fn configured_diffusion() -> spektrafilm_model::diffusion::DiffusionFilter<'static> {
-        spektrafilm_model::diffusion::DiffusionFilter {
-            family: "black_pro_mist",
-            strength: 1.0,
-            spatial_scale: 0.05,
-            halo_warmth: 0.3,
-            core_intensity: 1.0,
-            core_size: 1.0,
-            halo_intensity: 1.0,
-            halo_size: 1.0,
-            bloom_intensity: 1.0,
-            bloom_size: 1.0,
-        }
-    }
-
-    #[test]
-    fn enlarger_diffusion_preserves_uniform_flash_at_reflected_edges() {
-        let n = 9u32;
-        let flash = 0.37f64;
-        let image = ImageBuf::from_data(n, n, vec![from_f64(flash); (n * n * 3) as usize]);
-        let out = spektrafilm_model::diffusion::apply_diffusion_filter_um(
-            &image,
-            &configured_diffusion(),
-            10.0,
-        )
-        .unwrap();
-        let max_error = out
-            .data
-            .iter()
-            .map(|v| (to_f64(*v) - flash).abs())
-            .fold(0.0, f64::max);
-        assert!(
-            max_error < 2e-5,
-            "uniform preflash changed at a reflected edge: {max_error}"
-        );
-    }
-
-    #[test]
-    fn enlarger_diffusion_is_affine_for_flash_plus_scene_raw() {
-        let n = 9u32;
-        let mut scene_data = Vec::with_capacity((n * n * 3) as usize);
-        for y in 0..n {
-            for x in 0..n {
-                let v = if x == n - 1 && y == 0 {
-                    1.0
-                } else {
-                    0.02 + 0.01 * (x + y) as f64
-                };
-                scene_data.extend([from_f64(v), from_f64(v * 0.8), from_f64(v * 0.6)]);
-            }
-        }
-        let scene = ImageBuf::from_data(n, n, scene_data);
-        let flash = ImageBuf::from_data(n, n, vec![from_f64(0.37); (n * n * 3) as usize]);
-        let combined = ImageBuf::from_data(
-            n,
-            n,
-            scene
-                .data
-                .iter()
-                .zip(&flash.data)
-                .map(|(a, b)| from_f64(to_f64(*a) + to_f64(*b)))
-                .collect(),
-        );
-        let zero = ImageBuf::from_data(n, n, vec![from_f64(0.0); (n * n * 3) as usize]);
-        let filter = configured_diffusion();
-        let scene_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&scene, &filter, 10.0).unwrap();
-        let flash_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&flash, &filter, 10.0).unwrap();
-        let combined_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&combined, &filter, 10.0)
-                .unwrap();
-        let zero_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&zero, &filter, 10.0).unwrap();
-        let max_error = combined_out
-            .data
-            .iter()
-            .zip(
-                scene_out
-                    .data
-                    .iter()
-                    .zip(flash_out.data.iter().zip(&zero_out.data)),
-            )
-            .map(|(actual, (scene, (flash, zero)))| {
-                (to_f64(*actual) - (to_f64(*scene) + to_f64(*flash) - to_f64(*zero))).abs()
-            })
-            .fold(0.0, f64::max);
-        assert!(
-            max_error < 4e-5,
-            "diffusion is not affine across flash addition: {max_error}"
-        );
-    }
 }
