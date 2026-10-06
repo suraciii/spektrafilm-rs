@@ -3,7 +3,7 @@
   "generated": {
     "python_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
     "python_version": "0.3.4",
-    "rust_commit": "d23a67cabbcbc7f95da26bf76055a7ce0ddc8690",
+    "rust_commit": "7e0e603e4513ad9a4ab663a5950652fb9489a88a",
     "rust_audited_baseline": "9dd59b0380194b93686aaa230a8bb9680aa270a4",
     "python_platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43",
     "python_version_runtime": "3.14.4",
