@@ -66,6 +66,7 @@ pub fn digest_params(
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
         params.film_render.grain.active = false;
         params.film_render.grain.particle_area_um2 = 0.0;
+        params.film_render.grain.rms_granularity = [0.0; 3];
         params.film_render.grain.blur = 0.0;
         params.print_render.glare.blur = 0.0;
         params.camera.lens_blur_um = 0.0;
@@ -99,6 +100,15 @@ pub fn digest_params(
         params.scanner.white_correction = false;
         params.scanner.black_correction = false;
         params.scanner.unsharp_mask = [0.0, 0.0];
+        params.enlarger.y_filter_shift = 0.0;
+        params.enlarger.m_filter_shift = 0.0;
+        params.enlarger.preflash_exposure = 0.0;
+        params.enlarger.preflash_y_filter_shift = 0.0;
+        params.enlarger.preflash_m_filter_shift = 0.0;
+        params.io.crop = false;
+        params.io.upscale_factor = 1.0;
+        params.settings.use_enlarger_lut = false;
+        params.settings.use_scanner_lut = false;
     }
 
     if params.debug.deactivate_spatial_effects {
@@ -130,10 +140,8 @@ pub fn digest_params(
     params
 }
 
-/// Overwrite the enlarger's neutral dichroic filters from the
-/// `(print stock, illuminant, film stock)` database entry — mirrors upstream
-/// `apply_database_neutral_print_filters`. A missing combination keeps the
-/// current values and warns (upstream prints a warning to stdout; we log it).
+/// Set neutral dichroic filters from the stock database. Missing combinations
+/// leave the caller's configured defaults unchanged, matching upstream.
 pub fn apply_database_neutral_print_filters(
     mut params: RuntimeParams,
     film: &Profile,
@@ -151,14 +159,7 @@ pub fn apply_database_neutral_print_filters(
             params.enlarger.m_filter_neutral = m as f32;
             params.enlarger.y_filter_neutral = y as f32;
         }
-        None => {
-            tracing::warn!(
-                print_stock,
-                illuminant = %params.enlarger.illuminant,
-                film_stock,
-                "no neutral print filters found in database; using defaults"
-            );
-        }
+        None => {}
     }
     params
 }
@@ -167,34 +168,76 @@ pub fn apply_database_neutral_print_filters(
 /// positive/negative DIR-coupler gammas, the `(use, antihalation)` halation
 /// preset, and the velvia/provia slide-film coupler retunes.
 pub(crate) fn apply_film_specifics(params: &mut RuntimeParams, film: &Profile) {
-    if film.is_positive() {
-        params.film_render.dir_couplers.gamma_samelayer_rgb = [0.12, 0.08, 0.06];
-        params.film_render.dir_couplers.gamma_interlayer_r_to_gb = [0.12, 0.06];
-        params.film_render.dir_couplers.gamma_interlayer_g_to_rb = [0.08, 0.06];
-        params.film_render.dir_couplers.gamma_interlayer_b_to_rg = [0.06, 0.06];
-    }
-    if film.is_negative() {
-        params.film_render.dir_couplers.gamma_samelayer_rgb = [0.336, 0.319, 0.273];
-        params.film_render.dir_couplers.gamma_interlayer_r_to_gb = [0.353, 0.302];
-        params.film_render.dir_couplers.gamma_interlayer_g_to_rb = [0.154, 0.353];
-        params.film_render.dir_couplers.gamma_interlayer_b_to_rg = [0.168, 0.226];
-    }
-
+    apply_grain_preset(params, film);
+    apply_coupler_preset(params, film);
     apply_halation_preset(params, film);
+}
 
-    let stock = film.info.stock.as_deref().unwrap_or("");
-    if stock == "fujifilm_velvia_100" {
-        params.film_render.dir_couplers.gamma_samelayer_rgb = [0.108, 0.072, 0.054];
-        params.film_render.dir_couplers.gamma_interlayer_r_to_gb = [0.108, 0.054];
-        params.film_render.dir_couplers.gamma_interlayer_g_to_rb = [0.072, 0.054];
-        params.film_render.dir_couplers.gamma_interlayer_b_to_rg = [0.054, 0.054];
-    }
-    if stock == "fujifilm_provia_100f" {
-        params.film_render.dir_couplers.gamma_samelayer_rgb = [0.156, 0.104, 0.078];
-        params.film_render.dir_couplers.gamma_interlayer_r_to_gb = [0.156, 0.078];
-        params.film_render.dir_couplers.gamma_interlayer_g_to_rb = [0.104, 0.078];
-        params.film_render.dir_couplers.gamma_interlayer_b_to_rg = [0.078, 0.078];
-    }
+#[derive(serde::Deserialize)]
+struct GrainPresetFile {
+    defaults: Option<toml::Value>,
+    #[serde(flatten)]
+    stocks: std::collections::HashMap<String, toml::Value>,
+}
+
+fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
+    let Ok(file) = toml::from_str::<GrainPresetFile>(include_str!("../../../data/presets/grain.toml")) else {
+        return;
+    };
+    let class = if film.is_bw() { "bw" } else { "color" };
+    let polarity = if film.is_positive() { "positive" } else { "negative" };
+    let defaults = file.defaults.as_ref().and_then(|v| v.get(class)).and_then(|v| v.get(polarity));
+    let stock = film.info.stock.as_deref().and_then(|s| file.stocks.get(s));
+    if stock.is_none() { return; }
+    let value = |key: &str| stock.and_then(|v| v.get(key)).or_else(|| defaults.and_then(|v| v.get(key)));
+    let g = &mut params.film_render.grain;
+    let array = |key: &str, dst: &mut [f64]| {
+        if let Some(toml::Value::Array(values)) = value(key) {
+            for (d, v) in dst.iter_mut().zip(values) {
+                if let Some(v) = v.as_float() { *d = v; }
+            }
+        }
+    };
+    array("rms_granularity", &mut g.rms_granularity);
+    array("density_min", &mut g.density_min);
+    array("uniformity", &mut g.uniformity);
+    array("particle_scale_sublayers", &mut g.particle_scale_layers);
+}
+
+#[derive(serde::Deserialize)]
+struct CouplerPresetFile {
+    defaults: Option<toml::Value>,
+    #[serde(flatten)]
+    stocks: std::collections::HashMap<String, toml::Value>,
+}
+
+fn apply_coupler_preset(params: &mut RuntimeParams, film: &Profile) {
+    let Ok(file) = toml::from_str::<CouplerPresetFile>(include_str!("../../../data/presets/couplers.toml")) else {
+        return;
+    };
+    let class = if film.is_bw() { "bw" } else { "color" };
+    let polarity = if film.is_positive() { "positive" } else { "negative" };
+    let defaults = file.defaults.as_ref().and_then(|v| v.get(class)).and_then(|v| v.get(polarity));
+    let cine = if class == "color" && polarity == "negative" && film.is_film() && film.info.usage == "cine" {
+        let branch = if film.info.reference_illuminant.to_ascii_uppercase().starts_with('T') { "tungsten" } else { "daylight" };
+        defaults.and_then(|v| v.get("cine")).and_then(|v| v.get(branch))
+    } else { None };
+    let stock = film.info.stock.as_deref().and_then(|s| file.stocks.get(s));
+    let set = |key: &str, dst: &mut [f64]| {
+        let value = stock.and_then(|v| v.get(key))
+            .or_else(|| cine.and_then(|v| v.get(key)))
+            .or_else(|| defaults.and_then(|v| v.get(key)));
+        if let Some(toml::Value::Array(values)) = value {
+            for (d, v) in dst.iter_mut().zip(values) {
+                if let Some(v) = v.as_float() { *d = v; }
+            }
+        }
+    };
+    let d = &mut params.film_render.dir_couplers;
+    set("gamma_samelayer_rgb", &mut d.gamma_samelayer_rgb);
+    set("gamma_interlayer_r_to_gb", &mut d.gamma_interlayer_r_to_gb);
+    set("gamma_interlayer_g_to_rb", &mut d.gamma_interlayer_g_to_rb);
+    set("gamma_interlayer_b_to_rg", &mut d.gamma_interlayer_b_to_rg);
 }
 
 /// Seed low-level halation parameters from the profile's `use` /
@@ -231,13 +274,14 @@ pub fn broadcast_monochrome_layout(film: &Profile, params: &mut RuntimeParams) {
     if !film.is_bw() {
         return;
     }
+    let g = &mut params.film_render.grain;
     let dir = &mut params.film_render.dir_couplers;
     dir.gamma_samelayer_rgb = [dir.gamma_samelayer_rgb[0]; 3];
     dir.gamma_interlayer_r_to_gb = [0.0, 0.0];
     dir.gamma_interlayer_g_to_rb = [0.0, 0.0];
     dir.gamma_interlayer_b_to_rg = [0.0, 0.0];
-    let g = &mut params.film_render.grain;
     g.particle_scale = [g.particle_scale[0]; 3];
+    g.rms_granularity = [g.rms_granularity[0]; 3];
     g.density_min = [g.density_min[0]; 3];
     g.uniformity = [g.uniformity[0]; 3];
     let h = &mut params.film_render.halation;
@@ -318,6 +362,15 @@ mod tests {
         params.scanner.black_correction = true;
         params.scanner.unsharp_mask = [0.7, 0.7];
         params.debug.lut_mode = true;
+        params.enlarger.y_filter_shift = 12.0;
+        params.enlarger.m_filter_shift = -8.0;
+        params.enlarger.preflash_exposure = 0.1;
+        params.enlarger.preflash_y_filter_shift = 3.0;
+        params.enlarger.preflash_m_filter_shift = 4.0;
+        params.io.crop = true;
+        params.io.upscale_factor = 2.0;
+        params.settings.use_enlarger_lut = true;
+        params.settings.use_scanner_lut = true;
 
         let d = digest_params(params, &film, &print, None, true);
         assert!(d.debug.deactivate_spatial_effects, "lut_mode promotes spatial deactivation");
@@ -330,6 +383,15 @@ mod tests {
         assert!(!d.scanner.white_correction);
         assert!(!d.scanner.black_correction);
         assert_eq!(d.scanner.unsharp_mask, [0.0, 0.0]);
+        assert_eq!(d.enlarger.y_filter_shift, 0.0);
+        assert_eq!(d.enlarger.m_filter_shift, 0.0);
+        assert_eq!(d.enlarger.preflash_exposure, 0.0);
+        assert_eq!(d.enlarger.preflash_y_filter_shift, 0.0);
+        assert_eq!(d.enlarger.preflash_m_filter_shift, 0.0);
+        assert!(!d.io.crop);
+        assert_eq!(d.io.upscale_factor, 1.0);
+        assert!(!d.settings.use_enlarger_lut);
+        assert!(!d.settings.use_scanner_lut);
         // Spatial deactivation payload
         assert!(!d.film_render.halation.active);
         assert_eq!(d.film_render.halation.scatter_core_um, [0.0, 0.0, 0.0]);
@@ -405,17 +467,51 @@ mod tests {
     }
 
     #[test]
-    fn stock_specific_overrides_and_their_skip() {
+    fn stock_specific_preset_overrides_and_their_skip() {
         let film = film_profile("fujifilm_velvia_100", "positive", "still", "strong");
         let print = blank_profile();
         let d = digest_params(RuntimeParams::default(), &film, &print, None, true);
-        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.108, 0.072, 0.054]);
+        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.2398, 0.0662, 0.144]);
 
         // apply_stocks_specifics=false keeps user values (GUI edit path).
         let mut user = RuntimeParams::default();
         user.film_render.dir_couplers.gamma_samelayer_rgb = [0.9, 0.8, 0.7];
         let d = digest_params(user, &film, &print, None, false);
         assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.9, 0.8, 0.7]);
+    }
+
+    #[test]
+    fn presets_override_controls_when_stock_specifics_are_requested() {
+        let film = film_profile("kodak_portra_400", "negative", "still", "strong");
+        let print = blank_profile();
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.rms_granularity = [99.0; 3];
+        params.film_render.grain.uniformity = [0.5; 3];
+        params.film_render.dir_couplers.gamma_samelayer_rgb = [0.9; 3];
+        let seeded = digest_params(params.clone(), &film, &print, None, true);
+        assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
+        assert_eq!(seeded.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.5159, 0.5934, 0.2829]);
+        let edited = digest_params(params, &film, &print, None, false);
+        assert_eq!(edited.film_render.grain.rms_granularity, [99.0; 3]);
+        assert_eq!(edited.film_render.dir_couplers.gamma_samelayer_rgb, [0.9; 3]);
+        let unknown = film_profile("custom_stock", "negative", "still", "strong");
+        let mut custom = RuntimeParams::default();
+        custom.film_render.grain.rms_granularity = [99.0; 3];
+        let custom = digest_params(custom, &unknown, &print, None, true);
+        assert_eq!(custom.film_render.grain.rms_granularity, [99.0; 3]);
+    }
+
+    #[test]
+    fn missing_neutral_filter_combination_keeps_configured_defaults() {
+        let film = film_profile("custom_stock", "negative", "still", "strong");
+        let print = blank_profile();
+        let mut params = RuntimeParams::default();
+        params.enlarger.c_filter_neutral = 17.0;
+        params.enlarger.m_filter_neutral = 23.0;
+        params.enlarger.y_filter_neutral = 91.0;
+        let params = apply_database_neutral_print_filters(params, &film, &print, None);
+        assert_eq!([params.enlarger.c_filter_neutral, params.enlarger.m_filter_neutral, params.enlarger.y_filter_neutral], [17.0, 23.0, 91.0]);
     }
 
     #[test]
@@ -455,9 +551,8 @@ mod tests {
         params.camera.diffusion_filter.filter_family = "soft_1".into();
         assert!(params.validate().unwrap_err().contains("soft_1"));
 
-        let mut params = RuntimeParams::default();
-        params.enlarger.illuminant = "BB3400".into();
-        assert!(params.validate().unwrap_err().contains("BB3400"));
+        params.enlarger.illuminant = "BB1000".into();
+        assert!(params.validate().unwrap_err().contains("BB1000"));
 
         let mut params = RuntimeParams::default();
         params.settings.rgb_to_raw_method = "hanatos2019".into();

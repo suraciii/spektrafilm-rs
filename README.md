@@ -15,6 +15,8 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
 - **Decoupled preview + export.** GUI uses f32 GPU for iteration, then shells out to the f64 CPU binary for the final write. The export runs in a worker thread with a cancel button and proper child-process lifecycle.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
+- **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
+- **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 
 ## Build
 
@@ -57,6 +59,14 @@ Distribute the native shared libraries and their transitive dependencies with th
 On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after building the release CLI, f64 exporter, GUI and RAW helper. `BUILD_TARGET_DIR` selects Cargo's output directory and `DIST_DIR` selects the generated package directory. The script copies the actual recursive ELF dependencies, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML and native license notices; it verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`. Extract the entire archive and launch the wrappers in `bin/`; they locate bundled data and libraries relative to their own location. The host supplies glibc, the display server and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh` respectively.
 
 The release workflow runs workspace tests with `precision-f64` and `scripts/parity/package_smoke.py` on each platform before uploading the package. The smoke runner requires installed CLI, f64 exporter, RAW helper and data paths. It exercises generated float/integer files, retained EXIF/IPTC/XMP/ICC, invalid-input/depth errors, a SHA-verified Kodak RAW fixture, and delivered ZIP LUT/OCIO/QA artifacts. With `--gui`, the external native driver operates the real window and file dialogs, verifies state restoration across restart, compares input/output rasters, saves float output, observes the bundled f64 child, and checks Cancel/close cleanup. Linux uses Xvfb; Windows/macOS require an interactive desktop, and macOS requires Accessibility/Automation/Screen Recording authorization. Driver and OCR dependencies are listed in [scripts/parity/README.md](scripts/parity/README.md). CI retains screenshots, observations and command logs, including failed runs.
+The release workflow intentionally invokes package smoke without `--gui`.
+Therefore its package status covers CLI/RAW/IO/LUT/OCIO/QA and provenance, not
+native desktop interaction. GUI evidence is maintained separately and is not
+silently counted as a release pass.
+
+The Linux native GUI acceptance run against the debug GUI and f64 exporter under Xvfb passed the five-tab shell, native dialogs, Preview/Scan, quarter-turn pipeline rotation, exact 100/200/400% zoom (192/384/768 px bounds), Paper back/watermark, interpolation, gray canvas, white border, Reveal/Crossfade frames, float inspection, profile selection, ProPhoto RGB input/Display P3 output, state/startup round trips, RAW ACES2065-1 loading and Cancel/close cleanup. Viewer-only changes produced zero decoded Save/Export pixel differences; rotated export input matched NumPy exactly and retained EXIF/IPTC/XMP with normalized orientation/dimensions. The complete records and executable hashes are embedded under `gui_evidence` in `docs/parity/parity_matrix.json`; local smoke at Rust `8bdd7fe` and CI workflow `37226896580` provide the current Linux evidence. The same workflow passed Windows x64 package smoke. macOS remains incomplete: its real native run reaches the viewer transition tests but currently fails the Reveal-frame assertion; this is reported as unverified rather than hidden.
+
+Quarter-turn actions rotate the pipeline input and preserve source metadata. The export worker stages rotated pixels as a 32-bit TIFF; the metadata writer normalizes orientation and dimensions. Cancellation is checked before and after staging, so a cancelled export does not launch the CPU child. A native TIFF write cannot be interrupted; closing during that write waits for it to finish and removes the temporary file.
 
 `spektrafilm-raw` returns linear ACES2065-1 pixels after LibRaw camera orientation, optional Lensfun correction, and white balance. Camera WB (`as-shot`) is the default; `daylight` uses LibRaw's daylight base, while `tungsten` and `custom` adapt that base using the reference CIE D/Kang 2002 whitepoints and Von Kries/CAT02 transform. Custom temperature must be finite in 1667–25000 K and custom tint finite; absent custom temperature is an error. Lensfun applies vignetting before combined channel geometry resampling with bilinear interpolation and nearest boundary extension, and preserves unchanged pixels/empty lens summary when camera or lens matching fails.
 
@@ -102,18 +112,19 @@ executable.
 ./target/release/spektrafilm-gui [optional/path/to/image.orf]
 ```
 
-- **Sidebar workflow** — the Rust GUI follows the upstream sidebar tabs: **MAIN** (load, input image, profiles, exposure, crop, preview/RAW, scanner, enlarger and output), **FILM** (halation, DIR couplers, diffusion and grain), **PRINT** (glare, print curves, enlarger details/diffusion and saving color), **ADVANCED** (spectral/color controls), and **CONFIG** (state persistence and display controls). Preview/Scan stays available below every tab.
+- **Sidebar workflow** — the Rust GUI follows the upstream sidebar tabs: **MAIN** (load, input image, profiles, exposure, crop, preview/RAW, scanner, enlarger and output), **FILM** (halation, DIR couplers, diffusion and grain), **PRINT** (glare, print curves, enlarger details/diffusion and saving color), **ADVANCED** (spectral/color controls), and **CONFIG** (state persistence and display controls). The tab row and Preview/Scan action bar remain fixed while each tab's controls scroll.
 - **Open…** — load standard images or camera RAW. RAW processing uses LibRaw and exposes as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction; RAW enters the runtime as linear ACES2065-1.
 - **Input image / Profiles** — choose input/output color workflow, film stock and print paper. Picking a film auto-selects its paired paper (`target_print` in the profile).
 - **Sliders** — exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger and output. Changes follow the selected sidebar tab and update the GPU preview according to Auto preview.
-- **Zoom** — scroll wheel or trackpad pinch over the preview (cursor-anchored), click-drag to pan, double-click to reset.
+- **Viewer controls** — `ccw rotate` and `cw rotate` physically rotate the in-memory input used by Preview, Save and f64 Export; `100%`, `200%` and `400%` map source pixels to exact device-pixel percentages; reset view returns to fit.
 - **Export…** — re-runs the pipeline at f64 precision on the CPU and writes a PNG/TIFF/JPEG. Status bar shows elapsed time; **Cancel** kills the child cleanly. Closing the GUI mid-export also kills the child (no orphans).
 - **Save…** — convert retained floating output into the independently selected saving color space and transfer encoding, then save at the selected bit depth. Viewer borders, watermark and display ICC transforms stay out of saved pixels.
 - **Save state… / Load state…** — exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values; legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections or Rust extension versions appear in the status bar.
 - **Save startup default / Restore factory default** — persist the current controls, or remove that default and restore Kodak Gold 200 + Kodak Supra Endura. Startup files live in the platform configuration directory (`SPEKTRAFILM_CONFIG_DIR` overrides it); Rust-only runtime/viewer settings use the explicit `rust.version = 1` extension. File-dialog directories persist separately.
 - **Preview** — explicitly update the preview when auto-preview is disabled. Crop, spectral adaptation/blur, UV/IR, layered grain and both diffusion filters apply to the runtime, with the chosen preview long-edge limit.
 - **Scan** — render the original-resolution image with spatial and stochastic effects; **Preview** uses the configured long-edge limit and preview digestion.
-- **Viewer** — switch Input / Output / Paper back; choose nearest, linear, cubic, spline16, spline36, Lanczos or Blackman sampling. The canvas is the pinned 18% gray (`#767676`) or black, with normalized white padding and the upstream paper watermark. Reveal and crossfade affect the disposable viewing frame; hovering reports the original floating RGB pixel.
+- **Scan-for-print** — temporarily enable scanner white/black corrections and disable print glare. Toggle again to restore all three previous values. Loading state or changing profiles clears the transient snapshot.
+- **Viewer** — switch Input / Output / Paper back; choose nearest, linear, cubic, spline16, spline36, Lanczos or Blackman sampling for Output. Input retains the upstream nearest interpolation; Paper back uses spline36. The configured preview limit bounds disposable Input/Output rasters. The canvas is the pinned 18% gray (`#767676`) or black, with normalized white padding and the upstream paper watermark. Reveal and crossfade affect the disposable viewing frame; hovering reports the original floating RGB pixel.
 - **Display transform / Display ICC…** — on Windows, discover the primary display ICC profile or choose a profile and apply it only to the viewer. Without an available display transform the output is viewed in its selected output space; the input/reference is converted to encoded sRGB.
 - **Launch state** — `spektrafilm-gui IMAGE --state GUI_STATE.json` loads a deterministic state for repeatable sessions. `SPEKTRAFILM_GUI_STATE` provides the same startup override.
 
@@ -168,6 +179,21 @@ The calibrated LUT creator uses the Python 0.3.4 spectral runtime in determinist
 It supports one through four LUTs, shared film stages across repeated `--print`
 stocks, and `--combinations` for every contiguous collapsed sub-chain.
 
+
+The experimental spectral registry ships the `hanatos2025`, `mallett2019`,
+`arctic2026alpha02`, `arctic2026beta04`, `gauss-lasers`, `jakob2019`, and
+`otsu2018` methods. Runtime parameters can select a method and an illuminant
+(`A`, `D50`, `D55`, `D60`, `D65`, `D75`, `E`, `T`, `TH-KG3`, `TH-KG3-L`,
+`K75P`, or `BB<temperature>` in the supported 1667–25000 K range). LUT builds
+accept `--params runtime_params.json`, `--stops-above-midgray
+<auto|native|null|STOPS>`, and the legacy additive `--exposure-ev EV`.
+Schema 3 bundles record the full digested parameter tree per print, the
+digest's changed values, a SHA-256 snapshot digest, and resolved input stops
+and gain. `Bundle::baked_params` preserves the actual bake configuration for
+QA. Grain and coupler TOML presets override controls when stock specifics are
+requested; later edits use `apply_stocks_specifics=false`. All fitted density
+models refresh sampled curves on load, including `sept_norm_cdfs` with
+per-layer median-preserving skew parameters.
 ```bash
 ./target/release/spektrafilm lut list input
 ./target/release/spektrafilm lut list output
@@ -178,6 +204,10 @@ SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build \
 ./target/release/spektrafilm lut build --from bundle.toml \
     --resolution 65 --out build/lut_bundles --data-dir data
 ```
+The CLI also resolves the packaged `../share/data` directory for `lut` and
+`export-lut` when invoked outside the package directory. Profile metadata and
+array dimensions are validated before construction; present but malformed
+neutral-filter JSON is an error rather than an empty-database fallback.
 
 TOML fields match the typed `spektrafilm_core::lut_baker::BundleSpec`; supplied
 CLI flags override file values. A minimal spec is:
@@ -203,11 +233,20 @@ lightness_compression = [0.7, 1.0, 2.2]
 ```
 
 Canonical names and registry short tags are accepted. Disabled scene-linear
-registry roles fail explicitly. `auto` headroom maps encoded SDR white to four
-stops above film midgray and uses native log/HDR white-to-midgray headroom;
-`--stops-above-gray` overrides the linear exposure gain. PQ and HLG outputs
-apply their registry midgray gain before encoding. Intermediate wires retain
-the probed log-exposure margins and below-fog density headroom in `bundle.json`.
+registry roles fail explicitly. The default `"auto"` bridge resolves to four
+stops for encoded SDR inputs and six stops for scene-referred camera-log
+inputs; `native`/`null` preserves the registry's native gain. Explicit stops
+use `0.18 * 2^stops / decode(1)`, and legacy `--exposure-ev` adds a deliberate
+multiplier of `2^EV`. The resolved stops and gain are recorded in
+`bundle.json`. PQ and HLG outputs apply the inverse midgray bridge before
+encoding. Intermediate wires retain the probed log-exposure margins and
+below-fog density headroom.
+
+Params-first baking preserves runtime gamut and look controls, forces the
+film-print-scan route, and clears taps and preview mode. LUT digestion disables
+crop, resize and internal spectral acceleration LUTs, and neutralizes per-image
+exposure, enlarger filter shifts and preflash. The snapshot's `digest_changes`
+records these changes relative to an ordinary render of the same settings.
 
 For Rust consumers, `BundleBuilder::build` returns typed `Bundle`, `Lut`, and
 `BundleMeta` values. `Lut::table` is blue-fast `[r][g][b]`, indexed by
@@ -254,6 +293,16 @@ Grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (default, matc
 Both composite and layered grain use the CPU sampler during GPU preview. The resident composite shader approximates every Poisson/binomial draw by a normal distribution, including dark/highlight pixels with low binomial variance; those valid cases require the faithful CPU distribution. Grain-active rendering explicitly selects the per-stage path rather than claiming GPU grain parity.
 
 The LUT path (`use_enlarger_lut` + `use_scanner_lut`) ports Python's PCHIP 3D interpolation (`crates/spektrafilm-math/src/pchip3d.rs` ↔ `spektrafilm/utils/fast_interp_lut.py`). The executed f64 LUT-reduction scenarios passed the **1e-5** maximum absolute-error budget; the 265 delivered LUT stock/topology/transport cases passed independent Python comparisons.
+
+Rust profile authoring supports `profile::save_profile`, preserving JSON nulls
+and leaving the source profile unchanged, and
+`density_curves::parametric_density_curves_model`. The `measurement` module
+provides not-a-knot cubic gamma inversion and local exposure slopes with
+explicit errors for invalid samples. Python research utilities
+for nonlinear toe fitting (`measure_density_min(control_plot=...)`) and
+interactive plotting remain a separate developer API scope: no runtime,
+GUI or LUT Creator code calls them. They are not included in the user-feature
+parity claim.
 
 ## Performance
 

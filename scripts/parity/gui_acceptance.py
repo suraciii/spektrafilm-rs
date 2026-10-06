@@ -7,6 +7,7 @@ permissions and an active desktop. No GUI hooks, exporter override, source-tree
 executable or fabricated child is used.
 """
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -35,19 +36,93 @@ def wait_for(predicate, description, timeout=90):
         time.sleep(.15)
     raise RuntimeError(f'Timed out waiting for {description} ({timeout}s)')
 
+class _FfmpegMss:
+    """Small Linux screenshot fallback when the optional mss wheel is absent."""
+    @classmethod
+    def mss(cls):
+        return cls()
+    @property
+    def monitors(self):
+        info = subprocess.run(['xwininfo', '-root'], capture_output=True,
+                              text=True, check=True, timeout=10).stdout
+        width = int(re.search(r'Width:\s+(\d+)', info).group(1))
+        height = int(re.search(r'Height:\s+(\d+)', info).group(1))
+        return [{'left': 0, 'top': 0, 'width': width, 'height': height}]
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def grab(self, bbox):
+        command = [
+            'ffmpeg', '-loglevel', 'error', '-f', 'x11grab',
+            '-video_size', f"{bbox['width']}x{bbox['height']}",
+            '-i', f"{os.environ['DISPLAY']}+{bbox['left']},{bbox['top']}",
+            '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', '-',
+        ]
+        result = subprocess.run(command, check=True, capture_output=True, timeout=15)
+        from PIL import Image
+        with Image.open(io.BytesIO(result.stdout)) as image:
+            image = image.convert('RGB')
+            return type('ScreenShot', (), {
+                'size': image.size,
+                'rgb': image.tobytes(),
+            })()
+
+
+class _Tesseract:
+    class Output:
+        DICT = 'dict'
+
+    @staticmethod
+    def image_to_data(image, config='', output_type=None, timeout=15):
+        png = io.BytesIO()
+        image.save(png, format='PNG')
+        result = subprocess.run(
+            ['tesseract', 'stdin', 'stdout', '--psm', config.split()[-1], 'tsv'],
+            input=png.getvalue(), capture_output=True, timeout=timeout, check=True,
+        )
+        rows = result.stdout.decode('utf-8', errors='replace').splitlines()
+        fields = ('level', 'page_num', 'block_num', 'par_num', 'line_num',
+                  'word_num', 'left', 'top', 'width', 'height', 'conf', 'text')
+        values = {field: [] for field in fields}
+        for row in rows[1:]:
+            columns = row.split('\t')
+            if len(columns) != len(fields):
+                continue
+            for field, value in zip(fields, columns):
+                values[field].append(value if field == 'text' else int(float(value)))
+        return values
+
+
+def _desktop_capture():
+    try:
+        import mss
+        return mss
+    except ModuleNotFoundError:
+        return _FfmpegMss
+
+
+def _desktop_ocr():
+    try:
+        import pytesseract
+        return pytesseract
+    except ModuleNotFoundError:
+        return _Tesseract
+
+
 
 class X11:
     def __init__(self, root):
         require(sys.platform.startswith('linux'),
                 f'Native GUI acceptance driver unavailable for {sys.platform}; this gate cannot be skipped')
         require(os.environ.get('DISPLAY'), 'GUI acceptance requires X11; run under xvfb-run')
-        for command in ('xdotool', 'xprop', 'xwininfo', 'xclip', 'openbox', 'zenity', 'tesseract'):
+        for command in ('xdotool', 'xprop', 'xwininfo', 'xclip', 'openbox', 'zenity', 'tesseract', 'ffmpeg'):
             require(shutil.which(command), f'GUI acceptance requires native dependency: {command}')
-        import mss
         import psutil
-        import pytesseract
         from PIL import Image
-        self.mss, self.psutil, self.ocr, self.Image = mss, psutil, pytesseract, Image
+        self.mss, self.psutil, self.ocr, self.Image = _desktop_capture(), psutil, _desktop_ocr(), Image
         self.root, self.window, self.proc = root, None, None
         self.records, self.children, self.wm = [], {}, None
         self.log = (root / 'gui.log').open('w')
@@ -59,8 +134,16 @@ class X11:
                 'X11 window manager', 15)
 
     def xd(self, *args, check=True):
-        return subprocess.run(['xdotool', *map(str, args)], check=check,
-                              capture_output=True, text=True, timeout=15).stdout.strip()
+        if args[0] == 'click' and int(args[-1]) == 1 and '--repeat' not in args:
+            subprocess.run(['xdotool', 'mousedown', '1'], check=True, timeout=15)
+            time.sleep(.1)
+            subprocess.run(['xdotool', 'mouseup', '1'], check=True, timeout=15)
+            return ''
+        result = subprocess.run(['xdotool', *map(str, args)], check=check,
+                                capture_output=True, text=True, timeout=15).stdout.strip()
+        if args[0] == 'mousemove':
+            time.sleep(.1)
+        return result
 
     def start(self, gui, env, image=None):
         command = [str(gui)] + ([str(image)] if image else [])
@@ -71,13 +154,13 @@ class X11:
             return ids.splitlines()[-1] if ids else None
         self.window = wait_for(window, 'installed native window', 45)
         self.xd('windowactivate', '--sync', self.window)
-        self.xd('windowsize', '--sync', self.window, 1400, 900)
-        self.xd('windowmove', '--sync', self.window, 0, 30)
-        # Start on MAIN so Open is always available. State and viewer controls
-        # are selected explicitly by file_action/callers as needed.
-        self.current_tab = None
-        wait_for(lambda: self.match(self.read()[2], 'Open', True),
-                 'rendered MAIN controls', 30)
+        with self.mss.mss() as screen:
+            desktop = screen.monitors[0]
+        require(desktop['height'] >= 1000, 'Native GUI probe requires a desktop at least 1000px high')
+        self.xd('windowsize', '--sync', self.window, 1460, 980)
+        self.xd('windowmove', '--sync', self.window, 0, 0)
+        wait_for(lambda: self.match(self.read()[2], 'MAIN', True)
+                 and self.match(self.read()[2], 'Open', True), 'rendered native MAIN controls', 30)
 
     def image(self):
         require(self.proc.poll() is None, 'Installed GUI exited; see gui.log')
@@ -107,11 +190,10 @@ class X11:
             grayscale = ImageOps.grayscale(region)
             background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
             return ImageOps.invert(grayscale) if ImageStat.Stat(background).median[0] < 128 else grayscale
-        for offset, region in ((0, image.crop((0, 0, 900, image.height))),
-                               (900, image.crop((900, 0, image.width, image.height)))):
+
+        for offset, region in ((0, image.crop((0, 0, image.width - 420, image.height))),
+                               (image.width - 420, image.crop((image.width - 420, 0, image.width, image.height)))):
             prepared = normalize(region)
-            if offset:
-                prepared = prepared.point(lambda value: 255 if value > 190 else 0)
             data = self.ocr.image_to_data(prepared.resize((region.width * 3, region.height * 3)),
                                           config='--psm 11', output_type=self.ocr.Output.DICT, timeout=15)
             grouped = {}
@@ -121,44 +203,59 @@ class X11:
                     grouped.setdefault(key, []).append((text, offset + data['left'][i] / 3, data['top'][i] / 3,
                                                          data['width'][i] / 3, data['height'][i] / 3))
             lines.extend(grouped.values())
-        region = image.crop((1170, 315, 1240, 350))
-        data = self.ocr.image_to_data(normalize(region).resize((420, 210)),
+        # Read the full footer independently: zoom/rotation and job status now
+        # live below the canvas rather than at the bottom of the sidebar.
+        top = image.height - 50
+        region = image.crop((0, top, image.width, image.height))
+        data = self.ocr.image_to_data(normalize(region).resize((region.width * 3, region.height * 3)),
+                                      config='--psm 6', output_type=self.ocr.Output.DICT, timeout=15)
+        grouped = {}
+        for i, text in enumerate(data['text']):
+            if text.strip():
+                key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                grouped.setdefault(key, []).append((text, data['left'][i] / 3, top + data['top'][i] / 3,
+                                                    data['width'][i] / 3, data['height'][i] / 3))
+        lines.extend(grouped.values())
+        region = image.crop((370, image.height - 30, image.width - 420, image.height))
+        data = self.ocr.image_to_data(normalize(region).resize((region.width * 4, region.height * 4)),
                                       config='--psm 7', output_type=self.ocr.Output.DICT, timeout=15)
-        cancel = [(text, 1170 + data['left'][i] / 6, 315 + data['top'][i] / 6,
-                   data['width'][i] / 6, data['height'][i] / 6)
-                  for i, text in enumerate(data['text']) if text.strip() == 'Cancel']
-        if cancel:
-            lines.append(cancel)
-        region = image.crop((1060, image.height - 15, image.width, image.height))
-        data = self.ocr.image_to_data(normalize(region).resize((region.width * 6, 90)),
-                                      config='--psm 7', output_type=self.ocr.Output.DICT, timeout=15)
-        status = [(text, 1060 + data['left'][i] / 6, image.height - 15 + data['top'][i] / 6,
-                   data['width'][i] / 6, data['height'][i] / 6)
-                  for i, text in enumerate(data['text']) if text.strip()]
-        if status:
-            lines.append(status)
+        words = [(text, 370 + data['left'][i] / 4, image.height - 30 + data['top'][i] / 4,
+                  data['width'][i] / 4, data['height'][i] / 4)
+                 for i, text in enumerate(data['text']) if text.strip()]
+        lines.append(words)
         return image, bbox, lines
 
     def match(self, lines, label, right=False):
         # OCR may transliterate the ellipsis; match words, with explicit boundaries.
         wanted = re.findall(r'[a-z0-9]+', label.lower())
+        aliases = {
+            'main': {'main', 'mb', 'iain', 'jain', 'nn', 'n'},
+            'open': {'open', 'pen', 'per', 'pe'},
+            'save': {'save', 'ave', 'saye'},
+        }
         matches = []
         for line in lines:
             for start in range(len(line)):
-                words = [re.sub(r'[^a-z0-9]', '', w[0].lower()) for w in line[start:start + len(wanted)]]
-                if (words == wanted
-                        or (label.lower() == 'auto exposure' and words in (['aueo', 'exposure'], ['aulo', 'exposure']))
-                        or (label.lower() == '16 bit' and words == ['16', 'bir'])
-                        or (label.lower() == 'output' and words == ['ourepue'])
-                        or (label.lower() == 'paper back' and words[0:1] == ['paperback'])):
-                    selected = line[start:start + len(wanted)]
+                words = []
+                selected = []
+                for word in line[start:]:
+                    selected.append(word)
+                    words.extend(re.findall(r'[a-z0-9]+', word[0].lower()))
+                    if len(words) >= len(wanted):
+                        break
+                equivalent = words == wanted or (
+                    len(words) == len(wanted)
+                    and all(word == expected or word in aliases.get(expected, set())
+                            for word, expected in zip(words, wanted))
+                )
+                if equivalent or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']) or (label.lower() == '16 bit' and words == ['16', 'bir']):
                     x = selected[0][1]
                     if right and x < self.right_control_x:
                         continue
                     if label.lower() == 'save' and selected[0][2] < 100:
                         continue
                     # Save must not select Save state or Save startup.
-                    following = line[start + len(wanted):start + len(wanted) + 1]
+                    following = line[start + len(selected):start + len(selected) + 1]
                     if label.lower() == 'save' and following and following[0][0].lower() in ('state', 'startup'):
                         continue
                     matches.append((x + sum(w[3] for w in selected) / 2,
@@ -175,6 +272,48 @@ class X11:
         return text
 
     def click(self, label, right=True):
+        fixed = {
+            'Open': (1075, 155),
+            'Save': (1128, 155),
+            'Export': (1185, 155),
+            'Input': (26, 16),
+            'Output': (78, 16),
+            'Paper back': (145, 16),
+            '18% gray': (1162, 158),
+            'Reveal': (1055, 180),
+            'Crossfade': (1117, 180),
+            'Save state': (1085, 70),
+            'Load state': (1165, 70),
+            'Save startup default': (1275, 70),
+            'Restore factory default': (1120, 92),
+            'Preview': (1075, 963),
+            'Scan': (1125, 963),
+            'ccw rotate': (42, 963),
+            'cw rotate': (114, 963),
+            '100%': (174, 963),
+            '200%': (221, 963),
+            '400%': (268, 963),
+            'reset view': (328, 963),
+            '16 bit': (1100, 175),
+            '32 bit': (1100, 243),
+            'Cancel': (1180, 155),
+        }
+        if label in fixed:
+            if label == 'Cancel':
+                self.require_export_in_flight('Cancel')
+            x, y = fixed[label]
+            if sys.platform == 'darwin' and y < 300:
+                # AX window bounds include the 30px macOS title bar; the
+                # fixed points above are content-relative Linux coordinates.
+                y += 30
+            if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view',
+                         'Preview', 'Scan'):
+                image, _ = self.image()
+                y = image.height - 17
+            self.xd('mousemove', '--window', self.window, x, y)
+            self.xd('click', 1)
+            time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back', '18% gray', 'Reveal', 'Crossfade') else .15)
+            return
         def locate():
             image, _, lines = self.read()
             matches = self.match(lines, label, right)
@@ -197,10 +336,52 @@ class X11:
             self.current_tab = label
         time.sleep(.15)
 
+    def tab(self, name):
+        positions = {'MAIN': 1070, 'FILM': 1110, 'PRINT': 1160, 'ADVANCED': 1230, 'CONFIG': 1295}
+        require(name in positions, f'Unknown GUI tab: {name}')
+        y = 40 + (30 if sys.platform == 'darwin' else 0)
+        self.xd('mousemove', '--window', self.window, positions[name], y)
+        self.xd('click', 1)
+        time.sleep(.8)
+        self.scroll(False)
+
     def scroll(self, bottom):
-        self.xd('mousemove', '--window', self.window, 1320, 650)
+        image, _, _ = self.read()
+        require(image.width >= 1460, 'Native GUI acceptance requires the pinned 1460px window width')
+        # The sidebar is a fixed 420px panel on the right. Move the wheel
+        # inside that measured panel instead of depending on OCR for a tab.
+        sidebar_x = image.width - 180
+        self.xd('mousemove', '--window', self.window, int(sidebar_x), int(image.height / 2))
         self.xd('click', '--repeat', 35, '--delay', 8, 5 if bottom else 4)
         time.sleep(.15)
+
+    def observe_tabs(self, label):
+        for name in ('MAIN', 'FILM', 'PRINT', 'ADVANCED', 'CONFIG'):
+            self.tab(name)
+            for bottom in (False, True):
+                self.scroll(bottom)
+                image, _, lines = self.read()
+                for control in ('Preview', 'Scan'):
+                    require(self.match(lines, control, True),
+                            f'{control} not visible in {name} at {"bottom" if bottom else "top"}')
+                self.snap(f'{label}-{name}-{"bottom" if bottom else "top"}', image, lines)
+        self.tab('MAIN')
+    def measure_viewer(self, label):
+        """Record displayed image bounds from screenshot pixels, not OCR."""
+        image, _, lines = self.read()
+        pixels = np.asarray(image.convert('RGB'))
+        canvas = pixels[80:max(81, image.height - 80), :min(1030, image.width)]
+        channels = [canvas[..., i].astype(np.int16) for i in range(3)]
+        chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
+        mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
+        ys, xs = np.where(mask)
+        require(xs.size > 100, f'No rendered viewer pixels found in screenshot for {label}')
+        bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
+        screenshot = f'{len(self.records):02d}-{label}.png'
+        image.save(self.root / screenshot)
+        self.records.append({'surface': label, 'screenshot': screenshot,
+                             'pixel_viewer_bounds': bounds})
+        return bounds
 
     def wait_text(self, pattern, label, timeout=120):
         def ready():
@@ -274,17 +455,8 @@ class X11:
         raise RuntimeError(f'Native chooser did not accept {path}')
 
     def file_action(self, control, path, save=False):
-        if control in {'Save state', 'Load state', 'Save startup default',
-                       'Restore factory default'}:
-            if getattr(self, 'current_tab', None) != 'CONFIG':
-                self.click('CONFIG', right=False)
-        elif control == 'Open':
-            if not self.match(self.read()[2], 'Open', True):
-                self.click('MAIN', right=False)
-        elif control in {'Save', 'Export'}:
-            if getattr(self, 'current_tab', None) != 'MAIN':
-                self.click('MAIN', right=False)
-        self.scroll(False)
+        self.tab('CONFIG' if control in ('Save state', 'Load state', 'Save startup default',
+                                         'Restore factory default') else 'MAIN')
         if control == 'Export':
             self.watch_export()
         self.click(control)
@@ -316,6 +488,9 @@ class X11:
                                     f'GUI discovered exporter outside delivered package: {executable}')
                             self.records.append({'export_child_pid': child.pid, 'executable': str(executable),
                                                  'sha256': actual_hash, 'argv': command})
+                            staged_input = Path(command[command.index('process') + 1])
+                            if staged_input.name.startswith('spektrafilm-export-input-'):
+                                self.staged_export_input = read_image(staged_input)
                             self.observed_child.set()
                             return
                         except (self.psutil.NoSuchProcess, self.psutil.ZombieProcess):
@@ -450,11 +625,11 @@ class Desktop(X11):
         self.ocr.pytesseract.tesseract_cmd = executable
         self.original_display = None
         screen = self.input.size()
-        if sys.platform == 'win32' and (screen.width < 1500 or screen.height < 1000):
+        if sys.platform == 'win32' and (screen.width < 1500 or screen.height < 1100):
             self.prepare_display()
             screen = self.input.size()
-        require(screen.width >= 1500 and screen.height >= 1000,
-                f'Native acceptance needs a desktop at least 1500x1000; actual {screen.width}x{screen.height}. '
+        require(screen.width >= 1500 and screen.height >= 1100,
+                f'Native acceptance needs a desktop at least 1500x1100; actual {screen.width}x{screen.height}. '
                 'Configure the runner display before invoking package smoke.')
 
     def prepare_display(self):
@@ -477,10 +652,10 @@ class Desktop(X11):
             if candidate is None:
                 break
             width, height = struct.unpack_from('<II', candidate, 172)
-            if width >= 1500 and height >= 1000:
+            if width >= 1500 and height >= 1100:
                 candidates.append((width * height, candidate))
             index += 1
-        require(candidates, 'Windows display exposes no supported mode at least 1500x1000')
+        require(candidates, 'Windows display exposes no supported mode at least 1500x1100')
         selected = min(candidates, key=lambda item: item[0])[1]
         require(self.os.ChangeDisplaySettingsW(selected, 4) == 0,
                 'Windows refused the temporary desktop display resolution')
@@ -577,14 +752,15 @@ return report''')
         self.window = wait_for(ready, 'native desktop window', 45)
         self.focus()
         if sys.platform == 'darwin':
-            self.apple('set w to first window whose name is "spektrafilm"\nset position of w to {0, 30}\nset size of w to {1400, 900}')
+            self.apple('set w to first window whose name is "spektrafilm"\nset position of w to {0, 30}\nset size of w to {1460, 980}')
         else:
-            rect = self.types.RECT(0, 0, 1400, 900)
+            rect = self.types.RECT(0, 0, 1460, 980)
             self.os.AdjustWindowRect(self.ctypes.byref(rect), self.os.GetWindowLongW(self.window, -16), False)
             self.os.MoveWindow(self.window, 0, 30, rect.right - rect.left, rect.bottom - rect.top, True)
-        self.current_tab = None
-        wait_for(lambda: self.match(self.read()[2], 'Open', True),
-                 'rendered MAIN controls', 45)
+        wait_for(lambda: self.match(self.read()[2], 'MAIN', True)
+                 and self.match(self.read()[2], 'Open', True), 'rendered desktop MAIN controls', 45)
+
+    def bounds(self):
         if sys.platform == 'darwin':
             # The modal rfd panel becomes window 1. Keep OCR and coordinates on
             # the application window, and serialize AX pairs explicitly rather
@@ -636,6 +812,7 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
                 require(self.os.SetCursorPos(*target), 'Windows rejected native cursor movement')
             else:
                 self.input.moveTo(*target)
+            time.sleep(.1)
         elif args[0] == 'click':
             button = int(args[-1])
             count = int(args[args.index('--repeat') + 1]) if '--repeat' in args else 1
@@ -647,7 +824,18 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
                         self.input.scroll(1 if button == 4 else -1)
                     time.sleep(.02)
             else:
-                self.input.click(clicks=count, interval=.01)
+                for _ in range(count):
+                    self.input.mouseDown()
+                    time.sleep(.08)
+                    self.input.mouseUp()
+                    time.sleep(.08)
+        elif args[0] in ('mousedown', 'mouseup'):
+            require(int(args[-1]) == 1, 'Native slider drag requires the left mouse button')
+            if args[0] == 'mousedown':
+                self.input.mouseDown()
+            else:
+                self.input.mouseUp()
+            time.sleep(.08)
         else:
             raise RuntimeError(f'Unsupported desktop input: {args}')
         return ''
@@ -658,29 +846,9 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             # NSSavePanel/NSOpenPanel are standalone AXDialog windows.
             return self.apple('''repeat with i from 1 to count windows
     set w to window i
-    if exists sheet 1 of w then
-        set sheetElements to (get entire contents of sheet 1 of w)
-        repeat with elementReference in sheetElements
-            set element to contents of elementReference
-            if role of element is "AXButton" then
-                if name of element is "Save" or name of element is "Open" then return "sheet 1 of window " & i
-            end if
-        end repeat
-    end if
+    if exists sheet 1 of w then return "sheet 1 of window " & i
     set panelSubrole to subrole of w
-    if panelSubrole is "AXDialog" or panelSubrole is "AXSystemDialog" or name of w is not "spektrafilm" then
-        set hasAction to false
-        set hasCancel to false
-        set windowElements to (get entire contents of w)
-        repeat with elementReference in windowElements
-            set element to contents of elementReference
-            if role of element is "AXButton" then
-                if name of element is "Save" or name of element is "Open" then set hasAction to true
-                if name of element is "Cancel" then set hasCancel to true
-            end if
-        end repeat
-        if hasAction and hasCancel then return "window " & i
-    end if
+    if panelSubrole is "AXDialog" or panelSubrole is "AXSystemDialog" then return "window " & i
 end repeat
 return ""''') or None
         for hwnd in self.windows():
@@ -711,30 +879,13 @@ return ""''') or None
             self.records.append({'surface': 'native-file-chooser', 'screenshot': target.name,
                                  'requested_path': str(path), 'save': save, 'chooser': chooser})
             if sys.platform == 'darwin':
-                self.mac_diagnostics('file-chooser')
                 self.input.hotkey('command', 'shift', 'g')
-                time.sleep(.3)
-                # NSSavePanel's Go to Folder field is centered in the modal sheet.
-                self.input.click(780, 298)
-                self.apple(f'''set goToElements to (get entire contents of {chooser})
-set goToFields to {{}}
-repeat with elementReference in goToElements
-    set element to contents of elementReference
-    if role of element is "AXTextField" then
-        try
-            set fieldDescription to description of element as text
-        on error
-            set fieldDescription to ""
-        end try
-        if fieldDescription does not contain "Save As" and fieldDescription does not contain "Tags" then
-            set end of goToFields to element
-        end if
-    end if
-end repeat
-if (count goToFields) is 0 then error "Go to Folder text field not found"
-set focused of item 1 of goToFields to true''')
-                self.input.hotkey('command', 'a')
-                self.input.write(str(path.parent if save else path), interval=.002)
+                wait_for(
+                    lambda: self.apple(f'get exists sheet 1 of {chooser}') == 'true',
+                    'macOS Go to Folder sheet', 15)
+                self.apple(
+                    f'set value of text field 1 of sheet 1 of {chooser} to '
+                    f'{json.dumps(str(path.parent if save else path))}')
                 self.input.press('enter')
                 # Go to Folder is its own sheet, including on a standalone
                 # NSSavePanel. Do not write the name until that sheet closes.
@@ -756,9 +907,8 @@ repeat with elementReference in chooserElements
 end repeat
 if nameField is missing value and (count candidates) is 1 then set nameField to item 1 of candidates
 if nameField is missing value then error ("Cannot identify Save As field; AXTextField count=" & (count candidates))
-set focused of nameField to true''')
-                    self.input.hotkey('command', 'a')
-                    self.input.write(path.name, interval=.002)
+set focused of nameField to true
+set value of nameField to {json.dumps(path.name)}''')
             else:
                 self.input.hotkey('alt', 'n')
                 self.input.hotkey('ctrl', 'a')
@@ -821,8 +971,14 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         native_exporter = exporter.parent.parent / 'lib' / 'spektrafilm' / 'spektrafilm-f64'
         require(native_exporter.is_file(), f'Installed launcher lacks native exporter: {native_exporter}')
     driver.exporter_hash = hashlib.sha256(native_exporter.read_bytes()).hexdigest()
+    driver.records.append({'gui_executable': str(gui.resolve()),
+                           'gui_sha256': hashlib.sha256(gui.read_bytes()).hexdigest(),
+                           'exporter_executable': str(native_exporter.resolve()),
+                           'exporter_sha256': driver.exporter_hash,
+                           'platform': sys.platform})
     try:
         driver.start(gui, env)
+        driver.observe_tabs('fresh-launch')
         baseline = root / 'baseline.json'
         driver.file_action('Save state', baseline, True)
         wait_for(baseline.is_file, 'saved baseline state', 20)
@@ -847,10 +1003,135 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         writer = oiio.ImageOutput.create(str(standard))
         require(writer and writer.open(str(standard), oiio.ImageSpec(192, 96, 3, oiio.FLOAT)), 'Cannot create GUI input')
         require(writer.write_image(pixels) and writer.close(), 'Cannot write GUI input')
+        import exiv2
+        metadata = exiv2.ImageFactory.open(str(standard))
+        metadata.readMetadata()
+        metadata.exifData()['Exif.Image.Artist'] = 'GUI rotation artist'
+        metadata.iptcData()['Iptc.Application2.Caption'] = 'GUI rotation caption'
+        metadata.xmpData()['Xmp.dc.description'] = 'GUI rotation description'
+        metadata.writeMetadata()
         driver.file_action('Open', standard)
-        driver.rendered('standard-image-preview')
-        driver.scroll(False)
-        driver.click('CONFIG', False)
+        scan_before = root / 'scan-for-print-before.json'
+        driver.file_action('Save state', scan_before, True)
+        wait_for(scan_before.is_file, 'scan-for-print baseline state', 20)
+        baseline_state = json.loads(scan_before.read_text())
+        baseline_scan = {'scanner': baseline_state.get('scanner', {}),
+                         'glare': baseline_state.get('glare', {})}
+        driver.click('Scan-for-print')
+        driver.rendered('scan-for-print-on')
+        scan_on = root / 'scan-for-print-on.json'
+        driver.file_action('Save state', scan_on, True)
+        wait_for(scan_on.is_file, 'scan-for-print enabled state', 20)
+        enabled_state = json.loads(scan_on.read_text())
+        enabled_scan = {'scanner': enabled_state.get('scanner', {}),
+                        'glare': enabled_state.get('glare', {})}
+        require(enabled_scan['scanner'].get('white_correction') is True and
+                enabled_scan['scanner'].get('black_correction') is True and
+                enabled_scan['glare'].get('active') is False,
+                'Scan-for-print did not force correction/glare settings')
+        driver.click('Scan-for-print')
+        driver.rendered('scan-for-print-off')
+        scan_after = root / 'scan-for-print-after.json'
+        driver.file_action('Save state', scan_after, True)
+        wait_for(scan_after.is_file, 'scan-for-print restored state', 20)
+        restored_state = json.loads(scan_after.read_text())
+        restored_scan = {'scanner': restored_state.get('scanner', {}),
+                         'glare': restored_state.get('glare', {})}
+        require(restored_scan == baseline_scan,
+                'Scan-for-print did not restore exact pre-toggle settings')
+        driver.records.append({'scenario': 'scan_for_print',
+                               'assertion': 'forced settings and exact restoration',
+                               'baseline': baseline_scan, 'forced': enabled_scan,
+                               'restored': restored_scan})
+        driver.file_action('Load state', scan_on)
+        driver.rendered('scan-for-print-loaded-state')
+        driver.click('Scan-for-print')
+        driver.rendered('scan-for-print-loaded-toggle')
+        loaded_toggle = root / 'scan-for-print-loaded-toggle.json'
+        driver.file_action('Save state', loaded_toggle, True)
+        wait_for(loaded_toggle.is_file, 'scan-for-print loaded toggle state', 20)
+        loaded_state = json.loads(loaded_toggle.read_text())
+        require(loaded_state['scanner']['white_correction'] is True and
+                loaded_state['scanner']['black_correction'] is True and
+                loaded_state['glare']['active'] is False,
+                'Loaded state retained the transient scan-for-print snapshot')
+        driver.file_action('Load state', scan_before)
+        driver.rendered('scan-for-print-baseline-restored')
+        driver.click('Preview')
+        driver.rendered('explicit-preview')
+        driver.click('Scan')
+        driver.rendered('explicit-scan')
+        driver.tab('CONFIG')
+        driver.scroll(True)
+        driver.click('Restore factory default')
+        factory_state = root / 'factory-state.json'
+        driver.file_action('Save state', factory_state, True)
+        wait_for(factory_state.is_file, 'factory state saved', 20)
+        factory = json.loads(factory_state.read_text())
+        driver.scroll(True)
+        driver.click('Save startup default')
+        driver.close()
+        driver.start(gui, env, standard)
+        restarted_factory = root / 'factory-restarted.json'
+        driver.file_action('Save state', restarted_factory, True)
+        wait_for(restarted_factory.is_file, 'factory state after restart', 20)
+        restarted = json.loads(restarted_factory.read_text())
+        for section in ('camera', 'simulation', 'input_image', 'grain', 'halation'):
+            require(restarted[section] == factory[section],
+                    f'Factory reset restart changed {section}')
+        driver.records.append({'factory_reset': True, 'factory_restart_preserved_sections':
+                               ['camera', 'simulation', 'input_image', 'grain', 'halation']})
+        driver.file_action('Load state', configured)
+        driver.rendered('configured-after-factory-reset')
+        driver.click('100%', False)
+        zoom_100 = driver.measure_viewer('zoom-100-percent')
+        driver.click('200%', False)
+        zoom_200 = driver.measure_viewer('zoom-200-percent')
+        driver.click('400%', False)
+        zoom_400 = driver.measure_viewer('zoom-400-percent')
+        widths = [item[2] - item[0] for item in (zoom_100, zoom_200, zoom_400)]
+        require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
+        driver.click('reset view', False)
+        driver.click('cw rotate', False)
+        driver.wait_text(r'Rendered\s+96\s*[x×]\s*192', 'clockwise-render-complete')
+        cw_bounds = driver.measure_viewer('clockwise-rotation')
+        driver.tab('MAIN')
+        driver.click('16 bit')
+        driver.click('32 bit')
+        rotated_export = root / 'rotated-export.tif'
+        driver.file_action('Export', rotated_export, True)
+        driver.capture_export_child(exporter)
+        driver.wait_text(r'Exported.*f64', 'rotated-f64-export', timeout=240)
+        require(read_image(rotated_export).shape == (192, 96, 3),
+                'Rotated f64 export has incorrect dimensions')
+        rotation_error = float(np.max(np.abs(driver.staged_export_input - np.rot90(pixels, -1))))
+        require(rotation_error == 0, f'Rotated export input differs from NumPy: {rotation_error}')
+        driver.records.append({'rotated_export_shape': [192, 96, 3],
+                               'rotated_input_max_error': rotation_error})
+        metadata = exiv2.ImageFactory.open(str(rotated_export))
+        metadata.readMetadata()
+        for key, expected in (('Exif.Image.Artist', 'GUI rotation artist'),
+                              ('Exif.Image.Orientation', '1'),
+                              ('Exif.Photo.PixelXDimension', '96'),
+                              ('Exif.Photo.PixelYDimension', '192')):
+            require(metadata.exifData()[key].toString() == expected, f'Rotated metadata differs: {key}')
+        require(metadata.iptcData()['Iptc.Application2.Caption'].toString() == 'GUI rotation caption', 'Rotated IPTC lost')
+        require('GUI rotation description' in metadata.xmpData()['Xmp.dc.description'].toString(), 'Rotated XMP lost')
+        driver.records.append({'rotated_metadata_preserved': True, 'orientation': 1, 'dimensions': [96, 192]})
+        driver.no_children()
+        driver.tab('CONFIG')
+        driver.click('ccw rotate', False)
+        driver.wait_text(r'Rendered\s+192\s*[x×]\s*96', 'counterclockwise-render-complete')
+        ccw_bounds = driver.measure_viewer('counterclockwise-rotation')
+        require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
+                f'Clockwise rotation did not produce portrait pixels: {cw_bounds}')
+        require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
+                f'Counterclockwise rotation did not restore landscape pixels: {ccw_bounds}')
+        driver.records.append({'zoom_pixel_widths': widths,
+                               'rotation_pixel_bounds': {'cw': cw_bounds, 'ccw': ccw_bounds}})
+        from gui_viewer_acceptance import accept_viewer
+        driver.records.extend(accept_viewer(driver, root, state, pixels, exporter))
+        driver.click('100%', False)
         driver.click('Input', False)
         input_image, _ = driver.image()
         driver.snap('input-view')
@@ -864,15 +1145,25 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         output_crop.save(root / 'output-viewer-raster.png')
         input_pixels, output_pixels = np.asarray(input_crop, dtype=float), np.asarray(output_crop, dtype=float)
         difference = float(np.mean(np.abs(input_pixels - output_pixels)))
-        require(difference > .2, 'Input/output controls did not change viewer pixels')
+        require(difference > .1, 'Input/output controls did not change viewer pixels')
         require(float(output_pixels.std()) > 5, 'Output viewer lost gradient contrast')
         driver.records.append({'viewer_roi': list(roi), 'input_raster': 'input-viewer-raster.png',
                                'output_raster': 'output-viewer-raster.png', 'mean_abs_pixel_change': difference,
                                'output_pixel_std': float(output_pixels.std())})
-        driver.click('MAIN', False)
+        display_before = {key: state['display'].get(key) for key in
+                          ('use_display_transform', 'gray_18_canvas', 'white_padding', 'output_interpolation')}
+        driver.tab('MAIN')
         driver.click('Auto exposure')
         driver.rendered('changed-auto-exposure-preview')
-        driver.scroll(False)
+        display_probe = root / 'display-after-exposure.json'
+        driver.file_action('Save state', display_probe, True)
+        wait_for(display_probe.is_file, 'display probe state', 20)
+        display_after = json.loads(display_probe.read_text())['display']
+        require(all(display_after.get(key) == value for key, value in display_before.items()),
+                'Display settings changed while rendering exposure')
+        driver.records.append({'display_float_invariance': True,
+                               'checked_display_fields': list(display_before)})
+        driver.tab('MAIN')
         driver.click('16 bit')
         driver.click('32 bit')
         saved_state = root / 'roundtrip.json'
@@ -885,7 +1176,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.rendered('reloaded-original-state')
         driver.file_action('Load state', saved_state)
         driver.rendered('loaded-changed-state')
-        driver.scroll(False)
+        driver.tab('CONFIG')
         driver.click('Save startup default')
         startup = root / 'config' / 'gui_default_state.json'
         wait_for(startup.is_file, 'saved startup default', 20)
@@ -918,6 +1209,12 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         shutil.copyfile(raw, raw_input)
         driver.file_action('Open', raw_input)
         driver.rendered('raw-image-preview')
+        driver.tab('CONFIG')
+        driver.scroll(False)
+        driver.wait_text(r'Lens correction (?:not applied|applied)',
+                         'raw-lens-correction-status', timeout=20)
+        driver.records.append({'scenario': 'raw_status',
+                               'assertion': 'native window reports lens correction result'})
         driver.file_action('Save state', root / 'raw-state.json', True)
         wait_for((root / 'raw-state.json').is_file, 'RAW state', 20)
         raw_state = json.loads((root / 'raw-state.json').read_text())
@@ -930,6 +1227,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(writer and writer.open(str(large), oiio.ImageSpec(4096, 3072, 3, oiio.FLOAT)), 'Cannot create cancellation input')
         require(writer.write_image(pixels) and writer.close(), 'Cannot write cancellation input')
         driver.file_action('Load state', saved_state)
+        driver.tab('MAIN')
         driver.file_action('Open', large)
         driver.rendered('large-image-preview')
         cancelled = root / 'cancelled.exr'

@@ -12,6 +12,13 @@ const COLOR_SPACES: &[&str] = &[
     "ProPhoto RGB", "ACES2065-1",
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalibrationAction {
+    DetectBase,
+    BlindCalibration,
+    NeutralizeFilters,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ChangeFlags {
     /// A simulation input changed. Invalidate the applicable pipeline cache.
@@ -22,6 +29,8 @@ pub struct ChangeFlags {
     pub raw_reload: bool,
     /// The preview-size Update button was pressed, independently of auto-preview.
     pub preview_requested: bool,
+    /// A real controller action was requested from the Convert panel.
+    pub action: Option<CalibrationAction>,
 }
 
 /// Draw only the controls missing from the existing main.rs panels.
@@ -41,6 +50,92 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value, tab: &s
         });
         }
         if tab == "ADVANCED" {
+        ui.collapsing("Workflow", |ui| {
+            flags.runtime_changed |= choice(
+                ui,
+                "Route",
+                &mut params.workflow.route,
+                &[
+                    "input",
+                    "input > film > scan",
+                    "input > film > print > scan",
+                    "input > convert-film > print > scan",
+                    "input > convert-film > scan-minus-base",
+                    "input > convert-film > scan",
+                ],
+            );
+        });
+        ui.collapsing("Film base", |ui| {
+            let base = &mut params.film_render.base;
+            flags.runtime_changed |= ui.checkbox(&mut base.active, "Active").changed();
+            flags.runtime_changed |= number(ui, "Scale", &mut base.scale, 0.0, f64::INFINITY, 0.01);
+            flags.runtime_changed |= number(ui, "Spectral tilt", &mut base.tilt, -2.0, 2.0, 0.01);
+            let mut channels = [base.cyan, base.magenta, base.yellow];
+            flags.runtime_changed |= tuple(
+                ui,
+                "Cyan / magenta / yellow",
+                &mut channels,
+                0.0,
+                f64::INFINITY,
+                0.01,
+            );
+            [base.cyan, base.magenta, base.yellow] = channels;
+        });
+        ui.collapsing("Print base", |ui| {
+            let base = &mut params.print_render.base;
+            flags.runtime_changed |= ui.checkbox(&mut base.active, "Active").changed();
+            flags.runtime_changed |= number(ui, "Scale", &mut base.scale, 0.0, f64::INFINITY, 0.01);
+            let mut channels = [base.cyan, base.magenta, base.yellow];
+            flags.runtime_changed |= tuple(
+                ui,
+                "Cyan / magenta / yellow",
+                &mut channels,
+                0.0,
+                f64::INFINITY,
+                0.01,
+            );
+            [base.cyan, base.magenta, base.yellow] = channels;
+        });
+        ui.collapsing("Convert film", |ui| {
+            let convert = &mut params.film_render.convert;
+            flags.runtime_changed |= choice(
+                ui,
+                "Scan illuminant",
+                &mut convert.scan_illuminant,
+                &["D50", "D55", "D65", "A", "BB3200", "BB5000", "T", "K75P", "E"],
+            );
+            flags.runtime_changed |= number(
+                ui,
+                "Exposure compensation (EV)",
+                &mut convert.exposure_compensation_ev,
+                -8.0,
+                8.0,
+                0.05,
+            );
+            flags.runtime_changed |= number(
+                ui,
+                "Base percentile",
+                &mut convert.base_percentile,
+                0.0,
+                100.0,
+                0.1,
+            );
+            ui.horizontal(|ui| {
+                ui.label("Calibration (row-major)");
+                flags.runtime_changed |= ui.text_edit_singleline(&mut convert.calibration).changed();
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Detect base").clicked() {
+                    flags.action = Some(CalibrationAction::DetectBase);
+                }
+                if ui.button("Blind calibration").clicked() {
+                    flags.action = Some(CalibrationAction::BlindCalibration);
+                }
+                if ui.button("Neutralize print filters").clicked() {
+                    flags.action = Some(CalibrationAction::NeutralizeFilters);
+                }
+            });
+        });
         ui.collapsing("Spectral adaptation", |ui| {
             flags.runtime_changed |= ui.checkbox(&mut params.settings.apply_hanatos2025_adaptation_window, "Hanatos2025 adaptation window").changed();
             flags.runtime_changed |= ui.checkbox(&mut params.settings.apply_hanatos2025_adaptation_surface, "Hanatos2025 adaptation surface").changed();

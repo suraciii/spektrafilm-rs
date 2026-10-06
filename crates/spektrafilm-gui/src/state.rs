@@ -96,8 +96,8 @@ impl GuiState {
         merge(&mut runtime["enlarger"]["diffusion_filter"],&s["enlarger_diffusion"]);
         copy_fields(&mut runtime["enlarger"],&s["preflashing"], &["preflash_exposure","preflash_y_filter_shift","preflash_m_filter_shift"]);
         for (from,to) in [("print_illuminant","illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("print_y_filter_shift","y_filter_shift"),("print_m_filter_shift","m_filter_shift")] { runtime["enlarger"][to] = s["simulation"][from].clone(); }
+        runtime["workflow"]["route"] = s["simulation"]["workflow"]["route"].clone();
         copy_fields(&mut runtime["io"],&s["simulation"], &["output_color_space","scan_film"]);
-        runtime["io"]["output_cctf_encoding"] = s["rust"]["runtime"]["io"].get("output_cctf_encoding").cloned().unwrap_or_else(||json!(true));
         runtime["film_render"]["density_curve_gamma"] = s["special"]["film_gamma_factor"].clone();
         runtime["settings"]["preview_max_size"] = s["display"]["preview_max_size"].clone();
         for (key,value) in [("use_enlarger_lut",json!(true)),("use_scanner_lut",json!(true)),("lut_resolution",json!(17)),("use_fast_stats",json!(true))] { runtime["settings"][key] = value; }
@@ -137,6 +137,7 @@ impl GuiState {
         for section in ["input_gamut_compress","output_gamut_compress"] { merge(&mut s[section], &runtime["io"][section]); }
         s["simulation"]["film_stock"] = json!(film); s["simulation"]["print_paper"] = json!(paper);
         for (from,to) in [("illuminant","print_illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("y_filter_shift","print_y_filter_shift"),("m_filter_shift","print_m_filter_shift")] { s["simulation"][to]=runtime["enlarger"][from].clone(); }
+        s["simulation"]["workflow"]["route"] = runtime["workflow"]["route"].clone();
         copy_fields(&mut s["simulation"],&runtime["io"], &["output_color_space","scan_film"]);
         s["special"]["film_gamma_factor"] = runtime["film_render"]["density_curve_gamma"].clone();
         s["display"]["preview_max_size"] = runtime["settings"]["preview_max_size"].clone();

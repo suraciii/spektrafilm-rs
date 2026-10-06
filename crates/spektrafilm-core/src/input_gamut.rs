@@ -245,18 +245,18 @@ pub struct InputGamutCompress {
 }
 
 impl InputGamutCompress {
-    /// Resolve from the params. `active = false` disables compression (the
-    /// remap passes the LUT through unchanged). Any algorithm other than
-    /// `"xy"`/`"oklch"`, or an invalid knee, errors — mirroring upstream
-    /// `InputGamutCompressSpec.__post_init__` (unsupported values fail
-    /// before any artifact is produced).
+    /// `active = false` disables compression (the remap passes the LUT through unchanged).
+    /// `"off"` is accepted only for an inactive spec; unknown algorithms and invalid
+    /// knees error before any artifact is produced.
     pub fn build(params: &InputGamutCompressParams) -> Result<Self, String> {
+        let inactive = params.algorithm == "off";
         let algorithm = match params.algorithm.as_str() {
             "xy" => Algorithm::Xy,
             "oklch" => Algorithm::Oklch,
+            "off" if !params.active => Algorithm::Xy,
             other => {
                 return Err(format!(
-                    "input gamut compression algorithm must be 'xy' or 'oklch', got {other:?}"
+                    "input gamut compression algorithm must be 'xy', 'oklch', or inactive 'off', got {other:?}"
                 ))
             }
         };
@@ -273,12 +273,13 @@ impl InputGamutCompress {
             return Err(format!("input gamut compression knee power must be > 0, got {p}"));
         }
         let locus = spectral_locus_xy();
-        let c_max = match (params.active, algorithm) {
+        let active = params.active && !inactive;
+        let c_max = match (active, algorithm) {
             (true, Algorithm::Oklch) => OKLCH_CMAX.clone(),
             _ => Arc::new(Vec::new()),
         };
         Ok(Self {
-            active: params.active,
+            active,
             algorithm,
             knee: (t as f64, l as f64, p as f64),
             locus,

@@ -3,6 +3,7 @@
 //! Transport encodings belong to this module; runtime stages receive linear RGB
 //! or physical tap values. Format writers alone reorder lattice vertices.
 use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::Path;
 
@@ -46,12 +47,6 @@ impl Topology {
     }
 }
 
-/// `auto` resolves native log/HDR headroom or four stops for encoded SDR;
-/// `Native(())` preserves the transport's native linear scale.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Headroom { Auto(String), Stops(f64), Native(()) }
-impl Default for Headroom { fn default() -> Self { Self::Auto("auto".into()) } }
 fn resolution_default() -> usize { 33 }
 fn container_default() -> String { "directory".into() }
 
@@ -71,9 +66,24 @@ pub struct BundleSpec {
     #[serde(default)] pub qa_print_index: Option<usize>,
     #[serde(default)] pub input_gamut_compress: InputGamutCompressParams,
     #[serde(default, deserialize_with = "deserialize_output_gamut")] pub output_gamut_compress: OutputGamutCompressParams,
-    #[serde(default)] pub stops_above_midgray: Headroom,
+    /// Effective upstream exposure stops; omitted/`"auto"` resolves from input.
+    #[serde(default, deserialize_with = "deserialize_stops")] pub stops_above_midgray: Option<f64>,
+    /// True only for explicit `native`/`null`; numeric zero remains a real stop value.
+    #[serde(skip)] native_input_gain: bool,
+    /// Legacy deliberate exposure adjustment, retained for compatibility.
+    #[serde(default)] pub exposure_ev: f64,
     #[serde(default)] pub ocio_config: bool,
     #[serde(default)] pub include_combinations: bool,
+}
+fn deserialize_stops<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    #[derive(Deserialize)] #[serde(untagged)] enum Value { Number(f64), Text(String), Null(()) }
+    match Value::deserialize(d)? {
+        Value::Number(value) => Ok(Some(value)),
+        Value::Text(value) if value == "auto" => Ok(None),
+        Value::Text(value) if value == "native" => Ok(Some(f64::NAN)),
+        Value::Text(value) => Err(serde::de::Error::custom(format!("invalid stops_above_midgray {value:?}"))),
+        Value::Null(()) => Ok(Some(f64::NAN)),
+    }
 }
 fn deserialize_output_gamut<'de, D: serde::Deserializer<'de>>(d: D) -> Result<OutputGamutCompressParams, D::Error> {
     #[derive(Deserialize)] #[serde(untagged)] enum Value { Name(String), Spec(OutputGamutCompressParams) }
@@ -91,6 +101,17 @@ impl BundleSpec {
         if !output.output { return Err(format!("{} is not registered as an output color space", output.name)); }
         self.input_color_space = input.name.into();
         self.output_color_space = output.name.into();
+        let requested_native = self.native_input_gain
+            || self.stops_above_midgray.is_some_and(|value| value.is_nan());
+        let mut stops = if requested_native {
+            0.0
+        } else {
+            self.stops_above_midgray.unwrap_or_else(|| input.auto_stops_above_midgray())
+        };
+        if self.exposure_ev != 0.0 { stops += self.exposure_ev; }
+        if !stops.is_finite() { return Err("stops_above_midgray must be finite".into()); }
+        self.native_input_gain = requested_native && self.exposure_ev == 0.0;
+        self.stops_above_midgray = Some(stops);
         if self.print_profiles.is_empty() { return Err("print_profiles must contain at least one entry".into()); }
         if self.resolution < 2 { return Err("resolution must be >= 2".into()); }
         let count = self.resolution.checked_pow(3).and_then(|v| v.checked_mul(3));
@@ -99,20 +120,24 @@ impl BundleSpec {
         }
         if self.container != "directory" && self.container != "zip" { return Err("container must be directory or zip".into()); }
         if self.qa_print_index.is_some_and(|i| i >= self.print_profiles.len()) { return Err("qa_print_index is outside print_profiles".into()); }
-        self.stops_above_midgray = match &self.stops_above_midgray {
-            Headroom::Auto(s) if s == "auto" => Headroom::Stops(input.native_stops()),
-            Headroom::Auto(s) => return Err(format!("stops_above_midgray must be a number, null, or auto; got {s:?}")),
-            Headroom::Stops(n) if !n.is_finite() => return Err("stops_above_midgray must be finite".into()),
-            other => other.clone(),
-        };
+        if !self.exposure_ev.is_finite() {
+            return Err("exposure_ev must be finite".into());
+        }
         if self.name.is_empty() {
             let print = if self.print_profiles.len() == 1 { normalize_stock(&self.print_profiles[0]) } else { format!("{}printpack", self.print_profiles.len()) };
             self.name = format!("spektrafilm_v034_{}_{}_{}_{}_{}", normalize_stock(&self.film_profile), print, self.topology.name(), input.short_tag, output.short_tag);
         }
         Ok(())
     }
-    pub fn stops(&self) -> Option<f64> {
-        match self.stops_above_midgray { Headroom::Stops(n) => Some(n), _ => None }
+    pub(crate) fn uses_native_input_gain(&self) -> bool {
+        self.native_input_gain
+    }
+}
+fn effective_input_gain(spec: &BundleSpec, input: &ColorSpaceEntry) -> f64 {
+    if spec.native_input_gain {
+        input.native_input_gain()
+    } else {
+        input.input_gain_for_stops(spec.stops_above_midgray.expect("normalized BundleSpec"))
     }
 }
 
@@ -199,7 +224,11 @@ pub struct ColorSpaceMeta { pub name: String, pub cctf: bool }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StocksMeta { pub film: String, pub prints: Vec<String> }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputExposureMeta { pub stops_above_midgray: f64, pub gain: f64 }
+pub struct InputExposureMeta {
+    pub stops_above_midgray: f64,
+    pub exposure_ev: f64,
+    pub gain: f64,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundleMeta {
     pub schema_version: u32,
@@ -214,15 +243,30 @@ pub struct BundleMeta {
     pub luts: Vec<LutFileMeta>,
     pub input_exposure: Option<InputExposureMeta>,
     pub params_snapshot: BTreeMap<String, serde_json::Value>,
+    /// SHA-256 of each complete serialized snapshot, including digest disclosure.
+    #[serde(default)]
+    pub params_digest: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bundle { pub spec: BundleSpec, pub luts: Vec<(String, Lut)>, pub meta: BundleMeta }
+pub struct Bundle {
+    pub spec: BundleSpec,
+    pub luts: Vec<(String, Lut)>,
+    pub meta: BundleMeta,
+    #[serde(default)]
+    pub baked_params: BTreeMap<String, RuntimeParams>,
+}
 
-pub struct BundleBuilder { pub spec: BundleSpec }
+pub struct BundleBuilder {
+    pub spec: BundleSpec,
+    base_params: Option<RuntimeParams>,
+}
 impl BundleBuilder {
-    pub fn new(spec: BundleSpec) -> Self { Self { spec } }
+    pub fn new(spec: BundleSpec) -> Self { Self { spec, base_params: None } }
+    pub fn with_params(spec: BundleSpec, params: RuntimeParams) -> Self {
+        Self { spec, base_params: Some(params) }
+    }
     /// Construct once per print and evaluate each lattice as one ImageBuf.
     /// No spatial effects or stochastic grain; non-spatial DIR remains active.
     pub fn build(&self, data_dir: &Path, backend: &dyn ComputeBackend) -> Result<Bundle, String> {
@@ -230,10 +274,13 @@ impl BundleBuilder {
         spec.normalize()?;
         let input = lut_transport::resolve(&spec.input_color_space)?;
         let output = lut_transport::resolve(&spec.output_color_space)?;
-        let neutral = NeutralFilters::load(data_dir);
-        let first = make_pipeline(&spec, &spec.print_profiles[0], input, output, data_dir, &neutral)?;
+        let neutral = NeutralFilters::load(data_dir)?;
+        let first = make_pipeline(&spec, &spec.print_profiles[0], input, output, data_dir, &neutral, self.base_params.as_ref())?;
         let wires = measure_wires(&first, &spec, input, backend)?;
         let mut luts = Vec::new();
+        let mut baked_params = BTreeMap::new();
+        let mut snapshots = BTreeMap::new();
+        let mut digests = BTreeMap::new();
         let mut metas = Vec::new();
         let recipes = recipes(spec.topology, spec.include_combinations);
         for recipe in recipes.iter().filter(|r| r.shared) {
@@ -242,26 +289,19 @@ impl BundleBuilder {
         }
         for (i, print) in spec.print_profiles.iter().enumerate() {
             let extra;
-            let pipeline = if i == 0 { &first } else { extra = make_pipeline(&spec, print, input, output, data_dir, &neutral)?; &extra };
+            let pipeline = if i == 0 { &first } else { extra = make_pipeline(&spec, print, input, output, data_dir, &neutral, self.base_params.as_ref())?; &extra };
+            let snapshot = bake_snapshot(&spec, print, pipeline, input, output, data_dir, &neutral, self.base_params.as_ref())?;
+            let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&snapshot).map_err(|e| e.to_string())?));
+            snapshots.insert(print.clone(), snapshot);
+            digests.insert(print.clone(), digest);
+            baked_params.insert(print.clone(), pipeline.params.clone());
             for recipe in recipes.iter().filter(|r| !r.shared) {
                 let (path,lut,meta) = bake_recipe(recipe, Some(print), pipeline, &spec, &wires, input, output, backend)?;
                 luts.push((path,lut)); metas.push(meta);
             }
         }
-        let gain = input.input_gain(spec.stops());
-        let mut snapshots = BTreeMap::new();
-        for print in &spec.print_profiles {
-            snapshots.insert(print.clone(), serde_json::json!({
-                "film_profile":spec.film_profile,"print_profile":print,
-                "input_color_space":input.primaries,"output_color_space":output.primaries,
-                "input_cctf":input.cctf,"output_cctf":output.cctf,
-                "input_cctf_decoding":false,"output_cctf_encoding":false,"lut_mode":true,
-                "input_gamut_compress":spec.input_gamut_compress,"output_gamut_compress":spec.output_gamut_compress,
-                "stops_above_midgray":spec.stops(),"input_exposure_gain":gain,"resolution":spec.resolution,"topology":spec.topology
-            }));
-        }
         let meta = BundleMeta {
-            schema_version:1,name:spec.name.clone(),topology:spec.topology,resolution:spec.resolution,target:spec.target.clone(),
+            schema_version:3,name:spec.name.clone(),topology:spec.topology,resolution:spec.resolution,target:spec.target.clone(),
             provenance:BTreeMap::from([
                 ("spektrafilm_version".into(),"0.3.4".into()), ("lut_creator_version".into(),"0.3.4".into()),
                 ("reference_commit".into(),REFERENCE_COMMIT.into()),
@@ -271,33 +311,77 @@ impl BundleBuilder {
             ]),
             stocks:StocksMeta {film:spec.film_profile.clone(),prints:spec.print_profiles.clone()},
             color_spaces:BTreeMap::from([("input".into(),ColorSpaceMeta{name:input.name.into(),cctf:input.cctf.is_some()}),("output".into(),ColorSpaceMeta{name:output.name.into(),cctf:output.cctf.is_some()})]),
-            wires,luts:metas,input_exposure:spec.stops().map(|stops| InputExposureMeta{stops_above_midgray:stops,gain}),params_snapshot:snapshots,
+            wires,luts:metas,input_exposure:Some(InputExposureMeta{stops_above_midgray:spec.stops_above_midgray.unwrap(),exposure_ev:spec.exposure_ev,gain:effective_input_gain(&spec,input)}),params_snapshot:snapshots,params_digest:digests,
             artifacts: Vec::new(),
         };
-        Ok(Bundle{spec,luts,meta})
+        Ok(Bundle{spec,luts,meta,baked_params})
     }
 }
 
-fn make_pipeline(spec: &BundleSpec, print_stock: &str, input: &ColorSpaceEntry, output: &ColorSpaceEntry, data_dir: &Path, neutral: &NeutralFilters) -> Result<Pipeline,String> {
+fn make_pipeline(spec: &BundleSpec, print_stock: &str, input: &ColorSpaceEntry, output: &ColorSpaceEntry, data_dir: &Path, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>) -> Result<Pipeline,String> {
     let film = profile::load_profile_by_name(data_dir,&spec.film_profile).map_err(|e| e.to_string())?;
     let print = profile::load_profile_by_name(data_dir,print_stock).map_err(|e| e.to_string())?;
-    let mut params = RuntimeParams::default();
-    params.debug.lut_mode = true;
+    let params = bake_params(spec, input, output, &film, &print, neutral, base_params, true)?;
+    Pipeline::new_with_spectral(film,print,params,data_dir)
+}
+
+pub(crate) fn bake_params(spec: &BundleSpec, input: &ColorSpaceEntry, output: &ColorSpaceEntry, film: &profile::Profile, print: &profile::Profile, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>, lut_mode: bool) -> Result<RuntimeParams, String> {
+    let mut params = base_params.cloned().unwrap_or_default();
+    if base_params.is_none() {
+        params.io.input_gamut_compress = spec.input_gamut_compress.clone();
+        params.io.output_gamut_compress = spec.output_gamut_compress.clone();
+    }
+    params.debug.lut_mode = lut_mode;
     params.io.input_color_space = input.primaries.into();
     params.io.output_color_space = output.primaries.into();
     params.io.input_cctf_decoding = false;
     params.io.output_cctf_encoding = false;
-    params.io.input_gamut_compress = spec.input_gamut_compress.clone();
-    params.io.output_gamut_compress = spec.output_gamut_compress.clone();
+    params.io.scan_film = false;
+    params.workflow.route = "input > film > print > scan".into();
+    params.taps.inject = None;
+    params.taps.collect = None;
+    params.settings.preview_mode = false;
+    if params.io.input_gamut_compress.algorithm == "off" {
+        params.io.input_gamut_compress.active = false;
+    }
     params.validate()?;
-    let params = digest_params(params,&film,&print,Some(neutral),true);
-    Pipeline::new_with_spectral(film,print,params,data_dir)
+    Ok(digest_params(params, film, print, Some(neutral), true))
+}
+
+fn bake_snapshot(spec: &BundleSpec, print_stock: &str, pipeline: &Pipeline, input: &ColorSpaceEntry, output: &ColorSpaceEntry, data_dir: &Path, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>) -> Result<serde_json::Value, String> {
+    let film = profile::load_profile_by_name(data_dir, &spec.film_profile).map_err(|e| e.to_string())?;
+    let print = profile::load_profile_by_name(data_dir, print_stock).map_err(|e| e.to_string())?;
+    let reference = bake_params(spec, input, output, &film, &print, neutral, base_params, false)?;
+    let before = serde_json::to_value(reference).map_err(|e| e.to_string())?;
+    let mut snapshot = serde_json::to_value(&pipeline.params).map_err(|e| e.to_string())?;
+    let mut changes = BTreeMap::new();
+    collect_digest_changes("", &before, &snapshot, &mut changes);
+    snapshot["film"] = serde_json::json!({"stock":film.info.stock,"version":film.metadata.version});
+    snapshot["print"] = serde_json::json!({"stock":print.info.stock,"version":print.metadata.version});
+    snapshot["digest_changes"] = serde_json::to_value(changes).map_err(|e| e.to_string())?;
+    snapshot["stops_above_midgray"] = serde_json::json!(spec.stops_above_midgray);
+    snapshot["exposure_ev"] = serde_json::json!(spec.exposure_ev);
+    snapshot["input_gain"] = serde_json::json!(effective_input_gain(spec, input));
+    Ok(snapshot)
+}
+
+fn collect_digest_changes(path: &str, before: &serde_json::Value, after: &serde_json::Value, changes: &mut BTreeMap<String, serde_json::Value>) {
+    if let (Some(before), Some(after)) = (before.as_object(), after.as_object()) {
+        for (key, value) in before {
+            if let Some(next) = after.get(key) {
+                let child = if path.is_empty() { key.clone() } else { format!("{path}.{key}") };
+                collect_digest_changes(&child, value, next, changes);
+            }
+        }
+    } else if before != after {
+        changes.insert(path.into(), serde_json::json!({"from":before,"to":after}));
+    }
 }
 
 /// Uniform code cube packed `[r][g][b]` into a (n*n)-wide, n-high image.
 fn lattice_image(n: usize, inject: Tap, spec: &BundleSpec, wires: &BoundaryWires, input: &ColorSpaceEntry) -> Result<ImageBuf,String> {
     let mut data = Vec::with_capacity(n*n*n*3);
-    let gain = input.input_gain(spec.stops());
+    let gain = effective_input_gain(spec, input);
     for r in 0..n { for g in 0..n { for b in 0..n {
         let code = [r,g,b].map(|i| i as f64/(n-1) as f64);
         let physical = if inject == Tap::RgbIn { input.decode_rgb(code).map(|v|v*gain) } else { wires.decode(inject,code)? };
@@ -389,6 +473,38 @@ mod tests {
     }
 
     #[test]
+    fn stops_above_midgray_accepts_auto_native_and_explicit_values() {
+        let mut auto = spec("srgb", "srgb");
+        auto.normalize().unwrap();
+        assert_eq!(auto.stops_above_midgray, Some(4.0));
+
+        let mut native: BundleSpec = serde_json::from_value(serde_json::json!({
+            "film_profile":"kodak_portra_400", "print_profiles":["kodak_portra_endura"],
+            "input_color_space":"srgb", "output_color_space":"srgb",
+            "stops_above_midgray":null
+        })).unwrap();
+        native.normalize().unwrap();
+        assert_eq!(native.stops_above_midgray, Some(0.0));
+        assert!(native.uses_native_input_gain());
+
+        let mut explicit: BundleSpec = serde_json::from_value(serde_json::json!({
+            "film_profile":"kodak_portra_400", "print_profiles":["kodak_portra_endura"],
+            "input_color_space":"srgb", "output_color_space":"srgb",
+            "stops_above_midgray":2.5
+        })).unwrap();
+        explicit.normalize().unwrap();
+        assert_eq!(explicit.stops_above_midgray, Some(2.5));
+        assert!(!explicit.uses_native_input_gain());
+        let mut numeric_zero = spec("srgb", "srgb");
+        numeric_zero.stops_above_midgray = Some(0.0);
+        numeric_zero.normalize().unwrap();
+        assert!(!numeric_zero.uses_native_input_gain());
+        assert!((effective_input_gain(&numeric_zero, lut_transport::resolve("srgb").unwrap()) - 0.18).abs() < 1e-12);
+        let input = lut_transport::resolve("srgb").unwrap();
+        assert!((input.input_gain_for_stops(2.5) - 0.18 * 2.5f64.exp2()).abs() < 1e-12);
+    }
+
+    #[test]
     fn inactive_roles_fail_before_baking_and_slug_roles_match() {
         assert!(spec("ACEScg", "srgb").normalize().unwrap_err().contains("input color space"));
         assert!(spec("srgb", "vlog").normalize().unwrap_err().contains("output color space"));
@@ -397,12 +513,58 @@ mod tests {
         assert_eq!(s.input_color_space,"Panasonic V-Log");
         assert_eq!(s.output_color_space,"Rec.2100 PQ");
         let input = lut_transport::resolve(&s.input_color_space).unwrap();
-        assert!((input.input_gain(s.stops())-1.0).abs()<1e-12);
+        assert!((input.input_gain(s.exposure_ev)-1.0).abs()<1e-12);
         assert_eq!(lut_transport::resolve("rec2100pq").unwrap().output_gain(),100.0/0.18);
         let mut sdr = spec("srgb", "srgb");
         sdr.normalize().unwrap();
-        assert_eq!(sdr.stops(),Some(4.0));
-        assert!((lut_transport::resolve("srgb").unwrap().input_gain(sdr.stops())-2.88).abs()<1e-12);
+        assert_eq!(sdr.exposure_ev,0.0);
+        assert_eq!(lut_transport::resolve("srgb").unwrap().input_gain(sdr.exposure_ev),1.0);
+    }
+
+    #[test]
+    fn input_exposure_preserves_native_midgray_and_applies_deliberate_ev() {
+        for name in ["srgb", "vlog", "acescct", "rec2100pq", "rec2100hlg"] {
+            let input = lut_transport::resolve(name).unwrap();
+            for ev in [-2.0_f64, 0.0, 1.0] {
+                let got = input.midgray_linear * input.input_gain(ev);
+                assert!((got - 0.18 * ev.exp2()).abs() < 1e-14, "{name} at {ev} EV: {got}");
+            }
+        }
+    }
+
+    #[test]
+    fn params_first_bake_preserves_look_and_discloses_neutralized_trims() {
+        let film: profile::Profile = serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
+        let print = film.clone();
+        let neutral = NeutralFilters::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let s = spec("srgb", "srgb");
+        let input = lut_transport::resolve("srgb").unwrap();
+        let mut base = RuntimeParams::default();
+        base.io.input_gamut_compress.algorithm = "off".into();
+        base.io.output_gamut_compress.algorithm = "off".into();
+        base.workflow.route = "input".into();
+        base.io.scan_film = true;
+        base.settings.preview_mode = true;
+        base.taps.collect = Some("cmy_film".into());
+        base.enlarger.y_filter_shift = 12.0;
+        base.camera.exposure_compensation_ev = 1.5;
+        base.io.crop = true;
+        base.film_render.density_curve_gamma = 1.3;
+        let baked = bake_params(&s,input,input,&film,&print,&neutral,Some(&base),true).unwrap();
+        let reference = bake_params(&s,input,input,&film,&print,&neutral,Some(&base),false).unwrap();
+        assert_eq!(baked.io.input_gamut_compress.algorithm,"off");
+        assert_eq!(baked.io.output_gamut_compress.algorithm,"off");
+        assert_eq!(baked.film_render.density_curve_gamma,1.3);
+        assert_eq!(baked.workflow.route,"input > film > print > scan");
+        assert!(!baked.io.scan_film);
+        assert!(!baked.settings.preview_mode);
+        assert!(baked.taps.collect.is_none());
+        let mut changes = BTreeMap::new();
+        collect_digest_changes("",&serde_json::to_value(reference).unwrap(),&serde_json::to_value(baked).unwrap(),&mut changes);
+        assert_eq!(changes["enlarger.y_filter_shift"],serde_json::json!({"from":12.0,"to":0.0}));
+        assert_eq!(changes["camera.exposure_compensation_ev"],serde_json::json!({"from":1.5,"to":0.0}));
+        assert_eq!(changes["io.crop"],serde_json::json!({"from":true,"to":false}));
+        assert_eq!(base.enlarger.y_filter_shift,12.0);
     }
 
     #[test]

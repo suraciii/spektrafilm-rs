@@ -25,6 +25,13 @@ mod display;
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
 const IN_FLIGHT_REPAINT: Duration = Duration::from_millis(16);
+const IMAGE_FILE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "tif", "tiff", "exr",
+    // Keep this list in lockstep with image_io::is_raw.
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef",
+    "srw", "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef", "kdc", "ari", "bay", "dcr",
+    "drf", "erf", "fff", "k25", "mos", "ptx",
+];
 
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt()
@@ -240,8 +247,15 @@ struct App {
     gui_state: state::GuiState,
     force_preview: bool,
     full_scan_requested: bool,
+    /// Original correction switches captured while Scan-for-print is active.
+    /// This transient workflow state is deliberately excluded from persistence.
+    scan_for_print_snapshot: Option<(bool, bool, bool)>,
     image_path: Option<PathBuf>,
     image: Option<Arc<ImageBuf>>,
+    raw_lens_info: Option<String>,
+    /// Number of quarter turns applied to the in-memory input relative to the
+    /// file on disk. Export uses the rotated buffer when this is non-zero.
+    input_rotation: i32,
     source_metadata: Option<ImageMetadata>,
     save_depth: BitDepth,
     /// Last rendered pipeline output (post sRGB encode + clip). Retained
@@ -288,7 +302,12 @@ struct App {
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
     export_job: Option<ExportJob>,
+    /// In-flight Convert controller action. The epoch drops results made stale
+    /// by later parameter edits or a newer action.
+    calibration_job: Option<CalibrationJob>,
+    calibration_epoch: u64,
 }
+
 
 /// One in-flight preview render. The worker owns a Pipeline + the
 /// ImageBuf clone and, when it finishes, sends back the output buffer
@@ -324,6 +343,21 @@ struct ExportJob {
     handle: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
     started_at: Instant,
+}
+
+enum CalibrationResult {
+    Base {
+        params: spektrafilm_core::params::FilmBaseParams,
+        exposure_ev: f64,
+    },
+    BlindCalibration(String),
+    NeutralizeFilters { m_shift: f32, y_shift: f32 },
+}
+
+struct CalibrationJob {
+    epoch: u64,
+    rx: mpsc::Receiver<Result<CalibrationResult, String>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl App {
@@ -367,8 +401,11 @@ impl App {
             gui_state,
             force_preview: false,
             full_scan_requested: false,
+            scan_for_print_snapshot: None,
             image_path: None,
+            input_rotation: 0,
             image: None,
+            raw_lens_info: None,
             source_metadata: None,
             save_depth,
             output_image: None,
@@ -392,6 +429,8 @@ impl App {
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,
             export_job: None,
+            calibration_job: None,
+            calibration_epoch: 0,
         };
         app.viewer.settings = display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
         if let Some(p) = initial_image {
@@ -417,12 +456,15 @@ impl App {
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
         self.film_name = state.film().to_owned();
         self.print_name = state.paper().to_owned();
+        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
         self.params = params;
         self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
         self.gui_state = state;
+        self.scan_for_print_snapshot = None;
+        self.raw_lens_info = None;
         self.pipeline_cache_key = None;
         self.pipeline_cache = None;
         self.dirty = true;
@@ -434,13 +476,13 @@ impl App {
 
     fn refresh_viewing_artifacts(&mut self) {
         if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding) {
+            match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
                 Ok(raster) => self.viewer.replace_input_display(raster),
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
         }
         if let Some(output) = self.output_image.as_ref() {
-            match display::output_display_raster(output,&self.output_color_space,self.output_cctf_encoding,self.viewer.settings.use_display_transform,self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new)) {
+            match display::output_display_raster(output,&self.output_color_space,self.output_cctf_encoding,self.viewer.settings.use_display_transform,self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new),self.params.settings.preview_max_size as usize) {
                 Ok((raster,status)) => { self.viewer.replace_output_display(raster); self.viewer.transform_status=status; }
                 Err(e) => self.status = format!("Viewer display error: {e}"),
             }
@@ -474,8 +516,33 @@ impl App {
         });
     }
 
+    fn toggle_scan_for_print(&mut self) {
+        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
+            self.params.scanner.white_correction = white;
+            self.params.scanner.black_correction = black;
+            self.params.print_render.glare.active = glare;
+        } else {
+            self.scan_for_print_snapshot = Some((
+                self.params.scanner.white_correction,
+                self.params.scanner.black_correction,
+                self.params.print_render.glare.active,
+            ));
+            self.params.scanner.white_correction = true;
+            self.params.scanner.black_correction = true;
+            self.params.print_render.glare.active = false;
+        }
+        self.pipeline_cache_key = None;
+        self.pipeline_cache = None;
+        self.dirty = true;
+        self.force_preview = true;
+    }
+
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            let scan_label = if self.scan_for_print_snapshot.is_some() { "Scan-for-print: ON" } else { "Scan-for-print" };
+            if ui.button(scan_label).clicked() {
+                self.toggle_scan_for_print();
+            }
             if ui.button("Preview").clicked() {
                 self.dirty = true;
                 self.force_preview = true;
@@ -510,7 +577,8 @@ impl App {
         params.settings.preview_mode = preview;
         let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
         let paper = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
-        let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir);
+        let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
+            .map_err(anyhow::Error::msg)?;
         Ok(spektrafilm_core::params_builder::digest_params(params, &film, &paper, Some(&database), false))
     }
 
@@ -519,9 +587,11 @@ impl App {
             let params = self.current_state()?.runtime_params()?;
             let film = profile::load_profile_by_name(&self.data_dir,&self.film_name)?;
             let paper = profile::load_profile_by_name(&self.data_dir,&self.print_name)?;
-            let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir);
+            let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
+                .map_err(anyhow::Error::msg)?;
             self.params = spektrafilm_core::params_builder::digest_params(params,&film,&paper,Some(&database),true);
             self.params.io.scan_film = film.is_positive();
+            self.scan_for_print_snapshot = None;
             self.pipeline_cache_key = None;
             self.pipeline_cache = None;
             Ok(())
@@ -532,6 +602,7 @@ impl App {
     fn load_image_from_path(&mut self, path: &Path) {
         let t = Instant::now();
         let raw = image_io::is_raw(path);
+        let mut raw_lens_info = None;
         let loaded = if raw {
             let settings = &self.gui_state.sections["load_raw"];
             let options = spektrafilm_raw::RawOptions {
@@ -545,8 +616,9 @@ impl App {
                 tint: settings["tint"].as_f64(),
                 lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
             };
-            spektrafilm_raw::load(path, &options).map(|result| LoadedImage {
-                image: result.image, metadata: image_io::read_metadata(path),
+            spektrafilm_raw::load(path, &options).map(|result| {
+                raw_lens_info = Some(result.lens_info);
+                LoadedImage { image: result.image, metadata: image_io::read_metadata(path) }
             }).map_err(anyhow::Error::msg)
         } else { image_io::load(path).map_err(anyhow::Error::from) };
         match loaded {
@@ -556,6 +628,7 @@ impl App {
                     self.params.io.input_cctf_decoding = false;
                 }
                 self.source_metadata = metadata;
+                self.input_rotation = 0;
                 self.status = format!(
                     "Loaded {} × {} ({:.1} MP) in {:.0} ms",
                     img.width,
@@ -563,8 +636,16 @@ impl App {
                     (img.pixel_count() as f64 / 1e6),
                     t.elapsed().as_secs_f32() * 1000.0
                 );
+                self.raw_lens_info = raw_lens_info;
+                if raw {
+                    match self.raw_lens_info.as_deref() {
+                        Some(info) if !info.is_empty() => self.status.push_str(&format!("; Lens correction applied ({info})")),
+                        _ => self.status.push_str("; Lens correction not applied"),
+                    }
+                }
+                self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.image = Some(Arc::new(img));
-                match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding) {
+                match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
                     Ok(raster) => self.viewer.set_input(raster,[self.image.as_ref().unwrap().width as usize,self.image.as_ref().unwrap().height as usize]),
                     Err(e) => self.status = format!("Viewer input error: {e}"),
                 }
@@ -578,6 +659,38 @@ impl App {
         }
     }
 
+    fn rotate_input_image(&mut self, clockwise: bool) {
+        let Some(image) = self.image.as_ref() else {
+            self.status = "Load an image before rotating.".into();
+            return;
+        };
+        let quarter_turns = if clockwise { -1 } else { 1 };
+        let rotated = image.rotated_quarter_turns(quarter_turns);
+        self.image = Some(Arc::new(rotated));
+        self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
+        self.output_image = None;
+        if let Some(image) = self.image.as_ref() {
+            match display::input_display_raster(image, &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
+                Ok(raster) => self.viewer.set_input(raster, [image.width as usize, image.height as usize]),
+                Err(e) => self.status = format!("Viewer input error: {e}"),
+            }
+        }
+        self.dirty = true;
+        self.force_preview = true;
+        self.status = format!(
+            "Rotated input {}°",
+            self.input_rotation as i32 * 90
+        );
+    }
+
+    fn rotate_input_image_clockwise(&mut self) {
+        self.rotate_input_image(true);
+    }
+
+    fn rotate_input_image_counterclockwise(&mut self) {
+        self.rotate_input_image(false);
+    }
+
     fn preview_pipeline(
         &mut self,
         film_name: &str,
@@ -589,7 +702,7 @@ impl App {
         if self.pipeline_cache_key.as_deref() == Some(key.as_str())
             && let Some(pipeline) = self.pipeline_cache.as_ref()
         {
-            return Ok((pipeline.clone().with_params(params.clone()), t.elapsed().as_secs_f32() * 1000.0));
+            return Ok((pipeline.clone().with_params(params.clone())?, t.elapsed().as_secs_f32() * 1000.0));
         }
 
         let mut film = profile::load_profile_by_name(&self.data_dir, film_name)
@@ -666,12 +779,12 @@ impl App {
                         spektrafilm_core::params_builder::resize_for_preview(&image, params.settings.preview_max_size)
                     } else { (*image).clone() };
                     let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
-                    let pipeline = pipeline_template.with_params(params);
+                    let pipeline = pipeline_template.with_params(params)?;
                     let t = Instant::now();
                     let output = pipeline.process(working_image, backend.as_ref())?;
                     let render_ms = t.elapsed().as_secs_f32() * 1000.0;
                     let t_preview = Instant::now();
-                    let (preview, display_status) = display::output_display_raster(&output,&pipeline.params.io.output_color_space,pipeline.params.io.output_cctf_encoding,display_enabled,display_profile.as_deref())?;
+                    let (preview, display_status) = display::output_display_raster(&output,&pipeline.params.io.output_color_space,pipeline.params.io.output_cctf_encoding,display_enabled,display_profile.as_deref(),pipeline.params.settings.preview_max_size as usize)?;
                     let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                     let worker_total_ms = t_total.elapsed().as_secs_f32() * 1000.0;
                     Ok(RenderResult {
@@ -875,6 +988,10 @@ impl App {
         let data_dir = self.data_dir.clone();
         let save_depth = self.save_depth;
         let export_state = self.gui_state.sections.clone();
+        let rotated_input = (self.input_rotation != 0).then(|| (
+            Arc::clone(self.image.as_ref().expect("export requires loaded image")),
+            self.source_metadata.clone(),
+        ));
         let (tx, rx) = mpsc::channel();
         let ctx_for_worker = ctx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -883,9 +1000,27 @@ impl App {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-export".into())
             .spawn(move || {
-                let res = run_f64_export(
+                let res = (|| -> Result<_> {
+                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
+                    let rotated_input_guard = if let Some((image, metadata)) = rotated_input {
+                        let nanos = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+                        let guard = TempPath(std::env::temp_dir().join(format!(
+                            "spektrafilm-export-input-{}-{nanos}.tif", std::process::id()
+                        )), None);
+                        image_io::save(&guard.0, &image, SaveOptions {
+                            depth: BitDepth::ThirtyTwo,
+                            color_space: &params.io.input_color_space,
+                            cctf_encoding: params.io.input_cctf_decoding,
+                        }, metadata.as_ref())?;
+                        Some(guard)
+                    } else { None };
+                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
+                    let input_for_export = rotated_input_guard.as_ref()
+                        .map(|guard| guard.0.as_path()).unwrap_or(&input_path);
+                    run_f64_export(
                     &cli_path,
-                    &input_path,
+                    input_for_export,
                     &out_path,
                     &film,
                     &paper,
@@ -894,7 +1029,8 @@ impl App {
                     save_depth,
                     &export_state,
                     &cancel_for_worker,
-                );
+                )
+                })();
                 let name = out_path
                     .file_name()
                     .and_then(|s| s.to_str())
@@ -973,27 +1109,160 @@ impl App {
         };
     }
 
-    fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.heading("spektrafilm");
-        ui.add_space(6.0);
-        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding);
-        ui.horizontal_wrapped(|ui| {
-            for tab in GuiTab::ALL {
-                ui.selectable_value(&mut self.gui_tab, tab, tab.label());
-            }
-        });
-        ui.separator();
-        if self.gui_tab == GuiTab::Config {
-            self.state_toolbar(ui);
+    fn start_calibration(&mut self, action: controls::CalibrationAction) {
+        if self.calibration_job.is_some() {
+            self.status = "A Convert calibration action is already running.".into();
+            return;
         }
+        let Some(image) = self.image.as_ref().map(|image| (**image).clone()) else {
+            self.status = "Load an input image before running a Convert action.".into();
+            return;
+        };
+        let mut params = match self.current_state().and_then(|state| state.runtime_params()) {
+            Ok(params) => params,
+            Err(error) => {
+                self.status = format!("Calibration state error: {error:#}");
+                return;
+            }
+        };
+        let film = match profile::load_profile_by_name(&self.data_dir, &self.film_name) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.status = format!("Calibration film error: {error:#}");
+                return;
+            }
+        };
+        let print = match profile::load_profile_by_name(&self.data_dir, &self.print_name) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.status = format!("Calibration print error: {error:#}");
+                return;
+            }
+        };
+        let data_dir = self.data_dir.clone();
+        let backend = Arc::clone(&self.backend);
+        let epoch = self.calibration_epoch.wrapping_add(1);
+        self.calibration_epoch = epoch;
+        let (tx, rx) = mpsc::channel();
+        let action_name = match action {
+            controls::CalibrationAction::DetectBase => "Detecting film base…",
+            controls::CalibrationAction::BlindCalibration => "Fitting blind calibration…",
+            controls::CalibrationAction::NeutralizeFilters => "Neutralizing print filters…",
+        };
+        self.status = action_name.into();
+        let handle = std::thread::Builder::new()
+            .name("spektrafilm-calibration".into())
+            .spawn(move || {
+                params.workflow.route = "input > convert-film > scan".into();
+                let result = match action {
+                    controls::CalibrationAction::DetectBase => {
+                        spektrafilm_core::stages::converting::detect_base(&image, &film, &params)
+                            .map(|(params, exposure_ev)| CalibrationResult::Base { params, exposure_ev })
+                    }
+                    controls::CalibrationAction::BlindCalibration => {
+                        spektrafilm_core::stages::converting::blind_calibration(&image, &film, &params)
+                            .map(CalibrationResult::BlindCalibration)
+                    }
+                    controls::CalibrationAction::NeutralizeFilters => {
+                        spektrafilm_core::stages::converting::neutralize_filters(
+                            &film,
+                            &print,
+                            &params,
+                            &data_dir,
+                            backend.as_ref(),
+                        )
+                        .map(|(m_shift, y_shift)| CalibrationResult::NeutralizeFilters { m_shift, y_shift })
+                    }
+                };
+                let _ = tx.send(result);
+            })
+            .map_err(|error| error.to_string());
+        match handle {
+            Ok(handle) => {
+                self.calibration_job = Some(CalibrationJob { epoch, rx, handle: Some(handle) });
+            }
+            Err(error) => {
+                self.status = format!("Calibration worker error: {error}");
+            }
+        }
+    }
+
+    fn poll_calibration_job(&mut self, ctx: &egui::Context) {
+        let Some(job) = self.calibration_job.as_ref() else {
+            return;
+        };
+        let result = match job.rx.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(IN_FLIGHT_REPAINT);
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let mut job = self.calibration_job.take().expect("calibration job exists");
+                if let Some(handle) = job.handle.take() {
+                    let _ = handle.join();
+                }
+                self.status = "Calibration worker vanished.".into();
+                return;
+            }
+        };
+        let mut job = self.calibration_job.take().expect("calibration job exists");
+        let epoch = job.epoch;
+        if let Some(handle) = job.handle.take() {
+            let _ = handle.join();
+        }
+        if epoch != self.calibration_epoch {
+            self.status = "Discarded stale Convert calibration result.".into();
+            return;
+        }
+        match result {
+            Ok(CalibrationResult::Base { params, exposure_ev }) => {
+                self.params.film_render.base = params;
+                self.params.film_render.convert.exposure_compensation_ev = exposure_ev;
+                self.dirty = true;
+                self.force_preview = true;
+                self.status = format!("Film base detected; exposure compensation {exposure_ev:+.2} EV.");
+            }
+            Ok(CalibrationResult::BlindCalibration(calibration)) => {
+                self.params.film_render.convert.calibration = calibration;
+                self.dirty = true;
+                self.force_preview = true;
+                self.status = "Blind calibration fitted.".into();
+            }
+            Ok(CalibrationResult::NeutralizeFilters { m_shift, y_shift }) => {
+                self.params.enlarger.m_filter_shift = m_shift;
+                self.params.enlarger.y_filter_shift = y_shift;
+                self.dirty = true;
+                self.force_preview = true;
+                self.status = format!("Print filters neutralized: M {m_shift:+.2}, Y {y_shift:+.2}.");
+            }
+            Err(error) => {
+                self.status = format!("Calibration failed: {error}");
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size);
+        self.state_toolbar(ui);
         let changes = controls::show(
             ui,
             &mut self.params,
             &mut self.gui_state.sections,
             self.gui_tab.label(),
         );
-        self.dirty |= changes.runtime_changed;
-        if changes.preview_requested { self.dirty = true; self.force_preview = true; }
+        if changes.runtime_changed {
+            self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+            self.dirty = true;
+        }
+        if let Some(action) = changes.action {
+            self.start_calibration(action);
+        }
+        if changes.preview_requested {
+            self.dirty = true;
+            self.force_preview = true;
+        }
         if changes.raw_reload {
             if let Some(path) = self.image_path.clone() { self.load_image_from_path(&path); }
         }
@@ -1005,12 +1274,7 @@ impl App {
                 if let Some(path) = self.file_dialog("load")
                     .add_filter(
                         "Image",
-                        &[
-                            "jpg", "jpeg", "png", "tif", "tiff", "exr", // standard
-                            "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf",
-                            "rw2", "pef", "srw", "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef",
-                            "kdc",
-                        ],
+                        IMAGE_FILE_EXTENSIONS,
                     )
                     .pick_file()
                 {
@@ -1112,7 +1376,7 @@ impl App {
                 let film_changed =
                     profile_combo(ui, "film", "Film stock", &self.films, &mut self.film_name);
                 if film_changed {
-                    self.film_dev_times = Vec::new();
+                    self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                     self.params.film_render.development_time = None;
                     if let Ok(film) = profile::load_profile_by_name(&self.data_dir, &self.film_name)
                     {
@@ -1172,7 +1436,7 @@ impl App {
                     })
                     .inner;
                 if paper_changed {
-                    self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
+                    self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                     self.params.print_render.development_time = None;
                     self.sync_profile_defaults();
                     self.dirty = true;
@@ -1742,7 +2006,6 @@ impl App {
                 self.refresh_viewing_artifacts();
             }
         }
-        self.simulation_action_bar(ui);
         // ── Metrics ─────────────────────────────────────────────────────
         ui.add_space(10.0);
         ui.separator();
@@ -1770,7 +2033,10 @@ impl App {
         ));
         ui.monospace(format!("backend: {}", self.backend.name()));
         ui.label(egui::RichText::new(&self.status).small());
-        if input_view_before != (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding) { self.refresh_viewing_artifacts(); }
+        if let Some(info) = self.raw_lens_info.as_deref() {
+            ui.label(if info.is_empty() { "Lens correction not applied".to_owned() } else { format!("Lens correction applied ({info})") });
+        }
+        if input_view_before != (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size) { self.refresh_viewing_artifacts(); }
     }
 }
 
@@ -1817,21 +2083,63 @@ impl eframe::App for App {
         }
         self.poll_render_job(ctx);
         self.poll_export_job(ctx);
+        self.poll_calibration_job(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(420.0)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.controls_panel(ui, ctx));
+                ui.heading("spektrafilm");
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    for tab in GuiTab::ALL {
+                        ui.selectable_value(&mut self.gui_tab, tab, tab.label());
+                    }
+                });
+                ui.separator();
+                if self.gui_tab == GuiTab::Config {
+                    self.state_toolbar(ui);
+                    ui.separator();
+                }
+                let scroll_height = (ui.available_height() - 36.0).max(1.0);
+                ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("controls-scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.controls_panel(ui, ctx));
+                });
+                ui.separator();
+                self.simulation_action_bar(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.viewer.show(ui,self.image.as_deref(),self.output_image.as_ref());
-            ui.separator();
-            ui.horizontal(|ui| {
+            egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("ccw rotate").clicked() {
+                    self.rotate_input_image_counterclockwise();
+                    ui.ctx().request_repaint();
+                }
+                if ui.button("cw rotate").clicked() {
+                    self.rotate_input_image_clockwise();
+                    ui.ctx().request_repaint();
+                }
+                for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
+                    if ui.button(label).clicked() {
+                        self.viewer.set_zoom_percent(percent);
+                        ui.ctx().request_repaint();
+                    }
+                }
                 if ui.button("reset view").clicked() {
                     self.viewer.reset_view();
+                    ui.ctx().request_repaint();
                 }
-                ui.label(format!("{} · zoom {:.2}×", self.status, self.viewer.zoom));
+                let zoom = self.viewer.zoom_percent().map_or_else(
+                    || format!("{:.0}% fit", self.viewer.zoom * 100.0),
+                    |percent| format!("{percent:.0}%"),
+                );
+                ui.label(format!("{} · zoom {zoom}", self.status));
             });
+            });
+            self.viewer.layer_controls(ui);
+            self.viewer.show(ui,self.image.as_deref(),self.output_image.as_ref());
         });
 
         // Accept drag-and-dropped image files.
@@ -2045,6 +2353,9 @@ fn preview_pipeline_cache_key(
     serde_json::json!({
         "film": film_name,
         "print": print_name,
+        "film_base": params.film_render.base,
+        "print_base": params.print_render.base,
+        "film_chemistry": params.film_render.chemistry,
         "film_dev": params.film_render.development_time,
         "print_dev": params.print_render.development_time,
         "scan_film": params.io.scan_film,
@@ -2063,6 +2374,7 @@ fn preview_pipeline_cache_key(
             "use_cat16": params.settings.use_cat16,
         },
         "camera": {
+            "color_filter": params.camera.color_filter,
             "filter_uv": params.camera.filter_uv,
             "filter_ir": params.camera.filter_ir,
         },

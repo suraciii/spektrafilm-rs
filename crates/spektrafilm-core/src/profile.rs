@@ -2,17 +2,17 @@
 ///
 /// Mirrors Python `profiles/io.py`. Profiles contain spectral sensitivity data,
 /// density curves, and metadata for each film stock and paper type.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, Serializer};
 use std::path::Path;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub metadata: ProfileMetadata,
     pub info: ProfileInfo,
     pub data: ProfileData,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileMetadata {
     #[serde(default)]
     pub version: String,
@@ -27,8 +27,96 @@ pub struct ProfileMetadata {
     #[serde(default)]
     pub datasource: String,
 }
+fn ser_f64<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.is_finite() {
+        serializer.serialize_f64(*value)
+    } else {
+        serializer.serialize_none()
+    }
+}
 
-#[derive(Debug, Clone, Deserialize)]
+fn ser_f64_vec<S>(values: &Vec<f64>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    values
+        .iter()
+        .map(|value| value.is_finite().then_some(*value))
+        .collect::<Vec<_>>()
+        .serialize(serializer)
+}
+
+fn ser_f64_matrix<S>(values: &Vec<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    values
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|value| value.is_finite().then_some(*value))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+        .serialize(serializer)
+}
+
+fn ser_f64_tensor<S>(
+    values: &Vec<Vec<Vec<f64>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    values
+        .iter()
+        .map(|matrix| {
+            matrix
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|value| value.is_finite().then_some(*value))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+        .serialize(serializer)
+}
+
+fn ser_base_density<S>(values: &Vec<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let rows = values
+        .iter()
+        .map(|row| {
+            if row.len() <= 1 {
+                row.first()
+                    .and_then(|value| value.is_finite().then_some(*value))
+                    .map_or(serde_json::Value::Null, serde_json::Value::from)
+            } else {
+                serde_json::Value::Array(
+                    row.iter()
+                        .map(|value| {
+                            value
+                                .is_finite()
+                                .then_some(*value)
+                                .map_or(serde_json::Value::Null, serde_json::Value::from)
+                        })
+                        .collect(),
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    rows.serialize(serializer)
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileInfo {
     pub stock: Option<String>,
     pub name: Option<String>,
@@ -47,7 +135,7 @@ pub struct ProfileInfo {
     pub channel_model: String,
     #[serde(default = "default_status_m")]
     pub densitometer: String,
-    #[serde(default = "default_log_sens")]
+    #[serde(default, serialize_with = "ser_f64")]
     pub log_sensitivity_density_over_min: f64,
     #[serde(default = "default_d55")]
     pub reference_illuminant: String,
@@ -86,18 +174,18 @@ fn default_d50() -> String {
     "D50".into()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileData {
-    #[serde(default)]
+    #[serde(default, serialize_with = "ser_f64_vec")]
     pub wavelengths: Vec<f64>,
-    #[serde(default, deserialize_with = "deser_zero_matrix")]
+    #[serde(default, deserialize_with = "deser_zero_matrix", serialize_with = "ser_f64_matrix")]
     pub log_sensitivity: Vec<Vec<f64>>,
-    #[serde(default, deserialize_with = "deser_zero_vec")]
+    #[serde(default, deserialize_with = "deser_zero_vec", serialize_with = "ser_f64_vec")]
     pub hanatos2025_adaptation_window_params: Vec<f64>,
-    #[serde(default, deserialize_with = "deser_zero_matrix")]
+    #[serde(default, deserialize_with = "deser_zero_matrix", serialize_with = "ser_f64_matrix")]
     pub hanatos2025_adaptation_surface_params: Vec<Vec<f64>>,
     /// NaN-preserving: null values mean "no data at this wavelength"
-    #[serde(default, deserialize_with = "deser_nullable_matrix")]
+    #[serde(default, deserialize_with = "deser_nullable_matrix", serialize_with = "ser_f64_matrix")]
     pub channel_density: Vec<Vec<f64>>,
     /// NaN-preserving base+fog as stored in the JSON: one row per wavelength,
     /// with 1 column for colour profiles or N columns (one per development
@@ -105,7 +193,8 @@ pub struct ProfileData {
     #[serde(
         rename = "base_density",
         default,
-        deserialize_with = "deser_base_density_rows"
+        deserialize_with = "deser_base_density_rows",
+        serialize_with = "ser_base_density"
     )]
     pub base_density_rows: Vec<Vec<f64>>,
     /// Resolved base+fog spectrum (the selected development-time column of
@@ -114,13 +203,13 @@ pub struct ProfileData {
     #[serde(skip)]
     pub base_density: Vec<f64>,
     /// NaN-preserving
-    #[serde(default, deserialize_with = "deser_nullable_vec")]
+    #[serde(default, deserialize_with = "deser_nullable_vec", serialize_with = "ser_f64_vec")]
     pub midscale_neutral_density: Vec<f64>,
-    #[serde(default)]
+    #[serde(default, serialize_with = "ser_f64_vec")]
     pub log_exposure: Vec<f64>,
-    #[serde(default, deserialize_with = "deser_zero_matrix")]
+    #[serde(default, deserialize_with = "deser_zero_matrix", serialize_with = "ser_f64_matrix")]
     pub density_curves: Vec<Vec<f64>>,
-    #[serde(default, deserialize_with = "deser_zero_tensor")]
+    #[serde(default, deserialize_with = "deser_zero_tensor", serialize_with = "ser_f64_tensor")]
     pub density_curves_layers: Vec<Vec<Vec<f64>>>,
     /// Parametric fit of the density curves (sum-of-CDFs per channel), used by
     /// the print-curve morph. Absent on older profiles. On B&W profiles the
@@ -129,7 +218,7 @@ pub struct ProfileData {
     pub density_curves_model: Option<DensityCurvesModel>,
     /// Development-time family axis (minutes), one entry per density-curves
     /// column on B&W profiles. Empty for colour profiles.
-    #[serde(default, deserialize_with = "deser_zero_vec")]
+    #[serde(default, deserialize_with = "deser_zero_vec", serialize_with = "ser_f64_vec")]
     pub development_time: Vec<f64>,
 }
 
@@ -138,16 +227,19 @@ pub struct ProfileData {
 /// `centers`, `amplitudes`, `sigmas` are each `[n_channels][n_layers]`. Each
 /// channel's density is `sum_i amplitudes[i] * Phi((x - centers[i]) / sigmas[i])`,
 /// where `Phi` is the (sign-flipped for positive stocks) standard-normal CDF.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DensityCurvesModel {
     #[serde(default)]
     pub model_type: String,
-    #[serde(default)]
+    #[serde(default, serialize_with = "ser_f64_matrix")]
     pub centers: Vec<Vec<f64>>,
-    #[serde(default)]
+    #[serde(default, serialize_with = "ser_f64_matrix")]
     pub amplitudes: Vec<Vec<f64>>,
-    #[serde(default)]
+    #[serde(default, serialize_with = "ser_f64_matrix")]
     pub sigmas: Vec<Vec<f64>>,
+    /// Per-layer median-preserving skew for `sept_norm_cdfs`.
+    #[serde(default)]
+    pub alphas: Option<Vec<Vec<f64>>>,
 }
 
 impl DensityCurvesModel {
@@ -384,6 +476,55 @@ pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
     // families when a specific time is requested.
     let idx = development_time_index(&profile.data.development_time, None);
     profile.data.base_density = base_density_column(&profile.data.base_density_rows, idx);
+    let curves_stale = profile.data.density_curves.is_empty()
+        || profile
+            .data
+            .density_curves
+            .iter()
+            .flatten()
+            .any(|value| !value.is_finite() || value.abs() > 10.0);
+    let model = profile.data.density_curves_model.clone();
+    if let Some(model) = model.as_ref() {
+        let expected_exposures = profile.data.log_exposure.len();
+        let expected_layers = model.n_layers();
+        let layers_stale = expected_layers > 1
+            && (profile.data.density_curves_layers.len() != expected_exposures
+                || profile.data.density_curves_layers.iter().any(|row| {
+                    row.len() != expected_layers
+                        || row.iter().any(|layer| {
+                            layer.len() != 3
+                        || layer.iter().any(|value| !value.is_finite())
+                        })
+                }));
+        if curves_stale {
+            profile.data.density_curves =
+                spektrafilm_model::density_curves::evaluate_density_curves(
+                    &profile.data.log_exposure,
+                    &model.model_type,
+                    &model.centers,
+                    &model.amplitudes,
+                    &model.sigmas,
+                    model.alphas.as_deref(),
+                    profile.is_positive(),
+                )
+                .map_err(ProfileError::Validation)?;
+        }
+        if expected_layers > 1 && (curves_stale || layers_stale) {
+            profile.data.density_curves_layers =
+                spektrafilm_model::density_curves::evaluate_density_curves_layers(
+                    &profile.data.log_exposure,
+                    &model.model_type,
+                    &model.centers,
+                    &model.amplitudes,
+                    &model.sigmas,
+                    model.alphas.as_deref(),
+                    profile.is_positive(),
+                )
+                .map_err(ProfileError::Validation)?;
+        } else if expected_layers <= 1 && curves_stale {
+            profile.data.density_curves_layers.clear();
+        }
+    }
     Ok(profile)
 }
 
@@ -391,6 +532,66 @@ pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
 pub fn load_profile_by_name(data_dir: &Path, stock: &str) -> Result<Profile, ProfileError> {
     let path = data_dir.join("profiles").join(format!("{stock}.json"));
     load_profile(&path)
+}
+
+/// Save a profile under `data_dir/profiles`, preserving `NaN` as JSON `null`.
+///
+/// The profile is cloned before applying `suffix`; the caller's profile is
+/// never mutated. The returned path is the written profile filename.
+pub fn save_profile(
+    data_dir: &Path,
+    profile: &Profile,
+    suffix: &str,
+) -> Result<std::path::PathBuf, ProfileError> {
+    if suffix.contains(['/', '\\']) {
+        return Err(ProfileError::Validation(
+            "profile suffix must not contain path separators".into(),
+        ));
+    }
+    let mut saved = profile.clone();
+    let stock = saved
+        .info
+        .stock
+        .as_mut()
+        .ok_or_else(|| ProfileError::Validation("profile stock is missing".into()))?;
+    stock.push_str(suffix);
+    let path = data_dir.join("profiles").join(format!("{stock}.json"));
+    validate_profile(&saved)?;
+    std::fs::create_dir_all(path.parent().expect("profile path has parent"))
+        .map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    let json = serde_json::to_vec_pretty(&saved)
+        .map_err(|e| ProfileError::Serialize(path.display().to_string(), e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    Ok(path)
+}
+
+/// Compatibility spelling for callers that used the upstream split API.
+pub fn save_processed_profile(
+    data_dir: &Path,
+    profile: &Profile,
+    suffix: &str,
+) -> Result<std::path::PathBuf, ProfileError> {
+    save_profile(data_dir, profile, suffix)
+}
+
+/// Return bundled profile slugs in deterministic order.
+pub fn list_profiles(data_dir: &Path) -> Result<Vec<String>, ProfileError> {
+    let root = data_dir.join("profiles");
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(&root)
+        .map_err(|e| ProfileError::Io(root.display().to_string(), e))?
+    {
+        let entry = entry.map_err(|e| ProfileError::Io(root.display().to_string(), e))?;
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            if let Some(stem) = path.file_stem().and_then(|name| name.to_str()) {
+                names.push(stem.to_owned());
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 /// Index into a development-time family: nearest entry to `requested` by
@@ -463,6 +664,9 @@ pub fn resolve_for_render(mut profile: Profile, development_time: Option<f64>) -
         model.centers = pick(&model.centers);
         model.amplitudes = pick(&model.amplitudes);
         model.sigmas = pick(&model.sigmas);
+        if let Some(alphas) = model.alphas.clone() {
+            model.alphas = Some(pick(&alphas));
+        }
     }
     // Layers are n_le × n_layers × n_times on B&W families (upstream slices
     // `[:, :, idx]`). Collapse the family, then broadcast the single
@@ -504,12 +708,43 @@ pub fn resolve_for_render(mut profile: Profile, development_time: Option<f64>) -
         bcast(&mut model.centers);
         bcast(&mut model.amplitudes);
         bcast(&mut model.sigmas);
+        if let Some(alphas) = &mut model.alphas {
+            bcast(alphas);
+        }
     }
     profile
 }
 
-fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
+pub(crate) fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
+    let info = &profile.info;
     let data = &profile.data;
+    for (field, value, allowed) in [
+        ("type", info.film_type.as_str(), &["negative", "positive"][..]),
+        ("support", info.support.as_str(), &["film", "paper"][..]),
+        ("stage", info.stage.as_str(), &["filming", "printing"][..]),
+        ("use", info.usage.as_str(), &["still", "cine"][..]),
+        ("antihalation", info.antihalation.as_str(), &["strong", "weak", "no"][..]),
+        ("channel_model", info.channel_model.as_str(), &["color", "bw"][..]),
+    ] {
+        if !allowed.contains(&value) {
+            return Err(ProfileError::Validation(format!(
+                "unsupported {field} value {value:?}"
+            )));
+        }
+    }
+    for (field, value) in [
+        ("reference_illuminant", info.reference_illuminant.as_str()),
+        ("viewing_illuminant", info.viewing_illuminant.as_str()),
+    ] {
+        if !matches!(value, "D50" | "D55" | "D65" | "T" | "TH-KG3" | "K75P") {
+            return Err(ProfileError::Validation(format!(
+                "unsupported {field} value {value:?}"
+            )));
+        }
+    }
+    if data.wavelengths.is_empty() {
+        return Err(ProfileError::Validation("wavelengths is empty".into()));
+    }
     if data.log_exposure.is_empty() {
         return Err(ProfileError::Validation("log_exposure is empty".into()));
     }
@@ -518,25 +753,48 @@ fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
             "density_curves length must match log_exposure length".into(),
         ));
     }
+    let channels = if profile.is_bw() { 1 } else { 3 };
+    if data.log_sensitivity.len() != data.wavelengths.len()
+        || data.log_sensitivity.iter().any(|row| row.len() != channels)
+    {
+        return Err(ProfileError::Validation(format!(
+            "log_sensitivity must be {}×{}",
+            data.wavelengths.len(),
+            channels
+        )));
+    }
+    if data.channel_density.len() != data.wavelengths.len()
+        || data.channel_density.iter().any(|row| row.len() != channels)
+    {
+        return Err(ProfileError::Validation(format!(
+            "channel_density must be {}×{}",
+            data.wavelengths.len(),
+            channels
+        )));
+    }
+    if data.base_density_rows.len() != data.wavelengths.len()
+        || data.base_density_rows.iter().any(|row| row.is_empty())
+    {
+        return Err(ProfileError::Validation(
+            "base_density must have one non-empty row per wavelength".into(),
+        ));
+    }
+    if !data.midscale_neutral_density.is_empty()
+        && data.midscale_neutral_density.len() != data.wavelengths.len()
+    {
+        return Err(ProfileError::Validation(
+            "midscale_neutral_density length must match wavelengths".into(),
+        ));
+    }
     if profile.is_bw() {
         // B&W: one sensitivity/dye channel; density-curve columns index the
         // development-time family (validated against its length when present).
-        if data.log_sensitivity.iter().any(|r| r.len() != 1) {
-            return Err(ProfileError::Validation(
-                "bw profile log_sensitivity must have exactly 1 channel".into(),
-            ));
-        }
-        if data.channel_density.iter().any(|r| r.len() != 1) {
-            return Err(ProfileError::Validation(
-                "bw profile channel_density must have exactly 1 channel".into(),
-            ));
-        }
-        let n_times = data.development_time.len().max(1);
-        if data.density_curves.iter().any(|r| r.len() != n_times) {
+        if data.density_curves.iter().any(|r| r.len() != data.development_time.len().max(1)) {
             return Err(ProfileError::Validation(
                 "bw profile density_curves columns must match development_time length".into(),
             ));
         }
+        let n_times = data.development_time.len().max(1);
         if data
             .base_density_rows
             .iter()
@@ -546,6 +804,10 @@ fn validate_profile(profile: &Profile) -> Result<(), ProfileError> {
                 "bw profile base_density columns must be 1 or match development_time".into(),
             ));
         }
+    } else if data.density_curves.iter().any(|r| r.len() != 3) {
+        return Err(ProfileError::Validation(
+            "color profile density_curves must have 3 channels".into(),
+        ));
     }
     Ok(())
 }
@@ -556,6 +818,8 @@ pub enum ProfileError {
     Io(String, std::io::Error),
     #[error("parsing profile {0}: {1}")]
     Parse(String, serde_json::Error),
+    #[error("serializing profile {0}: {1}")]
+    Serialize(String, serde_json::Error),
     #[error("invalid profile: {0}")]
     Validation(String),
 }
@@ -595,6 +859,19 @@ mod tests {
         // Whole-field nulls parse as empty.
         assert!(p.data.midscale_neutral_density.is_empty());
         assert!(p.data.hanatos2025_adaptation_window_params.is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_metadata_and_shape() {
+        let Some(mut profile) = data_profile("kodak_portra_400") else {
+            return;
+        };
+        profile.info.stage = "unknown".into();
+        assert!(validate_profile(&profile).is_err());
+
+        let mut profile = data_profile("kodak_portra_400").unwrap();
+        profile.data.channel_density[0].pop();
+        assert!(validate_profile(&profile).is_err());
     }
 
     /// Resolving collapses the family to the requested (nearest) time and
@@ -697,5 +974,55 @@ mod tests {
         assert_eq!(profile.data.wavelengths.len(), 81);
         assert_eq!(profile.data.log_exposure.len(), 256);
         assert_eq!(profile.data.density_curves.len(), 256);
+    }
+
+    #[test]
+    fn save_profile_preserves_nulls_and_does_not_mutate_source() {
+        let Some(mut profile) = data_profile("kodak_portra_400") else {
+            return;
+        };
+        let original_stock = profile.info.stock.clone();
+        profile.data.midscale_neutral_density[0] = f64::NAN;
+        let root = std::env::temp_dir().join(format!(
+            "spektrafilm-profile-save-{}",
+            std::process::id()
+        ));
+        let path = save_profile(&root, &profile, "_copy").unwrap();
+        assert_eq!(profile.info.stock, original_stock);
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(json["info"]["stock"], "kodak_portra_400_copy");
+        assert!(json["data"]["midscale_neutral_density"][0].is_null());
+        let loaded = load_profile(&path).unwrap();
+        assert!(loaded.data.midscale_neutral_density[0].is_nan());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fitted_models_replace_stale_sampled_curves_and_clear_single_layer_cache() {
+        let directory = std::env::temp_dir().join(format!("spektrafilm-profile-model-{}",std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        for model_type in ["norm_cdfs","sept_norm_cdfs"] {
+            let path = directory.join(format!("{model_type}.json"));
+            let value = serde_json::json!({
+                "metadata":{},"info":{},"data":{
+                    "wavelengths":[380.0],
+                    "log_sensitivity":[[0.0,0.0,0.0]],
+                    "channel_density":[[0.0,0.0,0.0]],
+                    "base_density":[[0.0]],
+                    "log_exposure":[-4.0,0.0,4.0],
+                    "density_curves":[[99.0,99.0,99.0],[99.0,99.0,99.0],[99.0,99.0,99.0]],
+                    "density_curves_layers":[[[99.0,99.0,99.0]]],
+                    "density_curves_model":{"model_type":model_type,"centers":[[0.0],[0.0],[0.0]],"amplitudes":[[2.0],[2.0],[2.0]],"sigmas":[[1.0],[1.0],[1.0]],"alphas":[[0.6],[0.6],[0.6]]}
+                }
+            });
+            std::fs::write(&path,serde_json::to_vec(&value).unwrap()).unwrap();
+            let profile = load_profile(&path).unwrap();
+            assert_eq!(profile.data.density_curves[1],vec![1.0;3]);
+            assert!(profile.data.density_curves[0].iter().all(|v|*v<0.001));
+            assert!(profile.data.density_curves[2].iter().all(|v|*v>1.999));
+            assert!(profile.data.density_curves_layers.is_empty());
+        }
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

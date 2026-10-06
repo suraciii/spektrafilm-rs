@@ -54,18 +54,16 @@ paper-as-film rejection checks. Preview evidence separates arithmetic
 digestion with glare disabled from stochastic 512² glare moments under
 the unchanged 1% mean / 5% standard-deviation budgets.
 
-The current report `target/parity-current/parity_report.json` passes all 68
-expanded rows with no unsupported prerequisites. The measured f64 binary SHA256
-is recorded in `differential_evidence.environment.rust_bin_sha256`; full
-per-tap metrics and reference environment are embedded under
-`differential_evidence` in the machine-readable matrix. LUT artifact acceptance
-passes 112 QA/transport scenarios; its report and SHA256 are recorded under
-`lut_evidence`. Historical baseline failures remain metadata and never excuse
-current drift.
+The current report `/tmp/spektrafilm-current-parity/parity_report.json` passes
+all 68 exercised rows with no unsupported prerequisites. Full per-tap
+metrics and reference environment are embedded under `differential_evidence`
+in the machine-readable matrix. This verifies those scenarios; isolated
+dark-grain regimes and other unexercised controls require their own evidence.
+Historical baseline failures remain metadata and never excuse current drift.
 
 ## Native GUI evidence
 
-The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; implementation status, historical audit status, and platform coverage remain separate.
+The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; all other rows retain their unverified status.
 
 The current release workflow deliberately runs the package gate without
 `--gui` on Linux, Windows and macOS. Those package results cover CLI/RAW/IO,

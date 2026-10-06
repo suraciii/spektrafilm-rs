@@ -51,6 +51,35 @@ impl ImageBuf {
         self.data[i + 1] = rgb[1];
         self.data[i + 2] = rgb[2];
     }
+    /// Return a new buffer rotated by a multiple of 90 degrees.
+    ///
+    /// Positive turns are counter-clockwise, matching NumPy's `rot90`
+    /// convention used by the pinned Python GUI.
+    pub fn rotated_quarter_turns(&self, quarter_turns: i32) -> Self {
+        let turns = quarter_turns.rem_euclid(4);
+        if turns == 0 {
+            return self.clone();
+        }
+        let (width, height) = if turns % 2 == 0 {
+            (self.width, self.height)
+        } else {
+            (self.height, self.width)
+        };
+        let mut rotated = Self::new(width, height);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let (dst_x, dst_y) = match turns {
+                    1 => (y, self.width - 1 - x),
+                    2 => (self.width - 1 - x, self.height - 1 - y),
+                    3 => (self.height - 1 - y, x),
+                    _ => unreachable!(),
+                };
+                rotated.set(dst_x, dst_y, self.get(x, y));
+            }
+        }
+        rotated
+    }
+
 
     pub fn pixels(&self) -> impl Iterator<Item = &[Scalar]> {
         self.data.chunks_exact(3)
@@ -174,5 +203,21 @@ mod tests {
             img.get(1, 0),
             [from_f64(4.0), from_f64(20.0), from_f64(6.0)]
         );
+    }
+    #[test]
+    fn rotated_quarter_turns_match_numpy_orientation_for_non_square_image() {
+        let mut image = ImageBuf::new(2, 3);
+        for (index, pixel) in image.pixels_mut().enumerate() {
+            pixel[0] = from_f64(index as f64);
+            pixel[1] = from_f64(index as f64 + 10.0);
+            pixel[2] = from_f64(index as f64 + 20.0);
+        }
+        let ccw = image.rotated_quarter_turns(1);
+        assert_eq!((ccw.width, ccw.height), (3, 2));
+        assert_eq!(ccw.get(0, 0), image.get(1, 0));
+        assert_eq!(ccw.get(2, 0), image.get(1, 2));
+        assert_eq!(ccw.get(0, 1), image.get(0, 0));
+        assert_eq!(image.rotated_quarter_turns(-1).rotated_quarter_turns(1).data, image.data);
+        assert_eq!(image.rotated_quarter_turns(4).data, image.data);
     }
 }

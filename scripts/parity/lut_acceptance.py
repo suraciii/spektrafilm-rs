@@ -62,6 +62,13 @@ fn main()->Result<(),Box<dyn std::error::Error>> {
    }
   }
  }
+ for name in ["Fujifilm F-Log","Fujifilm F-Log2","Nikon N-Log","ProPhoto RGB","Rec.2100 PQ","Rec.2100 HLG"] {
+  let cs=spektrafilm_core::lut_transport::resolve(name)?;
+  for p in [[0.0,0.0,0.0],[0.001,0.01,0.1],[0.18,0.42,0.75],[1.0,0.5,0.02]] {
+   let decoded=cs.decode_rgb(p);let encoded=cs.encode_rgb(p);
+   println!("{}\t{:?}\t{:?}\t{:?}",name,p,decoded,encoded);
+  }
+ }
  Ok(())
 }
 '''
@@ -110,6 +117,14 @@ def check_artifacts(root, meta, qa_report=None, archive_required=False):
         local_file(root, lut["path"])
     qa_paths = {a["path"] for a in refs if a["kind"] == "qa"}
     if qa_report is not None:
+        readme = local_file(root, "README.md").read_text()
+        require("\n## Quality\n" in readme, "finalize removed Quality summary")
+        quality = readme.split("\n## Quality\n", 1)[1]
+        for entry in qa_report["prints"]:
+            for result in entry["results"]:
+                status = "PASS" if result["passed"] is True else "FAIL" if result["passed"] is False else "INFO"
+                require(f"| {entry['print_name']} | {result['name']} | {status} |" in quality,
+                        f"finalized Quality summary missing {entry['print_name']}/{result['name']}")
         require("qa/report.json" in qa_paths, "QA JSON not registered")
         on_disk = {p.relative_to(root).as_posix() for p in (root / "qa").rglob("*") if p.is_file()}
         require(on_disk == qa_paths, f"QA registry drift: missing={on_disk-qa_paths}, extra={qa_paths-on_disk}")
@@ -242,6 +257,16 @@ def format_acceptance(cli, root, report):
     command(argv, root / "format_compile.log", report)
     output = root / "formats"
     command([binary, output], root / "format_probe.log", report)
+    from spektrafilm_lut_creator.color_spaces import resolve, decode_cctf, encode_cctf
+    transport = []
+    for line in (root / "format_probe.log").read_text().splitlines():
+        name, sample, decoded, encoded = line.split("\t")
+        sample = np.asarray(json.loads(sample))
+        entry = resolve(name)
+        decode_error = max_error(np.asarray(json.loads(decoded)), decode_cctf(sample, entry), 1e-8, f"{name}/decode")
+        encode_error = max_error(np.asarray(json.loads(encoded)), encode_cctf(sample, entry), 1e-8, f"{name}/encode")
+        transport.append({"name": name, "sample": sample.tolist(), "decode": decode_error, "encode": encode_error})
+    report["transport_samples"] = transport
     table = np.empty((4, 4, 4, 3))
     for b in range(4):
         for g in range(4):
@@ -300,6 +325,34 @@ def run(args, report):
     require(not bundles.exists(), f"{bundles} already exists; use a fresh evidence directory")
     bundles.mkdir()
     report["cli"] = {"path": str(cli), "sha256": hashlib.sha256(cli.read_bytes()).hexdigest(), "backend": "cpu"}
+    report["transport_lattices"] = []
+    for input_name, output_name in (
+        ("Fujifilm F-Log", "sRGB"), ("Fujifilm F-Log2", "sRGB"),
+        ("Nikon N-Log", "sRGB"), ("ProPhoto RGB", "ProPhoto RGB"),
+        ("Rec.2100 PQ", "Rec.2100 PQ"), ("Rec.2100 HLG", "Rec.2100 HLG"),
+    ):
+        name = "transport_" + re.sub(r"[^a-z0-9]+", "_", input_name.lower()).strip("_")
+        command([cli, "lut", "build", "--name", name, "--film", FILM, "--print", PRINTS[0],
+                 "--input", input_name, "--output", output_name, "--resolution", "4",
+                 "--qa-print-index", "0", "--ocio-config", "--out", bundles, "--data-dir", data],
+                root / f"{name}.log", report)
+        folder = bundles / name
+        meta = json.loads((folder / "bundle.json").read_text())
+        require(not (folder / "qa").exists() and not any(a["kind"] == "qa" for a in meta["artifacts"]),
+                "--qa-print-index without --qa unexpectedly ran QA")
+        spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS[:1], input_color_space=input_name,
+                          output_color_space=output_name, resolution=4, name=name,
+                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+        expected = BundleBuilder(spec).build()
+        require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts], "transport LUT paths drift")
+        lattices = [{"path": row["path"], **max_error(get_format("cube").read(folder / row["path"]).table,
+                     py.table, 2e-6, name)} for row, (_, py) in zip(meta["luts"], expected.luts)]
+        if input_name.startswith("Fujifilm F-Log"):
+            require(not any(a["kind"] == "ocio" for a in meta["artifacts"])
+                    and not list(folder.rglob("*.ocio")), "unsupported F-Log unexpectedly emitted OCIO")
+            require("[ocio] SKIP:" in (root / f"{name}.log").read_text(), "missing explicit OCIO skip message")
+        report["transport_lattices"].append({"input": input_name, "output": output_name,
+                                          "lattices": lattices, "artifacts": check_artifacts(folder, meta)})
     report["cases"] = []
     report["scenario_count"] = 0
     for topology in ("1lut", "2lut", "3lut", "4lut"):
@@ -318,7 +371,7 @@ def run(args, report):
         spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS, input_color_space="sRGB",
                           output_color_space="sRGB", topology=topology, resolution=17, name=name,
                           include_combinations=topology == "4lut",
-                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+                          exposure_ev=(meta["input_exposure"] or {}).get("exposure_ev", 0.0))
         expected = BundleBuilder(spec).build()
         require(meta["topology"] == topology and meta["resolution"] == 17, "bundle topology/resolution drift")
         require(meta["stocks"] == {"film": FILM, "prints": list(PRINTS)}, "bundle stocks drift")
@@ -364,7 +417,7 @@ def run(args, report):
                               input_color_space="Panasonic V-Log", output_color_space="sRGB",
                               topology=topology, resolution=17, name=ocio_name,
                               include_combinations=True,
-                              stops_above_midgray=ocio_meta["input_exposure"]["stops_above_midgray"])
+                              exposure_ev=(ocio_meta["input_exposure"] or {}).get("exposure_ev", 0.0))
         ocio_python = BundleBuilder(ocio_spec).build()
         require([tuple(m[k] for k in fields) for m in ocio_meta["luts"]]
                 == [tuple(getattr(m, k) for k in fields) for m in ocio_python.meta.luts],
@@ -404,7 +457,7 @@ def run(args, report):
                           input_color_space="sRGB", output_color_space="sRGB",
                           topology="1lut", resolution=17, name=name,
                           input_gamut_compress=InputGamutCompressSpec(active=active, algorithm=algorithm),
-                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+                          exposure_ev=(meta["input_exposure"] or {}).get("exposure_ev", 0.0))
         expected = BundleBuilder(spec).build()
         luts = [(m["path"], get_format("cube").read(folder / m["path"])) for m in meta["luts"]]
         require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts],

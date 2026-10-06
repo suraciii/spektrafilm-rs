@@ -97,10 +97,10 @@
   <table>
     <thead><tr><th>阶段</th><th>范围</th><th>交付物</th><th>优先级</th></tr></thead>
     <tbody>
-      <tr><td>Phase A</td><td>Shell / layout parity</td><td>五个 sidebar tabs、420px sidebar、CONFIG display/state、全 tab action bar、viewer status footer。</td><td class="status-good">已落地/正在合并</td></tr>
-      <tr><td>Phase B</td><td>Viewer interaction parity</td><td>ccw/cw rotate、精确 100/200/400% zoom、reset view、layer presentation 的一致语义。</td><td class="status-warn">P1</td></tr>
-      <tr><td>Phase C</td><td>Consumer evidence</td><td>截图、pixel probe、state round-trip、Save/Export isolation、代表性 RAW/非方形图像场景。</td><td class="status-warn">P1</td></tr>
-      <tr><td>Phase D</td><td>Matrix/document closure</td><td>更新 parity matrix、README、Issue #11/#12/#17 的实际证据和剩余差异。</td><td class="status-warn">P1</td></tr>
+      <tr><td>Phase A</td><td>Shell / layout parity</td><td>五个 sidebar tabs、420px sidebar、CONFIG display/state、固定 tab/action bar、viewer layer controls 和状态 footer。</td><td class="status-good">已落地</td></tr>
+      <tr><td>Phase B</td><td>Viewer interaction parity</td><td>ccw/cw rotate、真实输入管线方向、精确 100/200/400% zoom、reset view、layer presentation 的一致语义。</td><td class="status-good">已落地</td></tr>
+      <tr><td>Phase C</td><td>Consumer evidence</td><td>真实窗口截图、float pixel probe、state round-trip、Save/Export 像素零差异、RAW、旋转元数据、profile 与非 sRGB 场景。</td><td class="status-good">Linux Xvfb 完整验收通过</td></tr>
+      <tr><td>Phase D</td><td>Matrix/document closure</td><td>parity matrix 内嵌实际记录和执行文件 SHA256；README 更新测量范围及 TIFF 暂存取消边界。</td><td class="status-good">实测证据已写入矩阵</td></tr>
     </tbody>
   </table>
 

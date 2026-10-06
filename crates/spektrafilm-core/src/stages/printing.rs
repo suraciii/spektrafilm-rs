@@ -298,43 +298,40 @@ pub fn develop(
     print: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let log_exposure = print.log_exposure_f64();
 
-    // Mirrors Python `develop_print_morph`: when the profile carries a fitted
-    // `density_curves_model`, the print density curves always come from
-    // evaluating it (identity evaluation when the morph is inactive, the s023
-    // coupled-gamma morph when active), interpolated at gamma 1. Upstream
-    // 0.3.4 has no stored-curve print path at all; the fallback below covers
-    // model-less custom profiles and evaluation errors.
+    // Mirrors Python `develop_print_morph`: model-backed profiles are always
+    // evaluated from the fitted model. Invalid custom models and morph
+    // parameters are returned to the caller rather than falling back to
+    // stored curves or panicking during rendering.
     let morph = &params.print_render.density_curves_morph;
     if let Some(model) = print.data.density_curves_model.as_ref() {
-        match crate::print_morph::morph_density_curves(
+        let curves = crate::print_morph::morph_density_curves(
             &log_exposure,
             model,
             morph,
             print.is_positive(),
-        ) {
-            Ok(curves) => {
-                return backend.density_curve_interp(log_raw_print, &log_exposure, &curves, 1.0);
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "print-curve model eval failed; using stored curves")
-            }
-        }
+        )
+        .map_err(|error| format!("invalid print density-curve model: {error}"))?;
+        return Ok(backend.density_curve_interp(
+            log_raw_print,
+            &log_exposure,
+            &curves,
+            1.0,
+        ));
     }
 
-    // Stored-curve fallback (profiles without a fitted model). Python parity
-    // note for this path: print's `develop` uses `develop_simple` directly with
-    // RAW (un-normalized) density curves — no nanmin subtraction.
-    backend.density_curve_interp(
+    // Stored-curve path for profiles without a fitted model. Python parity
+    // note: print's `develop` uses `develop_simple` directly with RAW
+    // (un-normalized) density curves — no nanmin subtraction.
+    Ok(backend.density_curve_interp(
         log_raw_print,
         &log_exposure,
         &print.density_curves_f64(),
         params.print_render.density_curve_gamma as f64,
-    )
+    ))
 }
-
 /// Full printing stage with pre-calibrated enlarger. `pixel_size_um`
 /// is the working-geometry pitch from
 /// [`crate::resizing::crop_and_rescale`].
@@ -350,7 +347,7 @@ pub fn process_with_calibration(
     preflash: [f64; 3],
     bw_print_correction: f64,
     pixel_size_um: f64,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let log_raw = expose_calibrated(
         cmy_film,
         film,
@@ -368,7 +365,6 @@ pub fn process_with_calibration(
     crate::pipeline::dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &log_raw);
     develop(&log_raw, print, params, backend)
 }
-
 /// Full printing stage (simplified — computes illuminant internally).
 pub fn process(
     cmy_film: &ImageBuf,
@@ -376,7 +372,7 @@ pub fn process(
     print: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let illuminant: Vec<f64> = crate::enlarger::enlarger_filtered_illuminant_f64(
         &params.enlarger.illuminant,
         params.enlarger.c_filter_neutral as f64,

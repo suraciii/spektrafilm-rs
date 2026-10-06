@@ -147,6 +147,8 @@ struct WorkflowOptions {
     raw_tint: Option<f64>,
     #[arg(long)]
     lens_correction: bool,
+    #[arg(long)]
+    route: Option<String>,
     #[arg(long, default_value = "none")]
     film_channel_swap: String,
     #[arg(long, default_value = "none")]
@@ -206,8 +208,7 @@ fn main() -> Result<()> {
             output,
             data_dir,
         } => {
-            let data_dir = resolve_data_dir(data_dir);
-            lut::export_lut(&film, paper.as_deref(), size, &output, &data_dir)?;
+            lut::export_lut(&film, paper.as_deref(), size, &output, &resolve_data_dir(data_dir))?;
         }
         Commands::Describe { format } => {
             if format != "json" {
@@ -287,11 +288,17 @@ fn cmd_process(
     } else {
         RuntimeParams::default()
     };
+    let route = workflow
+        .route
+        .clone()
+        .or_else(|| scan_film.then_some("input > film > scan".into()))
+        .unwrap_or_else(|| params.workflow.route.clone());
+    params.workflow.route = route;
+    params.io.scan_film = scan_film;
     params
         .validate()
         .map_err(anyhow::Error::msg)
         .with_context(|| format!("invalid params{}", params_file.map(|p| format!(" file {}", p.display())).unwrap_or_default()))?;
-    params.io.scan_film = scan_film;
 
     // RAW supplies linear ACES; prepared images retain their samples.
     let input_is_raw = image_io::is_raw(input);
@@ -304,7 +311,7 @@ fn cmd_process(
     // Digest to the static runtime form (0.3.4 order: database neutral
     // filters, preview deactivation, stock-specific overrides, debug
     // switches). `new_with_spectral` re-applies the idempotent parts.
-    let neutral_db = NeutralFilters::load(data_dir);
+    let neutral_db = NeutralFilters::load(data_dir).map_err(anyhow::Error::msg)?;
     let inject = params
         .taps
         .inject
@@ -383,8 +390,17 @@ fn cmd_process(
              data_dir.display()
         )
     })?;
+    let route = pipeline.params.workflow.route.as_str();
     let run_once = |image: ImageBuf| -> Result<ImageBuf> {
-        let out = if inject.is_none() && collect.is_none() {
+        let out = if route == "input" {
+            image_io::convert_image(
+                &image,
+                &pipeline.params.io.input_color_space,
+                pipeline.params.io.input_cctf_decoding,
+                &pipeline.params.io.output_color_space,
+                pipeline.params.io.output_cctf_encoding,
+            )?
+        } else if inject.is_none() && collect.is_none() {
             pipeline.process(image, backend.as_ref()).map_err(anyhow::Error::msg)?
         } else {
             pipeline
@@ -501,7 +517,7 @@ fn render_recipe(
         .ok_or_else(|| anyhow::anyhow!("recipe does not select a print profile"))?;
     let print = profile::load_profile_by_name(data_dir, print_name)
         .with_context(|| format!("loading print profile {print_name}"))?;
-    let neutral_db = NeutralFilters::load(data_dir);
+    let neutral_db = NeutralFilters::load(data_dir).map_err(anyhow::Error::msg)?;
     let params = digest_params(params, &film, &print, Some(&neutral_db), true);
     let loaded = image_io::load(input)
         .with_context(|| format!("loading staged input {}", input.display()))?;
@@ -853,7 +869,7 @@ fn cmd_list_profiles(data_dir: &Path) {
 
 
 
-fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
+pub(crate) fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
     let mut candidates = vec![explicit.clone()];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -866,10 +882,7 @@ fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         candidates.push(PathBuf::from(manifest).join("..").join("..").join("data"));
     }
-    candidates
-        .into_iter()
-        .find(|path| path.is_dir())
-        .unwrap_or(explicit)
+    candidates.into_iter().find(|path| path.is_dir()).unwrap_or(explicit)
 }
 
 fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {

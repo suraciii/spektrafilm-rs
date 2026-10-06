@@ -27,6 +27,8 @@ exact fix — never a silent skip):
 from __future__ import annotations
 
 import argparse
+import hashlib
+import platform
 import json
 import hashlib
 import shutil
@@ -132,10 +134,8 @@ def preflight_rust() -> dict:
         )
     return {"rust_bin": str(RS_BIN.resolve()),
             "rust_bin_sha256": hashlib.sha256(RS_BIN.read_bytes()).hexdigest(),
-            "rust_commit": subprocess.check_output(["git", "rev-parse", "HEAD"],
-                                                   cwd=REPO_ROOT, text=True).strip(),
-            "rust_worktree_dirty": bool(subprocess.check_output(
-                ["git", "diff", "--name-only", "HEAD"], cwd=REPO_ROOT, text=True).strip()),
+            "rust_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip(),
+            "rust_worktree_dirty": bool(subprocess.check_output(["git", "diff", "--name-only", "HEAD"], cwd=REPO_ROOT, text=True).strip()),
             "platform": platform.platform()}
 
 

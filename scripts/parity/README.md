@@ -17,11 +17,14 @@ Files:
 | `gen_matrix.py` | Regenerates `docs/parity/parity_matrix.json` (live asset hashing) |
 | `lut_acceptance.py` | Real CLI LUT bakes, pinned QA/format comparisons, OCIO processors and delivered artifact checks |
 | `package_smoke.py` | Installed image/metadata/RAW paths, LUT/OCIO/QA delivery and actual native GUI operations |
+| `gui_viewer_acceptance.py` | Native viewer controls, float probes, animation frames, profile/non-sRGB paths and Save/Export isolation |
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
 the machine-readable inventory is
 [`docs/parity/parity_matrix.json`](../../docs/parity/parity_matrix.json).
+
+Pass `--gui-report path/to/gui-acceptance/observations.json` to `gen_matrix.py` to retain the executed native GUI records and their SHA256 alongside the spectral report. A failed or incomplete GUI report is rejected. Each named scenario remains scoped to its actual assertions; Linux desktop evidence does not establish Windows/macOS display behavior.
 
 ## Reference environment (one-time setup)
 
@@ -157,18 +160,44 @@ The same gate compares 32 additional diagnostic results for disabled xy and
 active oklch input compression, separately from the 112 baseline results.
 
 
-All three package jobs run `package_smoke.py` against installed executables
-and bundled data. The native GUI driver operates real windows and file dialogs,
-records screenshots, saves/restores state across restart, decodes RAW, saves a
-float image, observes the bundled f64 exporter, and checks Cancel/window-close
-child cleanup. Linux uses Xvfb with a 1600×1000 screen. Windows/macOS acceptance
-requires actual successful workflow execution; installing a driver is not
-evidence that those packages run.
+The package smoke command always covers installed image/metadata/RAW paths,
+LUT/OCIO/QA delivery and binary provenance. Native GUI acceptance is optional:
+pass `--gui` only for a real desktop/Xvfb run. The release workflow currently
+omits `--gui` by design, so its three package jobs do not claim GUI coverage;
+the GUI driver remains available as a separate, explicit evidence command.
+When enabled, the driver operates real windows and file dialogs, records
+screenshots, saves/restores state across restart, decodes RAW, saves a float
+image, observes the bundled f64 exporter, and checks Cancel/window-close child
+cleanup. Linux GUI runs use Xvfb; Windows/macOS GUI runs require a real
+interactive desktop and platform permissions.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
-engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo and zenity. Package
-smoke also builds a ZIP bundle through the installed exporter, checks offline
+engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo, zenity and
+ffmpeg. Package smoke also builds a ZIP bundle through the installed exporter, checks offline
 report references and artifacts, and executes its delivered OCIO processors.
+`package_smoke.py` requires `--package-root` and writes `package_report.json`
+next to `observations.json`. It records the Rust HEAD, pinned reference commit,
+platform, worktree status, a deterministic package-tree SHA256, each delivered
+binary SHA256 and the observed scenario results. A passing smoke command without
+that provenance is not publication evidence.
+For a single local gate, provide the built f64 CLI and portable package:
+
+```bash
+xvfb-run -a -s '-screen 0 1600x1000x24' python3 scripts/parity/run_all.py \
+  --rust-bin target/release/spektrafilm-f64 \
+  --data-dir data \
+  --package-root dist/spektrafilm-linux-x64 \
+  --out-root target/acceptance
+```
+
+The wrapper runs the existing runtime parity, LUT acceptance, and package smoke
+checks without adding another test framework. It fails on missing prerequisites
+or on the first failed check and writes command logs plus `report.json`.
+The wrapper uses `SPEKTRAFILM_PY` for installed package acceptance and defaults
+to the pinned reference venv; `SPEKTRAFILM_PY_REPO` defaults to the sibling
+checkout. Supply both variables on CI or when using another checkout. Final
+reports record the Rust HEAD, executable SHA256, platform and reference pin.
+
 `--raw-fixture PATH` reuses the pinned Kodak KDC download when network access
 is unavailable; the same required SHA256 check runs before decoding.
 

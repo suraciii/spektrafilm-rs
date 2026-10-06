@@ -156,7 +156,7 @@
     "auto_exposure": true,
     "auto_exposure_method": "center_weighted",
     "lens_blur_um": 0.0,
-    "film_format_mm": 35.0,
+    "color_filter": "none",
     "filter_uv": [
       0.0,
       410.0,
@@ -271,7 +271,10 @@
     "saving_color_space": "sRGB",
     "saving_cctf_encoding": true,
     "auto_preview": true,
-    "scan_film": false
+    "scan_film": false,
+    "workflow": {
+      "route": "input > film > print > scan"
+    }
   },
   "load_raw": {
     "white_balance": "as_shot",

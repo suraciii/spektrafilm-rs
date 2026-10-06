@@ -353,6 +353,8 @@ fn mat3_mul3(a: &[[f32; 3]; 3], b: &[[f32; 3]; 3], out: &mut [[f32; 3]; 3]) {
 pub enum Cctf {
     /// Scene-linear (ACES2065-1) — identity.
     Linear,
+    /// ACEScct logarithmic encoding used by the ACEScct RGB transport space.
+    Acescct,
     /// IEC 61966-2-1 sRGB piecewise curve (sRGB, Display P3).
     Srgb,
     /// ROMM/ProPhoto: gamma 1.8 with a 1/32 encoded toe (`x < 16·E_t` on
@@ -599,6 +601,13 @@ pub fn srgb_encode_f64(v: f64) -> f64 {
 pub fn cctf_decode(v: f64, cctf: Cctf) -> f64 {
     match cctf {
         Cctf::Linear => v,
+        Cctf::Acescct => {
+            if v > 0.155251141552511 {
+                (v * 17.52 - 9.72).exp2()
+            } else {
+                (v - 0.0729055341958355) / 10.5402377416545
+            }
+        }
         Cctf::Srgb => srgb_decode_f64(v),
         Cctf::ProPhoto => {
             // E_t = 16^(1.8/(1-1.8)) = 1/512; linear below 16·E_t = 1/32.
@@ -627,9 +636,16 @@ pub fn cctf_decode(v: f64, cctf: Cctf) -> f64 {
 pub fn cctf_encode(v: f64, cctf: Cctf) -> f64 {
     match cctf {
         Cctf::Linear => v,
+        Cctf::Acescct => {
+            if v <= 0.0078125 {
+                10.5402377416545 * v + 0.0729055341958355
+            } else {
+                (v.log2() + 9.72) / 17.52
+            }
+        }
         Cctf::Srgb => srgb_encode_f64(v),
         Cctf::ProPhoto => {
-            // E_t = 1/512; linear when E_t > v (strict), else gamma 1/1.8.
+            // E_t = 1/512; linear when E_t > v, else gamma 1/1.8.
             if 1.0 / 512.0 > v {
                 v * 16.0
             } else {
@@ -726,6 +742,19 @@ mod tests {
         assert!(encode_rgb([-0.1, 2.0, 0.18], &SRGB)[0] < 0.0);
         assert!(encode_rgb([-0.1, 2.0, 0.18], &SRGB)[1] > 1.0);
     }
+    #[test]
+    fn acescct_transfer_matches_transport_curve() {
+        for linear in [0.0, 0.001, 0.0078125, 0.18, 1.0, 4.0] {
+            let encoded = cctf_encode(linear, Cctf::Acescct);
+            let decoded = cctf_decode(encoded, Cctf::Acescct);
+            assert!((decoded - linear).abs() < 1e-12, "{linear}: {encoded} -> {decoded}");
+        }
+        assert_eq!(
+            cctf_encode(0.18, Cctf::Acescct),
+            (0.18f64.log2() + 9.72) / 17.52
+        );
+    }
+
 
     // Generated with fresh colour-science 0.4.7; default stored matrices, CAT02.
     #[test]

@@ -1,0 +1,13 @@
+identifier = "arctic2026alpha02"
+file = "arctic2026alpha02/reflectance_xy_tc.npy"
+kind = "reflectance"
+title = "arctic2026 (alpha02)"
+[array]
+lut_size = 192
+bands = 81
+spectral_shape = [380, 780, 5]
+dtype = "float16"
+[reflectance]
+scene_illuminant = "D65"
+midgray = 0.184
+bounded = false

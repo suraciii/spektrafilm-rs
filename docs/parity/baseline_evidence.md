@@ -266,18 +266,18 @@ Independent executed checks establish:
   print compensation/normalization or illuminant/filter calibration inputs change.
   The workspace regression compares updated pipelines with freshly constructed
   pipelines across EV -2 through +2.
-- The current f64 CLI passed all 68 runtime differential rows in
-  `target/parity-current/parity_report.json`; the executable SHA256 is
-  `59a56d781bcf638eb43eaa511956f8efb4cc9e1f0bafe11eea71d607b23d5660`.
-  LUT artifact acceptance passed 112 QA/transport scenarios in
-  `target/lut-acceptance-current-3/report.json`; its report SHA256 is recorded
-  in `docs/parity/parity_matrix.json`. The reports retain the Python pin,
-  runtime dependencies, per-tap metrics, delivered LUT comparisons, and
-  failure rows.
-- The package and native GUI reports remain separate platform evidence. The
-  existing Linux report was generated from the same Rust source commit but
-  has a dirty-worktree provenance flag; it cannot serve as clean final
-  delivery evidence until a final package is rebuilt from the committed tree.
+- The current release CLI passed all 68 runtime differential rows in
+  `/tmp/spektrafilm-current-parity/parity_report.json`. LUT artifact acceptance
+  passed 112 topology QA comparisons, 32 input-compression override comparisons,
+  six F-Log/F-Log2/N-Log/ProPhoto/PQ/HLG bundle comparisons, OCIO processors and
+  public format/transport probes in `/tmp/spektrafilm-lut-current-3/report.json`.
+  Unsupported optional OCIO mappings explicitly skip configuration emission;
+  `qa_print_index` alone does not enable QA. Scenario errors remain named failed
+  rows while later measurements continue. Finalization preserves the README
+  Quality table, writes `bundle.json`, and creates ZIPs only when requested.
+  Scientific QA failures at coarse resolution match Python's reported failures;
+  acceptance verifies the results and statuses rather than requiring every LUT
+  quality metric to pass.
 - Profile serialization preserves missing spectral samples as JSON null and
   saves a suffixed copy without mutating the caller. Parametric curves retain
   the upstream formula. The public gamma/slope helpers use linear-cost
@@ -285,15 +285,13 @@ Independent executed checks establish:
   gamma `[3.103978836041295, 3.1039788360412963, 3.6538466942740713]`
   and slopes `[3.21, 3.21, 3.21]`. Nonlinear density-min fitting and plotting
   remain independent research APIs outside product parity.
-- Historical Linux/Xvfb native evidence is retained at
-  `/tmp/spektrafilm-current-105754-evidence-12/gui-acceptance/observations.json`.
-  Its measured report SHA256 is
-  `625285ed2ad5e641c3372d697c4477d4b22b28fb32d1329b25c32e2d452e204e`, and it
-  records the named viewer assertions from that run. The report was generated
-  with dirty-worktree provenance, so it is not clean final delivery evidence.
-  The current GUI driver additionally checks exact stock halation and print-glare
-  defaults; the historical report predates those assertions. Windows/macOS
-  native display and window behavior remain unverified here.
+- The final workspace passed 197 tests. The relocated portable Linux package
+  passed installed image/metadata/RAW/LUT/OCIO/QA and native GUI acceptance at
+  `/tmp/spektrafilm-current-package-evidence-3`. Native assertions include
+  Scan-for-print force/restore/state reset, Input interpolation isolation,
+  preview-limit refresh with full-resolution Export, persistent RAW lens status,
+  animation, display/save isolation and actual in-flight Cancel/close cleanup.
+  Windows/macOS remain governed by their CI evidence, not Linux screenshots.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

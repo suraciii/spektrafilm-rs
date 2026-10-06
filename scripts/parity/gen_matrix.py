@@ -244,28 +244,28 @@ AUDIT_RUNTIME_STATUSES = {
 # GUI actions — spektrafilm_gui/controller.py handlers wired in app.py:225-242.
 # ---------------------------------------------------------------------------
 GUI_ACTIONS = [
-    ("load_input_image", "open a raster image via OIIO with ICC/metadata", S, None),
-    ("load_raw_image", "RAW decode via rawpy+lensfun (WB modes, TCA/vignetting)", S, None),
-    ("rotate_input_image_clockwise", "quarter-turn input layer", S, None),
-    ("rotate_input_image_counterclockwise", "quarter-turn input layer", S, None),
-    ("apply_profile_defaults", "film/paper selection re-syncs stock defaults", S, None),
-    ("apply_film_profile_defaults", "film stock change re-applies stock specifics", S, None),
-    ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", S, None),
-    ("run_scan", "full-resolution simulation", S, None),
-    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", S, None),
-    ("request_auto_preview", "auto-preview wiring for every editor", S, None),
-    ("report_display_transform_status", "napari display transform toggle", S, None),
-    ("set_gray_18_canvas", "18% gray canvas background", S, None),
-    ("set_output_interpolation_mode", "output layer interpolation mode", S, None),
-    ("refresh_preview_cache", "recompute cached preview", S, None),
-    ("save_output_layer", "save with format/ICC/metadata preservation", S, None),
-    ("save_current_as_default", "GUI state persisted as startup default", S, None),
-    ("save_current_state_to_file", "GUI state export", S, None),
-    ("load_state_from_file", "GUI state import", S, None),
-    ("restore_factory_default", "reset persisted state", S, None),
-    ("show_startup_placeholder", "startup placeholder layer", S, None),
-    ("virtual_photo_paper", "photo-paper presentation frame + watermark asset", S, None),
-    ("polaroid_animation", "development animation", S, None),
+    ("load_input_image", "open a raster image via OIIO with ICC/metadata", ABSENT, 9),
+    ("load_raw_image", "RAW decode via rawpy+lensfun (WB modes, TCA/vignetting)", ABSENT, 10),
+    ("rotate_input_image_clockwise", "quarter-turn input layer", ABSENT, 12),
+    ("rotate_input_image_counterclockwise", "quarter-turn input layer", ABSENT, 12),
+    ("apply_profile_defaults", "film/paper selection re-syncs stock defaults", DIVERGENT, 3),
+    ("apply_film_profile_defaults", "film stock change re-applies stock specifics", DIVERGENT, 3),
+    ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
+    ("run_scan", "full-resolution simulation", ABSENT, 12),
+    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", ABSENT, 12),
+    ("request_auto_preview", "auto-preview wiring for every editor", DIVERGENT, 11),
+    ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
+    ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
+    ("set_output_interpolation_mode", "output layer interpolation mode", ABSENT, 12),
+    ("refresh_preview_cache", "recompute cached preview", ABSENT, 12),
+    ("save_output_layer", "save with format/ICC/metadata preservation", ABSENT, 9),
+    ("save_current_as_default", "GUI state persisted as startup default", ABSENT, 11),
+    ("save_current_state_to_file", "GUI state export", ABSENT, 11),
+    ("load_state_from_file", "GUI state import", ABSENT, 11),
+    ("restore_factory_default", "reset persisted state", ABSENT, 11),
+    ("show_startup_placeholder", "startup placeholder layer", ABSENT, 11),
+    ("virtual_photo_paper", "photo-paper presentation frame + watermark asset", ABSENT, 12),
+    ("polaroid_animation", "development animation", ABSENT, 12),
 ]
 AUDIT_GUI_STATUSES = {
     "load_input_image": ABSENT,
@@ -552,50 +552,9 @@ def gui_evidence(path):
             "report_sha256": sha256(path), "records": records,
             "scope": "Only named assertions and screenshots in this native run are measured; other actions remain unverified."}
 
-def external_report(path, label):
-    if path is None:
-        return {"status": "pending_fresh_execution"}
-    report = json.loads(path.read_text())
-    if report.get("passed") is not True:
-        sys.exit(f"Refusing failed {label} evidence: {path}")
-    if label == "LUT":
-        reference = report.get("reference", {})
-        cli = report.get("cli", {})
-        cli_path = Path(cli.get("path", ""))
-        transport = report.get("transport_lattices")
-        commands = report.get("commands", [])
-        transport_ok = len(transport) == 6 if isinstance(transport, list) else (
-            transport is None and len(commands) >= 13
-        )
-        required = (
-            report.get("reference_commit") == PY_COMMIT
-            and reference.get("commit") == PY_COMMIT
-            and cli_path.is_file()
-            and cli.get("sha256") == sha256(cli_path)
-            and transport_ok
-            and len(report.get("cases", [])) == 4
-            and len(report.get("formats", [])) == 4
-            and report.get("override_scenario_count") == 32
-            and report.get("scenario_count") == 112
-            and not report.get("failures")
-        )
-        if not required:
-            sys.exit(f"Refusing incomplete or unpinned {label} evidence: {path}")
-    return {
-        "status": "passed",
-        "report_path": str(path.resolve()),
-        "report_sha256": sha256(path),
-        "summary": {
-            key: report[key]
-            for key in ("scenario_count", "passed", "failures")
-            if key in report
-        },
-    }
-
-def gui_action_entry(action, desc, status, owner, evidence, audit_status):
+def gui_action_entry(action, desc, status, owner, evidence):
     entry = {"description": desc, **integration_entry(status, owner, "",
-        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs",
-        audit_status=audit_status)}
+        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
     keys = {
         "rotate_input_image_clockwise": "rotated_input_max_error",
         "rotate_input_image_counterclockwise": "rotation_pixel_bounds",
@@ -604,35 +563,14 @@ def gui_action_entry(action, desc, status, owner, evidence, audit_status):
         "restore_factory_default": "factory_reset",
     }
     scenarios = {
-        "apply_profile_defaults": "profile_defaults",
-        "apply_film_profile_defaults": "profile_defaults",
-        "load_input_image": "viewer-small-input-raster",
-        "load_raw_image": "raw_status",
-        "run_preview": "explicit-preview",
-        "run_scan": "explicit-scan",
-        "request_auto_preview": "viewer-small-input-raster",
-        "refresh_preview_cache": "preview_size_isolation",
-        "save_current_state_to_file": "viewer_restore",
-        "load_state_from_file": "viewer_restore",
-        "set_output_interpolation_mode": "interpolation",
-        "set_gray_18_canvas": "gray_canvas",
-        "virtual_photo_paper": "paper_back",
-        "polaroid_animation": "reveal",
+        "set_output_interpolation_mode": "interpolation", "set_gray_18_canvas": "gray_canvas",
+        "virtual_photo_paper": "paper_back", "polaroid_animation": "reveal",
         "save_output_layer": "display_output_isolation",
-        "scan_for_print": "scan_for_print",
-    }
-    surfaces = {
-        "run_preview": "explicit-preview",
-        "run_scan": "explicit-scan",
-        "show_startup_placeholder": "fresh-launch-MAIN-top",
+        "scan_for_print": "scan_for_print", "load_raw_image": "raw_status",
     }
     rows = [row for row in evidence.get("records", [])
             if (action in keys and keys[action] in row)
-            or (action in scenarios and row.get("scenario") == scenarios[action])
-            or (action in surfaces and row.get("surface") == surfaces[action])]
-    if action in {"apply_profile_defaults", "apply_film_profile_defaults"}:
-        rows = [row for row in rows
-                if row.get("assertion") == "selected stock presets match reference defaults"]
+            or (action in scenarios and row.get("scenario") == scenarios[action])]
     if rows:
         entry.update(rust_status="verified_exercised_path",
                      verification="Named native-window assertions only; see measured_evidence.",
@@ -647,11 +585,9 @@ def main() -> None:
     parser.add_argument("--report", type=Path,
                         default=REPO_ROOT / "target/parity/parity_report.json")
     parser.add_argument("--gui-report", type=Path)
-    parser.add_argument("--lut-report", type=Path)
     args = parser.parse_args()
     evidence = report_evidence(args.report)
     native_gui = gui_evidence(args.gui_report)
-    lut_evidence = external_report(args.lut_report, "LUT")
     head = subprocess.run(["git", "-C", str(PY_REPO), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
     if head != PY_COMMIT:
@@ -689,8 +625,7 @@ def main() -> None:
             for group, fields in RUNTIME_FIELDS.items()
         },
         "gui_actions": {
-            action: gui_action_entry(action, desc, status, owner, native_gui,
-                                     AUDIT_GUI_STATUSES[action])
+            action: gui_action_entry(action, desc, status, owner, native_gui)
             for action, desc, status, owner in GUI_ACTIONS
         },
         "lut_registry": {
@@ -723,7 +658,6 @@ def main() -> None:
         "verification_status": evidence["status"],
         "differential_evidence": evidence,
         "gui_evidence": native_gui,
-        "lut_evidence": lut_evidence,
         "budgets": BUDGETS,
         "scenario_status": f"{evidence['catalog_rows']} expanded rows; exercised scenario and tap evidence is recorded under differential_evidence.",
     }

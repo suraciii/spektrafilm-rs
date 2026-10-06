@@ -19,15 +19,23 @@ pub struct NeutralFilters {
 
 impl NeutralFilters {
     /// Load the JSON database from `<data_dir>/filters/neutral_print_filters.json`.
-    /// Returns an empty database if the file is missing — matches Python's behavior.
-    pub fn load(data_dir: &Path) -> Self {
+    /// A missing file is an explicit no-op, matching Python's optional database.
+    /// Present but malformed files are errors; silently treating them as empty
+    /// would change calibrated output without telling the caller.
+    pub fn load(data_dir: &Path) -> Result<Self, String> {
         let path = data_dir.join("filters").join("neutral_print_filters.json");
-        let db = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<RawDb>(&s).ok())
-            .map(|raw| raw.0)
-            .unwrap_or_default();
-        Self { db }
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self { db: HashMap::new() });
+            }
+            Err(error) => {
+                return Err(format!("reading neutral filter database {}: {error}", path.display()));
+            }
+        };
+        let raw: RawDb = serde_json::from_str(&text)
+            .map_err(|error| format!("parsing neutral filter database {}: {error}", path.display()))?;
+        Ok(Self { db: raw.0 })
     }
 
     /// Look up filter CC values for a (print_stock, illuminant, film_stock) combination.
@@ -43,6 +51,30 @@ impl NeutralFilters {
             .get(illuminant)?
             .get(film_stock)
             .copied()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_present_database_is_rejected() {
+        let root = std::env::temp_dir().join(format!(
+            "spektrafilm-neutral-filter-test-{}",
+            std::process::id()
+        ));
+        let filters = root.join("filters");
+        std::fs::create_dir_all(&filters).unwrap();
+        std::fs::write(
+            filters.join("neutral_print_filters.json"),
+            b"{\"not\": \"a filter database\"",
+        )
+        .unwrap();
+
+        let result = NeutralFilters::load(&root);
+        assert!(result.is_err(), "malformed filter data must not become an empty database");
+        let _ = std::fs::remove_dir_all(root);
     }
 }
 

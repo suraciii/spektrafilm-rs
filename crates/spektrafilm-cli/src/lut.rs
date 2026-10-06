@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
-use spektrafilm_core::lut_baker::{BundleBuilder, BundleSpec, Headroom, Topology};
+use spektrafilm_core::lut_baker::{BundleBuilder, BundleSpec, Topology};
 use spektrafilm_core::lut_delivery::{self, DeliveryOptions};
+use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::{lut_transport, profile};
 
 #[derive(Subcommand)]
@@ -56,10 +57,12 @@ pub(crate) struct BuildArgs {
     target: Option<String>,
     #[arg(long, value_parser = ["directory", "zip"])]
     container: Option<String>,
-    /// Place encoded source 1.0 at 0.18 * 2**STOPS; omitted uses native log/HDR
-    /// headroom or four stops for encoded SDR, unless overridden by TOML.
-    #[arg(long = "stops-above-gray", value_name = "STOPS")]
-    stops_above_midgray: Option<f64>,
+    /// Upstream input exposure stops (`auto`, `native`, `null`, or finite number).
+    #[arg(long = "stops-above-midgray", value_name = "STOPS")]
+    stops_above_midgray: Option<String>,
+    /// Legacy linear input exposure adjustment in EV.
+    #[arg(long = "exposure-ev", value_name = "EV")]
+    exposure_ev: Option<f64>,
     #[arg(long)]
     qa: bool,
     #[arg(long, value_name = "I")]
@@ -70,7 +73,9 @@ pub(crate) struct BuildArgs {
     #[arg(long)]
     combinations: bool,
     /// Write the bundle inside DIR/<bundle-name>/.
-    #[arg(long, value_name = "DIR")]
+    /// Captured RuntimeParams JSON snapshot to use as the bake source.
+    #[arg(long, value_name = "FILE")]
+    params: Option<PathBuf>,
     out: PathBuf,
     #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
     data_dir: PathBuf,
@@ -78,8 +83,14 @@ pub(crate) struct BuildArgs {
 
 pub(crate) fn run(command: LutCommand) -> Result<()> {
     match command {
-        LutCommand::Build(args) => build(args),
-        LutCommand::List { kind, data_dir } => list(kind, &data_dir),
+        LutCommand::Build(mut args) => {
+            args.data_dir = crate::resolve_data_dir(args.data_dir);
+            build(args)
+        }
+        LutCommand::List { kind, data_dir } => {
+            let data_dir = crate::resolve_data_dir(data_dir);
+            list(kind, &data_dir)
+        }
     }
 }
 
@@ -105,12 +116,16 @@ fn build(args: BuildArgs) -> Result<()> {
         ("resolution", json!(args.resolution)),
         ("target", json!(args.target)),
         ("container", json!(args.container)),
-        ("stops_above_midgray", json!(args.stops_above_midgray)),
+        ("stops_above_midgray", args.stops_above_midgray.as_deref().map(|value| value.parse::<f64>().map_or_else(|_| if value == "null" { Value::Null } else { Value::String(value.into()) }, Value::from)).unwrap_or(Value::Null)),
+        ("exposure_ev", json!(args.exposure_ev)),
         ("qa_print_index", json!(args.qa_print_index)),
     ] {
         if !value.is_null() {
             fields.insert(field.into(), value);
         }
+    }
+    if args.stops_above_midgray.as_deref() == Some("null") {
+        fields.insert("stops_above_midgray".into(), Value::Null);
     }
     if !args.prints.is_empty() {
         fields.insert("print_profiles".into(), json!(args.prints));
@@ -139,17 +154,31 @@ fn build(args: BuildArgs) -> Result<()> {
     spec.normalize().map_err(anyhow::Error::msg)?;
     lut_delivery::validate_target(&spec)?;
     let backend = spektrafilm_gpu::select_backend();
-    let bundle = BundleBuilder::new(spec)
+    let builder = if let Some(path) = &args.params {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading RuntimeParams JSON: {}", path.display()))?;
+        let params: RuntimeParams = serde_json::from_str(&text)
+            .with_context(|| format!("parsing RuntimeParams JSON: {}", path.display()))?;
+        BundleBuilder::with_params(spec, params)
+    } else {
+        BundleBuilder::new(spec)
+    };
+    let bundle = builder
         .build(&args.data_dir, backend.as_ref())
         .map_err(anyhow::Error::msg)?;
     let out = args.out.join(&bundle.spec.name);
     let mut meta = lut_delivery::write_bundle_files(&bundle, &out, &DeliveryOptions::default())?;
     if bundle.spec.ocio_config {
-        for artifact in spektrafilm_core::lut_ocio::emit(&out, &bundle, &meta)? {
-            lut_delivery::append_artifact(&mut meta, artifact)?;
+        match spektrafilm_core::lut_ocio::emit(&out, &bundle, &meta)? {
+            spektrafilm_core::lut_ocio::OcioEmission::Written(artifact) => {
+                lut_delivery::append_artifact(&mut meta, artifact)?;
+            }
+            spektrafilm_core::lut_ocio::OcioEmission::Skipped { reason } => {
+                println!("[ocio] SKIP: {reason}");
+            }
         }
     }
-    if bundle.spec.qa || bundle.spec.qa_print_index.is_some() {
+    if bundle.spec.qa {
         let qa_root = out.join("qa");
         let report = spektrafilm_core::lut_qa::run(&bundle, &args.data_dir, backend.as_ref(), &qa_root)
             .map_err(anyhow::Error::msg)?;
@@ -160,6 +189,7 @@ fn build(args: BuildArgs) -> Result<()> {
                 description: "Pinned Python 0.3.4 LUT quality assessment".into(),
             })?;
         }
+        lut_delivery::append_quality_summary(&out, &report)?;
         println!("[qa] {}", if report.passed { "PASS" } else { "FAIL" });
     }
     lut_delivery::finalize_bundle(&out, &meta, bundle.spec.container == "zip")?;
@@ -240,7 +270,6 @@ pub(crate) fn export_lut(
         "output_color_space": "sRGB",
         "topology": Topology::One,
         "resolution": resolution,
-        "stops_above_midgray": Headroom::Native(()),
     }))?;
     let backend = spektrafilm_gpu::select_backend();
     let bundle = BundleBuilder::new(spec).build(data_dir, backend.as_ref())
