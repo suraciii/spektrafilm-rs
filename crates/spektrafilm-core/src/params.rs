@@ -88,7 +88,7 @@ pub struct CameraParams {
     /// Stable camera taking-filter identifier. `"none"` preserves the
     /// historical no-filter behavior; named values are loaded from the
     /// shipped measured transmission curves.
-    #[serde(default)]
+    #[serde(default = "default_color_filter", deserialize_with = "deserialize_color_filter")]
     pub color_filter: String,
     #[serde(default)]
     pub diffusion_filter: DiffusionFilterParams,
@@ -579,6 +579,17 @@ impl Default for PrintRenderingParams {
             base: PrintBaseParams::default(),
         }
     }
+}
+
+fn default_color_filter() -> String {
+    "none".into()
+}
+
+fn deserialize_color_filter<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(|value| value.unwrap_or_else(default_color_filter))
 }
 
 fn default_print_density_curves_morph() -> PrintCurvesMorphParams {
@@ -1167,3 +1178,21 @@ fn default_d55() -> String { "D55".into() }
 fn default_99() -> f64 { 99.0 }
 fn default_calibration() -> String { "1 0 0  0 1 0  0 0 1".into() }
 fn default_route() -> String { "input > film > print > scan".into() }
+
+#[cfg(test)]
+mod tests {
+    use super::CameraParams;
+
+    #[test]
+    fn null_or_missing_camera_color_filter_uses_no_filter() {
+        let null: CameraParams = serde_json::from_str(r#"{"color_filter":null}"#).unwrap();
+        assert_eq!(null.color_filter, "none");
+
+        let missing: CameraParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.color_filter, "none");
+
+        let named: CameraParams =
+            serde_json::from_str(r#"{"color_filter":"hoya_r1"}"#).unwrap();
+        assert_eq!(named.color_filter, "hoya_r1");
+    }
+}
