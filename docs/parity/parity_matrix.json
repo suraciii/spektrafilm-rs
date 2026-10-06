@@ -3,7 +3,7 @@
   "generated": {
     "python_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
     "python_version": "0.3.4",
-    "rust_commit": "12d26b1a8acdebd80a23d99a1ff6864913d95f3c",
+    "rust_commit": "4bad2dd4f612255714996aafd3968311e9a5af9a",
     "rust_audited_baseline": "9dd59b0380194b93686aaa230a8bb9680aa270a4",
     "python_platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43",
     "python_version_runtime": "3.14.4",
@@ -3479,15 +3479,14 @@
     }
   ],
   "known_gaps": [],
-  "verification_status": "partial_or_failed_evidence",
+  "verification_status": "verified_catalog",
   "differential_evidence": {
-    "status": "partial_or_failed_evidence",
-    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/parity-final-alignment-report/parity_report.json",
+    "status": "verified_catalog",
+    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/parity-final-fix/parity_report.json",
     "catalog_rows": 68,
     "reported_rows": 68,
     "counts": {
-      "pass": 62,
-      "FAIL": 6
+      "pass": 68
     },
     "verified_scenarios": [
       "bare_chain_4x4",
@@ -3508,15 +3507,21 @@
       "input_cctf_decoding",
       "crop_controls",
       "uv_ir_filters",
+      "layered_grain",
+      "grain_single_curve_seeded",
       "scan_film_glare",
       "preview_mode_digest",
+      "preview_digest_deterministic",
+      "velvia_dir_preset",
       "halation_preset",
       "camera_lens_blur",
       "scanner_unsharp",
       "enlarger_diffusion_filter",
+      "dir_couplers_spatial",
       "print_curves_morph",
       "preflash",
       "exposure_compensation",
+      "defaults_full_chain_32x32",
       "profiles_sweep::fujifilm_c200",
       "profiles_sweep::fujifilm_pro_400h",
       "profiles_sweep::fujifilm_provia_100f",
@@ -3617,9 +3622,9 @@
         "numpy_blas": "Build Dependencies:\n  blas:\n    detection method: pkgconfig\n    found: true\n    include directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/include\n    lib directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/lib\n    name: scipy-openblas\n    openblas configuration: OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY\n      Haswell MAX_THREADS=64\n    pc file directory: /project/.openblas\n    version: 0.3.34.106.0\n  lapack:\n    detection method: pkgconfig\n    found: true\n    include directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/include\n    lib directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/lib\n    name: scipy-openblas\n    openblas configuration: OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY\n      Haswell MAX_THREADS=64\n    pc file directory: /project/.openblas\n    version: 0.3.34.106.0\nCompilers:\n  c:\n    commands: cc\n    linker: ld.bfd\n    name: gcc\n    version: 14.2.1\n  c++:\n    commands: c++\n    linker: ld.bfd\n    name: gcc\n    version: 14.2.1\n  cython:\n    commands: cython\n    linker: cython\n    name: cython\n    version: 3.3.0\nMachine Information:\n  build:\n    cpu: x86_64\n    endian: little\n    family: x86_64\n    system: linux\n  host:\n    cpu: x86_64\n    endian: little\n    family: x86_64\n    system: linux\nPython Information:\n  path: /tmp/build-env-h653xs07/bin/python\n  version: '3.13'\nSIMD Extensions:\n  baseline:\n  - X86_V2\n  found:\n  - X86_V3\n  - X86_V4\n  - AVX512_ICL\n  not found:\n  - AVX512_SPR\n\n"
       },
       "rust_bin": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/release/spektrafilm-f64",
-      "rust_bin_sha256": "5fb0289fb0020918da318c1210d26dede8298eb190dd2c84848d6ae645e5e512",
-      "rust_commit": "570aad75157bd0a607b2d4cca4274412f4d49b49",
-      "rust_worktree_dirty": false,
+      "rust_bin_sha256": "9d7ef0fd23be6d5cfa1441bf15e1c04b0b3748b0c4b43a87969e6ab4975c2883",
+      "rust_commit": "7c36fe53cf6284bc0f20884a2896854b380e8ec5",
+      "rust_worktree_dirty": true,
       "platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43"
     },
     "rows": [
@@ -4394,19 +4399,19 @@
         "budget": "rng_stream",
         "declared_status": "expected_parity",
         "audit_baseline": {
-          "status": "known_gap",
-          "notes": "Rust parses profile density_curves_layers but never uses them; only the single-curve apply_grain_to_density path is ported. blur_dye_clouds_um / micro_structure / particle_scale_layers are likewise unread.",
+          "status": "expected_parity",
+          "notes": "Rust uses the same layered interpolation, per-layer particle scales, and seeded legacy np.random stream as the Python implementation.",
           "description": "Default grain (sublayers_active=True) on a 32x32 frame \u2014 Python develops through interp_density_cmy_layers + apply_grain_to_density_layers."
         },
-        "owner_issue": 6,
-        "status": "FAIL",
+        "owner_issue": null,
+        "status": "pass",
         "taps": {
           "cmy_film": {
             "n": 3072,
-            "max_abs": 0.0006830258353036633,
-            "mean_abs": 0.00012310381099470504,
-            "within_budget": false,
-            "detail": "max_abs=6.830e-04 (budget 1.0e-06)"
+            "max_abs": 7.915592181717557e-09,
+            "mean_abs": 3.216535103769206e-09,
+            "within_budget": true,
+            "detail": "max_abs=7.916e-09 (budget 1.0e-06)"
           }
         }
       },
@@ -4422,14 +4427,14 @@
           "description": "Grain with sublayers_active=False (the ported path), deterministic seeds 0/1/2 (grain.py:87)."
         },
         "owner_issue": null,
-        "status": "FAIL",
+        "status": "pass",
         "taps": {
           "cmy_film": {
             "n": 3072,
-            "max_abs": 0.000747126987479696,
-            "mean_abs": 0.00014293565583517337,
-            "within_budget": false,
-            "detail": "max_abs=7.471e-04 (budget 1.0e-06)"
+            "max_abs": 7.860915696156212e-09,
+            "mean_abs": 3.215511428664742e-09,
+            "within_budget": true,
+            "detail": "max_abs=7.861e-09 (budget 1.0e-06)"
           }
         }
       },
@@ -4472,15 +4477,15 @@
         "taps": {
           "rgb_out": {
             "n": 786432,
-            "py_mean": 0.29948220357533245,
-            "rs_mean": 0.3001878038159324,
-            "py_std": 0.15136676549130562,
-            "rs_std": 0.1564602938747134,
-            "mean_rel": 0.00235606734616025,
-            "std_rel": 0.03365024262013685,
-            "max_abs": 0.03165669693948797,
+            "py_mean": 0.29948154265240684,
+            "rs_mean": 0.299481853918141,
+            "py_std": 0.15136664596676466,
+            "rs_std": 0.1513670605795561,
+            "mean_rel": 1.0393486404227726e-06,
+            "std_rel": 2.7391291442361778e-06,
+            "max_abs": 0.005210532550794289,
             "within_budget": true,
-            "detail": "mean_rel=2.356e-03 std_rel=3.365e-02"
+            "detail": "mean_rel=1.039e-06 std_rel=2.739e-06"
           }
         }
       },
@@ -4496,7 +4501,7 @@
           "description": "Preview digestion with spatial controls enabled and stochastic glare off."
         },
         "owner_issue": 3,
-        "status": "FAIL",
+        "status": "pass",
         "taps": {
           "log_e_film": {
             "n": 3072,
@@ -4507,31 +4512,31 @@
           },
           "cmy_film": {
             "n": 3072,
-            "max_abs": 0.09178661972382424,
-            "mean_abs": 0.013365506884826793,
-            "within_budget": false,
-            "detail": "max_abs=9.179e-02 (budget 1.0e-06)"
+            "max_abs": 1.4432899320127035e-15,
+            "mean_abs": 2.9916751946116687e-16,
+            "within_budget": true,
+            "detail": "max_abs=1.443e-15 (budget 1.0e-06)"
           },
           "log_e_print": {
             "n": 3072,
-            "max_abs": 0.10840783154643352,
-            "mean_abs": 0.01271958330984044,
-            "within_budget": false,
-            "detail": "max_abs=1.084e-01 (budget 1.0e-06)"
+            "max_abs": 1.3600232051658168e-15,
+            "mean_abs": 3.060530502893971e-16,
+            "within_budget": true,
+            "detail": "max_abs=1.360e-15 (budget 1.0e-06)"
           },
           "cmy_print": {
             "n": 3072,
-            "max_abs": 0.1872726089248995,
-            "mean_abs": 0.02296734813379986,
-            "within_budget": false,
-            "detail": "max_abs=1.873e-01 (budget 1.0e-06)"
+            "max_abs": 3.774758283725532e-15,
+            "mean_abs": 4.894811408047891e-16,
+            "within_budget": true,
+            "detail": "max_abs=3.775e-15 (budget 1.0e-06)"
           },
           "rgb_out": {
             "n": 3072,
-            "max_abs": 0.027928789832890155,
-            "mean_abs": 0.007157311938185028,
-            "within_budget": false,
-            "detail": "max_abs=2.793e-02 (budget 1.0e-06)"
+            "max_abs": 8.3254114713327e-10,
+            "mean_abs": 8.193101699289415e-11,
+            "within_budget": true,
+            "detail": "max_abs=8.325e-10 (budget 1.0e-06)"
           }
         }
       },
@@ -4547,14 +4552,14 @@
           "description": "fujifilm_velvia_100 with DIR couplers active \u2014 digest_params applies the velvia-specific DIR gammas (params_builder.py:202-206)."
         },
         "owner_issue": 3,
-        "status": "FAIL",
+        "status": "pass",
         "taps": {
           "cmy_film": {
             "n": 3072,
-            "max_abs": 1.5965104531212506,
-            "mean_abs": 0.12020667002410114,
-            "within_budget": false,
-            "detail": "max_abs=1.597e+00 (budget 5.0e-05)"
+            "max_abs": 8.154299457885372e-11,
+            "mean_abs": 7.968047978874326e-12,
+            "within_budget": true,
+            "detail": "max_abs=8.154e-11 (budget 5.0e-05)"
           }
         }
       },
@@ -4676,14 +4681,14 @@
           "description": "DIR couplers active (deterministic spatial diffusion, no RNG) on the default portra pair."
         },
         "owner_issue": null,
-        "status": "FAIL",
+        "status": "pass",
         "taps": {
           "cmy_film": {
             "n": 3072,
-            "max_abs": 0.09239553052928323,
-            "mean_abs": 0.01341016535547986,
-            "within_budget": false,
-            "detail": "max_abs=9.240e-02 (budget 5.0e-05)"
+            "max_abs": 3.254774227912094e-11,
+            "mean_abs": 1.021985444043851e-11,
+            "within_budget": true,
+            "detail": "max_abs=3.255e-11 (budget 5.0e-05)"
           }
         }
       },
@@ -4803,43 +4808,43 @@
           "description": "Every default effect active (grain layers + halation + DIR + print glare + unsharp) \u2014 the shipped consumer default."
         },
         "owner_issue": 6,
-        "status": "FAIL",
+        "status": "pass",
         "taps": {
           "cmy_film": {
             "n": 3072,
             "py_mean": 0.7187044427824,
-            "rs_mean": 0.7177094912092667,
+            "rs_mean": 0.7187044428136806,
             "py_std": 0.08812793813535712,
-            "rs_std": 0.09160560640012895,
-            "mean_rel": 0.0013843681963080167,
-            "std_rel": 0.03946158662455516,
-            "max_abs": 0.040211622204859854,
+            "rs_std": 0.08812794095817614,
+            "mean_rel": 4.352365573255124e-11,
+            "std_rel": 3.203092095338503e-08,
+            "max_abs": 2.3312516583828824e-08,
             "within_budget": true,
-            "detail": "mean_rel=1.384e-03 std_rel=3.946e-02"
+            "detail": "mean_rel=4.352e-11 std_rel=3.203e-08"
           },
           "cmy_print": {
             "n": 3072,
             "py_mean": 0.6410378155430921,
-            "rs_mean": 0.645111097208955,
+            "rs_mean": 0.6410378166279146,
             "py_std": 0.14761998929600248,
-            "rs_std": 0.15960212585630387,
-            "mean_rel": 0.006354198718233079,
-            "std_rel": 0.08116879439867204,
-            "max_abs": 0.10400155204804429,
-            "within_budget": false,
-            "detail": "mean_rel=6.354e-03 std_rel=8.117e-02"
+            "rs_std": 0.14761999914854668,
+            "mean_rel": 1.6922908879724866e-09,
+            "std_rel": 6.674261557767907e-08,
+            "max_abs": 5.171746597643079e-08,
+            "within_budget": true,
+            "detail": "mean_rel=1.692e-09 std_rel=6.674e-08"
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.15686301546437983,
-            "rs_mean": 0.156447641598933,
-            "py_std": 0.06392815495183506,
-            "rs_std": 0.06822950174597424,
-            "mean_rel": 0.002648003828162696,
-            "std_rel": 0.06728407534019895,
-            "max_abs": 0.021939149901234772,
-            "within_budget": false,
-            "detail": "mean_rel=2.648e-03 std_rel=6.728e-02"
+            "py_mean": 0.15685473240724748,
+            "rs_mean": 0.15684246787507108,
+            "py_std": 0.06393736089440213,
+            "rs_std": 0.06393643260590177,
+            "mean_rel": 7.819038666015684e-05,
+            "std_rel": 1.4518717810278384e-05,
+            "max_abs": 0.001834951721457978,
+            "within_budget": true,
+            "detail": "mean_rel=7.819e-05 std_rel=1.452e-05"
           }
         }
       },
@@ -6215,51 +6220,51 @@
           },
           "cmy_film": {
             "n": 3072,
-            "py_mean": 0.8336657612860957,
-            "rs_mean": 0.8336776767852377,
-            "py_std": 0.08869226723611251,
-            "rs_std": 0.08868955775825167,
-            "mean_rel": 1.4292897340119207e-05,
-            "std_rel": 3.054920057038007e-05,
-            "max_abs": 0.0008558117876558136,
+            "py_mean": 0.8336756886367279,
+            "rs_mean": 0.8336739071761886,
+            "py_std": 0.08869262593646939,
+            "rs_std": 0.08869054768016547,
+            "mean_rel": 2.1368747626796346e-06,
+            "std_rel": 2.3432120562084688e-05,
+            "max_abs": 0.0014903000865587046,
             "within_budget": true,
-            "detail": "mean_rel=1.429e-05 std_rel=3.055e-05"
+            "detail": "mean_rel=2.137e-06 std_rel=2.343e-05"
           },
           "log_e_print": {
             "n": 3072,
-            "py_mean": -0.0967064601650044,
-            "rs_mean": -0.09669525447567562,
-            "py_std": 0.04134746155801788,
-            "rs_std": 0.04134076621554637,
-            "mean_rel": 0.00011587322408094834,
-            "std_rel": 0.00016192874288325511,
-            "max_abs": 0.0008989541608451709,
+            "py_mean": -0.09670550092410422,
+            "rs_mean": -0.09669083612676428,
+            "py_std": 0.041343861865595355,
+            "rs_std": 0.041335649947803775,
+            "mean_rel": 0.00015164387961188235,
+            "std_rel": 0.0001986248362157355,
+            "max_abs": 0.00130985496808958,
             "within_budget": true,
-            "detail": "mean_rel=1.159e-04 std_rel=1.619e-04"
+            "detail": "mean_rel=1.516e-04 std_rel=1.986e-04"
           },
           "cmy_print": {
             "n": 3072,
-            "py_mean": 0.3941261319836135,
-            "rs_mean": 0.39412837695949104,
-            "py_std": 0.08470826042689544,
-            "rs_std": 0.0847043495795224,
-            "mean_rel": 5.696084819931123e-06,
-            "std_rel": 4.6168429776901326e-05,
-            "max_abs": 0.0014435255529944846,
+            "py_mean": 0.3941262868962794,
+            "rs_mean": 0.3941346176283893,
+            "py_std": 0.08469448389346587,
+            "rs_std": 0.08469709600662181,
+            "mean_rel": 2.113721511836494e-05,
+            "std_rel": 3.084159718391686e-05,
+            "max_abs": 0.002344630304512596,
             "within_budget": true,
-            "detail": "mean_rel=5.696e-06 std_rel=4.617e-05"
+            "detail": "mean_rel=2.114e-05 std_rel=3.084e-05"
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.28869807111359874,
-            "rs_mean": 0.28869623163331254,
-            "py_std": 0.05013451324765004,
-            "rs_std": 0.05013072412835469,
-            "mean_rel": 6.371640375385003e-06,
-            "std_rel": 7.557905821547162e-05,
-            "max_abs": 0.0009704591265873863,
+            "py_mean": 0.2886952840920012,
+            "rs_mean": 0.28869032024485647,
+            "py_std": 0.0501367577175439,
+            "rs_std": 0.05012490623557933,
+            "mean_rel": 1.719407076677544e-05,
+            "std_rel": 0.00023638309504057855,
+            "max_abs": 0.0011468765722380536,
             "within_budget": true,
-            "detail": "mean_rel=6.372e-06 std_rel=7.558e-05"
+            "detail": "mean_rel=1.719e-05 std_rel=2.364e-04"
           }
         }
       },

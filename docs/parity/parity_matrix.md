@@ -54,14 +54,12 @@ paper-as-film rejection checks. Preview evidence separates arithmetic
 digestion with glare disabled from stochastic 512² glare moments under
 the unchanged 1% mean / 5% standard-deviation budgets.
 
-The fresh report `target/parity-final-alignment-report/parity_report.json`
-exercised all 68 catalog rows: 62 passed and six exceeded their existing
-budgets (`layered_grain`, `grain_single_curve_seeded`,
-`preview_digest_deterministic`, `velvia_dir_preset`, `dir_couplers_spatial`,
-and `defaults_full_chain_32x32`). Full per-tap metrics and the reference
-environment are embedded under `differential_evidence` in the machine-readable
-matrix. The failed rows remain explicit evidence gaps; they are not claimed as
-passes or excused by the historical baseline.
+The fresh report `target/parity-final-fix/parity_report.json` exercised all
+68 catalog rows: all 68 passed their unchanged budgets. Full per-tap metrics
+and the reference environment are embedded under `differential_evidence` in
+the machine-readable matrix. The six formerly failing expected-parity rows
+now pass: layered grain, seeded single-curve grain, deterministic preview
+digest, Velvia DIR presets, spatial DIR couplers and the full default chain.
 
 ## Native GUI evidence
 
