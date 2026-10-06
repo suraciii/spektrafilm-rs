@@ -3,7 +3,7 @@
   "generated": {
     "python_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
     "python_version": "0.3.4",
-    "rust_commit": "7e0e603e4513ad9a4ab663a5950652fb9489a88a",
+    "rust_commit": "e691b6e5a90c37288f0b5930b2ece2236ad6b501",
     "rust_audited_baseline": "9dd59b0380194b93686aaa230a8bb9680aa270a4",
     "python_platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43",
     "python_version_runtime": "3.14.4",
@@ -3726,7 +3726,7 @@
   "verification_status": "verified_catalog",
   "differential_evidence": {
     "status": "verified_catalog",
-    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/parity-final-22/parity_report.json",
+    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/parity-final-23/parity_report.json",
     "catalog_rows": 68,
     "reported_rows": 68,
     "counts": {
@@ -3867,7 +3867,7 @@
       },
       "rust_bin": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/release/spektrafilm-f64",
       "rust_bin_sha256": "60e7b8cfe9978d7b20a88123c725ddcbb21194d90cc42bc93e674644f78aa16c",
-      "rust_commit": "d23a67cabbcbc7f95da26bf76055a7ce0ddc8690",
+      "rust_commit": "e691b6e5a90c37288f0b5930b2ece2236ad6b501",
       "rust_worktree_dirty": false,
       "platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43"
     },
@@ -4721,15 +4721,15 @@
         "taps": {
           "rgb_out": {
             "n": 786432,
-            "py_mean": 0.2994824762364121,
+            "py_mean": 0.2994813996354824,
             "rs_mean": 0.299481853918141,
-            "py_std": 0.15136684450212892,
+            "py_std": 0.1513669410175179,
             "rs_std": 0.1513670605795561,
-            "mean_rel": 2.077978915168896e-06,
-            "std_rel": 1.4275083019919355e-06,
-            "max_abs": 0.007256613956383329,
+            "mean_rel": 1.51689774107757e-06,
+            "std_rel": 7.898821062440638e-07,
+            "max_abs": 0.004677795529645007,
             "within_budget": true,
-            "detail": "mean_rel=2.078e-06 std_rel=1.428e-06"
+            "detail": "mean_rel=1.517e-06 std_rel=7.899e-07"
           }
         }
       },
@@ -5080,15 +5080,15 @@
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.15685055637447567,
+            "py_mean": 0.15685703081107943,
             "rs_mean": 0.15684246787507108,
-            "py_std": 0.06393409157510019,
+            "py_std": 0.063933125330381,
             "rs_std": 0.06393643260590177,
-            "mean_rel": 5.156819071319971e-05,
-            "std_rel": 3.6616314456216806e-05,
-            "max_abs": 0.0011584096030904656,
+            "mean_rel": 9.284209915900859e-05,
+            "std_rel": 5.173023379805257e-05,
+            "max_abs": 0.0017763080266947617,
             "within_budget": true,
-            "detail": "mean_rel=5.157e-05 std_rel=3.662e-05"
+            "detail": "mean_rel=9.284e-05 std_rel=5.173e-05"
           }
         }
       },
@@ -6464,51 +6464,51 @@
           },
           "cmy_film": {
             "n": 3072,
-            "py_mean": 0.8336692874778974,
+            "py_mean": 0.8336650656697094,
             "rs_mean": 0.8336739071761886,
-            "py_std": 0.08868235153418064,
+            "py_std": 0.08868524968161037,
             "rs_std": 0.08869054768016547,
-            "mean_rel": 5.541403960337362e-06,
-            "std_rel": 9.242138760470609e-05,
-            "max_abs": 0.0011242448488999468,
+            "mean_rel": 1.0605585916054822e-05,
+            "std_rel": 5.9739343060107894e-05,
+            "max_abs": 0.0013571105979505171,
             "within_budget": true,
-            "detail": "mean_rel=5.541e-06 std_rel=9.242e-05"
+            "detail": "mean_rel=1.061e-05 std_rel=5.974e-05"
           },
           "log_e_print": {
             "n": 3072,
-            "py_mean": -0.0966966184404826,
+            "py_mean": -0.09670402167738928,
             "rs_mean": -0.09669083612676428,
-            "py_std": 0.04134706850180453,
+            "py_std": 0.04134848654300637,
             "rs_std": 0.041335649947803775,
-            "mean_rel": 5.979851014008303e-05,
-            "std_rel": 0.00027616356889378506,
-            "max_abs": 0.0010410255944261065,
+            "mean_rel": 0.0001363495581289333,
+            "std_rel": 0.0003104489734889435,
+            "max_abs": 0.0010657864348156965,
             "within_budget": true,
-            "detail": "mean_rel=5.980e-05 std_rel=2.762e-04"
+            "detail": "mean_rel=1.363e-04 std_rel=3.104e-04"
           },
           "cmy_print": {
             "n": 3072,
-            "py_mean": 0.3941105659411122,
+            "py_mean": 0.3941650681990743,
             "rs_mean": 0.3941346176283893,
-            "py_std": 0.08471194748447136,
+            "py_std": 0.08470700697612832,
             "rs_std": 0.08469709600662181,
-            "mean_rel": 6.102776569732285e-05,
-            "std_rel": 0.00017531739371557146,
-            "max_abs": 0.001974540721719431,
+            "mean_rel": 7.725334673653853e-05,
+            "std_rel": 0.0001170029476935453,
+            "max_abs": 0.0019623259015911776,
             "within_budget": true,
-            "detail": "mean_rel=6.103e-05 std_rel=1.753e-04"
+            "detail": "mean_rel=7.725e-05 std_rel=1.170e-04"
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.2887052358178382,
+            "py_mean": 0.2886947676095012,
             "rs_mean": 0.28869032024485647,
-            "py_std": 0.05013350968709316,
+            "py_std": 0.05012942230404934,
             "rs_std": 0.05012490623557933,
-            "mean_rel": 5.166367329456057e-05,
-            "std_rel": 0.00017161079620252757,
-            "max_abs": 0.001333315959091752,
+            "mean_rel": 1.5405075338038355e-05,
+            "std_rel": 9.008818100115351e-05,
+            "max_abs": 0.0015328054072535902,
             "within_budget": true,
-            "detail": "mean_rel=5.166e-05 std_rel=1.716e-04"
+            "detail": "mean_rel=1.541e-05 std_rel=9.009e-05"
           }
         }
       },
