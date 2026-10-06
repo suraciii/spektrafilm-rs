@@ -499,6 +499,9 @@ fn render_recipe(
     contract::validate_output(&recipe.output)?;
     contract::validate_output_path(output, &recipe.output)?;
     contract::validate_input_path(input)?;
+    if let Some(seed) = recipe.seed {
+        contract::validate_seed(seed)?;
+    }
     let mut params = contract::normalize_parameters(recipe.parameters.clone())?;
     params.random_seed = recipe.seed.unwrap_or(0);
     if recipe.output.format == "png" {
