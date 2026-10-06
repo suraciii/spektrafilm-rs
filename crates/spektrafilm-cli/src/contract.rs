@@ -14,6 +14,7 @@ pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
 pub const MAX_EDGE: u32 = 9568;
 pub const MAX_DECODED_BYTES: u64 = 2_147_483_648;
+pub const MAX_SEED: u64 = u32::MAX as u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -58,10 +59,20 @@ pub fn default_output(format: &str) -> OutputContract {
     }
 }
 
+pub fn validate_seed(seed: u64) -> Result<()> {
+    if seed > MAX_SEED {
+        bail!("seed must be <= {MAX_SEED} for the admitted runtime contract");
+    }
+    Ok(())
+}
+
 pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     let file = fs::File::open(path).with_context(|| format!("opening recipe {}", path.display()))?;
     let recipe: RenderRecipe = serde_json::from_reader(file)
         .with_context(|| format!("parsing recipe {}", path.display()))?;
+    if let Some(seed) = recipe.seed {
+        validate_seed(seed)?;
+    }
     if recipe.schema_version != PARAMETER_SCHEMA_VERSION {
         bail!("unsupported recipe schema {}", recipe.schema_version);
     }
@@ -224,7 +235,7 @@ pub fn describe() -> Value {
             "deadlineMillis": 900000,
             "maxEdge": 9568,
             "maxDecodedBytes": 2147483648u64,
-            "seedPolicy": "explicit-or-deterministic-default",
+            "seedPolicy": "explicit-u32-or-deterministic-default",
         },
         "errors": [
             "invalid-recipe", "unsupported-control", "incompatible-input", "resource-unavailable",
@@ -250,6 +261,12 @@ mod tests {
             max_edge: Some(MAX_EDGE + 1),
             ..output
         }).is_err());
+    }
+
+    #[test]
+    fn seed_contract_rejects_gpu_truncation() {
+        assert!(validate_seed(MAX_SEED).is_ok());
+        assert!(validate_seed(MAX_SEED + 1).is_err());
     }
 
     #[test]
