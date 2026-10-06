@@ -490,7 +490,7 @@ mod tests {
         params.film_render.dir_couplers.gamma_samelayer_rgb = [0.9; 3];
         let seeded = digest_params(params.clone(), &film, &print, None, true);
         assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
-        assert_eq!(seeded.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(seeded.film_render.grain.uniformity, [0.97, 0.99, 0.97]);
         assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.336, 0.319, 0.273]);
         let edited = digest_params(params, &film, &print, None, false);
         assert_eq!(edited.film_render.grain.rms_granularity, [99.0; 3]);
