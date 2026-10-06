@@ -190,10 +190,27 @@ Independent executed checks establish:
   camera/white-balance cases exactly, both before and after relocation, including
   a known Lensfun correction. The rebuilt consumers load LibRaw 0.22's actual
   `libraw.so.24`; its selected link artifact prevents system-header ABI mismatch.
-  The final DIR-corrected Linux package passed the same portable image/RAW/GUI
-  smoke under Xvfb with a clean environment. The fork's Release workflow is now
-  active; Windows/macOS installed-workflow acceptance remains unverified.
-  PR #18 remains a draft, and acceptance issues #17/#1 remain open.
+- The latest non-GUI cross-platform package workflow is pinned to Rust
+  `79b98c9927b3b74e6183695890a5cdc3e979739c` and Python
+  `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc` (workflow `37242896312`).
+  Windows, macOS and Linux package smoke all passed. Windows and macOS
+  reports were clean; Linux recorded the known Python-generated worktree
+  bytecode change. Each report covered six package scenarios; the spectral
+  maximum absolute error was `6.634529148286106e-9` against the `1e-6`
+  budget.
+- The preceding GUI-enabled workflow `37226896580` passed Windows package
+  smoke and Linux runtime/LUT/package gates, but macOS failed
+  `Reveal did not produce observable transition frames`; that historical
+  desktop result remains explicitly incomplete.
+- The release workflow now invokes `package_smoke.py` without `--gui` on all
+  three platforms and no longer installs or configures GUI-only acceptance
+  dependencies. Its package result intentionally excludes native desktop
+  interaction; the historical GUI results above remain evidence, not a release
+  pass.
+- Earlier platform repairs are retained in commits `8bdd7fe` and `85376a8`;
+  they fixed macOS native path entry/profile selection and the white-border
+  slider coordinate. No further desktop-driver retries are warranted
+  without a reproducible macOS transition-frame failure.
 - Saving into the output layer's own colour space and encoding is now a
   bit-exact copy, matching the pinned Python save guard
   (`spektrafilm_gui/controller.py:354-369`). Previously the export ran the
@@ -224,13 +241,13 @@ Independent executed checks establish:
   comparisons plus 32 additional comparisons for disabled xy and active oklch,
   with unchanged metric budgets, status semantics, offline artifact and OCIO checks.
   The integrated precision-f64 workspace passed 192 tests after these corrections.
-- The new external Linux package GUI gate passed real native window and file
-  chooser operations under Xvfb: standard/RAW loading and preview, input/output
-  raster comparison, Auto exposure and float-depth edits, state save/load and
-  restart restoration, float save, actual bundled f64 export, Cancel and closing
-  in flight. Observed exporter executable hashes match installed native payloads;
-  cancelled/closed exports left no output, child process or temporary JSON.
-  Windows/macOS drivers exist but have no passing target-platform evidence yet.
+- The latest three-platform workflow (`37226896580`, Rust `9f52fc2`) passed
+  Windows x64 package smoke and Linux x64 runtime parity, LUT acceptance and
+  package smoke. The Windows report is clean; Linux's report is valid but
+  records `rust_worktree_dirty: true` after Python generated tracked bytecode.
+  macOS completed chooser, profile, slider and preceding viewer assertions,
+  then failed only at `Reveal did not produce observable transition frames`.
+  This is an incomplete macOS acceptance result, not a passing platform row.
 - The first real three-platform workflow exposed Ubuntu Exiv2 auto_ptr predicate
   incompatibility, Homebrew OIIO's missing external fmt include path, and MSYS2
   LibRaw below 0.22. The fixes retain the native contracts: get() pointer checks,
@@ -245,6 +262,38 @@ Independent executed checks establish:
   after the UI accepts successful completion without cancellation. The rebuilt
   Linux package passed the full native GUI/RAW/LUT smoke, including real in-flight
   Cancel and close with no output, child or staged-image/state-JSON residue.
+- Current calibration updates rebuild the print exposure factor when camera EV,
+  print compensation/normalization or illuminant/filter calibration inputs change.
+  The workspace regression compares updated pipelines with freshly constructed
+  pipelines across EV -2 through +2.
+- The current f64 CLI passed all 68 runtime differential rows in
+  `target/parity-current/parity_report.json`; the executable SHA256 is
+  `59a56d781bcf638eb43eaa511956f8efb4cc9e1f0bafe11eea71d607b23d5660`.
+  LUT artifact acceptance passed 112 QA/transport scenarios in
+  `target/lut-acceptance-current-3/report.json`; its report SHA256 is recorded
+  in `docs/parity/parity_matrix.json`. The reports retain the Python pin,
+  runtime dependencies, per-tap metrics, delivered LUT comparisons, and
+  failure rows.
+- The package and native GUI reports remain separate platform evidence. The
+  existing Linux report was generated from the same Rust source commit but
+  has a dirty-worktree provenance flag; it cannot serve as clean final
+  delivery evidence until a final package is rebuilt from the committed tree.
+- Profile serialization preserves missing spectral samples as JSON null and
+  saves a suffixed copy without mutating the caller. Parametric curves retain
+  the upstream formula. The public gamma/slope helpers use linear-cost
+  not-a-knot spline construction; a seven-sample cubic smoke matched SciPy
+  gamma `[3.103978836041295, 3.1039788360412963, 3.6538466942740713]`
+  and slopes `[3.21, 3.21, 3.21]`. Nonlinear density-min fitting and plotting
+  remain independent research APIs outside product parity.
+- Historical Linux/Xvfb native evidence is retained at
+  `/tmp/spektrafilm-current-105754-evidence-12/gui-acceptance/observations.json`.
+  Its measured report SHA256 is
+  `625285ed2ad5e641c3372d697c4477d4b22b28fb32d1329b25c32e2d452e204e`, and it
+  records the named viewer assertions from that run. The report was generated
+  with dirty-worktree provenance, so it is not clean final delivery evidence.
+  The current GUI driver additionally checks exact stock halation and print-glare
+  defaults; the historical report predates those assertions. Windows/macOS
+  native display and window behavior remain unverified here.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

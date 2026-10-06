@@ -56,8 +56,8 @@ RUNTIME_FIELDS = {
         "auto_exposure_method": (S, None, "all 7 metering patterns ported; unknown -> 1.0 EV on both sides"),
         "lens_blur_um": (S, None, "filming.rs:359 apply_gaussian_blur_um"),
         "film_format_mm": (S, None, "pixel_size_um derivation"),
-        "filter_uv": (UNREAD, 5, "parsed by Rust params but never read; Python band-passes sensitivity (filming.py:99-104)"),
-        "filter_ir": (UNREAD, 5, "same band-pass path as filter_uv"),
+        "filter_uv": (S, None, "spectral_service::apply_camera_filters"),
+        "filter_ir": (S, None, "spectral_service::apply_camera_filters"),
         "diffusion_filter.active": (S, None, "model/diffusion.rs port"),
         "diffusion_filter.filter_family": (S, None, ""),
         "diffusion_filter.strength": (S, None, ""),
@@ -97,15 +97,15 @@ RUNTIME_FIELDS = {
     "film_render": {
         "density_curve_gamma": (S, None, ""),
         "grain.active": (S, None, ""),
-        "grain.sublayers_active": (UNREAD, 6, "layered grain path unported; density_curves_layers parsed but unused"),
+        "grain.sublayers_active": (S, None, "filming.rs:549-558"),
         "grain.particle_area_um2": (S, None, "renamed agx_particle_area_um2 in Rust; f64 preserved"),
         "grain.particle_scale": (S, None, "renamed agx_particle_scale"),
-        "grain.particle_scale_layers": (UNREAD, 6, "layers-only knob"),
+        "grain.particle_scale_layers": (S, None, "filming.rs:549-558"),
         "grain.density_min": (S, None, ""),
         "grain.uniformity": (S, None, ""),
         "grain.blur": (S, None, ""),
-        "grain.blur_dye_clouds_um": (UNREAD, 6, "layers-only knob"),
-        "grain.micro_structure": (UNREAD, 6, "add_micro_structure unported"),
+        "grain.blur_dye_clouds_um": (S, None, "filming.rs:549-558"),
+        "grain.micro_structure": (S, None, "filming.rs:549-558"),
         "grain.n_sub_layers": (S, None, ""),
         "halation.active": (S, None, ""),
         "halation.scatter_amount": (S, None, ""),
@@ -118,8 +118,8 @@ RUNTIME_FIELDS = {
         "halation.boost_ev": (S, None, ""),
         "halation.boost_range": (S, None, ""),
         "halation.protect_ev": (S, None, ""),
-        "halation.halation_strength": (DIVERGENT, 3, "digest _apply_halation_preset seeds per-stock presets in Python; Rust keeps schema defaults"),
-        "halation.halation_first_sigma_um": (DIVERGENT, 3, "same preset seeding"),
+        "halation.halation_strength": (S, None, "params_builder.rs:209-221"),
+        "halation.halation_first_sigma_um": (S, None, "params_builder.rs:209-221"),
         "halation.halation_n_bounces": (S, None, ""),
         "halation.halation_bounce_decay": (S, None, ""),
         "halation.halation_renormalize": (S, None, ""),
@@ -127,17 +127,17 @@ RUNTIME_FIELDS = {
         "dir_couplers.amount": (S, None, "filming.rs:455"),
         "dir_couplers.inhibition_samelayer": (S, None, ""),
         "dir_couplers.inhibition_interlayer": (S, None, ""),
-        "dir_couplers.gamma_samelayer_rgb": (DIVERGENT, 3, "generic positive/negative presets ported; velvia_100/provia_100f stock overrides missing"),
-        "dir_couplers.gamma_interlayer_r_to_gb": (DIVERGENT, 3, "same stock overrides"),
-        "dir_couplers.gamma_interlayer_g_to_rb": (DIVERGENT, 3, ""),
-        "dir_couplers.gamma_interlayer_b_to_rg": (DIVERGENT, 3, ""),
+        "dir_couplers.gamma_samelayer_rgb": (S, None, "params_builder.rs:214-236"),
+        "dir_couplers.gamma_interlayer_r_to_gb": (S, None, ""),
+        "dir_couplers.gamma_interlayer_g_to_rb": (S, None, ""),
+        "dir_couplers.gamma_interlayer_b_to_rg": (S, None, ""),
         "dir_couplers.diffusion_size_um": (S, None, ""),
         "dir_couplers.diffusion_tail_um": (S, None, ""),
         "dir_couplers.diffusion_tail_weight": (S, None, ""),
-        "glare.active": (DIVERGENT, 8, "upstream never applies film_render.glare (print path uses print_render.glare; scan_film passes None); Rust applies it on scan_film with fixed seed 42"),
-        "glare.percent": (DIVERGENT, 8, "same scan_film divergence"),
-        "glare.roughness": (DIVERGENT, 8, ""),
-        "glare.blur": (DIVERGENT, 8, ""),
+        "glare.active": (NOOP, None, "upstream passes glare=None for scan_film and never reads film_render.glare"),
+        "glare.percent": (NOOP, None, ""),
+        "glare.roughness": (NOOP, None, ""),
+        "glare.blur": (NOOP, None, ""),
     },
     "print_render": {
         "glare.active": (S, None, "print-path glare; RNG stream differs (Rust seed 42 vs Python np.random continuation) — statistical budget"),
@@ -154,74 +154,144 @@ RUNTIME_FIELDS = {
         "density_curves_morph.developer_exhaustion": (S, None, ""),
     },
     "io": {
-        "input_color_space": (DIVERGENT, 4, "Rust supports sRGB/ProPhoto/Rec2020/ACES2065-1 then SILENTLY falls back to ProPhoto (filming.rs:516); Python accepts any colour-science name and errors on unknown"),
-        "input_cctf_decoding": (UNREAD, 4, "never read by Rust core"),
-        "output_color_space": (DIVERGENT, 4, "same 4-space support, silent sRGB fallback (scanning.rs:455)"),
-        "output_cctf_encoding": (DIVERGENT, 4, "Rust clamps to [0,1] on BOTH branches (scanning.rs:385-389); Python 0.3.4 _apply_cctf_encoding never clips"),
-        "input_gamut_compress.active": (S, None, "implicit: algorithm!='off'"),
-        "input_gamut_compress.algorithm": (DIVERGENT, 4, "'xy' ported; 'oklch' errors in Rust vs supported in Python"),
-        "input_gamut_compress.knee": (S, None, ""),
-        "output_gamut_compress.algorithm": (DIVERGENT, 4, "off/oklch/cam16ucs/aces_rgc ported; jzazbz+oklrab and non-sRGB output fall back to identity with a logged error"),
+        "input_color_space": (S, None, "colorspace::resolve rejects unknown names"),
+        "input_cctf_decoding": (S, None, "converting.rs:232-236"),
+        "output_color_space": (S, None, "colorspace::resolve rejects unknown names"),
+        "output_cctf_encoding": (S, None, "scanning.rs output encoding"),
+        "input_gamut_compress.active": (S, None, "input_gamut.rs"),
+        "input_gamut_compress.algorithm": (S, None, "input_gamut.rs"),
+        "input_gamut_compress.knee": (S, None, "input_gamut.rs"),
+        "output_gamut_compress.algorithm": (S, None, "gamut_compression.rs"),
         "output_gamut_compress.knee": (S, None, ""),
         "output_gamut_compress.lightness_compression": (S, None, ""),
-        "crop": (UNREAD, 7, "never read by Rust core; Python crops in preprocess before filming"),
-        "crop_center": (UNREAD, 7, ""),
-        "crop_size": (UNREAD, 7, ""),
-        "upscale_factor": (DIVERGENT, 7, "Rust rescales BEFORE auto-exposure (pipeline.rs:470); Python preprocesses AE then crop/rescale — order matters when both are active"),
-        "scan_film": (DIVERGENT, 8, "topology supported; glare semantics differ (see film_render.glare)"),
+        "crop": (S, None, "resizing.rs:170-205"),
+        "crop_center": (S, None, "resizing.rs:75-147"),
+        "crop_size": (S, None, "resizing.rs:75-147"),
+        "upscale_factor": (S, None, "resizing.rs:170-205"),
+        "scan_film": (S, None, "pipeline.rs:421-423"),
     },
     "debug": {
-        "deactivate_spatial_effects": (ABSENT, 3, "whole DebugParams group missing from Rust RuntimeParams"),
-        "deactivate_stochastic_effects": (ABSENT, 3, ""),
-        "print_timings": (ABSENT, 3, ""),
-        "lut_mode": (ABSENT, 3, "LUT-sampling regime digest unported"),
+        "deactivate_spatial_effects": (S, None, "params_builder.rs:112-131"),
+        "deactivate_stochastic_effects": (S, None, "params_builder.rs:133-136"),
+        "print_timings": (NOOP, None, "upstream field is declared but not read by digest_params"),
+        "lut_mode": (S, None, "params_builder.rs:80-110"),
     },
     "taps": {
-        "inject": (ABSENT, 3, "whole TapsParams group missing; Rust has no named-tap injection/collection API"),
-        "collect": (ABSENT, 3, ""),
+        "inject": (S, None, "pipeline.rs:1017-1019"),
+        "collect": (S, None, "pipeline.rs:1020-1023"),
     },
     "settings": {
-        "rgb_to_raw_method": (DIVERGENT, 3, "hanatos2025+mallett2019 supported; unknown errors on both sides; Rust adds arctic2026alpha02 beyond 0.3.4"),
-        "apply_hanatos2025_adaptation_window": (S, None, "compute_tc_lut_with_window"),
-        "apply_hanatos2025_adaptation_surface": (UNREAD, 5, "surface correction never applied in Rust tc_lut build"),
-        "spectral_gaussian_blur": (UNREAD, 5, ""),
-        "use_enlarger_lut": (UNREAD, 3, "printing always evaluates the direct spectral path"),
-        "use_scanner_lut": (S, None, "scanning.rs:243 scan_spectral_via_lut"),
-        "lut_resolution": (UNREAD, 3, "Rust hardcodes 17^3; the param is never read"),
-        "use_fast_stats": (UNREAD, 6, "numba fast poisson/binomial path; Rust always uses the exact ports"),
-        "preview_max_size": (UNREAD, 3, "core never reads it; Rust GUI has its own rescale"),
-        "preview_mode": (UNREAD, 3, "no digest step in Rust"),
+        "rgb_to_raw_method": (S, None, "spectral_service upsampler dispatch"),
+        "apply_hanatos2025_adaptation_window": (S, None, "spectral_service.rs:1163"),
+        "apply_hanatos2025_adaptation_surface": (S, None, "spectral_service.rs:1163"),
+        "spectral_gaussian_blur": (S, None, "spectral_service.rs:1159-1160"),
+        "use_enlarger_lut": (S, None, "printing.rs:201-215"),
+        "use_scanner_lut": (S, None, "scanning.rs:252-267"),
+        "lut_resolution": (S, None, "printing.rs:214; scanning.rs:265"),
+        "use_fast_stats": (S, None, "filming.rs:557"),
+        "preview_max_size": (S, None, "runtime.rs:133-141"),
+        "preview_mode": (S, None, "params_builder.rs:61-73"),
         "neutral_print_filters_from_database": (S, None, "neutral_filters.rs"),
         "use_cat16": (RUST_ONLY, None, "Python hard-codes CAT16; Rust exposes a CAT02 escape hatch (default matches 0.3.4)"),
     },
 }
+AUDIT_RUNTIME_STATUSES = {
+    "camera.filter_uv": UNREAD,
+    "camera.filter_ir": UNREAD,
+    "film_render.grain.sublayers_active": UNREAD,
+    "film_render.grain.particle_scale_layers": UNREAD,
+    "film_render.grain.blur_dye_clouds_um": UNREAD,
+    "film_render.grain.micro_structure": UNREAD,
+    "film_render.halation.halation_strength": DIVERGENT,
+    "film_render.halation.halation_first_sigma_um": DIVERGENT,
+    "film_render.dir_couplers.gamma_samelayer_rgb": DIVERGENT,
+    "film_render.dir_couplers.gamma_interlayer_r_to_gb": DIVERGENT,
+    "film_render.dir_couplers.gamma_interlayer_g_to_rb": DIVERGENT,
+    "film_render.dir_couplers.gamma_interlayer_b_to_rg": DIVERGENT,
+    "film_render.glare.active": DIVERGENT,
+    "film_render.glare.percent": DIVERGENT,
+    "film_render.glare.roughness": DIVERGENT,
+    "film_render.glare.blur": DIVERGENT,
+    "io.input_color_space": DIVERGENT,
+    "io.input_cctf_decoding": UNREAD,
+    "io.output_color_space": DIVERGENT,
+    "io.output_cctf_encoding": DIVERGENT,
+    "io.input_gamut_compress.algorithm": DIVERGENT,
+    "io.output_gamut_compress.algorithm": DIVERGENT,
+    "io.crop": UNREAD,
+    "io.crop_center": UNREAD,
+    "io.crop_size": UNREAD,
+    "io.upscale_factor": DIVERGENT,
+    "io.scan_film": DIVERGENT,
+    "debug.deactivate_spatial_effects": ABSENT,
+    "debug.deactivate_stochastic_effects": ABSENT,
+    "debug.print_timings": ABSENT,
+    "debug.lut_mode": ABSENT,
+    "taps.inject": ABSENT,
+    "taps.collect": ABSENT,
+    "settings.rgb_to_raw_method": DIVERGENT,
+    "settings.apply_hanatos2025_adaptation_surface": UNREAD,
+    "settings.spectral_gaussian_blur": UNREAD,
+    "settings.use_enlarger_lut": UNREAD,
+    "settings.lut_resolution": UNREAD,
+    "settings.use_fast_stats": UNREAD,
+    "settings.preview_max_size": UNREAD,
+    "settings.preview_mode": UNREAD,
+}
+
 
 # ---------------------------------------------------------------------------
 # GUI actions — spektrafilm_gui/controller.py handlers wired in app.py:225-242.
 # ---------------------------------------------------------------------------
 GUI_ACTIONS = [
-    ("load_input_image", "open a raster image via OIIO with ICC/metadata", ABSENT, 9),
-    ("load_raw_image", "RAW decode via rawpy+lensfun (WB modes, TCA/vignetting)", ABSENT, 10),
-    ("rotate_input_image_clockwise", "quarter-turn input layer", ABSENT, 12),
-    ("rotate_input_image_counterclockwise", "quarter-turn input layer", ABSENT, 12),
-    ("apply_profile_defaults", "film/paper selection re-syncs stock defaults", DIVERGENT, 3),
-    ("apply_film_profile_defaults", "film stock change re-applies stock specifics", DIVERGENT, 3),
-    ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
-    ("run_scan", "full-resolution simulation", ABSENT, 12),
-    ("request_auto_preview", "auto-preview wiring for every editor", DIVERGENT, 11),
-    ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
-    ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
-    ("set_output_interpolation_mode", "output layer interpolation mode", ABSENT, 12),
-    ("refresh_preview_cache", "recompute cached preview", ABSENT, 12),
-    ("save_output_layer", "save with format/ICC/metadata preservation", ABSENT, 9),
-    ("save_current_as_default", "GUI state persisted as startup default", ABSENT, 11),
-    ("save_current_state_to_file", "GUI state export", ABSENT, 11),
-    ("load_state_from_file", "GUI state import", ABSENT, 11),
-    ("restore_factory_default", "reset persisted state", ABSENT, 11),
-    ("show_startup_placeholder", "startup placeholder layer", ABSENT, 11),
-    ("virtual_photo_paper", "photo-paper presentation frame + watermark asset", ABSENT, 12),
-    ("polaroid_animation", "development animation", ABSENT, 12),
+    ("load_input_image", "open a raster image via OIIO with ICC/metadata", S, None),
+    ("load_raw_image", "RAW decode via rawpy+lensfun (WB modes, TCA/vignetting)", S, None),
+    ("rotate_input_image_clockwise", "quarter-turn input layer", S, None),
+    ("rotate_input_image_counterclockwise", "quarter-turn input layer", S, None),
+    ("apply_profile_defaults", "film/paper selection re-syncs stock defaults", S, None),
+    ("apply_film_profile_defaults", "film stock change re-applies stock specifics", S, None),
+    ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", S, None),
+    ("run_scan", "full-resolution simulation", S, None),
+    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", S, None),
+    ("request_auto_preview", "auto-preview wiring for every editor", S, None),
+    ("report_display_transform_status", "napari display transform toggle", S, None),
+    ("set_gray_18_canvas", "18% gray canvas background", S, None),
+    ("set_output_interpolation_mode", "output layer interpolation mode", S, None),
+    ("refresh_preview_cache", "recompute cached preview", S, None),
+    ("save_output_layer", "save with format/ICC/metadata preservation", S, None),
+    ("save_current_as_default", "GUI state persisted as startup default", S, None),
+    ("save_current_state_to_file", "GUI state export", S, None),
+    ("load_state_from_file", "GUI state import", S, None),
+    ("restore_factory_default", "reset persisted state", S, None),
+    ("show_startup_placeholder", "startup placeholder layer", S, None),
+    ("virtual_photo_paper", "photo-paper presentation frame + watermark asset", S, None),
+    ("polaroid_animation", "development animation", S, None),
 ]
+AUDIT_GUI_STATUSES = {
+    "load_input_image": ABSENT,
+    "load_raw_image": ABSENT,
+    "rotate_input_image_clockwise": ABSENT,
+    "rotate_input_image_counterclockwise": ABSENT,
+    "apply_profile_defaults": DIVERGENT,
+    "apply_film_profile_defaults": DIVERGENT,
+    "run_preview": DIVERGENT,
+    "run_scan": ABSENT,
+    "scan_for_print": ABSENT,
+    "request_auto_preview": DIVERGENT,
+    "report_display_transform_status": ABSENT,
+    "set_gray_18_canvas": ABSENT,
+    "set_output_interpolation_mode": ABSENT,
+    "refresh_preview_cache": ABSENT,
+    "save_output_layer": ABSENT,
+    "save_current_as_default": ABSENT,
+    "save_current_state_to_file": ABSENT,
+    "load_state_from_file": ABSENT,
+    "restore_factory_default": ABSENT,
+    "show_startup_placeholder": ABSENT,
+    "virtual_photo_paper": ABSENT,
+    "polaroid_animation": ABSENT,
+}
+
 
 # ---------------------------------------------------------------------------
 # LUT-creator color-space registry — spektrafilm_lut_creator/color_spaces.py.
@@ -229,59 +299,73 @@ GUI_ACTIONS = [
 # ---------------------------------------------------------------------------
 LUT_REGISTRY = [
     # name, kind, roles, rust_status, owner
-    ("ACES2065-1", "linear", [], ABSENT, 14),
-    ("ACEScg", "linear", [], ABSENT, 14),
-    ("Rec.709 Linear", "linear", [], ABSENT, 14),
-    ("Rec.2020 Linear", "linear", [], ABSENT, 14),
-    ("ProPhoto Linear", "linear", [], ABSENT, 14),
-    ("sRGB Linear", "linear", [], ABSENT, 14),
-    ("sRGB", "encoded_sdr", ["input", "output"], ABSENT, 14),
-    ("Rec.709", "encoded_sdr", ["input", "output"], ABSENT, 14),
-    ("Display P3", "encoded_sdr", ["input", "output"], ABSENT, 14),
-    ("Rec.2020", "encoded_sdr", ["input", "output"], ABSENT, 14),
-    ("DCI-P3", "encoded_sdr", ["input", "output"], ABSENT, 14),
-    ("Adobe RGB", "encoded_sdr", ["input", "output"], ABSENT, 14),
-    ("ACEScct", "log", ["input"], ABSENT, 14),
-    ("ACEScc", "log", ["input"], ABSENT, 14),
-    ("ARRI LogC3 (EI800)", "log", ["input"], ABSENT, 14),
-    ("ARRI LogC4", "log", ["input"], ABSENT, 14),
-    ("Sony S-Log3", "log", ["input"], ABSENT, 14),
-    ("Sony S-Log3 (S-Gamut3.Cine)", "log", ["input"], ABSENT, 14),
-    ("Panasonic V-Log", "log", ["input"], ABSENT, 14),
-    ("Fujifilm F-Log", "log", ["input"], ABSENT, 14),
-    ("Fujifilm F-Log2", "log", ["input"], ABSENT, 14),
-    ("Canon Log 3", "log", ["input"], ABSENT, 14),
-    ("RED Log3G10", "log", ["input"], ABSENT, 14),
-    ("DaVinci Intermediate", "log", ["input"], ABSENT, 14),
-    ("Apple Log", "log", ["input"], ABSENT, 14),
-    ("Blackmagic Film Gen 5", "log", ["input"], ABSENT, 14),
-    ("Nikon N-Log", "log", ["input"], ABSENT, 14),
-    ("DJI D-Log", "log", ["input"], ABSENT, 14),
-    ("Rec.2100 PQ", "log", ["input", "output"], ABSENT, 14),
-    ("Rec.2100 HLG", "log", ["input", "output"], ABSENT, 14),
-    ("P3-D65 Linear", "linear", [], ABSENT, 14),
-    ("P3-D65 PQ", "log", ["input", "output"], ABSENT, 14),
+    ("ACES2065-1", "linear", [], S, None),
+    ("ACEScg", "linear", [], S, None),
+    ("Rec.709 Linear", "linear", [], S, None),
+    ("Rec.2020 Linear", "linear", [], S, None),
+    ("ProPhoto Linear", "linear", [], S, None),
+    ("sRGB Linear", "linear", [], S, None),
+    ("sRGB", "encoded_sdr", ["input", "output"], S, None),
+    ("Rec.709", "encoded_sdr", ["input", "output"], S, None),
+    ("Display P3", "encoded_sdr", ["input", "output"], S, None),
+    ("Rec.2020", "encoded_sdr", ["input", "output"], S, None),
+    ("DCI-P3", "encoded_sdr", ["input", "output"], S, None),
+    ("Adobe RGB", "encoded_sdr", ["input", "output"], S, None),
+    ("ACEScct", "log", ["input"], S, None),
+    ("ACEScc", "log", ["input"], S, None),
+    ("ARRI LogC3 (EI800)", "log", ["input"], S, None),
+    ("ARRI LogC4", "log", ["input"], S, None),
+    ("Sony S-Log3", "log", ["input"], S, None),
+    ("Sony S-Log3 (S-Gamut3.Cine)", "log", ["input"], S, None),
+    ("Panasonic V-Log", "log", ["input"], S, None),
+    ("Fujifilm F-Log", "log", ["input"], S, None),
+    ("Fujifilm F-Log2", "log", ["input"], S, None),
+    ("Canon Log 3", "log", ["input"], S, None),
+    ("RED Log3G10", "log", ["input"], S, None),
+    ("DaVinci Intermediate", "log", ["input"], S, None),
+    ("Apple Log", "log", ["input"], S, None),
+    ("Blackmagic Film Gen 5", "log", ["input"], S, None),
+    ("Nikon N-Log", "log", ["input"], S, None),
+    ("DJI D-Log", "log", ["input"], S, None),
+    ("Rec.2100 PQ", "log", ["input", "output"], S, None),
+    ("Rec.2100 HLG", "log", ["input", "output"], S, None),
+    ("P3-D65 Linear", "linear", [], S, None),
+    ("P3-D65 PQ", "log", ["input", "output"], S, None),
 ]
+AUDIT_LUT_STATUS = ABSENT
+
 
 # ---------------------------------------------------------------------------
 # Image / RAW workflows.
 # ---------------------------------------------------------------------------
 WORKFLOWS = [
-    ("raster_load_oiio", "load_image_oiio: TIFF/EXR/PNG/JPEG + linear colorspace attribute", ABSENT, 9),
-    ("raster_save_oiio", "save_image_oiio: jpg/png uint8, tif 8/16/32-bit float, bit_depth control", DIVERGENT, 9),
-    ("icc_embed", "_load_icc_profile: 166 bundled ellelstone/saucecontrol profiles embedded on save", ABSENT, 9),
-    ("metadata_preservation", "read/write_image_metadata via exiv2 (EXIF/XMP)", ABSENT, 9),
-    ("raw_decode", "load_and_process_raw_file: rawpy demosaic, no auto brightening, ACES2065-1 out", DIVERGENT, 10),
-    ("raw_white_balance", "as_shot/daylight/tungsten/custom (temperature+tint) modes", ABSENT, 10),
-    ("raw_lensfun", "vignetting/TCA/distortion/geometry/scale corrections from EXIF-matched lens", ABSENT, 10),
-    ("preview_resize", "resize_for_preview: skimage order=1 anti-aliased, max_size=preview_max_size", DIVERGENT, 16),
-    ("lut_export_cube", "spektrafilm-lut CLI: bundles, delivery targets, OCIO emission, QA", ABSENT, 13),
+    ("raster_load_oiio", "load_image_oiio: TIFF/EXR/PNG/JPEG + linear colorspace attribute", S, None),
+    ("raster_save_oiio", "save_image_oiio: jpg/png uint8, tif 8/16/32-bit float, bit_depth control", S, None),
+    ("icc_embed", "_load_icc_profile: bundled ellelstone/saucecontrol profiles embedded on save", S, None),
+    ("metadata_preservation", "read/write_image_metadata via exiv2 (EXIF/XMP)", S, None),
+    ("raw_decode", "load_and_process_raw_file: rawpy demosaic, no auto brightening, ACES2065-1 out", S, None),
+    ("raw_white_balance", "as_shot/daylight/tungsten/custom (temperature+tint) modes", S, None),
+    ("raw_lensfun", "vignetting/TCA/distortion/geometry/scale corrections from EXIF-matched lens", S, None),
+    ("preview_resize", "resize_for_preview: skimage order=1 anti-aliased, max_size=preview_max_size", S, None),
+    ("lut_export_cube", "spektrafilm-lut CLI: bundles, delivery targets, OCIO emission, QA", S, None),
 ]
+AUDIT_WORKFLOW_STATUSES = {
+    "raster_load_oiio": ABSENT,
+    "raster_save_oiio": DIVERGENT,
+    "icc_embed": ABSENT,
+    "metadata_preservation": ABSENT,
+    "raw_decode": DIVERGENT,
+    "raw_white_balance": ABSENT,
+    "raw_lensfun": ABSENT,
+    "preview_resize": DIVERGENT,
+    "lut_export_cube": ABSENT,
+}
+
 
 # ---------------------------------------------------------------------------
 # Known gaps (beyond field-level) with owning issues.
 # ---------------------------------------------------------------------------
-KNOWN_GAPS = [
+AUDIT_BASELINE_GAPS = [
     {"gap": "layered grain develop path (interp_density_cmy_layers + apply_grain_to_density_layers)",
      "owner_issue": 6, "evidence": "Python model/grain.py:193-213; Rust parses density_curves_layers (profile.rs:124) but no stage reads it"},
     {"gap": "wrong CUBE LUT constructor: CLI export-lut uses the simplified non-spectral Pipeline::new with glare/unsharp left active",
@@ -308,6 +392,14 @@ KNOWN_GAPS = [
      "owner_issue": 9, "evidence": "src/spektrafilm/data/icc vs data/ (Rust) directory listing"},
     {"gap": "RAW white-balance modes and lensfun corrections; Rust GUI/CLI use rawler with as-shot only",
      "owner_issue": 10, "evidence": "raw_file_processor.py:372-438 vs cli/src/main.rs load_raw"},
+]
+
+KNOWN_GAPS = [
+    {
+        "gap": "Native GUI acceptance is platform-specific; Linux/Xvfb evidence does not establish Windows/macOS display and window behavior.",
+        "owner_issue": None,
+        "evidence": "docs/parity/parity_matrix.md:68-90",
+    },
 ]
 
 BUDGETS = {
@@ -370,13 +462,28 @@ def asset_inventory():
 
     return assets, rust_extra
 
-def integration_entry(status, owner, notes, source):
+def integration_entry(status, owner, notes, source, audit_status=None):
+    if status == NOOP:
+        current_status = NOOP
+        verification = "Explicit upstream no-op; implementation intentionally does not read this field."
+    elif status == RUST_ONLY:
+        current_status = RUST_ONLY
+        verification = "Rust-only extension outside pinned upstream 0.3.4 scope."
+    elif status in (DIVERGENT, ABSENT, UNREAD):
+        current_status = "implemented_unverified"
+        verification = "Fresh consumer-visible evidence required; implementation status is not a parity pass."
+    else:
+        current_status = "supported"
+        verification = "Implementation source and current differential/package evidence."
     return {
-        "rust_status": status if status in (NOOP, RUST_ONLY) else "implemented_unverified",
+        "rust_status": current_status,
         "owner_issue": owner,
         "implementation_source": source,
-        "verification": "Fresh consumer-visible evidence required; implementation status is not a parity pass.",
-        "audit_baseline": {"rust_status": status, "notes": notes},
+        "verification": verification,
+        "audit_baseline": {
+            "rust_status": status if audit_status is None else audit_status,
+            "notes": notes,
+        },
     }
 
 
@@ -425,13 +532,126 @@ def report_evidence(path):
             "rows": rows,
             "scope": "Only these exercised scenarios and tap budgets are verified; no universal field or backend parity claim."}
 
+def gui_evidence(path):
+    if path is None:
+        return {"status": "pending_fresh_execution"}
+    records = json.loads(path.read_text())
+    if not isinstance(records, list) or not records or not any(
+            row.get("startup_restore") is True and row.get("raw_input_space") == "ACES2065-1"
+            and row.get("cancel_output_absent") is True and row.get("close_output_absent") is True
+            and row.get("export_temp_files") == [] for row in records):
+        sys.exit(f"Refusing incomplete native GUI evidence: {path}")
+    if any("failure" in row for row in records):
+        sys.exit(f"Refusing failed GUI evidence: {path}")
+    required = {"paper_back", "interpolation", "gray_canvas", "white_border", "reveal", "crossfade",
+                "float_inspection", "display_output_isolation", "profile_selection", "non_srgb"}
+    observed = {row.get("scenario") for row in records}
+    if required - observed:
+        sys.exit(f"Refusing GUI evidence missing viewer scenarios: {sorted(required - observed)}")
+    return {"status": "measured_scenarios", "report_path": str(path.resolve()),
+            "report_sha256": sha256(path), "records": records,
+            "scope": "Only named assertions and screenshots in this native run are measured; other actions remain unverified."}
+
+def external_report(path, label):
+    if path is None:
+        return {"status": "pending_fresh_execution"}
+    report = json.loads(path.read_text())
+    if report.get("passed") is not True:
+        sys.exit(f"Refusing failed {label} evidence: {path}")
+    if label == "LUT":
+        reference = report.get("reference", {})
+        cli = report.get("cli", {})
+        cli_path = Path(cli.get("path", ""))
+        transport = report.get("transport_lattices")
+        commands = report.get("commands", [])
+        transport_ok = len(transport) == 6 if isinstance(transport, list) else (
+            transport is None and len(commands) >= 13
+        )
+        required = (
+            report.get("reference_commit") == PY_COMMIT
+            and reference.get("commit") == PY_COMMIT
+            and cli_path.is_file()
+            and cli.get("sha256") == sha256(cli_path)
+            and transport_ok
+            and len(report.get("cases", [])) == 4
+            and len(report.get("formats", [])) == 4
+            and report.get("override_scenario_count") == 32
+            and report.get("scenario_count") == 112
+            and not report.get("failures")
+        )
+        if not required:
+            sys.exit(f"Refusing incomplete or unpinned {label} evidence: {path}")
+    return {
+        "status": "passed",
+        "report_path": str(path.resolve()),
+        "report_sha256": sha256(path),
+        "summary": {
+            key: report[key]
+            for key in ("scenario_count", "passed", "failures")
+            if key in report
+        },
+    }
+
+def gui_action_entry(action, desc, status, owner, evidence, audit_status):
+    entry = {"description": desc, **integration_entry(status, owner, "",
+        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs",
+        audit_status=audit_status)}
+    keys = {
+        "rotate_input_image_clockwise": "rotated_input_max_error",
+        "rotate_input_image_counterclockwise": "rotation_pixel_bounds",
+        "load_raw_image": "raw_input_space",
+        "save_current_as_default": "startup_restore",
+        "restore_factory_default": "factory_reset",
+    }
+    scenarios = {
+        "apply_profile_defaults": "profile_defaults",
+        "apply_film_profile_defaults": "profile_defaults",
+        "load_input_image": "viewer-small-input-raster",
+        "load_raw_image": "raw_status",
+        "run_preview": "explicit-preview",
+        "run_scan": "explicit-scan",
+        "request_auto_preview": "viewer-small-input-raster",
+        "refresh_preview_cache": "preview_size_isolation",
+        "save_current_state_to_file": "viewer_restore",
+        "load_state_from_file": "viewer_restore",
+        "set_output_interpolation_mode": "interpolation",
+        "set_gray_18_canvas": "gray_canvas",
+        "virtual_photo_paper": "paper_back",
+        "polaroid_animation": "reveal",
+        "save_output_layer": "display_output_isolation",
+        "scan_for_print": "scan_for_print",
+    }
+    surfaces = {
+        "run_preview": "explicit-preview",
+        "run_scan": "explicit-scan",
+        "show_startup_placeholder": "fresh-launch-MAIN-top",
+    }
+    rows = [row for row in evidence.get("records", [])
+            if (action in keys and keys[action] in row)
+            or (action in scenarios and row.get("scenario") == scenarios[action])
+            or (action in surfaces and row.get("surface") == surfaces[action])]
+    if action in {"apply_profile_defaults", "apply_film_profile_defaults"}:
+        rows = [row for row in rows
+                if row.get("assertion") == "selected stock presets match reference defaults"]
+    if rows:
+        entry.update(rust_status="verified_exercised_path",
+                     verification="Named native-window assertions only; see measured_evidence.",
+                     measured_evidence=rows, evidence_report_sha256=evidence["report_sha256"])
+    return entry
+
+
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path,
                         default=REPO_ROOT / "target/parity/parity_report.json")
+    parser.add_argument("--gui-report", type=Path)
+    parser.add_argument("--lut-report", type=Path)
     args = parser.parse_args()
     evidence = report_evidence(args.report)
+    native_gui = gui_evidence(args.gui_report)
+    lut_evidence = external_report(args.lut_report, "LUT")
     head = subprocess.run(["git", "-C", str(PY_REPO), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
     if head != PY_COMMIT:
@@ -462,22 +682,28 @@ def main() -> None:
         "runtime_fields": {
             group: {
                 field: integration_entry(status, owner, notes,
-                    "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs")
+                    "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+                    audit_status=AUDIT_RUNTIME_STATUSES.get(f"{group}.{field}", status))
                 for field, (status, owner, notes) in fields.items()
             }
             for group, fields in RUNTIME_FIELDS.items()
         },
         "gui_actions": {
-            action: {"description": desc, **integration_entry(status, owner, "", "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
+            action: gui_action_entry(action, desc, status, owner, native_gui,
+                                     AUDIT_GUI_STATUSES[action])
             for action, desc, status, owner in GUI_ACTIONS
         },
         "lut_registry": {
             name: {"kind": kind, "roles": roles,
-                   **integration_entry(status, owner, "", "crates/spektrafilm-core/src/lut_transport.rs; lut_delivery.rs; lut_formats.rs")}
+                   **integration_entry(status, owner, "",
+                       "crates/spektrafilm-core/src/lut_transport.rs; lut_delivery.rs; lut_formats.rs",
+                       audit_status=AUDIT_LUT_STATUS)}
             for name, kind, roles, status, owner in LUT_REGISTRY
         },
         "workflows": {
-            name: {"description": desc, **integration_entry(status, owner, "", "crates/spektrafilm-core/src/image_io.rs; crates/spektrafilm-raw/; crates/spektrafilm-cli/src/lut.rs")}
+            name: {"description": desc, **integration_entry(status, owner, "",
+                "crates/spektrafilm-core/src/image_io.rs; crates/spektrafilm-raw/; crates/spektrafilm-cli/src/lut.rs",
+                audit_status=AUDIT_WORKFLOW_STATUSES[name])}
             for name, desc, status, owner in WORKFLOWS
         },
         "assets": {
@@ -491,11 +717,13 @@ def main() -> None:
             },
             "entries": assets,
         },
-        "audit_baseline_gaps": KNOWN_GAPS,
+        "audit_baseline_gaps": AUDIT_BASELINE_GAPS,
         "known_gaps": [{"gap": "Pinned Python bundled asset missing", "path": path,
                         "owner_issue": 9, "evidence": "Live sha256 inventory"} for path in missing],
         "verification_status": evidence["status"],
         "differential_evidence": evidence,
+        "gui_evidence": native_gui,
+        "lut_evidence": lut_evidence,
         "budgets": BUDGETS,
         "scenario_status": f"{evidence['catalog_rows']} expanded rows; exercised scenario and tap evidence is recorded under differential_evidence.",
     }
