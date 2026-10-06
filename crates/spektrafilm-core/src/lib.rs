@@ -16,6 +16,7 @@ pub mod neutral_filters;
 pub mod params;
 pub mod params_builder;
 pub mod pipeline;
+pub mod runtime;
 pub mod print_morph;
 pub mod profile;
 pub mod resizing;

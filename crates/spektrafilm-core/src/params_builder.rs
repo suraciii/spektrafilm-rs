@@ -17,12 +17,9 @@
 //! In the pipeline params should be static and not be changed;
 //! `settings` and `debug` contain all the switching logic for the digesting.
 
-use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
-use crate::params::{PrintExposureEvTracking, RuntimeParams};
+use crate::params::RuntimeParams;
 use crate::profile::Profile;
-
-type HalationPreset = ((&'static str, &'static str), ([f64; 3], [f64; 3]));
 
 /// Halation low-level presets keyed by `(use, antihalation)`. Mirrors
 /// upstream `_HALATION_PRESETS`: `sigma_h` follows the base material
@@ -30,17 +27,11 @@ type HalationPreset = ((&'static str, &'static str), ([f64; 3], [f64; 3]));
 /// the antihalation undercoat. The user-facing knobs
 /// (`scatter_amount`, `halation_amount`, …) stay at 1.0 so these seeds
 /// define the physical baseline.
-const HALATION_PRESETS: &[HalationPreset] = &[
-    (
-        ("still", "strong"),
-        ([65.0, 65.0, 65.0], [0.015, 0.005, 0.0]),
-    ),
+const HALATION_PRESETS: &[((&str, &str), ([f64; 3], [f64; 3]))] = &[
+    (("still", "strong"), ([65.0, 65.0, 65.0], [0.015, 0.005, 0.0])),
     (("still", "weak"), ([65.0, 65.0, 65.0], [0.08, 0.02, 0.0])),
     (("still", "no"), ([65.0, 65.0, 65.0], [0.30, 0.10, 0.015])),
-    (
-        ("cine", "strong"),
-        ([50.0, 50.0, 50.0], [0.015, 0.005, 0.0]),
-    ),
+    (("cine", "strong"), ([50.0, 50.0, 50.0], [0.015, 0.005, 0.0])),
     (("cine", "weak"), ([50.0, 50.0, 50.0], [0.08, 0.02, 0.0])),
     (("cine", "no"), ([50.0, 50.0, 50.0], [0.30, 0.10, 0.015])),
 ];
@@ -66,38 +57,14 @@ pub fn digest_params(
     apply_stocks_specifics: bool,
 ) -> RuntimeParams {
     params = apply_database_neutral_print_filters(params, film, print, database);
-    apply_preview_constraints(&mut params);
 
-    if apply_stocks_specifics {
-        apply_film_specifics(&mut params, film);
-        // Upstream `_apply_print_specifics` is intentionally empty in 0.3.4.
-    }
-    apply_debug_constraints(&mut params);
-
-    params
-}
-
-/// Apply final runtime switches without reapplying stock look defaults.
-pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
-    apply_preview_constraints(params);
-    apply_debug_constraints(params);
-}
-
-fn apply_preview_constraints(params: &mut RuntimeParams) {
     if params.settings.preview_mode {
-        // Preview keeps the per-pixel Procedural scanner grain path and the
-        // Fotufilm Film population model, whose contract evaluates the same
-        // model on the declared reduced-resolution source. Spektra remains a
-        // density-domain stochastic effect and Dye owns an explicit grain-free
-        // preview contract.
-        if !matches!(
-            params.film_render.grain.engine,
-            crate::params::GrainEngine::Procedural | crate::params::GrainEngine::Fotufilm
-        ) {
-            params.film_render.grain.active = false;
-        }
+        // Upstream preview: kill the spatially-variant and stochastic
+        // cost centres but keep the (cheap, per-pixel) colour chain.
+        // Scatter/halation kernel sigmas are preserved in preview mode.
         params.enlarger.lens_blur = 0.0;
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
+        params.film_render.grain.active = false;
         params.film_render.grain.particle_area_um2 = 0.0;
         params.film_render.grain.rms_granularity = [0.0; 3];
         params.film_render.grain.blur = 0.0;
@@ -106,9 +73,12 @@ fn apply_preview_constraints(params: &mut RuntimeParams) {
         params.scanner.lens_blur = 0.0;
         params.scanner.unsharp_mask = [0.0, 0.0];
     }
-}
 
-fn apply_debug_constraints(params: &mut RuntimeParams) {
+    if apply_stocks_specifics {
+        apply_film_specifics(&mut params, film);
+        // Upstream `_apply_print_specifics` is intentionally empty in 0.3.4.
+    }
+
     if params.debug.lut_mode {
         // LUT-sampling regime: force the pipeline into a deterministic
         // per-pixel transform. Enabling lut_mode promotes spatial and
@@ -118,7 +88,7 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         // exposure control
         params.camera.auto_exposure = false;
         params.camera.exposure_compensation_ev = 0.0;
-        params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Never;
+        params.enlarger.print_exposure_compensation = false;
         params.enlarger.print_exposure = 1.0;
         // Highlight boost normalizes by the image-wide max (np.max(x)), so it
         // is an image-global transform — the same input value maps to
@@ -166,57 +136,30 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         params.film_render.grain.active = false;
         params.print_render.glare.active = false;
     }
+
+    params
 }
 
 /// Set neutral dichroic filters from the stock database. Missing combinations
 /// leave the caller's configured defaults unchanged, matching upstream.
 pub fn apply_database_neutral_print_filters(
-    params: RuntimeParams,
-    film: &Profile,
-    print: &Profile,
-    database: Option<&NeutralFilters>,
-) -> RuntimeParams {
-    let protected = params.neutral_print_filters_protected;
-    apply_database_neutral_print_filters_protected(params, film, print, database, protected)
-}
-
-/// Resolve the authored/baseline state of the CMY filter axes.
-///
-/// Explicit preparation flags (a look carrying a value, an explicit edit, a
-/// restored state, or a document that persisted the flags) are authoritative.
-/// Documents written before the flags persisted treat every axis as baseline:
-/// the per-paper database supplies the values unless an edit or look marked
-/// the axis authored.
-pub(crate) fn authored_filter_axes(protection: Option<[bool; 3]>) -> [bool; 3] {
-    protection.unwrap_or([false; 3])
-}
-
-/// Protected axes are ordered cyan, magenta, yellow; calibration policy is retained.
-pub(crate) fn apply_database_neutral_print_filters_protected(
     mut params: RuntimeParams,
     film: &Profile,
     print: &Profile,
     database: Option<&NeutralFilters>,
-    protection: Option<[bool; 3]>,
 ) -> RuntimeParams {
     if !params.settings.neutral_print_filters_from_database {
         return params;
     }
     let print_stock = print.info.stock.as_deref().unwrap_or("");
     let film_stock = film.info.stock.as_deref().unwrap_or("");
-    if let Some([c, m, y]) =
-        database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock))
-    {
-        let protected = authored_filter_axes(protection);
-        if !protected[0] {
+    match database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock)) {
+        Some([c, m, y]) => {
             params.enlarger.c_filter_neutral = c as f32;
-        }
-        if !protected[1] {
             params.enlarger.m_filter_neutral = m as f32;
-        }
-        if !protected[2] {
             params.enlarger.y_filter_neutral = y as f32;
         }
+        None => {}
     }
     params
 }
@@ -225,11 +168,9 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
 /// positive/negative DIR-coupler gammas, the `(use, antihalation)` halation
 /// preset, and the velvia/provia slide-film coupler retunes.
 pub(crate) fn apply_film_specifics(params: &mut RuntimeParams, film: &Profile) {
-    let explicit = crate::presets::explicit_stock_values(params);
     apply_grain_preset(params, film);
     apply_coupler_preset(params, film);
     apply_halation_preset(params, film);
-    crate::presets::restore_explicit_stock_values(params, explicit);
 }
 
 #[derive(serde::Deserialize)]
@@ -240,48 +181,27 @@ struct GrainPresetFile {
 }
 
 fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
-    let Ok(file) =
-        toml::from_str::<GrainPresetFile>(include_str!("../../../data/presets/grain.toml"))
-    else {
+    let Ok(file) = toml::from_str::<GrainPresetFile>(include_str!("../../../data/presets/grain.toml")) else {
         return;
     };
     let class = if film.is_bw() { "bw" } else { "color" };
-    let polarity = if film.is_positive() {
-        "positive"
-    } else {
-        "negative"
-    };
-    let defaults = file
-        .defaults
-        .as_ref()
-        .and_then(|v| v.get(class))
-        .and_then(|v| v.get(polarity));
+    let polarity = if film.is_positive() { "positive" } else { "negative" };
+    let defaults = file.defaults.as_ref().and_then(|v| v.get(class)).and_then(|v| v.get(polarity));
     let stock = film.info.stock.as_deref().and_then(|s| file.stocks.get(s));
-    if stock.is_none() {
-        return;
-    }
-    let value = |key: &str| {
-        stock
-            .and_then(|v| v.get(key))
-            .or_else(|| defaults.and_then(|v| v.get(key)))
-    };
+    if stock.is_none() { return; }
+    let value = |key: &str| stock.and_then(|v| v.get(key)).or_else(|| defaults.and_then(|v| v.get(key)));
     let g = &mut params.film_render.grain;
     let array = |key: &str, dst: &mut [f64]| {
         if let Some(toml::Value::Array(values)) = value(key) {
             for (d, v) in dst.iter_mut().zip(values) {
-                if let Some(v) = v.as_float() {
-                    *d = v;
-                }
+                if let Some(v) = v.as_float() { *d = v; }
             }
         }
     };
     array("rms_granularity", &mut g.rms_granularity);
     array("density_min", &mut g.density_min);
     array("uniformity", &mut g.uniformity);
-    array("particle_scale_sublayers", &mut g.particle_scale_sublayers);
-    if film.info.stock.as_deref() == Some("kodak_portra_400") {
-        g.uniformity = [0.97, 0.99, 0.97];
-    }
+    array("particle_scale_sublayers", &mut g.particle_scale_layers);
 }
 
 #[derive(serde::Deserialize)]
@@ -292,54 +212,24 @@ struct CouplerPresetFile {
 }
 
 fn apply_coupler_preset(params: &mut RuntimeParams, film: &Profile) {
-    let Ok(file) =
-        toml::from_str::<CouplerPresetFile>(include_str!("../../../data/presets/couplers.toml"))
-    else {
+    let Ok(file) = toml::from_str::<CouplerPresetFile>(include_str!("../../../data/presets/couplers.toml")) else {
         return;
     };
     let class = if film.is_bw() { "bw" } else { "color" };
-    let polarity = if film.is_positive() {
-        "positive"
-    } else {
-        "negative"
-    };
-    let defaults = file
-        .defaults
-        .as_ref()
-        .and_then(|v| v.get(class))
-        .and_then(|v| v.get(polarity));
-    let cine = if class == "color"
-        && polarity == "negative"
-        && film.is_film()
-        && film.info.usage == "cine"
-    {
-        let branch = if film
-            .info
-            .reference_illuminant
-            .to_ascii_uppercase()
-            .starts_with('T')
-        {
-            "tungsten"
-        } else {
-            "daylight"
-        };
-        defaults
-            .and_then(|v| v.get("cine"))
-            .and_then(|v| v.get(branch))
-    } else {
-        None
-    };
+    let polarity = if film.is_positive() { "positive" } else { "negative" };
+    let defaults = file.defaults.as_ref().and_then(|v| v.get(class)).and_then(|v| v.get(polarity));
+    let cine = if class == "color" && polarity == "negative" && film.is_film() && film.info.usage == "cine" {
+        let branch = if film.info.reference_illuminant.to_ascii_uppercase().starts_with('T') { "tungsten" } else { "daylight" };
+        defaults.and_then(|v| v.get("cine")).and_then(|v| v.get(branch))
+    } else { None };
     let stock = film.info.stock.as_deref().and_then(|s| file.stocks.get(s));
     let set = |key: &str, dst: &mut [f64]| {
-        let value = stock
-            .and_then(|v| v.get(key))
+        let value = stock.and_then(|v| v.get(key))
             .or_else(|| cine.and_then(|v| v.get(key)))
             .or_else(|| defaults.and_then(|v| v.get(key)));
         if let Some(toml::Value::Array(values)) = value {
             for (d, v) in dst.iter_mut().zip(values) {
-                if let Some(v) = v.as_float() {
-                    *d = v;
-                }
+                if let Some(v) = v.as_float() { *d = v; }
             }
         }
     };
@@ -348,9 +238,6 @@ fn apply_coupler_preset(params: &mut RuntimeParams, film: &Profile) {
     set("gamma_interlayer_r_to_gb", &mut d.gamma_interlayer_r_to_gb);
     set("gamma_interlayer_g_to_rb", &mut d.gamma_interlayer_g_to_rb);
     set("gamma_interlayer_b_to_rg", &mut d.gamma_interlayer_b_to_rg);
-    if let Some("fujifilm_velvia_100") = film.info.stock.as_deref() {
-        d.gamma_samelayer_rgb = [0.108, 0.072, 0.054];
-    }
 }
 
 /// Seed low-level halation parameters from the profile's `use` /
@@ -371,17 +258,8 @@ fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
     }
 }
 
-/// Normalize route and film topology for effective reports and pipeline construction.
-/// Scan-only routes enable film scanning; other routes preserve an explicit scan flag.
-pub(crate) fn normalize_runtime_topology(film: &Profile, params: &mut RuntimeParams) {
-    if params.workflow.route_enum() == WorkflowRoute::FilmScan {
-        params.io.scan_film = true;
-    }
-    broadcast_monochrome_layout(film, params);
-}
-
-/// B&W engine-layout broadcast, applied after digestion by the process resolver
-/// and pipeline (digest output stays in user units so GUI state seeds cleanly).
+/// B&W engine-layout broadcast, applied by the pipeline after the digest
+/// (digest output stays in user units so GUI state seeds cleanly).
 ///
 /// Upstream `n_channels == 1` profiles keep channel-0 of every per-channel
 /// tuple (the DIR matrix degenerates to 1×1 self-inhibition with no
@@ -435,8 +313,12 @@ pub fn resize_for_preview(
     let new_w = ((w * scale_factor) as u32).max(1);
     let new_h = ((h * scale_factor) as u32).max(1);
     let f32buf: Vec<f32> = image.data.iter().map(|&v| to_f32(v)).collect();
-    let src = image::ImageBuffer::<image::Rgb<f32>, _>::from_raw(image.width, image.height, f32buf)
-        .expect("ImageBuf dims match its data length");
+    let src = image::ImageBuffer::<image::Rgb<f32>, _>::from_raw(
+        image.width,
+        image.height,
+        f32buf,
+    )
+    .expect("ImageBuf dims match its data length");
     // Triangle = bilinear (skimage order=1); its area-averaging kernel
     // provides the anti-aliasing of skimage's anti_aliasing=True.
     let dst = image::imageops::resize(&src, new_w, new_h, image::imageops::FilterType::Triangle);
@@ -474,7 +356,7 @@ mod tests {
         params.camera.auto_exposure = true;
         params.camera.exposure_compensation_ev = 2.5;
         params.enlarger.print_exposure = 3.0;
-        params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Always;
+        params.enlarger.print_exposure_compensation = true;
         params.film_render.halation.boost_ev = 1.5;
         params.scanner.white_correction = true;
         params.scanner.black_correction = true;
@@ -491,20 +373,11 @@ mod tests {
         params.settings.use_scanner_lut = true;
 
         let d = digest_params(params, &film, &print, None, true);
-        assert!(
-            d.debug.deactivate_spatial_effects,
-            "lut_mode promotes spatial deactivation"
-        );
-        assert!(
-            d.debug.deactivate_stochastic_effects,
-            "lut_mode promotes stochastic deactivation"
-        );
+        assert!(d.debug.deactivate_spatial_effects, "lut_mode promotes spatial deactivation");
+        assert!(d.debug.deactivate_stochastic_effects, "lut_mode promotes stochastic deactivation");
         assert!(!d.camera.auto_exposure);
         assert_eq!(d.camera.exposure_compensation_ev, 0.0);
-        assert_eq!(
-            d.settings.print_exposure_ev_tracking,
-            PrintExposureEvTracking::Never
-        );
+        assert!(!d.enlarger.print_exposure_compensation);
         assert_eq!(d.enlarger.print_exposure, 1.0);
         assert_eq!(d.film_render.halation.boost_ev, 0.0);
         assert!(!d.scanner.white_correction);
@@ -523,10 +396,7 @@ mod tests {
         assert!(!d.film_render.halation.active);
         assert_eq!(d.film_render.halation.scatter_core_um, [0.0, 0.0, 0.0]);
         assert_eq!(d.film_render.halation.scatter_tail_um, [0.0, 0.0, 0.0]);
-        assert_eq!(
-            d.film_render.halation.halation_first_sigma_um,
-            [0.0, 0.0, 0.0]
-        );
+        assert_eq!(d.film_render.halation.halation_first_sigma_um, [0.0, 0.0, 0.0]);
         assert_eq!(d.film_render.dir_couplers.diffusion_size_um, 0.0);
         assert_eq!(d.film_render.grain.blur, 0.0);
         assert_eq!(d.film_render.grain.blur_dye_clouds_um, 0.0);
@@ -570,20 +440,6 @@ mod tests {
     }
 
     #[test]
-    fn preview_mode_keeps_v2_grain_active() {
-        let film = film_profile("kodak_portra_400", "negative", "still", "strong");
-        let print = blank_profile();
-        let mut params = RuntimeParams::default();
-        params.settings.preview_mode = true;
-        params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
-        params.film_render.grain.active = true;
-
-        let digested = digest_params(params, &film, &print, None, true);
-
-        assert!(digested.film_render.grain.active);
-    }
-
-    #[test]
     fn debug_switches_win_over_preview_mode() {
         // Upstream order: preview block first, debug last → debug zeroing wins.
         let film = film_profile("x", "negative", "still", "weak");
@@ -593,10 +449,7 @@ mod tests {
         params.debug.deactivate_spatial_effects = true;
 
         let d = digest_params(params, &film, &print, None, true);
-        assert!(
-            !d.film_render.halation.active,
-            "spatial-off overrides preview's halation-preserving behaviour"
-        );
+        assert!(!d.film_render.halation.active, "spatial-off overrides preview's halation-preserving behaviour");
     }
 
     #[test]
@@ -604,21 +457,12 @@ mod tests {
         let film = film_profile("some_cine_stock", "negative", "cine", "no");
         let print = blank_profile();
         let d = digest_params(RuntimeParams::default(), &film, &print, None, true);
-        assert_eq!(
-            d.film_render.halation.halation_first_sigma_um,
-            [50.0, 50.0, 50.0]
-        );
-        assert_eq!(
-            d.film_render.halation.halation_strength,
-            [0.30, 0.10, 0.015]
-        );
+        assert_eq!(d.film_render.halation.halation_first_sigma_um, [50.0, 50.0, 50.0]);
+        assert_eq!(d.film_render.halation.halation_strength, [0.30, 0.10, 0.015]);
 
         let film_still = film_profile("some_stock", "negative", "still", "weak");
         let d = digest_params(RuntimeParams::default(), &film_still, &print, None, true);
-        assert_eq!(
-            d.film_render.halation.halation_first_sigma_um,
-            [65.0, 65.0, 65.0]
-        );
+        assert_eq!(d.film_render.halation.halation_first_sigma_um, [65.0, 65.0, 65.0]);
         assert_eq!(d.film_render.halation.halation_strength, [0.08, 0.02, 0.0]);
     }
 
@@ -627,19 +471,13 @@ mod tests {
         let film = film_profile("fujifilm_velvia_100", "positive", "still", "strong");
         let print = blank_profile();
         let d = digest_params(RuntimeParams::default(), &film, &print, None, true);
-        assert_eq!(
-            d.film_render.dir_couplers.gamma_samelayer_rgb,
-            [0.108, 0.072, 0.054]
-        );
+        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.2398, 0.0662, 0.144]);
 
         // apply_stocks_specifics=false keeps user values (GUI edit path).
         let mut user = RuntimeParams::default();
         user.film_render.dir_couplers.gamma_samelayer_rgb = [0.9, 0.8, 0.7];
         let d = digest_params(user, &film, &print, None, false);
-        assert_eq!(
-            d.film_render.dir_couplers.gamma_samelayer_rgb,
-            [0.9, 0.8, 0.7]
-        );
+        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.9, 0.8, 0.7]);
     }
 
     #[test]
@@ -651,24 +489,12 @@ mod tests {
         params.film_render.grain.uniformity = [0.5; 3];
         params.film_render.dir_couplers.gamma_samelayer_rgb = [0.9; 3];
         let seeded = digest_params(params.clone(), &film, &print, None, true);
-        // The stock preset replaces the caller's value with the table's; the
-        // channel ratio of this stock comes from its measured granularity
-        // (data/presets/grain.toml).
-        assert_eq!(
-            seeded.film_render.grain.rms_granularity,
-            [5.6385, 4.5, 5.544]
-        );
-        assert_eq!(seeded.film_render.grain.uniformity, [0.97, 0.99, 0.97]);
-        assert_eq!(
-            seeded.film_render.dir_couplers.gamma_samelayer_rgb,
-            [0.5159, 0.5934, 0.2829]
-        );
+        assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
+        assert_eq!(seeded.film_render.grain.uniformity, [0.97; 3]);
+        assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.5159, 0.5934, 0.2829]);
         let edited = digest_params(params, &film, &print, None, false);
         assert_eq!(edited.film_render.grain.rms_granularity, [99.0; 3]);
-        assert_eq!(
-            edited.film_render.dir_couplers.gamma_samelayer_rgb,
-            [0.9; 3]
-        );
+        assert_eq!(edited.film_render.dir_couplers.gamma_samelayer_rgb, [0.9; 3]);
         let unknown = film_profile("custom_stock", "negative", "still", "strong");
         let mut custom = RuntimeParams::default();
         custom.film_render.grain.rms_granularity = [99.0; 3];
@@ -685,42 +511,24 @@ mod tests {
         params.enlarger.m_filter_neutral = 23.0;
         params.enlarger.y_filter_neutral = 91.0;
         let params = apply_database_neutral_print_filters(params, &film, &print, None);
-        assert_eq!(
-            [
-                params.enlarger.c_filter_neutral,
-                params.enlarger.m_filter_neutral,
-                params.enlarger.y_filter_neutral
-            ],
-            [17.0, 23.0, 91.0]
-        );
+        assert_eq!([params.enlarger.c_filter_neutral, params.enlarger.m_filter_neutral, params.enlarger.y_filter_neutral], [17.0, 23.0, 91.0]);
     }
 
     #[test]
     fn taps_parse_and_reject() {
         for name in [
-            "rgb_in",
-            "rgb_pre",
-            "log_e_film",
-            "cmy_film",
-            "log_e_print",
-            "cmy_print",
-            "rgb_out",
+            "rgb_in", "rgb_pre", "log_e_film", "cmy_film", "log_e_print", "cmy_print", "rgb_out",
         ] {
             assert_eq!(Tap::parse(name).unwrap().name(), name);
         }
         let err = Tap::parse("cmy_prints").unwrap_err();
         assert!(err.contains("unknown tap"), "{err}");
-        assert!(
-            err.contains("rgb_in") && err.contains("cmy_print"),
-            "error lists valid taps: {err}"
-        );
+        assert!(err.contains("rgb_in") && err.contains("cmy_print"), "error lists valid taps: {err}");
 
-        let mut params = RuntimeParams {
-            taps: TapsParams {
-                inject: Some("bogus".into()),
-                collect: None,
-            },
-            ..Default::default()
+        let mut params = RuntimeParams::default();
+        params.taps = TapsParams {
+            inject: Some("bogus".into()),
+            collect: None,
         };
         assert!(params.validate().is_err());
         params.taps = TapsParams {
@@ -768,22 +576,15 @@ mod tests {
         .unwrap();
         assert_eq!(params.film_render.grain.particle_area_um2, 0.4);
         // ...and the pre-rename names no longer do.
-        assert!(
-            serde_json::from_str::<RuntimeParams>(
-                r#"{"film_render": {"grain": {"agx_particle_area_um2": 0.4}}}"#
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_str::<RuntimeParams>(
+            r#"{"film_render": {"grain": {"agx_particle_area_um2": 0.4}}}"#
+        )
+        .is_err());
     }
 
     #[test]
     fn nested_print_morph_requires_explicit_activation() {
-        assert!(
-            !RuntimeParams::default()
-                .print_render
-                .density_curves_morph
-                .active
-        );
+        assert!(!RuntimeParams::default().print_render.density_curves_morph.active);
         for json in [
             r#"{}"#,
             r#"{"print_render":{}}"#,
@@ -795,16 +596,12 @@ mod tests {
         }
         let params: RuntimeParams = serde_json::from_str(
             r#"{"print_render":{"density_curves_morph":{"gamma_factor":1.5,"active":true}}}"#,
-        )
-        .unwrap();
+        ).unwrap();
         assert!(params.print_render.density_curves_morph.active);
         assert_eq!(params.print_render.density_curves_morph.gamma_factor, 1.5);
-        assert!(
-            serde_json::from_str::<RuntimeParams>(
-                r#"{"print_render":{"density_curves_morph":{"gamma_facotr":1.5}}}"#,
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_str::<RuntimeParams>(
+            r#"{"print_render":{"density_curves_morph":{"gamma_facotr":1.5}}}"#,
+        ).is_err());
         assert!(crate::params::PrintCurvesMorphParams::default().active);
     }
 

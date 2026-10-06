@@ -7,24 +7,16 @@ license.workspace = true
 [features]
 precision-f64 = [
     "spektrafilm-math/precision-f64",
-    "spektrafilm-backend/precision-f64",
     "spektrafilm-gpu/precision-f64",
 ]
 
 [dependencies]
-spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
+spektrafilm-gpu.workspace = true
 rayon.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
 rand_mt = "5"
 libm.workspace = true
-half = "2.7"
+thiserror.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
-# GPU parity tests require an adapter; production code depends only on the
-# compute backend abstraction.
-spektrafilm-gpu.workspace = true
-
-[lints]
-workspace = true

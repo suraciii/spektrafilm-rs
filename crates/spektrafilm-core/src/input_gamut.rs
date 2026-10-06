@@ -13,17 +13,10 @@
 use std::sync::{Arc, LazyLock};
 
 use rayon::prelude::*;
-use rustfft::{FftPlanner, num_complex::Complex};
 use spektrafilm_math::spectral::{self, CMF_X_F64, CMF_Y_F64, CMF_Z_F64, TcLut};
 
 use crate::gamut_compression::{oklab_to_xyz, reinhard_knee, xyz_to_oklab};
 use crate::params::InputGamutCompressParams;
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Boundary {
-    Locus,
-    InscribedHull,
-}
 
 /// CIE 1931 2° visible spectral locus as a closed xy polygon, sampled at 5 nm
 /// from 380 to 700 nm (65 vertices + the first repeated). Mirrors upstream
@@ -64,49 +57,6 @@ fn ray_polygon_distance(origin: [f64; 2], direction: [f64; 2], polygon: &[[f64; 
         }
     }
     t_min
-}
-
-/// Build the smooth star-shaped boundary used by upstream `inscribed_hull`.
-/// Fourier smoothing is followed by worst-case inward scaling, so the hull
-/// remains inside the sampled spectral locus at every ray.
-fn inscribed_locus_hull(white: [f64; 2], detail: f64, locus: &[[f64; 2]]) -> Vec<[f64; 2]> {
-    const N: usize = 1024;
-    let mut reach = vec![0.0; N];
-    for (i, r) in reach.iter_mut().enumerate() {
-        let theta = 2.0 * std::f64::consts::PI * i as f64 / N as f64;
-        *r = ray_polygon_distance(white, [theta.cos(), theta.sin()], locus);
-    }
-    let mut planner = FftPlanner::<f64>::new();
-    let forward = planner.plan_fft_forward(N);
-    let inverse = planner.plan_fft_inverse(N);
-    let mut spectrum: Vec<Complex<f64>> = reach.iter().map(|&v| Complex::new(v, 0.0)).collect();
-    forward.process(&mut spectrum);
-    for (k, value) in spectrum.iter_mut().enumerate() {
-        let mode = k.min(N - k) as f64;
-        *value *= (-0.5 * (mode / detail).powi(2)).exp();
-    }
-    inverse.process(&mut spectrum);
-    let smooth: Vec<f64> = spectrum
-        .iter()
-        .map(|v| (v.re / N as f64).max(1e-12))
-        .collect();
-    let scale = reach
-        .iter()
-        .zip(&smooth)
-        .filter_map(|(&r, &s)| (s.is_finite() && s > 0.0).then_some(r / s))
-        .fold(f64::INFINITY, f64::min);
-    let scale = if scale.is_finite() { scale } else { 1.0 };
-    let mut hull = Vec::with_capacity(N + 1);
-    for (i, &r) in smooth.iter().enumerate() {
-        let theta = 2.0 * std::f64::consts::PI * i as f64 / N as f64;
-        let radius = r * scale;
-        hull.push([
-            white[0] + radius * theta.cos(),
-            white[1] + radius * theta.sin(),
-        ]);
-    }
-    hull.push(hull[0]);
-    hull
 }
 
 /// ACES-RGC-style radial compression of a single CIE xy toward the spectral
@@ -289,8 +239,6 @@ enum Algorithm {
 pub struct InputGamutCompress {
     active: bool,
     algorithm: Algorithm,
-    boundary: Boundary,
-    hull_detail: f64,
     knee: (f64, f64, f64),
     locus: Vec<[f64; 2]>,
     c_max: Arc<Vec<f64>>,
@@ -309,24 +257,21 @@ impl InputGamutCompress {
             other => {
                 return Err(format!(
                     "input gamut compression algorithm must be 'xy', 'oklch', or inactive 'off', got {other:?}"
-                ));
+                ))
             }
         };
-        let boundary = match params.boundary.as_str() {
-            "locus" => Boundary::Locus,
-            "inscribed_hull" => Boundary::InscribedHull,
-            other => return Err(format!("unknown input gamut boundary {other:?}")),
-        };
-        if !params.hull_detail.is_finite() || params.hull_detail <= 0.0 {
+        let [t, l, p] = params.knee;
+        if !(0.0..1.0).contains(&t) {
             return Err(format!(
-                "input gamut hull detail must be finite and > 0, got {}",
-                params.hull_detail
+                "input gamut compression knee threshold must be in [0, 1), got {t}"
             ));
         }
-        let knee = crate::params::validation::validate_gamut_triplet(
-            "input gamut compression knee",
-            params.knee,
-        )?;
+        if l <= 0.0 {
+            return Err(format!("input gamut compression knee limit must be > 0, got {l}"));
+        }
+        if p <= 0.0 {
+            return Err(format!("input gamut compression knee power must be > 0, got {p}"));
+        }
         let locus = spectral_locus_xy();
         let active = params.active && !inactive;
         let c_max = match (active, algorithm) {
@@ -336,9 +281,7 @@ impl InputGamutCompress {
         Ok(Self {
             active,
             algorithm,
-            boundary,
-            hull_detail: params.hull_detail,
-            knee,
+            knee: (t as f64, l as f64, p as f64),
             locus,
             c_max,
         })
@@ -355,21 +298,10 @@ impl InputGamutCompress {
             return xy;
         }
         match self.algorithm {
-            Algorithm::Xy => {
-                let boundary = match self.boundary {
-                    Boundary::Locus => &self.locus,
-                    Boundary::InscribedHull => {
-                        return compress_xy_radial(
-                            xy,
-                            white_xy,
-                            self.knee,
-                            &inscribed_locus_hull(white_xy, self.hull_detail, &self.locus),
-                        );
-                    }
-                };
-                compress_xy_radial(xy, white_xy, self.knee, boundary)
+            Algorithm::Xy => compress_xy_radial(xy, white_xy, self.knee, &self.locus),
+            Algorithm::Oklch => {
+                compress_oklch_chroma(xy, self.knee, &self.c_max)
             }
-            Algorithm::Oklch => compress_oklch_chroma(xy, self.knee, &self.c_max),
         }
     }
 
@@ -383,13 +315,6 @@ impl InputGamutCompress {
         if !self.active {
             return lut.clone();
         }
-        let boundary = match (self.algorithm, self.boundary) {
-            (Algorithm::Xy, Boundary::Locus) => self.locus.clone(),
-            (Algorithm::Xy, Boundary::InscribedHull) => {
-                inscribed_locus_hull(ref_xy, self.hull_detail, &self.locus)
-            }
-            _ => Vec::new(),
-        };
         let size = lut.size;
         let ch = lut.channels;
         let inv = 1.0 / (size as f64 - 1.0);
@@ -398,12 +323,13 @@ impl InputGamutCompress {
             .enumerate()
             .for_each(|(cell, out)| {
                 let (i, j) = (cell / size, cell % size);
+                // Step 1: tc cell → CIE xy.
                 let (x, y) = spectral::tc_to_xy(i as f64 * inv, j as f64 * inv);
-                let cxy = match self.algorithm {
-                    Algorithm::Xy => compress_xy_radial([x, y], ref_xy, self.knee, &boundary),
-                    Algorithm::Oklch => compress_oklch_chroma([x, y], self.knee, &self.c_max),
-                };
+                // Step 2: compress.
+                let cxy = self.compress_xy([x, y], ref_xy);
+                // Step 3: compressed xy → tc.
                 let (tx, ty) = spectral::xy_to_tc(cxy[0], cxy[1]);
+                // Step 4: bilinear sample original LUT at (tx, ty) grid coords.
                 let sample =
                     bilinear_sample(lut, tx * (size as f64 - 1.0), ty * (size as f64 - 1.0));
                 out[..ch].copy_from_slice(&sample[..ch]);
@@ -454,8 +380,6 @@ mod tests {
         InputGamutCompressParams {
             active,
             algorithm: algorithm.into(),
-            boundary: "locus".into(),
-            hull_detail: 5.0,
             knee: [0.0, 1.0, 6.0],
         }
     }
@@ -510,12 +434,12 @@ mod tests {
         ];
         for (i, j, expected) in cells {
             let base = (i * 64 + j) * 3;
-            for (c, expected) in expected.iter().enumerate() {
+            for c in 0..3 {
                 assert!(
-                    (out.data[base + c] - expected).abs() < 1e-7,
+                    (out.data[base + c] - expected[c]).abs() < 1e-7,
                     "cell ({i},{j}) ch {c}: got {}, expected {}",
                     out.data[base + c],
-                    expected,
+                    expected[c],
                 );
             }
         }
@@ -534,53 +458,22 @@ mod tests {
         let spec = InputGamutCompress::build(&params("oklch", true)).unwrap();
         let out = spec.remap(&synthetic_lut(64), [0.3127, 0.329]);
         let cells = [
-            (
-                0usize,
-                0usize,
-                [0.30973501908479395, 0.38189996753840216, 0.4540649159920104],
-            ),
-            (
-                10usize,
-                20usize,
-                [0.390231319454233, 0.4623962679078412, 0.5345612163614495],
-            ),
-            (
-                32usize,
-                32usize,
-                [0.546394870475601, 0.6185598189292094, 0.6907152119946107],
-            ),
-            (
-                50usize,
-                5usize,
-                [0.1387877654727771, 0.21095271392638537, 0.2831176623799936],
-            ),
-            (
-                63usize,
-                63usize,
-                [0.4193442458939582, 0.49150919434756646, 0.5636741428011747],
-            ),
-            (
-                5usize,
-                60usize,
-                [0.35586974920999714, 0.42803469766360536, 0.5001996461172137],
-            ),
+            (0usize, 0usize, [0.30973501908479395, 0.38189996753840216, 0.4540649159920104]),
+            (10usize, 20usize, [0.390231319454233, 0.4623962679078412, 0.5345612163614495]),
+            (32usize, 32usize, [0.546394870475601, 0.6185598189292094, 0.6907152119946107]),
+            (50usize, 5usize, [0.1387877654727771, 0.21095271392638537, 0.2831176623799936]),
+            (63usize, 63usize, [0.4193442458939582, 0.49150919434756646, 0.5636741428011747]),
+            (5usize, 60usize, [0.35586974920999714, 0.42803469766360536, 0.5001996461172137]),
         ];
         for (i, j, want) in cells {
             let base = (i * 64 + j) * 3;
-            for (c, expected) in want.iter().enumerate() {
-                assert!(
-                    (out.data[base + c] - expected).abs() < 1e-6,
-                    "cell ({i}, {j}) channel {c}: {} expected {}",
-                    out.data[base + c],
-                    expected
-                );
+            for c in 0..3 {
+                assert!((out.data[base + c] - want[c]).abs() < 1e-6,
+                    "cell ({i}, {j}) channel {c}: {} expected {}", out.data[base + c], want[c]);
             }
         }
         let checksum: f64 = out.data.iter().sum();
-        assert!(
-            (checksum - 6060.726600945642).abs() < 1e-6,
-            "checksum {checksum}"
-        );
+        assert!((checksum - 6060.726600945642).abs() < 1e-6, "checksum {checksum}");
     }
 
     /// An inactive compressor (`active = false`) returns the LUT unchanged —

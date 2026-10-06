@@ -92,6 +92,7 @@ const ILLUMINANT_TH_KG3_F64: [f64; N_WAVELENGTHS] = [
     0.41455292589926274,
 ];
 
+
 /// TH-KG3 + default CMY dichroic filters (C=0, M=65, Y=55) at full f64 precision.
 /// Baked from Python's `color_enlarger(standard_illuminant('TH-KG3'), (0, 65, 55))`.
 pub const ILLUMINANT_TH_KG3_DEFAULT_FILTERS_F64: [f64; N_WAVELENGTHS] = [
@@ -177,6 +178,42 @@ pub const ILLUMINANT_TH_KG3_DEFAULT_FILTERS_F64: [f64; N_WAVELENGTHS] = [
     0.44953980952699202,
     0.41455292589926274,
 ];
+
+/// TH-KG3 + default CMY dichroic filters (C=0, M=65, Y=55) — f32 fallback.
+/// Baked from Python's `color_enlarger(standard_illuminant('TH-KG3'), (0, 65, 55))`.
+pub const ILLUMINANT_TH_KG3_DEFAULT_FILTERS: [f32; N_WAVELENGTHS] = [
+    0.076422, 0.082681, 0.088894, 0.094974, 0.101089, 0.107245, 0.113585, 0.120285, 0.127293,
+    0.134737, 0.142799, 0.151251, 0.160106, 0.169081, 0.177703, 0.186358, 0.195058, 0.203956,
+    0.213521, 0.223517, 0.233637, 0.243249, 0.247356, 0.229788, 0.180814, 0.131334, 0.119941,
+    0.147692, 0.190192, 0.227128, 0.251305, 0.265414, 0.274976, 0.283872, 0.292561, 0.300629,
+    0.307983, 0.314457, 0.320338, 0.325824, 0.330699, 0.335011, 0.339107, 0.346842, 0.390369,
+    0.572121, 0.949474, 1.326817, 1.507084, 1.545243, 1.540583, 1.532068, 1.519489, 1.503083,
+    1.479986, 1.459985, 1.436754, 1.403230, 1.371843, 1.340456, 1.301948, 1.264909, 1.226139,
+    1.180212, 1.136868, 1.092653, 1.045243, 1.000479, 0.948058, 0.902381, 0.854665, 0.792226,
+    0.734521, 0.689229, 0.652250, 0.607482, 0.571755, 0.526940, 0.486676, 0.449540, 0.414553,
+];
+
+/// Compute filtered enlarger illuminant with CMY dichroic filters.
+///
+/// Filter values are in Kodak CC units: 100 = 1.0 density = 90% reduction.
+/// For the default TH-KG3 + (C=0, M=65, Y=55) configuration, uses the exact
+/// baked values from the Python reference to ensure parity.
+pub fn enlarger_filtered_illuminant(
+    illuminant_name: &str,
+    c_filter: f32,
+    m_filter: f32,
+    y_filter: f32,
+) -> Vec<f32> {
+    enlarger_filtered_illuminant_f64(
+        illuminant_name,
+        c_filter as f64,
+        m_filter as f64,
+        y_filter as f64,
+    )
+    .into_iter()
+    .map(|v| v as f32)
+    .collect()
+}
 
 /// Compute filtered enlarger illuminant in f64 (Python parity).
 ///
@@ -281,8 +318,6 @@ fn dichroic_filters_f64() -> [[f64; 3]; N_WAVELENGTHS] {
     let transitions = [12.0f64, 8.0, 8.0, 8.0];
 
     let mut filters = [[0.0f64; 3]; N_WAVELENGTHS];
-    // The sample index determines the wavelength used by each filter.
-    #[allow(clippy::needless_range_loop)]
     for i in 0..N_WAVELENGTHS {
         let wl = spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
         filters[i][2] = erf((wl - edges[0]) / transitions[0]) / 2.0 + 0.5;
@@ -361,8 +396,6 @@ pub fn midgray_density_spectral_from_raw(
     // Python: compute_density_spectral — einsum + base_density. NaN propagates per wavelength.
     let n_wl = film.data.channel_density.len();
     let mut spectral = vec![0.0f64; n_wl];
-    // The wavelength index aligns spectral output, dye, and base density.
-    #[allow(clippy::needless_range_loop)]
     for wl in 0..n_wl {
         let cd = &film.data.channel_density[wl];
         let s = density_cmy[0] * cd[0] + density_cmy[1] * cd[1] + density_cmy[2] * cd[2];
@@ -472,7 +505,16 @@ fn erf(x: f64) -> f64 {
 #[cfg(test)]
 mod parity_tests {
     use crate::pipeline::Pipeline;
-    use crate::test_support::data_dir;
+    use std::path::{Path, PathBuf};
+
+    fn data_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data")
+    }
 
     /// Enlarger preflash regression guard. The constant preflash raw vector is
     /// the film base density lit by the preflash-filtered illuminant, integrated
@@ -499,7 +541,7 @@ mod parity_tests {
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
         let p = pipeline.preflash_raw();
 
-        let expect = [0.45670880384496165, 0.39599598403601427, 0.5172322808628251];
+        let expect = [0.4567086334477163, 0.3959958805787103, 0.5172324967476551];
         for c in 0..3 {
             assert!(
                 (p[c] - expect[c]).abs() < 1e-12,

@@ -53,11 +53,8 @@ fn gumbel_matched_cdf(z: f64) -> f64 {
 fn layer_cdf(z: f64, positive: bool, gumbel_mix: f64, model_type: &str, alpha: f64) -> f64 {
     let sz = signed_z(z, positive);
     let cdf = if model_type == "sept_norm_cdfs" {
-        spektrafilm_model::density_curves::layer_cdf(sz, model_type, alpha)
-            .expect("validated density curve model")
-    } else {
-        norm_cdf(sz)
-    };
+        spektrafilm_model::density_curves::layer_cdf(sz, model_type, alpha).expect("validated density curve model")
+    } else { norm_cdf(sz) };
     if gumbel_mix > 0.0 {
         (1.0 - gumbel_mix) * cdf + gumbel_mix * gumbel_matched_cdf(sz)
     } else {
@@ -66,7 +63,6 @@ fn layer_cdf(z: f64, positive: bool, gumbel_mix: f64, model_type: &str, alpha: f
 }
 
 /// Evaluate one channel's density at every `log_exposure` sample.
-#[allow(clippy::too_many_arguments)]
 fn evaluate_channel_density(
     log_exposure: &[f64],
     centers: &[f64],
@@ -82,16 +78,30 @@ fn evaluate_channel_density(
         let mix = gumbel_mix_per_layer[i];
         let (mu, a, s) = (centers[i], amplitudes[i], sigmas[i]);
         for (o, &x) in out.iter_mut().zip(log_exposure) {
-            *o += a * layer_cdf(
-                (x - mu) / s,
-                positive,
-                mix,
-                model_type,
-                alphas.map_or(0.0, |a| a[i]),
-            );
+            *o += a * layer_cdf((x - mu) / s, positive, mix, model_type, alphas.map_or(0.0, |a| a[i]));
         }
     }
     out
+}
+fn evaluate_model_channel(
+    log_exposure: &[f64],
+    centers: &[f64],
+    amplitudes: &[f64],
+    sigmas: &[f64],
+    model_type: &str,
+    alphas: Option<&[f64]>,
+    positive: bool,
+) -> Result<Vec<f64>, String> {
+    let model = spektrafilm_model::density_curves::evaluate_density_curves(
+        log_exposure,
+        model_type,
+        &[centers.to_vec()],
+        &[amplitudes.to_vec()],
+        &[sigmas.to_vec()],
+        alphas.map(|a| vec![a.to_vec()]).as_deref(),
+        positive,
+    )?;
+    Ok(model.into_iter().map(|row| row[0]).collect())
 }
 
 /// `(i_fast, i_mid, i_slow)` by ascending center (grain-speed order). Real
@@ -327,54 +337,20 @@ pub fn morph_density_curves(
     p: &PrintCurvesMorphParams,
     positive: bool,
 ) -> Result<Vec<[f64; 3]>, String> {
-    morph_density_curves_impl(log_exposure, model, p, positive, None)
-}
-
-type MorphedDensityCurvesWithLayers = (Vec<[f64; 3]>, Vec<Vec<Vec<f64>>>);
-
-/// Evaluate film totals and grain sublayers from the same chemistry parameters.
-pub(crate) fn morph_density_curves_with_layers(
-    log_exposure: &[f64],
-    model: &DensityCurvesModel,
-    p: &PrintCurvesMorphParams,
-    positive: bool,
-) -> Result<MorphedDensityCurvesWithLayers, String> {
-    let mut layers = vec![vec![vec![0.0; 3]; model.n_layers()]; log_exposure.len()];
-    let total = morph_density_curves_impl(log_exposure, model, p, positive, Some(&mut layers))?;
-    Ok((total, layers))
-}
-
-fn morph_density_curves_impl(
-    log_exposure: &[f64],
-    model: &DensityCurvesModel,
-    p: &PrintCurvesMorphParams,
-    positive: bool,
-    mut layers: Option<&mut Vec<Vec<Vec<f64>>>>,
-) -> Result<Vec<[f64; 3]>, String> {
-    if !matches!(
-        model.model_type.as_str(),
-        "cdfs" | "norm_cdfs" | "sept_norm_cdfs"
-    ) {
+    if !matches!(model.model_type.as_str(), "cdfs" | "norm_cdfs" | "sept_norm_cdfs") {
         return Err(format!(
             "unsupported density_curves_model type {:?} (expected \"cdfs\", \"norm_cdfs\", or \"sept_norm_cdfs\")",
             model.model_type
         ));
     }
-    if model.model_type == "sept_norm_cdfs"
-        && let Some(alphas) = &model.alphas
-    {
-        if alphas.len() != 3 || alphas.iter().any(|r| r.len() != model.n_layers()) {
-            return Err(format!(
-                "density_curves_model.alphas must be 3×{}",
-                model.n_layers()
-            ));
-        }
-        if alphas
-            .iter()
-            .flatten()
-            .any(|a| !a.is_finite() || a.abs() >= 1.0)
-        {
-            return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
+    if model.model_type == "sept_norm_cdfs" {
+        if let Some(alphas) = &model.alphas {
+            if alphas.len() != 3 || alphas.iter().any(|r| r.len() != model.n_layers()) {
+                return Err(format!("density_curves_model.alphas must be 3×{}", model.n_layers()));
+            }
+            if alphas.iter().flatten().any(|a| !a.is_finite() || a.abs() >= 1.0) {
+                return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
+            }
         }
     }
     if model.n_layers() == 0 {
@@ -396,38 +372,77 @@ fn morph_density_curves_impl(
             return Err(format!("density_curves_model.{name} must be 3×{n_layers}"));
         }
     }
-    p.validate()?;
+    // Upstream `apply_print_curves_morph` short-circuits when inactive: the
+    // fitted model is evaluated as-is (`_evaluate_fitted_density`) and the
+    // morph parameters — including invalid ones — are never read.
+    if !p.active {
+        let mut out = vec![[0.0f64; 3]; log_exposure.len()];
+        for channel in 0..3 {
+            let col = if model.model_type == "sept_norm_cdfs" {
+                evaluate_model_channel(
+                    log_exposure,
+                    &model.centers[channel],
+                    &model.amplitudes[channel],
+                    &model.sigmas[channel],
+                    &model.model_type,
+                    model.alphas.as_ref().map(|a| a[channel].as_slice()),
+                    positive,
+                )?
+            } else {
+                let zero_mix = vec![0.0f64; n_layers];
+                evaluate_channel_density(
+                    log_exposure,
+                    &model.centers[channel],
+                    &model.amplitudes[channel],
+                    &model.sigmas[channel],
+                    positive,
+                    &zero_mix,
+                    &model.model_type,
+                    None,
+                )
+            };
+            for (row, &v) in out.iter_mut().zip(col.iter()) {
+                row[channel] = v;
+            }
+        }
+        return Ok(out);
+    }
+
+    for (name, v) in [
+        ("gamma_factor", p.gamma_factor),
+        ("gamma_factor_fast", p.gamma_factor_fast),
+        ("gamma_factor_slow", p.gamma_factor_slow),
+        ("gamma_factor_red", p.gamma_factor_red),
+        ("gamma_factor_green", p.gamma_factor_green),
+        ("gamma_factor_blue", p.gamma_factor_blue),
+    ] {
+        if v <= 0.0 {
+            return Err(format!("{name} must be strictly positive (got {v})"));
+        }
+    }
+    if !(0.0..=1.0).contains(&p.developer_exhaustion) {
+        return Err(format!(
+            "developer_exhaustion must be in [0, 1] (got {})",
+            p.developer_exhaustion
+        ));
+    }
 
     let mut out = vec![[0.0f64; 3]; log_exposure.len()];
     for channel in 0..3 {
-        let morphed = p
-            .active
-            .then(|| morph_channel_params(model, p, channel, positive));
-        let (centers, amplitudes, sigmas) = morphed
-            .as_ref()
-            .map(|(c, a, s, _)| (c.as_slice(), a.as_slice(), s.as_slice()))
-            .unwrap_or((
-                &model.centers[channel],
-                &model.amplitudes[channel],
-                &model.sigmas[channel],
-            ));
-        for layer in 0..n_layers {
-            let mix = morphed.as_ref().map_or(0.0, |(_, _, _, mix)| mix[layer]);
-            let alpha = model.alphas.as_ref().map_or(0.0, |a| a[channel][layer]);
-            for (sample, &x) in log_exposure.iter().enumerate() {
-                let density = amplitudes[layer]
-                    * layer_cdf(
-                        (x - centers[layer]) / sigmas[layer],
-                        positive,
-                        mix,
-                        &model.model_type,
-                        alpha,
-                    );
-                out[sample][channel] += density;
-                if let Some(layers) = layers.as_deref_mut() {
-                    layers[sample][layer][channel] = density;
-                }
-            }
+        let (centers, amplitudes, sigmas, mix) =
+            morph_channel_params(model, p, channel, positive);
+        let col = evaluate_channel_density(
+            log_exposure,
+            &centers,
+            &amplitudes,
+            &sigmas,
+            positive,
+            &mix,
+            &model.model_type,
+            model.alphas.as_ref().map(|a| a[channel].as_slice()),
+        );
+        for (row, &v) in out.iter_mut().zip(col.iter()) {
+            row[channel] = v;
         }
     }
     Ok(out)
@@ -436,7 +451,16 @@ fn morph_density_curves_impl(
 #[cfg(test)]
 mod parity_tests {
     use super::*;
-    use crate::test_support::data_dir;
+    use std::path::{Path, PathBuf};
+
+    fn data_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data")
+    }
 
     /// s023 print-curve morph regression guard. Morphed density curves for the
     /// kodak_portra_endura fitted model are cross-checked against a faithful
@@ -469,46 +493,50 @@ mod parity_tests {
             (
                 0,
                 [
-                    6.043741813573511e-32,
-                    1.8626071677241282e-26,
-                    5.133309699665567e-29,
+                    1.2906643409588795e-31,
+                    2.2185991932034967e-26,
+                    3.4424343941784738e-29,
                 ],
             ),
             (
                 32,
                 [
-                    1.0587496409351388e-16,
-                    5.213366461788499e-14,
-                    2.455523561513903e-15,
+                    1.731310059675948e-16,
+                    5.7293695795930524e-14,
+                    1.7834501481392706e-15,
                 ],
             ),
             (
                 64,
                 [
-                    9.939369217475997e-07,
-                    7.439137710938368e-06,
-                    2.241644080123102e-06,
+                    1.2936031327160644e-06,
+                    7.7307480947653245e-06,
+                    1.817160255677715e-06,
                 ],
             ),
             (
                 100,
-                [0.1912862823336439, 0.18531041493200068, 0.15164796399974384],
+                [
+                    0.20550253856702763,
+                    0.18645371342322808,
+                    0.14121296658559268,
+                ],
             ),
             (
                 128,
-                [2.2414834969040576, 1.7608119481223927, 1.7480868974096948],
+                [2.2534590034222939, 1.7620679006649806, 1.7425395878923342],
             ),
             (
                 160,
-                [2.45869493442771, 2.0652999342370912, 1.8206426676953955],
+                [2.4610942432356335, 2.0655320765552783, 1.8208891086219476],
             ),
             (
                 200,
-                [2.4597462787423585, 2.067618475281535, 1.8210696107660937],
+                [2.462127527752795, 2.0678714180801663, 1.8213460466547904],
             ),
             (
                 255,
-                [2.4597509970155245, 2.067634980096055, 1.8210719974895442],
+                [2.462132276731988, 2.0678883162266803, 1.8213486357958832],
             ),
         ];
         for (i, want) in expect {
@@ -541,13 +569,13 @@ mod parity_tests {
 
         // Direct evaluation of the unmorphed model.
         for (i, &x) in log_exposure.iter().enumerate() {
-            for (c, morphed_density) in morphed[i].iter().enumerate() {
+            for c in 0..3 {
                 let mut d = 0.0;
                 for l in 0..model.n_layers() {
                     let z = (x - model.centers[c][l]) / model.sigmas[c][l];
                     d += model.amplitudes[c][l] * norm_cdf(signed_z(z, positive));
                 }
-                assert!((*morphed_density - d).abs() < 1e-15, "row {i} ch {c}");
+                assert!((morphed[i][c] - d).abs() < 1e-15, "row {i} ch {c}");
             }
         }
     }
@@ -581,26 +609,10 @@ mod parity_tests {
         };
         let axis = [-1.0, 0.0, 1.0];
         for positive in [false, true] {
-            let plain =
-                morph_density_curves(&axis, &model, &PrintCurvesMorphParams::default(), positive)
-                    .unwrap();
-            let exhausted = morph_density_curves(
-                &axis,
-                &model,
-                &PrintCurvesMorphParams {
-                    developer_exhaustion: 0.6,
-                    ..Default::default()
-                },
-                positive,
-            )
-            .unwrap();
-            for c in 0..3 {
-                assert!((plain[1][c] - exhausted[1][c]).abs() < 1e-9);
-            }
-            assert!(
-                (plain[0][0] - exhausted[0][0]).abs() > 1e-4
-                    || (plain[2][0] - exhausted[2][0]).abs() > 1e-4
-            );
+            let plain = morph_density_curves(&axis,&model,&PrintCurvesMorphParams::default(),positive).unwrap();
+            let exhausted = morph_density_curves(&axis,&model,&PrintCurvesMorphParams { developer_exhaustion:0.6,..Default::default() },positive).unwrap();
+            for c in 0..3 { assert!((plain[1][c]-exhausted[1][c]).abs()<1e-9); }
+            assert!((plain[0][0]-exhausted[0][0]).abs()>1e-4 || (plain[2][0]-exhausted[2][0]).abs()>1e-4);
         }
     }
 }

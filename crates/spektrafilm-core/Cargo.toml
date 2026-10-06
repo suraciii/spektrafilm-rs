@@ -12,7 +12,6 @@ precision-f64 = [
 ]
 
 [dependencies]
-spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-gpu.workspace = true
 spektrafilm-model.workspace = true
@@ -26,10 +25,8 @@ libm.workspace = true
 image.workspace = true
 anyhow.workspace = true
 sha2 = "0.10"
-fs2 = "0.4.3"
-tempfile = "3.27"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "=0.3.36", features = ["formatting"] }
 nalgebra = { version = "0.33", default-features = false, features = ["std"] }
 rustfft.workspace = true
 
@@ -44,10 +41,3 @@ blas-src = { version = "0.10", features = ["accelerate"] }
 [target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 cblas = "0.4"
 blas-src = { version = "0.10", features = ["openblas"] }
-
-
-[target.'cfg(unix)'.dev-dependencies]
-libc = "0.2"
-
-[lints]
-workspace = true

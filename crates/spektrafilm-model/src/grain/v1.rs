@@ -1,20 +1,30 @@
 // Stochastic grain generation.
 // Poisson-binomial particle model with dye cloud blur and lognormal micro-structure.
 
-use rayon::prelude::*;
-use spektrafilm_backend::ComputeBackend;
+use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, ZERO, from_f64, to_f64};
+use spektrafilm_math::precision::{Scalar, ZERO, from_f64};
 use spektrafilm_math::stats::{self, FastStatsRng};
+use rayon::prelude::*;
 use std::time::Instant;
 
-use spektrafilm_backend::timing::{print_stage_timing, stage_timings_enabled};
+fn stage_timings_enabled() -> bool {
+    std::env::var_os("SPEKTRAFILM_STAGE_TIMINGS").is_some()
+}
+
+fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
+    if enabled {
+        eprintln!("stage {stage}: {} ms", start.elapsed().as_millis());
+    }
+}
 
 /// Seed of the micro-structure clumping field. Python draws it from numba's
 /// unseeded thread-global RNG (`add_micro_structure` never reseeds), so the
 /// upstream texture is nondeterministic; Rust pins one documented stream so
+/// renders are reproducible.
 const MICRO_STRUCTURE_SEED: u64 = 42;
+
 /// Stream tags separating the poisson pass from the binomial pass inside
 /// the fast-stats grain sampler (see `FastStatsRng::stream`).
 const POISSON_TAG: u64 = 0;
@@ -31,7 +41,6 @@ const BINOMIAL_TAG: u64 = 1;
 /// `RandomState`), true uses the `fast_stats` kernels (statistical parity
 /// only — upstream's numba thread-global RNG is nondeterministic, so the
 /// Rust port drives each element from its own deterministic tagged stream).
-#[allow(clippy::too_many_arguments)]
 pub fn layer_particle_model(
     density: &[Scalar],
     width: u32,
@@ -59,13 +68,14 @@ pub fn layer_particle_model(
     let mut p_arr = Vec::with_capacity(n);
     let mut sat_arr = Vec::with_capacity(n);
     for &d in density.iter() {
-        let p = (to_f64(d) / dmax).clamp(1e-6, 1.0 - 1e-6);
+        let p = ((d as f64) / dmax).clamp(1e-6, 1.0 - 1e-6);
         let saturation = 1.0 - p * gu * (1.0 - 1e-6);
         p_arr.push(p);
         sat_arr.push(saturation);
     }
 
-    let grain: Vec<Scalar> = if use_fast_stats {
+    let grain: Vec<Scalar>;
+    if use_fast_stats {
         // `fast_stats` regime: Python runs `fast_poisson(lam_array)` then
         // `fast_binomial(seeds, p)` as whole-array numba kernels whose
         // element draws are independent, so per-element tagged streams
@@ -73,11 +83,11 @@ pub fn layer_particle_model(
         // parallel) regardless of numba's thread schedule.
         let lam: Vec<f64> = sat_arr.iter().map(|&sat| npp / sat).collect();
         let seeds = stats::fast_poisson_array(seed, POISSON_TAG, &lam);
-        stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
+        grain = stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
             .into_iter()
             .zip(&sat_arr)
             .map(|(developed, &sat)| from_f64((developed as f64) * od_particle * sat))
-            .collect()
+            .collect();
     } else {
         // scipy regime — Python-bit-exact RNG: numpy's MT19937 +
         // RandomState distribution algorithms (`rk_poisson` / `rk_binomial`).
@@ -101,11 +111,12 @@ pub fn layer_particle_model(
         }
         let mut out = vec![ZERO; n];
         for (i, slot) in out.iter_mut().enumerate() {
-            let developed = spektrafilm_math::numpy_rng::rk_binomial(&mut rng, seeds[i], p_arr[i]);
+            let developed =
+                spektrafilm_math::numpy_rng::rk_binomial(&mut rng, seeds[i], p_arr[i]);
             *slot = from_f64((developed as f64) * od_particle * sat_arr[i]);
         }
-        out
-    };
+        grain = out;
+    }
     finish_grain(grain, width, height, blur_particle, od_particle)
 }
 
@@ -117,6 +128,7 @@ fn finish_grain(
     blur_particle: f32,
     od_particle: f64,
 ) -> Vec<Scalar> {
+
     // Python gates on `blur_particle > 0` and hands `sigma = blur_particle
     // * sqrt(od_particle)` to fast_gaussian_filter, whose FIR path rounds
     // the kernel radius down (`int(3σ + 0.5)`); a radius of 0 is an exact
@@ -129,24 +141,31 @@ fn finish_grain(
     grain
 }
 
-fn observe_sampler(
-    backend: &dyn ComputeBackend,
-) -> Option<spektrafilm_backend::telemetry::ObservationScope> {
-    backend
-        .observation_context()
-        .filter(|context| context.enabled())
-        .map(|context| {
-            let scope = context.scope(
-                "grain_v1_sampler",
-                spektrafilm_backend::telemetry::ObservationKind::Stage,
-                context.purpose(),
-            );
-            scope.context().record_executor(
-                spektrafilm_backend::telemetry::Executor::Cpu,
-                Some(spektrafilm_backend::telemetry::CpuReason::GrainV1Sampler),
-            );
-            scope
-        })
+/// Convert upstream RMS granularity values (sigma × 1000 at a 48 µm
+/// aperture) into the coarsest particle area used by the sampler.
+pub fn particle_area_from_rms_granularity(
+    rms_granularity: [f64; 3],
+    density_max: [f64; 3],
+    density_min: [f64; 3],
+    uniformity: [f64; 3],
+) -> f64 {
+    let aperture_area = std::f64::consts::PI * 24.0f64.powi(2);
+    let mut total = 0.0;
+    let mut count = 0;
+    for c in 0..3 {
+        if rms_granularity[c] > 0.0 {
+            let sigma = rms_granularity[c] / 1000.0;
+            let reference = 1.0 + density_min[c];
+            let variance = (reference * (density_max[c] - uniformity[c] * reference)).max(1e-6);
+            total += sigma * sigma * aperture_area / variance;
+            count += 1;
+        }
+    }
+    if count == 0 {
+        0.0
+    } else {
+        total / count as f64
+    }
 }
 
 /// Apply grain to a CMY density image.
@@ -166,11 +185,9 @@ pub fn apply_grain_to_density(
     grain_blur: f32,
     n_sub_layers: u32,
     monochrome: bool,
-    base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
     let stage_timings = stage_timings_enabled();
-    let sampler = observe_sampler(backend);
     let w = density_cmy.width;
     let h = density_cmy.height;
     let pixel_area = pixel_size_um * pixel_size_um;
@@ -193,7 +210,8 @@ pub fn apply_grain_to_density(
             // Add density_min to input (kept in Scalar precision)
             let dmin_s = from_f64(density_min[ch]);
             let t = Instant::now();
-            let density_ch: Vec<Scalar> = density_cmy.pixels().map(|px| px[ch] + dmin_s).collect();
+            let density_ch: Vec<Scalar> =
+                density_cmy.pixels().map(|px| px[ch] + dmin_s).collect();
             print_stage_timing(stage_timings, "grain.extract_channel", t);
 
             let mut grain_sum = vec![ZERO; density_ch.len()];
@@ -204,7 +222,7 @@ pub fn apply_grain_to_density(
                 // from channel 0's RNG stream (upstream n_channels==1 has a
                 // single emulsion, seed ch=0).
                 let seed_ch = if monochrome { 0 } else { ch as u64 };
-                let seed = base_seed.wrapping_add(seed_ch + (sl as u64) * 10);
+                let seed = seed_ch + (sl as u64) * 10;
                 let g = layer_particle_model(
                     &density_ch,
                     w,
@@ -237,7 +255,6 @@ pub fn apply_grain_to_density(
     for (ch, grain_sum) in channels {
         out.write_channel(ch, &grain_sum);
     }
-    drop(sampler);
 
     // Final blur — typically a few px sigma at 1–6 MP, big enough that the
     // GPU separable kernel wins. Upstream gates the composite path on
@@ -266,7 +283,6 @@ fn add_micro_structure(
     height: u32,
     micro_structure: [f32; 2],
     pixel_size_um: f64,
-    base_seed: u64,
 ) {
     // Keep the unit math and Gaussian sigma in f64.
     let blur_px = micro_structure[0] as f64 / pixel_size_um;
@@ -276,8 +292,6 @@ fn add_micro_structure(
     }
 
     let n = planes[0].len();
-    // Channel indices select deterministic RNG streams.
-    #[allow(clippy::needless_range_loop)]
     for ch in 0..3 {
         // Clumping field: iid lognormal(mean=1, std=sigma) per channel —
         // each element from its own deterministic stream (Python draws the
@@ -285,8 +299,7 @@ fn add_micro_structure(
         let mut clumping: Vec<Scalar> = (0..n)
             .into_par_iter()
             .map(|i| {
-                let mut rng =
-                    FastStatsRng::stream(base_seed ^ MICRO_STRUCTURE_SEED, ch as u64, i as u64);
+                let mut rng = FastStatsRng::stream(MICRO_STRUCTURE_SEED, ch as u64, i as u64);
                 from_f64(stats::fast_lognormal_from_mean_std(&mut rng, 1.0, sigma))
             })
             .collect();
@@ -298,45 +311,6 @@ fn add_micro_structure(
             *v *= c;
         }
     }
-}
-/// Apply the upstream mass-conserving density-domain unsharp mask.
-fn apply_multiplicative_unsharp_mask(
-    image: &ImageBuf,
-    sigma: f32,
-    amount: f32,
-    backend: &dyn ComputeBackend,
-) -> ImageBuf {
-    if sigma <= 0.0 || amount <= 0.0 {
-        return image.clone();
-    }
-    let blurred = backend.gaussian_blur(image, sigma);
-    let mut out = image.clone();
-    let mut sums = [0.0f64; 3];
-    let mut out_sums = [0.0f64; 3];
-    for (i, px) in image.pixels().enumerate() {
-        let out_px = &mut out.data[i * 3..i * 3 + 3];
-        let blur_px = &blurred.data[i * 3..i * 3 + 3];
-        for c in 0..3 {
-            let density = to_f64(px[c]).max(0.0);
-            let blur_density = to_f64(blur_px[c]).max(1e-6);
-            let sharpened = if density <= 0.0 {
-                0.0
-            } else {
-                density.powf(1.0 + amount as f64) / blur_density.powf(amount as f64)
-            };
-            out_px[c] = from_f64(sharpened);
-            sums[c] += density;
-            out_sums[c] += sharpened;
-        }
-    }
-    for px in out.pixels_mut() {
-        for c in 0..3 {
-            if out_sums[c] > 0.0 {
-                px[c] = from_f64(to_f64(px[c]) * sums[c] / out_sums[c]);
-            }
-        }
-    }
-    out
 }
 
 /// Apply layered (per-sublayer) grain to a CMY density image.
@@ -364,21 +338,18 @@ pub fn apply_grain_to_density_layers(
     width: u32,
     height: u32,
     pixel_size_um: f64,
-    particle_area_um2: [f64; 3],
+    particle_area_um2: f64,
+    particle_scale: [f64; 3],
     particle_scale_layers: [f64; 3],
     density_min: [f64; 3],
     grain_uniformity: [f64; 3],
     grain_blur: f32,
     grain_blur_dye_clouds_um: f32,
     grain_micro_structure: [f32; 2],
-    mult_usm_sigma: f32,
-    mult_usm_amount: f32,
     monochrome: bool,
     use_fast_stats: bool,
-    base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
-    let sampler = observe_sampler(backend);
     let stage_timings = stage_timings_enabled();
     let pixel_area = pixel_size_um * pixel_size_um;
 
@@ -389,11 +360,9 @@ pub fn apply_grain_to_density_layers(
     //   density_max_layers    += density_min_layers
     //   n_particles_per_pixel  = pixel_area * fraction / particle_area_layer
     let mut density_max_total = [0.0f64; 3];
-    for layer in density_max_layers {
-        // Channel indices align layer densities with accumulated totals.
-        #[allow(clippy::needless_range_loop)]
+    for sl in 0..3 {
         for ch in 0..3 {
-            density_max_total[ch] += layer[ch];
+            density_max_total[ch] += density_max_layers[sl][ch];
         }
     }
     let mut fractions = [[0.0f64; 3]; 3];
@@ -405,7 +374,8 @@ pub fn apply_grain_to_density_layers(
             fractions[sl][ch] = density_max_layers[sl][ch] / density_max_total[ch];
             density_min_layers[sl][ch] = fractions[sl][ch] * density_min[ch];
             density_max_adj[sl][ch] = density_max_layers[sl][ch] + density_min_layers[sl][ch];
-            let particle_area_layer = particle_area_um2[ch] * particle_scale_layers[sl];
+            let particle_area_layer =
+                particle_area_um2 * particle_scale[ch] * particle_scale_layers[sl];
             n_particles[sl][ch] = pixel_area * fractions[sl][ch] / particle_area_layer;
         }
     }
@@ -422,12 +392,10 @@ pub fn apply_grain_to_density_layers(
             for sl in 0..3 {
                 let t = Instant::now();
                 let seed_ch = if monochrome { 0 } else { ch as u64 };
-                let seed = base_seed.wrapping_add(seed_ch + (sl as u64) * 10);
+                let seed = seed_ch + (sl as u64) * 10;
                 let dmin_l = from_f64(density_min_layers[sl][ch]);
-                let density_sl: Vec<Scalar> = density_cmy_layers[sl][ch]
-                    .iter()
-                    .map(|&v| v + dmin_l)
-                    .collect();
+                let density_sl: Vec<Scalar> =
+                    density_cmy_layers[sl][ch].iter().map(|&v| v + dmin_l).collect();
                 let g = layer_particle_model(
                     &density_sl,
                     width,
@@ -459,35 +427,29 @@ pub fn apply_grain_to_density_layers(
         height,
         grain_micro_structure,
         pixel_size_um,
-        base_seed,
     );
 
     let mut out = ImageBuf::new(width, height);
-    for (ch, plane) in planes.iter().enumerate() {
-        out.write_channel(ch, plane);
+    for ch in 0..3 {
+        let dmin_s = from_f64(density_min[ch]);
+        let plane: Vec<Scalar> = planes[ch].iter().map(|&v| v - dmin_s).collect();
+        out.write_channel(ch, &plane);
     }
-    drop(sampler);
 
-    // Final blur and mass-conserving multiplicative USM operate on absolute
-    // density, before the per-channel density floor is removed.
+    // Final blur — upstream gates the layered path on `grain_blur > 0`.
     if grain_blur > 0.0 {
         let t = Instant::now();
         out = backend.gaussian_blur(&out, grain_blur);
         print_stage_timing(stage_timings, "grain.final_blur", t);
     }
-    out = apply_multiplicative_unsharp_mask(&out, mult_usm_sigma, mult_usm_amount, backend);
-    for px in out.pixels_mut() {
-        for ch in 0..3 {
-            px[ch] -= from_f64(density_min[ch]);
-        }
-    }
+
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spektrafilm_backend::cpu_backend::CpuBackend;
+    use spektrafilm_gpu::cpu_backend::CpuBackend;
     use spektrafilm_math::precision::to_f64;
 
     const DENSITY_MIN: [f64; 3] = [0.03, 0.03, 0.03];
@@ -545,18 +507,16 @@ mod tests {
             3,
             3,
             pixel_size_um,
-            [0.2; 3],
+            0.2,
+            PARTICLE_SCALE,
             particle_scale_layers,
             DENSITY_MIN,
             UNIFORMITY,
             0.0,
             dye_blur,
             micro_structure,
-            0.0,
-            0.0,
             false,
             use_fast_stats,
-            0,
             &CpuBackend,
         )
     }
@@ -565,22 +525,8 @@ mod tests {
     fn layered_grain_is_deterministic_per_regime() {
         let d = [0.8, 1.0, 1.2];
         for use_fast_stats in [false, true] {
-            let a = layered(
-                d,
-                PARTICLE_SCALE_LAYERS,
-                1.0,
-                [0.2, 30.0],
-                12.0,
-                use_fast_stats,
-            );
-            let b = layered(
-                d,
-                PARTICLE_SCALE_LAYERS,
-                1.0,
-                [0.2, 30.0],
-                12.0,
-                use_fast_stats,
-            );
+            let a = layered(d, PARTICLE_SCALE_LAYERS, 1.0, [0.2, 30.0], 12.0, use_fast_stats);
+            let b = layered(d, PARTICLE_SCALE_LAYERS, 1.0, [0.2, 30.0], 12.0, use_fast_stats);
             assert_eq!(a.data, b.data, "fast_stats={use_fast_stats}");
         }
     }
@@ -594,12 +540,12 @@ mod tests {
         // upstream defaults disable the clumping field there.
         let d = [0.8, 1.0, 1.2];
         let out = layered(d, PARTICLE_SCALE_LAYERS, 1.0, [0.2, 30.0], 12.0, false);
-        for (ch, &density) in d.iter().enumerate() {
+        for ch in 0..3 {
             let m = mean(&out.extract_channel(ch));
             assert!(
-                (m - density).abs() < 0.15,
+                (m - d[ch]).abs() < 0.15,
                 "ch {ch}: mean {m} vs density {}",
-                density
+                d[ch]
             );
         }
         assert!(var(&out.extract_channel(0)) > 1e-6);
@@ -682,18 +628,16 @@ mod tests {
                 3,
                 3,
                 12.0,
-                [0.2; 3],
+                0.2,
+                [PARTICLE_SCALE[0]; 3],
                 PARTICLE_SCALE_LAYERS,
                 DENSITY_MIN,
                 [0.97; 3],
                 0.0,
                 0.0,
                 [0.0, 0.0],
-                0.0,
-                0.0,
                 monochrome,
                 false,
-                0,
                 &CpuBackend,
             )
         };
@@ -715,7 +659,7 @@ mod tests {
                 img.set(x, y, [from_f64(0.8), from_f64(1.0), from_f64(1.2)]);
             }
         }
-        let run = |seed| {
+        let run = || {
             apply_grain_to_density(
                 &img,
                 12.0,
@@ -727,12 +671,10 @@ mod tests {
                 0.0,
                 1,
                 false,
-                seed,
                 &CpuBackend,
             )
         };
-        assert_eq!(run(0).data, run(0).data);
-        assert_ne!(run(0).data, run(1).data);
+        assert_eq!(run().data, run().data);
     }
 
     #[test]

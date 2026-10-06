@@ -1,10 +1,12 @@
-//! Spectral upsampling (Hanatos2025 method) and spectral constants.
-//!
-//! Wavelength grid: 380-780 nm at 5 nm intervals (81 samples).
-
 use crate::colorspace;
 use crate::image::ImageBuf;
 use crate::lut;
+use byteorder::{LittleEndian, ReadBytesExt};
+/// Spectral upsampling (Hanatos2025 method) and spectral constants.
+///
+/// Wavelength grid: 380-780 nm at 5 nm intervals (81 samples).
+use std::io::Read;
+
 pub const WAVELENGTH_MIN: f32 = 380.0;
 pub const WAVELENGTH_MAX: f32 = 780.0;
 pub const WAVELENGTH_STEP: f32 = 5.0;
@@ -299,6 +301,89 @@ pub const CMF_Z: [f32; N_WAVELENGTHS] = [
     0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
 ];
 
+/// A uniformly sampled wavelength grid expressed as `[start_nm, end_nm, step_nm]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpectralShape {
+    pub start_nm: f64,
+    pub end_nm: f64,
+    pub step_nm: f64,
+}
+
+impl SpectralShape {
+    pub fn new(shape: [f64; 3]) -> Result<Self, &'static str> {
+        let result = Self { start_nm: shape[0], end_nm: shape[1], step_nm: shape[2] };
+        if !result.start_nm.is_finite() || !result.end_nm.is_finite() ||
+            !result.step_nm.is_finite() || result.step_nm <= 0.0 ||
+            result.end_nm < result.start_nm {
+            return Err("spectral shape must have finite, ordered bounds and a positive step");
+        }
+        let intervals = (result.end_nm - result.start_nm) / result.step_nm;
+        if (intervals - intervals.round()).abs() > 1e-9 {
+            return Err("spectral shape bounds must align to the step");
+        }
+        Ok(result)
+    }
+
+    #[inline]
+    pub fn len(self) -> usize {
+        ((self.end_nm - self.start_nm) / self.step_nm).round() as usize + 1
+    }
+
+    #[inline]
+    pub fn wavelength(self, index: usize) -> f64 {
+        self.start_nm + index as f64 * self.step_nm
+    }
+}
+
+/// CIE 1931 2° matching functions sampled on a runtime spectral grid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CmfGrid {
+    pub shape: SpectralShape,
+    pub values: Vec<[f64; 3]>,
+}
+
+impl CmfGrid {
+    pub fn for_shape(shape: SpectralShape) -> Self {
+        if shape == (SpectralShape { start_nm: 380.0, end_nm: 780.0, step_nm: 5.0 }) {
+            return Self {
+                shape,
+                values: (0..N_WAVELENGTHS)
+                    .map(|i| [CMF_X_F64[i], CMF_Y_F64[i], CMF_Z_F64[i]])
+                    .collect(),
+            };
+        }
+        let catalog: serde_json::Value =
+            serde_json::from_str(include_str!("../../../data/illuminants/cmfs.json"))
+                .expect("bundled CMF catalog must be valid JSON");
+        let source_shape = catalog["spectral_shape"].as_array().expect("CMF shape");
+        let source_start = source_shape[0].as_f64().expect("CMF start");
+        let source_step = source_shape[2].as_f64().expect("CMF step");
+        let source = catalog["values"].as_array().expect("CMF values");
+        let values = (0..shape.len()).map(|i| {
+            let wavelength = shape.wavelength(i);
+            if wavelength < source_start || wavelength > source_start + source_step * (source.len() - 1) as f64 {
+                return [0.0; 3];
+            }
+            let position = (wavelength - source_start) / source_step;
+            let lo = position.floor() as usize;
+            let hi = (lo + 1).min(source.len() - 1);
+            let frac = position - lo as f64;
+            if hi == lo {
+                return [0, 1, 2].map(|k| source[lo][k].as_f64().unwrap_or(0.0));
+            }
+            [0, 1, 2].map(|k| {
+                let a = source[lo][k].as_f64().unwrap_or(0.0);
+                let b = source[hi][k].as_f64().unwrap_or(0.0);
+                a + (b - a) * frac
+            })
+        }).collect();
+        Self { shape, values }
+    }
+}
+
+
+/// Illuminant SPDs normalized to match Python colour-science `standard_illuminant()`.
+/// These are the exact values returned by spektrafilm's Python illuminant loader.
 pub const ILLUMINANT_D55: [f32; N_WAVELENGTHS] = [
     0.37928266, 0.41130471, 0.44333841, 0.57639697, 0.70945552, 0.75371138, 0.79797887, 0.81556713,
     0.83316704, 0.81185393, 0.79052917, 0.89349794, 0.99645507, 1.06855416, 1.14065325, 1.15502884,
@@ -594,6 +679,36 @@ pub const ILLUMINANT_D65_F64: [f64; N_WAVELENGTHS] = [
     0.723841394971077,
 ];
 
+pub struct HanatosLut {
+    pub width: usize,
+    pub height: usize,
+    pub coeffs: Vec<[f32; 4]>,
+}
+
+impl HanatosLut {
+    pub fn load<R: Read>(mut reader: R) -> Result<Self, std::io::Error> {
+        let _h0 = reader.read_i32::<LittleEndian>()?;
+        let _h1 = reader.read_i32::<LittleEndian>()?;
+        let width = reader.read_i32::<LittleEndian>()? as usize;
+        let height = reader.read_i32::<LittleEndian>()? as usize;
+        let n_pixels = width * height;
+        let mut coeffs = Vec::with_capacity(n_pixels);
+        for _ in 0..n_pixels {
+            coeffs.push([
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+                reader.read_f32::<LittleEndian>()?,
+            ]);
+        }
+        Ok(Self {
+            width,
+            height,
+            coeffs,
+        })
+    }
+}
+
 /// Pre-computed TC LUT: [size][size][channels], maps tc→per-channel film raw.
 /// Stored in f64 for calibration precision matching Python.
 #[derive(Clone)]
@@ -630,6 +745,89 @@ pub fn tc_to_xy(tx: f64, ty: f64) -> (f64, f64) {
     (x_out, y_out)
 }
 
+/// XYZ → CIE xy chromaticity.
+#[inline]
+pub fn xyz_to_xy(xyz: [f32; 3]) -> (f32, f32) {
+    let sum = xyz[0] + xyz[1] + xyz[2];
+    if sum <= 0.0 {
+        return (0.3127, 0.3290);
+    }
+    (xyz[0] / sum, xyz[1] / sum)
+}
+
+/// Pre-computed illuminant XYZ white points (Y=1) matching Python exactly.
+/// Computed from: sum(illuminant * CMF) / sum(illuminant * CMF_Y) in f64 in Python.
+const D50_ILLUMINANT_XYZ: [f32; 3] = [0.964220, 1.0, 0.825210]; // from colour-science
+const D55_ILLUMINANT_XYZ: [f32; 3] = [0.956791, 1.0, 0.921367]; // exact Python value
+const D65_ILLUMINANT_XYZ: [f32; 3] = [0.950456, 1.0, 1.089058]; // from sRGB whitepoint
+
+/// f64 pre-computed illuminant XYZ. Exactly matches Python's `_illuminant_to_xy`
+/// → `(x/y, 1, (1-x-y)/y)` chain, computed at full f64 precision.
+const D50_ILLUMINANT_XYZ_F64: [f64; 3] = [0.96419686124892201, 1.0, 0.82512259200404314];
+const D55_ILLUMINANT_XYZ_F64: [f64; 3] = [0.9567908993343901, 1.0, 0.92136745658606822];
+const D65_ILLUMINANT_XYZ_F64: [f64; 3] = [0.95042966940215057, 1.0, 1.0888005470297513];
+
+/// Get the native white point XYZ for a named colorspace.
+/// Uses xy chromaticity → XYZ conversion to match Python colour-science exactly.
+pub fn colorspace_white_xyz(name: &str) -> [f32; 3] {
+    colorspace_white_xyz_f64(name).map(|v| v as f32)
+}
+
+/// f64 variant: native white point XYZ for a named colorspace.
+pub fn colorspace_white_xyz_f64(name: &str) -> [f64; 3] {
+    colorspace::resolve(name)
+        .expect("input color space must be validated before spectral conversion")
+        .whitepoint_xyz()
+}
+
+/// Get the RGB→XYZ matrix for a named colorspace.
+pub fn colorspace_to_xyz(name: &str) -> [[f32; 3]; 3] {
+    colorspace_to_xyz_f64(name).map(|row| row.map(|v| v as f32))
+}
+
+/// f64 variant: RGB→XYZ matrix for a named colorspace.
+pub fn colorspace_to_xyz_f64(name: &str) -> [[f64; 3]; 3] {
+    colorspace::resolve(name)
+        .expect("input color space must be validated before spectral conversion")
+        .matrix_rgb_to_xyz
+}
+
+/// Compute the reference illuminant's XYZ (for CAT02 target white).
+/// Uses f64 accumulation. Illuminant values are upcast from f32 source.
+/// For maximum precision, the illuminant constants should be stored at full
+/// Python f64 precision — our f32 constants lose ~1e-7 per value which
+/// accumulates to ~3e-6 in the final XYZ after 81 wavelengths.
+pub fn illuminant_xyz(illuminant: &[f32]) -> [f32; 3] {
+    // Match known illuminants by first value to use pre-computed XYZ
+    if illuminant.len() == N_WAVELENGTHS {
+        if (illuminant[0] - ILLUMINANT_D55[0]).abs() < 1e-6 {
+            return D55_ILLUMINANT_XYZ;
+        }
+        if (illuminant[0] - ILLUMINANT_D65[0]).abs() < 1e-6 {
+            return D65_ILLUMINANT_XYZ;
+        }
+        if (illuminant[0] - ILLUMINANT_D50[0]).abs() < 1e-6 {
+            return D50_ILLUMINANT_XYZ;
+        }
+    }
+
+    // Fallback: compute from SPD (f64 accumulation)
+    let n = illuminant.len().min(N_WAVELENGTHS);
+    let mut xyz = [0.0f64; 3];
+    for i in 0..n {
+        xyz[0] += illuminant[i] as f64 * CMF_X[i] as f64;
+        xyz[1] += illuminant[i] as f64 * CMF_Y[i] as f64;
+        xyz[2] += illuminant[i] as f64 * CMF_Z[i] as f64;
+    }
+    if xyz[1] > 0.0 {
+        let s = 1.0 / xyz[1];
+        xyz[0] *= s;
+        xyz[1] = 1.0;
+        xyz[2] *= s;
+    }
+    [xyz[0] as f32, xyz[1] as f32, xyz[2] as f32]
+}
+
 /// Compute the illuminant's xy chromaticity from its SPD (f64 precision).
 pub fn illuminant_to_xy(illuminant: &[f32]) -> (f64, f64) {
     let xyz = illuminant_xyz_f64(illuminant);
@@ -640,26 +838,6 @@ pub fn illuminant_to_xy(illuminant: &[f32]) -> (f64, f64) {
 ///
 /// Uses pre-computed full-precision XYZ values for standard illuminants (D50/D55/D65),
 /// or falls back to live SPD integration in f64.
-/// f64 pre-computed illuminant XYZ. Exactly matches Python's `_illuminant_to_xy`
-/// → `(x/y, 1, (1-x-y)/y)` chain, computed at full f64 precision.
-const D50_ILLUMINANT_XYZ_F64: [f64; 3] = [0.96419686124892201, 1.0, 0.82512259200404314];
-const D55_ILLUMINANT_XYZ_F64: [f64; 3] = [0.9567908993343901, 1.0, 0.92136745658606822];
-const D65_ILLUMINANT_XYZ_F64: [f64; 3] = [0.95042966940215057, 1.0, 1.0888005470297513];
-
-/// f64 variant: native white point XYZ for a named colorspace.
-pub fn colorspace_white_xyz_f64(name: &str) -> [f64; 3] {
-    colorspace::resolve(name)
-        .expect("input color space must be validated before spectral conversion")
-        .whitepoint_xyz()
-}
-
-/// f64 variant: RGB→XYZ matrix for a named colorspace.
-pub fn colorspace_to_xyz_f64(name: &str) -> [[f64; 3]; 3] {
-    colorspace::resolve(name)
-        .expect("input color space must be validated before spectral conversion")
-        .matrix_rgb_to_xyz
-}
-
 pub fn illuminant_xyz_f64(illuminant: &[f32]) -> [f64; 3] {
     if illuminant.len() == N_WAVELENGTHS {
         if (illuminant[0] - ILLUMINANT_D55[0]).abs() < 1e-6 {
@@ -746,6 +924,116 @@ pub fn build_rgb_to_adapted_xyz(
     out
 }
 
+/// RGB → tc coordinates + brightness, with full CAT02 chromatic adaptation.
+///
+/// Exact port of Python `_rgb_to_tc_b`:
+///   1. RGB → XYZ using colorspace matrix
+///   2. CAT02 adaptation from colorspace white to reference illuminant white
+///   3. XYZ → xy → tc, b = sum(XYZ)
+pub fn rgb_to_tc_b(
+    rgb: [crate::precision::Scalar; 3],
+    color_space: &str,
+    ref_illuminant: &[f32],
+    cat16: bool,
+) -> ((f64, f64), f64) {
+    let rgb_to_xyz = colorspace_to_xyz_f64(color_space);
+    let src_white = colorspace_white_xyz_f64(color_space);
+    let dst_white = illuminant_xyz_f64(ref_illuminant);
+
+    // Step 1: RGB → XYZ (in colorspace's native white) — f64 throughout
+    let rgb64 = [rgb[0] as f64, rgb[1] as f64, rgb[2] as f64];
+    let xyz_native = [
+        rgb_to_xyz[0][0] * rgb64[0] + rgb_to_xyz[0][1] * rgb64[1] + rgb_to_xyz[0][2] * rgb64[2],
+        rgb_to_xyz[1][0] * rgb64[0] + rgb_to_xyz[1][1] * rgb64[1] + rgb_to_xyz[1][2] * rgb64[2],
+        rgb_to_xyz[2][0] * rgb64[0] + rgb_to_xyz[2][1] * rgb64[1] + rgb_to_xyz[2][2] * rgb64[2],
+    ];
+
+    // Step 2: chromatic adaptation (CAT02, or CAT16 when enabled) — f64.
+    let adapt = if cat16 {
+        colorspace::chromatic_adaptation_matrix_cat16_f64(src_white, dst_white)
+    } else {
+        colorspace::chromatic_adaptation_matrix_f64(src_white, dst_white)
+    };
+    let xyz = [
+        adapt[0][0] * xyz_native[0] + adapt[0][1] * xyz_native[1] + adapt[0][2] * xyz_native[2],
+        adapt[1][0] * xyz_native[0] + adapt[1][1] * xyz_native[1] + adapt[1][2] * xyz_native[2],
+        adapt[2][0] * xyz_native[0] + adapt[2][1] * xyz_native[1] + adapt[2][2] * xyz_native[2],
+    ];
+
+    // Step 3: XYZ → xy → tc, b — fully f64 (Python parity).
+    let b = xyz[0] + xyz[1] + xyz[2];
+    if b <= 1e-10 {
+        return ((0.5, 0.5), 0.0);
+    }
+    // No xy clip (upstream 0.3.4 removed it): the input gamut compression
+    // baked into the tc_lut handles OOG chromaticities; `xy_to_tc` clamps
+    // each tc component to [0, 1] so the LUT lookup stays in-bounds.
+    let x_chrom = xyz[0] / b;
+    let y_chrom = xyz[1] / b;
+    let tc = xy_to_tc(x_chrom, y_chrom);
+    (tc, b)
+}
+
+/// Matrix-based Hanatos2025 RGB → raw — avoids per-pixel string lookups for the matrix.
+///
+/// `rgb_to_adapted_xyz` must equal `build_rgb_to_adapted_xyz(color_space, ref_illuminant)`.
+/// This is what the wgpu shader needs as a uniform (one-time CPU work, pure per-pixel GPU).
+pub fn hanatos2025_rgb_to_raw_with_matrix(
+    image: &ImageBuf,
+    tc_lut: &TcLut,
+    rgb_to_adapted_xyz: &[[f64; 3]; 3],
+) -> ImageBuf {
+    use rayon::prelude::*;
+    let size = tc_lut.size;
+    let channels = tc_lut.channels;
+    assert_eq!(channels, 3);
+
+    let mut output = ImageBuf::new(image.width, image.height);
+    output
+        .data
+        .par_chunks_exact_mut(3)
+        .zip(image.data.par_chunks_exact(3))
+        .for_each(|(out, px)| {
+            let r = px[0] as f64;
+            let g = px[1] as f64;
+            let b_in = px[2] as f64;
+            // RGB → adapted XYZ
+            let xyz0 = rgb_to_adapted_xyz[0][0] * r
+                + rgb_to_adapted_xyz[0][1] * g
+                + rgb_to_adapted_xyz[0][2] * b_in;
+            let xyz1 = rgb_to_adapted_xyz[1][0] * r
+                + rgb_to_adapted_xyz[1][1] * g
+                + rgb_to_adapted_xyz[1][2] * b_in;
+            let xyz2 = rgb_to_adapted_xyz[2][0] * r
+                + rgb_to_adapted_xyz[2][1] * g
+                + rgb_to_adapted_xyz[2][2] * b_in;
+            let b = xyz0 + xyz1 + xyz2;
+            if b <= 1e-10 {
+                out[0] = crate::precision::from_f64(0.0);
+                out[1] = crate::precision::from_f64(0.0);
+                out[2] = crate::precision::from_f64(0.0);
+                return;
+            }
+            // No xy clip (upstream 0.3.4) — `xy_to_tc` clamps the tc output.
+            let xc = xyz0 / b;
+            let yc = xyz1 / b;
+            let tc = xy_to_tc(xc, yc);
+
+            // Python: `lut[tc[0]_idx, tc[1]_idx]` — first axis = tc.0.
+            let lut_x = tc.0 * (size - 1) as f64;
+            let lut_y = tc.1 * (size - 1) as f64;
+            let interp = lut::bicubic_2d_f64(&tc_lut.data, size, size, channels, lut_x, lut_y);
+            out[0] = crate::precision::from_f64(interp[0] * b);
+            out[1] = crate::precision::from_f64(interp[1] * b);
+            out[2] = crate::precision::from_f64(interp[2] * b);
+        });
+    output
+}
+
+/// Apply a 2D TC LUT to an image using bicubic interpolation.
+///
+/// Full Hanatos2025 path with CAT02 adaptation:
+///   RGB → XYZ → CAT02 adapt → xy → tc → LUT → raw × brightness
 pub fn hanatos2025_rgb_to_raw(
     image: &ImageBuf,
     tc_lut: &TcLut,
@@ -787,9 +1075,9 @@ pub fn hanatos2025_rgb_to_raw_prepared(
         .par_chunks_exact_mut(3)
         .zip(image.data.par_chunks_exact(3))
         .for_each(|(out, px)| {
-            let r = crate::precision::to_f64(px[0]);
-            let g = crate::precision::to_f64(px[1]);
-            let b_in = crate::precision::to_f64(px[2]);
+            let r = px[0] as f64;
+            let g = px[1] as f64;
+            let b_in = px[2] as f64;
             let xyz_native = [
                 rgb_to_xyz[0][0] * r + rgb_to_xyz[0][1] * g + rgb_to_xyz[0][2] * b_in,
                 rgb_to_xyz[1][0] * r + rgb_to_xyz[1][1] * g + rgb_to_xyz[1][2] * b_in,
@@ -843,9 +1131,76 @@ mod tests {
     }
 
     #[test]
+    fn test_xyz_to_xy_white() {
+        let (x, y) = xyz_to_xy([0.95047, 1.0, 1.08883]);
+        assert!((x - 0.3127).abs() < 0.001);
+        assert!((y - 0.3290).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_cmf_y_peak() {
+        let max_idx = CMF_Y
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(max_idx, 35);
+    }
+
+    #[test]
+    fn test_wavelength_count() {
+        assert_eq!(CMF_X.len(), N_WAVELENGTHS);
+        assert_eq!(CMF_Y.len(), N_WAVELENGTHS);
+        assert_eq!(CMF_Z.len(), N_WAVELENGTHS);
+    }
+
+    #[test]
     fn test_illuminant_to_xy_d65() {
         let (x, y) = illuminant_to_xy(&ILLUMINANT_D65);
         assert!((x - 0.3127).abs() < 0.01, "D65 x={x}");
         assert!((y - 0.3290).abs() < 0.01, "D65 y={y}");
+    }
+
+    #[test]
+    fn test_rgb_to_tc_b_neutral_gray() {
+        use crate::precision::from_f64;
+        // 18% gray in sRGB with D55 ref should produce balanced tc near center
+        let gray = [from_f64(0.184), from_f64(0.184), from_f64(0.184)];
+        let (tc, b) = rgb_to_tc_b(gray, "sRGB", &ILLUMINANT_D55, false);
+        assert!(b > 0.0, "brightness should be positive: {b}");
+        // tc should be near the D55 chromaticity mapped to tc space
+        let d55_xy = illuminant_to_xy(&ILLUMINANT_D55);
+        let d55_tc = xy_to_tc(d55_xy.0, d55_xy.1);
+        assert!(
+            (tc.0 - d55_tc.0).abs() < 0.05,
+            "tc.0 ({}) far from D55 tc ({}))",
+            tc.0,
+            d55_tc.0
+        );
+        assert!(
+            (tc.1 - d55_tc.1).abs() < 0.05,
+            "tc.1 ({}) far from D55 tc ({})",
+            tc.1,
+            d55_tc.1
+        );
+    }
+
+    #[test]
+    fn runtime_cmf_grid_supports_non_default_sampling_and_zeroes_outside_catalog() {
+        let shape = SpectralShape::new([350.0, 840.0, 2.5]).unwrap();
+        let grid = CmfGrid::for_shape(shape);
+        assert_eq!(grid.values.len(), 197);
+        assert_eq!(grid.values[0], [0.0; 3]);
+        assert_eq!(grid.values[grid.values.len() - 1], [0.0; 3]);
+        assert!(grid.values.iter().any(|v| v[1] > 0.9));
+    }
+
+    #[test]
+    fn default_cmf_grid_preserves_f64_constants() {
+        let shape = SpectralShape::new([380.0, 780.0, 5.0]).unwrap();
+        let grid = CmfGrid::for_shape(shape);
+        assert_eq!(grid.values[0][0], CMF_X_F64[0]);
+        assert_eq!(grid.values[80][1], CMF_Y_F64[80]);
     }
 }
