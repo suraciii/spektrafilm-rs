@@ -153,11 +153,17 @@ semantics and in RNG stream.
 
 ## Integrated acceptance evidence
 
-The pinned Python runtime has generated 68 reference scenarios. All 68 passed
-the rebuilt Rust f64 differential run, including all shared profiles, seeded
-grain, deterministic and stochastic preview, spatial effects, and six invalid
-paper-as-film configurations rejected before producing output. The bare-chain
-maximum absolute error was 4.509e-10 against the 1e-6 budget.
+At the audited baseline, the pinned Python runtime generated 68 reference
+scenarios and all 68 passed the rebuilt Rust f64 differential run, including
+shared profiles, seeded grain, deterministic and stochastic preview, spatial
+effects, and six invalid paper-as-film configurations rejected before producing
+output. The bare-chain maximum absolute error was 4.509e-10 against the 1e-6
+budget. This is historical baseline evidence, not a claim about every later
+integration commit.
+
+The fresh integration run recorded in
+`docs/parity/parity_matrix.json` has 62 passing rows and six budget failures;
+the matrix names those rows and preserves their per-tap metrics.
 
 Independent executed checks establish:
 
