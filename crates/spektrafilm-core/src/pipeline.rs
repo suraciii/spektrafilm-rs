@@ -1619,17 +1619,9 @@ impl Pipeline {
             for c in 0..3 {
                 density_max[c] = dmax_curves[c] + g.density_min[c] as f32;
             }
-            let rms_area = spektrafilm_model::grain::particle_area_from_rms_granularity(
-                g.rms_granularity,
-                density_max.map(|value| value as f64),
-                g.density_min,
-                g.uniformity,
-            );
-            let particle_area_um2 = if rms_area > 0.0 {
-                rms_area
-            } else {
-                g.particle_area_um2
-            };
+            // Python's grain sampler uses this explicit particle area;
+            // `rms_granularity` is a profile/UI control only.
+            let particle_area_um2 = g.particle_area_um2;
             // GPU shaders are f32 — narrow the f64 grain params at the boundary.
             let mut npp = [0.0f32; 3];
             for c in 0..3 {

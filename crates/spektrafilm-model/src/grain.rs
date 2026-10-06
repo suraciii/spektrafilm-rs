@@ -139,32 +139,6 @@ fn finish_grain(
     grain
 }
 
-/// Convert upstream RMS granularity values (sigma × 1000 at a 48 µm
-/// aperture) into the coarsest particle area used by the sampler.
-pub fn particle_area_from_rms_granularity(
-    rms_granularity: [f64; 3],
-    density_max: [f64; 3],
-    density_min: [f64; 3],
-    uniformity: [f64; 3],
-) -> f64 {
-    let aperture_area = std::f64::consts::PI * 24.0f64.powi(2);
-    let mut total = 0.0;
-    let mut count = 0;
-    for c in 0..3 {
-        if rms_granularity[c] > 0.0 {
-            let sigma = rms_granularity[c] / 1000.0;
-            let reference = 1.0 + density_min[c];
-            let variance = (reference * (density_max[c] - uniformity[c] * reference)).max(1e-6);
-            total += sigma * sigma * aperture_area / variance;
-            count += 1;
-        }
-    }
-    if count == 0 {
-        0.0
-    } else {
-        total / count as f64
-    }
-}
 
 /// Apply grain to a CMY density image.
 ///
@@ -195,6 +169,7 @@ pub fn apply_grain_to_density(
         density_max_curves[1] + density_min[1],
         density_max_curves[2] + density_min[2],
     ];
+
 
     let channels: Vec<(usize, Vec<Scalar>)> = (0..3)
         .into_par_iter()

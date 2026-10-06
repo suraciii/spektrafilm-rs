@@ -102,15 +102,10 @@ sensitivity with white-balance normalization
 (`params.rs:82-85`) and even ships the erf4 window evaluation
 (`spectral_service.rs:232`), but nothing connects the camera params to it.
 
-### 4. Ignored blur/layered-grain controls — scenarios `layered_grain`,
-`preview_mode_digest` (issues #6, #3, #5)
-`film_render.grain.sublayers_active` (default **True** upstream!),
-`particle_scale_layers`, `blur_dye_clouds_um`, `micro_structure`,
-`settings.use_fast_stats`, `settings.preview_mode` are all accepted by Rust
-serde and never read. The upstream default path develops grain through
-`interp_density_cmy_layers` + `apply_grain_to_density_layers`
-(`model/grain.py:193-213`); only the single-curve fallback
-(`sublayers_active=False`) is ported. The Hanatos adaptation blur knobs
+### 4. Ignored preview/adaptation controls — scenario `preview_mode_digest`
+(`issues #3, #5`)
+`settings.preview_mode` is accepted by Rust serde but is not yet applied to
+the resident pipeline. The Hanatos adaptation blur knobs
 `settings.spectral_gaussian_blur` and
 `settings.apply_hanatos2025_adaptation_surface` (issue #5) are likewise
 parsed and never applied when the tc LUT is built

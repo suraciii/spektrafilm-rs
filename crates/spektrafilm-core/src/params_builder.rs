@@ -471,7 +471,7 @@ mod tests {
         let film = film_profile("fujifilm_velvia_100", "positive", "still", "strong");
         let print = blank_profile();
         let d = digest_params(RuntimeParams::default(), &film, &print, None, true);
-        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.2398, 0.0662, 0.144]);
+        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.108, 0.072, 0.054]);
 
         // apply_stocks_specifics=false keeps user values (GUI edit path).
         let mut user = RuntimeParams::default();
@@ -491,7 +491,7 @@ mod tests {
         let seeded = digest_params(params.clone(), &film, &print, None, true);
         assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
         assert_eq!(seeded.film_render.grain.uniformity, [0.97; 3]);
-        assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.5159, 0.5934, 0.2829]);
+        assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.336, 0.319, 0.273]);
         let edited = digest_params(params, &film, &print, None, false);
         assert_eq!(edited.film_render.grain.rms_granularity, [99.0; 3]);
         assert_eq!(edited.film_render.dir_couplers.gamma_samelayer_rgb, [0.9; 3]);

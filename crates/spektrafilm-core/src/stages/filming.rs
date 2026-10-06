@@ -512,22 +512,10 @@ pub fn develop(
         let norm_curves_f64 = spektrafilm_model::density_curves::normalize_density_curves_f64(
             &film.density_curves_f64(),
         );
-        let density_max_for_rms =
-            std::array::from_fn(|channel| {
-                spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64)[channel]
-                    + grain.density_min[channel]
-            });
-        let rms_particle_area = spektrafilm_model::grain::particle_area_from_rms_granularity(
-            grain.rms_granularity,
-            density_max_for_rms,
-            grain.density_min,
-            grain.uniformity,
-        );
-        let particle_area_um2 = if rms_particle_area > 0.0 {
-            rms_particle_area
-        } else {
-            grain.particle_area_um2
-        };
+        // The upstream grain sampler uses `particle_area_um2` directly.
+        // `rms_granularity` is a profile/UI control only; it does not feed
+        // `apply_grain` in the Python runtime.
+        let particle_area_um2 = grain.particle_area_um2;
         if grain.sublayers_active {
             // Python `apply_grain_to_density_layers`: sublayer densities
             // come from interpolating the composite density against the
