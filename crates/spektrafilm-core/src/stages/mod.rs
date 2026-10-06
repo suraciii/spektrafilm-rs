@@ -2,6 +2,7 @@ mod debug_compare;
 pub mod filming;
 pub mod printing;
 pub mod scanning;
+pub mod converting;
 
 #[cfg(test)]
 mod integration_tests {
@@ -53,6 +54,59 @@ mod integration_tests {
             result.data.iter().copied().sum::<Scalar>() / result.data.len() as Scalar;
         assert!(mean > from_f64(0.01), "output near-black: mean={mean}");
         assert!(mean < from_f64(0.99), "output near-white: mean={mean}");
+    }
+
+    #[test]
+    fn convert_film_routes_produce_scan_output() {
+        let dir = data_dir();
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        for route in [
+            "input > convert-film > scan",
+            "input > convert-film > scan-minus-base",
+            "input > convert-film > print > scan",
+        ] {
+            let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+            let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+            let mut params = RuntimeParams::default();
+            params.workflow.route = route.into();
+            params.camera.auto_exposure = false;
+            params.film_render.grain.active = false;
+            params.film_render.halation.active = false;
+            params.film_render.dir_couplers.active = false;
+            params.scanner.unsharp_mask = [0.0, 0.0];
+            params.settings.use_scanner_lut = false;
+            params.io.input_color_space = "sRGB".into();
+            params.io.output_color_space = "sRGB".into();
+            let image = ImageBuf::from_data(
+                1,
+                1,
+                vec![from_f64(0.2), from_f64(0.3), from_f64(0.4)],
+            );
+            let result = Pipeline::new(film, print, params)
+                .process(image, &backend)
+                .unwrap();
+            assert_eq!((result.width, result.height), (1, 1));
+            assert!(result.data.iter().all(|value| value.is_finite()), "{route}");
+        }
+    }
+
+    #[test]
+    fn passthrough_route_skips_simulation() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input".into();
+        params.io.input_color_space = "sRGB".into();
+        params.io.output_color_space = "sRGB".into();
+        params.io.input_cctf_decoding = false;
+        params.io.output_cctf_encoding = true;
+        let image = ImageBuf::from_data(1, 1, vec![from_f64(0.2), from_f64(0.3), from_f64(0.4)]);
+        let output = Pipeline::new(film, print, params)
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        assert_eq!(output.width, image.width);
+        assert!(output.data.iter().all(|value| value.is_finite()));
     }
 
     #[test]
@@ -309,7 +363,7 @@ mod debug_tests {
 
         let ref_illuminant = crate::spectral_service::select_illuminant(&film.info.reference_illuminant);
         let log_raw =
-            stages::filming::expose(&img, &film, &params, &backend, None, None, ref_illuminant, 1.0, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1), 0.0);
+            stages::filming::expose(&img, &film, &params, &backend, None, None, &ref_illuminant, 1.0, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1), 0.0);
         eprintln!("log_raw: {:?}", log_raw.get(0, 0));
 
         let density_cmy = stages::filming::develop(&log_raw, &film, &params, &backend, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1));

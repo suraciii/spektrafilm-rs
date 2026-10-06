@@ -61,15 +61,31 @@ impl ColorSpaceEntry {
         } else { rgb.map(|x| self.curve.encode(x)) }
     }
 
-    pub fn native_stops(&self) -> f64 {
-        if self.scene_referred_input { 6.0 }
-        else if self.kind == "encoded_sdr" { 4.0 }
-        else { (self.decode(1.0) / self.midgray_linear).log2() }
+    /// Gain for an upstream `stops_above_midgray` value.
+    ///
+    /// The stop reference is encoded white (`decode_cctf(1.0)`), rather than
+    /// the registry's native midgray.  This is the same normalization used by
+    /// the Python LUT creator.
+    pub fn input_gain_for_stops(&self, stops_above_midgray: f64) -> f64 {
+        0.18 * stops_above_midgray.exp2() / self.decode(1.0)
     }
 
-    pub fn input_gain(&self, stops: Option<f64>) -> f64 {
-        stops.map_or(1.0, |stops| 0.18 * stops.exp2() / self.decode(1.0))
+    /// Legacy EV gain, retained for callers outside the LUT creator.
+    pub fn input_gain(&self, exposure_ev: f64) -> f64 {
+        (0.18 / self.midgray_linear) * exposure_ev.exp2()
     }
+
+    pub fn auto_stops_above_midgray(&self) -> f64 {
+        if self.kind == "encoded_sdr" {
+            4.0
+        } else if self.scene_referred_input {
+            6.0
+        } else {
+            (self.decode(1.0) / self.midgray_linear).log2()
+        }
+    }
+
+    pub fn native_input_gain(&self) -> f64 { 1.0 }
 
     pub fn output_gain(&self) -> f64 { self.midgray_linear / 0.18 }
 }

@@ -85,6 +85,11 @@ pub struct CameraParams {
     pub filter_uv: [f32; 3],
     #[serde(default = "default_filter_ir")]
     pub filter_ir: [f32; 3],
+    /// Stable camera taking-filter identifier. `"none"` preserves the
+    /// historical no-filter behavior; named values are loaded from the
+    /// shipped measured transmission curves.
+    #[serde(default)]
+    pub color_filter: String,
     #[serde(default)]
     pub diffusion_filter: DiffusionFilterParams,
 }
@@ -99,6 +104,7 @@ impl Default for CameraParams {
             film_format_mm: 35.0,
             filter_uv: [0.0, 410.0, 8.0],
             filter_ir: [0.0, 675.0, 15.0],
+            color_filter: "none".into(),
             diffusion_filter: DiffusionFilterParams::default(),
         }
     }
@@ -206,6 +212,8 @@ pub struct GrainParams {
     pub particle_scale: [f64; 3],
     #[serde(default = "default_particle_scale_layers_f64")]
     pub particle_scale_layers: [f64; 3],
+    #[serde(default = "default_rms_granularity_f64")]
+    pub rms_granularity: [f64; 3],
     #[serde(default = "default_density_min_f64")]
     pub density_min: [f64; 3],
     #[serde(default = "default_uniformity_f64")]
@@ -237,10 +245,12 @@ fn default_particle_scale_layers_f64() -> [f64; 3] {
 fn default_density_min_f64() -> [f64; 3] {
     [0.03, 0.03, 0.03]
 }
+fn default_rms_granularity_f64() -> [f64; 3] {
+    [0.0, 0.0, 0.0]
+}
 fn default_uniformity_f64() -> [f64; 3] {
     [0.97, 0.99, 0.97]
 }
-
 impl Default for GrainParams {
     fn default() -> Self {
         Self {
@@ -249,6 +259,7 @@ impl Default for GrainParams {
             particle_area_um2: 0.2,
             particle_scale: [1.6, 1.6, 3.2],
             particle_scale_layers: [2.0, 1.0, 0.5],
+            rms_granularity: [0.0, 0.0, 0.0],
             density_min: [0.03, 0.03, 0.03],
             uniformity: [0.97, 0.99, 0.97],
             blur: 0.65,
@@ -443,15 +454,75 @@ impl Default for GlareParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct FilmBaseParams {
+    #[serde(default = "default_true")]
+    pub active: bool,
+    #[serde(default = "default_one_f64")]
+    pub scale: f64,
+    #[serde(default)]
+    pub tilt: f64,
+    #[serde(default = "default_one_f64")]
+    pub cyan: f64,
+    #[serde(default = "default_one_f64")]
+    pub magenta: f64,
+    #[serde(default = "default_one_f64")]
+    pub yellow: f64,
+}
+impl Default for FilmBaseParams {
+    fn default() -> Self { Self { active: true, scale: 1.0, tilt: 0.0, cyan: 1.0, magenta: 1.0, yellow: 1.0 } }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrintBaseParams {
+    #[serde(default = "default_true")]
+    pub active: bool,
+    #[serde(default = "default_one_f64")]
+    pub scale: f64,
+    #[serde(default = "default_one_f64")]
+    pub cyan: f64,
+    #[serde(default = "default_one_f64")]
+    pub magenta: f64,
+    #[serde(default = "default_one_f64")]
+    pub yellow: f64,
+}
+impl Default for PrintBaseParams {
+    fn default() -> Self { Self { active: true, scale: 1.0, cyan: 1.0, magenta: 1.0, yellow: 1.0 } }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConvertFilmParams {
+    #[serde(default = "default_d55")]
+    pub scan_illuminant: String,
+    #[serde(default)]
+    pub exposure_compensation_ev: f64,
+    #[serde(default = "default_99")]
+    pub base_percentile: f64,
+    #[serde(default = "default_calibration")]
+    pub calibration: String,
+}
+impl Default for ConvertFilmParams {
+    fn default() -> Self { Self { scan_illuminant: "D55".into(), exposure_compensation_ev: 0.0, base_percentile: 99.0, calibration: default_calibration() } }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowParams {
+    #[serde(default = "default_route")]
+    pub route: String,
+}
+impl Default for WorkflowParams { fn default() -> Self { Self { route: default_route() } } }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilmRenderingParams {
     #[serde(default = "default_one")]
     pub density_curve_gamma: f32,
-    /// Development time (minutes) for B&W development-time families —
-    /// forward-port of upstream dev's `chemistry.development_time`. Selects
-    /// the nearest entry of the profile's family; `None` picks the
-    /// floor-middle entry. Ignored by colour profiles.
     #[serde(default)]
     pub development_time: Option<f64>,
+    #[serde(default)]
+    pub chemistry: PrintCurvesMorphParams,
     #[serde(default)]
     pub grain: GrainParams,
     #[serde(default)]
@@ -460,17 +531,23 @@ pub struct FilmRenderingParams {
     pub dir_couplers: DirCouplersParams,
     #[serde(default)]
     pub glare: GlareParams,
+    #[serde(default)]
+    pub base: FilmBaseParams,
+    #[serde(default)]
+    pub convert: ConvertFilmParams,
 }
-
 impl Default for FilmRenderingParams {
     fn default() -> Self {
         Self {
             density_curve_gamma: 1.0,
             development_time: None,
+            chemistry: PrintCurvesMorphParams::default(),
             grain: GrainParams::default(),
             halation: HalationParams::default(),
             dir_couplers: DirCouplersParams::default(),
             glare: GlareParams::default(),
+            base: FilmBaseParams::default(),
+            convert: ConvertFilmParams::default(),
         }
     }
 }
@@ -488,6 +565,8 @@ pub struct PrintRenderingParams {
     pub glare: GlareParams,
     #[serde(default = "default_print_density_curves_morph", deserialize_with = "deserialize_print_density_curves_morph")]
     pub density_curves_morph: PrintCurvesMorphParams,
+    #[serde(default)]
+    pub base: PrintBaseParams,
 }
 
 impl Default for PrintRenderingParams {
@@ -497,6 +576,7 @@ impl Default for PrintRenderingParams {
             development_time: None,
             glare: GlareParams::default(),
             density_curves_morph: default_print_density_curves_morph(),
+            base: PrintBaseParams::default(),
         }
     }
 }
@@ -672,6 +752,9 @@ fn default_gamut_lightness() -> Option<[f32; 3]> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsParams {
+    /// Working wavelength grid: [start_nm, end_nm, step_nm].
+    #[serde(default = "crate::spectral_service::default_spectral_shape")]
+    pub spectral_shape: [f64; 3],
     #[serde(default = "default_hanatos")]
     pub rgb_to_raw_method: String,
     #[serde(default = "default_true")]
@@ -705,6 +788,7 @@ pub struct SettingsParams {
 impl Default for SettingsParams {
     fn default() -> Self {
         Self {
+            spectral_shape: crate::spectral_service::default_spectral_shape(),
             rgb_to_raw_method: "hanatos2025".into(),
             apply_hanatos2025_adaptation_window: true,
             apply_hanatos2025_adaptation_surface: false,
@@ -830,24 +914,63 @@ impl RuntimeParams {
     /// *before* any artifact is produced. Returns the first failure.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_color()?;
-        if !matches!(
-            self.settings.rgb_to_raw_method.as_str(),
-            "hanatos2025" | "mallett2019" | "arctic2026alpha02"
-        ) {
+        let spectral_shape = crate::spectral_service::SpectralShape::new(self.settings.spectral_shape)
+            .map_err(|e| format!("settings.spectral_shape: {e}"))?;
+        if spectral_shape.bounds != crate::spectral_service::default_spectral_shape() {
             return Err(format!(
-                "settings.rgb_to_raw_method: unsupported method {:?}; supported: \
-                 hanatos2025, mallett2019",
-                self.settings.rgb_to_raw_method
+                "settings.spectral_shape: only the bundled {:?} grid is supported by the current profile/CMF/LUT contract, got {:?}",
+                crate::spectral_service::default_spectral_shape(),
+                spectral_shape.bounds
+            ));
+        }
+        let calibration_values = self
+            .film_render
+            .convert
+            .calibration
+            .split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | ';' | '[' | ']' | '(' | ')'))
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                part.parse::<f64>()
+                    .map_err(|_| format!("film_render.convert.calibration contains non-numeric token {part:?}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if calibration_values.len() != 9 || calibration_values.iter().any(|value| !value.is_finite()) {
+            return Err(format!(
+                "film_render.convert.calibration must contain exactly 9 finite numbers, got {}",
+                calibration_values.len()
+            ));
+        }
+        if !crate::spectral_service::is_supported_color_filter(&self.camera.color_filter) {
+            let supported = crate::spectral_service::available_color_filters().join(", ");
+            return Err(format!(
+                "camera.color_filter: unsupported filter {:?}; supported: {supported}",
+                self.camera.color_filter
             ));
         }
         if !matches!(
-            self.enlarger.illuminant.as_str(),
-            "TH-KG3" | "D50" | "D55" | "D65"
+            self.settings.rgb_to_raw_method.as_str(),
+            "hanatos2025" | "mallett2019" | "arctic2026alpha02" | "arctic2026beta04"
+                | "gauss-lasers" | "jakob2019" | "otsu2018"
         ) {
             return Err(format!(
-                "enlarger.illuminant: unsupported illuminant {:?}; supported: \
-                 TH-KG3, D50, D55, D65",
+                "settings.rgb_to_raw_method: unsupported method {:?}; supported: \
+                 hanatos2025, mallett2019, arctic2026alpha02, arctic2026beta04, \
+                 gauss-lasers, jakob2019, otsu2018",
+                self.settings.rgb_to_raw_method
+            ));
+        }
+        if !crate::spectral_service::is_supported_illuminant(&self.enlarger.illuminant) {
+            let supported = crate::spectral_service::available_illuminants().join(", ");
+            return Err(format!(
+                "enlarger.illuminant: unsupported illuminant {:?}; supported: {supported}",
                 self.enlarger.illuminant
+            ));
+        }
+        if !crate::spectral_service::is_supported_illuminant(&self.film_render.convert.scan_illuminant) {
+            let supported = crate::spectral_service::available_illuminants().join(", ");
+            return Err(format!(
+                "film_render.convert.scan_illuminant: unsupported illuminant {:?}; supported: {supported}",
+                self.film_render.convert.scan_illuminant
             ));
         }
         const FILTER_FAMILIES: &str =
@@ -877,6 +1000,12 @@ impl RuntimeParams {
         if let Some(t) = self.taps.inject.as_deref() {
             Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
         }
+        if !matches!(self.workflow.route.as_str(),
+            "input" | "input > film > scan" | "input > film > print > scan" |
+            "input > convert-film > print > scan" | "input > convert-film > scan-minus-base" |
+            "input > convert-film > scan") {
+            return Err(format!("workflow.route: unsupported route {:?}", self.workflow.route));
+        }
         if let Some(t) = self.taps.collect.as_deref() {
             Tap::parse(t).map_err(|e| format!("taps.collect: {e}"))?;
         }
@@ -903,6 +1032,8 @@ pub struct RuntimeParams {
     #[serde(default)]
     pub io: IoParams,
     #[serde(default)]
+    pub workflow: WorkflowParams,
+    #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]
     pub debug: DebugParams,
@@ -919,6 +1050,7 @@ impl Default for RuntimeParams {
             film_render: FilmRenderingParams::default(),
             print_render: PrintRenderingParams::default(),
             io: IoParams::default(),
+            workflow: WorkflowParams::default(),
             settings: SettingsParams::default(),
             debug: DebugParams::default(),
             taps: TapsParams::default(),
@@ -1031,3 +1163,7 @@ fn default_17() -> u32 {
 fn default_640() -> u32 {
     640
 }
+fn default_d55() -> String { "D55".into() }
+fn default_99() -> f64 { 99.0 }
+fn default_calibration() -> String { "1 0 0  0 1 0  0 0 1".into() }
+fn default_route() -> String { "input > film > print > scan".into() }

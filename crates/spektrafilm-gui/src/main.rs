@@ -264,7 +264,12 @@ struct App {
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
     export_job: Option<ExportJob>,
+    /// In-flight Convert controller action. The epoch drops results made stale
+    /// by later parameter edits or a newer action.
+    calibration_job: Option<CalibrationJob>,
+    calibration_epoch: u64,
 }
+
 
 /// One in-flight preview render. The worker owns a Pipeline + the
 /// ImageBuf clone and, when it finishes, sends back the output buffer
@@ -300,6 +305,21 @@ struct ExportJob {
     handle: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
     started_at: Instant,
+}
+
+enum CalibrationResult {
+    Base {
+        params: spektrafilm_core::params::FilmBaseParams,
+        exposure_ev: f64,
+    },
+    BlindCalibration(String),
+    NeutralizeFilters { m_shift: f32, y_shift: f32 },
+}
+
+struct CalibrationJob {
+    epoch: u64,
+    rx: mpsc::Receiver<Result<CalibrationResult, String>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl App {
@@ -367,6 +387,8 @@ impl App {
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,
             export_job: None,
+            calibration_job: None,
+            calibration_epoch: 0,
         };
         app.viewer.settings = display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
         if let Some(p) = initial_image {
@@ -392,6 +414,7 @@ impl App {
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
         self.film_name = state.film().to_owned();
         self.print_name = state.paper().to_owned();
+        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
@@ -525,6 +548,7 @@ impl App {
                     (img.pixel_count() as f64 / 1e6),
                     t.elapsed().as_secs_f32() * 1000.0
                 );
+                self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.image = Some(Arc::new(img));
                 match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding) {
                     Ok(raster) => self.viewer.set_input(raster,[self.image.as_ref().unwrap().width as usize,self.image.as_ref().unwrap().height as usize]),
@@ -935,14 +959,157 @@ impl App {
         };
     }
 
+    fn start_calibration(&mut self, action: controls::CalibrationAction) {
+        if self.calibration_job.is_some() {
+            self.status = "A Convert calibration action is already running.".into();
+            return;
+        }
+        let Some(image) = self.image.as_ref().map(|image| (**image).clone()) else {
+            self.status = "Load an input image before running a Convert action.".into();
+            return;
+        };
+        let mut params = match self.current_state().and_then(|state| state.runtime_params()) {
+            Ok(params) => params,
+            Err(error) => {
+                self.status = format!("Calibration state error: {error:#}");
+                return;
+            }
+        };
+        let film = match profile::load_profile_by_name(&self.data_dir, &self.film_name) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.status = format!("Calibration film error: {error:#}");
+                return;
+            }
+        };
+        let print = match profile::load_profile_by_name(&self.data_dir, &self.print_name) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.status = format!("Calibration print error: {error:#}");
+                return;
+            }
+        };
+        let data_dir = self.data_dir.clone();
+        let backend = Arc::clone(&self.backend);
+        let epoch = self.calibration_epoch.wrapping_add(1);
+        self.calibration_epoch = epoch;
+        let (tx, rx) = mpsc::channel();
+        let action_name = match action {
+            controls::CalibrationAction::DetectBase => "Detecting film base…",
+            controls::CalibrationAction::BlindCalibration => "Fitting blind calibration…",
+            controls::CalibrationAction::NeutralizeFilters => "Neutralizing print filters…",
+        };
+        self.status = action_name.into();
+        let handle = std::thread::Builder::new()
+            .name("spektrafilm-calibration".into())
+            .spawn(move || {
+                params.workflow.route = "input > convert-film > scan".into();
+                let result = match action {
+                    controls::CalibrationAction::DetectBase => {
+                        spektrafilm_core::stages::converting::detect_base(&image, &film, &params)
+                            .map(|(params, exposure_ev)| CalibrationResult::Base { params, exposure_ev })
+                    }
+                    controls::CalibrationAction::BlindCalibration => {
+                        spektrafilm_core::stages::converting::blind_calibration(&image, &film, &params)
+                            .map(CalibrationResult::BlindCalibration)
+                    }
+                    controls::CalibrationAction::NeutralizeFilters => {
+                        spektrafilm_core::stages::converting::neutralize_filters(
+                            &film,
+                            &print,
+                            &params,
+                            &data_dir,
+                            backend.as_ref(),
+                        )
+                        .map(|(m_shift, y_shift)| CalibrationResult::NeutralizeFilters { m_shift, y_shift })
+                    }
+                };
+                let _ = tx.send(result);
+            })
+            .map_err(|error| error.to_string());
+        match handle {
+            Ok(handle) => {
+                self.calibration_job = Some(CalibrationJob { epoch, rx, handle: Some(handle) });
+            }
+            Err(error) => {
+                self.status = format!("Calibration worker error: {error}");
+            }
+        }
+    }
+
+    fn poll_calibration_job(&mut self, ctx: &egui::Context) {
+        let Some(job) = self.calibration_job.as_ref() else {
+            return;
+        };
+        let result = match job.rx.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(IN_FLIGHT_REPAINT);
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let mut job = self.calibration_job.take().expect("calibration job exists");
+                if let Some(handle) = job.handle.take() {
+                    let _ = handle.join();
+                }
+                self.status = "Calibration worker vanished.".into();
+                return;
+            }
+        };
+        let mut job = self.calibration_job.take().expect("calibration job exists");
+        let epoch = job.epoch;
+        if let Some(handle) = job.handle.take() {
+            let _ = handle.join();
+        }
+        if epoch != self.calibration_epoch {
+            self.status = "Discarded stale Convert calibration result.".into();
+            return;
+        }
+        match result {
+            Ok(CalibrationResult::Base { params, exposure_ev }) => {
+                self.params.film_render.base = params;
+                self.params.film_render.convert.exposure_compensation_ev = exposure_ev;
+                self.dirty = true;
+                self.force_preview = true;
+                self.status = format!("Film base detected; exposure compensation {exposure_ev:+.2} EV.");
+            }
+            Ok(CalibrationResult::BlindCalibration(calibration)) => {
+                self.params.film_render.convert.calibration = calibration;
+                self.dirty = true;
+                self.force_preview = true;
+                self.status = "Blind calibration fitted.".into();
+            }
+            Ok(CalibrationResult::NeutralizeFilters { m_shift, y_shift }) => {
+                self.params.enlarger.m_filter_shift = m_shift;
+                self.params.enlarger.y_filter_shift = y_shift;
+                self.dirty = true;
+                self.force_preview = true;
+                self.status = format!("Print filters neutralized: M {m_shift:+.2}, Y {y_shift:+.2}.");
+            }
+            Err(error) => {
+                self.status = format!("Calibration failed: {error}");
+            }
+        }
+        ctx.request_repaint();
+    }
+
     fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("spektrafilm");
         ui.add_space(6.0);
         let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding);
         self.state_toolbar(ui);
         let changes = controls::show(ui, &mut self.params, &mut self.gui_state.sections);
-        self.dirty |= changes.runtime_changed;
-        if changes.preview_requested { self.dirty = true; self.force_preview = true; }
+        if changes.runtime_changed {
+            self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+            self.dirty = true;
+        }
+        if let Some(action) = changes.action {
+            self.start_calibration(action);
+        }
+        if changes.preview_requested {
+            self.dirty = true;
+            self.force_preview = true;
+        }
         if changes.raw_reload {
             if let Some(path) = self.image_path.clone() { self.load_image_from_path(&path); }
         }
@@ -1024,7 +1191,7 @@ impl App {
                 let film_changed =
                     profile_combo(ui, "film", "Film stock", &self.films, &mut self.film_name);
                 if film_changed {
-                    self.film_dev_times = Vec::new();
+                    self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                     self.params.film_render.development_time = None;
                     if let Ok(film) = profile::load_profile_by_name(&self.data_dir, &self.film_name)
                     {
@@ -1084,7 +1251,7 @@ impl App {
                     })
                     .inner;
                 if paper_changed {
-                    self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
+                    self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                     self.params.print_render.development_time = None;
                     self.sync_profile_defaults();
                     self.dirty = true;
@@ -1683,6 +1850,7 @@ impl eframe::App for App {
         }
         self.poll_render_job(ctx);
         self.poll_export_job(ctx);
+        self.poll_calibration_job(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(340.0)
@@ -1918,6 +2086,9 @@ fn preview_pipeline_cache_key(
     serde_json::json!({
         "film": film_name,
         "print": print_name,
+        "film_base": params.film_render.base,
+        "print_base": params.print_render.base,
+        "film_chemistry": params.film_render.chemistry,
         "film_dev": params.film_render.development_time,
         "print_dev": params.print_render.development_time,
         "scan_film": params.io.scan_film,
@@ -1936,6 +2107,7 @@ fn preview_pipeline_cache_key(
             "use_cat16": params.settings.use_cat16,
         },
         "camera": {
+            "color_filter": params.camera.color_filter,
             "filter_uv": params.camera.filter_uv,
             "filter_ir": params.camera.filter_ir,
         },

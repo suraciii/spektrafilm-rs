@@ -3457,11 +3457,13 @@ dependencies = [
  "rustfft",
  "serde",
  "serde_json",
+ "sha2",
  "spektrafilm-gpu",
  "spektrafilm-math",
  "spektrafilm-model",
  "thiserror 2.0.18",
  "time",
+ "toml",
  "tracing",
  "zip",
 ]
@@ -3520,6 +3522,8 @@ dependencies = [
  "rand_mt",
  "rayon",
  "rustfft",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -3527,6 +3531,7 @@ dependencies = [
 name = "spektrafilm-model"
 version = "0.1.2"
 dependencies = [
+ "libm",
  "rand",
  "rand_distr",
  "rand_mt",

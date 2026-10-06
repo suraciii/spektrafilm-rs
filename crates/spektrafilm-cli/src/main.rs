@@ -147,12 +147,13 @@ struct WorkflowOptions {
     raw_tint: Option<f64>,
     #[arg(long)]
     lens_correction: bool,
+    #[arg(long)]
+    route: Option<String>,
     #[arg(long, default_value = "none")]
     film_channel_swap: String,
     #[arg(long, default_value = "none")]
     print_channel_swap: String,
 }
-
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -285,11 +286,17 @@ fn cmd_process(
     } else {
         RuntimeParams::default()
     };
+    let route = workflow
+        .route
+        .clone()
+        .or_else(|| scan_film.then_some("input > film > scan".into()))
+        .unwrap_or_else(|| params.workflow.route.clone());
+    params.workflow.route = route;
+    params.io.scan_film = scan_film;
     params
         .validate()
         .map_err(anyhow::Error::msg)
         .with_context(|| format!("invalid params{}", params_file.map(|p| format!(" file {}", p.display())).unwrap_or_default()))?;
-    params.io.scan_film = scan_film;
 
     // RAW supplies linear ACES; prepared images retain their samples.
     let input_is_raw = image_io::is_raw(input);
@@ -381,8 +388,17 @@ fn cmd_process(
              data_dir.display()
         )
     })?;
+    let route = pipeline.params.workflow.route.as_str();
     let run_once = |image: ImageBuf| -> Result<ImageBuf> {
-        let out = if inject.is_none() && collect.is_none() {
+        let out = if route == "input" {
+            image_io::convert_image(
+                &image,
+                &pipeline.params.io.input_color_space,
+                pipeline.params.io.input_cctf_decoding,
+                &pipeline.params.io.output_color_space,
+                pipeline.params.io.output_cctf_encoding,
+            )?
+        } else if inject.is_none() && collect.is_none() {
             pipeline.process(image, backend.as_ref()).map_err(anyhow::Error::msg)?
         } else {
             pipeline

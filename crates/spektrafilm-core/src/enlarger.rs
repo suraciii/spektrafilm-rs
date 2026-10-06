@@ -92,19 +92,6 @@ const ILLUMINANT_TH_KG3_F64: [f64; N_WAVELENGTHS] = [
     0.41455292589926274,
 ];
 
-/// TH-KG3 illuminant SPD (tungsten-halogen + Schott KG3 heat filter).
-/// Baked from Python's `standard_illuminant('TH-KG3')`.
-const ILLUMINANT_TH_KG3: [f32; N_WAVELENGTHS] = [
-    0.271155, 0.293363, 0.315409, 0.336981, 0.358678, 0.380520, 0.403013, 0.426787, 0.451652,
-    0.478065, 0.506671, 0.536658, 0.568077, 0.599922, 0.630515, 0.661222, 0.692091, 0.723665,
-    0.757601, 0.793069, 0.829085, 0.865485, 0.902213, 0.938990, 0.974700, 1.008742, 1.040917,
-    1.071556, 1.100911, 1.131926, 1.163899, 1.196365, 1.230339, 1.268295, 1.306852, 1.342863,
-    1.375710, 1.404628, 1.430895, 1.455403, 1.477179, 1.496412, 1.513666, 1.528069, 1.538146,
-    1.545943, 1.551590, 1.554026, 1.553567, 1.550062, 1.540827, 1.532074, 1.519489, 1.503083,
-    1.479986, 1.459985, 1.436754, 1.403230, 1.371843, 1.340456, 1.301948, 1.264909, 1.226139,
-    1.180212, 1.136868, 1.092653, 1.045243, 1.000479, 0.948058, 0.902381, 0.854665, 0.792226,
-    0.734521, 0.689229, 0.652250, 0.607482, 0.571755, 0.526940, 0.486676, 0.449540, 0.414553,
-];
 
 /// TH-KG3 + default CMY dichroic filters (C=0, M=65, Y=55) at full f64 precision.
 /// Baked from Python's `color_enlarger(standard_illuminant('TH-KG3'), (0, 65, 55))`.
@@ -252,10 +239,7 @@ pub fn enlarger_filtered_illuminant_f64(
 
     let light_source: Vec<f64> = match illuminant_name {
         "TH-KG3" => ILLUMINANT_TH_KG3_F64.to_vec(),
-        "D50" => spectral::ILLUMINANT_D50_F64.to_vec(),
-        "D55" => spectral::ILLUMINANT_D55_F64.to_vec(),
-        "D65" => spectral::ILLUMINANT_D65_F64.to_vec(),
-        _ => ILLUMINANT_TH_KG3.iter().map(|&v| v as f64).collect(),
+        _ => crate::spectral_service::select_illuminant_f64(illuminant_name).into_owned(),
     };
 
     let dichroics = dichroic_filters_f64();
