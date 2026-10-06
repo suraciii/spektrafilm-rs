@@ -1,12 +1,170 @@
-/// Spectral upsampling service: loads the Hanatos2025 spectra LUT and computes
-/// the TC LUT for a given film stock's sensitivity.
-///
-/// Port of Python `compute_hanatos2025_tc_lut` and `_load_hanatos2025_spectra_lut`.
+/// Descriptor-driven spectral upsampling and exact illuminant sampling.
+use std::borrow::Cow;
 use std::path::Path;
-
+use std::sync::{LazyLock, Mutex, OnceLock};
 use rayon::prelude::*;
 use spektrafilm_math::npy;
 use spektrafilm_math::spectral::{self, N_WAVELENGTHS, TcLut};
+
+pub const fn default_spectral_shape() -> [f64; 3] {
+    [380.0, 780.0, 5.0]
+}
+
+/// A regular wavelength grid. Samples include both endpoints.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpectralShape {
+    pub bounds: [f64; 3],
+    pub samples: usize,
+}
+
+impl SpectralShape {
+    pub fn new(bounds: [f64; 3]) -> Result<Self, String> {
+        let [start, end, step] = bounds;
+        if !bounds.iter().all(|v| v.is_finite()) || start <= 0.0 || end <= start || step <= 0.0 {
+            return Err("expected finite positive wavelengths, end > start and step > 0".into());
+        }
+        let intervals = (end - start) / step;
+        if intervals > 100_000.0 || (intervals - intervals.round()).abs() > 1e-8 {
+            return Err("grid must contain an integral number of intervals and at most 100001 samples".into());
+        }
+        Ok(Self { bounds, samples: intervals.round() as usize + 1 })
+    }
+
+    pub fn wavelength(self, index: usize) -> f64 {
+        self.bounds[0] + self.bounds[2] * index as f64
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct IlluminantCatalog {
+    spectral_shape: [f64; 3],
+    sources: std::collections::BTreeMap<String, Vec<f64>>,
+}
+
+static ILLUMINANT_CATALOG: LazyLock<IlluminantCatalog> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../data/illuminants/catalog.json"))
+        .expect("bundled exact illuminant catalog")
+});
+
+fn illuminant_catalog() -> &'static IlluminantCatalog {
+    &ILLUMINANT_CATALOG
+}
+
+/// Sample an exact catalog source, or evaluate a Planck blackbody, on a grid.
+/// Catalog spectra cannot be extrapolated beyond their measured/baked bounds.
+pub fn select_illuminant_on_grid_f64(name: &str, shape: SpectralShape) -> Result<Vec<f64>, String> {
+    let mut values = if let Some(temperature) = parse_blackbody_temperature(name) {
+        (0..shape.samples).map(|i| {
+            let wavelength_m = shape.wavelength(i) * 1e-9;
+            3.741_771_852e-16 / (wavelength_m.powi(5)
+                * (1.438_776_877e-2 / (wavelength_m * temperature)).exp_m1())
+        }).collect::<Vec<_>>()
+    } else {
+        let catalog = illuminant_catalog();
+        let source = catalog.sources.get(name)
+            .ok_or_else(|| format!("unsupported illuminant {name:?}"))?;
+        let source_shape = SpectralShape::new(catalog.spectral_shape)?;
+        if source.len() != source_shape.samples {
+            return Err(format!("catalog source {name:?} does not match its spectral grid"));
+        }
+        if shape.bounds[0] < source_shape.bounds[0] || shape.bounds[1] > source_shape.bounds[1] {
+            return Err(format!("illuminant {name:?} supports {:?}, requested {:?}", source_shape.bounds, shape.bounds));
+        }
+        (0..shape.samples).map(|i| {
+            let x = (shape.wavelength(i) - source_shape.bounds[0]) / source_shape.bounds[2];
+            let lo = (x.floor() as usize).min(source.len() - 1);
+            let hi = (lo + 1).min(source.len() - 1);
+            source[lo] + (source[hi] - source[lo]) * (x - lo as f64)
+        }).collect::<Vec<_>>()
+    };
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    if !mean.is_finite() || mean <= 0.0 {
+        return Err(format!("illuminant {name:?} has invalid spectral normalization"));
+    }
+    for value in &mut values { *value /= mean; }
+    Ok(values)
+}
+/// Camera taking filters shipped with the experimental runtime.
+pub const NO_COLOR_FILTER: &str = "none";
+const COLOR_FILTERS: &[&str] = &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"];
+
+pub fn available_color_filters() -> Vec<&'static str> {
+    COLOR_FILTERS.to_vec()
+}
+
+pub fn is_supported_color_filter(name: &str) -> bool {
+    COLOR_FILTERS.contains(&name)
+}
+
+/// Load a measured camera-filter curve and interpolate it onto the engine's
+/// 380–780 nm, 5 nm spectral grid. Unknown names are rejected before any
+/// filesystem access so configuration errors are deterministic.
+pub fn load_color_filter_transmittance(
+    data_dir: &Path,
+    name: &str,
+) -> Result<Option<Vec<f64>>, String> {
+    if name == NO_COLOR_FILTER {
+        return Ok(None);
+    }
+    if !is_supported_color_filter(name) {
+        return Err(format!(
+            "unsupported camera color filter {name:?}; supported: {}",
+            COLOR_FILTERS.join(", ")
+        ));
+    }
+    let stem = name.strip_prefix("hoya_").unwrap();
+    let path = data_dir.join("filters/colored/hoya").join(format!("{stem}.csv"));
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("reading camera color filter {}: {e}", path.display()))?;
+    let mut points = Vec::new();
+    for (line, raw) in text.lines().enumerate() {
+        let mut fields = raw.split(',');
+        let wavelength = fields.next().and_then(|v| v.trim().parse::<f64>().ok())
+            .ok_or_else(|| format!("invalid wavelength at {}:{}", path.display(), line + 1))?;
+        let transmission = fields.next().and_then(|v| v.trim().parse::<f64>().ok())
+            .ok_or_else(|| format!("invalid transmittance at {}:{}", path.display(), line + 1))?;
+        if !wavelength.is_finite() || !transmission.is_finite() {
+            return Err(format!("non-finite camera filter sample at {}:{}", path.display(), line + 1));
+        }
+        points.push((wavelength, transmission.clamp(0.0, 1.0)));
+    }
+    if points.len() < 2 {
+        return Err(format!("camera color filter {} has fewer than two samples", path.display()));
+    }
+    points.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = Vec::with_capacity(N_WAVELENGTHS);
+    for index in 0..N_WAVELENGTHS {
+        let wavelength = 380.0 + 5.0 * index as f64;
+        let value = if wavelength <= points[0].0 {
+            points[0].1
+        } else if wavelength >= points[points.len() - 1].0 {
+            points[points.len() - 1].1
+        } else {
+            let upper = points.partition_point(|(x, _)| *x < wavelength);
+            let (x0, y0) = points[upper - 1];
+            let (x1, y1) = points[upper];
+            y0 + (y1 - y0) * (wavelength - x0) / (x1 - x0)
+        };
+        out.push(value);
+    }
+    Ok(Some(out))
+}
+/// Descriptor for one shipped spectral upsampler.  The sidecar format is
+/// deliberately small; keeping this representation local avoids making the
+/// runtime depend on a TOML parser just to select a LUT.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LutDescriptor {
+    pub identifier: String,
+    pub file: String,
+    pub kind: String,
+    pub title: String,
+    pub lut_size: usize,
+    pub bands: usize,
+    /// Wavelength grid encoded by the asset, as [start_nm, end_nm, step_nm].
+    pub spectral_shape: [f64; 3],
+    pub scene_illuminant: Option<String>,
+    pub midgray: Option<f64>,
+}
 
 /// Pinned Python `standard_illuminant("T")`, normalized to mean one.
 pub const ILLUMINANT_T_F64: [f64; N_WAVELENGTHS] = [
@@ -181,6 +339,42 @@ pub const ILLUMINANT_TH_KG3_F64: [f64; N_WAVELENGTHS] = [
 ];
 
 pub const ILLUMINANT_TH_KG3: [f32; N_WAVELENGTHS] = narrow_illuminant(&ILLUMINANT_TH_KG3_F64);
+/// Pinned Python `standard_illuminant("TH-KG3-L")`, normalized to mean one.
+/// This is the 3400 K tungsten-halogen source with Schott KG3 and the
+/// Canon 24-70 mm f/2.8 lens transmission curve.
+pub const ILLUMINANT_TH_KG3_L_F64: [f64; N_WAVELENGTHS] = [
+    0.09456970290598739, 0.1358223126707035, 0.18067928085342475,
+    0.2259785007417468, 0.2677351393678483, 0.30492220983936275,
+    0.3404115534894003, 0.3725452187996161, 0.40207481582863175,
+    0.43144620857294336, 0.46257922241084165, 0.49512511929127734,
+    0.5289219800537478, 0.5626679850892985, 0.5958260010917935,
+    0.6299593886971075, 0.6644097398593504, 0.700554052742682,
+    0.7408873075661121, 0.7818238319378953, 0.8222884814131736,
+    0.8625802756777197, 0.9030662159717104, 0.9436349150547809,
+    0.9830168583481824, 1.0205556844981798, 1.0564491305809889,
+    1.0903341528774033, 1.1219168901687964, 1.1552754643901004,
+    1.18957077142463, 1.224385079368606, 1.2608110664687997,
+    1.3017320113172588, 1.3454684726941972, 1.3859275667105297,
+    1.4213335202694428, 1.4514983451100734, 1.4793862774441284,
+    1.506950815002019, 1.5335196656859136, 1.554810667188734,
+    1.5759275295354451, 1.594335896239912, 1.6071424189513246,
+    1.6178330856868541, 1.6264112869522358, 1.6318859951354185,
+    1.6324648760560658, 1.6295535378804413, 1.6210239391887935,
+    1.612877388213371, 1.5996095071678285, 1.5806584699460842,
+    1.5560501956617274, 1.5336590858122428, 1.5058658931227298,
+    1.4662994867298649, 1.428579312658189, 1.390812091273809,
+    1.3452831165124508, 1.2992635156028105, 1.2522330269883137,
+    1.2009204344497504, 1.148659982040946, 1.0954695988974383,
+    1.03926723560586, 0.9844711396581393, 0.9236646594179271,
+    0.8705698517734068, 0.8139325853073219, 0.7456552858076373,
+    0.6831551422932013, 0.630258990076302, 0.5900955284329665,
+    0.5422665143829449, 0.5029095765733292, 0.4567257035827689,
+    0.4130914600721322, 0.37567089330813325, 0.3419938635287332,
+];
+
+pub const ILLUMINANT_TH_KG3_L: [f32; N_WAVELENGTHS] =
+    narrow_illuminant(&ILLUMINANT_TH_KG3_L_F64);
+
 
 /// Pinned Python `standard_illuminant("K75P")`, normalized to mean one.
 pub const ILLUMINANT_K75P_F64: [f64; N_WAVELENGTHS] = [
@@ -279,28 +473,66 @@ const fn narrow_illuminant(values: &[f64; N_WAVELENGTHS]) -> [f32; N_WAVELENGTHS
     result
 }
 
+/// Exact upstream catalog names plus bundled printer illuminants and the
+/// analytic blackbody token.
+pub fn available_illuminants() -> Vec<&'static str> {
+    let mut names: Vec<_> = illuminant_catalog().sources.keys().map(String::as_str).collect();
+    for name in ["T", "TH-KG3", "TH-KG3-L", "K75P"] {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.push("BB<temperature>");
+    names
+}
+
+pub fn is_supported_illuminant(name: &str) -> bool {
+    matches!(name, "T" | "TH-KG3" | "TH-KG3-L" | "K75P")
+        || illuminant_catalog().sources.contains_key(name)
+        || parse_blackbody_temperature(name).is_some()
+}
+
+
+fn parse_blackbody_temperature(name: &str) -> Option<f64> {
+    let temperature = name.strip_prefix("BB")?.parse::<f64>().ok()?;
+    (temperature.is_finite() && (1667.0..=25000.0).contains(&temperature))
+        .then_some(temperature)
+}
+
+fn generated_illuminant(name: &str) -> Option<(Cow<'static, [f32]>, Cow<'static, [f64]>)> {
+    let values = select_illuminant_on_grid_f64(name, SpectralShape::new(default_spectral_shape()).ok()?).ok()?;
+    let f32_values = values.iter().map(|value| *value as f32).collect();
+    Some((Cow::Owned(f32_values), Cow::Owned(values)))
+}
+
 /// Select the reference or viewing illuminant used by bundled profiles.
-pub fn select_illuminant(name: &str) -> &'static [f32] {
+pub fn select_illuminant(name: &str) -> Cow<'static, [f32]> {
     match name {
-        "D50" => &spectral::ILLUMINANT_D50,
-        "D55" => &spectral::ILLUMINANT_D55,
-        "D65" => &spectral::ILLUMINANT_D65,
-        "T" => &ILLUMINANT_T,
-        "TH-KG3" => &ILLUMINANT_TH_KG3,
-        "K75P" => &ILLUMINANT_K75P,
-        _ => panic!("unsupported profile illuminant {name:?}"),
+        "D50" => Cow::Borrowed(&spectral::ILLUMINANT_D50),
+        "D55" => Cow::Borrowed(&spectral::ILLUMINANT_D55),
+        "D65" => Cow::Borrowed(&spectral::ILLUMINANT_D65),
+        "T" => Cow::Borrowed(&ILLUMINANT_T),
+        "TH-KG3" => Cow::Borrowed(&ILLUMINANT_TH_KG3),
+        "TH-KG3-L" => Cow::Borrowed(&ILLUMINANT_TH_KG3_L),
+        "K75P" => Cow::Borrowed(&ILLUMINANT_K75P),
+        _ => generated_illuminant(name)
+            .map(|(f32_values, _)| f32_values)
+            .unwrap_or_else(|| panic!("unsupported profile illuminant {name:?}")),
     }
 }
 
-pub fn select_illuminant_f64(name: &str) -> &'static [f64] {
+pub fn select_illuminant_f64(name: &str) -> Cow<'static, [f64]> {
     match name {
-        "D50" => &spectral::ILLUMINANT_D50_F64,
-        "D55" => &spectral::ILLUMINANT_D55_F64,
-        "D65" => &spectral::ILLUMINANT_D65_F64,
-        "T" => &ILLUMINANT_T_F64,
-        "TH-KG3" => &ILLUMINANT_TH_KG3_F64,
-        "K75P" => &ILLUMINANT_K75P_F64,
-        _ => panic!("unsupported profile illuminant {name:?}"),
+        "D50" => Cow::Borrowed(&spectral::ILLUMINANT_D50_F64),
+        "D55" => Cow::Borrowed(&spectral::ILLUMINANT_D55_F64),
+        "D65" => Cow::Borrowed(&spectral::ILLUMINANT_D65_F64),
+        "T" => Cow::Borrowed(&ILLUMINANT_T_F64),
+        "TH-KG3" => Cow::Borrowed(&ILLUMINANT_TH_KG3_F64),
+        "TH-KG3-L" => Cow::Borrowed(&ILLUMINANT_TH_KG3_L_F64),
+        "K75P" => Cow::Borrowed(&ILLUMINANT_K75P_F64),
+        _ => generated_illuminant(name)
+            .map(|(_, f64_values)| f64_values)
+            .unwrap_or_else(|| panic!("unsupported profile illuminant {name:?}")),
     }
 }
 
@@ -422,6 +654,127 @@ pub fn load_arctic2026alpha02_lut(data_dir: &Path) -> Result<SpectraLut, String>
     })
 }
 
+/// Parse the shipped sidecar descriptor into the fields consumed at runtime.
+pub fn parse_lut_descriptor(text: &str) -> Result<LutDescriptor, String> {
+    let mut values = std::collections::HashMap::<String, String>::new();
+    let mut section = "";
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() { continue; }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = &line[1..line.len() - 1];
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let name = match (section, key.trim()) {
+            ("array", "lut_size") => "array.lut_size",
+            ("array", "bands") => "array.bands",
+            ("array", "spectral_shape") => "array.spectral_shape",
+            ("reflectance", "scene_illuminant") => "reflectance.scene_illuminant",
+            ("reflectance", "midgray") => "reflectance.midgray",
+            _ => key.trim(),
+        };
+        values.insert(name.to_string(), value.trim().trim_matches('"').to_string());
+    }
+    let required = |key: &str| values.get(key).cloned().ok_or_else(|| format!("descriptor missing {key}"));
+    let shape_text = required("array.spectral_shape")?;
+    let shape_text = shape_text.trim().trim_start_matches('[').trim_end_matches(']');
+    let shape_values = shape_text
+        .split(',')
+        .map(|value| value.trim().parse::<f64>().map_err(|_| "invalid spectral_shape".to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let spectral_shape = <[f64; 3]>::try_from(shape_values)
+        .map_err(|_| "spectral_shape must contain [start, end, step]".to_string())?;
+    if !spectral_shape.iter().all(|value| value.is_finite()) || spectral_shape[2] <= 0.0 || spectral_shape[1] < spectral_shape[0] {
+        return Err("spectral_shape must contain finite ascending bounds and positive step".into());
+    }
+    Ok(LutDescriptor {
+        identifier: required("identifier")?,
+        file: required("file")?,
+        kind: required("kind")?,
+        title: required("title")?,
+        lut_size: required("array.lut_size")?.parse().map_err(|_| "invalid lut_size".to_string())?,
+        bands: required("array.bands")?.parse().map_err(|_| "invalid bands".to_string())?,
+        spectral_shape,
+        scene_illuminant: values.get("reflectance.scene_illuminant").cloned(),
+        midgray: values.get("reflectance.midgray").and_then(|v| v.parse().ok()),
+    })
+}
+
+pub fn available_lut_identifiers(data_dir: &Path) -> Result<Vec<String>, String> {
+    let root = data_dir.join("luts").join("spectral_upsampling");
+    let mut ids = Vec::new();
+    for entry in std::fs::read_dir(&root).map_err(|e| format!("reading {}: {e}", root.display()))? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().and_then(|x| x.to_str()) == Some("toml") {
+            ids.push(parse_lut_descriptor(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)?.identifier);
+        }
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+/// Stable public name for callers that do not care about LUT internals.
+pub fn available_spectral_methods(data_dir: &Path) -> Result<Vec<String>, String> {
+    available_lut_identifiers(data_dir)
+}
+
+pub fn lut_descriptor(data_dir: &Path, identifier: &str) -> Result<LutDescriptor, String> {
+    let root = data_dir.join("luts").join("spectral_upsampling");
+    for entry in std::fs::read_dir(&root).map_err(|e| format!("reading {}: {e}", root.display()))? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("toml") { continue; }
+        let desc = parse_lut_descriptor(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)?;
+        if desc.identifier == identifier { return Ok(desc); }
+    }
+    Err(format!("unknown spectral LUT method {identifier:?}; available: {:?}", available_lut_identifiers(data_dir).unwrap_or_default()))
+}
+
+static SPECTRA_CACHE: OnceLock<Mutex<std::collections::HashMap<String, SpectraLut>>> = OnceLock::new();
+
+fn spectral_cache_key(identifier: &str, shape: [f64; 3]) -> String {
+    format!("{identifier}|{:.9}:{:.9}:{:.9}", shape[0], shape[1], shape[2])
+}
+
+/// Load a registered LUT and validate it against the requested working grid.
+/// Resampling is intentionally not implicit: the spectral integration arrays
+/// and profile sensitivities must be sampled on the same grid.
+pub fn load_lut_on_grid(
+    data_dir: &Path,
+    identifier: &str,
+    requested: SpectralShape,
+) -> Result<SpectraLut, String> {
+    let desc = lut_descriptor(data_dir, identifier)?;
+    let cache = SPECTRA_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let key = spectral_cache_key(identifier, requested.bounds);
+    if let Some(lut) = cache.lock().map_err(|_| "spectral cache poisoned".to_string())?.get(&key).cloned() {
+        return Ok(lut);
+    }
+    let path = data_dir.join("luts").join("spectral_upsampling").join(&desc.file);
+    let (shape, data) = npy::load_npy_f32(std::io::BufReader::new(std::fs::File::open(&path)
+        .map_err(|e| format!("opening spectral LUT {}: {e}", path.display()))?))
+        .map_err(|e| format!("loading spectral LUT {}: {e}", path.display()))?;
+    let expected_bands = ((desc.spectral_shape[1] - desc.spectral_shape[0]) / desc.spectral_shape[2]).round() as usize + 1;
+    if shape != vec![desc.lut_size, desc.lut_size, desc.bands] || desc.bands != expected_bands {
+        return Err(format!("{identifier} descriptor/data shape mismatch: descriptor {:?}, bands {}, data shape {:?}", desc.spectral_shape, desc.bands, shape));
+    }
+    if desc.spectral_shape != requested.bounds || desc.bands != requested.samples {
+        return Err(format!(
+            "{identifier} spectral grid mismatch: asset {:?} ({} bands), requested {:?} ({} samples); \
+             resampling LUTs is unsupported because profile sensitivities and CMFs must share this grid",
+            desc.spectral_shape, desc.bands, requested.bounds, requested.samples
+        ));
+    }
+    let lut = SpectraLut { size: shape[0], n_wavelengths: shape[2], data };
+    cache.lock().map_err(|_| "spectral cache poisoned".to_string())?.insert(key, lut.clone());
+    Ok(lut)
+}
+
+pub fn load_lut(data_dir: &Path, identifier: &str) -> Result<SpectraLut, String> {
+    load_lut_on_grid(data_dir, identifier, SpectralShape::new(default_spectral_shape()).expect("fixed spectral grid"))
+}
+
+#[derive(Clone)]
 pub struct SpectraLut {
     pub size: usize,
     pub n_wavelengths: usize,
@@ -611,19 +964,60 @@ pub fn compute_reflectance_tc_lut(
         data,
     }
 }
+/// Descriptor-driven dispatcher used by the pipeline. Reflectance LUTs are
+/// relit under the film reference illuminant and normalized at the descriptor's
+/// scene white on every channel; irradiance LUTs use the Hanatos path.
+pub fn compute_registered_tc_lut(
+    data_dir: &Path,
+    identifier: &str,
+    sensitivity: &[[f64; 3]],
+    reference_illuminant: &[f64],
+    adaptation: Option<&Hanatos2025Adaptation<'_>>,
+) -> Result<TcLut, String> {
+    let descriptor = lut_descriptor(data_dir, identifier)?;
+    let spectra = load_lut(data_dir, identifier)?;
+    match descriptor.kind.as_str() {
+        "reflectance" => {
+            let mut lut = compute_reflectance_tc_lut(&spectra, sensitivity, reference_illuminant);
+            let scene = descriptor.scene_illuminant.as_deref().ok_or_else(|| "reflectance descriptor missing scene_illuminant".to_string())?;
+            let scene_xy = spectral::illuminant_to_xy(&select_illuminant(scene));
+            let (tx, ty) = spectral::xy_to_tc(scene_xy.0, scene_xy.1);
+            let neutral = spektrafilm_math::lut::bicubic_2d(
+                &spectra.data,
+                spectra.size,
+                spectra.size,
+                spectra.n_wavelengths,
+                tx as f32 * (spectra.size - 1) as f32,
+                ty as f32 * (spectra.size - 1) as f32,
+            );
+            let n_wl = neutral.len().min(sensitivity.len()).min(reference_illuminant.len());
+            let mut response = [0.0f64; 3];
+            for wl in 0..n_wl {
+                for c in 0..3 {
+                    response[c] += neutral[wl] as f64
+                        * reference_illuminant[wl]
+                        * sensitivity[wl][c];
+                }
+            }
+            for c in 0..lut.channels {
+                let n = response[c];
+                if n.abs() > 1e-15 {
+                    for cell in lut.data.chunks_exact_mut(lut.channels) { cell[c] /= n; }
+                }
+            }
+            Ok(lut)
+        }
+        "irradiance" => {
+            let adaptation = adaptation.ok_or_else(|| "hanatos2025 requires sensitivity adaptation".to_string())?;
+            compute_hanatos2025_tc_lut(&spectra, sensitivity, adaptation)
+        }
+        other => Err(format!("unsupported spectral LUT kind {other:?}")),
+    }
+}
 
-/// Contract the spectra cube against the sensitivity through the erf4
-/// spectral bandpass window — the `apply_window` arm of Python
-/// `compute_hanatos2025_tc_lut`.
-///
-/// The window models the camera's UV/IR sensitivity cutoff baked into the
-/// film profile. It's applied to the sensitivity before integration, with
-/// reference-illuminant normalization to preserve white balance.
-///
-/// `window_params`: (c_uv, sigma_uv, c_ir, sigma_ir) — erf4 bandpass parameters.
-/// `illuminant`: reference illuminant SPD for normalization (f64 to
-/// match Python parity — f32 illuminants drop ~7 decimal places per
-/// sample, accumulating ~1e-9 error per LUT cell).
+
+/// Contract the spectra cube against the sensitivity through the erf4 spectral
+/// bandpass window, normalizing against the reference illuminant.
 fn contract_with_window(
     spectra_cube: &SpectraCube,
     sensitivity: &[[f64; 3]],
@@ -634,19 +1028,7 @@ fn contract_with_window(
         .n_wavelengths
         .min(sensitivity.len())
         .min(N_WAVELENGTHS);
-
-    // Compute erf4 bandpass window in f64
     let window = eval_erf4_bandpass(window_params);
-
-    // Window normalization — Python:
-    //   norm_num = np.sum(sens * illuminant[:, None] * window, axis=0)
-    //   norm_den = np.sum(sens * illuminant[:, None], axis=0)
-    //   normalization = norm_num / norm_den
-    //   window /= normalization
-    // Multiplication order per cell: `(sens * illuminant) * window`
-    // — left-to-right. The 81-wavelength reduction in numpy uses
-    // pairwise summation; for 81 elements that's recursive halving.
-    // We replicate it via `pairwise_sum_f64`.
     let mut num_per_wl = [
         Vec::<f64>::with_capacity(n_wl),
         Vec::with_capacity(n_wl),
@@ -1385,5 +1767,81 @@ mod tests {
             err.contains("3 channels"),
             "surface error not actionable: {err}"
         );
+    }
+    #[test]
+    fn descriptor_parser_and_registry_shape_contract() {
+        let text = r#"
+            identifier = "example"
+            file = "example.npy"
+            kind = "reflectance"
+            title = "Example"
+            [array]
+            lut_size = 2
+            bands = 81
+            spectral_shape = [380.0, 780.0, 5.0]
+            [reflectance]
+            scene_illuminant = "D65"
+            midgray = 0.184
+        "#;
+        let d = parse_lut_descriptor(text).unwrap();
+        assert_eq!(d.identifier, "example");
+        assert_eq!(d.lut_size * d.lut_size * d.bands, 324);
+        assert_eq!(d.scene_illuminant.as_deref(), Some("D65"));
+    }
+
+    #[test]
+    fn reflectance_contract_has_three_channels() {
+        let spectra = SpectraLut {
+            size: 2,
+            n_wavelengths: N_WAVELENGTHS,
+            data: vec![1.0; 4 * N_WAVELENGTHS],
+        };
+        let sensitivity = vec![[1.0; 3]; N_WAVELENGTHS];
+        let lut = compute_reflectance_tc_lut(
+            &spectra,
+            &sensitivity,
+            &spectral::ILLUMINANT_D65_F64,
+        );
+        assert_eq!(lut.channels, 3);
+        assert_eq!(lut.data.len(), 2 * 2 * 3);
+        assert!(lut.data.iter().all(|v| v.is_finite() && *v > 0.0));
+    }
+
+    #[test]
+    fn bundled_reflectance_registry_methods_produce_finite_luts() {
+        let data = data_dir();
+        let sensitivity = portra_sensitivity();
+        let ids = available_lut_identifiers(&data).unwrap();
+        assert!(ids.len() >= 6, "expected bundled spectral registry entries: {ids:?}");
+        for id in ids {
+            let descriptor = lut_descriptor(&data, &id).unwrap();
+            if descriptor.kind != "reflectance" {
+                continue;
+            }
+            let lut = compute_registered_tc_lut(
+                &data,
+                &id,
+                &sensitivity,
+                &spectral::ILLUMINANT_D55_F64,
+                None,
+            )
+            .unwrap_or_else(|error| panic!("{id} failed: {error}"));
+            assert_eq!(lut.channels, 3);
+            assert!(lut.data.iter().all(|value| value.is_finite()), "{id} contains non-finite values");
+        }
+    }
+
+    #[test]
+    fn generated_illuminants_are_supported_and_normalized() {
+        for name in ["A", "D60", "D75", "E", "BB3400", "BB5000", "TH-KG3-L"] {
+            assert!(is_supported_illuminant(name), "{name} should be supported");
+            let values = select_illuminant_f64(name);
+            assert_eq!(values.len(), N_WAVELENGTHS);
+            assert!(values.iter().all(|value| value.is_finite() && *value > 0.0));
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            assert!((mean - 1.0).abs() < 1e-12, "{name} mean={mean}");
+        }
+        assert!(!is_supported_illuminant("BB1000"));
+        assert!(!is_supported_illuminant("not-an-illuminant"));
     }
 }

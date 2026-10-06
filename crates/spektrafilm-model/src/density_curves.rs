@@ -1,11 +1,182 @@
-/// H-D (Hurter-Driffield) characteristic curve interpolation.
+/// Parametric density-curve models and H-D characteristic-curve interpolation.
 ///
-/// Maps log exposure → density for each CMY channel using the
-/// per-profile density curve tables.
+/// The sampled profile arrays are a cache of the parametric model.  Keeping
+/// the evaluator here makes the model usable by both profile loading and the
+/// hot interpolation path without duplicating the septic dispatch logic.
+///
+/// Maps log exposure → density for each CMY channel using the per-profile
+/// density curve tables.
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::interp;
 use spektrafilm_math::precision::{Scalar, ONE, ZERO, from_f64};
+
+const SEPT_K: f64 = 5.8013;
+/// Evaluate upstream's six-parameter parametric H-D density model.
+///
+/// The returned layout is `[exposure][channel]`. The logarithmic sum is
+/// evaluated in a stable form so high-exposure probes do not overflow even
+/// though the reference formula is written as `log10(1 + 10**x)`.
+pub fn parametric_density_curves_model(
+    log_exposure: &[f64],
+    gamma: [f64; 3],
+    log_exposure_0: [f64; 3],
+    density_max: [f64; 3],
+    toe_size: [f64; 3],
+    shoulder_size: [f64; 3],
+) -> Vec<[f64; 3]> {
+    fn log10_one_plus_pow10(value: f64) -> f64 {
+        if value > 0.0 {
+            value + (1.0 + 10.0_f64.powf(-value)).log10()
+        } else {
+            (1.0 + 10.0_f64.powf(value)).log10()
+        }
+    }
+    log_exposure
+        .iter()
+        .map(|&exposure| {
+            std::array::from_fn(|channel| {
+                let g = gamma[channel];
+                let toe = toe_size[channel];
+                let shoulder = shoulder_size[channel];
+                let toe_argument = (exposure - log_exposure_0[channel]) / toe;
+                let shoulder_argument =
+                    (exposure - log_exposure_0[channel] - density_max[channel] / g) / shoulder;
+                g * toe * log10_one_plus_pow10(toe_argument)
+                    - g * shoulder * log10_one_plus_pow10(shoulder_argument)
+            })
+        })
+        .collect()
+}
+
+
+#[inline]
+fn septic_smoothstep(v: f64) -> f64 {
+    let v2 = v * v;
+    (v2 * v2) * (35.0 + v * (-84.0 + v * (70.0 - 20.0 * v)))
+}
+
+#[inline]
+fn septic_warp(z: f64, alpha: f64) -> (f64, f64) {
+    let u = (z / SEPT_K + 0.5).clamp(0.0, 1.0);
+    if alpha == 0.0 {
+        return (u, 1.0);
+    }
+    let t = 2.0 * u - 1.0;
+    let v = (u + alpha * u * (1.0 - u) * t * t).clamp(0.0, 1.0);
+    let dv_du = 1.0 + alpha * (u * (u * (-16.0 * u + 24.0) - 10.0) + 1.0);
+    (v, dv_du)
+}
+
+/// Evaluate one layer's sigmoid. Unknown model names are rejected rather than
+/// silently changing the profile's characteristic curve.
+pub fn layer_cdf(z: f64, model_type: &str, alpha: f64) -> Result<f64, String> {
+    match model_type {
+        "norm_cdfs" | "cdfs" => {
+            let x = z * std::f64::consts::FRAC_1_SQRT_2;
+            Ok(if x.abs() < std::f64::consts::FRAC_1_SQRT_2 {
+                0.5 + 0.5 * libm::erf(x)
+            } else {
+                let y = 0.5 * libm::erfc(x.abs());
+                if x > 0.0 { 1.0 - y } else { y }
+            })
+        }
+        "sept_norm_cdfs" => {
+            if !alpha.is_finite() || alpha.abs() >= 1.0 {
+                return Err(format!("septic density-curve alpha must satisfy |alpha| < 1 (got {alpha})"));
+            }
+            Ok(septic_smoothstep(septic_warp(z, alpha).0))
+        }
+        other => Err(format!(
+            "unknown density-curve model_type {other:?}; expected \"norm_cdfs\" or \"sept_norm_cdfs\""
+        )),
+    }
+}
+
+/// Evaluate a fitted model onto an exposure axis.  `centers`, `amplitudes`,
+/// `sigmas`, and optional `alphas` are indexed `[channel][layer]`.
+pub fn evaluate_density_curves(
+    log_exposure: &[f64],
+    model_type: &str,
+    centers: &[Vec<f64>],
+    amplitudes: &[Vec<f64>],
+    sigmas: &[Vec<f64>],
+    alphas: Option<&[Vec<f64>]>,
+    positive: bool,
+) -> Result<Vec<Vec<f64>>, String> {
+    if centers.len() != amplitudes.len() || centers.len() != sigmas.len() {
+        return Err("density-curve model arrays must have matching channel counts".into());
+    }
+    validate_alphas(model_type, centers, alphas)?;
+    let mut out = vec![vec![0.0; centers.len()]; log_exposure.len()];
+    for (ch, ((cs, amps), ss)) in centers.iter().zip(amplitudes).zip(sigmas).enumerate() {
+        if cs.len() != amps.len() || cs.len() != ss.len() {
+            return Err(format!("density-curve model channel {ch} has inconsistent layer counts"));
+        }
+        for (layer, ((&center, &amp), &sigma)) in cs.iter().zip(amps).zip(ss).enumerate() {
+            if !sigma.is_finite() || sigma <= 0.0 {
+                return Err(format!("density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"));
+            }
+            let alpha = alphas.and_then(|a| a.get(ch).and_then(|r| r.get(layer))).copied().unwrap_or(0.0);
+            for (row, &x) in out.iter_mut().zip(log_exposure) {
+                let z = if positive { -(x - center) / sigma } else { (x - center) / sigma };
+                row[ch] += amp * layer_cdf(z, model_type, alpha)?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Evaluate per-layer curves as `[exposure][layer][channel]`.
+pub fn evaluate_density_curves_layers(
+    log_exposure: &[f64],
+    model_type: &str,
+    centers: &[Vec<f64>],
+    amplitudes: &[Vec<f64>],
+    sigmas: &[Vec<f64>],
+    alphas: Option<&[Vec<f64>]>,
+    positive: bool,
+) -> Result<Vec<Vec<Vec<f64>>>, String> {
+    let n_layers = centers.first().map_or(0, Vec::len);
+    if centers.iter().any(|r| r.len() != n_layers) {
+        return Err("density-curve model channels must have equal layer counts".into());
+    }
+    validate_alphas(model_type, centers, alphas)?;
+    let mut out = vec![vec![vec![0.0; centers.len()]; n_layers]; log_exposure.len()];
+    for ch in 0..centers.len() {
+        if amplitudes.get(ch).map_or(true, |r| r.len() != n_layers)
+            || sigmas.get(ch).map_or(true, |r| r.len() != n_layers)
+        {
+            return Err(format!("density-curve model channel {ch} has inconsistent layer counts"));
+        }
+        for layer in 0..n_layers {
+            let alpha = alphas.and_then(|a| a.get(ch).and_then(|r| r.get(layer))).copied().unwrap_or(0.0);
+            for (k, &x) in log_exposure.iter().enumerate() {
+                let sigma = sigmas[ch][layer];
+                if !sigma.is_finite() || sigma <= 0.0 {
+                    return Err(format!("density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"));
+                }
+                let z = if positive { -(x - centers[ch][layer]) / sigma } else { (x - centers[ch][layer]) / sigma };
+                out[k][layer][ch] = amplitudes[ch][layer] * layer_cdf(z, model_type, alpha)?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn validate_alphas(model_type: &str, centers: &[Vec<f64>], alphas: Option<&[Vec<f64>]>) -> Result<(), String> {
+    if model_type == "sept_norm_cdfs" {
+        if let Some(alphas) = alphas {
+            if alphas.len() != centers.len() || alphas.iter().zip(centers).any(|(a, c)| a.len() != c.len()) {
+                return Err("septic density-curve alphas must match the channel and layer counts".into());
+            }
+            if alphas.iter().flatten().any(|a| !a.is_finite() || a.abs() >= 1.0) {
+                return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Interpolate density from log exposure for a single pixel value.
 #[inline]
@@ -258,43 +429,6 @@ fn extract_col(data: &[[f32; 3]], c: usize) -> Vec<f32> {
 }
 
 
-/// Generate the three-channel parametric H-D curves used by the upstream
-/// profile-authoring API.
-///
-/// This is the direct sum-of-softplus model from
-/// `model/parametric.py`; `log_exposure` is returned in its input order.
-pub fn parametric_density_curves_model(
-    log_exposure: &[f64],
-    gamma: [f64; 3],
-    log_exposure_0: [f64; 3],
-    density_max: [f64; 3],
-    toe_size: [f64; 3],
-    shoulder_size: [f64; 3],
-) -> Vec<[f64; 3]> {
-    log_exposure
-        .iter()
-        .map(|&x| {
-            std::array::from_fn(|channel| {
-                let toe = gamma[channel]
-                    * toe_size[channel]
-                    * (1.0
-                        + 10.0f64.powf(
-                            (x - log_exposure_0[channel]) / toe_size[channel],
-                        ))
-                    .log10();
-                let shoulder = gamma[channel]
-                    * shoulder_size[channel]
-                    * (1.0
-                        + 10.0f64.powf(
-                            (x - log_exposure_0[channel] - density_max[channel] / gamma[channel])
-                                / shoulder_size[channel],
-                        ))
-                    .log10();
-                toe - shoulder
-            })
-        })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -457,6 +591,51 @@ mod tests {
                     pair[0][channel],
                     pair[1][channel]
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn septic_curves_preserve_median_polarity_and_layer_sums() {
+        let centers = vec![vec![0.0, 0.0]];
+        let amplitudes = vec![vec![0.6, 1.4]];
+        let sigmas = vec![vec![1.0, 1.0]];
+        let alphas = vec![vec![0.7, -0.4]];
+        let axis = [-4.0, 0.0, 4.0];
+        for positive in [false, true] {
+            let total = evaluate_density_curves(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&alphas), positive).unwrap();
+            let layers = evaluate_density_curves_layers(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&alphas), positive).unwrap();
+            assert_eq!(total[1][0], 1.0);
+            assert_eq!(total[0][0], if positive { 2.0 } else { 0.0 });
+            assert_eq!(total[2][0], if positive { 0.0 } else { 2.0 });
+            for i in 0..axis.len() { assert_eq!(layers[i][0][0] + layers[i][1][0], total[i][0]); }
+        }
+        let incomplete = vec![vec![0.7]];
+        assert!(evaluate_density_curves(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&incomplete), false).is_err());
+        assert!(evaluate_density_curves_layers(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&incomplete), false).is_err());
+    }
+    #[test]
+    fn parametric_density_model_matches_reference_formula() {
+        let axis = [-1.0, 0.0, 1.0];
+        let got = parametric_density_curves_model(
+            &axis,
+            [1.1, 0.9, 1.0],
+            [-0.2, 0.1, 0.0],
+            [1.4, 1.2, 1.0],
+            [0.7, 0.8, 0.9],
+            [0.6, 0.7, 0.8],
+        );
+        for (row, &exposure) in got.iter().zip(&axis) {
+            for channel in 0..3 {
+                let g = [1.1, 0.9, 1.0][channel];
+                let e0 = [-0.2, 0.1, 0.0][channel];
+                let dmax = [1.4, 1.2, 1.0][channel];
+                let toe = [0.7, 0.8, 0.9][channel];
+                let shoulder = [0.6, 0.7, 0.8][channel];
+                let reference = g * toe * (1.0 + 10.0_f64.powf((exposure - e0) / toe)).log10()
+                    - g * shoulder
+                        * (1.0 + 10.0_f64.powf((exposure - e0 - dmax / g) / shoulder)).log10();
+                assert!((row[channel] - reference).abs() < 1e-12);
             }
         }
     }

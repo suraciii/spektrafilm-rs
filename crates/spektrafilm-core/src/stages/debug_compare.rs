@@ -357,7 +357,7 @@ mod tests {
             &backend,
             pipeline.tc_lut(),
             None,
-            crate::spectral_service::select_illuminant(&pipeline.film.info.reference_illuminant),
+            &crate::spectral_service::select_illuminant(&pipeline.film.info.reference_illuminant),
             1.0,
             crate::resizing::pixel_size_um(pipeline.params.camera.film_format_mm, 1, 1),
             0.0,

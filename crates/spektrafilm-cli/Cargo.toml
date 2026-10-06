@@ -26,12 +26,14 @@ precision-f64 = [
 ]
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
 spektrafilm-core.workspace = true
 spektrafilm-gpu.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-raw.workspace = true
 clap.workspace = true
-serde_json.workspace = true
 toml = "0.8"
 image.workspace = true
 exr.workspace = true

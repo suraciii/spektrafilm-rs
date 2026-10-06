@@ -237,6 +237,9 @@ pub struct DensityCurvesModel {
     pub amplitudes: Vec<Vec<f64>>,
     #[serde(default, serialize_with = "ser_f64_matrix")]
     pub sigmas: Vec<Vec<f64>>,
+    /// Per-layer median-preserving skew for `sept_norm_cdfs`.
+    #[serde(default)]
+    pub alphas: Option<Vec<Vec<f64>>>,
 }
 
 impl DensityCurvesModel {
@@ -473,6 +476,55 @@ pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
     // families when a specific time is requested.
     let idx = development_time_index(&profile.data.development_time, None);
     profile.data.base_density = base_density_column(&profile.data.base_density_rows, idx);
+    let curves_stale = profile.data.density_curves.is_empty()
+        || profile
+            .data
+            .density_curves
+            .iter()
+            .flatten()
+            .any(|value| !value.is_finite() || value.abs() > 10.0);
+    let model = profile.data.density_curves_model.clone();
+    if let Some(model) = model.as_ref() {
+        let expected_exposures = profile.data.log_exposure.len();
+        let expected_layers = model.n_layers();
+        let layers_stale = expected_layers > 1
+            && (profile.data.density_curves_layers.len() != expected_exposures
+                || profile.data.density_curves_layers.iter().any(|row| {
+                    row.len() != expected_layers
+                        || row.iter().any(|layer| {
+                            layer.len() != 3
+                        || layer.iter().any(|value| !value.is_finite())
+                        })
+                }));
+        if curves_stale {
+            profile.data.density_curves =
+                spektrafilm_model::density_curves::evaluate_density_curves(
+                    &profile.data.log_exposure,
+                    &model.model_type,
+                    &model.centers,
+                    &model.amplitudes,
+                    &model.sigmas,
+                    model.alphas.as_deref(),
+                    profile.is_positive(),
+                )
+                .map_err(ProfileError::Validation)?;
+        }
+        if expected_layers > 1 && (curves_stale || layers_stale) {
+            profile.data.density_curves_layers =
+                spektrafilm_model::density_curves::evaluate_density_curves_layers(
+                    &profile.data.log_exposure,
+                    &model.model_type,
+                    &model.centers,
+                    &model.amplitudes,
+                    &model.sigmas,
+                    model.alphas.as_deref(),
+                    profile.is_positive(),
+                )
+                .map_err(ProfileError::Validation)?;
+        } else if expected_layers <= 1 && curves_stale {
+            profile.data.density_curves_layers.clear();
+        }
+    }
     Ok(profile)
 }
 
@@ -612,6 +664,9 @@ pub fn resolve_for_render(mut profile: Profile, development_time: Option<f64>) -
         model.centers = pick(&model.centers);
         model.amplitudes = pick(&model.amplitudes);
         model.sigmas = pick(&model.sigmas);
+        if let Some(alphas) = model.alphas.clone() {
+            model.alphas = Some(pick(&alphas));
+        }
     }
     // Layers are n_le × n_layers × n_times on B&W families (upstream slices
     // `[:, :, idx]`). Collapse the family, then broadcast the single
@@ -653,6 +708,9 @@ pub fn resolve_for_render(mut profile: Profile, development_time: Option<f64>) -
         bcast(&mut model.centers);
         bcast(&mut model.amplitudes);
         bcast(&mut model.sigmas);
+        if let Some(alphas) = &mut model.alphas {
+            bcast(alphas);
+        }
     }
     profile
 }
@@ -938,5 +996,33 @@ mod tests {
         let loaded = load_profile(&path).unwrap();
         assert!(loaded.data.midscale_neutral_density[0].is_nan());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fitted_models_replace_stale_sampled_curves_and_clear_single_layer_cache() {
+        let directory = std::env::temp_dir().join(format!("spektrafilm-profile-model-{}",std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        for model_type in ["norm_cdfs","sept_norm_cdfs"] {
+            let path = directory.join(format!("{model_type}.json"));
+            let value = serde_json::json!({
+                "metadata":{},"info":{},"data":{
+                    "wavelengths":[380.0],
+                    "log_sensitivity":[[0.0,0.0,0.0]],
+                    "channel_density":[[0.0,0.0,0.0]],
+                    "base_density":[[0.0]],
+                    "log_exposure":[-4.0,0.0,4.0],
+                    "density_curves":[[99.0,99.0,99.0],[99.0,99.0,99.0],[99.0,99.0,99.0]],
+                    "density_curves_layers":[[[99.0,99.0,99.0]]],
+                    "density_curves_model":{"model_type":model_type,"centers":[[0.0],[0.0],[0.0]],"amplitudes":[[2.0],[2.0],[2.0]],"sigmas":[[1.0],[1.0],[1.0]],"alphas":[[0.6],[0.6],[0.6]]}
+                }
+            });
+            std::fs::write(&path,serde_json::to_vec(&value).unwrap()).unwrap();
+            let profile = load_profile(&path).unwrap();
+            assert_eq!(profile.data.density_curves[1],vec![1.0;3]);
+            assert!(profile.data.density_curves[0].iter().all(|v|*v<0.001));
+            assert!(profile.data.density_curves[2].iter().all(|v|*v>1.999));
+            assert!(profile.data.density_curves_layers.is_empty());
+        }
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

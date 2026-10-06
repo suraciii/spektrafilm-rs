@@ -17,5 +17,6 @@ rayon.workspace = true
 rand.workspace = true
 rand_distr.workspace = true
 rand_mt = "5"
+libm.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

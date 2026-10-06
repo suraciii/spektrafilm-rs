@@ -281,10 +281,23 @@ pub fn scan_log_xyz_cpu(
     illuminant: &[f64],
     normalization: f64,
 ) -> Vec<f64> {
-    let n_wl = channel_density
-        .len()
-        .min(illuminant.len())
-        .min(spectral::N_WAVELENGTHS);
+    let cmfs: Vec<[f64; 3]> = (0..spectral::N_WAVELENGTHS)
+        .map(|i| [spectral::CMF_X_F64[i], spectral::CMF_Y_F64[i], spectral::CMF_Z_F64[i]])
+        .collect();
+    scan_log_xyz_cpu_with_cmfs(density_cmy, channel_density, base_density, illuminant, &cmfs, normalization)
+}
+
+/// Runtime-grid variant of [`scan_log_xyz_cpu`]. No wavelength limit is applied
+/// beyond the lengths of the supplied channel, illuminant, and CMF arrays.
+pub fn scan_log_xyz_cpu_with_cmfs(
+    density_cmy: &ImageBuf,
+    channel_density: &[[f64; 3]],
+    base_density: &[f64],
+    illuminant: &[f64],
+    cmfs: &[[f64; 3]],
+    normalization: f64,
+) -> Vec<f64> {
+    let n_wl = channel_density.len().min(illuminant.len()).min(cmfs.len());
     let has_base = !base_density.is_empty() && base_density.len() >= n_wl;
     let n_pix = (density_cmy.width as usize) * (density_cmy.height as usize);
 
@@ -293,12 +306,7 @@ pub fn scan_log_xyz_cpu(
         .iter()
         .flat_map(|r| [r[0], r[1], r[2]])
         .collect();
-    let mut cmf_flat = Vec::with_capacity(n_wl * 3);
-    for wl in 0..n_wl {
-        cmf_flat.push(spectral::CMF_X_F64[wl]);
-        cmf_flat.push(spectral::CMF_Y_F64[wl]);
-        cmf_flat.push(spectral::CMF_Z_F64[wl]);
-    }
+    let cmf_flat: Vec<f64> = cmfs[..n_wl].iter().flatten().copied().collect();
     let mut xyz_flat = spectral_to_proj_tiled(
         &density_f64,
         &cd_flat,
@@ -342,10 +350,28 @@ pub fn scan_spectral_cpu(
     cat: &[[f64; 3]; 3],
     xyz_to_rgb: &[[f64; 3]; 3],
 ) -> ImageBuf {
-    let n_wl = channel_density
-        .len()
-        .min(illuminant.len())
-        .min(spectral::N_WAVELENGTHS);
+    let cmfs: Vec<[f64; 3]> = (0..spectral::N_WAVELENGTHS)
+        .map(|i| [spectral::CMF_X_F64[i], spectral::CMF_Y_F64[i], spectral::CMF_Z_F64[i]])
+        .collect();
+    scan_spectral_cpu_with_cmfs(
+        density_cmy, channel_density, base_density, illuminant, &cmfs,
+        normalization, cat, xyz_to_rgb,
+    )
+}
+
+/// Runtime-grid variant of [`scan_spectral_cpu`]. CMFs are supplied per
+/// wavelength and therefore scanning is not truncated to the historical grid.
+pub fn scan_spectral_cpu_with_cmfs(
+    density_cmy: &ImageBuf,
+    channel_density: &[[f64; 3]],
+    base_density: &[f64],
+    illuminant: &[f64],
+    cmfs: &[[f64; 3]],
+    normalization: f64,
+    cat: &[[f64; 3]; 3],
+    xyz_to_rgb: &[[f64; 3]; 3],
+) -> ImageBuf {
+    let n_wl = channel_density.len().min(illuminant.len()).min(cmfs.len());
     let has_base = !base_density.is_empty() && base_density.len() >= n_wl;
     let n_pix = (density_cmy.width as usize) * (density_cmy.height as usize);
 
@@ -364,12 +390,7 @@ pub fn scan_spectral_cpu(
         .iter()
         .flat_map(|r| [r[0], r[1], r[2]])
         .collect();
-    let mut cmf_flat = Vec::with_capacity(n_wl * 3);
-    for wl in 0..n_wl {
-        cmf_flat.push(spectral::CMF_X_F64[wl]);
-        cmf_flat.push(spectral::CMF_Y_F64[wl]);
-        cmf_flat.push(spectral::CMF_Z_F64[wl]);
-    }
+    let cmf_flat: Vec<f64> = cmfs[..n_wl].iter().flatten().copied().collect();
     let mut xyz_flat = spectral_to_proj_tiled(
         &density_f64,
         &cd_flat,

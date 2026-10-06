@@ -156,13 +156,15 @@ fn scan_spectral_via_lut(
     out
 }
 
-pub fn scan(
+pub fn scan_with_options(
     density_cmy: &ImageBuf,
     profile: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
     color_ref: &crate::color_reference::ColorReference,
     gamut: &crate::gamut_compression::OutputGamutCompress,
+    scan_illuminant: Option<&str>,
+    include_base: bool,
 ) -> ImageBuf {
     // Python parity — channel_density / base_density are f64 in the JSON profile.
     let channel_density: Vec<[f64; 3]> = profile
@@ -177,9 +179,15 @@ pub fn scan(
             ]
         })
         .collect();
-    let base_density: Vec<f64> = profile.data.base_density.clone();
+    let base_density: Vec<f64> = if include_base {
+        profile.data.base_density.clone()
+    } else {
+        vec![0.0; profile.data.base_density.len()]
+    };
 
-    let illuminant = select_illuminant_f64(&profile.info.viewing_illuminant);
+    let illuminant = scan_illuminant
+        .map(select_illuminant_f64)
+        .unwrap_or_else(|| select_illuminant_f64(&profile.info.viewing_illuminant));
     let n_wl = illuminant
         .len()
         .min(channel_density.len())
@@ -376,6 +384,17 @@ pub fn scan(
     }
 
     rgb
+}
+
+pub fn scan(
+    density_cmy: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+) -> ImageBuf {
+    scan_with_options(density_cmy, profile, params, backend, color_ref, gamut, None, true)
 }
 
 pub fn process(

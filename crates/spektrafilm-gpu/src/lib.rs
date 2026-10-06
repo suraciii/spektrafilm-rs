@@ -57,6 +57,26 @@ pub trait ComputeBackend: Send + Sync {
         )
     }
 
+    /// Runtime-grid scan. GPU implementations deliberately route this
+    /// uncommon path through the faithful CPU integrator rather than silently
+    /// truncating CMFs to the historical 81-sample grid.
+    fn scan_spectral_with_cmfs(
+        &self,
+        density_cmy: &ImageBuf,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
+        illuminant: &[f64],
+        cmfs: &[[f64; 3]],
+        normalization: f64,
+        cat: &[[f64; 3]; 3],
+        xyz_to_rgb: &[[f64; 3]; 3],
+    ) -> ImageBuf {
+        cpu_backend::scan_spectral_cpu_with_cmfs(
+            density_cmy, channel_density, base_density, illuminant, cmfs,
+            normalization, cat, xyz_to_rgb,
+        )
+    }
+
     /// Spectral printing: film density CMY → print log-exposure via spectral integration.
     /// GPU backends override this with a compute shader.
     fn print_spectral(

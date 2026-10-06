@@ -15,6 +15,8 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
 - **Decoupled preview + export.** GUI uses f32 GPU for iteration, then shells out to the f64 CPU binary for the final write. The export runs in a worker thread with a cancel button and proper child-process lifecycle.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
+- **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
+- **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 
 ## Build
 
@@ -177,6 +179,21 @@ The calibrated LUT creator uses the Python 0.3.4 spectral runtime in determinist
 It supports one through four LUTs, shared film stages across repeated `--print`
 stocks, and `--combinations` for every contiguous collapsed sub-chain.
 
+
+The experimental spectral registry ships the `hanatos2025`, `mallett2019`,
+`arctic2026alpha02`, `arctic2026beta04`, `gauss-lasers`, `jakob2019`, and
+`otsu2018` methods. Runtime parameters can select a method and an illuminant
+(`A`, `D50`, `D55`, `D60`, `D65`, `D75`, `E`, `T`, `TH-KG3`, `TH-KG3-L`,
+`K75P`, or `BB<temperature>` in the supported 1667–25000 K range). LUT builds
+accept `--params runtime_params.json`, `--stops-above-midgray
+<auto|native|null|STOPS>`, and the legacy additive `--exposure-ev EV`.
+Schema 3 bundles record the full digested parameter tree per print, the
+digest's changed values, a SHA-256 snapshot digest, and resolved input stops
+and gain. `Bundle::baked_params` preserves the actual bake configuration for
+QA. Grain and coupler TOML presets override controls when stock specifics are
+requested; later edits use `apply_stocks_specifics=false`. All fitted density
+models refresh sampled curves on load, including `sept_norm_cdfs` with
+per-layer median-preserving skew parameters.
 ```bash
 ./target/release/spektrafilm lut list input
 ./target/release/spektrafilm lut list output
@@ -216,11 +233,20 @@ lightness_compression = [0.7, 1.0, 2.2]
 ```
 
 Canonical names and registry short tags are accepted. Disabled scene-linear
-registry roles fail explicitly. `auto` headroom maps encoded SDR white to four
-stops above film midgray and uses native log/HDR white-to-midgray headroom;
-`--stops-above-gray` overrides the linear exposure gain. PQ and HLG outputs
-apply their registry midgray gain before encoding. Intermediate wires retain
-the probed log-exposure margins and below-fog density headroom in `bundle.json`.
+registry roles fail explicitly. The default `"auto"` bridge resolves to four
+stops for encoded SDR inputs and six stops for scene-referred camera-log
+inputs; `native`/`null` preserves the registry's native gain. Explicit stops
+use `0.18 * 2^stops / decode(1)`, and legacy `--exposure-ev` adds a deliberate
+multiplier of `2^EV`. The resolved stops and gain are recorded in
+`bundle.json`. PQ and HLG outputs apply the inverse midgray bridge before
+encoding. Intermediate wires retain the probed log-exposure margins and
+below-fog density headroom.
+
+Params-first baking preserves runtime gamut and look controls, forces the
+film-print-scan route, and clears taps and preview mode. LUT digestion disables
+crop, resize and internal spectral acceleration LUTs, and neutralizes per-image
+exposure, enlarger filter shifts and preflash. The snapshot's `digest_changes`
+records these changes relative to an ordinary render of the same settings.
 
 For Rust consumers, `BundleBuilder::build` returns typed `Bundle`, `Lut`, and
 `BundleMeta` values. `Lut::table` is blue-fast `[r][g][b]`, indexed by

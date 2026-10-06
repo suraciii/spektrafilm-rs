@@ -301,6 +301,87 @@ pub const CMF_Z: [f32; N_WAVELENGTHS] = [
     0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000,
 ];
 
+/// A uniformly sampled wavelength grid expressed as `[start_nm, end_nm, step_nm]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpectralShape {
+    pub start_nm: f64,
+    pub end_nm: f64,
+    pub step_nm: f64,
+}
+
+impl SpectralShape {
+    pub fn new(shape: [f64; 3]) -> Result<Self, &'static str> {
+        let result = Self { start_nm: shape[0], end_nm: shape[1], step_nm: shape[2] };
+        if !result.start_nm.is_finite() || !result.end_nm.is_finite() ||
+            !result.step_nm.is_finite() || result.step_nm <= 0.0 ||
+            result.end_nm < result.start_nm {
+            return Err("spectral shape must have finite, ordered bounds and a positive step");
+        }
+        let intervals = (result.end_nm - result.start_nm) / result.step_nm;
+        if (intervals - intervals.round()).abs() > 1e-9 {
+            return Err("spectral shape bounds must align to the step");
+        }
+        Ok(result)
+    }
+
+    #[inline]
+    pub fn len(self) -> usize {
+        ((self.end_nm - self.start_nm) / self.step_nm).round() as usize + 1
+    }
+
+    #[inline]
+    pub fn wavelength(self, index: usize) -> f64 {
+        self.start_nm + index as f64 * self.step_nm
+    }
+}
+
+/// CIE 1931 2° matching functions sampled on a runtime spectral grid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CmfGrid {
+    pub shape: SpectralShape,
+    pub values: Vec<[f64; 3]>,
+}
+
+impl CmfGrid {
+    pub fn for_shape(shape: SpectralShape) -> Self {
+        if shape == (SpectralShape { start_nm: 380.0, end_nm: 780.0, step_nm: 5.0 }) {
+            return Self {
+                shape,
+                values: (0..N_WAVELENGTHS)
+                    .map(|i| [CMF_X_F64[i], CMF_Y_F64[i], CMF_Z_F64[i]])
+                    .collect(),
+            };
+        }
+        let catalog: serde_json::Value =
+            serde_json::from_str(include_str!("../../../data/illuminants/cmfs.json"))
+                .expect("bundled CMF catalog must be valid JSON");
+        let source_shape = catalog["spectral_shape"].as_array().expect("CMF shape");
+        let source_start = source_shape[0].as_f64().expect("CMF start");
+        let source_step = source_shape[2].as_f64().expect("CMF step");
+        let source = catalog["values"].as_array().expect("CMF values");
+        let values = (0..shape.len()).map(|i| {
+            let wavelength = shape.wavelength(i);
+            if wavelength < source_start || wavelength > source_start + source_step * (source.len() - 1) as f64 {
+                return [0.0; 3];
+            }
+            let position = (wavelength - source_start) / source_step;
+            let lo = position.floor() as usize;
+            let hi = (lo + 1).min(source.len() - 1);
+            let frac = position - lo as f64;
+            if hi == lo {
+                return [0, 1, 2].map(|k| source[lo][k].as_f64().unwrap_or(0.0));
+            }
+            [0, 1, 2].map(|k| {
+                let a = source[lo][k].as_f64().unwrap_or(0.0);
+                let b = source[hi][k].as_f64().unwrap_or(0.0);
+                a + (b - a) * frac
+            })
+        }).collect();
+        Self { shape, values }
+    }
+}
+
+
 /// Illuminant SPDs normalized to match Python colour-science `standard_illuminant()`.
 /// These are the exact values returned by spektrafilm's Python illuminant loader.
 pub const ILLUMINANT_D55: [f32; N_WAVELENGTHS] = [
@@ -1103,5 +1184,23 @@ mod tests {
             tc.1,
             d55_tc.1
         );
+    }
+
+    #[test]
+    fn runtime_cmf_grid_supports_non_default_sampling_and_zeroes_outside_catalog() {
+        let shape = SpectralShape::new([350.0, 840.0, 2.5]).unwrap();
+        let grid = CmfGrid::for_shape(shape);
+        assert_eq!(grid.values.len(), 197);
+        assert_eq!(grid.values[0], [0.0; 3]);
+        assert_eq!(grid.values[grid.values.len() - 1], [0.0; 3]);
+        assert!(grid.values.iter().any(|v| v[1] > 0.9));
+    }
+
+    #[test]
+    fn default_cmf_grid_preserves_f64_constants() {
+        let shape = SpectralShape::new([380.0, 780.0, 5.0]).unwrap();
+        let grid = CmfGrid::for_shape(shape);
+        assert_eq!(grid.values[0][0], CMF_X_F64[0]);
+        assert_eq!(grid.values[80][1], CMF_Y_F64[80]);
     }
 }

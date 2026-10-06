@@ -50,9 +50,11 @@ fn gumbel_matched_cdf(z: f64) -> f64 {
     (-(-(z / width + location)).exp()).exp()
 }
 
-fn layer_cdf(z: f64, positive: bool, gumbel_mix: f64) -> f64 {
+fn layer_cdf(z: f64, positive: bool, gumbel_mix: f64, model_type: &str, alpha: f64) -> f64 {
     let sz = signed_z(z, positive);
-    let cdf = norm_cdf(sz);
+    let cdf = if model_type == "sept_norm_cdfs" {
+        spektrafilm_model::density_curves::layer_cdf(sz, model_type, alpha).expect("validated density curve model")
+    } else { norm_cdf(sz) };
     if gumbel_mix > 0.0 {
         (1.0 - gumbel_mix) * cdf + gumbel_mix * gumbel_matched_cdf(sz)
     } else {
@@ -68,16 +70,38 @@ fn evaluate_channel_density(
     sigmas: &[f64],
     positive: bool,
     gumbel_mix_per_layer: &[f64],
+    model_type: &str,
+    alphas: Option<&[f64]>,
 ) -> Vec<f64> {
     let mut out = vec![0.0f64; log_exposure.len()];
     for i in 0..centers.len() {
         let mix = gumbel_mix_per_layer[i];
         let (mu, a, s) = (centers[i], amplitudes[i], sigmas[i]);
         for (o, &x) in out.iter_mut().zip(log_exposure) {
-            *o += a * layer_cdf((x - mu) / s, positive, mix);
+            *o += a * layer_cdf((x - mu) / s, positive, mix, model_type, alphas.map_or(0.0, |a| a[i]));
         }
     }
     out
+}
+fn evaluate_model_channel(
+    log_exposure: &[f64],
+    centers: &[f64],
+    amplitudes: &[f64],
+    sigmas: &[f64],
+    model_type: &str,
+    alphas: Option<&[f64]>,
+    positive: bool,
+) -> Result<Vec<f64>, String> {
+    let model = spektrafilm_model::density_curves::evaluate_density_curves(
+        log_exposure,
+        model_type,
+        &[centers.to_vec()],
+        &[amplitudes.to_vec()],
+        &[sigmas.to_vec()],
+        alphas.map(|a| vec![a.to_vec()]).as_deref(),
+        positive,
+    )?;
+    Ok(model.into_iter().map(|row| row[0]).collect())
 }
 
 /// `(i_fast, i_mid, i_slow)` by ascending center (grain-speed order). Real
@@ -109,6 +133,8 @@ fn developer_exhaustion_center_offset(
     sigmas: &[f64],
     positive: bool,
     gumbel_mix_per_layer: &[f64],
+    model_type: &str,
+    alphas: Option<&[f64]>,
 ) -> f64 {
     if gumbel_mix_per_layer.iter().all(|&m| m.abs() <= 1e-8) {
         return 0.0;
@@ -123,6 +149,8 @@ fn developer_exhaustion_center_offset(
         sigmas,
         positive,
         &zeros,
+        model_type,
+        alphas,
     )[0];
 
     let residual = |center_offset: f64| -> f64 {
@@ -134,6 +162,8 @@ fn developer_exhaustion_center_offset(
             sigmas,
             positive,
             gumbel_mix_per_layer,
+            model_type,
+            alphas,
         )[0];
         d0 - target_d0
     };
@@ -280,6 +310,8 @@ fn morph_channel_params(
         &sigmas,
         positive,
         &gumbel_mix_per_layer,
+        &model.model_type,
+        model.alphas.as_ref().map(|a| a[channel].as_slice()),
     );
     for c in &mut centers {
         *c += offset;
@@ -305,16 +337,21 @@ pub fn morph_density_curves(
     p: &PrintCurvesMorphParams,
     positive: bool,
 ) -> Result<Vec<[f64; 3]>, String> {
-    // The port implements only the Gaussian-CDF model: upstream 0.3.4 calls
-    // it "cdfs", upstream dev renames it "norm_cdfs" (identical formula —
-    // dev's `_GAUSS_MODEL_TYPES = ('norm_cdfs',)`); the B&W profiles carry
-    // the new name. The skewed "sept_norm_cdfs" variant would evaluate
-    // wrongly as Gaussian — refuse rather than emit silently-wrong densities.
-    if model.model_type != "cdfs" && model.model_type != "norm_cdfs" {
+    if !matches!(model.model_type.as_str(), "cdfs" | "norm_cdfs" | "sept_norm_cdfs") {
         return Err(format!(
-            "unsupported density_curves_model type {:?} (expected \"cdfs\"/\"norm_cdfs\")",
+            "unsupported density_curves_model type {:?} (expected \"cdfs\", \"norm_cdfs\", or \"sept_norm_cdfs\")",
             model.model_type
         ));
+    }
+    if model.model_type == "sept_norm_cdfs" {
+        if let Some(alphas) = &model.alphas {
+            if alphas.len() != 3 || alphas.iter().any(|r| r.len() != model.n_layers()) {
+                return Err(format!("density_curves_model.alphas must be 3×{}", model.n_layers()));
+            }
+            if alphas.iter().flatten().any(|a| !a.is_finite() || a.abs() >= 1.0) {
+                return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
+            }
+        }
     }
     if model.n_layers() == 0 {
         return Err("s023 morph requires a fitted density_curves_model".into());
@@ -339,17 +376,31 @@ pub fn morph_density_curves(
     // fitted model is evaluated as-is (`_evaluate_fitted_density`) and the
     // morph parameters — including invalid ones — are never read.
     if !p.active {
-        let zero_mix = vec![0.0f64; n_layers];
         let mut out = vec![[0.0f64; 3]; log_exposure.len()];
         for channel in 0..3 {
-            let col = evaluate_channel_density(
-                log_exposure,
-                &model.centers[channel],
-                &model.amplitudes[channel],
-                &model.sigmas[channel],
-                positive,
-                &zero_mix,
-            );
+            let col = if model.model_type == "sept_norm_cdfs" {
+                evaluate_model_channel(
+                    log_exposure,
+                    &model.centers[channel],
+                    &model.amplitudes[channel],
+                    &model.sigmas[channel],
+                    &model.model_type,
+                    model.alphas.as_ref().map(|a| a[channel].as_slice()),
+                    positive,
+                )?
+            } else {
+                let zero_mix = vec![0.0f64; n_layers];
+                evaluate_channel_density(
+                    log_exposure,
+                    &model.centers[channel],
+                    &model.amplitudes[channel],
+                    &model.sigmas[channel],
+                    positive,
+                    &zero_mix,
+                    &model.model_type,
+                    None,
+                )
+            };
             for (row, &v) in out.iter_mut().zip(col.iter()) {
                 row[channel] = v;
             }
@@ -378,9 +429,18 @@ pub fn morph_density_curves(
 
     let mut out = vec![[0.0f64; 3]; log_exposure.len()];
     for channel in 0..3 {
-        let (centers, amplitudes, sigmas, mix) = morph_channel_params(model, p, channel, positive);
-        let col =
-            evaluate_channel_density(log_exposure, &centers, &amplitudes, &sigmas, positive, &mix);
+        let (centers, amplitudes, sigmas, mix) =
+            morph_channel_params(model, p, channel, positive);
+        let col = evaluate_channel_density(
+            log_exposure,
+            &centers,
+            &amplitudes,
+            &sigmas,
+            positive,
+            &mix,
+            &model.model_type,
+            model.alphas.as_ref().map(|a| a[channel].as_slice()),
+        );
         for (row, &v) in out.iter_mut().zip(col.iter()) {
             row[channel] = v;
         }
@@ -520,15 +580,15 @@ mod parity_tests {
         }
     }
 
-    /// The port only implements the Gaussian `cdfs` model; any other
-    /// `model_type` must be refused rather than evaluated as Gaussian.
+    /// Unknown model types must be refused rather than evaluated as Gaussian.
     #[test]
     fn morph_rejects_unknown_model_type() {
         let model = DensityCurvesModel {
-            model_type: "sept_norm_cdfs".into(),
+            model_type: "bogus".into(),
             centers: vec![vec![0.0; 3]; 3],
             amplitudes: vec![vec![1.0; 3]; 3],
             sigmas: vec![vec![1.0; 3]; 3],
+            alphas: None,
         };
         let p = PrintCurvesMorphParams {
             active: true,
@@ -536,5 +596,23 @@ mod parity_tests {
         };
         let err = morph_density_curves(&[0.0, 1.0], &model, &p, false).unwrap_err();
         assert!(err.contains("unsupported"), "{err}");
+    }
+
+    #[test]
+    fn septic_exhaustion_preserves_zero_exposure_density_and_changes_the_curve() {
+        let model = DensityCurvesModel {
+            model_type: "sept_norm_cdfs".into(),
+            centers: vec![vec![-0.7, 0.1, 1.2]; 3],
+            amplitudes: vec![vec![0.6, 0.8, 0.7]; 3],
+            sigmas: vec![vec![0.4, 0.6, 0.5]; 3],
+            alphas: Some(vec![vec![0.6, -0.3, 0.2]; 3]),
+        };
+        let axis = [-1.0, 0.0, 1.0];
+        for positive in [false, true] {
+            let plain = morph_density_curves(&axis,&model,&PrintCurvesMorphParams::default(),positive).unwrap();
+            let exhausted = morph_density_curves(&axis,&model,&PrintCurvesMorphParams { developer_exhaustion:0.6,..Default::default() },positive).unwrap();
+            for c in 0..3 { assert!((plain[1][c]-exhausted[1][c]).abs()<1e-9); }
+            assert!((plain[0][0]-exhausted[0][0]).abs()>1e-4 || (plain[2][0]-exhausted[2][0]).abs()>1e-4);
+        }
     }
 }

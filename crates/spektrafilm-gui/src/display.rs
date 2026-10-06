@@ -323,6 +323,7 @@ pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> 
     }
 }
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> { Ok(None) }
 
 /// Takes already encoded sRGB viewing pixels, never an export ImageBuf.
@@ -376,4 +377,21 @@ pub fn output_display_raster(image: &ImageBuf, space: &str, encoded: bool, enabl
     #[cfg(windows)] let srgb=if enabled { Some(input_display_raster(image,space,encoded,max_edge)?) } else { None };
     #[cfg(not(windows))] let srgb={ let _=(space,encoded);None };
     Ok(prepare_display_raster(raw,srgb,enabled,profile))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raster_constructors_preserve_dimensions_and_rgb_values() {
+        let rgba = DisplayRaster::from_rgba([1, 1], &[64, 128, 255, 7]).unwrap();
+        assert_eq!(rgba.size, [1, 1]);
+        assert_eq!(rgba.rgb[0], [64.0 / 255.0, 128.0 / 255.0, 1.0]);
+
+        let image = ImageBuf::from_data(1, 1, vec![0.25 as _, 0.5 as _, 0.75 as _]);
+        let raster = DisplayRaster::from_float(&image).unwrap();
+        assert_eq!(raster.size, [1, 1]);
+        assert_eq!(raster.rgb[0], [0.25, 0.5, 0.75]);
+    }
 }
