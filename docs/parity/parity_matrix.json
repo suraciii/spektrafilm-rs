@@ -3,7 +3,7 @@
   "generated": {
     "python_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
     "python_version": "0.3.4",
-    "rust_commit": "6f7252079083b303fe0cf1f4788bbb126985f62d",
+    "rust_commit": "d23a67cabbcbc7f95da26bf76055a7ce0ddc8690",
     "rust_audited_baseline": "9dd59b0380194b93686aaa230a8bb9680aa270a4",
     "python_platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43",
     "python_version_runtime": "3.14.4",
@@ -3726,7 +3726,7 @@
   "verification_status": "verified_catalog",
   "differential_evidence": {
     "status": "verified_catalog",
-    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/parity-publish/parity_report.json",
+    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/parity-final-22/parity_report.json",
     "catalog_rows": 68,
     "reported_rows": 68,
     "counts": {
@@ -3867,7 +3867,7 @@
       },
       "rust_bin": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/release/spektrafilm-f64",
       "rust_bin_sha256": "60e7b8cfe9978d7b20a88123c725ddcbb21194d90cc42bc93e674644f78aa16c",
-      "rust_commit": "6f7252079083b303fe0cf1f4788bbb126985f62d",
+      "rust_commit": "d23a67cabbcbc7f95da26bf76055a7ce0ddc8690",
       "rust_worktree_dirty": false,
       "platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43"
     },
@@ -4721,15 +4721,15 @@
         "taps": {
           "rgb_out": {
             "n": 786432,
-            "py_mean": 0.2994817703724709,
+            "py_mean": 0.2994824762364121,
             "rs_mean": 0.299481853918141,
-            "py_std": 0.1513673220947511,
+            "py_std": 0.15136684450212892,
             "rs_std": 0.1513670605795561,
-            "mean_rel": 2.789674643647284e-07,
-            "std_rel": 1.7276859455535144e-06,
-            "max_abs": 0.0053539248858580635,
+            "mean_rel": 2.077978915168896e-06,
+            "std_rel": 1.4275083019919355e-06,
+            "max_abs": 0.007256613956383329,
             "within_budget": true,
-            "detail": "mean_rel=2.790e-07 std_rel=1.728e-06"
+            "detail": "mean_rel=2.078e-06 std_rel=1.428e-06"
           }
         }
       },
@@ -5080,15 +5080,15 @@
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.1568555679731939,
+            "py_mean": 0.15685055637447567,
             "rs_mean": 0.15684246787507108,
-            "py_std": 0.06393440016954977,
+            "py_std": 0.06393409157510019,
             "rs_std": 0.06393643260590177,
-            "mean_rel": 8.351694678152779e-05,
-            "std_rel": 3.1789402053029815e-05,
-            "max_abs": 0.0016166517125186242,
+            "mean_rel": 5.156819071319971e-05,
+            "std_rel": 3.6616314456216806e-05,
+            "max_abs": 0.0011584096030904656,
             "within_budget": true,
-            "detail": "mean_rel=8.352e-05 std_rel=3.179e-05"
+            "detail": "mean_rel=5.157e-05 std_rel=3.662e-05"
           }
         }
       },
@@ -6464,51 +6464,51 @@
           },
           "cmy_film": {
             "n": 3072,
-            "py_mean": 0.833673940014536,
+            "py_mean": 0.8336692874778974,
             "rs_mean": 0.8336739071761886,
-            "py_std": 0.08869474634263508,
+            "py_std": 0.08868235153418064,
             "rs_std": 0.08869054768016547,
-            "mean_rel": 3.938991708687871e-08,
-            "std_rel": 4.733834463412408e-05,
-            "max_abs": 0.0015315532615718386,
+            "mean_rel": 5.541403960337362e-06,
+            "std_rel": 9.242138760470609e-05,
+            "max_abs": 0.0011242448488999468,
             "within_budget": true,
-            "detail": "mean_rel=3.939e-08 std_rel=4.734e-05"
+            "detail": "mean_rel=5.541e-06 std_rel=9.242e-05"
           },
           "log_e_print": {
             "n": 3072,
-            "py_mean": -0.09669196241177087,
+            "py_mean": -0.0966966184404826,
             "rs_mean": -0.09669083612676428,
-            "py_std": 0.04134783688051605,
+            "py_std": 0.04134706850180453,
             "rs_std": 0.041335649947803775,
-            "mean_rel": 1.1648176109979682e-05,
-            "std_rel": 0.0002947417236720204,
-            "max_abs": 0.001224385102500239,
+            "mean_rel": 5.979851014008303e-05,
+            "std_rel": 0.00027616356889378506,
+            "max_abs": 0.0010410255944261065,
             "within_budget": true,
-            "detail": "mean_rel=1.165e-05 std_rel=2.947e-04"
+            "detail": "mean_rel=5.980e-05 std_rel=2.762e-04"
           },
           "cmy_print": {
             "n": 3072,
-            "py_mean": 0.39411784475550776,
+            "py_mean": 0.3941105659411122,
             "rs_mean": 0.3941346176283893,
-            "py_std": 0.08470820834515536,
+            "py_std": 0.08471194748447136,
             "rs_std": 0.08469709600662181,
-            "mean_rel": 4.255801432170157e-05,
-            "std_rel": 0.00013118372765320843,
-            "max_abs": 0.0021845611087137895,
+            "mean_rel": 6.102776569732285e-05,
+            "std_rel": 0.00017531739371557146,
+            "max_abs": 0.001974540721719431,
             "within_budget": true,
-            "detail": "mean_rel=4.256e-05 std_rel=1.312e-04"
+            "detail": "mean_rel=6.103e-05 std_rel=1.753e-04"
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.2886868442386881,
+            "py_mean": 0.2887052358178382,
             "rs_mean": 0.28869032024485647,
-            "py_std": 0.0501364234402711,
+            "py_std": 0.05013350968709316,
             "rs_std": 0.05012490623557933,
-            "mean_rel": 1.2040750168275367e-05,
-            "std_rel": 0.00022971731730100085,
-            "max_abs": 0.001421003940206389,
+            "mean_rel": 5.166367329456057e-05,
+            "std_rel": 0.00017161079620252757,
+            "max_abs": 0.001333315959091752,
             "within_budget": true,
-            "detail": "mean_rel=1.204e-05 std_rel=2.297e-04"
+            "detail": "mean_rel=5.166e-05 std_rel=1.716e-04"
           }
         }
       },
@@ -6625,7 +6625,7 @@
   },
   "gui_evidence": {
     "status": "measured_scenarios",
-    "report_path": "/tmp/spektrafilm-current-105754-evidence-12/gui-acceptance/observations.json",
+    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/package-final-19/gui-acceptance/viewer-observations.json",
     "report_sha256": "625285ed2ad5e641c3372d697c4477d4b22b28fb32d1329b25c32e2d452e204e",
     "records": [
       {
@@ -9296,8 +9296,8 @@
   },
   "lut_evidence": {
     "status": "passed",
-    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/lut-acceptance-remote/report.json",
-    "report_sha256": "452d823f8bae531efd7a6be8d025b4819a4460c843e16fb1c3e051a1437eee81",
+    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/lut-final/report.json",
+    "report_sha256": "624213bc446c68bc7b0c58fb6ec741bdda3ddb6ed3cf617bc812174499ae8b52",
     "summary": {
       "scenario_count": 112,
       "passed": true,
