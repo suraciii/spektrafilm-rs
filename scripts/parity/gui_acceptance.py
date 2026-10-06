@@ -73,8 +73,11 @@ class X11:
         self.xd('windowactivate', '--sync', self.window)
         self.xd('windowsize', '--sync', self.window, 1400, 900)
         self.xd('windowmove', '--sync', self.window, 0, 30)
-        wait_for(lambda: self.match(self.read()[2], 'Save state', True)
-                 and self.match(self.read()[2], 'Open', True), 'rendered native controls', 30)
+        # Start on MAIN so Open is always available. State and viewer controls
+        # are selected explicitly by file_action/callers as needed.
+        self.current_tab = None
+        wait_for(lambda: self.match(self.read()[2], 'Open', True),
+                 'rendered MAIN controls', 30)
 
     def image(self):
         require(self.proc.poll() is None, 'Installed GUI exited; see gui.log')
@@ -92,6 +95,10 @@ class X11:
 
     def read(self):
         image, bbox = self.image()
+        # The sidebar occupies the right portion of the client, but its
+        # first control can move left with native font/theme metrics.
+        # Use a proportional boundary rather than a fixed pixel coordinate.
+        self.right_control_x = image.width * 0.65
         from PIL import ImageOps, ImageStat
         lines = []
         # Segment the sidebar from the viewer and normalize each region to
@@ -100,9 +107,8 @@ class X11:
             grayscale = ImageOps.grayscale(region)
             background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
             return ImageOps.invert(grayscale) if ImageStat.Stat(background).median[0] < 128 else grayscale
-
-        for offset, region in ((0, image.crop((0, 0, 1060, image.height))),
-                               (1060, image.crop((1060, 0, image.width, image.height)))):
+        for offset, region in ((0, image.crop((0, 0, 900, image.height))),
+                               (900, image.crop((900, 0, image.width, image.height)))):
             prepared = normalize(region)
             if offset:
                 prepared = prepared.point(lambda value: 255 if value > 190 else 0)
@@ -133,18 +139,21 @@ class X11:
             lines.append(status)
         return image, bbox, lines
 
-    @staticmethod
-    def match(lines, label, right=False):
+    def match(self, lines, label, right=False):
         # OCR may transliterate the ellipsis; match words, with explicit boundaries.
         wanted = re.findall(r'[a-z0-9]+', label.lower())
         matches = []
         for line in lines:
             for start in range(len(line)):
                 words = [re.sub(r'[^a-z0-9]', '', w[0].lower()) for w in line[start:start + len(wanted)]]
-                if words == wanted or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']) or (label.lower() == '16 bit' and words == ['16', 'bir']):
+                if (words == wanted
+                        or (label.lower() == 'auto exposure' and words in (['aueo', 'exposure'], ['aulo', 'exposure']))
+                        or (label.lower() == '16 bit' and words == ['16', 'bir'])
+                        or (label.lower() == 'output' and words == ['ourepue'])
+                        or (label.lower() == 'paper back' and words[0:1] == ['paperback'])):
                     selected = line[start:start + len(wanted)]
                     x = selected[0][1]
-                    if right and x < 1000:
+                    if right and x < self.right_control_x:
                         continue
                     if label.lower() == 'save' and selected[0][2] < 100:
                         continue
@@ -169,6 +178,13 @@ class X11:
         def locate():
             image, _, lines = self.read()
             matches = self.match(lines, label, right)
+            if not matches and label == 'Cancel':
+                # During export, GTK renders Cancel where Export was. OCR
+                # intermittently misses this short label; Save remains the
+                # adjacent, same-row anchor.
+                anchor = self.match(lines, 'Save', True)
+                if anchor:
+                    matches = [(anchor[0][0] + 57, anchor[0][1])]
             if matches:
                 self.snap('control-' + label.replace(' ', '-'), image, lines)
                 return matches[0]
@@ -177,6 +193,8 @@ class X11:
             self.require_export_in_flight('Cancel')
         self.xd('mousemove', '--window', self.window, int(x), int(y))
         self.xd('click', 1)
+        if label in {'MAIN', 'CONFIG', 'FILM', 'PRINT', 'ADVANCED'}:
+            self.current_tab = label
         time.sleep(.15)
 
     def scroll(self, bottom):
@@ -256,6 +274,16 @@ class X11:
         raise RuntimeError(f'Native chooser did not accept {path}')
 
     def file_action(self, control, path, save=False):
+        if control in {'Save state', 'Load state', 'Save startup default',
+                       'Restore factory default'}:
+            if getattr(self, 'current_tab', None) != 'CONFIG':
+                self.click('CONFIG', right=False)
+        elif control == 'Open':
+            if not self.match(self.read()[2], 'Open', True):
+                self.click('MAIN', right=False)
+        elif control in {'Save', 'Export'}:
+            if getattr(self, 'current_tab', None) != 'MAIN':
+                self.click('MAIN', right=False)
         self.scroll(False)
         if control == 'Export':
             self.watch_export()
@@ -554,10 +582,9 @@ return report''')
             rect = self.types.RECT(0, 0, 1400, 900)
             self.os.AdjustWindowRect(self.ctypes.byref(rect), self.os.GetWindowLongW(self.window, -16), False)
             self.os.MoveWindow(self.window, 0, 30, rect.right - rect.left, rect.bottom - rect.top, True)
-        wait_for(lambda: self.match(self.read()[2], 'Save state', True)
-                 and self.match(self.read()[2], 'Open', True), 'rendered desktop controls', 45)
-
-    def bounds(self):
+        self.current_tab = None
+        wait_for(lambda: self.match(self.read()[2], 'Open', True),
+                 'rendered MAIN controls', 45)
         if sys.platform == 'darwin':
             # The modal rfd panel becomes window 1. Keep OCR and coordinates on
             # the application window, and serialize AX pairs explicitly rather
@@ -823,6 +850,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.file_action('Open', standard)
         driver.rendered('standard-image-preview')
         driver.scroll(False)
+        driver.click('CONFIG', False)
         driver.click('Input', False)
         input_image, _ = driver.image()
         driver.snap('input-view')
@@ -841,6 +869,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.records.append({'viewer_roi': list(roi), 'input_raster': 'input-viewer-raster.png',
                                'output_raster': 'output-viewer-raster.png', 'mean_abs_pixel_change': difference,
                                'output_pixel_std': float(output_pixels.std())})
+        driver.click('MAIN', False)
         driver.click('Auto exposure')
         driver.rendered('changed-auto-exposure-preview')
         driver.scroll(False)
@@ -909,7 +938,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.snap('cancel-export-in-flight')
         driver.click('Cancel')
         driver.scroll(True)
-        driver.wait_text(r'Export cancelled', 'cancelled-export', timeout=30)
+        driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=30)
         driver.no_children()
         require(not cancelled.exists(), 'Cancelled export left an output image')
         leftovers = list(root.rglob('spektrafilm-export-*'))
