@@ -595,6 +595,12 @@ def main() -> None:
 
     rs_head = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
                              capture_output=True, text=True, check=True).stdout.strip()
+    rs_status = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    if rs_status:
+        sys.exit("Refusing parity matrix from a dirty Rust worktree")
 
     assets, rust_extra = asset_inventory()
     matched = sum(1 for a in assets if a["match"])

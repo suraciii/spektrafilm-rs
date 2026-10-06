@@ -574,6 +574,7 @@ pub fn develop(
                 grain.micro_structure,
                 grain.monochrome,
                 params.settings.use_fast_stats,
+                params.random_seed,
                 backend,
             );
         } else {
@@ -590,6 +591,7 @@ pub fn develop(
                 grain.blur,
                 grain.n_sub_layers,
                 grain.monochrome,
+                params.random_seed,
                 backend,
             );
         }

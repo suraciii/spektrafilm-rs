@@ -22,9 +22,7 @@ fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
 /// Seed of the micro-structure clumping field. Python draws it from numba's
 /// unseeded thread-global RNG (`add_micro_structure` never reseeds), so the
 /// upstream texture is nondeterministic; Rust pins one documented stream so
-/// renders are reproducible.
 const MICRO_STRUCTURE_SEED: u64 = 42;
-
 /// Stream tags separating the poisson pass from the binomial pass inside
 /// the fast-stats grain sampler (see `FastStatsRng::stream`).
 const POISSON_TAG: u64 = 0;
@@ -185,6 +183,7 @@ pub fn apply_grain_to_density(
     grain_blur: f32,
     n_sub_layers: u32,
     monochrome: bool,
+    base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
     let stage_timings = stage_timings_enabled();
@@ -222,7 +221,7 @@ pub fn apply_grain_to_density(
                 // from channel 0's RNG stream (upstream n_channels==1 has a
                 // single emulsion, seed ch=0).
                 let seed_ch = if monochrome { 0 } else { ch as u64 };
-                let seed = seed_ch + (sl as u64) * 10;
+                let seed = base_seed.wrapping_add(seed_ch + (sl as u64) * 10);
                 let g = layer_particle_model(
                     &density_ch,
                     w,
@@ -283,6 +282,7 @@ fn add_micro_structure(
     height: u32,
     micro_structure: [f32; 2],
     pixel_size_um: f64,
+    base_seed: u64,
 ) {
     // Keep the unit math and Gaussian sigma in f64.
     let blur_px = micro_structure[0] as f64 / pixel_size_um;
@@ -299,7 +299,11 @@ fn add_micro_structure(
         let mut clumping: Vec<Scalar> = (0..n)
             .into_par_iter()
             .map(|i| {
-                let mut rng = FastStatsRng::stream(MICRO_STRUCTURE_SEED, ch as u64, i as u64);
+                let mut rng = FastStatsRng::stream(
+                    base_seed ^ MICRO_STRUCTURE_SEED,
+                    ch as u64,
+                    i as u64,
+                );
                 from_f64(stats::fast_lognormal_from_mean_std(&mut rng, 1.0, sigma))
             })
             .collect();
@@ -348,6 +352,7 @@ pub fn apply_grain_to_density_layers(
     grain_micro_structure: [f32; 2],
     monochrome: bool,
     use_fast_stats: bool,
+    base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
     let stage_timings = stage_timings_enabled();
@@ -392,7 +397,7 @@ pub fn apply_grain_to_density_layers(
             for sl in 0..3 {
                 let t = Instant::now();
                 let seed_ch = if monochrome { 0 } else { ch as u64 };
-                let seed = seed_ch + (sl as u64) * 10;
+                let seed = base_seed.wrapping_add(seed_ch + (sl as u64) * 10);
                 let dmin_l = from_f64(density_min_layers[sl][ch]);
                 let density_sl: Vec<Scalar> =
                     density_cmy_layers[sl][ch].iter().map(|&v| v + dmin_l).collect();
@@ -427,6 +432,7 @@ pub fn apply_grain_to_density_layers(
         height,
         grain_micro_structure,
         pixel_size_um,
+        base_seed,
     );
 
     let mut out = ImageBuf::new(width, height);
@@ -517,6 +523,7 @@ mod tests {
             micro_structure,
             false,
             use_fast_stats,
+            0,
             &CpuBackend,
         )
     }
@@ -638,6 +645,7 @@ mod tests {
                 [0.0, 0.0],
                 monochrome,
                 false,
+                0,
                 &CpuBackend,
             )
         };
@@ -659,7 +667,7 @@ mod tests {
                 img.set(x, y, [from_f64(0.8), from_f64(1.0), from_f64(1.2)]);
             }
         }
-        let run = || {
+        let run = |seed| {
             apply_grain_to_density(
                 &img,
                 12.0,
@@ -671,10 +679,12 @@ mod tests {
                 0.0,
                 1,
                 false,
+                seed,
                 &CpuBackend,
             )
         };
-        assert_eq!(run().data, run().data);
+        assert_eq!(run(0).data, run(0).data);
+        assert_ne!(run(0).data, run(1).data);
     }
 
     #[test]

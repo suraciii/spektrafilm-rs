@@ -497,7 +497,10 @@ fn render_recipe(
     data_dir: &Path,
 ) -> Result<Value> {
     contract::validate_output(&recipe.output)?;
+    contract::validate_output_path(output, &recipe.output)?;
+    contract::validate_input_path(input)?;
     let mut params = contract::normalize_parameters(recipe.parameters.clone())?;
+    params.random_seed = recipe.seed.unwrap_or(0);
     if recipe.output.format == "png" {
         params.settings.preview_mode = true;
         params.settings.preview_max_size = recipe.output.max_edge.unwrap_or(640);
@@ -521,6 +524,7 @@ fn render_recipe(
     let params = digest_params(params, &film, &print, Some(&neutral_db), true);
     let loaded = image_io::load(input)
         .with_context(|| format!("loading staged input {}", input.display()))?;
+    contract::validate_input_dimensions(loaded.image.width, loaded.image.height)?;
     let input_size = [loaded.image.width, loaded.image.height];
     let image = if recipe.output.format == "png" {
         resize_for_preview(&loaded.image, params.settings.preview_max_size)
@@ -549,7 +553,7 @@ fn render_recipe(
     if temporary.exists() {
         bail!("temporary output already exists: {}", temporary.display());
     }
-    if let Err(error) = image_io::save(
+    if let Err(error) = image_io::save_jpeg_quality(
         &temporary,
         &result,
         SaveOptions {
@@ -558,6 +562,7 @@ fn render_recipe(
             cctf_encoding: true,
         },
         loaded.metadata.as_ref(),
+        contract::FINISHED_JPEG_QUALITY,
     ) {
         let _ = fs::remove_file(&temporary);
         return Err(error).context("writing spektrafilm-rs output");

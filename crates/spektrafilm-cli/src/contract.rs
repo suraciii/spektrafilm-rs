@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use spektrafilm_core::image_io::ImageFormat;
 use spektrafilm_core::params::RuntimeParams;
 use std::fs;
 use std::path::Path;
@@ -11,6 +12,8 @@ pub const ADAPTER_VERSION: &str = "spektrafilm-rs-adapter-1";
 pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-1";
 pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
+pub const MAX_EDGE: u32 = 9568;
+pub const MAX_DECODED_BYTES: u64 = 2_147_483_648;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -93,6 +96,57 @@ pub fn normalize_parameters(value: Value) -> Result<RuntimeParams> {
     Ok(params)
 }
 
+pub fn validate_input_path(path: &Path) -> Result<()> {
+    if ImageFormat::detect(path)? != ImageFormat::Tiff {
+        bail!("render input must be a TIFF");
+    }
+    let file = fs::File::open(path)
+        .with_context(|| format!("opening render input {}", path.display()))?;
+    let mut decoder = tiff::decoder::Decoder::new(file)
+        .with_context(|| format!("reading TIFF header {}", path.display()))?;
+    let (width, height) = decoder.dimensions()?;
+    validate_input_dimensions(width, height)?;
+    let bits = match decoder.colortype()? {
+        tiff::ColorType::RGB(bits)
+        | tiff::ColorType::RGBA(bits)
+        | tiff::ColorType::Gray(bits)
+        | tiff::ColorType::GrayA(bits) => bits,
+        other => bail!("render input has unsupported TIFF color type {other:?}"),
+    };
+    if bits != 32 {
+        bail!("render input must be a 32-bit TIFF");
+    }
+    Ok(())
+}
+
+pub fn validate_input_dimensions(width: u32, height: u32) -> Result<()> {
+    if width.max(height) > MAX_EDGE {
+        bail!("render input exceeds maxEdge {MAX_EDGE}: {width}x{height}");
+    }
+    let decoded_bytes = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|pixels| pixels.checked_mul(3))
+        .and_then(|samples| samples.checked_mul(std::mem::size_of::<f64>() as u64))
+        .ok_or_else(|| anyhow::anyhow!("render input decoded size overflows"))?;
+    if decoded_bytes > MAX_DECODED_BYTES {
+        bail!("render input exceeds maxDecodedBytes {MAX_DECODED_BYTES}: {decoded_bytes}");
+    }
+    Ok(())
+}
+
+pub fn validate_output_path(path: &Path, output: &OutputContract) -> Result<()> {
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let matches = match output.format.as_str() {
+        "jpeg" => extension == "jpg" || extension == "jpeg",
+        "png" => extension == "png",
+        _ => false,
+    };
+    if !matches {
+        bail!("output path extension does not match declared {} format", output.format);
+    }
+    Ok(())
+}
+
 pub fn validate_output(output: &OutputContract) -> Result<()> {
     let preview = output.format == "png";
     let expected = default_output(&output.format);
@@ -109,6 +163,9 @@ pub fn validate_output(output: &OutputContract) -> Result<()> {
     }
     if preview && output.max_edge.is_none_or(|edge| edge == 0) {
         bail!("bounded png output requires a positive maxEdge");
+    }
+    if preview && output.max_edge.is_some_and(|edge| edge > MAX_EDGE) {
+        bail!("bounded png output exceeds maxEdge {MAX_EDGE}");
     }
     if !preview && output.max_edge.is_some() {
         bail!("full-size jpeg output must not carry maxEdge");
@@ -174,4 +231,32 @@ pub fn describe() -> Value {
             "cancelled", "deadline", "engine-failure", "output-invalid", "outcome-unknown"
         ],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admitted_output_requires_matching_path_and_bound() {
+        let output = OutputContract {
+            max_edge: Some(1024),
+            ..default_output("png")
+        };
+        assert!(validate_output(&output).is_ok());
+        assert!(validate_output_path(Path::new("result.png"), &output).is_ok());
+        assert!(validate_output_path(Path::new("result.jpg"), &output).is_err());
+        assert!(validate_output(&OutputContract {
+            max_edge: Some(MAX_EDGE + 1),
+            ..output
+        }).is_err());
+    }
+
+    #[test]
+    fn render_input_limits_reject_oversized_decodes() {
+        assert!(validate_input_dimensions(MAX_EDGE, 1).is_ok());
+        assert!(validate_input_dimensions(1024, 1024).is_ok());
+        assert!(validate_input_dimensions(MAX_EDGE + 1, 1).is_err());
+        assert!(validate_input_dimensions(20_000, 20_000).is_err());
+    }
 }
