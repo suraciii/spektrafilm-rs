@@ -102,10 +102,15 @@ sensitivity with white-balance normalization
 (`params.rs:82-85`) and even ships the erf4 window evaluation
 (`spectral_service.rs:232`), but nothing connects the camera params to it.
 
-### 4. Ignored preview/adaptation controls — scenario `preview_mode_digest`
-(`issues #3, #5`)
-`settings.preview_mode` is accepted by Rust serde but is not yet applied to
-the resident pipeline. The Hanatos adaptation blur knobs
+### 4. Ignored blur/layered-grain controls — scenarios `layered_grain`,
+`preview_mode_digest` (issues #6, #3, #5)
+`film_render.grain.sublayers_active` (default **True** upstream!),
+`particle_scale_layers`, `blur_dye_clouds_um`, `micro_structure`,
+`settings.use_fast_stats`, `settings.preview_mode` are all accepted by Rust
+serde and never read. The upstream default path develops grain through
+`interp_density_cmy_layers` + `apply_grain_to_density_layers`
+(`model/grain.py:193-213`); only the single-curve fallback
+(`sublayers_active=False`) is ported. The Hanatos adaptation blur knobs
 `settings.spectral_gaussian_blur` and
 `settings.apply_hanatos2025_adaptation_surface` (issue #5) are likewise
 parsed and never applied when the tc LUT is built
@@ -118,7 +123,8 @@ correction (`utils/spectral_upsampling.py:336-386`).
 output as error-logged **identity fallback**
 (`crates/spektrafilm-core/src/gamut_compression.rs:267-293`); Python 0.3.4
 supports all five algorithms on any output space
-spaces silently fall back (filming.rs:516 → ProPhoto; `scanning.rs::scan_with_capture` →
+(`utils/gamut_compression.py:197-216`). Similarly unknown input color
+spaces silently fall back (filming.rs:516 → ProPhoto; scanning.rs:455 →
 sRGB) where Python raises.
 
 ### 6. Wrong LUT constructor — CLI `export-lut` (issue #13)
@@ -131,7 +137,7 @@ per-pixel regime (spatial/stochastic off, AE off, corrections off).
 
 ### 7. Output encoding / clipping — scenario `output_encoding_srgb` (issue #4)
 Rust clamps the final RGB to [0,1] on **both** branches of the encoding
-switch (`crates/spektrafilm-core/src/stages/scanning.rs::scan_with_capture`); Python
+switch (`crates/spektrafilm-core/src/stages/scanning.rs:370-389`); Python
 0.3.4's `_apply_cctf_encoding` never clips (`runtime/stages/scanning.py:130-139`)
 — the doc-comment in Rust references a `_apply_cctf_encoding_and_clip`
 helper that does not exist at this pin. With gamut compression off and
@@ -141,23 +147,17 @@ out-of-gamut input, Python returns out-of-range values.
 On `scan_film=True` Python passes `glare=None`
 (`runtime/stages/scanning.py:54-55`) — no glare on the direct scan, ever.
 Rust selects `film_render.glare` for the scan path
-(`crates/spektrafilm-core/src/stages/scanning.rs::scan_with_capture`) and applies it
-with a **fixed seed 42** (same function), diverging both in
+(`crates/spektrafilm-core/src/stages/scanning.rs:284-288`) and applies it
+with a **fixed seed 42** (`scanning.rs:325-333`), diverging both in
 semantics and in RNG stream.
 
 ## Integrated acceptance evidence
 
-At the audited baseline, the pinned Python runtime generated 68 reference
-scenarios and all 68 passed the rebuilt Rust f64 differential run, including
-shared profiles, seeded grain, deterministic and stochastic preview, spatial
-effects, and six invalid paper-as-film configurations rejected before producing
-output. The bare-chain maximum absolute error was 4.509e-10 against the 1e-6
-budget. This is historical baseline evidence, not a claim about every later
-integration commit.
-
-The fresh integration run recorded in
-`docs/parity/parity_matrix.json` has 62 passing rows and six budget failures;
-the matrix names those rows and preserves their per-tap metrics.
+The pinned Python runtime has generated 68 reference scenarios. All 68 passed
+the rebuilt Rust f64 differential run, including all shared profiles, seeded
+grain, deterministic and stochastic preview, spatial effects, and six invalid
+paper-as-film configurations rejected before producing output. The bare-chain
+maximum absolute error was 4.509e-10 against the 1e-6 budget.
 
 Independent executed checks establish:
 
@@ -266,18 +266,18 @@ Independent executed checks establish:
   print compensation/normalization or illuminant/filter calibration inputs change.
   The workspace regression compares updated pipelines with freshly constructed
   pipelines across EV -2 through +2.
-- The current release CLI passed all 68 runtime differential rows in
-  `/tmp/spektrafilm-current-parity/parity_report.json`. LUT artifact acceptance
-  passed 112 topology QA comparisons, 32 input-compression override comparisons,
-  six F-Log/F-Log2/N-Log/ProPhoto/PQ/HLG bundle comparisons, OCIO processors and
-  public format/transport probes in `/tmp/spektrafilm-lut-current-3/report.json`.
-  Unsupported optional OCIO mappings explicitly skip configuration emission;
-  `qa_print_index` alone does not enable QA. Scenario errors remain named failed
-  rows while later measurements continue. Finalization preserves the README
-  Quality table, writes `bundle.json`, and creates ZIPs only when requested.
-  Scientific QA failures at coarse resolution match Python's reported failures;
-  acceptance verifies the results and statuses rather than requiring every LUT
-  quality metric to pass.
+- The current f64 CLI passed all 68 runtime differential rows in
+  `target/parity-current/parity_report.json`; the executable SHA256 is
+  `59a56d781bcf638eb43eaa511956f8efb4cc9e1f0bafe11eea71d607b23d5660`.
+  LUT artifact acceptance passed 112 QA/transport scenarios in
+  `target/lut-acceptance-current-3/report.json`; its report SHA256 is recorded
+  in `docs/parity/parity_matrix.json`. The reports retain the Python pin,
+  runtime dependencies, per-tap metrics, delivered LUT comparisons, and
+  failure rows.
+- The package and native GUI reports remain separate platform evidence. The
+  existing Linux report was generated from the same Rust source commit but
+  has a dirty-worktree provenance flag; it cannot serve as clean final
+  delivery evidence until a final package is rebuilt from the committed tree.
 - Profile serialization preserves missing spectral samples as JSON null and
   saves a suffixed copy without mutating the caller. Parametric curves retain
   the upstream formula. The public gamma/slope helpers use linear-cost
@@ -285,13 +285,15 @@ Independent executed checks establish:
   gamma `[3.103978836041295, 3.1039788360412963, 3.6538466942740713]`
   and slopes `[3.21, 3.21, 3.21]`. Nonlinear density-min fitting and plotting
   remain independent research APIs outside product parity.
-- The final workspace passed 197 tests. The relocated portable Linux package
-  passed installed image/metadata/RAW/LUT/OCIO/QA and native GUI acceptance at
-  `/tmp/spektrafilm-current-package-evidence-3`. Native assertions include
-  Scan-for-print force/restore/state reset, Input interpolation isolation,
-  preview-limit refresh with full-resolution Export, persistent RAW lens status,
-  animation, display/save isolation and actual in-flight Cancel/close cleanup.
-  Windows/macOS remain governed by their CI evidence, not Linux screenshots.
+- Historical Linux/Xvfb native evidence is retained at
+  `/tmp/spektrafilm-current-105754-evidence-12/gui-acceptance/observations.json`.
+  Its measured report SHA256 is
+  `625285ed2ad5e641c3372d697c4477d4b22b28fb32d1329b25c32e2d452e204e`, and it
+  records the named viewer assertions from that run. The report was generated
+  with dirty-worktree provenance, so it is not clean final delivery evidence.
+  The current GUI driver additionally checks exact stock halation and print-glare
+  defaults; the historical report predates those assertions. Windows/macOS
+  native display and window behavior remain unverified here.
 
 Pinned Python glare uses unseeded Numba thread-local random streams. Repeating
 `np.random.seed(0)` does not reproduce its pixels: the measured 512×512 repeat

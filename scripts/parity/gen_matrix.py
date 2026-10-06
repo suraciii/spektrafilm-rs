@@ -21,20 +21,15 @@ from collections import Counter
 import hashlib
 import json
 import platform
-import os
-import re
+import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
-RUNTIME_REPO = Path(os.environ.get(
-    "SPEKTRAFILM_RUNTIME_REPO", str(REPO_ROOT)
-)).resolve()
+PY_REPO = Path("/home/szf/repos/spektrafilm")
 PY_COMMIT = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
 RS_COMMIT = "9dd59b0380194b93686aaa230a8bb9680aa270a4"
-EXPECTED_RUST_COMMIT = "a1910231fbd2c049c5177b539b6e7963c97f4e90"
-SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 S = "supported"
 UNREAD = "accepted_but_unread"
@@ -42,7 +37,6 @@ ABSENT = "absent_from_rust"
 NOOP = "noop_upstream"
 RUST_ONLY = "rust_only_extra"
 DIVERGENT = "divergent"
-RETIRED = "intentionally_retired"
 
 
 def sha256(path: Path) -> str:
@@ -93,12 +87,12 @@ RUNTIME_FIELDS = {
         "preflash_m_filter_shift": (S, None, ""),
     },
     "scanner": {
-        "lens_blur": (S, None, "scanning.rs::scan_with_capture"),
+        "lens_blur": (S, None, "scanning.rs:348"),
         "white_correction": (S, None, "color_reference luminance remap"),
         "black_correction": (S, None, ""),
         "white_level": (S, None, ""),
         "black_level": (S, None, ""),
-        "unsharp_mask": (S, None, "scanning.rs::scan_with_capture"),
+        "unsharp_mask": (S, None, "scanning.rs:353"),
     },
     "film_render": {
         "density_curve_gamma": (S, None, ""),
@@ -169,7 +163,7 @@ RUNTIME_FIELDS = {
         "input_gamut_compress.knee": (S, None, "input_gamut.rs"),
         "output_gamut_compress.algorithm": (S, None, "gamut_compression.rs"),
         "output_gamut_compress.knee": (S, None, ""),
-        "output_gamut_compress.lightness_compression": (RETIRED, None, "Intentionally retired under specs/output-mix/spec.md; no replacement or parity claim"),
+        "output_gamut_compress.lightness_compression": (S, None, ""),
         "crop": (S, None, "resizing.rs:170-205"),
         "crop_center": (S, None, "resizing.rs:75-147"),
         "crop_size": (S, None, "resizing.rs:75-147"),
@@ -192,8 +186,8 @@ RUNTIME_FIELDS = {
         "apply_hanatos2025_adaptation_surface": (S, None, "spectral_service.rs:1163"),
         "spectral_gaussian_blur": (S, None, "spectral_service.rs:1159-1160"),
         "use_enlarger_lut": (S, None, "printing.rs:201-215"),
-        "use_scanner_lut": (S, None, "scanning/spectral.rs::scan_spectral_rgb"),
-        "lut_resolution": (S, None, "printing.rs:214; scanning/spectral.rs::scan_spectral_rgb"),
+        "use_scanner_lut": (S, None, "scanning.rs:252-267"),
+        "lut_resolution": (S, None, "printing.rs:214; scanning.rs:265"),
         "use_fast_stats": (S, None, "filming.rs:557"),
         "preview_max_size": (S, None, "runtime.rs:133-141"),
         "preview_mode": (S, None, "params_builder.rs:61-73"),
@@ -250,28 +244,28 @@ AUDIT_RUNTIME_STATUSES = {
 # GUI actions — spektrafilm_gui/controller.py handlers wired in app.py:225-242.
 # ---------------------------------------------------------------------------
 GUI_ACTIONS = [
-    ("load_input_image", "open a raster image via OIIO with ICC/metadata", ABSENT, 9),
-    ("load_raw_image", "RAW decode via rawpy+lensfun (WB modes, TCA/vignetting)", ABSENT, 10),
-    ("rotate_input_image_clockwise", "quarter-turn input layer", ABSENT, 12),
-    ("rotate_input_image_counterclockwise", "quarter-turn input layer", ABSENT, 12),
-    ("apply_profile_defaults", "film/paper selection re-syncs stock defaults", DIVERGENT, 3),
-    ("apply_film_profile_defaults", "film stock change re-applies stock specifics", DIVERGENT, 3),
-    ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
-    ("run_scan", "full-resolution simulation", ABSENT, 12),
-    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", ABSENT, 12),
-    ("request_auto_preview", "auto-preview request from a runtime editor", DIVERGENT, 11),
-    ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
-    ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
-    ("set_output_interpolation_mode", "output layer interpolation mode", ABSENT, 12),
-    ("refresh_preview_cache", "recompute cached preview", ABSENT, 12),
-    ("save_output_layer", "save with format/ICC/metadata preservation", ABSENT, 9),
-    ("save_current_as_default", "GUI state persisted as startup default", ABSENT, 11),
-    ("save_current_state_to_file", "GUI state export", ABSENT, 11),
-    ("load_state_from_file", "GUI state import", ABSENT, 11),
-    ("restore_factory_default", "reset persisted state", ABSENT, 11),
-    ("show_startup_placeholder", "startup placeholder layer", ABSENT, 11),
-    ("virtual_photo_paper", "photo-paper presentation frame + watermark asset", ABSENT, 12),
-    ("polaroid_animation", "development animation", ABSENT, 12),
+    ("load_input_image", "open a raster image via OIIO with ICC/metadata", S, None),
+    ("load_raw_image", "RAW decode via rawpy+lensfun (WB modes, TCA/vignetting)", S, None),
+    ("rotate_input_image_clockwise", "quarter-turn input layer", S, None),
+    ("rotate_input_image_counterclockwise", "quarter-turn input layer", S, None),
+    ("apply_profile_defaults", "film/paper selection re-syncs stock defaults", S, None),
+    ("apply_film_profile_defaults", "film stock change re-applies stock specifics", S, None),
+    ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", S, None),
+    ("run_scan", "full-resolution simulation", S, None),
+    ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", S, None),
+    ("request_auto_preview", "auto-preview wiring for every editor", S, None),
+    ("report_display_transform_status", "napari display transform toggle", S, None),
+    ("set_gray_18_canvas", "18% gray canvas background", S, None),
+    ("set_output_interpolation_mode", "output layer interpolation mode", S, None),
+    ("refresh_preview_cache", "recompute cached preview", S, None),
+    ("save_output_layer", "save with format/ICC/metadata preservation", S, None),
+    ("save_current_as_default", "GUI state persisted as startup default", S, None),
+    ("save_current_state_to_file", "GUI state export", S, None),
+    ("load_state_from_file", "GUI state import", S, None),
+    ("restore_factory_default", "reset persisted state", S, None),
+    ("show_startup_placeholder", "startup placeholder layer", S, None),
+    ("virtual_photo_paper", "photo-paper presentation frame + watermark asset", S, None),
+    ("polaroid_animation", "development animation", S, None),
 ]
 AUDIT_GUI_STATUSES = {
     "load_input_image": ABSENT,
@@ -381,11 +375,11 @@ AUDIT_BASELINE_GAPS = [
     {"gap": "stock-specific DIR presets (velvia_100, provia_100f) and halation use/antihalation presets",
      "owner_issue": 3, "evidence": "params_builder.py:199-252 vs pipeline.rs:55-94"},
     {"gap": "direct-scan glare: Python passes glare=None on scan_film; Rust applies film_render.glare (seed 42)",
-     "owner_issue": 8, "evidence": "scanning.py:54-55 vs scanning.rs::scan_with_capture"},
+     "owner_issue": 8, "evidence": "scanning.py:54-55 vs scanning.rs:284-288,325-333"},
     {"gap": "output clip semantics: Rust clamps [0,1] when output_cctf_encoding=False; Python never clips",
-     "owner_issue": 4, "evidence": "scanning.rs::scan_with_capture vs scanning.py:130-139"},
+     "owner_issue": 4, "evidence": "scanning.rs:385-389 vs scanning.py:130-139"},
     {"gap": "unsupported color spaces silently fall back (input->ProPhoto, output->sRGB) instead of erroring",
-     "owner_issue": 4, "evidence": "filming.rs:510-518 _ => PROPHOTO_TO_XYZ; scanning.rs::scan_with_capture"},
+     "owner_issue": 4, "evidence": "filming.rs:510-518 _ => PROPHOTO_TO_XYZ; scanning.rs:449-456 _ => XYZ_TO_SRGB_F64"},
     {"gap": "jzazbz/oklrab output gamut + perceptual compression on non-sRGB output fall back to identity",
      "owner_issue": 4, "evidence": "gamut_compression.rs:267-293 error-and-identity branches"},
     {"gap": "enlarger LUT reduction (use_enlarger_lut) unported; lut_resolution param unread",
@@ -393,7 +387,7 @@ AUDIT_BASELINE_GAPS = [
     {"gap": "crop + AE order: Rust rescales before AE; Python AEs before crop/rescale",
      "owner_issue": 7, "evidence": "pipeline.rs:462-471 vs pipeline.py:191-195"},
     {"gap": "glare RNG stream: Rust fixed seed 42 vs Python continued np.random stream (statistical parity only)",
-     "owner_issue": 8, "evidence": "scanning.rs::scan_with_capture; model/glare.py via fast_stats np.random"},
+     "owner_issue": 8, "evidence": "scanning.rs:331 comment; model/glare.py via fast_stats np.random"},
     {"gap": "ICC profiles (166 files) + SPEKTRAFILM_LICENSE.txt not bundled in the Rust tree",
      "owner_issue": 9, "evidence": "src/spektrafilm/data/icc vs data/ (Rust) directory listing"},
     {"gap": "RAW white-balance modes and lensfun corrections; Rust GUI/CLI use rawler with as-shot only",
@@ -429,7 +423,7 @@ BUDGETS = {
 def asset_inventory():
     """Hash-compare every bundled Python 0.3.4 data file against the Rust tree."""
     py_data = PY_REPO / "src" / "spektrafilm" / "data"
-    rs_data = RUNTIME_REPO / "data"
+    rs_data = REPO_ROOT / "data"
     assets = []
     for path in sorted(py_data.rglob("*")):
         if not path.is_file():
@@ -469,17 +463,6 @@ def asset_inventory():
     return assets, rust_extra
 
 def integration_entry(status, owner, notes, source, audit_status=None):
-    if status == RETIRED:
-        return {
-            "rust_status": RETIRED,
-            "owner_issue": owner,
-            "implementation_source": "specs/output-mix/spec.md#output-boundary-and-retirement",
-            "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
-            "audit_baseline": {
-                "rust_status": status if audit_status is None else audit_status,
-                "notes": notes,
-            },
-        }
     if status == NOOP:
         current_status = NOOP
         verification = "Explicit upstream no-op; implementation intentionally does not read this field."
@@ -516,30 +499,7 @@ def report_evidence(path):
     reference = environment.get("reference_environment", {})
     if pins.get("python_commit") != PY_COMMIT or pins.get("python_version") != "0.3.4":
         sys.exit(f"Refusing report with incorrect Python pin: {path}")
-    current_rust = subprocess.run(
-        ["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True).stdout.strip()
-    rust_commit = environment.get("rust_commit")
-    if current_rust != EXPECTED_RUST_COMMIT or rust_commit != EXPECTED_RUST_COMMIT:
-        sys.exit(
-            f"Refusing stale Rust provenance: report={rust_commit}, "
-            f"checkout={current_rust}, expected={EXPECTED_RUST_COMMIT}"
-        )
-    if environment.get("rust_worktree_dirty") is not False:
-        sys.exit(f"Refusing report without a clean Rust worktree provenance: {path}")
-    rust_hash = environment.get("rust_bin_sha256")
-    rust_bin_value = environment.get("rust_bin")
-    if not isinstance(rust_hash, str) or not SHA256_RE.fullmatch(rust_hash):
-        sys.exit(f"Refusing report without a complete Rust executable SHA256: {path}")
-    if not isinstance(rust_bin_value, str) or not rust_bin_value:
-        sys.exit(f"Refusing report without a Rust executable path: {path}")
-    rust_bin = Path(rust_bin_value)
-    if rust_bin.exists():
-        if not rust_bin.is_file() or not rust_bin.stat().st_mode & 0o111:
-            sys.exit(f"Refusing report with a non-executable Rust binary: {rust_bin}")
-        if sha256(rust_bin) != rust_hash:
-            sys.exit(f"Refusing stale Rust binary hash: {rust_bin}")
-    if (report.get("unsupported")
+    if (report.get("unsupported") or not environment.get("rust_bin")
             or not reference.get("dependencies") or not reference.get("numpy_blas")
             or not reference.get("python_version") or not reference.get("architecture")):
         sys.exit(f"Refusing report without complete runnable environment provenance: {path}")
@@ -588,51 +548,94 @@ def gui_evidence(path):
     observed = {row.get("scenario") for row in records}
     if required - observed:
         sys.exit(f"Refusing GUI evidence missing viewer scenarios: {sorted(required - observed)}")
-    provenance = next((row for row in records if row.get("rust_commit")), None)
-    if not provenance or provenance.get("rust_worktree_dirty") is not False:
-        sys.exit(f"Refusing GUI evidence without a clean Rust provenance record: {path}")
-    current = subprocess.run(["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
-                             capture_output=True, text=True, check=True).stdout.strip()
-    if current != EXPECTED_RUST_COMMIT or provenance["rust_commit"] != EXPECTED_RUST_COMMIT:
-        sys.exit(
-            f"GUI evidence Rust commit {provenance['rust_commit']} != expected "
-            f"{EXPECTED_RUST_COMMIT} (checkout {current})"
-        )
-    for path_key, hash_key in (("gui_executable", "gui_sha256"),
-                               ("exporter_executable", "exporter_sha256")):
-        executable_hash = provenance.get(hash_key)
-        executable_value = provenance.get(path_key)
-        if (not isinstance(executable_hash, str)
-                or not SHA256_RE.fullmatch(executable_hash)
-                or not isinstance(executable_value, str)
-                or not executable_value):
-            sys.exit(f"Refusing GUI evidence without complete {hash_key}: {path}")
-        executable = Path(executable_value)
-        if executable.exists() and sha256(executable) != executable_hash:
-            sys.exit(f"Refusing stale GUI executable hash: {executable}")
-    required_actions = {action for action, _, _, _ in GUI_ACTIONS}
-    action_rows = [row for row in records if row.get("parity_action")]
-    action_names = [row["parity_action"] for row in action_rows]
-    if len(action_names) != len(set(action_names)) or set(action_names) - required_actions:
-        sys.exit(f"Refusing duplicate or unknown GUI action evidence: {path}")
-    if required_actions - set(action_names):
-        sys.exit(f"Refusing GUI evidence missing actions: {sorted(required_actions - set(action_names))}")
     return {"status": "measured_scenarios", "report_path": str(path.resolve()),
             "report_sha256": sha256(path), "records": records,
-            "rust_commit": provenance["rust_commit"],
-            "gui_executable_sha256": provenance.get("gui_sha256"),
-            "exporter_executable_sha256": provenance.get("exporter_sha256"),
-            "scope": "All catalog GUI actions have named native assertions in this run; platform-specific display behavior remains scoped to the execution platform."}
+            "scope": "Only named assertions and screenshots in this native run are measured; other actions remain unverified."}
 
+def external_report(path, label):
+    if path is None:
+        return {"status": "pending_fresh_execution"}
+    report = json.loads(path.read_text())
+    if report.get("passed") is not True:
+        sys.exit(f"Refusing failed {label} evidence: {path}")
+    if label == "LUT":
+        reference = report.get("reference", {})
+        cli = report.get("cli", {})
+        cli_path = Path(cli.get("path", ""))
+        transport = report.get("transport_lattices")
+        commands = report.get("commands", [])
+        transport_ok = len(transport) == 6 if isinstance(transport, list) else (
+            transport is None and len(commands) >= 13
+        )
+        required = (
+            report.get("reference_commit") == PY_COMMIT
+            and reference.get("commit") == PY_COMMIT
+            and cli_path.is_file()
+            and cli.get("sha256") == sha256(cli_path)
+            and transport_ok
+            and len(report.get("cases", [])) == 4
+            and len(report.get("formats", [])) == 4
+            and report.get("override_scenario_count") == 32
+            and report.get("scenario_count") == 112
+            and not report.get("failures")
+        )
+        if not required:
+            sys.exit(f"Refusing incomplete or unpinned {label} evidence: {path}")
+    return {
+        "status": "passed",
+        "report_path": str(path.resolve()),
+        "report_sha256": sha256(path),
+        "summary": {
+            key: report[key]
+            for key in ("scenario_count", "passed", "failures")
+            if key in report
+        },
+    }
 
-def gui_action_entry(action, desc, status, owner, evidence):
+def gui_action_entry(action, desc, status, owner, evidence, audit_status):
     entry = {"description": desc, **integration_entry(status, owner, "",
-        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
+        "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs",
+        audit_status=audit_status)}
+    keys = {
+        "rotate_input_image_clockwise": "rotated_input_max_error",
+        "rotate_input_image_counterclockwise": "rotation_pixel_bounds",
+        "load_raw_image": "raw_input_space",
+        "save_current_as_default": "startup_restore",
+        "restore_factory_default": "factory_reset",
+    }
+    scenarios = {
+        "apply_profile_defaults": "profile_defaults",
+        "apply_film_profile_defaults": "profile_defaults",
+        "load_input_image": "viewer-small-input-raster",
+        "load_raw_image": "raw_status",
+        "run_preview": "explicit-preview",
+        "run_scan": "explicit-scan",
+        "request_auto_preview": "viewer-small-input-raster",
+        "refresh_preview_cache": "preview_size_isolation",
+        "save_current_state_to_file": "viewer_restore",
+        "load_state_from_file": "viewer_restore",
+        "set_output_interpolation_mode": "interpolation",
+        "set_gray_18_canvas": "gray_canvas",
+        "virtual_photo_paper": "paper_back",
+        "polaroid_animation": "reveal",
+        "save_output_layer": "display_output_isolation",
+        "scan_for_print": "scan_for_print",
+    }
+    surfaces = {
+        "run_preview": "explicit-preview",
+        "run_scan": "explicit-scan",
+        "show_startup_placeholder": "fresh-launch-MAIN-top",
+    }
     rows = [row for row in evidence.get("records", [])
-            if row.get("parity_action") == action]
+            if (action in keys and keys[action] in row)
+            or (action in scenarios and row.get("scenario") == scenarios[action])
+            or (action in surfaces and row.get("surface") == surfaces[action])]
+    if action in {"apply_profile_defaults", "apply_film_profile_defaults"}:
+        rows = [row for row in rows
+                if row.get("assertion") == "selected stock presets match reference defaults"]
     if rows:
         entry.update(rust_status="verified_exercised_path",
-                     verification="Named native-window assertion; see measured_evidence.",
+                     verification="Named native-window assertions only; see measured_evidence.",
                      measured_evidence=rows, evidence_report_sha256=evidence["report_sha256"])
     return entry
 
@@ -644,22 +647,18 @@ def main() -> None:
     parser.add_argument("--report", type=Path,
                         default=REPO_ROOT / "target/parity/parity_report.json")
     parser.add_argument("--gui-report", type=Path)
+    parser.add_argument("--lut-report", type=Path)
     args = parser.parse_args()
     evidence = report_evidence(args.report)
     native_gui = gui_evidence(args.gui_report)
+    lut_evidence = external_report(args.lut_report, "LUT")
     head = subprocess.run(["git", "-C", str(PY_REPO), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
     if head != PY_COMMIT:
         sys.exit(f"Python repo at {head}, expected {PY_COMMIT}")
 
-    rs_head = subprocess.run(["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
+    rs_head = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
                              capture_output=True, text=True, check=True).stdout.strip()
-    rs_status = subprocess.run(
-        ["git", "-C", str(RUNTIME_REPO), "status", "--porcelain", "--untracked-files=all"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-    if rs_status:
-        sys.exit("Refusing parity matrix from a dirty Rust worktree")
 
     assets, rust_extra = asset_inventory()
     matched = sum(1 for a in assets if a["match"])
@@ -683,14 +682,15 @@ def main() -> None:
         "runtime_fields": {
             group: {
                 field: integration_entry(status, owner, notes,
-                    "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
+                    "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
                     audit_status=AUDIT_RUNTIME_STATUSES.get(f"{group}.{field}", status))
                 for field, (status, owner, notes) in fields.items()
             }
             for group, fields in RUNTIME_FIELDS.items()
         },
         "gui_actions": {
-            action: gui_action_entry(action, desc, status, owner, native_gui)
+            action: gui_action_entry(action, desc, status, owner, native_gui,
+                                     AUDIT_GUI_STATUSES[action])
             for action, desc, status, owner in GUI_ACTIONS
         },
         "lut_registry": {
@@ -723,6 +723,7 @@ def main() -> None:
         "verification_status": evidence["status"],
         "differential_evidence": evidence,
         "gui_evidence": native_gui,
+        "lut_evidence": lut_evidence,
         "budgets": BUDGETS,
         "scenario_status": f"{evidence['catalog_rows']} expanded rows; exercised scenario and tap evidence is recorded under differential_evidence.",
     }

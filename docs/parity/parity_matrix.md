@@ -54,16 +54,23 @@ paper-as-film rejection checks. Preview evidence separates arithmetic
 digestion with glare disabled from stochastic 512² glare moments under
 the unchanged 1% mean / 5% standard-deviation budgets.
 
-The fresh report `target/parity-final-fix/parity_report.json` exercised all
-68 catalog rows: all 68 passed their unchanged budgets. Full per-tap metrics
-and the reference environment are embedded under `differential_evidence` in
-the machine-readable matrix. The six formerly failing expected-parity rows
-now pass: layered grain, seeded single-curve grain, deterministic preview
-digest, Velvia DIR presets, spatial DIR couplers and the full default chain.
+The current report `target/parity-current/parity_report.json` passes all 68
+expanded rows with no unsupported prerequisites. The measured f64 binary SHA256
+is recorded in `differential_evidence.environment.rust_bin_sha256`; full
+per-tap metrics and reference environment are embedded under
+`differential_evidence` in the machine-readable matrix. LUT artifact acceptance
+passes 112 QA/transport scenarios; its report and SHA256 are recorded under
+`lut_evidence`. Historical baseline failures remain metadata and never excuse
+current drift.
 
 ## Native GUI evidence
 
-The native driver exercises the five page tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present in a report whose Rust commit matches the current clean worktree; all other rows retain their unverified status.
+The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; implementation status, historical audit status, and platform coverage remain separate.
+
+The current release workflow deliberately runs the package gate without
+`--gui` on Linux, Windows and macOS. Those package results cover CLI/RAW/IO,
+LUT/OCIO/QA and provenance only; they do not change native GUI rows or the
+platform-specific GUI evidence below.
 
 - Latest non-GUI package workflow `37242896312` at Rust
   `79b98c9927b3b74e6183695890a5cdc3e979739c` passed Windows, macOS and Linux
