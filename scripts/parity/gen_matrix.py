@@ -21,14 +21,16 @@ from collections import Counter
 import hashlib
 import json
 import platform
+import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
-PY_REPO = Path("/home/szf/repos/spektrafilm")
+RUNTIME_REPO = Path(os.environ.get(
+    "SPEKTRAFILM_RUNTIME_REPO", str(REPO_ROOT)
+)).resolve()
 PY_COMMIT = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
 RS_COMMIT = "9dd59b0380194b93686aaa230a8bb9680aa270a4"
 EXPECTED_RUST_COMMIT = "a1910231fbd2c049c5177b539b6e7963c97f4e90"
@@ -426,7 +428,7 @@ BUDGETS = {
 def asset_inventory():
     """Hash-compare every bundled Python 0.3.4 data file against the Rust tree."""
     py_data = PY_REPO / "src" / "spektrafilm" / "data"
-    rs_data = REPO_ROOT / "data"
+    rs_data = RUNTIME_REPO / "data"
     assets = []
     for path in sorted(py_data.rglob("*")):
         if not path.is_file():
@@ -503,7 +505,7 @@ def report_evidence(path):
     if pins.get("python_commit") != PY_COMMIT or pins.get("python_version") != "0.3.4":
         sys.exit(f"Refusing report with incorrect Python pin: {path}")
     current_rust = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        ["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
         capture_output=True, text=True, check=True).stdout.strip()
     rust_commit = environment.get("rust_commit")
     if current_rust != EXPECTED_RUST_COMMIT or rust_commit != EXPECTED_RUST_COMMIT:
@@ -577,7 +579,7 @@ def gui_evidence(path):
     provenance = next((row for row in records if row.get("rust_commit")), None)
     if not provenance or provenance.get("rust_worktree_dirty") is not False:
         sys.exit(f"Refusing GUI evidence without a clean Rust provenance record: {path}")
-    current = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+    current = subprocess.run(["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
                              capture_output=True, text=True, check=True).stdout.strip()
     if current != EXPECTED_RUST_COMMIT or provenance["rust_commit"] != EXPECTED_RUST_COMMIT:
         sys.exit(
@@ -638,10 +640,10 @@ def main() -> None:
     if head != PY_COMMIT:
         sys.exit(f"Python repo at {head}, expected {PY_COMMIT}")
 
-    rs_head = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+    rs_head = subprocess.run(["git", "-C", str(RUNTIME_REPO), "rev-parse", "HEAD"],
                              capture_output=True, text=True, check=True).stdout.strip()
     rs_status = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "status", "--porcelain", "--untracked-files=all"],
+        ["git", "-C", str(RUNTIME_REPO), "status", "--porcelain", "--untracked-files=all"],
         capture_output=True, text=True, check=True,
     ).stdout
     if rs_status:

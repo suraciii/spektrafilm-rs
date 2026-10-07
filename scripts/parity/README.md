@@ -58,6 +58,11 @@ cargo build -p spektrafilm-cli --features precision-f64 \
 Override locations with `SPEKTRAFILM_PY`, `SPEKTRAFILM_PY_REPO` and
 `SPEKTRAFILM_RS_BIN` if they differ from the defaults.
 
+For CI or another checkout, `SPEKTRAFILM_RUNTIME_REPO` points the provenance
+and data/work-directory checks at a separate clean exact-a191 runtime
+worktree while the parity script itself remains the candidate checkout. This
+keeps PR merge refs testable without weakening the exact-commit gate.
+
 
 ### Fresh provenance gate
 
