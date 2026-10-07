@@ -21,6 +21,7 @@ from collections import Counter
 import hashlib
 import json
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,8 @@ REPO_ROOT = HERE.parent.parent
 PY_REPO = Path("/home/szf/repos/spektrafilm")
 PY_COMMIT = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
 RS_COMMIT = "9dd59b0380194b93686aaa230a8bb9680aa270a4"
+EXPECTED_RUST_COMMIT = "a1910231fbd2c049c5177b539b6e7963c97f4e90"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 S = "supported"
 UNREAD = "accepted_but_unread"
@@ -499,7 +502,30 @@ def report_evidence(path):
     reference = environment.get("reference_environment", {})
     if pins.get("python_commit") != PY_COMMIT or pins.get("python_version") != "0.3.4":
         sys.exit(f"Refusing report with incorrect Python pin: {path}")
-    if (report.get("unsupported") or not environment.get("rust_bin")
+    current_rust = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    rust_commit = environment.get("rust_commit")
+    if current_rust != EXPECTED_RUST_COMMIT or rust_commit != EXPECTED_RUST_COMMIT:
+        sys.exit(
+            f"Refusing stale Rust provenance: report={rust_commit}, "
+            f"checkout={current_rust}, expected={EXPECTED_RUST_COMMIT}"
+        )
+    if environment.get("rust_worktree_dirty") is not False:
+        sys.exit(f"Refusing report without a clean Rust worktree provenance: {path}")
+    rust_hash = environment.get("rust_bin_sha256")
+    rust_bin_value = environment.get("rust_bin")
+    if not isinstance(rust_hash, str) or not SHA256_RE.fullmatch(rust_hash):
+        sys.exit(f"Refusing report without a complete Rust executable SHA256: {path}")
+    if not isinstance(rust_bin_value, str) or not rust_bin_value:
+        sys.exit(f"Refusing report without a Rust executable path: {path}")
+    rust_bin = Path(rust_bin_value)
+    if rust_bin.exists():
+        if not rust_bin.is_file() or not rust_bin.stat().st_mode & 0o111:
+            sys.exit(f"Refusing report with a non-executable Rust binary: {rust_bin}")
+        if sha256(rust_bin) != rust_hash:
+            sys.exit(f"Refusing stale Rust binary hash: {rust_bin}")
+    if (report.get("unsupported")
             or not reference.get("dependencies") or not reference.get("numpy_blas")
             or not reference.get("python_version") or not reference.get("architecture")):
         sys.exit(f"Refusing report without complete runnable environment provenance: {path}")
@@ -553,8 +579,23 @@ def gui_evidence(path):
         sys.exit(f"Refusing GUI evidence without a clean Rust provenance record: {path}")
     current = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
                              capture_output=True, text=True, check=True).stdout.strip()
-    if provenance["rust_commit"] != current:
-        sys.exit(f"GUI evidence Rust commit {provenance['rust_commit']} != current {current}")
+    if current != EXPECTED_RUST_COMMIT or provenance["rust_commit"] != EXPECTED_RUST_COMMIT:
+        sys.exit(
+            f"GUI evidence Rust commit {provenance['rust_commit']} != expected "
+            f"{EXPECTED_RUST_COMMIT} (checkout {current})"
+        )
+    for path_key, hash_key in (("gui_executable", "gui_sha256"),
+                               ("exporter_executable", "exporter_sha256")):
+        executable_hash = provenance.get(hash_key)
+        executable_value = provenance.get(path_key)
+        if (not isinstance(executable_hash, str)
+                or not SHA256_RE.fullmatch(executable_hash)
+                or not isinstance(executable_value, str)
+                or not executable_value):
+            sys.exit(f"Refusing GUI evidence without complete {hash_key}: {path}")
+        executable = Path(executable_value)
+        if executable.exists() and sha256(executable) != executable_hash:
+            sys.exit(f"Refusing stale GUI executable hash: {executable}")
     required_actions = {action for action, _, _, _ in GUI_ACTIONS}
     action_rows = [row for row in records if row.get("parity_action")]
     action_names = [row["parity_action"] for row in action_rows]
