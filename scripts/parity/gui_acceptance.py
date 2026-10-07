@@ -25,6 +25,12 @@ import OpenImageIO as oiio
 def require(value, message):
     if not value:
         raise RuntimeError(message)
+def render_count(text):
+    matches = re.findall(r'Rendered\s+(\d+)', text, re.I)
+    require(matches, f'Native GUI did not report a render count: {text}')
+    return int(matches[-1])
+
+
 
 
 def wait_for(predicate, description, timeout=90):
@@ -463,9 +469,18 @@ class X11:
         self.click(control)
         self.dialog(path, save)
 
-    def rendered(self, label):
+    def rendered(self, label, previous_count=None):
         self.scroll(True)
-        self.wait_text(r'Rendered\s+\d+', label)
+        def ready():
+            image, _, lines = self.read()
+            text = '\n'.join(' '.join(w[0] for w in line) for line in lines)
+            require(not re.search(r'(?:Render|Load|Save|Export|Startup state|Preview state)\s*(?:error|failed)', text, re.I),
+                    f'GUI failure on {label}: {text}')
+            if re.search(r'Rendered\s+\d+', text, re.I):
+                if previous_count is None or render_count(text) != previous_count:
+                    self.snap(label, image, lines)
+                    return text
+        return wait_for(ready, label, 120)
 
     def watch_export(self):
         self.observed_child = threading.Event()
@@ -972,7 +987,15 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         native_exporter = exporter.parent.parent / 'lib' / 'spektrafilm' / 'spektrafilm-f64'
         require(native_exporter.is_file(), f'Installed launcher lacks native exporter: {native_exporter}')
     driver.exporter_hash = hashlib.sha256(native_exporter.read_bytes()).hexdigest()
-    driver.records.append({'gui_executable': str(gui.resolve()),
+    rust_repo = Path(__file__).resolve().parents[2]
+    rust_commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=rust_repo,
+                                 capture_output=True, text=True, check=True).stdout.strip()
+    rust_worktree_dirty = bool(subprocess.run(
+        ['git', 'status', '--porcelain', '--untracked-files=all'], cwd=rust_repo,
+        capture_output=True, text=True, check=True).stdout.strip())
+    driver.records.append({'rust_commit': rust_commit,
+                           'rust_worktree_dirty': rust_worktree_dirty,
+                           'gui_executable': str(gui.resolve()),
                            'gui_sha256': hashlib.sha256(gui.read_bytes()).hexdigest(),
                            'exporter_executable': str(native_exporter.resolve()),
                            'exporter_sha256': driver.exporter_hash,
@@ -980,6 +1003,14 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
     try:
         driver.start(gui, env)
         driver.observe_tabs('fresh-launch')
+        startup_image, _, startup_lines = driver.read()
+        startup_text = '\n'.join(' '.join(word[0] for word in line) for line in startup_lines)
+        require(re.search(r'Load\s+an\s+image\s+to\s+start', startup_text, re.I),
+                'Fresh GUI did not show the startup placeholder status')
+        driver.snap('startup-placeholder', startup_image, startup_lines)
+        driver.records.append({'parity_action': 'show_startup_placeholder',
+                               'assertion': 'fresh native window shows the load-image placeholder',
+                               'screenshot': driver.records[-1]['screenshot']})
         baseline = root / 'baseline.json'
         driver.file_action('Save state', baseline, True)
         wait_for(baseline.is_file, 'saved baseline state', 20)
@@ -988,7 +1019,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         state['halation']['active'] = False
         state['glare']['active'] = False
         state['input_image']['input_color_space'] = 'sRGB'
-        state['display']['preview_max_size'] = 256
+        state['display']['preview_max_size'] = 64
         state['camera']['auto_exposure'] = False
         configured = root / 'configured.json'
         configured.write_text(json.dumps(state))
@@ -1012,6 +1043,13 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         metadata.xmpData()['Xmp.dc.description'] = 'GUI rotation description'
         metadata.writeMetadata()
         driver.file_action('Open', standard)
+        driver.click('Input', False)
+        loaded_bounds = driver.measure_viewer('loaded-input-image')
+        driver.records.append({'parity_action': 'load_input_image',
+                               'assertion': 'opened raster produces non-empty native Input viewer pixels',
+                               'source_dimensions': [192, 96],
+                               'pixel_viewer_bounds': loaded_bounds,
+                               'screenshot': driver.records[-1]['screenshot']})
         scan_before = root / 'scan-for-print-before.json'
         driver.file_action('Save state', scan_before, True)
         wait_for(scan_before.is_file, 'scan-for-print baseline state', 20)
@@ -1040,7 +1078,8 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                          'glare': restored_state.get('glare', {})}
         require(restored_scan == baseline_scan,
                 'Scan-for-print did not restore exact pre-toggle settings')
-        driver.records.append({'scenario': 'scan_for_print',
+        driver.records.append({'parity_action': 'scan_for_print',
+                               'scenario': 'scan_for_print',
                                'assertion': 'forced settings and exact restoration',
                                'baseline': baseline_scan, 'forced': enabled_scan,
                                'restored': restored_scan})
@@ -1058,10 +1097,34 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                 'Loaded state retained the transient scan-for-print snapshot')
         driver.file_action('Load state', scan_before)
         driver.rendered('scan-for-print-baseline-restored')
+        _, _, lines = driver.read()
+        before_preview = render_count('\n'.join(' '.join(w[0] for w in line) for line in lines))
         driver.click('Preview')
-        driver.rendered('explicit-preview')
+        preview_status = driver.rendered('explicit-preview', before_preview)
+        driver.records.append({'parity_action': 'run_preview',
+                               'assertion': 'Preview click increments the native render counter',
+                               'status': preview_status,
+                               'render_count_before': before_preview,
+                               'render_count_after': render_count(preview_status)})
+        _, _, lines = driver.read()
+        before_scan = render_count('\n'.join(' '.join(w[0] for w in line) for line in lines))
         driver.click('Scan')
-        driver.rendered('explicit-scan')
+        scan_status = driver.rendered('explicit-scan', before_scan)
+        scan_output = root / 'scan-output.exr'
+        driver.file_action('Save', scan_output, True)
+        wait_for(scan_output.is_file, 'full-resolution scan output', 30)
+        scan_reader = oiio.ImageInput.open(str(scan_output))
+        require(scan_reader, f'Cannot decode Scan output: {scan_output}')
+        scan_spec = scan_reader.spec()
+        scan_reader.close()
+        require((scan_spec.width, scan_spec.height) == (192, 96),
+                f'Scan output dimensions differ from source: {(scan_spec.width, scan_spec.height)}')
+        driver.records.append({'parity_action': 'run_scan',
+                               'assertion': 'Scan click increments render counter and saves source dimensions',
+                               'status': scan_status,
+                               'render_count_before': before_scan,
+                               'render_count_after': render_count(scan_status),
+                               'output_dimensions': [scan_spec.width, scan_spec.height]})
         driver.tab('CONFIG')
         driver.scroll(True)
         driver.click('Restore factory default')
@@ -1069,6 +1132,15 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.file_action('Save state', factory_state, True)
         wait_for(factory_state.is_file, 'factory state saved', 20)
         factory = json.loads(factory_state.read_text())
+        canonical_factory_path = Path(__file__).resolve().parents[2] / 'crates/spektrafilm-gui/src/factory_state.json'
+        canonical_factory = json.loads(canonical_factory_path.read_text())
+        configured_state = json.loads(configured.read_text())
+        require(any(factory.get(section) != configured_state.get(section)
+                    for section in canonical_factory),
+                'Factory reset did not change the configured non-default state')
+        for section, expected in canonical_factory.items():
+            require(factory.get(section) == expected,
+                    f'Factory reset changed canonical section {section}')
         driver.scroll(True)
         driver.click('Save startup default')
         driver.close()
@@ -1077,11 +1149,14 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.file_action('Save state', restarted_factory, True)
         wait_for(restarted_factory.is_file, 'factory state after restart', 20)
         restarted = json.loads(restarted_factory.read_text())
-        for section in ('camera', 'simulation', 'input_image', 'grain', 'halation'):
-            require(restarted[section] == factory[section],
-                    f'Factory reset restart changed {section}')
-        driver.records.append({'factory_reset': True, 'factory_restart_preserved_sections':
-                               ['camera', 'simulation', 'input_image', 'grain', 'halation']})
+        for section, expected in canonical_factory.items():
+            require(restarted.get(section) == expected,
+                    f'Factory reset restart changed canonical section {section}')
+        driver.records.append({'parity_action': 'restore_factory_default',
+                               'factory_reset': True,
+                               'assertion': 'reset matches canonical factory state and survives restart',
+                               'canonical_sections': sorted(canonical_factory),
+                               'factory_restart_preserved_sections': sorted(canonical_factory)})
         driver.file_action('Load state', configured)
         driver.rendered('configured-after-factory-reset')
         driver.click('100%', False)
@@ -1107,7 +1182,9 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                 'Rotated f64 export has incorrect dimensions')
         rotation_error = float(np.max(np.abs(driver.staged_export_input - np.rot90(pixels, -1))))
         require(rotation_error == 0, f'Rotated export input differs from NumPy: {rotation_error}')
-        driver.records.append({'rotated_export_shape': [192, 96, 3],
+        driver.records.append({'parity_action': 'rotate_input_image_clockwise',
+                               'assertion': 'clockwise export stages an exact quarter-turned input',
+                               'rotated_export_shape': [192, 96, 3],
                                'rotated_input_max_error': rotation_error})
         metadata = exiv2.ImageFactory.open(str(rotated_export))
         metadata.readMetadata()
@@ -1128,7 +1205,9 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                 f'Clockwise rotation did not produce portrait pixels: {cw_bounds}')
         require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
                 f'Counterclockwise rotation did not restore landscape pixels: {ccw_bounds}')
-        driver.records.append({'zoom_pixel_widths': widths,
+        driver.records.append({'parity_action': 'rotate_input_image_counterclockwise',
+                               'assertion': 'counterclockwise rotation restores landscape viewer bounds',
+                               'zoom_pixel_widths': widths,
                                'rotation_pixel_bounds': {'cw': cw_bounds, 'ccw': ccw_bounds}})
         from gui_viewer_acceptance import accept_viewer
         driver.records.extend(accept_viewer(driver, root, state, pixels, exporter))
@@ -1151,11 +1230,29 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.records.append({'viewer_roi': list(roi), 'input_raster': 'input-viewer-raster.png',
                                'output_raster': 'output-viewer-raster.png', 'mean_abs_pixel_change': difference,
                                'output_pixel_std': float(output_pixels.std())})
+        driver.tab('CONFIG')
+        driver.scroll(False)
+        display_image, _, display_lines = driver.read()
+        display_text = '\n'.join(' '.join(word[0] for word in line) for line in display_lines)
+        require(re.search(r'Display\s+transform:', display_text, re.I),
+                'Native GUI did not report display transform status')
+        driver.snap('display-transform-status', display_image, display_lines)
+        driver.records.append({'parity_action': 'report_display_transform_status',
+                               'assertion': 'CONFIG reports the active display transform status',
+                               'screenshot': driver.records[-1]['screenshot'],
+                               'status': display_text})
+        driver.tab('MAIN')
         display_before = {key: state['display'].get(key) for key in
                           ('use_display_transform', 'gray_18_canvas', 'white_padding', 'output_interpolation')}
-        driver.tab('MAIN')
+        _, _, lines = driver.read()
+        before_auto_preview = render_count('\n'.join(' '.join(w[0] for w in line) for line in lines))
         driver.click('Auto exposure')
-        driver.rendered('changed-auto-exposure-preview')
+        auto_preview_status = driver.rendered('changed-auto-exposure-preview', before_auto_preview)
+        driver.records.append({'parity_action': 'request_auto_preview',
+                               'assertion': 'runtime editor change increments the native render counter',
+                               'status': auto_preview_status,
+                               'render_count_before': before_auto_preview,
+                               'render_count_after': render_count(auto_preview_status)})
         display_probe = root / 'display-after-exposure.json'
         driver.file_action('Save state', display_probe, True)
         wait_for(display_probe.is_file, 'display probe state', 20)
@@ -1173,10 +1270,29 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         saved = json.loads(saved_state.read_text())
         require(saved['camera']['auto_exposure'] is True, 'Control change absent from saved state')
         require(saved['rust']['save_bit_depth'] == 32, 'Float depth selection absent from state')
+        driver.records.append({'parity_action': 'save_current_state_to_file',
+                               'assertion': 'Save state writes the changed control values to JSON',
+                               'state': saved_state.name,
+                               'auto_exposure': saved['camera']['auto_exposure'],
+                               'save_bit_depth': saved['rust']['save_bit_depth']})
         driver.file_action('Load state', configured)
         driver.rendered('reloaded-original-state')
         driver.file_action('Load state', saved_state)
-        driver.rendered('loaded-changed-state')
+        loaded_state_status = driver.rendered('loaded-changed-state')
+        loaded_probe = root / 'loaded-state-observed.json'
+        driver.file_action('Save state', loaded_probe, True)
+        wait_for(loaded_probe.is_file, 'observed loaded state', 20)
+        loaded = json.loads(loaded_probe.read_text())
+        require(loaded['camera']['auto_exposure'] == saved['camera']['auto_exposure'],
+                'Load state did not restore auto exposure')
+        require(loaded['rust']['save_bit_depth'] == saved['rust']['save_bit_depth'],
+                'Load state did not restore save depth')
+        driver.records.append({'parity_action': 'load_state_from_file',
+                               'assertion': 'Load state restores observed control values and renders',
+                               'status': loaded_state_status,
+                               'auto_exposure': loaded['camera']['auto_exposure'],
+                               'save_bit_depth': loaded['rust']['save_bit_depth'],
+                               'observed_state': loaded_probe.name})
         driver.tab('CONFIG')
         driver.click('Save startup default')
         startup = root / 'config' / 'gui_default_state.json'
@@ -1188,9 +1304,11 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.file_action('Save state', restored_path, True)
         wait_for(restored_path.is_file, 'restart state saved', 20)
         restored = json.loads(restored_path.read_text())
-        for section in ('camera', 'simulation', 'input_image', 'grain', 'halation'):
-            require(restored[section] == saved[section], f'Restart changed {section}')
-        require(restored['rust']['save_bit_depth'] == 32, 'Restart lost save depth')
+        require(restored == saved, 'Startup default did not restore the complete saved state')
+        driver.records.append({'parity_action': 'save_current_as_default',
+                               'assertion': 'startup default restores the complete saved state after restart',
+                               'persisted_state_keys': sorted(saved),
+                               'save_bit_depth': restored['rust']['save_bit_depth']})
         float_path = root / 'preview.exr'
         driver.file_action('Save', float_path, True)
         wait_for(float_path.is_file, 'real float image save', 30)
@@ -1214,12 +1332,14 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.scroll(False)
         driver.wait_text(r'Lens correction (?:not applied|applied)',
                          'raw-lens-correction-status', timeout=20)
-        driver.records.append({'scenario': 'raw_status',
-                               'assertion': 'native window reports lens correction result'})
         driver.file_action('Save state', root / 'raw-state.json', True)
         wait_for((root / 'raw-state.json').is_file, 'RAW state', 20)
         raw_state = json.loads((root / 'raw-state.json').read_text())
         require(raw_state['input_image']['input_color_space'] == 'ACES2065-1', 'RAW load did not configure ACES input')
+        driver.records.append({'parity_action': 'load_raw_image',
+                               'scenario': 'raw_status',
+                               'assertion': 'RAW load configures ACES2065-1 and reports lens correction result',
+                               'raw_input_space': raw_state['input_image']['input_color_space']})
         # A real large image keeps the spectral child in flight long enough to
         # exercise Cancel and window close. No fake exporter or timing hook.
         large = root / 'large.tif'

@@ -253,7 +253,7 @@ GUI_ACTIONS = [
     ("run_preview", "preview render through resize_for_preview (skimage order=1 anti-aliased)", DIVERGENT, 16),
     ("run_scan", "full-resolution simulation", ABSENT, 12),
     ("scan_for_print", "force scanner corrections/glare and restore transient snapshot", ABSENT, 12),
-    ("request_auto_preview", "auto-preview wiring for every editor", DIVERGENT, 11),
+    ("request_auto_preview", "auto-preview request from a runtime editor", DIVERGENT, 11),
     ("report_display_transform_status", "napari display transform toggle", ABSENT, 12),
     ("set_gray_18_canvas", "18% gray canvas background", ABSENT, 12),
     ("set_output_interpolation_mode", "output layer interpolation mode", ABSENT, 12),
@@ -548,32 +548,36 @@ def gui_evidence(path):
     observed = {row.get("scenario") for row in records}
     if required - observed:
         sys.exit(f"Refusing GUI evidence missing viewer scenarios: {sorted(required - observed)}")
+    provenance = next((row for row in records if row.get("rust_commit")), None)
+    if not provenance or provenance.get("rust_worktree_dirty") is not False:
+        sys.exit(f"Refusing GUI evidence without a clean Rust provenance record: {path}")
+    current = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    if provenance["rust_commit"] != current:
+        sys.exit(f"GUI evidence Rust commit {provenance['rust_commit']} != current {current}")
+    required_actions = {action for action, _, _, _ in GUI_ACTIONS}
+    action_rows = [row for row in records if row.get("parity_action")]
+    action_names = [row["parity_action"] for row in action_rows]
+    if len(action_names) != len(set(action_names)) or set(action_names) - required_actions:
+        sys.exit(f"Refusing duplicate or unknown GUI action evidence: {path}")
+    if required_actions - set(action_names):
+        sys.exit(f"Refusing GUI evidence missing actions: {sorted(required_actions - set(action_names))}")
     return {"status": "measured_scenarios", "report_path": str(path.resolve()),
             "report_sha256": sha256(path), "records": records,
-            "scope": "Only named assertions and screenshots in this native run are measured; other actions remain unverified."}
+            "rust_commit": provenance["rust_commit"],
+            "gui_executable_sha256": provenance.get("gui_sha256"),
+            "exporter_executable_sha256": provenance.get("exporter_sha256"),
+            "scope": "All catalog GUI actions have named native assertions in this run; platform-specific display behavior remains scoped to the execution platform."}
+
 
 def gui_action_entry(action, desc, status, owner, evidence):
     entry = {"description": desc, **integration_entry(status, owner, "",
         "crates/spektrafilm-gui/src/main.rs; state.rs; controls.rs; display.rs")}
-    keys = {
-        "rotate_input_image_clockwise": "rotated_input_max_error",
-        "rotate_input_image_counterclockwise": "rotation_pixel_bounds",
-        "load_raw_image": "raw_input_space",
-        "save_current_as_default": "startup_restore",
-        "restore_factory_default": "factory_reset",
-    }
-    scenarios = {
-        "set_output_interpolation_mode": "interpolation", "set_gray_18_canvas": "gray_canvas",
-        "virtual_photo_paper": "paper_back", "polaroid_animation": "reveal",
-        "save_output_layer": "display_output_isolation",
-        "scan_for_print": "scan_for_print", "load_raw_image": "raw_status",
-    }
     rows = [row for row in evidence.get("records", [])
-            if (action in keys and keys[action] in row)
-            or (action in scenarios and row.get("scenario") == scenarios[action])]
+            if row.get("parity_action") == action]
     if rows:
         entry.update(rust_status="verified_exercised_path",
-                     verification="Named native-window assertions only; see measured_evidence.",
+                     verification="Named native-window assertion; see measured_evidence.",
                      measured_evidence=rows, evidence_report_sha256=evidence["report_sha256"])
     return entry
 

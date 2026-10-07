@@ -63,12 +63,7 @@ digest, Velvia DIR presets, spatial DIR couplers and the full default chain.
 
 ## Native GUI evidence
 
-The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present; all other rows retain their unverified status.
-
-The current release workflow deliberately runs the package gate without
-`--gui` on Linux, Windows and macOS. Those package results cover CLI/RAW/IO,
-LUT/OCIO/QA and provenance only; they do not change native GUI rows or the
-platform-specific GUI evidence below.
+The native driver exercises the five sidebar tabs, persistent Preview/Scan controls, quarter-turn pipeline input, exact pixel zoom, state/restart restoration, RAW loading and export cancellation. Viewer scenarios additionally record Paper back, interpolation, canvas/border changes, animation frames, float inspection, profile selection, non-sRGB state and decoded Save/Export isolation. Generate the matrix with `--gui-report` only after the complete native run succeeds. GUI action rows become `verified_exercised_path` only when their named assertions are present in a report whose Rust commit matches the current clean worktree; all other rows retain their unverified status.
 
 - Latest non-GUI package workflow `37242896312` at Rust
   `79b98c9927b3b74e6183695890a5cdc3e979739c` passed Windows, macOS and Linux

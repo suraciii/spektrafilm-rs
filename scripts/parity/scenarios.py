@@ -289,6 +289,18 @@ def build_scenarios():
             PRINT_TAPS, "arithmetic", "expected_parity", None,
         ))
     sc.append(_scn(
+        "output_colorspace_display_p3_encoded",
+        "io.output_color_space='Display P3' with output CCTF encoding enabled.",
+        "kodak_portra_400", "kodak_portra_endura", "gradient4x4",
+        _bare_with({
+            "io.output_color_space": "Display P3",
+            "io.output_cctf_encoding": True,
+        }),
+        ["rgb_out"], "arithmetic", "expected_parity", None,
+        "Encoded non-sRGB output is retained by the pipeline; the GUI "
+        "viewer converts a separate copy to encoded sRGB.",
+    ))
+    sc.append(_scn(
         "output_encoding_srgb",
         "io.output_cctf_encoding=True — sRGB transfer applied at the scan "
         "stage.",
@@ -339,6 +351,22 @@ def build_scenarios():
         "io.crop/crop_center/crop_size are never read by the Rust core; "
         "output geometry itself differs (Python emits 16x16, Rust 32x32) — "
         "the harness reports a shape mismatch as the evidence.",
+    ))
+    sc.append(_scn(
+        "crop_auto_exposure",
+        "io.crop=True with center-weighted auto-exposure; Python crops "
+        "before metering while Rust must preserve the reference order.",
+        "kodak_portra_400", "kodak_portra_endura", "gradient32x32",
+        _bare_with({
+            "camera.auto_exposure": True,
+            "io.crop": True,
+            "io.crop_center": [0.5, 0.5],
+            "io.crop_size": [0.5, 0.5],
+        }),
+        ["rgb_out"], "arithmetic", "known_gap", 7,
+        "This locks crop geometry and crop/auto-exposure ordering into the "
+        "color regression matrix; the current Rust core still reports the "
+        "known crop gap.",
     ))
     sc.append(_scn(
         "uv_ir_filters",
