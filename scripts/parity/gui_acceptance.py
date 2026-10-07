@@ -951,7 +951,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         (root / name).mkdir()
     env = dict(environment)
     for key in ('SPEKTRAFILM_F64_CLI', 'SPEKTRAFILM_GUI_STATE', 'SPEKTRAFILM_DATA_DIR',
-                'SPEKTRAFILM_PY', 'SPEKTRAFILM_PY_REPO', 'DBUS_SESSION_BUS_ADDRESS'):
+                'SPEKTRAFILM_PY', 'SPEKTRAFILM_PY_REPO'):
         env.pop(key, None)
     env.update(SPEKTRAFILM_CONFIG_DIR=str(root / 'config'), XDG_CACHE_HOME=str(root / 'cache'),
                XDG_CONFIG_HOME=str(root / 'config'), HOME=str(root / 'home'),
