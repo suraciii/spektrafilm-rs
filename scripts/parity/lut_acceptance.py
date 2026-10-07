@@ -457,7 +457,7 @@ def run(args, report):
                           input_color_space="sRGB", output_color_space="sRGB",
                           topology="1lut", resolution=17, name=name,
                           input_gamut_compress=InputGamutCompressSpec(active=active, algorithm=algorithm),
-                          exposure_ev=(meta["input_exposure"] or {}).get("exposure_ev", 0.0))
+                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
         expected = BundleBuilder(spec).build()
         luts = [(m["path"], get_format("cube").read(folder / m["path"])) for m in meta["luts"]]
         require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts],
