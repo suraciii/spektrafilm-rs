@@ -1,0 +1,47 @@
+{
+  "schema": "spektrafilm-raw-wb-audit/1",
+  "issue": "https://github.com/suraciii/spektrafilm-rs/issues/26",
+  "reference_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+  "rust_commit": "a1910231fbd2c049c5177b539b6e7963c97f4e90",
+  "libraw": "0.22.0",
+  "comparison": {
+    "lens_correction": false,
+    "max_abs_budget": 1e-5,
+    "mean_abs_budget": 1e-6,
+    "modes": ["as_shot", "daylight", "tungsten", "custom_5000K_tint_1.05"]
+  },
+  "fixtures": [
+    {
+      "name": "RAW_KODAK_DC50_é.KDC",
+      "source_url": "https://raw.githubusercontent.com/letmaik/rawpy/main/test/RAW_KODAK_DC50_%C3%A9.KDC",
+      "sha256": "37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc",
+      "bytes": 92675,
+      "decoded_shape": [512, 768, 3],
+      "observed": {
+        "as_shot": {"max_abs": 0.4555886387825012, "mean_abs": 0.23690000690684304, "pass": false},
+        "daylight": {"max_abs": 0.4555886387825012, "mean_abs": 0.23690000690684304, "pass": false},
+        "tungsten": {"max_abs": 2.1190247535705566, "mean_abs": 0.1687205805524161, "pass": false},
+        "custom_5000K_tint_1.05": {"max_abs": 0.4651198983192444, "mean_abs": 0.22664153346096594, "pass": false}
+      }
+    },
+    {
+      "name": "RAW_CANON_40D_SRAW_V103.CR2",
+      "source_url": "https://raw.githubusercontent.com/letmaik/rawpy/main/test/RAW_CANON_40D_SRAW_V103.CR2",
+      "sha256": "152382ce4dbf644899d12b41b4c577f07638aa3ec5745ac344c36bad93826125",
+      "bytes": 6800865,
+      "decoded_shape": [1296, 1944, 3],
+      "camera_white_balance": [2341, 1024, 1570, 1024],
+      "observed": {
+        "as_shot": {"max_abs": 0.6067444980144501, "mean_abs": 0.19472718829304933, "pass": false},
+        "daylight": {"max_abs": 0.6062104254961014, "mean_abs": 0.19054078234874677, "pass": false},
+        "tungsten": {"max_abs": 1.9152237176895142, "mean_abs": 0.1828917804181855, "pass": false},
+        "custom_5000K_tint_1.05": {"max_abs": 0.5903509855270386, "mean_abs": 0.18446736753029716, "pass": false}
+      }
+    }
+  ],
+  "notes": [
+    "Binaries are not redistributed; download and verify the pinned public fixtures before running.",
+    "These rows intentionally record the current mismatch and must not be converted into a passing assertion without a native WB fix.",
+    "Lens bridge parity is audited separately with known and absent metadata cases."
+  ]
+}
