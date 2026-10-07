@@ -225,7 +225,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
     from gui_acceptance import read_image
     _require(read_image(full_export).shape[:2] == np.asarray(pixels).shape[:2],
              "Input preview raster size reduced full-resolution Export")
-    records.append({"scenario": "preview_size_isolation", "input_pixel_change": preview_delta,
+    records.append({"parity_action": "refresh_preview_cache",
+                    "scenario": "preview_size_isolation", "input_pixel_change": preview_delta,
                     "assertion": "Input preview refreshes; Export retains source dimensions"})
     _load_state(driver, _state_path(root, "viewer-reset-after-preview.json", state), "viewer-reset-after-preview")
     baseline = _state_path(root, "viewer-baseline.json", copy.deepcopy(state))
@@ -242,7 +243,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
     watermark_path = root / "viewer-paper-watermark-region.png"
     watermark_region.save(watermark_path)
     watermark = np.asarray(watermark_region, dtype=np.float32)
-    records.append({"scenario": "paper_back", "action": "select Paper back",
+    records.append({"parity_action": "virtual_photo_paper",
+                    "scenario": "paper_back", "action": "select Paper back",
                     "assertion": "real-window paper raster and watermark region are visible",
                     "paper_view_std": float(paper.std()),
                     "paper_view_screenshot": records[-1]["screenshot"],
@@ -262,7 +264,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
     nearest = np.asarray(_viewer_crop(nearest_image), dtype=np.float32)
     spline = np.asarray(_viewer_crop(spline_image), dtype=np.float32)
     interpolation_delta = float(np.mean(np.abs(nearest - spline)))
-    records.append({"scenario": "interpolation", "action": "select Output and switch nearest/spline36",
+    records.append({"parity_action": "set_output_interpolation_mode",
+                    "scenario": "interpolation", "action": "select Output and switch nearest/spline36",
                     "assertion": "viewer pixels differ between nearest and spline36",
                     "nearest_screenshot": records[-2]["screenshot"],
                     "spline36_screenshot": records[-1]["screenshot"],
@@ -291,7 +294,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
     gray_restored_image, _ = _record_snap(driver, records, "viewer-gray-canvas-restored")
     gray_restored = np.asarray(_viewer_crop(gray_restored_image), dtype=np.float32)
     gray_delta = float(np.mean(np.abs(gray - gray_restored)))
-    records.append({"scenario": "gray_canvas", "action": "toggle 18% gray canvas",
+    records.append({"parity_action": "set_gray_18_canvas",
+                    "scenario": "gray_canvas", "action": "toggle 18% gray canvas",
                     "assertion": "viewer pixels change and restore after toggle",
                     "mean_abs_pixel_change": gray_delta})
     _require(gray_delta > 0.1, "18% gray canvas did not alter the real viewer")
@@ -328,7 +332,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
     reveal_frames = _transition_frames(driver, records, "viewer-reveal", count=32, interval=0.05)
     driver.wait_text(r"Rendered\s+\d+", "viewer-reveal-rendered")
     reveal_delta = float(max(np.max(np.abs(reveal_frames[0] - frame)) for frame in reveal_frames[1:]))
-    records.append({"scenario": "reveal", "action": "preview with Paper back and Reveal",
+    records.append({"parity_action": "polaroid_animation",
+                    "scenario": "reveal", "action": "preview with Paper back and Reveal",
                     "assertion": "raw transition frames differ in the viewer region",
                     "frames": len(reveal_frames), "max_frame_delta": reveal_delta})
     _require(reveal_delta > 1.0, "Reveal did not produce observable transition frames")
@@ -391,13 +396,13 @@ def accept_viewer(driver, root, state, pixels, exporter):
              "Viewer-only changes altered Save/Export dimensions")
     save_error = float(np.max(np.abs(save_before - save_after)))
     export_error = float(np.max(np.abs(export_before - export_after)))
-    records.append({"scenario": "display_output_isolation",
+    records.append({"parity_action": "save_output_layer",
+                    "scenario": "display_output_isolation",
                     "action": "change viewer-only controls then Save and f64 Export",
                     "assertion": "decoded Save and Export pixels remain invariant",
-                    "save_before": before_save.name,
-                    "save_after": after_save.name, "export_before": before_export.name,
-                    "export_after": after_export.name, "save_max_abs_delta": save_error,
-                    "export_max_abs_delta": export_error})
+                    "save_before": before_save.name, "save_after": after_save.name,
+                    "export_before": before_export.name, "export_after": after_export.name,
+                    "save_max_abs_delta": save_error, "export_max_abs_delta": export_error})
     _require(save_error <= 1e-6 and export_error <= 1e-6,
              f"Viewer changed output pixels: save={save_error}, export={export_error}")
 
@@ -411,6 +416,11 @@ def accept_viewer(driver, root, state, pixels, exporter):
                                 if current_paper == "kodak_portra_endura"
                                 else ("kodak_portra_endura", "Kodak Professional Portra Endura"))
     driver.tab("MAIN")
+    profile_before_path = root / "viewer-profile-before-state.json"
+    profile_before_path.unlink(missing_ok=True)
+    driver.file_action("Save state", profile_before_path, True)
+    _wait_file(profile_before_path, "viewer profile baseline state")
+    profile_before = json.loads(profile_before_path.read_text())
     _select_profile(driver, "Film stock", film_label)
     _select_profile(driver, "Print paper", paper_label)
     driver.click("Preview")
@@ -423,10 +433,21 @@ def accept_viewer(driver, root, state, pixels, exporter):
     selected_simulation = selected_state["simulation"]
     _require(selected_simulation["film_stock"] == film_target, "Film profile selection was not persisted")
     _require(selected_simulation["print_paper"] == paper_target, "Paper profile selection was not persisted")
-    records.append({"scenario": "profile_selection", "action": "select Film stock and Print paper",
-                    "assertion": "selected profile names persist in saved GUI state",
+    before_grain = profile_before["rust"]["runtime"]["film_render"]["grain"]["rms_granularity"]
+    selected_grain = selected_state["rust"]["runtime"]["film_render"]["grain"]["rms_granularity"]
+    _require(before_grain != selected_grain,
+             "Film profile selection did not apply stock-specific grain defaults")
+    records.append({"parity_action": "apply_profile_defaults",
+                    "scenario": "profile_selection", "action": "select Film stock and Print paper",
+                    "assertion": "selected film and paper defaults persist in saved GUI state",
                     "film_stock": selected_simulation["film_stock"],
                     "print_paper": selected_simulation["print_paper"], "state": selected_path.name})
+    records.append({"parity_action": "apply_film_profile_defaults",
+                    "scenario": "profile_selection",
+                    "assertion": "film selection changes stock-specific grain defaults",
+                    "film_stock": selected_simulation["film_stock"],
+                    "grain_before": before_grain, "grain_after": selected_grain,
+                    "state": selected_path.name})
 
     non_srgb = copy.deepcopy(selected_state)
     non_srgb.setdefault("input_image", {})["input_color_space"] = "ProPhoto RGB"
