@@ -77,13 +77,16 @@ int sf_image_load(const char* path, unsigned* width, unsigned* height, double** 
     } catch (const std::exception& ex) { error(err, ex.what()); return 0; }
 }
 int sf_image_save(const char* path, unsigned width, unsigned height, const double* samples,
-                  int depth, int format, const unsigned char* icc, size_t icc_len, char** err) {
+                  int depth, int format, int jpeg_quality,
+                  const unsigned char* icc, size_t icc_len, char** err) {
     try {
         // format: JPEG=0, PNG=1, TIFF=2, EXR=3. Quantization truncates, like numpy astype.
         OIIO::TypeDesc type = OIIO::TypeDesc::UINT8;
         if (format == 2) type = depth == 8 ? OIIO::TypeDesc::UINT8 : depth == 16 ? OIIO::TypeDesc::UINT16 : OIIO::TypeDesc::FLOAT;
         if (format == 3) type = depth == 16 ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
         OIIO::ImageSpec spec(width, height, 3, type);
+        if (format == 0 && jpeg_quality > 0)
+            spec.attribute("jpeg:quality", jpeg_quality);
         if (format == 2) spec.attribute("Compression", "zip");
         if (icc && icc_len && format != 3)
             spec.attribute("ICCProfile", OIIO::TypeDesc(OIIO::TypeDesc::UINT8, int(icc_len)), icc);

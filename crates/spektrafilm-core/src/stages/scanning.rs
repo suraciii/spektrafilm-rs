@@ -340,7 +340,7 @@ pub fn scan_with_options(
             glare.percent,
             glare.roughness,
             glare.blur,
-            0,
+            params.random_seed,
         );
         spektrafilm_model::glare::add_glare_with_amount(&mut rgb, &glare_amount, glare_rgb_offset);
     }

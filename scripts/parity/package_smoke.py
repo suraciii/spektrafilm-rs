@@ -207,7 +207,7 @@ def main():
         str(exporter), 'lut', 'build', '--name', name, '--film', 'kodak_portra_400',
         '--print', 'kodak_portra_endura', '--input', 'sRGB', '--output', 'sRGB',
         '--topology', '3lut', '--resolution', '17', '--ocio-config', '--qa',
-        '--container', 'zip', '--out', str(bundle_root), '--data-dir', str(data)],
+        '--container', 'zip', str(bundle_root), '--data-dir', str(data)],
         cwd=evidence, env=environment, capture_output=True, text=True, timeout=600)
     (evidence / 'installed-lut.log').write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr

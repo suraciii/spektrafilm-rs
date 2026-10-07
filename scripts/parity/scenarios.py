@@ -362,11 +362,9 @@ def build_scenarios():
             "film_render.dir_couplers.active": False,
             "print_render.glare.active": False,
         }),
-        ["cmy_film"], "rng_stream", "known_gap", 6,
-        "Rust parses profile density_curves_layers but never uses them; "
-        "only the single-curve apply_grain_to_density path is ported. "
-        "blur_dye_clouds_um / micro_structure / particle_scale_layers are "
-        "likewise unread.",
+        ["cmy_film"], "rng_stream", "expected_parity", None,
+        "Rust uses the same layered interpolation, per-layer particle scales, "
+        "and seeded legacy np.random stream as the Python implementation.",
     ))
     sc.append(_scn(
         "grain_single_curve_seeded",

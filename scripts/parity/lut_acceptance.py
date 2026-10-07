@@ -334,7 +334,7 @@ def run(args, report):
         name = "transport_" + re.sub(r"[^a-z0-9]+", "_", input_name.lower()).strip("_")
         command([cli, "lut", "build", "--name", name, "--film", FILM, "--print", PRINTS[0],
                  "--input", input_name, "--output", output_name, "--resolution", "4",
-                 "--qa-print-index", "0", "--ocio-config", "--out", bundles, "--data-dir", data],
+                 "--qa-print-index", "0", "--ocio-config", bundles, "--data-dir", data],
                 root / f"{name}.log", report)
         folder = bundles / name
         meta = json.loads((folder / "bundle.json").read_text())
@@ -360,7 +360,7 @@ def run(args, report):
         argv = [cli, "lut", "build", "--name", name, "--film", FILM,
                 "--print", PRINTS[0], "--print", PRINTS[1], "--input", "sRGB", "--output", "sRGB",
                 "--topology", topology, "--resolution", "17", "--qa",
-                "--out", bundles, "--data-dir", data]
+                bundles, "--data-dir", data]
         if topology == "2lut":
             argv.extend(["--qa-print-index", "1"])
         if topology == "4lut":
@@ -371,7 +371,7 @@ def run(args, report):
         spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS, input_color_space="sRGB",
                           output_color_space="sRGB", topology=topology, resolution=17, name=name,
                           include_combinations=topology == "4lut",
-                          exposure_ev=(meta["input_exposure"] or {}).get("exposure_ev", 0.0))
+                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
         expected = BundleBuilder(spec).build()
         require(meta["topology"] == topology and meta["resolution"] == 17, "bundle topology/resolution drift")
         require(meta["stocks"] == {"film": FILM, "prints": list(PRINTS)}, "bundle stocks drift")
@@ -409,7 +409,7 @@ def run(args, report):
         command([cli, "lut", "build", "--name", ocio_name, "--film", FILM,
                  "--print", PRINTS[0], "--print", PRINTS[1], "--input", "Panasonic V-Log",
                  "--output", "sRGB", "--topology", topology, "--resolution", "17",
-                 "--ocio-config", "--combinations", "--out", bundles, "--data-dir", data],
+                 "--ocio-config", "--combinations", bundles, "--data-dir", data],
                 root / f"{ocio_name}.log", report)
         ocio_root = bundles / ocio_name
         ocio_meta = json.loads((ocio_root / "bundle.json").read_text())
@@ -417,7 +417,7 @@ def run(args, report):
                               input_color_space="Panasonic V-Log", output_color_space="sRGB",
                               topology=topology, resolution=17, name=ocio_name,
                               include_combinations=True,
-                              exposure_ev=(ocio_meta["input_exposure"] or {}).get("exposure_ev", 0.0))
+                              stops_above_midgray=(ocio_meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
         ocio_python = BundleBuilder(ocio_spec).build()
         require([tuple(m[k] for k in fields) for m in ocio_meta["luts"]]
                 == [tuple(getattr(m, k) for k in fields) for m in ocio_python.meta.luts],
@@ -450,14 +450,14 @@ def run(args, report):
             f'active = {str(active).lower()}\nalgorithm = "{algorithm}"\n'
             'knee = [0.0, 1.0, 6.0]\n')
         command([cli, "lut", "build", "--from", spec_path, "--qa",
-                 "--out", bundles, "--data-dir", data], root / f"{name}.log", report)
+                 bundles, "--data-dir", data], root / f"{name}.log", report)
         folder = bundles / name
         meta = json.loads((folder / "bundle.json").read_text())
         spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS[:1],
                           input_color_space="sRGB", output_color_space="sRGB",
                           topology="1lut", resolution=17, name=name,
                           input_gamut_compress=InputGamutCompressSpec(active=active, algorithm=algorithm),
-                          exposure_ev=(meta["input_exposure"] or {}).get("exposure_ev", 0.0))
+                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
         expected = BundleBuilder(spec).build()
         luts = [(m["path"], get_format("cube").read(folder / m["path"])) for m in meta["luts"]]
         require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts],
@@ -493,7 +493,7 @@ def run(args, report):
     name = "lumix"
     command([cli, "lut", "build", "--name", name, "--film", FILM, "--print", PRINTS[0],
              "--input", "Panasonic V-Log", "--output", "sRGB", "--resolution", "4",
-             "--target", "lumix_realtime_vlog", "--out", bundles, "--data-dir", data], root / "lumix.log", report)
+             "--target", "lumix_realtime_vlog", bundles, "--data-dir", data], root / "lumix.log", report)
     folder = bundles / name
     meta = json.loads((folder / "bundle.json").read_text())
     expected = BundleBuilder(BundleSpec(film_profile=FILM, print_profiles=PRINTS[:1],

@@ -30,6 +30,9 @@ import argparse
 import hashlib
 import platform
 import json
+import hashlib
+import shutil
+import platform
 import math
 import os
 import struct
@@ -224,7 +227,7 @@ def run_rust(scn: dict, out_dir: Path, fixtures: Path) -> subprocess.CompletedPr
         import tempfile
         archive = Path(tempfile.mkdtemp(prefix="spektrafilm-parity-history-"))
         for path in prior:
-            path.rename(archive / path.name)
+            shutil.move(str(path), str(archive / path.name))
     params_tree = nested_params(scn["params"])
     params_file = out_dir / "rs_params.json"
     params_file.write_text(json.dumps(params_tree, indent=2))

@@ -1030,6 +1030,10 @@ impl RuntimeParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeParams {
+    /// Per-render stochastic seed. The recipe runner sets this out-of-band so
+    /// it does not become part of the user parameter schema or digest.
+    #[serde(skip)]
+    pub random_seed: u64,
     #[serde(default)]
     pub camera: CameraParams,
     #[serde(default)]
@@ -1055,6 +1059,7 @@ pub struct RuntimeParams {
 impl Default for RuntimeParams {
     fn default() -> Self {
         Self {
+            random_seed: 0,
             camera: CameraParams::default(),
             enlarger: EnlargerParams::default(),
             scanner: ScannerParams::default(),
@@ -1068,6 +1073,7 @@ impl Default for RuntimeParams {
         }
     }
 }
+
 
 impl RuntimeParams {
     /// Resolve colour transforms and reject unsupported gamut configurations

@@ -60,7 +60,7 @@ unsafe extern "C" {
     fn sf_metadata_free(pointer: *mut c_void);
     fn sf_metadata_read(path: *const c_char) -> *mut c_void;
     fn sf_image_load(path: *const c_char, width: *mut u32, height: *mut u32, samples: *mut *mut f64, error: *mut *mut c_char) -> i32;
-    fn sf_image_save(path: *const c_char, width: u32, height: u32, samples: *const f64, depth: i32, format: i32, icc: *const u8, icc_len: usize, error: *mut *mut c_char) -> i32;
+    fn sf_image_save(path: *const c_char, width: u32, height: u32, samples: *const f64, depth: i32, format: i32, jpeg_quality: i32, icc: *const u8, icc_len: usize, error: *mut *mut c_char) -> i32;
     fn sf_metadata_write(path: *const c_char, source: *const c_void, width: u32, height: u32, space: *const c_char, encoded: bool, error: *mut *mut c_char) -> i32;
 }
 fn cpath(path: &Path) -> Result<CString, ImageIoError> { CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| ImageIoError::InvalidPath) }
@@ -91,6 +91,27 @@ pub fn load(path: &Path) -> Result<LoadedImage, ImageIoError> {
 /// astype. PNG/JPEG always use uint8; float TIFF/EXR preserve unbounded samples.
 /// Pixel failures are errors; metadata failures report a warning after writing.
 pub fn save(path: &Path, image: &ImageBuf, options: SaveOptions<'_>, metadata: Option<&ImageMetadata>) -> Result<SaveReport, ImageIoError> {
+    save_inner(path, image, options, metadata, None)
+}
+
+/// Save a JPEG with an explicit quality value. Other formats ignore the value.
+pub fn save_jpeg_quality(
+    path: &Path,
+    image: &ImageBuf,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    quality: u8,
+) -> Result<SaveReport, ImageIoError> {
+    save_inner(path, image, options, metadata, Some(quality))
+}
+
+fn save_inner(
+    path: &Path,
+    image: &ImageBuf,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    jpeg_quality: Option<u8>,
+) -> Result<SaveReport, ImageIoError> {
     let format = ImageFormat::detect(path)?;
     if format == ImageFormat::Exr && options.depth == BitDepth::Eight { return Err(ImageIoError::ExrDepth(8)); }
     if image.width == 0 || image.height == 0 || image.data.len() != image.width as usize * image.height as usize * 3 { return Err(ImageIoError::InvalidImage); }
@@ -102,7 +123,7 @@ pub fn save(path: &Path, image: &ImageBuf, options: SaveOptions<'_>, metadata: O
     #[cfg(not(feature = "precision-f64"))]
     let data: Vec<f64> = image.data.iter().copied().map(to_f64).collect();
     let mut error = std::ptr::null_mut();
-    if unsafe { sf_image_save(name.as_ptr(), image.width, image.height, data.as_ptr(), options.depth.bits().into(), format as i32, icc.as_ptr(), icc.len(), &mut error) } == 0 {
+    if unsafe { sf_image_save(name.as_ptr(), image.width, image.height, data.as_ptr(), options.depth.bits().into(), format as i32, jpeg_quality.map_or(0, i32::from), icc.as_ptr(), icc.len(), &mut error) } == 0 {
         return Err(ImageIoError::Native { operation: "save", path: path.display().to_string(), message: take_error(error) });
     }
     let mut report = SaveReport::default();

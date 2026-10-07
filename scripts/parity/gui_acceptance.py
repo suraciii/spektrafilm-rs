@@ -178,6 +178,10 @@ class X11:
 
     def read(self):
         image, bbox = self.image()
+        # The sidebar occupies the right portion of the client, but its
+        # first control can move left with native font/theme metrics.
+        # Use a proportional boundary rather than a fixed pixel coordinate.
+        self.right_control_x = image.width * 0.65
         from PIL import ImageOps, ImageStat
         lines = []
         # Segment the sidebar from the viewer and normalize each region to
@@ -221,8 +225,7 @@ class X11:
         lines.append(words)
         return image, bbox, lines
 
-    @staticmethod
-    def match(lines, label, right=False):
+    def match(self, lines, label, right=False):
         # OCR may transliterate the ellipsis; match words, with explicit boundaries.
         wanted = re.findall(r'[a-z0-9]+', label.lower())
         aliases = {
@@ -247,7 +250,7 @@ class X11:
                 )
                 if equivalent or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']) or (label.lower() == '16 bit' and words == ['16', 'bir']):
                     x = selected[0][1]
-                    if right and x < 1000:
+                    if right and x < self.right_control_x:
                         continue
                     if label.lower() == 'save' and selected[0][2] < 100:
                         continue
@@ -314,6 +317,13 @@ class X11:
         def locate():
             image, _, lines = self.read()
             matches = self.match(lines, label, right)
+            if not matches and label == 'Cancel':
+                # During export, GTK renders Cancel where Export was. OCR
+                # intermittently misses this short label; Save remains the
+                # adjacent, same-row anchor.
+                anchor = self.match(lines, 'Save', True)
+                if anchor:
+                    matches = [(anchor[0][0] + 57, anchor[0][1])]
             if matches:
                 self.snap('control-' + label.replace(' ', '-'), image, lines)
                 return matches[0]
@@ -322,6 +332,8 @@ class X11:
             self.require_export_in_flight('Cancel')
         self.xd('mousemove', '--window', self.window, int(x), int(y))
         self.xd('click', 1)
+        if label in {'MAIN', 'CONFIG', 'FILM', 'PRINT', 'ADVANCED'}:
+            self.current_tab = label
         time.sleep(.15)
 
     def tab(self, name):
@@ -383,10 +395,11 @@ class X11:
         return wait_for(ready, label, timeout)
 
     def dialog(self, path, save=False):
+        dialog_classes = 'zenity|yad|xdg-desktop-portal-gtk'
         def find():
-            found = self.xd('search', '--onlyvisible', '--class', 'zenity|yad', check=False)
+            found = self.xd('search', '--onlyvisible', '--class', dialog_classes, check=False)
             return found.splitlines()[-1] if found else None
-        dialog = wait_for(find, 'native file chooser (zenity/yad)', 25)
+        dialog = wait_for(find, 'native file chooser (zenity/yad/portal)', 25)
         for child in self.psutil.Process(self.proc.pid).children(recursive=True):
             try:
                 if 'zenity' in child.name():
@@ -427,7 +440,7 @@ class X11:
         # Save choosers may first navigate the entered full path, then require Save.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if not self.xd('search', '--onlyvisible', '--class', 'zenity|yad', check=False):
+            if not self.xd('search', '--onlyvisible', '--class', dialog_classes, check=False):
                 return
             with self.mss.mss() as screen:
                 shot = screen.grab(screen.monitors[0])
@@ -939,7 +952,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         (root / name).mkdir()
     env = dict(environment)
     for key in ('SPEKTRAFILM_F64_CLI', 'SPEKTRAFILM_GUI_STATE', 'SPEKTRAFILM_DATA_DIR',
-                'SPEKTRAFILM_PY', 'SPEKTRAFILM_PY_REPO', 'DBUS_SESSION_BUS_ADDRESS'):
+                'SPEKTRAFILM_PY', 'SPEKTRAFILM_PY_REPO'):
         env.pop(key, None)
     env.update(SPEKTRAFILM_CONFIG_DIR=str(root / 'config'), XDG_CACHE_HOME=str(root / 'cache'),
                XDG_CONFIG_HOME=str(root / 'config'), HOME=str(root / 'home'),
@@ -1224,7 +1237,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.snap('cancel-export-in-flight')
         driver.click('Cancel')
         driver.scroll(True)
-        driver.wait_text(r'Export cancelled', 'cancelled-export', timeout=30)
+        driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=30)
         driver.no_children()
         require(not cancelled.exists(), 'Cancelled export left an output image')
         leftovers = list(root.rglob('spektrafilm-export-*'))

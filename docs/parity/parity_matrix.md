@@ -54,12 +54,12 @@ paper-as-film rejection checks. Preview evidence separates arithmetic
 digestion with glare disabled from stochastic 512² glare moments under
 the unchanged 1% mean / 5% standard-deviation budgets.
 
-The current report `/tmp/spektrafilm-current-parity/parity_report.json` passes
-all 68 exercised rows with no unsupported prerequisites. Full per-tap
-metrics and reference environment are embedded under `differential_evidence`
-in the machine-readable matrix. This verifies those scenarios; isolated
-dark-grain regimes and other unexercised controls require their own evidence.
-Historical baseline failures remain metadata and never excuse current drift.
+The fresh report `target/parity-final-fix/parity_report.json` exercised all
+68 catalog rows: all 68 passed their unchanged budgets. Full per-tap metrics
+and the reference environment are embedded under `differential_evidence` in
+the machine-readable matrix. The six formerly failing expected-parity rows
+now pass: layered grain, seeded single-curve grain, deterministic preview
+digest, Velvia DIR presets, spatial DIR couplers and the full default chain.
 
 ## Native GUI evidence
 
