@@ -327,8 +327,7 @@ pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> 
 pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> { Ok(None) }
 
 /// Takes already encoded sRGB viewing pixels, never an export ImageBuf.
-/// Windows ICC conversion is quantized to RGB8 as in the pinned Pillow workflow.
-#[cfg(windows)]
+/// ICC conversion is quantized to RGB8 as in the pinned Pillow workflow.
 pub fn apply_display_profile(raster: &DisplayRaster, path: &std::path::Path) -> Result<DisplayRaster,String> {
     use lcms2::{Profile,Transform,PixelFormat,Intent};
     let source=Profile::new_srgb(); let destination=Profile::new_file(path).map_err(|e| e.to_string())?;
@@ -337,18 +336,34 @@ pub fn apply_display_profile(raster: &DisplayRaster, path: &std::path::Path) -> 
     DisplayRaster::new(raster.size,rgb.into_iter().map(|p| p.map(|v| v as f32/255.0)).collect())
 }
 
-/// A disabled/unavailable transform explicitly views values in the output space.
-/// With Windows ICC active, callers first convert their output to sRGB using the
-/// shared color API, then pass that separate raster as srgb_preview.
+/// A disabled transform explicitly views values in the output space. An
+/// enabled transform always starts from the separate encoded-sRGB preview;
+/// an ICC profile only adds the final device conversion.
 pub fn prepare_display_raster(raw_output: DisplayRaster, srgb_preview: Option<DisplayRaster>, enabled: bool, selected_profile: Option<&std::path::Path>) -> (DisplayRaster,String) {
     if !enabled { return (raw_output,"Display transform: disabled; viewing output-space values".into()); }
+    let Some(srgb) = srgb_preview else {
+        return (raw_output,"Display transform: missing sRGB preview; viewing output-space values".into());
+    };
     #[cfg(windows)] {
         let discovered=if selected_profile.is_none() { discover_display_profile() } else { Ok(None) };
         let profile=selected_profile.map(std::path::Path::to_path_buf).or_else(|| discovered.ok().flatten());
-        if let Some(path)=profile { if let Some(srgb)=srgb_preview { match apply_display_profile(&srgb,&path) { Ok(raster)=>return (raster,format!("Display transform: active ({})",path.display())), Err(e)=>return (raw_output,format!("Display transform: failed ({e}); viewing output-space values")) } } else { return (raw_output,"Display transform: missing sRGB preview; viewing output-space values".into()); } }
+        if let Some(path)=profile {
+            match apply_display_profile(&srgb,&path) {
+                Ok(raster)=>return (raster,format!("Display transform: active ({})",path.display())),
+                Err(e)=>return (srgb,format!("Display transform: ICC failed ({e}); viewing sRGB preview")),
+            }
+        }
+        return (srgb,"Display transform: sRGB preview; no display profile".into());
     }
-    #[cfg(not(windows))] let _=(srgb_preview,selected_profile);
-    (raw_output,"Display transform: no display profile; viewing output-space values".into())
+    #[cfg(not(windows))] {
+        if let Some(path)=selected_profile {
+            match apply_display_profile(&srgb,path) {
+                Ok(raster)=>return (raster,format!("Display transform: active ({})",path.display())),
+                Err(e)=>return (srgb,format!("Display transform: ICC failed ({e}); viewing sRGB preview")),
+            }
+        }
+        (srgb,"Display transform: sRGB preview; no display profile".into())
+    }
 }
 
 /// Capped disposable float raster; sampling happens before color conversion.
@@ -374,8 +389,7 @@ pub fn input_display_raster(image: &ImageBuf, space: &str, decode: bool, max_edg
 }
 pub fn output_display_raster(image: &ImageBuf, space: &str, encoded: bool, enabled: bool, profile: Option<&std::path::Path>, max_edge: usize) -> Result<(DisplayRaster,String),String> {
     let raw=capped_raster(image,max_edge)?;
-    #[cfg(windows)] let srgb=if enabled { Some(input_display_raster(image,space,encoded,max_edge)?) } else { None };
-    #[cfg(not(windows))] let srgb={ let _=(space,encoded);None };
+    let srgb=enabled.then(|| input_display_raster(image,space,encoded,max_edge)).transpose()?;
     Ok(prepare_display_raster(raw,srgb,enabled,profile))
 }
 
@@ -393,5 +407,86 @@ mod tests {
         let raster = DisplayRaster::from_float(&image).unwrap();
         assert_eq!(raster.size, [1, 1]);
         assert_eq!(raster.rgb[0], [0.25, 0.5, 0.75]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn enabled_non_srgb_output_matches_colour_conversion() {
+        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+
+        let image = ImageBuf::from_data(1, 1, vec![0.75 as _, 0.20 as _, 0.10 as _]);
+        let source = image.data.clone();
+        let (actual, status) =
+            output_display_raster(&image, "Display P3", true, true, None, 1).unwrap();
+        let space = resolve("Display P3").unwrap();
+        let expected = display_rgb(
+            [0.75, 0.20, 0.10],
+            space,
+            true,
+            &display_matrix(space),
+        );
+
+        for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
+            assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
+        }
+        assert!(status.contains("sRGB preview"));
+        assert_eq!(image.data, source);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn enabled_preview_applies_source_cctf_decoding() {
+        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+
+        let image = ImageBuf::from_data(1, 1, vec![0.18 as _, 0.18 as _, 0.18 as _]);
+        let (actual, _) =
+            output_display_raster(&image, "ITU-R BT.2020", true, true, None, 1).unwrap();
+        let space = resolve("ITU-R BT.2020").unwrap();
+        let expected = display_rgb(
+            [0.18, 0.18, 0.18],
+            space,
+            true,
+            &display_matrix(space),
+        );
+
+        for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
+            assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn enabled_preview_clips_out_of_gamut_display_values_only() {
+        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+
+        let image = ImageBuf::from_data(1, 1, vec![1.3 as _, -0.2 as _, 0.4 as _]);
+        let source = image.data.clone();
+        let raw = capped_raster(&image, 1).unwrap();
+        let (preview, _) =
+            output_display_raster(&image, "Display P3", false, true, None, 1).unwrap();
+        let space = resolve("Display P3").unwrap();
+        let expected = display_rgb(
+            [1.3, -0.2, 0.4],
+            space,
+            false,
+            &display_matrix(space),
+        );
+
+        assert_eq!(raw.rgb[0], [1.3, -0.2, 0.4]);
+        for (actual, expected) in preview.rgb[0].into_iter().zip(expected) {
+            assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
+            assert!((0.0..=1.0).contains(&actual));
+        }
+        assert_eq!(image.data, source);
+    }
+
+    #[test]
+    fn disabled_transform_keeps_output_space_values() {
+        let image = ImageBuf::from_data(1, 1, vec![1.3 as _, -0.2 as _, 0.4 as _]);
+        let (raster, status) =
+            output_display_raster(&image, "Display P3", false, false, None, 1).unwrap();
+
+        assert_eq!(raster.rgb[0], [1.3, -0.2, 0.4]);
+        assert!(status.contains("output-space values"));
     }
 }

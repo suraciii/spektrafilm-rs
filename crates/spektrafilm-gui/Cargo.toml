@@ -31,6 +31,7 @@ tracing-subscriber.workspace = true
 rfd = "0.15"
 rayon.workspace = true
 raw-window-handle = "0.6"
+lcms2 = { version = "6.1", features = ["static"] }
 
 # macOS-only: tag the CAMetalLayer's colorspace as sRGB so the OS
 # colour-manages the window correctly on wide-gamut external displays.
@@ -40,6 +41,3 @@ raw-window-handle = "0.6"
 objc2 = "0.5"
 core-graphics = "0.24"
 foreign-types = "0.5"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-lcms2 = { version = "6.1", features = ["static"] }
