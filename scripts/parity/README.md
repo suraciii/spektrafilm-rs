@@ -236,10 +236,13 @@ is unavailable; the same required SHA256 check runs before decoding.
 `raw_wb_audit.json` is the pinned decoded-buffer fixture matrix for RAW
 white-balance repair issue #26. It covers Kodak KDC and Canon 40D CR2 across
 `as_shot`, `daylight`, `tungsten` and `custom(5000K, tint=1.05)` with
-`lens_correction=false`, records the source URLs/SHA256/dimensions and preserves
-the current failing max/mean metrics. Download the public fixtures, verify
-their hashes, then use this manifest to reproduce the WB gate; it intentionally
-does not turn the current mismatch into a passing assertion.
+`lens_correction=false`, records the source URLs/SHA256/dimensions and the
+current verified decoder/reference provenance. The report binds the eight
+passing rows to the audited Rust commit and decoder SHA256; all rows must
+remain within `max_abs <= 1e-5` and `mean_abs <= 1e-6`. Download the public
+fixtures, verify their hashes, then rerun `raw_reference_compare.py` to
+regenerate the evidence. This gate compares decoded float buffers; visual
+screenshots or PNG-clamped comparisons are not substitutes.
 
 
 The package smoke exports the pinned 0.3.4 bare-chain midgray through the real

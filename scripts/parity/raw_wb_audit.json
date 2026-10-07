@@ -2,8 +2,14 @@
   "schema": "spektrafilm-raw-wb-audit/1",
   "issue": "https://github.com/suraciii/spektrafilm-rs/issues/26",
   "reference_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
-  "rust_commit": "a1910231fbd2c049c5177b539b6e7963c97f4e90",
+  "rust_commit": "499edb1a06a733bdb834703002ad6f8d44b2eb1b",
+  "rust_worktree_dirty": false,
+  "rust_bin": "/tmp/spektrafilm-wb-target/release/decode_raw_gui",
+  "rust_bin_sha256": "6bae5a23b3ce03b7dd0ca23a9b01c7c38b9630e16275494f56c8bee53a892fbb",
   "libraw": "0.22.0",
+  "rawpy_version": "0.26.1",
+  "rawpy_libraw_version": [0, 22, 0],
+  "verification_status": "verified",
   "comparison": {
     "lens_correction": false,
     "max_abs_budget": 1e-5,
@@ -18,10 +24,10 @@
       "bytes": 92675,
       "decoded_shape": [512, 768, 3],
       "observed": {
-        "as_shot": {"max_abs": 0.4555886387825012, "mean_abs": 0.23690000690684304, "pass": false},
-        "daylight": {"max_abs": 0.4555886387825012, "mean_abs": 0.23690000690684304, "pass": false},
-        "tungsten": {"max_abs": 2.1190247535705566, "mean_abs": 0.1687205805524161, "pass": false},
-        "custom_5000K_tint_1.05": {"max_abs": 0.4651198983192444, "mean_abs": 0.22664153346096594, "pass": false}
+        "as_shot": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "daylight": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "tungsten": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "custom_5000K_tint_1.05": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true}
       }
     },
     {
@@ -32,16 +38,16 @@
       "decoded_shape": [1296, 1944, 3],
       "camera_white_balance": [2341, 1024, 1570, 1024],
       "observed": {
-        "as_shot": {"max_abs": 0.6067444980144501, "mean_abs": 0.19472718829304933, "pass": false},
-        "daylight": {"max_abs": 0.6062104254961014, "mean_abs": 0.19054078234874677, "pass": false},
-        "tungsten": {"max_abs": 1.9152237176895142, "mean_abs": 0.1828917804181855, "pass": false},
-        "custom_5000K_tint_1.05": {"max_abs": 0.5903509855270386, "mean_abs": 0.18446736753029716, "pass": false}
+        "as_shot": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "daylight": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "tungsten": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "custom_5000K_tint_1.05": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true}
       }
     }
   ],
   "notes": [
     "Binaries are not redistributed; download and verify the pinned public fixtures before running.",
-    "These rows intentionally record the current mismatch and must not be converted into a passing assertion without a native WB fix.",
+    "Fresh decoded-buffer comparison passed all eight rows at max_abs <= 1e-5 and mean_abs <= 1e-6.",
     "Lens bridge parity is audited separately with known and absent metadata cases."
   ]
 }
