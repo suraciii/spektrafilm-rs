@@ -58,6 +58,33 @@ cargo build -p spektrafilm-cli --features precision-f64 \
 Override locations with `SPEKTRAFILM_PY`, `SPEKTRAFILM_PY_REPO` and
 `SPEKTRAFILM_RS_BIN` if they differ from the defaults.
 
+
+### Fresh provenance gate
+
+Runtime evidence is accepted only for the exact Rust runtime commit
+`a1910231fbd2c049c5177b539b6e7963c97f4e90`. `run_parity.py` rejects another
+checkout, a dirty worktree (including untracked files), or a non-executable
+CLI. Its report records the complete lowercase SHA256 of the executable.
+`gen_matrix.py` re-checks that commit, requires `rust_worktree_dirty: false`,
+requires a syntactically complete executable hash, and compares the hash with
+the recorded binary when that path is available. It therefore rejects copied
+or stale runtime reports rather than treating old rows as fresh evidence.
+
+Keep source and evidence separate when running the clean a191 runtime
+worktree. For example, with the report artifacts outside the checkout:
+
+```bash
+RUNTIME=/tmp/spektrafilm-a191-20261007
+OUT=/tmp/spektrafilm-a191-parity-fresh
+SPEKTRAFILM_RS_BIN=/tmp/spektrafilm-a191-target/release/spektrafilm-f64 \
+  python3 "$RUNTIME/scripts/parity/run_parity.py" --out-root "$OUT"
+python3 "$RUNTIME/scripts/parity/gen_matrix.py" \
+  --report "$OUT/parity_report.json"
+```
+
+The runtime checkout itself must remain clean; `--out-root` is intentionally
+outside it. A report from another commit, a dirty checkout, or a replaced
+binary fails before matrix generation.
 ## Running the matrix
 
 ```bash
