@@ -401,10 +401,13 @@ class X11:
         return wait_for(ready, label, timeout)
 
     def dialog(self, path, save=False):
-        dialog_classes = 'zenity|yad|xdg-desktop-portal-gtk'
+        dialog_classes = ('zenity', 'yad', 'xdg-desktop-portal-gtk')
         def find():
-            found = self.xd('search', '--onlyvisible', '--class', dialog_classes, check=False)
-            return found.splitlines()[-1] if found else None
+            for dialog_class in dialog_classes:
+                found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
+                if found:
+                    return found.splitlines()[-1]
+            return None
         dialog = wait_for(find, 'native file chooser (zenity/yad/portal)', 25)
         for child in self.psutil.Process(self.proc.pid).children(recursive=True):
             try:
@@ -446,7 +449,7 @@ class X11:
         # Save choosers may first navigate the entered full path, then require Save.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if not self.xd('search', '--onlyvisible', '--class', dialog_classes, check=False):
+            if not find():
                 return
             with self.mss.mss() as screen:
                 shot = screen.grab(screen.monitors[0])
