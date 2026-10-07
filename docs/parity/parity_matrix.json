@@ -3,7 +3,7 @@
   "generated": {
     "python_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
     "python_version": "0.3.4",
-    "rust_commit": "6024c2c385c67d58f6e95bb3d3c4e7099c0edd1b",
+    "rust_commit": "cd6966572b5998161947e2cd72e1e0274e5e89b8",
     "rust_audited_baseline": "9dd59b0380194b93686aaa230a8bb9680aa270a4",
     "python_platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43",
     "python_version_runtime": "3.14.4",
@@ -3482,7 +3482,7 @@
   "verification_status": "verified_catalog",
   "differential_evidence": {
     "status": "verified_catalog",
-    "report_path": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/parity-final-fix/parity_report.json",
+    "report_path": "/tmp/parity-cd69665/parity_report.json",
     "catalog_rows": 68,
     "reported_rows": 68,
     "counts": {
@@ -3564,68 +3564,52 @@
       "rust_baseline_commit": "9dd59b0380194b93686aaa230a8bb9680aa270a4"
     },
     "environment": {
-      "python": "/tmp/spektrafilm-034-venv/bin/python",
-      "py_repo": "/home/szf/repos/spektrafilm",
-      "py_spektrafilm": "/home/szf/repos/spektrafilm/src/spektrafilm/__init__.py",
+      "python": "/opt/hostedtoolcache/Python/3.13.15/x64/bin/python",
+      "py_repo": "/home/runner/work/_temp/spektrafilm-python",
+      "py_spektrafilm": "/home/runner/work/_temp/spektrafilm-python/src/spektrafilm/__init__.py",
       "reference_environment": {
-        "os": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43",
+        "os": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
         "architecture": "x86_64",
-        "python_version": "3.13.12",
+        "python_version": "3.13.15",
         "dependencies": {
-          "pytesseract": "0.3.13",
-          "llvmlite": "0.50.0",
-          "pyparsing": "3.3.3",
-          "opt_einsum": "3.4.0",
-          "OpenImageIO": "3.1.18.0",
           "opencolorio": "2.6.0",
-          "lensfunpy": "1.18.0",
-          "PyGetWindow": "0.0.9",
-          "PyYAML": "6.0.3",
-          "scipy": "1.18.1",
-          "Markdown": "3.11",
+          "opt_einsum": "3.4.0",
           "colour-science": "0.4.7",
-          "tifffile": "2026.9.20",
-          "networkx": "3.7",
-          "exiv2": "0.18.1",
-          "Pygments": "2.21.0",
-          "iniconfig": "2.3.0",
-          "ImageIO": "2.38.0",
-          "psutil": "7.2.2",
-          "lazy-loader": "0.6",
-          "spektrafilm": "0.3.4",
-          "rawpy": "0.26.1",
-          "MouseInfo": "0.1.3",
-          "pytest": "9.1.1",
-          "PyMsgBox": "2.0.1",
-          "matplotlib": "3.11.2",
-          "pillow": "12.3.0",
-          "PyAutoGUI": "0.9.54",
-          "pluggy": "1.6.0",
           "python-dateutil": "2.9.0.post0",
-          "scikit-image": "0.26.0",
-          "numba": "0.68.0",
-          "packaging": "26.3",
-          "kiwisolver": "1.5.1",
-          "pyFFTW": "0.15.1",
-          "PyScreeze": "1.0.1",
-          "pyperclip": "1.11.0",
-          "numpy": "2.5.3",
-          "python3-xlib": "0.15",
-          "cycler": "0.12.1",
-          "mss": "10.2.0",
-          "pytweening": "1.2.0",
-          "PyRect": "0.2.0",
-          "fonttools": "4.66.1",
           "six": "1.17.0",
-          "contourpy": "1.4.0"
+          "pillow": "12.3.0",
+          "rawpy": "0.26.1",
+          "networkx": "3.7",
+          "contourpy": "1.4.0",
+          "lensfunpy": "1.18.0",
+          "pyFFTW": "0.15.1",
+          "fonttools": "4.66.1",
+          "scikit-image": "0.26.0",
+          "ImageIO": "2.38.0",
+          "numpy": "2.5.3",
+          "OpenImageIO": "3.1.18.1",
+          "llvmlite": "0.50.0",
+          "scipy": "1.18.1",
+          "exiv2": "0.18.1",
+          "matplotlib": "3.11.2",
+          "numba": "0.68.0",
+          "spektrafilm": "0.3.4",
+          "pip": "26.2.1",
+          "pyparsing": "3.3.3",
+          "tifffile": "2026.9.20",
+          "Markdown": "3.11",
+          "cycler": "0.12.1",
+          "lazy-loader": "0.6",
+          "kiwisolver": "1.5.1",
+          "packaging": "26.3"
         },
-        "numpy_blas": "Build Dependencies:\n  blas:\n    detection method: pkgconfig\n    found: true\n    include directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/include\n    lib directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/lib\n    name: scipy-openblas\n    openblas configuration: OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY\n      Haswell MAX_THREADS=64\n    pc file directory: /project/.openblas\n    version: 0.3.34.106.0\n  lapack:\n    detection method: pkgconfig\n    found: true\n    include directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/include\n    lib directory: /opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/lib\n    name: scipy-openblas\n    openblas configuration: OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY\n      Haswell MAX_THREADS=64\n    pc file directory: /project/.openblas\n    version: 0.3.34.106.0\nCompilers:\n  c:\n    commands: cc\n    linker: ld.bfd\n    name: gcc\n    version: 14.2.1\n  c++:\n    commands: c++\n    linker: ld.bfd\n    name: gcc\n    version: 14.2.1\n  cython:\n    commands: cython\n    linker: cython\n    name: cython\n    version: 3.3.0\nMachine Information:\n  build:\n    cpu: x86_64\n    endian: little\n    family: x86_64\n    system: linux\n  host:\n    cpu: x86_64\n    endian: little\n    family: x86_64\n    system: linux\nPython Information:\n  path: /tmp/build-env-h653xs07/bin/python\n  version: '3.13'\nSIMD Extensions:\n  baseline:\n  - X86_V2\n  found:\n  - X86_V3\n  - X86_V4\n  - AVX512_ICL\n  not found:\n  - AVX512_SPR\n\n"
+        "numpy_blas": "{\n  \"Compilers\": {\n    \"c\": {\n      \"name\": \"gcc\",\n      \"linker\": \"ld.bfd\",\n      \"version\": \"14.2.1\",\n      \"commands\": \"cc\"\n    },\n    \"cython\": {\n      \"name\": \"cython\",\n      \"linker\": \"cython\",\n      \"version\": \"3.3.0\",\n      \"commands\": \"cython\"\n    },\n    \"c++\": {\n      \"name\": \"gcc\",\n      \"linker\": \"ld.bfd\",\n      \"version\": \"14.2.1\",\n      \"commands\": \"c++\"\n    }\n  },\n  \"Machine Information\": {\n    \"host\": {\n      \"cpu\": \"x86_64\",\n      \"family\": \"x86_64\",\n      \"endian\": \"little\",\n      \"system\": \"linux\"\n    },\n    \"build\": {\n      \"cpu\": \"x86_64\",\n      \"family\": \"x86_64\",\n      \"endian\": \"little\",\n      \"system\": \"linux\"\n    }\n  },\n  \"Build Dependencies\": {\n    \"blas\": {\n      \"name\": \"scipy-openblas\",\n      \"found\": true,\n      \"version\": \"0.3.34.106.0\",\n      \"detection method\": \"pkgconfig\",\n      \"include directory\": \"/opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/include\",\n      \"lib directory\": \"/opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/lib\",\n      \"openblas configuration\": \"OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY Haswell MAX_THREADS=64\",\n      \"pc file directory\": \"/project/.openblas\"\n    },\n    \"lapack\": {\n      \"name\": \"scipy-openblas\",\n      \"found\": true,\n      \"version\": \"0.3.34.106.0\",\n      \"detection method\": \"pkgconfig\",\n      \"include directory\": \"/opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/include\",\n      \"lib directory\": \"/opt/_internal/cpython-3.13.14/lib/python3.13/site-packages/scipy_openblas64/lib\",\n      \"openblas configuration\": \"OpenBLAS 0.3.34.106.0  USE64BITINT DYNAMIC_ARCH NO_AFFINITY Haswell MAX_THREADS=64\",\n      \"pc file directory\": \"/project/.openblas\"\n    }\n  },\n  \"Python Information\": {\n    \"path\": \"/tmp/build-env-h653xs07/bin/python\",\n    \"version\": \"3.13\"\n  },\n  \"SIMD Extensions\": {\n    \"baseline\": [\n      \"X86_V2\"\n    ],\n    \"found\": [\n      \"X86_V3\",\n      \"X86_V4\",\n      \"AVX512_ICL\"\n    ],\n    \"not found\": [\n      \"AVX512_SPR\"\n    ]\n  }\n}\n"
       },
-      "rust_bin": "/data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/target/release/spektrafilm-f64",
-      "rust_bin_sha256": "9d7ef0fd23be6d5cfa1441bf15e1c04b0b3748b0c4b43a87969e6ab4975c2883",
-      "rust_commit": "7c36fe53cf6284bc0f20884a2896854b380e8ec5",
+      "rust_bin": "/home/runner/work/spektrafilm-rs/spektrafilm-rs/target/release/spektrafilm-f64",
+      "rust_bin_sha256": "17869ba52059850c4e9d7d78fabe170838776619cc22bd17e7ba04337511aedb",
+      "rust_commit": "db8780dc965d646a9bd2bf19713012194468cf8d",
       "rust_worktree_dirty": true,
-      "platform": "Linux-7.0.0-27-generic-x86_64-with-glibc2.43"
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
     },
     "rows": [
       {
@@ -3886,21 +3870,21 @@
           "log_e_print": {
             "n": 48,
             "max_abs": 5.828670879282072e-16,
-            "mean_abs": 1.6694567639477057e-16,
+            "mean_abs": 1.7088494428813458e-16,
             "within_budget": true,
             "detail": "max_abs=5.829e-16 (budget 1.0e-05)"
           },
           "cmy_print": {
             "n": 48,
             "max_abs": 1.3322676295501878e-15,
-            "mean_abs": 2.9895067902666977e-16,
+            "mean_abs": 3.041548494546002e-16,
             "within_budget": true,
             "detail": "max_abs=1.332e-15 (budget 1.0e-05)"
           },
           "rgb_out": {
             "n": 48,
             "max_abs": 4.508570183858751e-10,
-            "mean_abs": 4.353111968113943e-11,
+            "mean_abs": 4.3531148593197365e-11,
             "within_budget": true,
             "detail": "max_abs=4.509e-10 (budget 1.0e-05)"
           }
@@ -4477,15 +4461,15 @@
         "taps": {
           "rgb_out": {
             "n": 786432,
-            "py_mean": 0.29948154265240684,
+            "py_mean": 0.29948121675276806,
             "rs_mean": 0.299481853918141,
-            "py_std": 0.15136664596676466,
+            "py_std": 0.15136716307716125,
             "rs_std": 0.1513670605795561,
-            "mean_rel": 1.0393486404227726e-06,
-            "std_rel": 2.7391291442361778e-06,
-            "max_abs": 0.005210532550794289,
+            "mean_rel": 2.1275637246028074e-06,
+            "std_rel": 6.771455781403635e-07,
+            "max_abs": 0.004943046024036668,
             "within_budget": true,
-            "detail": "mean_rel=1.039e-06 std_rel=2.739e-06"
+            "detail": "mean_rel=2.128e-06 std_rel=6.771e-07"
           }
         }
       },
@@ -4836,15 +4820,15 @@
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.15685473240724748,
+            "py_mean": 0.15684455839854503,
             "rs_mean": 0.15684246787507108,
-            "py_std": 0.06393736089440213,
+            "py_std": 0.06392906898205632,
             "rs_std": 0.06393643260590177,
-            "mean_rel": 7.819038666015684e-05,
-            "std_rel": 1.4518717810278384e-05,
-            "max_abs": 0.001834951721457978,
+            "mean_rel": 1.332863247081195e-05,
+            "std_rel": 0.00011518428099624876,
+            "max_abs": 0.001258068133678042,
             "within_budget": true,
-            "detail": "mean_rel=7.819e-05 std_rel=1.452e-05"
+            "detail": "mean_rel=1.333e-05 std_rel=1.152e-04"
           }
         }
       },
@@ -6220,51 +6204,51 @@
           },
           "cmy_film": {
             "n": 3072,
-            "py_mean": 0.8336756886367279,
+            "py_mean": 0.8336929633968326,
             "rs_mean": 0.8336739071761886,
-            "py_std": 0.08869262593646939,
+            "py_std": 0.08869286482601295,
             "rs_std": 0.08869054768016547,
-            "mean_rel": 2.1368747626796346e-06,
-            "std_rel": 2.3432120562084688e-05,
-            "max_abs": 0.0014903000865587046,
+            "mean_rel": 2.285760043646873e-05,
+            "std_rel": 2.6125504594086185e-05,
+            "max_abs": 0.001322578573938804,
             "within_budget": true,
-            "detail": "mean_rel=2.137e-06 std_rel=2.343e-05"
+            "detail": "mean_rel=2.286e-05 std_rel=2.613e-05"
           },
           "log_e_print": {
             "n": 3072,
-            "py_mean": -0.09670550092410422,
+            "py_mean": -0.09669340422246876,
             "rs_mean": -0.09669083612676428,
-            "py_std": 0.041343861865595355,
+            "py_std": 0.041338740911444107,
             "rs_std": 0.041335649947803775,
-            "mean_rel": 0.00015164387961188235,
-            "std_rel": 0.0001986248362157355,
-            "max_abs": 0.00130985496808958,
+            "mean_rel": 2.6559161145799383e-05,
+            "std_rel": 7.477159613915001e-05,
+            "max_abs": 0.0011163686926135424,
             "within_budget": true,
-            "detail": "mean_rel=1.516e-04 std_rel=1.986e-04"
+            "detail": "mean_rel=2.656e-05 std_rel=7.477e-05"
           },
           "cmy_print": {
             "n": 3072,
-            "py_mean": 0.3941262868962794,
+            "py_mean": 0.39413438795699235,
             "rs_mean": 0.3941346176283893,
-            "py_std": 0.08469448389346587,
+            "py_std": 0.08470067408219238,
             "rs_std": 0.08469709600662181,
-            "mean_rel": 2.113721511836494e-05,
-            "std_rel": 3.084159718391686e-05,
-            "max_abs": 0.002344630304512596,
+            "mean_rel": 5.82723568341237e-07,
+            "std_rel": 4.2243767352968855e-05,
+            "max_abs": 0.0022675246622323453,
             "within_budget": true,
-            "detail": "mean_rel=2.114e-05 std_rel=3.084e-05"
+            "detail": "mean_rel=5.827e-07 std_rel=4.224e-05"
           },
           "rgb_out": {
             "n": 3072,
-            "py_mean": 0.2886952840920012,
+            "py_mean": 0.28868478256804514,
             "rs_mean": 0.28869032024485647,
-            "py_std": 0.0501367577175439,
+            "py_std": 0.05013077983672063,
             "rs_std": 0.05012490623557933,
-            "mean_rel": 1.719407076677544e-05,
-            "std_rel": 0.00023638309504057855,
-            "max_abs": 0.0011468765722380536,
+            "mean_rel": 1.9182434079371105e-05,
+            "std_rel": 0.00011716556495691154,
+            "max_abs": 0.0012176365531897382,
             "within_budget": true,
-            "detail": "mean_rel=1.719e-05 std_rel=2.364e-04"
+            "detail": "mean_rel=1.918e-05 std_rel=1.172e-04"
           }
         }
       },
@@ -6283,7 +6267,7 @@
         "status": "pass",
         "python_rejected": true,
         "rust_rejected": true,
-        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/data)",
+        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /home/runner/work/spektrafilm-rs/spektrafilm-rs/data)",
         "artifact_produced": false
       },
       {
@@ -6301,7 +6285,7 @@
         "status": "pass",
         "python_rejected": true,
         "rust_rejected": true,
-        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/data)",
+        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /home/runner/work/spektrafilm-rs/spektrafilm-rs/data)",
         "artifact_produced": false
       },
       {
@@ -6319,7 +6303,7 @@
         "status": "pass",
         "python_rejected": true,
         "rust_rejected": true,
-        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/data)",
+        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /home/runner/work/spektrafilm-rs/spektrafilm-rs/data)",
         "artifact_produced": false
       },
       {
@@ -6337,7 +6321,7 @@
         "status": "pass",
         "python_rejected": true,
         "rust_rejected": true,
-        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/data)",
+        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /home/runner/work/spektrafilm-rs/spektrafilm-rs/data)",
         "artifact_produced": false
       },
       {
@@ -6355,7 +6339,7 @@
         "status": "pass",
         "python_rejected": true,
         "rust_rejected": true,
-        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/data)",
+        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /home/runner/work/spektrafilm-rs/spektrafilm-rs/data)",
         "artifact_produced": false
       },
       {
@@ -6373,7 +6357,7 @@
         "status": "pass",
         "python_rejected": true,
         "rust_rejected": true,
-        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /data/buzz-workspaces/slipstream/REPOS/slipstream-film-rs-implementation/third_party/spektrafilm-rs/data)",
+        "rust_detail": "Error: spectral pipeline construction failed: hanatos2025 adaptation window requires exactly 4 erf4 parameters (c_uv, sigma_uv, c_ir, sigma_ir), got 0 \u2014 the simplified no-LUT fallback was removed; check that the profiles/data directory contains the spectral LUTs (looked under /home/runner/work/spektrafilm-rs/spektrafilm-rs/data)",
         "artifact_produced": false
       }
     ],
