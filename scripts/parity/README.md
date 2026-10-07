@@ -233,6 +233,14 @@ reports record the Rust HEAD, executable SHA256, platform and reference pin.
 `--raw-fixture PATH` reuses the pinned Kodak KDC download when network access
 is unavailable; the same required SHA256 check runs before decoding.
 
+`raw_wb_audit.json` is the pinned decoded-buffer fixture matrix for RAW
+white-balance repair issue #26. It covers Kodak KDC and Canon 40D CR2 across
+`as_shot`, `daylight`, `tungsten` and `custom(5000K, tint=1.05)` with
+`lens_correction=false`, records the source URLs/SHA256/dimensions and preserves
+the current failing max/mean metrics. Download the public fixtures, verify
+their hashes, then use this manifest to reproduce the WB gate; it intentionally
+does not turn the current mismatch into a passing assertion.
+
 
 The package smoke exports the pinned 0.3.4 bare-chain midgray through the real
 spectral assets and compares the saved 32-bit TIFF against the recorded Python
