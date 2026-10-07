@@ -171,6 +171,16 @@ jobs:
           mkdir -p "$prefix/share/doc/libraw"
           cp COPYRIGHT LICENSE.CDDL LICENSE.LGPL "$prefix/share/doc/libraw/"
 
+
+      - name: Prepare exact a191 runtime worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/spektrafilm-a191-runtime"
+          git fetch --no-tags --depth=1 origin a1910231fbd2c049c5177b539b6e7963c97f4e90
+          git worktree add --detach "$runtime" FETCH_HEAD
+          printf 'SPEKTRAFILM_RUNTIME_REPO=%s\n' "$runtime" >> "$GITHUB_ENV"
+
       - name: Build release binaries
         id: build-release
         shell: bash
@@ -181,13 +191,17 @@ jobs:
           cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64
+          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" \
+            cargo build --manifest-path "$SPEKTRAFILM_RUNTIME_REPO/Cargo.toml" \
+            --target-dir "$SPEKTRAFILM_RUNTIME_REPO/target" \
+            --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
 
       - name: Run full pinned Python runtime parity
         shell: bash
         env:
           SPEKTRAFILM_PY_REPO: ${{ runner.temp }}/spektrafilm-python
           SPEKTRAFILM_PY: ${{ steps.reference-python.outputs.python-path }}
-          SPEKTRAFILM_RS_BIN: ${{ github.workspace }}/target/release/spektrafilm-f64
+          SPEKTRAFILM_RS_BIN: ${{ runner.temp }}/spektrafilm-a191-runtime/target/release/spektrafilm-f64
         run: |
           set -euo pipefail
           export LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}"
