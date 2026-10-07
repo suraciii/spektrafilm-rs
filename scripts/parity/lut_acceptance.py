@@ -371,7 +371,7 @@ def run(args, report):
         spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS, input_color_space="sRGB",
                           output_color_space="sRGB", topology=topology, resolution=17, name=name,
                           include_combinations=topology == "4lut",
-                          exposure_ev=(meta["input_exposure"] or {}).get("exposure_ev", 0.0))
+                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
         expected = BundleBuilder(spec).build()
         require(meta["topology"] == topology and meta["resolution"] == 17, "bundle topology/resolution drift")
         require(meta["stocks"] == {"film": FILM, "prints": list(PRINTS)}, "bundle stocks drift")
@@ -417,7 +417,7 @@ def run(args, report):
                               input_color_space="Panasonic V-Log", output_color_space="sRGB",
                               topology=topology, resolution=17, name=ocio_name,
                               include_combinations=True,
-                              exposure_ev=(ocio_meta["input_exposure"] or {}).get("exposure_ev", 0.0))
+                              stops_above_midgray=(ocio_meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
         ocio_python = BundleBuilder(ocio_spec).build()
         require([tuple(m[k] for k in fields) for m in ocio_meta["luts"]]
                 == [tuple(getattr(m, k) for k in fields) for m in ocio_python.meta.luts],
