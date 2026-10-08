@@ -222,7 +222,7 @@ if (radius > 0) {
 
 ## 7. 颗粒类型（Negative / Positive）与 Expand
 
-- `type` 字段（0=Negative）在 GPU kernel 参数中不出现——**正/负片颗粒差异完全由 profile 参数实现**（分区权重分布不同：负片型 highlights 高、正片型低），符合官方"Positive grain uses the classic algorithm"的描述（即同一算法、不同参数预设）。
+- **宿主证据纠正：Film Type 对应 `grainResolutionType`，不是独立的 profile 类型字段。** `GrainContext::describe` 在 `0x57c077` 使用该 ID，`0x57c09b` 设置标签 Film Type，随后按 Negative、Positive 顺序添加选项（`0x57c1ca`、`0x57c246`）。`update_state` 在 `0x57e124–0x57e12d` 将选项索引直接写入 state+`0x92c`，所以 Negative=0、Positive=1。先前“正负片仅由不同分区权重预设实现”的结论不成立。
 - 官方文档提示：颗粒影响黑白场（Overlay 在 0/1 处仍会推动），需要 **Expand** 工具恢复对比度——与 SpektraFilm 的 density_min/expand 概念同源。
 
 ## 8. 与 SpektraFilm 的对照与可借鉴设计
@@ -268,10 +268,21 @@ if (radius > 0) {
 
 Analogue 仍对九个重采样 tap 共用目标像素亮度；原生成器在每个虚拟 texel 读取源图亮度。该差异可能影响强边缘附近的颗粒，属于尚未逐值复刻的边界，与本次低频旋转导致的天空脊纹分开记录。
 
-**Noise 宿主绑定已反汇编确认。** `ScanGrainKernel::process()` 在 `0x5eef32` 注册匿名 execute 回调 `0x5ef280`。回调 `0x5ef31b–0x5ef446` 将 scale 绑定为 `(1+(s−1)/47) * 2.4 * max(W/1920,H/1080)`；`Segment::get_value()` 位于 `0x5f53f0`，常量 `0x25754e0/e4/e8` 分别为 1920/1080/2.4。这既不是原始 1–48，也不是 Analogue 重采样范围 1–2.5。`0x5ef454` 将 effective amount 乘 0.5 后绑定 arg3；`process()` 的 `0x5eea57–0x5eeadf` 先计算 `s_segment * resolution_normalized / gsf * 1.87 * effective(amount)`，随后选择 FastBlur 或 OpticalResolution。CPU/WGSL 已同步这些映射，删除了错误的“Noise 不模糊”测试，以边缘对比度和跨分辨率颗粒尺度回归替代。PSF 仍为兼容 FIR，resolution Limits 的端点仍按本节产品语义解释。
+**Noise 宿主绑定已反汇编确认。** `ScanGrainKernel::process()` 在 `0x5eef32` 注册匿名 execute 回调 `0x5ef280`。回调 `0x5ef31b–0x5ef446` 将 scale 绑定为 `(1+(s−1)/47) * 2.4 * max(W/1920,H/1080)`；`Segment::get_value()` 位于 `0x5f53f0`，常量 `0x25754e0/e4/e8` 分别为 1920/1080/2.4。这既不是原始 1–48，也不是 Analogue 重采样范围 1–2.5。`0x5ef454` 将 effective amount 乘 0.5 后绑定 arg3；`process()` 的 `0x5eea57–0x5eeadf` 先计算 `s_segment * resolution_normalized / gsf * 1.87 * effective(amount)`，随后选择 FastBlur 或 OpticalResolution。CPU/WGSL 已同步这些映射，删除了错误的“Noise 不模糊”测试，以边缘对比度和跨分辨率颗粒尺度回归替代。PSF 仍为兼容 FIR；参考 `grain_index_film.json` 的 resolution_factor 明确存储 min=100、max=0，支持 `(100-value)/100` 的反向归一化。
 
-**零值保持产品关闭语义。** Amount=0 原样返回，Shadows/Midtones/Highlights=0 对应分区权重为零。与 `effective(0)=0.2` 的参考多项式有意不同；不能把 `0.2×0.2` 简化为任意像素统一“4%残留颗粒”，还存在 bell、分区系数、50%合成及宿主调度。
+**零值遵循参考响应。** V2 已移除 Amount=0 的整段旁路和亮度分区=0 的特殊归零，统一使用 `effective(t)=0.12t²+0.68t+0.2`。零值仍可产生颗粒；要完全关闭，使用 Grain 的 Enabled / `active: false`。不能把 `0.2×0.2` 简化为任意像素统一“4%残留颗粒”，还存在 bell、分区系数、50%合成及宿主调度。
 
 **GSF 已实现，不是漏掉固定画布。** 实际虚拟尺寸为 `image*max(5200/W,3100/H)`，保持宽高比。`−0.2` 取整微调未复刻；按需程序采样不分配画布纹理，因此不施加某张显卡的 texture cap。封顶在极端宽高比下可能远大于 1px，不能一概称为微小项。当前 photo 管线无 overscan/damage mask 输入；未引入虚假的 mask 接线。
 
 **验证范围。** 1024×576 天空局部横纵相关性差 RMS：旧代码 `0.15443`，修正后 `0.04676`，回归门槛 `0.10`；同一临时 runner 对旧/新模块实测。最终 f64 Grain V2 测试 8 项通过，含中灰分区、同亮度异色 Noise 相位、Noise 边缘/尺度、12 profiles × 2 modes CPU/GPU 对照。768×512 f64 CLI 32-bit TIFF 开启/关闭对照以 ffmpeg 解码，去行均值残差 RMS 为 Analogue `0.00401`、最终 Noise `0.00799`；纸基扫描 16-bit TIFF 也完成导出及读取。6000×4000 合成天空与额外 GPU smoke 是宿主 Noise 映射修正前的证据，不作为最终 Noise 数值验收。这些均为合成输入，不构成用户原始照片已修复的证明。
+
+## 12. 公开参数对齐（2026-10-08）
+
+- 对外保留 Grain Profiles / Custom、Film Type、Processing Mode、Size、Amount、Shadows、Midtones、Highlights、Film Resolution、Chroma、Enabled。移除独立 Resolution filter、V2 timer 和额外 reset 行为。静态相位复用 recipe `random_seed`。
+- Amount、三个亮度分区和 Chroma 的 GUI/JSON 范围均为 0–100，运行时除以 100；Size 为 1–48，Film Resolution 为 0–100。
+- 预设下 Amount 仍可调：构造函数 `0x57cb9a–0x57cba3` 将 grainAmount 存入 context+`0x28`，没有加入隐藏控件列表；`update_state` 在 `0x57e250–0x57e264` 复制预设后，`0x57e280–0x57e292` 再读取并覆盖 Amount。其他控件只在 Custom 下生效。GUI 切换 Custom 复制当前有效参数，选择新预设恢复其 Amount。
+- Film Type 的执行分支已确认：`FilmGrainKernel::process` 在 `0x5ed417` 比较复制后的 state+`0x9ac`；Negative=0 跳到 `0x5ed4f8` 并调用 OpticalResolution（`0x5ed611`），Positive=1 调用 FastBlur（`0x5ed471`）。内置预设的 resolution type 均为 1，因此保持 Positive 分支。SpektraFilm 使用既有 Gaussian / fractional box FIR 兼容实现，未宣称还原参考 PSF。
+- 本次验收：f32/f64 各 9 项 grain 测试通过，包含 Film Type 边缘响应、零 Amount 非旁路和 CPU/WGPU 对照；shader device check、预设/Custom 参数继承及 4 项 GUI state 测试通过。f32/f64 各完成 10 个 TIFF render/export 往返（V1 对照及 V2 两种 Film Type × 两种模式，均覆盖 film/paper 输出）。
+- 独立 release f64 CLI 的 768×512 合成天空导出：Negative/Positive 最大像素差为 Analogue `0.0000915825`、Noise `0.0012207031`；Amount 与三个分区全零相对显式禁用的 RMS 为 `0.0021044274`。这些数值证明当前实现的分支与零端点有效，不证明与 Dehancer 像素一致。
+- 原生 GUI 实际完成 Positive/Noise WGPU 扫描；选 `8mm500` 后只显示 Amount，修改至 25 再切 Custom，继承 Positive/Analogue、Size 48、Shadows 30、Midtones 45、Highlights 65、Film Resolution 75、Chroma 90、Amount 25。当前隔离显示环境的 Save state 未出现文件对话框，因此未计入本次原生保存验收；状态持久化由上述 roundtrip 测试覆盖。
+- 历史天空数值保留于上一节；本次结果仍受独立 hash、Noise RGB-only 相位及 Gaussian/fractional-box PSF 兼容实现的限制。硬件 render node 权限不足，WGPU 证据不代表独显性能。

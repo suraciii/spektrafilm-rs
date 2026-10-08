@@ -1701,79 +1701,65 @@ impl App {
                             .changed();
                     });
                 if matches!(g.engine, GrainEngine::V2) {
-                    let mut profile_changed = false;
-                    egui::ComboBox::from_label("V2 profile")
-                        .selected_text(g.v2_profile.clone())
+                    use spektrafilm_core::params::GrainV2FilmType;
+                    let mut selected_profile = g.v2_profile.clone();
+                    egui::ComboBox::from_label("Grain Profiles")
+                        .selected_text(&selected_profile)
                         .show_ui(ui, |ui| {
                             for profile in spektrafilm_model::grain_v2::PROFILE_NAMES {
-                                profile_changed |= ui
-                                    .selectable_value(
-                                        &mut g.v2_profile,
-                                        profile.to_owned(),
-                                        profile,
-                                    )
-                                    .changed();
+                                ui.selectable_value(&mut selected_profile, profile.to_owned(), profile);
                             }
+                            ui.selectable_value(&mut selected_profile, "custom".into(), "Custom");
                         });
-                    if profile_changed || ui.button("Reset V2 controls to profile").clicked() {
-                        for value in [
-                            &mut g.v2_size,
-                            &mut g.v2_amount,
-                            &mut g.v2_shadows,
-                            &mut g.v2_midtones,
-                            &mut g.v2_highlights,
-                            &mut g.v2_chroma,
-                            &mut g.v2_resolution_factor,
-                        ] {
-                            *value = None;
+                    if selected_profile != g.v2_profile {
+                        if selected_profile == "custom" {
+                            g.select_custom_grain_v2();
+                        } else {
+                            g.v2_profile = selected_profile;
+                            g.v2_amount = None;
                         }
                         changed = true;
                     }
-                    egui::ComboBox::from_label("V2 mode")
-                        .selected_text(match g.v2_mode {
-                            GrainV2Mode::Analogue => "Analogue",
-                            GrainV2Mode::Noise => "Noise",
-                        })
-                        .show_ui(ui, |ui| {
-                            changed |= ui
-                                .selectable_value(
-                                    &mut g.v2_mode,
-                                    GrainV2Mode::Analogue,
-                                    "Analogue",
-                                )
-                                .changed();
-                            changed |= ui
-                                .selectable_value(&mut g.v2_mode, GrainV2Mode::Noise, "Noise")
-                                .changed();
-                        });
-                    let resolved = g.resolved_grain_v2();
-                    for (label, value, inherited, min, max) in [
-                        ("Size", &mut g.v2_size, resolved.size, 1.0, 48.0),
-                        ("Amount", &mut g.v2_amount, resolved.amount, 0.0, 1.0),
-                        ("Shadows", &mut g.v2_shadows, resolved.shadows, 0.0, 1.0),
-                        ("Midtones", &mut g.v2_midtones, resolved.midtones, 0.0, 1.0),
-                        ("Highlights", &mut g.v2_highlights, resolved.highlights, 0.0, 1.0),
-                        ("Chroma", &mut g.v2_chroma, resolved.color, 0.0, 1.0),
-                        ("Film Resolution", &mut g.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0),
-                    ] {
-                        let mut displayed = value.unwrap_or(inherited);
-                        if ui.add(egui::Slider::new(&mut displayed, min..=max).text(label)).changed() {
-                            *value = Some(displayed);
-                            changed = true;
+                    if g.v2_profile == "custom" {
+                        egui::ComboBox::from_label("Film Type")
+                            .selected_text(match g.v2_film_type {
+                                GrainV2FilmType::Negative => "Negative",
+                                GrainV2FilmType::Positive => "Positive",
+                            })
+                            .show_ui(ui, |ui| {
+                                changed |= ui.selectable_value(&mut g.v2_film_type, GrainV2FilmType::Negative, "Negative").changed();
+                                changed |= ui.selectable_value(&mut g.v2_film_type, GrainV2FilmType::Positive, "Positive").changed();
+                            });
+                        egui::ComboBox::from_label("Processing Mode")
+                            .selected_text(match g.v2_mode {
+                                GrainV2Mode::Analogue => "Analogue",
+                                GrainV2Mode::Noise => "Noise",
+                            })
+                            .show_ui(ui, |ui| {
+                                changed |= ui.selectable_value(&mut g.v2_mode, GrainV2Mode::Analogue, "Analogue").changed();
+                                changed |= ui.selectable_value(&mut g.v2_mode, GrainV2Mode::Noise, "Noise").changed();
+                            });
+                        let resolved = g.resolved_grain_v2();
+                        for (label, value, inherited, min, max) in [
+                            ("Size", &mut g.v2_size, resolved.size, 1.0, 48.0),
+                            ("Shadows", &mut g.v2_shadows, resolved.shadows * 100.0, 0.0, 100.0),
+                            ("Midtones", &mut g.v2_midtones, resolved.midtones * 100.0, 0.0, 100.0),
+                            ("Highlights", &mut g.v2_highlights, resolved.highlights * 100.0, 0.0, 100.0),
+                            ("Film Resolution", &mut g.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0),
+                            ("Chroma", &mut g.v2_chroma, resolved.color * 100.0, 0.0, 100.0),
+                        ] {
+                            let mut displayed = value.unwrap_or(inherited);
+                            if ui.add(egui::Slider::new(&mut displayed, min..=max).text(label)).changed() {
+                                *value = Some(displayed);
+                                changed = true;
+                            }
                         }
                     }
-                    egui::ComboBox::from_label("Resolution filter")
-                        .selected_text(if g.v2_resolution_type == 0 { "Gaussian" } else { "Fast box FIR" })
-                        .show_ui(ui, |ui| {
-                            changed |= ui.selectable_value(&mut g.v2_resolution_type, 0, "Gaussian").changed();
-                            changed |= ui.selectable_value(&mut g.v2_resolution_type, 1, "Fast box FIR").changed();
-                        });
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut g.v2_timer, 0.0..=65535.0)
-                                .text("V2 timer"),
-                        )
-                        .changed();
+                    let mut amount = g.resolved_grain_v2().amount * 100.0;
+                    if ui.add(egui::Slider::new(&mut amount, 0.0..=100.0).text("Amount")).changed() {
+                        g.v2_amount = Some(amount);
+                        changed = true;
+                    }
                 } else {
                 changed |= ui
                     .checkbox(&mut g.sublayers_active, "Layered sublayer grain")

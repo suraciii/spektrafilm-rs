@@ -62,13 +62,14 @@ pub fn profile_index(name: &str) -> Option<usize> {
 pub struct GrainV2Params {
     pub mode: GrainV2Mode,
     pub profile: usize,
+    /// Host grainResolutionType: 0 = Negative (optical), 1 = Positive (fast box).
+    pub film_type: u32,
     pub size: f32,
     pub amount: f32,
     pub shadows: f32,
     pub midtones: f32,
     pub highlights: f32,
     pub resolution_factor: f32,
-    pub resolution_type: u32,
     pub seed: u32,
     pub color: f32,
     pub cluster_size: f32,
@@ -87,13 +88,15 @@ impl GrainV2Params {
         Self {
             mode: GrainV2Mode::Analogue,
             profile: index.min(11),
+            // Host grainResolutionType: Negative = 0 (optical),
+            // Positive = 1 (fast box).
+            film_type: 1,
             size: p.scale,
             amount: p.amount,
             shadows: p.shadows,
             midtones: p.midtones,
             highlights: p.highlights,
             resolution_factor: p.resolution_factor,
-            resolution_type: 1,
             seed: 0,
             color: p.color,
             cluster_size: 1.6,
@@ -123,7 +126,7 @@ impl GrainV2Params {
                 * effective_control(a);
         }
         s * (1.0 - self.resolution_factor.clamp(0., 100.) / 100.) / gsf
-            * if self.resolution_type == 1 { 1.2 } else { 1.6 }
+            * if self.film_type == 1 { 1.2 } else { 1.6 }
             * (0.7 * a * a + 0.3 * a + 0.05)
     }
 }
@@ -293,17 +296,13 @@ fn weight(d: i32, r: f32, optical: bool) -> f32 {
 #[inline]
 fn effective_control(value: f32) -> f32 {
     let t = value.clamp(0., 1.);
-    if t == 0. {
-        0.
-    } else {
-        0.12 * t * t + 0.68 * t + 0.2
-    }
+    0.12 * t * t + 0.68 * t + 0.2
 }
 pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
-    if input.width == 0 || input.height == 0 || p.amount == 0. {
+    if input.width == 0 || input.height == 0 {
         return input.clone();
     }
-    let optical = p.resolution_type != 1;
+    let optical = p.film_type == 0;
     let radius = p.resolution_radius(input.width, input.height);
     let reach = if optical {
         (radius * 3.).ceil()
@@ -411,11 +410,37 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
 mod tests {
     use super::*;
     #[test]
-    fn zero_amount_identity() {
+    fn zero_amount_still_runs_pipeline() {
         let i = ImageBuf::from_data(2, 2, vec![0.4; 12]);
         let mut p = GrainV2Params::default();
         p.amount = 0.;
-        assert_eq!(apply_cpu(&i, p).data, i.data);
+        let out = apply_cpu(&i, p);
+        assert!(out.data.iter().all(|v| to_f32(*v).is_finite()));
+        assert_ne!(out.data, i.data);
+    }
+
+    #[test]
+    fn film_types_select_distinct_resolution_paths() {
+        let image = ImageBuf::from_data(
+            192,
+            108,
+            (0..192 * 108)
+                .flat_map(|i| [from_f32(if i % 192 < 96 { 0.1 } else { 0.8 }); 3])
+                .collect(),
+        );
+        for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
+            let mut params = GrainV2Params::default();
+            params.mode = mode;
+            params.size = 48.;
+            params.amount = 1.;
+            params.resolution_factor = 0.;
+            params.film_type = 0;
+            let negative = apply_cpu(&image, params);
+            params.film_type = 1;
+            let positive = apply_cpu(&image, params);
+            let edge = |img: &ImageBuf| to_f32(img.get(96, 54)[0]) - to_f32(img.get(95, 54)[0]);
+            assert!((edge(&negative) - edge(&positive)).abs() > 1e-3, "{mode:?}");
+        }
     }
     #[test]
     fn modes_resolution_and_color() {
@@ -431,7 +456,7 @@ mod tests {
         let b = apply_cpu(&i, p);
         assert_ne!(a.data, b.data);
         p.resolution_factor = 0.;
-        p.resolution_type = 0;
+        p.film_type = 0;
         assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
         p.colored = false;
         assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
@@ -561,43 +586,53 @@ mod tests {
                 .collect(),
         );
         for profile in 0..PROFILES.len() {
-            for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-                let mut params = GrainV2Params::for_profile(profile);
-                params.mode = mode;
-                params.seed = 42;
-                let cpu = apply_cpu(&image, params);
-                let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
-                    mode: params.mode as u32,
-                    amount: params.amount,
-                    shadows: params.shadows,
-                    midtones: params.midtones,
-                    highlights: params.highlights,
-                    raw_scale: params.size,
-                    cluster_size: params.cluster_size,
-                    rotation: params.rotation,
-                    color: params.color,
-                    resolution_factor: params.resolution_factor,
-                    resolution_type: params.resolution_type,
-                    seed: params.seed,
-                    colored: params.colored,
-                    clustered: params.clustered,
-                };
-                let gpu_image = gpu.grain_v2_gpu(&image, &gpu_params);
-                assert!(
-                    cpu.data.iter().all(|v| to_f32(*v).is_finite()),
-                    "CPU Grain V2 output contains non-finite samples"
-                );
-                assert!(
-                    gpu_image.data.iter().all(|v| to_f32(*v).is_finite()),
-                    "GPU Grain V2 output contains non-finite samples"
-                );
-                let max_error = cpu
-                    .data
-                    .iter()
-                    .zip(&gpu_image.data)
-                    .map(|(a, b)| (to_f32(*a) - to_f32(*b)).abs())
-                    .fold(0.0f32, f32::max);
-                assert!(max_error < 5e-3, "CPU/GPU Grain V2 drift: {max_error}");
+            for film_type in [0, 1] {
+                for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
+                    for control in [0., 1.] {
+                        let mut params = GrainV2Params::for_profile(profile);
+                        params.film_type = film_type;
+                        params.mode = mode;
+                        params.seed = 42;
+                        params.amount = control;
+                        params.shadows = control;
+                        params.midtones = control;
+                        params.highlights = control;
+                        params.color = control;
+                        let cpu = apply_cpu(&image, params);
+                        let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
+                            mode: params.mode as u32,
+                            film_type: params.film_type,
+                            amount: params.amount,
+                            shadows: params.shadows,
+                            midtones: params.midtones,
+                            highlights: params.highlights,
+                            raw_scale: params.size,
+                            cluster_size: params.cluster_size,
+                            rotation: params.rotation,
+                            color: params.color,
+                            resolution_factor: params.resolution_factor,
+                            seed: params.seed,
+                            colored: params.colored,
+                            clustered: params.clustered,
+                        };
+                        let gpu_image = gpu.grain_v2_gpu(&image, &gpu_params);
+                        assert!(
+                            cpu.data.iter().all(|v| to_f32(*v).is_finite()),
+                            "CPU Grain V2 output contains non-finite samples"
+                        );
+                        assert!(
+                            gpu_image.data.iter().all(|v| to_f32(*v).is_finite()),
+                            "GPU Grain V2 output contains non-finite samples"
+                        );
+                        let max_error = cpu
+                            .data
+                            .iter()
+                            .zip(&gpu_image.data)
+                            .map(|(a, b)| (to_f32(*a) - to_f32(*b)).abs())
+                            .fold(0.0f32, f32::max);
+                        assert!(max_error < 5e-3, "CPU/GPU Grain V2 drift: {max_error}");
+                    }
+                }
             }
         }
     }
