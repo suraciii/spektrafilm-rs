@@ -10,12 +10,12 @@ pub mod glare;
 pub mod grain;
 pub mod halation;
 
+pub(crate) mod validation;
 use couplers::DirCouplersParams;
 use diffusion::DiffusionFilterParams;
 use glare::GlareParams;
 use grain::GrainParams;
 use halation::HalationParams;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +37,10 @@ pub struct CameraParams {
     /// Stable camera taking-filter identifier. `"none"` preserves the
     /// historical no-filter behavior; named values are loaded from the
     /// shipped measured transmission curves.
-    #[serde(default = "default_color_filter", deserialize_with = "deserialize_color_filter")]
+    #[serde(
+        default = "default_color_filter",
+        deserialize_with = "deserialize_color_filter"
+    )]
     pub color_filter: String,
     #[serde(default)]
     pub diffusion_filter: DiffusionFilterParams,
@@ -143,13 +146,9 @@ impl Default for ScannerParams {
     }
 }
 
-
-
 fn default_one_f64() -> f64 {
     1.0
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -168,7 +167,16 @@ pub struct FilmBaseParams {
     pub yellow: f64,
 }
 impl Default for FilmBaseParams {
-    fn default() -> Self { Self { active: true, scale: 1.0, tilt: 0.0, cyan: 1.0, magenta: 1.0, yellow: 1.0 } }
+    fn default() -> Self {
+        Self {
+            active: true,
+            scale: 1.0,
+            tilt: 0.0,
+            cyan: 1.0,
+            magenta: 1.0,
+            yellow: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,7 +194,15 @@ pub struct PrintBaseParams {
     pub yellow: f64,
 }
 impl Default for PrintBaseParams {
-    fn default() -> Self { Self { active: true, scale: 1.0, cyan: 1.0, magenta: 1.0, yellow: 1.0 } }
+    fn default() -> Self {
+        Self {
+            active: true,
+            scale: 1.0,
+            cyan: 1.0,
+            magenta: 1.0,
+            yellow: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,7 +218,14 @@ pub struct ConvertFilmParams {
     pub calibration: String,
 }
 impl Default for ConvertFilmParams {
-    fn default() -> Self { Self { scan_illuminant: "D55".into(), exposure_compensation_ev: 0.0, base_percentile: 99.0, calibration: default_calibration() } }
+    fn default() -> Self {
+        Self {
+            scan_illuminant: "D55".into(),
+            exposure_compensation_ev: 0.0,
+            base_percentile: 99.0,
+            calibration: default_calibration(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,7 +234,13 @@ pub struct WorkflowParams {
     #[serde(default = "default_route")]
     pub route: String,
 }
-impl Default for WorkflowParams { fn default() -> Self { Self { route: default_route() } } }
+impl Default for WorkflowParams {
+    fn default() -> Self {
+        Self {
+            route: default_route(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -262,7 +291,10 @@ pub struct PrintRenderingParams {
     pub development_time: Option<f64>,
     #[serde(default)]
     pub glare: GlareParams,
-    #[serde(default = "default_print_density_curves_morph", deserialize_with = "deserialize_print_density_curves_morph")]
+    #[serde(
+        default = "default_print_density_curves_morph",
+        deserialize_with = "deserialize_print_density_curves_morph"
+    )]
     pub density_curves_morph: PrintCurvesMorphParams,
     #[serde(default)]
     pub base: PrintBaseParams,
@@ -288,20 +320,28 @@ fn deserialize_color_filter<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Option::<String>::deserialize(deserializer).map(|value| value.unwrap_or_else(default_color_filter))
+    Option::<String>::deserialize(deserializer)
+        .map(|value| value.unwrap_or_else(default_color_filter))
 }
 
 fn default_print_density_curves_morph() -> PrintCurvesMorphParams {
-    PrintCurvesMorphParams { active: false, ..PrintCurvesMorphParams::default() }
+    PrintCurvesMorphParams {
+        active: false,
+        ..PrintCurvesMorphParams::default()
+    }
 }
 
-fn deserialize_print_density_curves_morph<'de, D>(deserializer: D) -> Result<PrintCurvesMorphParams, D::Error>
+fn deserialize_print_density_curves_morph<'de, D>(
+    deserializer: D,
+) -> Result<PrintCurvesMorphParams, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let mut value = serde_json::Value::deserialize(deserializer)?;
     if let Some(object) = value.as_object_mut() {
-        object.entry("active").or_insert(serde_json::Value::Bool(false));
+        object
+            .entry("active")
+            .or_insert(serde_json::Value::Bool(false));
     }
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
@@ -515,7 +555,6 @@ impl Default for SettingsParams {
     }
 }
 
-
 /// Debug switches — mirrors upstream 0.3.4 `DebugParams`.
 ///
 /// `lut_mode` promotes the spatial/stochastic deactivation and disables the
@@ -615,132 +654,10 @@ impl Tap {
 
 impl RuntimeParams {
     /// Validate enum-like string fields against the values the engine
-    /// actually implements. Mirrors the upstream failures that Python
-    /// raises for unknown color spaces (`colour` `KeyError`), unknown
-    /// `rgb_to_raw_method` (`ValueError` in `FilmingStage`), unknown
-    /// gamut algorithms (`ValueError` in the specs' `__post_init__`),
-    /// unknown diffusion filter families (`ValueError` in
-    /// `apply_diffusion_filter_um`) and unknown tap names — all surfaced
-    /// *before* any artifact is produced. Returns the first failure.
+    /// actually implements. The validation rules live in `validation` so
+    /// this module remains the schema/default aggregation point.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_color()?;
-        let grain = &self.film_render.grain;
-        if grain.v2_profile != "custom"
-            && spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none()
-        {
-            return Err(format!("film_render.grain.v2_profile: unknown profile {:?}", grain.v2_profile));
-        }
-        for (name, value, min, max) in [
-            ("v2_size", grain.v2_size, 1.0, 48.0),
-            ("v2_amount", grain.v2_amount, 0.0, 100.0),
-            ("v2_shadows", grain.v2_shadows, 0.0, 100.0),
-            ("v2_midtones", grain.v2_midtones, 0.0, 100.0),
-            ("v2_highlights", grain.v2_highlights, 0.0, 100.0),
-            ("v2_chroma", grain.v2_chroma, 0.0, 100.0),
-            ("v2_resolution_factor", grain.v2_resolution_factor, 0.0, 100.0),
-        ] {
-            if let Some(value) = value {
-                if !value.is_finite() || !(min..=max).contains(&value) {
-                    return Err(format!("film_render.grain.{name}: must be finite and in {min}..={max}"));
-                }
-            }
-        }
-        let spectral_shape = crate::spectral_service::SpectralShape::new(self.settings.spectral_shape)
-            .map_err(|e| format!("settings.spectral_shape: {e}"))?;
-        if spectral_shape.bounds != crate::spectral_service::default_spectral_shape() {
-            return Err(format!(
-                "settings.spectral_shape: only the bundled {:?} grid is supported by the current profile/CMF/LUT contract, got {:?}",
-                crate::spectral_service::default_spectral_shape(),
-                spectral_shape.bounds
-            ));
-        }
-        let calibration_values = self
-            .film_render
-            .convert
-            .calibration
-            .split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | ';' | '[' | ']' | '(' | ')'))
-            .filter(|part| !part.is_empty())
-            .map(|part| {
-                part.parse::<f64>()
-                    .map_err(|_| format!("film_render.convert.calibration contains non-numeric token {part:?}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if calibration_values.len() != 9 || calibration_values.iter().any(|value| !value.is_finite()) {
-            return Err(format!(
-                "film_render.convert.calibration must contain exactly 9 finite numbers, got {}",
-                calibration_values.len()
-            ));
-        }
-        if !crate::spectral_service::is_supported_color_filter(&self.camera.color_filter) {
-            let supported = crate::spectral_service::available_color_filters().join(", ");
-            return Err(format!(
-                "camera.color_filter: unsupported filter {:?}; supported: {supported}",
-                self.camera.color_filter
-            ));
-        }
-        if !matches!(
-            self.settings.rgb_to_raw_method.as_str(),
-            "hanatos2025" | "mallett2019" | "arctic2026alpha02" | "arctic2026beta04"
-                | "gauss-lasers" | "jakob2019" | "otsu2018"
-        ) {
-            return Err(format!(
-                "settings.rgb_to_raw_method: unsupported method {:?}; supported: \
-                 hanatos2025, mallett2019, arctic2026alpha02, arctic2026beta04, \
-                 gauss-lasers, jakob2019, otsu2018",
-                self.settings.rgb_to_raw_method
-            ));
-        }
-        if !crate::spectral_service::is_supported_illuminant(&self.enlarger.illuminant) {
-            let supported = crate::spectral_service::available_illuminants().join(", ");
-            return Err(format!(
-                "enlarger.illuminant: unsupported illuminant {:?}; supported: {supported}",
-                self.enlarger.illuminant
-            ));
-        }
-        if !crate::spectral_service::is_supported_illuminant(&self.film_render.convert.scan_illuminant) {
-            let supported = crate::spectral_service::available_illuminants().join(", ");
-            return Err(format!(
-                "film_render.convert.scan_illuminant: unsupported illuminant {:?}; supported: {supported}",
-                self.film_render.convert.scan_illuminant
-            ));
-        }
-        const FILTER_FAMILIES: &str =
-            "glimmerglass, black_pro_mist, pro_mist, cinebloom";
-        for (label, df) in [
-            (
-                "camera.diffusion_filter.filter_family",
-                &self.camera.diffusion_filter,
-            ),
-            (
-                "enlarger.diffusion_filter.filter_family",
-                &self.enlarger.diffusion_filter,
-            ),
-        ] {
-            if df.active && df.strength > 0.0 && df.spatial_scale > 0.0
-                && !matches!(
-                    df.filter_family.as_str(),
-                    "glimmerglass" | "black_pro_mist" | "pro_mist" | "cinebloom"
-                ) {
-                return Err(format!(
-                    "{label}: unknown diffusion filter family {:?}; available: \
-                     {FILTER_FAMILIES}",
-                    df.filter_family
-                ));
-            }
-        }
-        if let Some(t) = self.taps.inject.as_deref() {
-            Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
-        }
-        if !matches!(self.workflow.route.as_str(),
-            "input" | "input > film > scan" | "input > film > print > scan" |
-            "input > convert-film > print > scan" | "input > convert-film > scan-minus-base" |
-            "input > convert-film > scan") {
-            return Err(format!("workflow.route: unsupported route {:?}", self.workflow.route));
-        }
-        if let Some(t) = self.taps.collect.as_deref() {
-            Tap::parse(t).map_err(|e| format!("taps.collect: {e}"))?;
-        }
-        Ok(())
+        validation::validate(self)
     }
 }
 /// Top-level runtime parameters. Combines all sub-parameter groups.
@@ -793,7 +710,6 @@ impl Default for RuntimeParams {
         }
     }
 }
-
 
 impl RuntimeParams {
     /// Resolve colour transforms and reject unsupported gamut configurations
@@ -873,10 +789,18 @@ fn default_17() -> u32 {
 fn default_640() -> u32 {
     640
 }
-fn default_d55() -> String { "D55".into() }
-fn default_99() -> f64 { 99.0 }
-fn default_calibration() -> String { "1 0 0  0 1 0  0 0 1".into() }
-fn default_route() -> String { "input > film > print > scan".into() }
+fn default_d55() -> String {
+    "D55".into()
+}
+fn default_99() -> f64 {
+    99.0
+}
+fn default_calibration() -> String {
+    "1 0 0  0 1 0  0 0 1".into()
+}
+fn default_route() -> String {
+    "input > film > print > scan".into()
+}
 
 #[cfg(test)]
 mod tests {
@@ -890,8 +814,7 @@ mod tests {
         let missing: CameraParams = serde_json::from_str("{}").unwrap();
         assert_eq!(missing.color_filter, "none");
 
-        let named: CameraParams =
-            serde_json::from_str(r#"{"color_filter":"hoya_r1"}"#).unwrap();
+        let named: CameraParams = serde_json::from_str(r#"{"color_filter":"hoya_r1"}"#).unwrap();
         assert_eq!(named.color_filter, "hoya_r1");
     }
     #[test]
@@ -904,7 +827,10 @@ mod tests {
         grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
         let preset = grain.resolved_grain_v2();
         assert_eq!(preset.amount, 0.25);
-        assert_eq!(preset.mode, spektrafilm_model::grain::v2::GrainV2Mode::Analogue);
+        assert_eq!(
+            preset.mode,
+            spektrafilm_model::grain::v2::GrainV2Mode::Analogue
+        );
         assert_eq!(preset.film_type, 1);
         grain.select_custom_grain_v2();
         assert_eq!(grain.v2_amount, Some(25.0));
@@ -913,16 +839,23 @@ mod tests {
         grain.v2_amount = Some(25.0);
         grain.v2_mode = super::grain::GrainV2Mode::Noise;
         grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
-        let roundtrip: super::RuntimeParams = serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
+        let roundtrip: super::RuntimeParams =
+            serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
         let custom = roundtrip.film_render.grain.resolved_grain_v2();
         assert_eq!(custom.amount, 0.25);
-        assert_eq!(custom.mode, spektrafilm_model::grain::v2::GrainV2Mode::Noise);
+        assert_eq!(
+            custom.mode,
+            spektrafilm_model::grain::v2::GrainV2Mode::Noise
+        );
         assert_eq!(custom.film_type, 0);
         params.film_render.grain.v2_profile = "35mm250".into();
         params.film_render.grain.v2_amount = None;
         params.film_render.grain.select_custom_grain_v2();
         assert_eq!(params.film_render.grain.v2_amount, Some(35.0));
-        assert_eq!(params.film_render.grain.v2_mode, super::grain::GrainV2Mode::Analogue);
+        assert_eq!(
+            params.film_render.grain.v2_mode,
+            super::grain::GrainV2Mode::Analogue
+        );
         for value in [0.0, 100.0] {
             params.film_render.grain.v2_amount = Some(value);
             params.validate().unwrap();

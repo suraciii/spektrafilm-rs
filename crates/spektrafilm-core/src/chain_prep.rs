@@ -44,10 +44,7 @@ impl ScanColorContext {
         channel_density_len: usize,
         output_color_space: &str,
     ) -> Self {
-        let n_wl = illuminant
-            .len()
-            .min(channel_density_len)
-            .min(N_WAVELENGTHS);
+        let n_wl = illuminant.len().min(channel_density_len).min(N_WAVELENGTHS);
 
         // Python parity — the normalization sums exactly n_wl terms in f64.
         let normalization: f64 = (0..n_wl)
@@ -75,8 +72,10 @@ impl ScanColorContext {
 
         let output_space = colorspace::resolve(output_color_space)
             .expect("output color space must be validated before scanning");
-        let adapt =
-            colorspace::chromatic_adaptation_matrix_f64(viewing_white, output_space.whitepoint_xyz());
+        let adapt = colorspace::chromatic_adaptation_matrix_f64(
+            viewing_white,
+            output_space.whitepoint_xyz(),
+        );
 
         Self {
             illuminant,
@@ -86,6 +85,48 @@ impl ScanColorContext {
             viewing_white,
             adapt,
             base_xyz_to_rgb: output_space.matrix_xyz_to_rgb,
+        }
+    }
+}
+
+/// Backend-neutral scan preparation shared by the per-stage and resident paths.
+///
+/// All spectral values stay f64 here. GPU callers narrow only when constructing
+/// their backend parameter structs.
+#[derive(Debug, Clone)]
+pub struct PreparedChain {
+    pub scan: ScanColorContext,
+    pub scan_xyz_to_rgb: [[f64; 3]; 3],
+}
+
+impl PreparedChain {
+    pub fn for_scan(
+        profile: &crate::profile::Profile,
+        params: &crate::params::RuntimeParams,
+        scan_illuminant: Option<&str>,
+    ) -> Self {
+        let illuminant = scan_illuminant
+            .map(crate::spectral_service::select_illuminant_f64)
+            .unwrap_or_else(|| {
+                crate::spectral_service::select_illuminant_f64(&profile.info.viewing_illuminant)
+            });
+        let channel_density_len = profile.data.channel_density.len();
+        let scan = ScanColorContext::build(
+            illuminant.into_owned(),
+            channel_density_len,
+            &params.io.output_color_space,
+        );
+        let mut scan_xyz_to_rgb = [[0.0f64; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                scan_xyz_to_rgb[i][j] = scan.base_xyz_to_rgb[i][0] * scan.adapt[0][j]
+                    + scan.base_xyz_to_rgb[i][1] * scan.adapt[1][j]
+                    + scan.base_xyz_to_rgb[i][2] * scan.adapt[2][j];
+            }
+        }
+        Self {
+            scan,
+            scan_xyz_to_rgb,
         }
     }
 }

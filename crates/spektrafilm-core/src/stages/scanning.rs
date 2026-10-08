@@ -10,7 +10,6 @@ use spektrafilm_math::precision::{Scalar, from_f64};
 
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
-use crate::spectral_service::select_illuminant_f64;
 
 /// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy grid.
 /// Same layout as the enlarger LUT helper in `printing.rs`.
@@ -184,16 +183,10 @@ pub fn scan_with_options(
         vec![0.0; profile.data.base_density.len()]
     };
 
-    let illuminant = scan_illuminant
-        .map(select_illuminant_f64)
-        .unwrap_or_else(|| select_illuminant_f64(&profile.info.viewing_illuminant));
     let output_space = colorspace::resolve(&params.io.output_color_space)
         .expect("output color space must be validated before scanning");
-    let scan_context = crate::chain_prep::ScanColorContext::build(
-        illuminant.into_owned(),
-        channel_density.len(),
-        &params.io.output_color_space,
-    );
+    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, scan_illuminant);
+    let scan_context = &prepared.scan;
     let illuminant = &scan_context.illuminant;
     let normalization = scan_context.normalization;
     let adapt = scan_context.adapt;
@@ -263,8 +256,7 @@ pub fn scan_with_options(
     if let Some(glare) = glare {
         // Shared scan context keeps the CPU two-step CAT→RGB operation
         // order used by the reference path.
-        let glare_rgb_offset_f64 =
-            crate::chain_prep::glare_rgb_offset_f64(&scan_context);
+        let glare_rgb_offset_f64 = crate::chain_prep::glare_rgb_offset_f64(&scan_context);
         let glare_rgb_offset: [Scalar; 3] = glare_rgb_offset_f64.map(from_f64);
         let glare_amount = spektrafilm_model::glare::compute_random_glare_amount(
             rgb.width,
@@ -296,8 +288,7 @@ pub fn scan_with_options(
     // Unsharp mask
     let [usm_sigma, usm_amount] = params.scanner.unsharp_mask;
     if usm_sigma > 0.0 && usm_amount > 0.0 {
-        rgb =
-            spektrafilm_model::optics::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
+        rgb = spektrafilm_model::optics::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
     // Grain V2 is a display-domain effect. Apply it after optical scan
@@ -359,7 +350,16 @@ pub fn scan(
     color_ref: &crate::color_reference::ColorReference,
     gamut: &crate::gamut_compression::OutputGamutCompress,
 ) -> ImageBuf {
-    scan_with_options(density_cmy, profile, params, backend, color_ref, gamut, None, true)
+    scan_with_options(
+        density_cmy,
+        profile,
+        params,
+        backend,
+        color_ref,
+        gamut,
+        None,
+        true,
+    )
 }
 
 pub fn process(
