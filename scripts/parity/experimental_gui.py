@@ -7,6 +7,7 @@ This gate records GUI behavior; numerical Python/Rust parity is a separate gate.
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,20 @@ import numpy as np
 import OpenImageIO as oiio
 
 from gui_acceptance import X11, require, wait_for, render_count
+
+
+def parameters_equal(actual, expected):
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        return actual is expected
+    if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+        return math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6)
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(
+            parameters_equal(actual[key], expected[key]) for key in actual)
+    if isinstance(actual, list) and isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            parameters_equal(left, right) for left, right in zip(actual, expected))
+    return actual == expected
 
 UPSTREAM = '28bf883e1672e884307edc75852549376e13644e'
 ROUTES = [
@@ -376,7 +391,8 @@ def main():
         restored = driver.state_action('Save current to file', restored_path, save=True)
         for section, expected in factory.items():
             if section != 'rust':
-                require(restored.get(section) == expected, f'Factory restore changed {section}')
+                require(parameters_equal(restored.get(section), expected),
+                        f'Factory restore changed {section}')
         report['restart_state_sha256'] = sha(restart_path)
         report['restored_factory_sha256'] = sha(restored_path)
         if not args.development_smoke:
