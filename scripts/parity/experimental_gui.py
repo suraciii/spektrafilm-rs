@@ -132,6 +132,9 @@ class ExperimentalDesktop(X11):
         time.sleep(.4)
 
     def state_action(self, label, path, save=False):
+        # Re-enter MAIN before CONFIG after a restart; the saved default may
+        # leave the native tab bar focused on a different section.
+        self.tab('MAIN')
         self.tab('CONFIG')
         if not self.locate(label):
             self.section('GUI parameters')
