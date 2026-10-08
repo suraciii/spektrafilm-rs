@@ -20,9 +20,9 @@
   "grain": {
     "active": true,
     "rms_granularity": [
-      6,
-      8,
-      10
+      5,
+      5,
+      5
     ],
     "density_min": [
       0.03,
@@ -36,7 +36,7 @@
     ],
     "particle_scale_sublayers": [
       1,
-      0.5,
+      0.4,
       0.25
     ],
     "blur": 0.89,
@@ -46,7 +46,8 @@
     "micro_structure": [
       0.2,
       30
-    ]
+    ],
+    "micro_sublayers": 1
   },
   "preflashing": {
     "illuminant": "TH-KG3",
@@ -55,8 +56,8 @@
     "normalize_print_exposure": true,
     "y_filter_shift": 0.0,
     "m_filter_shift": 0.0,
-    "y_filter_neutral": 58.5840694289496,
-    "m_filter_neutral": 57.71493266136707,
+    "y_filter_neutral": 55.2848,
+    "m_filter_neutral": 58.8453,
     "c_filter_neutral": 0.0,
     "lens_blur": 0.0,
     "diffusion_filter": {
@@ -120,28 +121,31 @@
     "inhibition_samelayer": 1.0,
     "inhibition_interlayer": 1.0,
     "gamma_samelayer_rgb": [
-      0.336,
-      0.319,
-      0.273
+      0.5159,
+      0.5934,
+      0.2829
     ],
     "gamma_interlayer_r_to_gb": [
-      0.353,
-      0.302
+      0.4032,
+      0.2488
     ],
     "gamma_interlayer_g_to_rb": [
-      0.154,
-      0.353
+      0.2227,
+      0.4340
     ],
     "gamma_interlayer_b_to_rg": [
-      0.168,
-      0.226
+      0.1829,
+      0.1799
     ],
+    "langmuir_donor_k_rgb": [1.0, 1.0, 1.0],
+    "langmuir_receiver_k_rgb": [1.0, 1.0, 1.0],
     "diffusion_size_um": 20.0,
     "diffusion_tail_um": 200.0,
-    "diffusion_tail_weight": 0.06
+    "diffusion_tail_weight": 0.03
   },
   "chemistry": {
-    "active": false,
+    "development_time": null,
+    "active": true,
     "gamma_factor": 1.0,
     "gamma_factor_fast": 1.0,
     "gamma_factor_slow": 1.0,
@@ -150,22 +154,45 @@
     "gamma_factor_blue": 1.0,
     "developer_exhaustion": 0.0
   },
+  "film_chemistry": {
+    "development_time": null,
+    "active": true,
+    "gamma_factor": 1.0,
+    "gamma_factor_fast": 1.0,
+    "gamma_factor_slow": 1.0,
+    "gamma_factor_red": 1.0,
+    "gamma_factor_green": 1.0,
+    "gamma_factor_blue": 1.0,
+    "developer_exhaustion": 0.0
+  },
+  "film_base": {
+    "active": true,
+    "scale": 1.0,
+    "tilt": 0.0,
+    "cyan": 1.0,
+    "magenta": 1.0,
+    "yellow": 1.0
+  },
+  "print_base": {
+    "active": true,
+    "scale": 1.0,
+    "cyan": 1.0,
+    "magenta": 1.0,
+    "yellow": 1.0
+  },
+  "convert": {
+    "scan_illuminant": "D55",
+    "exposure_compensation_ev": 0.0,
+    "base_percentile": 99.0,
+    "calibration": "1 0 0  0 1 0  0 0 1"
+  },
   "camera": {
     "exposure_compensation_ev": 0.0,
     "auto_exposure": true,
     "auto_exposure_method": "center_weighted",
     "lens_blur_um": 0.0,
+    "film_format_mm": 35.0,
     "color_filter": "none",
-    "filter_uv": [
-      0.0,
-      410.0,
-      8.0
-    ],
-    "filter_ir": [
-      0.0,
-      675.0,
-      15.0
-    ],
     "diffusion_filter": {
       "active": false,
       "filter_family": "black_pro_mist",
@@ -226,23 +253,25 @@
   "input_gamut_compress": {
     "active": true,
     "algorithm": "xy",
+    "boundary": "inscribed_hull",
+    "hull_detail": 5.0,
     "knee": [
-      0.0,
+      0.815,
       1.0,
-      6.0
+      1.2
     ]
   },
   "output_gamut_compress": {
-    "algorithm": "cam16ucs",
+    "algorithm": "oklch",
     "knee": [
-      0.0,
+      0.95,
       1.0,
-      6.0
+      1.6
     ],
     "lightness_compression": [
-      0.7,
+      0.95,
       1.0,
-      2.2
+      1.6
     ]
   },
   "special": {
@@ -255,8 +284,7 @@
       0,
       1,
       2
-    ],
-    "film_gamma_factor": 1.0
+    ]
   },
   "simulation": {
     "film_stock": "kodak_gold_200",
@@ -270,13 +298,10 @@
     "saving_color_space": "sRGB",
     "saving_cctf_encoding": true,
     "auto_preview": true,
-    "scan_film": false,
-    "workflow": {
-      "route": "input > film > print > scan"
-    }
+    "route": "input > film > print > scan"
   },
   "load_raw": {
-    "white_balance": "as_shot",
+    "white_balance": "daylight",
     "temperature": 5500.0,
     "tint": 1.0,
     "lens_correction": false

@@ -491,6 +491,8 @@ pub fn develop(
             dir.diffusion_tail_weight,
             film.is_positive(),
             gamma,
+            dir.langmuir_donor_k_rgb,
+            dir.langmuir_receiver_k_rgb,
             backend,
         );
         print_stage_timing(stage_timings, "filming_develop.dir_couplers", t);

@@ -1,11 +1,6 @@
 {
     "fujifilm_crystal_archive_typeii": {
         "TH-KG3": {
-            "cinestill_800t_cs41_approx": [
-                0.0,
-                37.6398,
-                50.9664
-            ],
             "fujifilm_c200": [
                 0.0,
                 88.428,
@@ -462,11 +457,6 @@
     },
     "kodak_ektacolor_edge": {
         "TH-KG3": {
-            "cinestill_800t_cs41_approx": [
-                0.0,
-                26.0407,
-                32.1645
-            ],
             "fujifilm_c200": [
                 0.0,
                 72.3216,
@@ -581,11 +571,6 @@
     },
     "kodak_endura_premier": {
         "TH-KG3": {
-            "cinestill_800t_cs41_approx": [
-                0.0,
-                33.9864,
-                37.7417
-            ],
             "fujifilm_c200": [
                 0.0,
                 75.7517,
@@ -700,11 +685,6 @@
     },
     "kodak_portra_endura": {
         "TH-KG3": {
-            "cinestill_800t_cs41_approx": [
-                0.0,
-                23.9493,
-                28.8556
-            ],
             "fujifilm_c200": [
                 0.0,
                 70.2223,
@@ -819,11 +799,6 @@
     },
     "kodak_supra_endura": {
         "TH-KG3": {
-            "cinestill_800t_cs41_approx": [
-                0.0,
-                24.5859,
-                31.5784
-            ],
             "fujifilm_c200": [
                 0.0,
                 70.6298,
@@ -938,11 +913,6 @@
     },
     "kodak_ultra_endura": {
         "TH-KG3": {
-            "cinestill_800t_cs41_approx": [
-                0.0,
-                34.6813,
-                37.1981
-            ],
             "fujifilm_c200": [
                 0.0,
                 75.5708,

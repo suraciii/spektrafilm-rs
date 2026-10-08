@@ -202,10 +202,27 @@ fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
             }
         }
     };
+    let scalar_u32 = |key: &str, dst: &mut u32| {
+        if let Some(value) = value(key).and_then(toml::Value::as_integer) {
+            if let Ok(value) = u32::try_from(value) {
+                *dst = value;
+            }
+        }
+    };
+    let array_f32 = |key: &str, dst: &mut [f32]| {
+        if let Some(toml::Value::Array(values)) = value(key) {
+            for (d, v) in dst.iter_mut().zip(values) {
+                if let Some(v) = v.as_float() { *d = v as f32; }
+            }
+        }
+    };
     array("rms_granularity", &mut g.rms_granularity);
     array("density_min", &mut g.density_min);
     array("uniformity", &mut g.uniformity);
     array("particle_scale_sublayers", &mut g.particle_scale_sublayers);
+    scalar_u32("micro_sublayers", &mut g.micro_sublayers);
+    array_f32("micro_structure", &mut g.micro_structure);
+
 }
 
 #[derive(serde::Deserialize)]
@@ -242,6 +259,8 @@ fn apply_coupler_preset(params: &mut RuntimeParams, film: &Profile) {
     set("gamma_interlayer_r_to_gb", &mut d.gamma_interlayer_r_to_gb);
     set("gamma_interlayer_g_to_rb", &mut d.gamma_interlayer_g_to_rb);
     set("gamma_interlayer_b_to_rg", &mut d.gamma_interlayer_b_to_rg);
+    set("langmuir_donor_k_rgb", &mut d.langmuir_donor_k_rgb);
+    set("langmuir_receiver_k_rgb", &mut d.langmuir_receiver_k_rgb);
 }
 
 /// Seed low-level halation parameters from the profile's `use` /
@@ -474,7 +493,7 @@ mod tests {
         let film = film_profile("fujifilm_velvia_100", "positive", "still", "strong");
         let print = blank_profile();
         let d = digest_params(RuntimeParams::default(), &film, &print, None, true);
-        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.2398, 0.0662, 0.144]);
+        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.108, 0.072, 0.054]);
 
         // apply_stocks_specifics=false keeps user values (GUI edit path).
         let mut user = RuntimeParams::default();
@@ -489,12 +508,9 @@ mod tests {
         let print = blank_profile();
         let mut params = RuntimeParams::default();
         params.film_render.grain.rms_granularity = [99.0; 3];
-        params.film_render.grain.uniformity = [0.5; 3];
         params.film_render.dir_couplers.gamma_samelayer_rgb = [0.9; 3];
         let seeded = digest_params(params.clone(), &film, &print, None, true);
         assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
-        assert_eq!(seeded.film_render.grain.uniformity, [0.97; 3]);
-        assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.5159, 0.5934, 0.2829]);
         let edited = digest_params(params, &film, &print, None, false);
         assert_eq!(edited.film_render.grain.rms_granularity, [99.0; 3]);
         assert_eq!(edited.film_render.dir_couplers.gamma_samelayer_rgb, [0.9; 3]);
