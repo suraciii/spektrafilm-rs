@@ -68,6 +68,8 @@ pub fn digest_params(
         params.film_render.grain.particle_area_um2 = 0.0;
         params.film_render.grain.rms_granularity = [0.0; 3];
         params.film_render.grain.blur = 0.0;
+        params.film_render.grain.mult_usm_sigma = 0.0;
+        params.film_render.grain.mult_usm_amount = 0.0;
         params.print_render.glare.blur = 0.0;
         params.camera.lens_blur_um = 0.0;
         params.scanner.lens_blur = 0.0;
@@ -123,6 +125,8 @@ pub fn digest_params(
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
         params.film_render.grain.blur = 0.0;
         params.film_render.grain.blur_dye_clouds_um = 0.0;
+        params.film_render.grain.mult_usm_sigma = 0.0;
+        params.film_render.grain.mult_usm_amount = 0.0;
         params.print_render.glare.blur = 0.0;
         params.camera.lens_blur_um = 0.0;
         params.enlarger.lens_blur = 0.0;
@@ -201,7 +205,7 @@ fn apply_grain_preset(params: &mut RuntimeParams, film: &Profile) {
     array("rms_granularity", &mut g.rms_granularity);
     array("density_min", &mut g.density_min);
     array("uniformity", &mut g.uniformity);
-    array("particle_scale_sublayers", &mut g.particle_scale_layers);
+    array("particle_scale_sublayers", &mut g.particle_scale_sublayers);
 }
 
 #[derive(serde::Deserialize)]
@@ -280,7 +284,6 @@ pub fn broadcast_monochrome_layout(film: &Profile, params: &mut RuntimeParams) {
     dir.gamma_interlayer_r_to_gb = [0.0, 0.0];
     dir.gamma_interlayer_g_to_rb = [0.0, 0.0];
     dir.gamma_interlayer_b_to_rg = [0.0, 0.0];
-    g.particle_scale = [g.particle_scale[0]; 3];
     g.rms_granularity = [g.rms_granularity[0]; 3];
     g.density_min = [g.density_min[0]; 3];
     g.uniformity = [g.uniformity[0]; 3];
@@ -567,17 +570,20 @@ mod tests {
         assert!(err.is_err(), "typo'd field must not deserialize silently");
         let err = serde_json::from_str::<RuntimeParams>(r#"{"debugo": {}}"#);
         assert!(err.is_err());
-        // The 0.3.4 names deserialize.
         let params: RuntimeParams = serde_json::from_str(
-            r#"{"film_render": {"grain": {"particle_area_um2": 0.4,
-               "particle_scale": [1.0, 1.0, 1.0],
-               "particle_scale_layers": [1.0, 1.0, 1.0]}}}"#,
+            r#"{"film_render": {"grain": {"active": true,
+               "rms_granularity": [6.0, 8.0, 10.0],
+               "density_min": [0.03, 0.03, 0.03],
+               "uniformity": [0.97, 0.97, 0.97],
+               "particle_scale_sublayers": [1.0, 0.5, 0.25],
+               "blur": 0.89, "mult_usm_sigma": 0.7,
+               "mult_usm_amount": 1.5, "blur_dye_clouds_um": 2.0,
+               "micro_structure": [0.2, 30.0]}}}"#,
         )
         .unwrap();
-        assert_eq!(params.film_render.grain.particle_area_um2, 0.4);
-        // ...and the pre-rename names no longer do.
+        assert_eq!(params.film_render.grain.rms_granularity, [6.0, 8.0, 10.0]);
         assert!(serde_json::from_str::<RuntimeParams>(
-            r#"{"film_render": {"grain": {"agx_particle_area_um2": 0.4}}}"#
+            r#"{"film_render": {"grain": {"particle_area_um2": 0.4}}}"#
         )
         .is_err());
     }
