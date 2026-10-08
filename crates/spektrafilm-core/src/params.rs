@@ -194,11 +194,83 @@ impl Default for ScannerParams {
     }
 }
 
+/// Selects the film-grain implementation. V1 remains the default for
+/// backwards-compatible recipes; V2 is procedural grain in linear scanner RGB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrainEngine {
+    V1,
+    V2,
+}
+
+impl Default for GrainEngine {
+    fn default() -> Self {
+        Self::V1
+    }
+}
+
+/// Procedural Grain V2 generation mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrainV2Mode {
+    Analogue,
+    Noise,
+}
+
+impl Default for GrainV2Mode {
+    fn default() -> Self {
+        Self::Analogue
+    }
+}
+
+fn default_grain_v2_profile() -> String {
+    "35mm250".to_owned()
+}
+
+const fn default_grain_v2_resolution_type() -> u32 {
+    1
+}
+
+const fn default_grain_v2_timer() -> f32 {
+    0.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrainParams {
     #[serde(default = "default_true")]
     pub active: bool,
+    /// Selects the grain implementation; V1 preserves the historical default.
+    #[serde(default)]
+    pub engine: GrainEngine,
+    /// Procedural Grain V2 profile id.
+    #[serde(default = "default_grain_v2_profile")]
+    pub v2_profile: String,
+    #[serde(default)]
+    pub v2_mode: GrainV2Mode,
+    /// Optional controls inherit the selected profile when unset.
+    /// Size uses the profile scale range 1..=48; tonal controls use 0..=1.
+    #[serde(default)]
+    pub v2_size: Option<f32>,
+    #[serde(default)]
+    pub v2_amount: Option<f32>,
+    #[serde(default)]
+    pub v2_shadows: Option<f32>,
+    #[serde(default)]
+    pub v2_midtones: Option<f32>,
+    #[serde(default)]
+    pub v2_highlights: Option<f32>,
+    #[serde(default)]
+    pub v2_chroma: Option<f32>,
+    /// Film Resolution override, 0..=100. Unset inherits the profile.
+    #[serde(default)]
+    pub v2_resolution_factor: Option<f32>,
+    /// 0 = Gaussian FIR, 1 = fractional box FIR approximating FastBlur.
+    #[serde(default = "default_grain_v2_resolution_type")]
+    pub v2_resolution_type: u32,
+    /// Stable animation phase; photos should leave this at zero.
+    #[serde(default = "default_grain_v2_timer")]
+    pub v2_timer: f32,
     #[serde(default = "default_true")]
     pub sublayers_active: bool,
     // f64 to preserve Python JSON precision through the Poisson/Binomial
@@ -255,6 +327,18 @@ impl Default for GrainParams {
     fn default() -> Self {
         Self {
             active: true,
+            engine: GrainEngine::V1,
+            v2_profile: default_grain_v2_profile().to_owned(),
+            v2_mode: GrainV2Mode::Analogue,
+            v2_size: None,
+            v2_amount: None,
+            v2_shadows: None,
+            v2_midtones: None,
+            v2_highlights: None,
+            v2_chroma: None,
+            v2_resolution_factor: None,
+            v2_resolution_type: default_grain_v2_resolution_type(),
+            v2_timer: default_grain_v2_timer(),
             sublayers_active: true,
             particle_area_um2: 0.2,
             particle_scale: [1.6, 1.6, 3.2],
@@ -268,6 +352,31 @@ impl Default for GrainParams {
             n_sub_layers: 1,
             monochrome: false,
         }
+    }
+}
+
+impl GrainParams {
+    /// Resolve profile defaults and explicit overrides after RuntimeParams::validate.
+    /// The returned seed contains the timer phase; callers add the runtime seed.
+    pub fn resolved_grain_v2(&self) -> spektrafilm_model::grain_v2::GrainV2Params {
+        use spektrafilm_model::grain_v2::{self, GrainV2Params};
+        let index = grain_v2::profile_index(&self.v2_profile)
+            .expect("Grain V2 profile must be validated before rendering");
+        let mut params = GrainV2Params::for_profile(index);
+        params.mode = match self.v2_mode {
+            GrainV2Mode::Analogue => grain_v2::GrainV2Mode::Analogue,
+            GrainV2Mode::Noise => grain_v2::GrainV2Mode::Noise,
+        };
+        params.size = self.v2_size.unwrap_or(params.size);
+        params.amount = self.v2_amount.unwrap_or(params.amount);
+        params.shadows = self.v2_shadows.unwrap_or(params.shadows);
+        params.midtones = self.v2_midtones.unwrap_or(params.midtones);
+        params.highlights = self.v2_highlights.unwrap_or(params.highlights);
+        params.color = self.v2_chroma.unwrap_or(params.color);
+        params.resolution_factor = self.v2_resolution_factor.unwrap_or(params.resolution_factor);
+        params.resolution_type = self.v2_resolution_type;
+        params.seed = self.v2_timer as u32;
+        params
     }
 }
 
@@ -925,6 +1034,29 @@ impl RuntimeParams {
     /// *before* any artifact is produced. Returns the first failure.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_color()?;
+        let grain = &self.film_render.grain;
+        if spektrafilm_model::grain_v2::profile_index(&grain.v2_profile).is_none() {
+            return Err(format!("film_render.grain.v2_profile: unknown profile {:?}", grain.v2_profile));
+        }
+        for (name, value, min, max) in [
+            ("v2_size", grain.v2_size, 1.0, 48.0),
+            ("v2_amount", grain.v2_amount, 0.0, 1.0),
+            ("v2_shadows", grain.v2_shadows, 0.0, 1.0),
+            ("v2_midtones", grain.v2_midtones, 0.0, 1.0),
+            ("v2_highlights", grain.v2_highlights, 0.0, 1.0),
+            ("v2_chroma", grain.v2_chroma, 0.0, 1.0),
+            ("v2_resolution_factor", grain.v2_resolution_factor, 0.0, 100.0),
+            ("v2_timer", Some(grain.v2_timer), 0.0, 65535.0),
+        ] {
+            if let Some(value) = value {
+                if !value.is_finite() || !(min..=max).contains(&value) {
+                    return Err(format!("film_render.grain.{name}: must be finite and in {min}..={max}"));
+                }
+            }
+        }
+        if grain.v2_resolution_type > 1 {
+            return Err("film_render.grain.v2_resolution_type: expected 0 or 1".into());
+        }
         let spectral_shape = crate::spectral_service::SpectralShape::new(self.settings.spectral_shape)
             .map_err(|e| format!("settings.spectral_shape: {e}"))?;
         if spectral_shape.bounds != crate::spectral_service::default_spectral_shape() {
@@ -1200,5 +1332,28 @@ mod tests {
         let named: CameraParams =
             serde_json::from_str(r#"{"color_filter":"hoya_r1"}"#).unwrap();
         assert_eq!(named.color_filter, "hoya_r1");
+    }
+    #[test]
+    fn grain_v2_profile_inheritance_and_overrides() {
+        let mut params = super::RuntimeParams::default();
+        for (i, name) in spektrafilm_model::grain_v2::PROFILE_NAMES.iter().enumerate() {
+            params.film_render.grain.v2_profile = (*name).into();
+            let expected = spektrafilm_model::grain_v2::GrainV2Params::for_profile(i);
+            let actual = params.film_render.grain.resolved_grain_v2();
+            assert_eq!(actual.amount, expected.amount);
+            assert_eq!(actual.resolution_factor, expected.resolution_factor);
+            params.validate().unwrap();
+        }
+        params.film_render.grain.v2_amount = Some(0.0);
+        assert_eq!(params.film_render.grain.resolved_grain_v2().amount, 0.0);
+        let roundtrip: super::RuntimeParams = serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
+        assert_eq!(roundtrip.film_render.grain.resolved_grain_v2().amount, 0.0);
+        for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+            params.film_render.grain.v2_amount = Some(value);
+            assert!(params.validate().is_err());
+        }
+        params.film_render.grain.v2_amount = None;
+        params.film_render.grain.v2_profile = "unknown".into();
+        assert!(params.validate().is_err());
     }
 }

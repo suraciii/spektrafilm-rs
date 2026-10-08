@@ -20,6 +20,7 @@ precision-f64 = [
 spektrafilm-core.workspace = true
 spektrafilm-gpu.workspace = true
 spektrafilm-math.workspace = true
+spektrafilm-model.workspace = true
 spektrafilm-raw = { path = "../spektrafilm-raw" }
 eframe.workspace = true
 egui.workspace = true

@@ -368,15 +368,48 @@ pub fn scan_with_options(
             spektrafilm_model::diffusion::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
+    // Grain V2 is a display-domain effect. Apply it after optical scan
+    // effects and before destination transfer encoding. V1 remains in the
+    // filming density stage above and is never touched by this branch.
+    if params.film_render.grain.active
+        && matches!(
+            params.film_render.grain.engine,
+            crate::params::GrainEngine::V2
+        )
+    {
+        let mut grain = params.film_render.grain.resolved_grain_v2();
+        if params.debug.deactivate_spatial_effects {
+            grain.resolution_factor = 100.0;
+        }
+        grain.seed = grain.seed.wrapping_add(params.random_seed as u32);
+        let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
+            mode: grain.mode as u32,
+            amount: grain.amount,
+            shadows: grain.shadows,
+            midtones: grain.midtones,
+            highlights: grain.highlights,
+            raw_scale: grain.size,
+            cluster_size: grain.cluster_size,
+            rotation: grain.rotation,
+            color: grain.color,
+            resolution_factor: grain.resolution_factor,
+            resolution_type: grain.resolution_type,
+            seed: grain.seed,
+            colored: grain.colored,
+            clustered: grain.clustered,
+        };
+        rgb = backend
+            .grain_v2(&rgb, &gpu_params)
+            .unwrap_or_else(|| spektrafilm_model::grain_v2::apply_cpu(&rgb, grain));
+    }
+
     // Match colour.RGB_to_RGB(cs, cs): apply the stored same-space matrix
     // roundtrip and destination CCTF. Preserve values outside [0, 1] for
     // formats and later consumers that support extended range.
     if params.io.output_cctf_encoding {
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-            let encoded = colorspace::encode_rgb(
-                [px[0] as f64, px[1] as f64, px[2] as f64],
-                output_space,
-            );
+            let encoded =
+                colorspace::encode_rgb([px[0] as f64, px[1] as f64, px[2] as f64], output_space);
             px[0] = from_f64(encoded[0]);
             px[1] = from_f64(encoded[1]);
             px[2] = from_f64(encoded[2]);
@@ -407,5 +440,3 @@ pub fn process(
 ) -> ImageBuf {
     scan(density_cmy, profile, params, backend, color_ref, gamut)
 }
-
-

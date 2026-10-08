@@ -503,7 +503,7 @@ pub fn develop(
     // model always samples the profile's 3 emulsion sublayers) and
     // `use_fast_stats` only by the layered path, exactly like upstream.
     let grain = &params.film_render.grain;
-    if grain.active {
+    if grain.active && matches!(grain.engine, crate::params::GrainEngine::V1) {
         let t = Instant::now();
         // Use f64 throughout — Python reads these from JSON as f64; the
         // f32 storage in `GrainParams` would otherwise truncate to ~7

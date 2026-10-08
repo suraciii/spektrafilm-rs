@@ -6,6 +6,27 @@ pub mod wgpu_backend;
 
 use spektrafilm_math::image::ImageBuf;
 
+/// f32 boundary representation shared by the WGPU Grain V2 shader and the
+/// core parameter mapper. The field groups mirror the shader's 64-byte
+/// uniform layout.
+#[derive(Debug, Clone, Copy)]
+pub struct GrainV2GpuParams {
+    pub mode: u32,
+    pub amount: f32,
+    pub shadows: f32,
+    pub midtones: f32,
+    pub highlights: f32,
+    pub raw_scale: f32,
+    pub cluster_size: f32,
+    pub rotation: f32,
+    pub color: f32,
+    pub resolution_factor: f32,
+    pub resolution_type: u32,
+    pub seed: u32,
+    pub colored: bool,
+    pub clustered: bool,
+}
+
 /// Compute backend abstraction. Each method corresponds to a GPU-friendly
 /// operation in the film simulation pipeline.
 ///
@@ -144,6 +165,12 @@ pub trait ComputeBackend: Send + Sync {
             log_exposure.iter().map(|&v| v / gamma_factor).collect()
         };
         spektrafilm_math::interp::fast_interp_image_f64(log_raw, &scaled, density_curves)
+    }
+
+    /// Return a rendered Grain V2 image when this backend supports the shader.
+    /// The caller uses the independent CPU reference when this returns None.
+    fn grain_v2(&self, _image: &ImageBuf, _params: &GrainV2GpuParams) -> Option<ImageBuf> {
+        None
     }
 
     /// Optional fused fast-path: runs filming + printing + scanning as a single
