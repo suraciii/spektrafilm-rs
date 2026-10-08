@@ -313,9 +313,10 @@ pub fn scan_with_options(
         if params.debug.deactivate_spatial_effects {
             grain.resolution_factor = 100.0;
         }
-        grain.seed = grain.seed.wrapping_add(params.random_seed as u32);
+        grain.seed = params.random_seed as u32;
         let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
             mode: grain.mode as u32,
+            film_type: grain.film_type,
             amount: grain.amount,
             shadows: grain.shadows,
             midtones: grain.midtones,
@@ -325,7 +326,6 @@ pub fn scan_with_options(
             rotation: grain.rotation,
             color: grain.color,
             resolution_factor: grain.resolution_factor,
-            resolution_type: grain.resolution_type,
             seed: grain.seed,
             colored: grain.colored,
             clustered: grain.clustered,

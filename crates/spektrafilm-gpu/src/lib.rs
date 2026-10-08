@@ -1,11 +1,31 @@
 mod gpu_helpers;
 pub mod cpu_backend;
-#[cfg(feature = "cuda-backend")]
-pub mod cuda_backend;
 #[cfg(feature = "wgpu-backend")]
 pub mod wgpu_backend;
 
 use spektrafilm_math::image::ImageBuf;
+
+/// f32 boundary representation shared by the WGPU Grain V2 shader and the
+/// core parameter mapper. The field groups mirror the shader's 64-byte
+/// uniform layout.
+#[derive(Debug, Clone, Copy)]
+pub struct GrainV2GpuParams {
+    pub mode: u32,
+    /// Film stock type: 0 = Negative, 1 = Positive.
+    pub film_type: u32,
+    pub amount: f32,
+    pub shadows: f32,
+    pub midtones: f32,
+    pub highlights: f32,
+    pub raw_scale: f32,
+    pub cluster_size: f32,
+    pub rotation: f32,
+    pub color: f32,
+    pub resolution_factor: f32,
+    pub seed: u32,
+    pub colored: bool,
+    pub clustered: bool,
+}
 
 /// Compute backend abstraction. Each method corresponds to a GPU-friendly
 /// operation in the film simulation pipeline.
@@ -145,6 +165,12 @@ pub trait ComputeBackend: Send + Sync {
             log_exposure.iter().map(|&v| v / gamma_factor).collect()
         };
         spektrafilm_math::interp::fast_interp_image_f64(log_raw, &scaled, density_curves)
+    }
+
+    /// Return a rendered Grain V2 image when this backend supports the shader.
+    /// The caller uses the independent CPU reference when this returns None.
+    fn grain_v2(&self, _image: &ImageBuf, _params: &GrainV2GpuParams) -> Option<ImageBuf> {
+        None
     }
 
     /// Optional fused fast-path: runs filming + printing + scanning as a single
@@ -376,7 +402,7 @@ pub struct Lut3D {
 }
 
 /// Select the available compute backend. Reference f64 builds default to CPU.
-/// Explicit `SPEKTRAFILM_BACKEND=cuda|wgpu` requests select f32 preview arithmetic,
+/// Explicit `SPEKTRAFILM_BACKEND=wgpu` requests select f32 preview arithmetic,
 /// including in an f64 binary. Unavailable requests report a faithful CPU fallback.
 pub fn select_backend() -> Box<dyn ComputeBackend> {
     let requested = std::env::var("SPEKTRAFILM_BACKEND")
@@ -391,22 +417,6 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     if requested.as_deref() == Some("cpu") {
         tracing::info!(backend = cpu_backend::CpuBackend.name(), "using CPU backend");
         return Box::new(cpu_backend::CpuBackend);
-    }
-
-    #[cfg(feature = "cuda-backend")]
-    {
-        if requested.as_deref() == Some("cuda") {
-            if let Some(cuda) = cuda_backend::CudaBackend::new() {
-                tracing::info!(precision = "f32", reference = false, "using CUDA preview backend");
-                return Box::new(cuda);
-            }
-            tracing::warn!("CUDA backend requested but unavailable; falling back");
-        }
-    }
-
-    #[cfg(not(feature = "cuda-backend"))]
-    if requested.as_deref() == Some("cuda") {
-        tracing::warn!("CUDA backend requested but spektrafilm-gpu was built without cuda-backend");
     }
 
     #[cfg(not(feature = "wgpu-backend"))]

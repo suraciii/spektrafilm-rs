@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>从乳剂到图像 · SpektraFilm Grain V3 研究</title>
+<style>
+:root{color-scheme:dark;--bg:#11151b;--panel:#1b222c;--text:#eef3f8;--muted:#a9b5c2;--accent:#72d6c3;--line:#394858;--warn:#f4bd69}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.7 system-ui,sans-serif}main{max-width:1160px;margin:auto;padding:38px 24px 70px}h1,h2,h3{line-height:1.3}h1{font-size:36px;letter-spacing:-.03em;margin:8px 0 14px}h2{font-size:24px;margin:40px 0 16px}h3{font-size:17px;margin:4px 0 10px}p{margin:8px 0;color:var(--muted)}a{color:var(--accent)}.tag{color:var(--accent);font-size:12px;letter-spacing:.13em}.lead{font-size:19px;max-width:880px}.note{border-left:3px solid var(--warn);padding:9px 16px;background:#20252d;margin:18px 0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}.controls{display:flex;flex-wrap:wrap;gap:18px;align-items:center;margin:20px 0}.controls label{flex:1;min-width:220px}input{width:100%;accent-color:var(--accent)}select,button{background:#273540;color:var(--text);border:1px solid #52616e;padding:8px;border-radius:6px;font:inherit}button{cursor:pointer}button:hover{border-color:var(--accent)}output{color:var(--accent);font-variant-numeric:tabular-nums}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.step{color:var(--accent);font-size:12px}canvas{display:block;width:100%;height:auto;background:#eee;border-radius:5px;margin:12px 0;image-rendering:pixelated}.caption{font-size:13px}.stat{color:var(--accent);font-size:14px;min-height:24px}.formula{overflow-x:auto;background:#0e1319;padding:16px;font:14px/1.8 ui-monospace,monospace;white-space:pre-wrap;border-radius:8px}.tablewrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:710px}th,td{text-align:left;vertical-align:top;padding:13px;border-bottom:1px solid var(--line)}th{color:var(--accent)}td{color:var(--muted)}li{margin:8px 0;color:var(--muted)}strong{color:var(--text)}.sources{font-size:13px}.flow{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}.flow span{flex:1;min-width:140px;padding:13px;border:1px solid var(--line);border-radius:8px}.flow b{display:block;color:var(--accent);font-weight:500}footer{border-top:1px solid var(--line);padding-top:20px;margin-top:35px;font-size:13px;color:var(--muted)}@media(max-width:720px){main{padding:24px 14px 50px}h1{font-size:28px}.grid,.trio{grid-template-columns:1fr}.controls{gap:12px}}
+</style>
+</head>
+<body><main>
+<div class="tag">SPEKTRAFILM / GRAIN V3 / 研究与交互示意</div>
+<h1>让乳剂里的颗粒形成图像</h1>
+<p class="lead">光改变已有晶体的显影概率；显影产物改变局部吸收；印相或扫描把透过胶片的光积分为像素。颗粒的形态与图像内容由同一过程产生。</p>
+<div class="note"><strong>适用范围：</strong>下面以常规彩色负片为主。乳剂中的卤化银晶体、显影银、最终染料云、屏幕上看到的颗粒纹理是不同对象。黑白银盐负片主要保留金属银；彩色负片经漂白定影主要留下染料。反转片还有不同的显影流程。</div>
+<h2>01 · 同一片乳剂，改变曝光</h2>
+<p>拖动曝光：晶体位置、大小和各自的随机阈值保持不变，更多或更少的晶体被激活。改变扫描孔径：乳剂和显影结果保持不变，变化的是每个输出像素收集的光。</p>
+<div class="panel controls">
+<label for="ev">曝光 <output id="evValue">0.0 EV</output><input id="ev" type="range" min="-3" max="3" step="0.1" value="0"></label>
+<label for="pitch">扫描孔径 / 采样间距 <select id="pitch"><option value="1">0.42 µm</option><option value="2" selected>0.83 µm</option><option value="4">1.67 µm</option><option value="8">3.33 µm</option></select></label>
+<button id="reset" type="button">恢复初始观察</button>
+</div>
+<div class="grid">
+<section class="panel"><div class="step">① 曝光分布 H(x,y)</div><h3>投到乳剂上的光</h3><canvas id="exposure" width="384" height="144" role="img" aria-label="含渐变、圆形、矩形和细条纹的入射曝光示意"></canvas><p class="caption">左暗右亮，包含形状和细线。这里用单个感色组解释成像；真实相机输入应按波长与感色灵敏度积分。</p></section>
+<section class="panel"><div class="step">② 固定晶体 + 曝光依赖的激活</div><h3>快、中、慢三个子层</h3><canvas id="crystals" width="384" height="144" role="img" aria-label="固定晶体的显影激活，青色橙色紫色分别标记三个子层"></canvas><p class="caption">灰色是未激活晶体；青 / 橙 / 紫是快 / 中 / 慢子层的已激活晶体投影。颜色仅用于区分子层，不是染料颜色。</p><div id="counts" class="stat" aria-live="polite"></div></section>
+<section class="panel"><div class="step">③ 显影产物的空间分布 → 透射率</div><h3>染料云重叠构成负像</h3><canvas id="negative" width="384" height="144" role="img" aria-label="染料云密度转换为透射率后的负像"></canvas><p class="caption">高曝光区域通常有更多染料，透光更少。局部团块来自云的尺寸、重叠和深度投影；不需要让晶体迁移聚团。</p></section>
+<section class="panel"><div class="step">④ 先透射，再按孔径积分</div><h3>扫描后观察</h3><canvas id="scan" width="384" height="144" role="img" aria-label="孔径积分后以简化反相显示的图像"></canvas><p class="caption">孔径越大，纹理和细节越容易被平均。为便于辨认形状，此处仅显示 1 − 平均透射率；不是完整彩负反演或印相。</p><div id="scanStats" class="stat"></div></section>
+</div>
+<p class="note"><strong>这是教学模型，不是 V3 原型或实测胶片。</strong>160 × 60 µm 的示意区域，三组固定随机晶体，简化响应 p = 1 − exp(−sH)，以高斯核表示染料云，采用方形扫描孔径。快层的粒径更大、灵敏度更高是演示设定；具体胶片需实测标定。未模拟显影化学、真实多层光谱、镜头 PSF、散射或扫描电子噪声。</p>
+<h2>02 · 真实过程里，“颗粒聚集”发生在哪里？</h2>
+<div class="flow"><span><b>涂布乳剂</b>晶体已有位置、形状、大小和深度</span><span><b>曝光 / 潜影</b>吸收光子，形成能催化显影的潜影中心</span><span><b>显影 / 漂定</b>局部反应生成染料；彩负去除银和未显影卤化银</span><span><b>光学读取</b>吸收、空间积分和采样共同决定可见纹理</span></div>
+<p>单个晶体的响应具有阈值和统计性，不能简单等同于“一个光子变成一个颗粒”。彩色负片常有不同速度的感色子层；实际层数、粒径与灵敏度分布依胶片而异。Kodak 对 VISION3 500T 的资料还明确描述了降低阴影颗粒的染料分层技术。</p>
+<p>屏幕上的一个粗团块，可能汇集多个染料云、多个深度以及扫描系统的低通响应。显影抑制、层间作用会改变邻域响应；它们不能一概替换成独立低频噪声场。粒径也不是图像细节的硬截止：应看整条链路的 MTF 与信噪比。</p>
+<h2>03 · 亮度如何改变颗粒？</h2>
+<div class="trio">
+<div class="panel"><h3>低曝光</h3><p>少数敏感晶体先被激活。负片密度低；最终照片暗部的颗粒还取决于反演、印相对比度与扫描噪声。</p></div>
+<div class="panel"><h3>中间曝光</h3><p>更多晶体和子层参与。覆盖率、随机波动与云重叠一起变化；多个速度子层的响应会交叠。</p></div>
+<div class="panel"><h3>高曝光</h3><p>各子层逐渐饱和，云覆盖更加连续。密度波动与输出亮度波动不等价；不能用一个固定高光权重概括所有胶片。</p></div>
+</div>
+<p><strong>必须区分三个坐标：</strong>场景曝光 H、负片密度 D、最终图像亮度 Y。负片的高密度通常来自高曝光，但扫描底片本身的透射亮度反而低。Dehancer 的 Shadows / Midtones / Highlights 是输入 RGB 的亮度分区，不能直接当作乳剂的三种速度子层。</p>
+<h2>04 · 三种已有实现，究竟在做什么？</h2>
+<div class="tablewrap"><table><thead><tr><th>对象</th><th>图像与颗粒的关系</th><th>已核实的边界</th></tr></thead><tbody>
+<tr><td><strong>SpektraFilm V1</strong></td><td>总密度反查 3 × 3 子层；按每像素粒子数抽样随机密度，经染料云模糊、子层求和，再进入印相 / 扫描。</td><td>有 µm 尺度与密度域耦合；没有固定晶体位置 / 形状 / 深度。候选粒子统计随目标密度改变，按输出栅格重新抽样。</td></tr>
+<tr><td><strong>Dehancer 已分析 OFX</strong></td><td>程序纹理受局部亮度影响，九点纹理重采样；用亮度分区 Overlay 混合。Film Resolution 先降低图像分辨能力。</td><td>厂商“图像由颗粒组成”的视觉目标不等于逐晶体曝光模拟。已分析 kernel 明确读取现有 RGB 并混合生成纹理；不把一个版本的证据推广到所有产品。</td></tr>
+<tr><td><strong>当前 Grain V2</strong></td><td>扫描后 RGB 进入内部固定显示 transfer；程序颗粒、分区混合与分辨率处理后回到 linear RGB。</td><td>属于 Dehancer 语义的兼容实现；整数梯度、相位、FIR 等不是厂商数值复刻。不同曝光的颗粒外观受控制，但不代表感光乳剂成像。</td></tr>
+</tbody></table></div>
+<p class="sources">代码依据：<a href="../crates/spektrafilm-model/src/grain.rs">grain.rs · layer_particle_model / apply_grain_to_density_layers</a>；<a href="../crates/spektrafilm-core/src/stages/filming.rs">filming.rs · 子层密度插值</a>；<a href="../crates/spektrafilm-core/src/stages/scanning.rs">scanning.rs · V2 接入</a>；<a href="dehancer-grain-reverse-engineering.md">Dehancer 逆向笔记 §§5–6、11</a>。</p>
+<details class="panel"><summary>展开：V1 为什么已经有亮度相关的随机性，却仍不是固定乳剂？</summary>
+<div class="formula">p = clamp(D_target / D_max)
+s = 1 − p · uniformity · (1 − ε)
+M ~ Poisson(N / s)
+K | M ~ Binomial(M, p)
+D_sample = K · (D_max / N) · s
+
+E[D_sample] = D_max · p
+Var[D_sample] = (D_max² / N) · p · s</div>
+<p>以上是未滤波、精确分布分支、单子层、给定 p 的矩；fast_stats 是近似采样。N 由像素面积 / 有效粒子面积等决定。在 uniformity 接近 1 时，p·s 近似 p(1−p)，所以密度方差通常在中间响应较大。子层求和、密度偏置、滤波、微结构场与非线性扫描会进一步改变它。</p><p>M 的均值 N/s 随 p 改变：这是用于拟合密度统计的模型，不是曝光前固定的一批晶体。相同随机 seed 可以重现同一调用，但不保证换分辨率、裁切或曝光后仍对应同一片物理乳剂。</p></details>
+<h2>05 · V3 建议：以等效成像为目标，扩展 V1</h2>
+<p><strong>目标是物理响应与最终结果等效，不要求内部过程逐步相同。</strong>优先采用曝光条件下的分层随机密度场，保留 V1 的感色曲线、特性曲线、片基 / 染料光谱和印相 / 扫描链。是否显式生成晶体，取决于它是否比统计模型更有效地改善可观察结果；固定晶体不是验收条件。</p>
+<div class="formula">每个感色子层的曝光 / 平均密度
+  → 条件统计：密度分布、空间相关、跨通道相关、有效物理尺度
+  → 空间相关的随机密度场（允许解析近似、滤波或稀疏云核）
+  → 等效透射与孔径积分 → 现有印相 / 扫描链
+
+物理约束：正确的平均吸收、曝光响应、尺度变化与细节传递
+结果约束：颗粒形态 / 色彩 / 亮度分布与真实样本在目标范围内相符</div>
+<p>第一步选定一种负片和一组受控曝光，测量或确定目标统计，再检查 V1 缺失哪些项。只有独立逐像素采样和固定模糊核无法匹配时，才增加曝光相关空间核、非高斯密度分布或通道相关等必要能力。保留现有 DIR 的宏观作用，避免重复计算同一种效应。V1 未保存晶体、候选数随密度改变，本身都不是“不等效”的证据。</p>
+<div class="grid">
+<section class="panel"><h3>候选 A · 分层统计密度场（优先）</h3><p>直接匹配不同曝光下的响应和纹理统计，让随机密度参与吸收、印相与扫描。可以作为正式渲染模型；只要物理约束、观感和跨尺度结果通过验收，就无需再还原微观过程。</p></section>
+<section class="panel"><h3>候选 B · 空间粒子 / 染料云（可选参考）</h3><p>用于解释云重叠、检查近似或弥补统计模型难以表达的形态。仅在实测收益足够时引入。教学示意中的固定晶体帮助理解因果，不限定 V3 的实现架构。</p></section>
+</div>
+<div class="note"><strong>等效近似必须保留非线性读取的结果。</strong>一个采样孔径，一半 D=0、一半 D=2，平均透射率是 0.505；先平均密度得到 D=1，透射率只有 0.1。可以直接计算透射光积分，也可以用经验证的统计积分 / 等效算子替代。只保留平均密度通常不够；匹配单个 RMS 或功率谱也不足以证明所有图像结果等效。</div>
+<h2>06 · 用哪些可观察结果检验“等效”？</h2>
+<ol>
+<li><strong>平均响应：</strong>多次乳剂实现 / 足够面积平均后的 D–log H 曲线和扫描颜色，匹配目标胶片；不能只比较颗粒开关前的像素均值。</li>
+<li><strong>亮度与色彩统计：</strong>按曝光测量颗粒 RMS、空间功率谱 / 自相关和跨感色通道协方差。Kodak RMS 数据须对应它规定的测量孔径；单个 RMS 数值不能决定纹理形态。</li>
+<li><strong>形态与细节：</strong>真实高分辨扫描约束颗粒形状、团块、稀疏尾部与彩色斑点；边缘和细线检验 MTF 及边缘附近的随机响应，均匀天空检查方向性伪影。无需取得每颗晶体的真实参数。</li>
+<li><strong>尺度一致性：</strong>相同画幅、不同输出尺寸和裁切下，颗粒物理尺度和读取后的统计应一致。对同一随机场比较直接低分辨读取与高分辨后按同孔径读取；不要求场的内部表示是晶体。</li>
+<li><strong>计算一致性：</strong>CPU / GPU 结果误差有界，重复渲染稳定，拼块无接缝；以暗部、天空、皮肤、强边缘与多种输出尺度检查实际观感。逐像素匹配某张真实胶片的随机纹理不是要求。</li>
+</ol>
+<p>Newson 等的连续 Boolean 模型可用于建立参考，基于其统计的等效算法也可直接用于生产渲染。现有 profile 不足以唯一确定微观乳剂，但 V3 无需解决这个反问题：只拟合影响目标成像范围的有效参数。最终选择应由效果、误差和运行成本决定；未经样本验证，不能宣称已经达到等效。</p>
+<h2>资料与证据等级</h2>
+<ul class="sources">
+<li><a href="https://www.kodak.com/content/products-brochures/Film/kodak-essential-reference-guide-for-filmmakers.pdf">Kodak · The Essential Reference Guide for Filmmakers</a>：Film Structure / Image Structure / Granularity；支持潜影、染料云、多速度子层、颗粒与扫描孔径的区分。</li>
+<li><a href="https://www.kodak.com/content/products-brochures/motion-picture/KODAK-VISION3-5219-7219-technical-information.pdf">Kodak · VISION3 500T / 5219 / 7219，2026-03</a>：特性、颗粒度、MTF 与 DLT；具体胶片的测量依据。</li>
+<li><a href="https://www.ipol.im/pub/art/2017/192/">Newson et al. · Realistic Film Grain Rendering，2017</a>：连续 Boolean 颗粒模型与任意分辨率读取。<a href="https://dl.acm.org/doi/10.1145/3592127">Film Grain Rendering and Parameter Estimation，2023</a>：基于模型统计的参数估计方向。</li>
+<li><a href="https://www.dehancer.com/learn/articles/how-does-film-grain-work-in-dehancer-ofx-plugin">Dehancer · How does film grain work</a>：厂商视觉目标与功能解释；算法结论另以本仓库逆向笔记为依据。</li>
+</ul>
+<footer>2026-10-08 · 当前交付是研究、代码对照和可执行教学示意。V3 是待标定的设计建议；没有修改渲染引擎，没有把合成示意当成真实胶片或用户照片的验证。</footer>
+</main>
+<script>
+'use strict';
+const W=384,H=144,N=W*H;
+const ev=document.getElementById('ev'), pitch=document.getElementById('pitch');
+let seed=1977;
+function random(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return (seed+0.5)/4294967296;}
+function scene(x,y){let h=0.025+0.75*x/W;if((x-95)**2+(y-72)**2<28**2)h=0.035;if(x>216&&x<280&&y>35&&y<102)h=0.85;if(x>298&&y>30&&y<115)h*=((Math.floor(x/3)%2)?0.5:1);return h;}
+const layerSpec=[{name:'快',speed:4.5,radius:1.7,color:'#56d4c2'},{name:'中',speed:1.6,radius:1.15,color:'#f4bd69'},{name:'慢',speed:0.55,radius:0.8,color:'#c5a8ef'}];
+const grains=layerSpec.map((spec,l)=>Array.from({length:2300},()=>({x:random()*(W+16)-8,y:random()*(H+16)-8,r:spec.radius*(0.65+0.7*random()),threshold:random(),layer:l})));
+function drawGray(id,values){const ctx=document.getElementById(id).getContext('2d');const im=ctx.createImageData(W,H);for(let i=0;i<N;i++){const value=Math.round(Math.max(0,Math.min(1,values[i]))*255);im.data[i*4]=value;im.data[i*4+1]=value;im.data[i*4+2]=value;im.data[i*4+3]=255;}ctx.putImageData(im,0,0);}
+function render(){const gain=2**Number(ev.value),q=Number(pitch.value);document.getElementById('evValue').value=Number(ev.value).toFixed(1)+' EV';const input=new Float32Array(N),density=new Float32Array(N),transmission=new Float32Array(N),scan=new Float32Array(N);for(let y=0;y<H;y++)for(let x=0;x<W;x++)input[y*W+x]=Math.min(1,scene(x,y)*gain)**(1/2.2);
+const ctx=document.getElementById('crystals').getContext('2d');ctx.fillStyle='#101820';ctx.fillRect(0,0,W,H);const active=[0,0,0];
+for(const [l,group] of grains.entries()){for(const g of group){const on=g.threshold<1-Math.exp(-layerSpec[l].speed*scene(g.x,g.y)*gain);ctx.beginPath();ctx.arc(g.x,g.y,g.r,0,Math.PI*2);ctx.fillStyle=on?layerSpec[l].color:'#34424b';ctx.fill();if(!on)continue;active[l]++;const sigma=g.r*1.15,reach=Math.ceil(3*sigma);for(let y=Math.max(0,Math.floor(g.y)-reach);y<=Math.min(H-1,Math.floor(g.y)+reach);y++)for(let x=Math.max(0,Math.floor(g.x)-reach);x<=Math.min(W-1,Math.floor(g.x)+reach);x++){const r2=(x+0.5-g.x)**2+(y+0.5-g.y)**2;density[y*W+x]+=0.65*Math.exp(-r2/(2*sigma*sigma));}}}
+let meanT=0,meanD=0;for(let i=0;i<N;i++){transmission[i]=10**(-density[i]);meanT+=transmission[i]/N;meanD+=density[i]/N;}
+for(let by=0;by<H;by+=q)for(let bx=0;bx<W;bx+=q){let sum=0;for(let dy=0;dy<q;dy++)for(let dx=0;dx<q;dx++)sum+=transmission[(by+dy)*W+bx+dx];const v=(1-sum/(q*q))**(1/2.2);for(let dy=0;dy<q;dy++)for(let dx=0;dx<q;dx++)scan[(by+dy)*W+bx+dx]=v;}
+drawGray('exposure',input);drawGray('negative',transmission.map(v=>v**(1/2.2)));drawGray('scan',scan);document.getElementById('counts').textContent=active.map((n,i)=>layerSpec[i].name+'层 '+n+' / 2300').join(' · ');document.getElementById('scanStats').textContent='采样网格 '+W/q+' × '+H/q+' · 平均透射率 '+meanT.toFixed(3);window.demoState={active,ev:Number(ev.value),pitch:q,meanT,meanD,grainCount:6900,firstGrain:{...grains[0][0]},scanWidth:W/q,scanHeight:H/q};}
+ev.addEventListener('input',render);pitch.addEventListener('change',render);document.getElementById('reset').addEventListener('click',()=>{ev.value='0';pitch.value='2';render();});render();
+</script></body></html>

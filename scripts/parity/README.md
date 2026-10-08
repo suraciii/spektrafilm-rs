@@ -18,6 +18,16 @@ Files:
 | `lut_acceptance.py` | Real CLI LUT bakes, pinned QA/format comparisons, OCIO processors and delivered artifact checks |
 | `package_smoke.py` | Installed image/metadata/RAW paths, LUT/OCIO/QA delivery and actual native GUI operations |
 | `gui_viewer_acceptance.py` | Native viewer controls, float probes, animation frames, profile/non-sRGB paths and Save/Export isolation |
+| `grain_v2_acceptance.py` | Grain V2 presets, Film Types and endpoints, CPU/GPU dispatch parity, Custom parameter inheritance and f32/f64 float TIFF render/export roundtrips |
+
+Grain V2 acceptance: run `python3 scripts/parity/grain_v2_acceptance.py`.
+The GPU comparison dispatches the actual shader across multiple workgroups for all twelve profiles in Analogue and Noise modes, with a maximum absolute error budget of 0.005 against the independent CPU implementation. A missing WGPU adapter is reported as a skip; it is not GPU evidence. Film Resolution/FastBlur and procedural gradient hashing are compatibility implementations, not a claim of bit-exact Dehancer output.
+
+Local verification on 2026-10-08: workspace tests passed (240 tests); native f32 WGPU and f64 GUI previews rendered, the V2 mode control was exercised, and native Save/f64 Export wrote readable TIFF files. CLI V2 processing and six f32/f64 render/export roundtrips passed. The local native dependency prefix was `/data/deps/libraw-0.22.2` (real LibRaw 0.22.2). Hardware render-node access was denied, so this establishes WGPU execution with the available adapter, not discrete-GPU performance. Strict all-features clippy stopped in unchanged math sources on existing diagnostics.
+
+The subsequent V2 sky-stripe repair passed eight grain tests in both f32 and f64, the shader device check, profile inheritance checks, and all six render/export roundtrips. Final Noise host scale, half-effective Amount and Film Resolution behavior are included. A separate f64 CLI run exported and decoded a 768×512 synthetic sky TIFF with spatial grain residual RMS 0.00799 against grain disabled. These checks do not establish a fix for an unavailable original user photo or hardware-GPU performance.
+
+The public-control alignment passed nine grain tests in each precision, shader device validation, preset/Custom inheritance, and ten TIFF roundtrips per precision. Four GUI state tests passed separately. Native GUI scanning exercised Positive/Noise and preset-to-Custom inheritance with editable preset Amount. The isolated display did not open the Save state dialog; native state saving is not claimed for this run. Current CLI measurements and host dispatch provenance are recorded in [the public-control alignment evidence](../../docs/dehancer-grain-reverse-engineering.md#12-公开参数对齐2026-10-08).
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
@@ -57,6 +67,11 @@ cargo build -p spektrafilm-cli --features precision-f64 \
 
 Override locations with `SPEKTRAFILM_PY`, `SPEKTRAFILM_PY_REPO` and
 `SPEKTRAFILM_RS_BIN` if they differ from the defaults.
+
+For CI or another checkout, `SPEKTRAFILM_RUNTIME_REPO` points the provenance
+and data/work-directory checks at a separate clean exact-a191 runtime
+worktree while the parity script itself remains the candidate checkout. This
+keeps PR merge refs testable without weakening the exact-commit gate.
 
 
 ### Fresh provenance gate
@@ -187,18 +202,26 @@ The same gate compares 32 additional diagnostic results for disabled xy and
 active oklch input compression, separately from the 112 baseline results.
 
 
-All three package jobs run `package_smoke.py` against installed executables
-and bundled data. The native GUI driver operates real windows and file dialogs,
-records screenshots, saves/restores state across restart, decodes RAW, saves a
-float image, observes the bundled f64 exporter, and checks Cancel/window-close
-child cleanup. Linux uses Xvfb with a 1600×1000 screen. Windows/macOS acceptance
-requires actual successful workflow execution; installing a driver is not
-evidence that those packages run.
+The package smoke command always covers installed image/metadata/RAW paths,
+LUT/OCIO/QA delivery and binary provenance. Native GUI acceptance is optional:
+pass `--gui` only for a real desktop/Xvfb run. The release workflow currently
+omits `--gui` by design, so its three package jobs do not claim GUI coverage;
+the GUI driver remains available as a separate, explicit evidence command.
+When enabled, the driver operates real windows and file dialogs, records
+screenshots, saves/restores state across restart, decodes RAW, saves a float
+image, observes the bundled f64 exporter, and checks Cancel/window-close child
+cleanup. Linux GUI runs use Xvfb; Windows/macOS GUI runs require a real
+interactive desktop and platform permissions.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
-engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo and zenity. Package
-smoke also builds a ZIP bundle through the installed exporter, checks offline
+engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo, zenity and
+ffmpeg. Package smoke also builds a ZIP bundle through the installed exporter, checks offline
 report references and artifacts, and executes its delivered OCIO processors.
+`package_smoke.py` requires `--package-root` and writes `package_report.json`
+next to `observations.json`. It records the Rust HEAD, pinned reference commit,
+platform, worktree status, a deterministic package-tree SHA256, each delivered
+binary SHA256 and the observed scenario results. A passing smoke command without
+that provenance is not publication evidence.
 For a single local gate, provide the built f64 CLI and portable package:
 
 ```bash
@@ -219,6 +242,17 @@ reports record the Rust HEAD, executable SHA256, platform and reference pin.
 
 `--raw-fixture PATH` reuses the pinned Kodak KDC download when network access
 is unavailable; the same required SHA256 check runs before decoding.
+
+`raw_wb_audit.json` is the pinned decoded-buffer fixture matrix for RAW
+white-balance repair issue #26. It covers Kodak KDC and Canon 40D CR2 across
+`as_shot`, `daylight`, `tungsten` and `custom(5000K, tint=1.05)` with
+`lens_correction=false`, records the source URLs/SHA256/dimensions and the
+current verified decoder/reference provenance. The report binds the eight
+passing rows to the audited Rust commit and decoder SHA256; all rows must
+remain within `max_abs <= 1e-5` and `mean_abs <= 1e-6`. Download the public
+fixtures, verify their hashes, then rerun `raw_reference_compare.py` to
+regenerate the evidence. This gate compares decoded float buffers; visual
+screenshots or PNG-clamped comparisons are not substitutes.
 
 
 The package smoke exports the pinned 0.3.4 bare-chain midgray through the real
