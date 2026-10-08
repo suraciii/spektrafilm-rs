@@ -1,21 +1,17 @@
 /// wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 #[cfg(feature = "wgpu-backend")]
-use std::borrow::Cow;
 
+use std::borrow::Cow;
 #[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
 
 #[cfg(feature = "wgpu-backend")]
 use crate::{ComputeBackend, Lut3D, cpu_backend};
+use crate::gpu_helpers::{
+    f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
+};
 
-/// Borrow a `&[Scalar]` as `&[f32]` for GPU upload.
-/// Zero-copy in f32 mode; allocates a converted Vec in f64 mode.
-#[cfg(all(feature = "wgpu-backend", not(feature = "precision-f64")))]
-#[inline]
-fn scalars_to_f32(v: &[spektrafilm_math::precision::Scalar]) -> std::borrow::Cow<'_, [f32]> {
-    std::borrow::Cow::Borrowed(v)
-}
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
@@ -46,65 +42,9 @@ fn fir_blur_radius(sigma: f32) -> u32 {
     ((3.0_f32 * sigma).ceil() as u32).min(MAX_BLUR_RADIUS)
 }
 
-#[cfg(all(feature = "wgpu-backend", feature = "precision-f64"))]
-#[inline]
-fn scalars_to_f32(v: &[spektrafilm_math::precision::Scalar]) -> std::borrow::Cow<'static, [f32]> {
-    std::borrow::Cow::Owned(v.iter().map(|&s| s as f32).collect())
-}
 
-/// Convert a `Vec<f32>` from GPU readback into `Vec<Scalar>`.
-/// Zero-copy (identity) in f32 mode; allocates in f64 mode.
-#[cfg(all(feature = "wgpu-backend", not(feature = "precision-f64")))]
-#[inline]
-fn f32_to_scalars(v: Vec<f32>) -> Vec<spektrafilm_math::precision::Scalar> {
-    v
-}
 
-/// Sanitize NaN values in spectral inputs before GPU upload.
-///
-/// **Why this exists**: profile JSON has NaN values for `channel_density` /
-/// `base_density` at UV/IR wavelengths where the dye/base density isn't
-/// measured. Python's `density_to_light` zeros NaN values out (correctly
-/// excluding those wavelengths from the einsum). WGSL on Metal compiles with
-/// fast-math semantics and optimizes away `x != x` NaN checks, so we cannot
-/// rely on in-shader NaN handling. We sanitize CPU-side instead:
-///
-/// - `channel_density` NaN → 0
-/// - `base_density` NaN OR any of its row in channel_density is NaN → +1000
-///   (so `pow(10, -1000) ≈ 0` zeros the whole wavelength's contribution)
-///
-/// This preserves Python's wavelength-skipping semantics exactly.
-#[cfg(feature = "wgpu-backend")]
-fn sanitize_spectral_inputs(
-    channel_density: &[[f64; 3]],
-    base_density: &[f64],
-    n_wl: usize,
-) -> (Vec<f32>, Vec<f32>) {
-    let mut cd = Vec::with_capacity(n_wl * 3);
-    let mut bd = Vec::with_capacity(n_wl);
-    for wl in 0..n_wl {
-        let r = channel_density[wl][0];
-        let g = channel_density[wl][1];
-        let b = channel_density[wl][2];
-        let base = if wl < base_density.len() {
-            base_density[wl]
-        } else {
-            f64::NAN
-        };
-        let row_has_nan = r.is_nan() || g.is_nan() || b.is_nan() || base.is_nan();
-        cd.push(if r.is_nan() { 0.0 } else { r as f32 });
-        cd.push(if g.is_nan() { 0.0 } else { g as f32 });
-        cd.push(if b.is_nan() { 0.0 } else { b as f32 });
-        bd.push(if row_has_nan { 1000.0 } else { base as f32 });
-    }
-    (cd, bd)
-}
 
-#[cfg(all(feature = "wgpu-backend", feature = "precision-f64"))]
-#[inline]
-fn f32_to_scalars(v: Vec<f32>) -> Vec<spektrafilm_math::precision::Scalar> {
-    v.into_iter().map(|x| x as f64).collect()
-}
 
 #[cfg(feature = "wgpu-backend")]
 pub struct WgpuBackend {
@@ -816,7 +756,7 @@ impl WgpuBackend {
 
     /// GPU-resident pipeline: runs the front pass (hanatos LUT lookup or
     /// mallett matmul), highlight boost, camera lens blur, halation,
-    /// density curves, DIR, grain, print spectral, scan spectral, glare,
+    /// density curves, DIR, print spectral, scan spectral, glare,
     /// gamut compression, scanner lens blur,
     /// and unsharp as a single command buffer with ping-pong image storage.
     /// Only one upload at the start and one readback at the end.
@@ -1042,7 +982,7 @@ impl WgpuBackend {
             width: image.width,
             height: image.height,
             k: film_log_exposure.len() as u32,
-            uniform_grid: if is_uniform(film_log_exposure) { 1 } else { 0 },
+            uniform_grid: if is_uniform_grid_endpoint(film_log_exposure) { 1 } else { 0 },
             gamma_inv: [(1.0 / film_gamma) as f32; 3],
             _pad: 0.0,
         };
@@ -1073,7 +1013,7 @@ impl WgpuBackend {
             width: image.width,
             height: image.height,
             k: print_log_exposure.len() as u32,
-            uniform_grid: if is_uniform(print_log_exposure) { 1 } else { 0 },
+            uniform_grid: if is_uniform_grid_endpoint(print_log_exposure) { 1 } else { 0 },
             gamma_inv: [(1.0 / print_gamma) as f32; 3],
             _pad: 0.0,
         };
@@ -1507,22 +1447,6 @@ impl WgpuBackend {
             })
         });
 
-        // ── Grain state ──────────────────────────────────────────────────
-        // Applied in place on buf_a (density_cmy) after DIR couplers,
-        // before print_spectral. Optionally followed by a Gaussian
-        // post-blur (uses buf_b as mid, since log_raw_corrected in buf_b
-        // is no longer needed after DIR's final density_curve_0).
-        let grain_state = p.grain.as_ref().map(|gp| {
-            build_grain_state(
-                &self.device,
-                gp,
-                image.width,
-                image.height,
-                &buf_a,
-                &buf_b,
-                self,
-            )
-        });
 
         // ── DIR couplers state ────────────────────────────────────────────
         // Allocated lazily when the DIR stage is active. Reads buf_a
@@ -1593,11 +1517,6 @@ impl WgpuBackend {
         if let Some(ds) = dir_state.as_ref() {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
             ds.encode_passes(&mut encoder, n_pixels, wg_xy);
-        }
-        // 3c. Grain (in-place on buf_a, optional post-blur via buf_b mid).
-        if let Some(gs) = grain_state.as_ref() {
-            let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
-            gs.encode_passes(&mut encoder, n_pixels, wg_xy);
         }
         // 4 + 5. Printing: print_spectral (buf_a → buf_b) then the print
         //     density curve (buf_b → buf_a). Skipped for scan_film — the
@@ -2103,7 +2022,7 @@ impl ComputeBackend for WgpuBackend {
             _pad: f32,
         }
         // Detect uniformly-spaced log_exposure (typical case) to use the fast path.
-        let uniform = is_uniform(log_exposure);
+        let uniform = is_uniform_grid_endpoint(log_exposure);
         let gamma_inv = if gamma_factor.abs() > 1e-12 {
             (1.0 / gamma_factor) as f32
         } else {
@@ -3462,7 +3381,7 @@ fn build_dir_state(
         width,
         height,
         k: dp.log_exposure.len() as u32,
-        uniform_grid: if is_uniform(dp.log_exposure) { 1 } else { 0 },
+        uniform_grid: if is_uniform_grid_endpoint(dp.log_exposure) { 1 } else { 0 },
         gamma_inv: [(1.0 / dp.gamma_factor) as f32; 3],
         _pad: 0.0,
     };
@@ -4276,273 +4195,4 @@ impl GamutState {
         pass.set_bind_group(0, &self.dispatch.bg, &[]);
         dispatch_linear(&mut pass, n_pixels);
     }
-}
-
-/// Pre-built grain pass — owns the grain compute bind group plus the
-/// optional post-blur pipeline state.
-///
-/// CPU equivalent: `spektrafilm_model::grain::apply_grain_to_density`.
-/// Operates in place on `buf_a` (density_cmy). When `grain_blur > 0.4`,
-/// follows up with a separable Gaussian blur that uses `buf_b` as mid
-/// (free at this point — DIR's `density_curve_0` already overwrote
-/// buf_b's role).
-#[cfg(feature = "wgpu-backend")]
-struct GrainState {
-    grain_dispatch: DispatchJob,
-    blur: Option<BlurJob>,
-    blur_pipe_h: CachedPipelineRef,
-    blur_pipe_v: CachedPipelineRef,
-}
-
-#[cfg(feature = "wgpu-backend")]
-fn build_grain_state(
-    device: &wgpu::Device,
-    gp: &crate::GrainGpuParams,
-    width: u32,
-    height: u32,
-    buf_a: &wgpu::Buffer,
-    buf_b: &wgpu::Buffer,
-    backend: &WgpuBackend,
-) -> GrainState {
-    use wgpu::util::DeviceExt;
-    let n_pixels = (width as usize) * (height as usize);
-
-    let grain_pipe = backend.cached_pipeline(
-        include_str!("../../spektrafilm-shaders/wgsl/grain.wgsl"),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct GrainParams {
-        n_pixels: u32,
-        base_seed: u32,
-        n_sub_layers: u32,
-        monochrome: u32,
-        density_min: [f32; 4],
-        density_max: [f32; 4],
-        n_particles_per_pixel: [f32; 4],
-        grain_uniformity: [f32; 4],
-    }
-    let params = GrainParams {
-        n_pixels: n_pixels as u32,
-        base_seed: gp.base_seed,
-        n_sub_layers: gp.n_sub_layers.max(1),
-        monochrome: gp.monochrome as u32,
-        density_min: [gp.density_min[0], gp.density_min[1], gp.density_min[2], 0.0],
-        density_max: [gp.density_max[0], gp.density_max[1], gp.density_max[2], 0.0],
-        n_particles_per_pixel: [
-            gp.n_particles_per_pixel[0],
-            gp.n_particles_per_pixel[1],
-            gp.n_particles_per_pixel[2],
-            0.0,
-        ],
-        grain_uniformity: [
-            gp.grain_uniformity[0],
-            gp.grain_uniformity[1],
-            gp.grain_uniformity[2],
-            0.0,
-        ],
-    };
-    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("grain_params"),
-        contents: bytemuck::bytes_of(&params),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("grain_bg"),
-        layout: &grain_pipe.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf_a.as_entire_binding(),
-            },
-        ],
-    });
-    let grain_dispatch = DispatchJob {
-        _params_buf: params_buf,
-        pipeline: grain_pipe,
-        bg,
-    };
-
-    // Optional post-blur: blur buf_a → buf_a in place (H writes mid=buf_b,
-    // V reads buf_b writes buf_a, separate compute passes so no aliasing).
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h = backend.cached_pipeline(
-        include_str!("../../spektrafilm-shaders/wgsl/gaussian_blur_h.wgsl"),
-        blur_layout,
-    );
-    let blur_pipe_v = backend.cached_pipeline(
-        include_str!("../../spektrafilm-shaders/wgsl/gaussian_blur_v.wgsl"),
-        blur_layout,
-    );
-    let blur = if gp.grain_blur > 0.4 {
-        let sigma = gp.grain_blur.max(0.01);
-        let radius = fir_blur_radius(sigma);
-        let kernel_size = (2 * radius + 1) as usize;
-        let sigma_f64 = sigma as f64;
-        let two_sigma_sq = 2.0 * sigma_f64 * sigma_f64;
-        let r_i32 = radius as i32;
-        let mut kernel = Vec::with_capacity(kernel_size);
-        for k in 0..kernel_size {
-            let x = (k as i32 - r_i32) as f64;
-            kernel.push((-x * x / two_sigma_sq).exp());
-        }
-        let sum: f64 = kernel.iter().sum();
-        let kernel_f32: Vec<f32> = kernel.into_iter().map(|v| (v / sum) as f32).collect();
-
-        let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain_blur_kernel"),
-            contents: bytemuck::cast_slice(&kernel_f32),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct BlurParams {
-            width: u32,
-            height: u32,
-            radius: u32,
-            _pad: u32,
-        }
-        let params = BlurParams {
-            width,
-            height,
-            radius,
-            _pad: 0,
-        };
-        let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grain_blur_params"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("grain_blur_h_bg"),
-            layout: &blur_pipe_h.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_a.as_entire_binding(),
-                }, // src
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: kernel_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: buf_b.as_entire_binding(),
-                }, // mid
-            ],
-        });
-        let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("grain_blur_v_bg"),
-            layout: &blur_pipe_v.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_b.as_entire_binding(),
-                }, // mid
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: kernel_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: buf_a.as_entire_binding(),
-                }, // dst (in place)
-            ],
-        });
-        Some(BlurJob {
-            _kernel_buf: kernel_buf,
-            _params_buf: params_buf,
-            bg_h,
-            bg_v,
-        })
-    } else {
-        None
-    };
-
-    GrainState {
-        grain_dispatch,
-        blur,
-        blur_pipe_h,
-        blur_pipe_v,
-    }
-}
-
-#[cfg(feature = "wgpu-backend")]
-impl GrainState {
-    fn encode_passes(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        n_pixels: u32,
-        wg_xy: (u32, u32),
-    ) {
-        // Grain compute.
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("grain_compute"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.grain_dispatch.pipeline.pipeline);
-            pass.set_bind_group(0, &self.grain_dispatch.bg, &[]);
-            dispatch_linear(&mut pass, n_pixels);
-        }
-        // Optional post-blur.
-        if let Some(b) = &self.blur {
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("grain_blur_h"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &b.bg_h, &[]);
-                pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
-            }
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("grain_blur_v"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &b.bg_v, &[]);
-                pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
-            }
-        }
-    }
-}
-
-/// Detects whether a 1D sequence is uniformly spaced (within tight tolerance).
-#[cfg(feature = "wgpu-backend")]
-fn is_uniform(xs: &[f64]) -> bool {
-    if xs.len() < 3 {
-        return true;
-    }
-    let step = (xs[xs.len() - 1] - xs[0]) / (xs.len() as f64 - 1.0);
-    let tol = step.abs() * 1e-9 + 1e-12;
-    for i in 1..xs.len() {
-        let expected = xs[0] + (i as f64) * step;
-        if (xs[i] - expected).abs() > tol {
-            return false;
-        }
-    }
-    true
 }

@@ -2,7 +2,7 @@
 //!
 //! This is intentionally feature-gated. The resident CUDA path currently
 //! covers the preview chain: front pass, highlight boost, camera lens blur,
-//! halation, DIR couplers, grain, density curves, print/scan spectral reductions,
+//! halation, DIR, density curves, print/scan spectral reductions,
 //! glare, output gamut compression, scanner lens blur, unsharp, and one readback.
 
 use std::sync::Arc;
@@ -12,76 +12,8 @@ use cudarc::driver::{
 };
 use cudarc::nvrtc::compile_ptx;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::Scalar;
+use crate::{gpu_helpers::{f32_to_scalars, flatten_curves_f32, is_uniform_grid, matrix_f32, sanitize_spectral_inputs, scalars_to_f32}, ComputeBackend, FilmChainParams, FrontPass, Lut3D, cpu_backend};
 
-use crate::{ComputeBackend, FilmChainParams, FrontPass, Lut3D, cpu_backend};
-
-#[cfg(not(feature = "precision-f64"))]
-fn scalars_to_f32(v: &[Scalar]) -> std::borrow::Cow<'_, [f32]> {
-    std::borrow::Cow::Borrowed(v)
-}
-
-#[cfg(feature = "precision-f64")]
-fn scalars_to_f32(v: &[Scalar]) -> std::borrow::Cow<'_, [f32]> {
-    std::borrow::Cow::Owned(v.iter().map(|&s| s as f32).collect())
-}
-
-#[cfg(not(feature = "precision-f64"))]
-fn f32_to_scalars(v: Vec<f32>) -> Vec<Scalar> {
-    v
-}
-
-#[cfg(feature = "precision-f64")]
-fn f32_to_scalars(v: Vec<f32>) -> Vec<Scalar> {
-    v.into_iter().map(|x| x as f64).collect()
-}
-
-fn sanitize_spectral_inputs(
-    channel_density: &[[f64; 3]],
-    base_density: &[f64],
-    n_wl: usize,
-) -> (Vec<f32>, Vec<f32>) {
-    let mut cd = Vec::with_capacity(n_wl * 3);
-    let mut bd = Vec::with_capacity(n_wl);
-    for wl in 0..n_wl {
-        let r = channel_density[wl][0];
-        let g = channel_density[wl][1];
-        let b = channel_density[wl][2];
-        let base = if wl < base_density.len() {
-            base_density[wl]
-        } else {
-            f64::NAN
-        };
-        let row_has_nan = r.is_nan() || g.is_nan() || b.is_nan() || base.is_nan();
-        cd.push(if r.is_nan() { 0.0 } else { r as f32 });
-        cd.push(if g.is_nan() { 0.0 } else { g as f32 });
-        cd.push(if b.is_nan() { 0.0 } else { b as f32 });
-        bd.push(if row_has_nan { 1000.0 } else { base as f32 });
-    }
-    (cd, bd)
-}
-
-fn matrix_f32(m: &[[f64; 3]; 3]) -> Vec<f32> {
-    m.iter()
-        .flat_map(|r| r.iter().map(|&v| v as f32))
-        .collect()
-}
-
-fn flatten_curves_f32(v: &[[f64; 3]]) -> Vec<f32> {
-    v.iter()
-        .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-        .collect()
-}
-
-fn is_uniform_grid(xs: &[f64]) -> bool {
-    if xs.len() < 3 {
-        return true;
-    }
-    let step = xs[1] - xs[0];
-    let tol = step.abs().max(1.0) * 1e-6;
-    xs.windows(2)
-        .all(|w| ((w[1] - w[0]) - step).abs() <= tol)
-}
 
 const MAX_BLUR_RADIUS: u32 = 256;
 
@@ -710,57 +642,6 @@ extern "C" __global__ void unsharp_combine_kernel(
     output[base + 2u] = k1 * original[base + 2u] - amount * blurred[base + 2u];
 }
 
-extern "C" __global__ void grain_kernel(
-    unsigned int n_pixels,
-    unsigned int base_seed,
-    unsigned int n_sub_layers,
-    unsigned int monochrome,
-    float dmin_r,
-    float dmin_g,
-    float dmin_b,
-    float dmax_r,
-    float dmax_g,
-    float dmax_b,
-    float npp_r,
-    float npp_g,
-    float npp_b,
-    float gu_r,
-    float gu_g,
-    float gu_b,
-    float* __restrict__ density
-) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n_pixels) return;
-    unsigned int base = idx * 3u;
-    float dmin[3] = {dmin_r, dmin_g, dmin_b};
-    float dmax[3] = {dmax_r, dmax_g, dmax_b};
-    float npp[3] = {npp_r, npp_g, npp_b};
-    float gu[3] = {gu_r, gu_g, gu_b};
-    float n_sl_f = (float)n_sub_layers;
-    for (unsigned int ch = 0u; ch < 3u; ch++) {
-        float od_particle = dmax[ch] / npp[ch];
-        float d_in = density[base + ch] + dmin[ch];
-        float p = fminf(fmaxf(d_in / dmax[ch], 1e-6f), 1.0f - 1e-6f);
-        float saturation = 1.0f - p * gu[ch] * (1.0f - 1e-6f);
-        float lambda = npp[ch] / saturation;
-        float sum = 0.0f;
-        for (unsigned int sl = 0u; sl < n_sub_layers; sl++) {
-            unsigned int seed_ch = monochrome != 0u ? 0u : ch;
-            unsigned int layer_seed = seed_ch + sl * 10u + base_seed;
-            unsigned int rng = splitmix32_hash(layer_seed) ^ splitmix32_hash(idx);
-            float z1 = standard_normal(&rng);
-            float n_seeds = fmaxf(0.0f, roundf(lambda + sqrtf(lambda) * z1));
-            float mean = n_seeds * p;
-            float variance = n_seeds * p * (1.0f - p);
-            float developed = mean;
-            if (variance > 0.0f) {
-                developed = fminf(fmaxf(roundf(mean + sqrtf(variance) * standard_normal(&rng)), 0.0f), n_seeds);
-            }
-            sum += developed * od_particle * saturation;
-        }
-        density[base + ch] = sum / n_sl_f - dmin[ch];
-    }
-}
 
 extern "C" __global__ void dir_matmul_kernel(
     const float* __restrict__ density,
@@ -1047,7 +928,6 @@ pub struct CudaBackend {
     glare_gen_kernel: CudaFunction,
     glare_apply_kernel: CudaFunction,
     unsharp_kernel: CudaFunction,
-    grain_kernel: CudaFunction,
     dir_matmul_kernel: CudaFunction,
     gamut_kernel: CudaFunction,
     device_name: String,
@@ -1081,7 +961,6 @@ impl CudaBackend {
         let glare_gen_kernel = module.load_function("glare_gen_kernel").ok()?;
         let glare_apply_kernel = module.load_function("glare_apply_kernel").ok()?;
         let unsharp_kernel = module.load_function("unsharp_combine_kernel").ok()?;
-        let grain_kernel = module.load_function("grain_kernel").ok()?;
         let dir_matmul_kernel = module.load_function("dir_matmul_kernel").ok()?;
         let gamut_kernel = module.load_function("gamut_compress_kernel").ok()?;
         let device_name = ctx
@@ -1109,7 +988,6 @@ impl CudaBackend {
             glare_gen_kernel,
             glare_apply_kernel,
             unsharp_kernel,
-            grain_kernel,
             dir_matmul_kernel,
             gamut_kernel,
             device_name,
@@ -1313,45 +1191,6 @@ impl CudaBackend {
         Ok(())
     }
 
-    fn run_grain_device(
-        &self,
-        density: &mut CudaSlice<f32>,
-        scratch: &mut CudaSlice<f32>,
-        width: u32,
-        height: u32,
-        gp: &crate::GrainGpuParams,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let n_pixels = width * height;
-        let mono = if gp.monochrome { 1u32 } else { 0u32 };
-        {
-            let mut launch = self.stream.launch_builder(&self.grain_kernel);
-            launch
-                .arg(&n_pixels)
-                .arg(&gp.base_seed)
-                .arg(&gp.n_sub_layers)
-                .arg(&mono)
-                .arg(&gp.density_min[0])
-                .arg(&gp.density_min[1])
-                .arg(&gp.density_min[2])
-                .arg(&gp.density_max[0])
-                .arg(&gp.density_max[1])
-                .arg(&gp.density_max[2])
-                .arg(&gp.n_particles_per_pixel[0])
-                .arg(&gp.n_particles_per_pixel[1])
-                .arg(&gp.n_particles_per_pixel[2])
-                .arg(&gp.grain_uniformity[0])
-                .arg(&gp.grain_uniformity[1])
-                .arg(&gp.grain_uniformity[2])
-                .arg(&mut *density);
-            unsafe { launch.launch(LaunchConfig::for_num_elems(n_pixels)) }?;
-        }
-        if gp.grain_blur > 0.4 {
-            let mut out = self.alloc_f32(n_pixels as usize * 3)?;
-            self.blur_device(density, scratch, &mut out, width, height, gp.grain_blur)?;
-            std::mem::swap(density, &mut out);
-        }
-        Ok(())
-    }
 
     fn run_glare_device(
         &self,
@@ -1759,9 +1598,6 @@ impl CudaBackend {
             self.run_dir_device(&mut buf_a, &mut buf_b, image.width, image.height, dp)?;
         }
 
-        if let Some(gp) = p.grain.as_ref() {
-            self.run_grain_device(&mut buf_a, &mut buf_b, image.width, image.height, gp)?;
-        }
 
         let scan_cd_src;
         let scan_bd_src;

@@ -123,6 +123,42 @@ pub fn compute_exposure_correction(
     });
     result
 }
+/// Backend-neutral DIR inputs derived once from the film profile and
+/// controls. Both the per-stage CPU path ([`apply_density_correction`]) and
+/// the GPU-resident chain builder consume this so the matrix scaling, the
+/// "curves before DIR" inversion, and the density maxima cannot drift apart.
+#[derive(Debug, Clone)]
+pub struct DirPrepared {
+    /// `couplers_matrix * amount`, row-major.
+    pub matrix_scaled: [[f64; 3]; 3],
+    /// Density curves before DIR coupler effects (from the normalized
+    /// composite curves), re-interpolated against the corrected exposure.
+    pub curves_0: Vec<[f64; 3]>,
+    /// Per-channel maximum of the normalized composite curves.
+    pub density_max: [f64; 3],
+}
+
+/// Derive the shared DIR inputs: scaled couplers matrix, the pre-DIR
+/// curves, and the normalized density maxima. Pure function of the film
+/// tables and the DIR controls — no image input.
+pub fn prepare_dir(
+    density_curves: &[[f64; 3]],
+    log_exposure: &[f64],
+    couplers_matrix: &[[f64; 3]; 3],
+    amount: f64,
+    positive: bool,
+) -> DirPrepared {
+    let mut matrix_scaled = *couplers_matrix;
+    for row in &mut matrix_scaled {
+        for v in row.iter_mut() {
+            *v *= amount;
+        }
+    }
+    let norm_curves = normalize_density_curves_f64(density_curves);
+    let curves_0 = compute_curves_before_dir(&norm_curves, log_exposure, &matrix_scaled, positive);
+    let density_max = max_density_f64(&norm_curves);
+    DirPrepared { matrix_scaled, curves_0, density_max }
+}
 
 /// Full DIR coupler density correction pipeline.
 ///
@@ -143,17 +179,7 @@ pub fn apply_density_correction(
     gamma_factor: f32,
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
-    let mut matrix_scaled = *couplers_matrix;
-    for row in &mut matrix_scaled {
-        for v in row.iter_mut() {
-            *v *= amount;
-        }
-    }
-
-    let norm_curves = normalize_density_curves_f64(density_curves);
-    let density_curves_0 =
-        compute_curves_before_dir(&norm_curves, log_exposure, &matrix_scaled, positive);
-    let density_max = max_density_f64(&norm_curves);
+    let prepared = prepare_dir(density_curves, log_exposure, couplers_matrix, amount, positive);
 
     let diffusion_size_px = (diffusion_size_um / pixel_size_um as f64) as f32;
     let diffusion_tail_px = (diffusion_tail_um / pixel_size_um as f64) as f32;
@@ -161,8 +187,8 @@ pub fn apply_density_correction(
     let log_raw_corrected = compute_exposure_correction(
         log_raw,
         density_cmy,
-        density_max,
-        &matrix_scaled,
+        prepared.density_max,
+        &prepared.matrix_scaled,
         diffusion_size_px,
         diffusion_tail_px,
         diffusion_tail_weight,
@@ -174,7 +200,7 @@ pub fn apply_density_correction(
     backend.density_curve_interp(
         &log_raw_corrected,
         log_exposure,
-        &density_curves_0,
+        &prepared.curves_0,
         gamma_factor as f64,
     )
 }
