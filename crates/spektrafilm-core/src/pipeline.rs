@@ -256,6 +256,33 @@ pub struct Pipeline {
     data_dir: Option<std::path::PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ResidentFallbackReason {
+    InputTransferDecoding,
+    RequestedSpectralLut,
+    ActiveOpticalDiffusion,
+    FaithfulGrainDistribution,
+    UnsupportedOutputGamut,
+    BlurRadiusExceedsBackendSupport,
+    MissingResidentFrontPass,
+}
+
+#[derive(Debug)]
+enum ResidentDecision {
+    UseResident,
+    PerStage { reasons: Vec<ResidentFallbackReason> },
+}
+
+impl ResidentDecision {
+    fn reasons(reasons: Vec<ResidentFallbackReason>) -> Self {
+        if reasons.is_empty() {
+            Self::UseResident
+        } else {
+            Self::PerStage { reasons }
+        }
+    }
+}
+
 impl Pipeline {
     /// Accessor for the pre-computed TC LUT (used by parity tests).
     pub fn tc_lut(&self) -> Option<&TcLut> {
@@ -1265,6 +1292,37 @@ impl Pipeline {
         stages::filming::meter_autoexposure_ev(image, &self.params)
     }
 
+    fn resident_decision(&self) -> ResidentDecision {
+        let mut reasons = Vec::new();
+        if self.params.io.input_cctf_decoding {
+            reasons.push(ResidentFallbackReason::InputTransferDecoding);
+        }
+        if self.params.settings.use_scanner_lut
+            || (!self.params.io.scan_film && self.params.settings.use_enlarger_lut)
+        {
+            reasons.push(ResidentFallbackReason::RequestedSpectralLut);
+        }
+        let diffusion_effective = |df: &crate::params::DiffusionFilterParams| {
+            df.active && df.strength > 0.0 && df.spatial_scale > 0.0
+        };
+        if diffusion_effective(&self.params.camera.diffusion_filter)
+            || (!self.params.io.scan_film
+                && diffusion_effective(&self.params.enlarger.diffusion_filter))
+        {
+            reasons.push(ResidentFallbackReason::ActiveOpticalDiffusion);
+        }
+        if self.params.film_render.grain.active {
+            reasons.push(ResidentFallbackReason::FaithfulGrainDistribution);
+        }
+        if self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none() {
+            reasons.push(ResidentFallbackReason::UnsupportedOutputGamut);
+        }
+        if self.tc_lut.is_none() && self.mallett_core.is_none() {
+            reasons.push(ResidentFallbackReason::MissingResidentFrontPass);
+        }
+        ResidentDecision::reasons(reasons)
+    }
+
     /// Try the GPU-resident fast path. Builds all the per-stage data and
     /// hands it to the backend's `try_run_film_chain`. The output is unclipped
     /// linear destination RGB; `apply_post_scan` performs optional encoding.
@@ -1277,39 +1335,17 @@ impl Pipeline {
         pixel_size_um: f64,
         ae_ev: f64,
     ) -> Option<ImageBuf> {
-        if self.params.io.input_cctf_decoding
-            || (self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none())
-        {
-            return None;
-        }
-        if self.params.settings.use_scanner_lut
-            || (!self.params.io.scan_film && self.params.settings.use_enlarger_lut)
-        {
-            tracing::info!(backend = backend.name(), stage = "spectral_lut", execution = "per_stage",
-                "using per-stage path for requested PCHIP spectral LUT evaluation");
-            return None;
-        }
-        // The Gaussian preview approximation does not reproduce the sampled,
-        // finite, normalized PSF. Keep optical diffusion on the CPU FFT path.
-        let diffusion_effective = |df: &crate::params::DiffusionFilterParams| {
-            df.active && df.strength > 0.0 && df.spatial_scale > 0.0
-        };
-        if diffusion_effective(&self.params.camera.diffusion_filter)
-            || (!self.params.io.scan_film
-                && diffusion_effective(&self.params.enlarger.diffusion_filter))
-        {
-            tracing::info!(backend = backend.name(), stage = "diffusion", execution = "cpu_fft",
-                "using per-stage path for faithful optical diffusion");
-            return None;
-        }
-        // GPU composite grain always uses normal approximations. The binomial
-        // low-variance regime depends on each pixel's developed density, so a
-        // configuration-only gate cannot guarantee the exact distribution.
-        // Keep both layered and composite grain on the faithful CPU sampler.
-        if self.params.film_render.grain.active {
-            tracing::info!(backend = backend.name(), stage = "grain", execution = "cpu",
-                "using per-stage path for faithful grain distributions");
-            return None;
+        match self.resident_decision() {
+            ResidentDecision::UseResident => {}
+            ResidentDecision::PerStage { reasons } => {
+                tracing::info!(
+                    backend = backend.name(),
+                    execution = "per_stage_cpu",
+                    fallback_reasons = ?reasons,
+                    "using per-stage path because resident GPU execution is unavailable"
+                );
+                return None;
+            }
         }
         // Bake the exposure scale (auto-exposure × manual EV compensation)
         // into the front-pass matrix. Both upsamplers (hanatos and mallett)
@@ -1449,33 +1485,20 @@ impl Pipeline {
             &scan_profile.info.viewing_illuminant,
         );
         let viewing_illu: Vec<f64> = viewing_illu.iter().map(|&v| v as f64).collect();
-        let n_wl = if self.params.io.scan_film {
+        let scan_channel_density_len = if self.params.io.scan_film {
             film_channel_density.len()
         } else {
             print_channel_density.len()
         };
-        let scan_norm: f64 = (0..n_wl)
-            .map(|i| viewing_illu[i] * spektrafilm_math::spectral::CMF_Y_F64[i])
-            .sum();
-        let mut viewing_xyz = [0.0; 3];
-        for i in 0..n_wl {
-            viewing_xyz[0] += viewing_illu[i] * spektrafilm_math::spectral::CMF_X_F64[i];
-            viewing_xyz[1] += viewing_illu[i] * spektrafilm_math::spectral::CMF_Y_F64[i];
-            viewing_xyz[2] += viewing_illu[i] * spektrafilm_math::spectral::CMF_Z_F64[i];
-        }
-        let sum = viewing_xyz.iter().sum::<f64>();
-        let x = viewing_xyz[0] / sum;
-        let y = viewing_xyz[1] / sum;
-        let viewing_white = [x / y, 1.0, (1.0 - x - y) / y];
-        let output_white = spektrafilm_math::spectral::colorspace_white_xyz_f64(
+        let scan_context = crate::chain_prep::ScanColorContext::build(
+            viewing_illu,
+            scan_channel_density_len,
             &self.params.io.output_color_space,
         );
-        let adapt = spektrafilm_math::colorspace::chromatic_adaptation_matrix_f64(
-            viewing_white,
-            output_white,
-        );
-        let base_xyz_to_rgb = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
-            .expect("validated output colour space").matrix_xyz_to_rgb;
+        let viewing_illu: &[f64] = &scan_context.illuminant;
+        let scan_norm = scan_context.normalization;
+        let adapt = scan_context.adapt;
+        let base_xyz_to_rgb = scan_context.base_xyz_to_rgb;
         let mut scan_xyz_to_rgb = [[0.0f64; 3]; 3];
         for i in 0..3 {
             for j in 0..3 {
@@ -1551,26 +1574,15 @@ impl Pipeline {
                 dir.inhibition_samelayer,
                 dir.inhibition_interlayer,
             );
-            let mut matrix_scaled = matrix;
-            for row in &mut matrix_scaled {
-                for v in row.iter_mut() {
-                    *v *= dir.amount;
-                }
-            }
-            let norm_curves_f64 = spektrafilm_model::density_curves::normalize_density_curves_f64(
+            let prepared = spektrafilm_model::couplers::prepare_dir(
                 &self.film.density_curves_f64(),
-            );
-            let density_curves_0_f64 = spektrafilm_model::couplers::compute_curves_before_dir(
-                &norm_curves_f64,
                 &self.film.log_exposure_f64(),
-                &matrix_scaled,
+                &matrix,
+                dir.amount,
                 self.film.is_positive(),
             );
-            let density_max_f64 = spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
             Some((
-                density_curves_0_f64,
-                matrix_scaled,
-                density_max_f64,
+                prepared,
                 pixel_size_um,
                 dir.diffusion_size_um,
                 dir.diffusion_tail_um,
@@ -1583,72 +1595,26 @@ impl Pipeline {
         };
         let dir_couplers = dir_inputs.as_ref().map(|d| {
             // GPU shader path is f32 — narrow at the boundary.
+            let m = d.0.matrix_scaled;
             let matrix_f32: [[f32; 3]; 3] = [
-                [d.1[0][0] as f32, d.1[0][1] as f32, d.1[0][2] as f32],
-                [d.1[1][0] as f32, d.1[1][1] as f32, d.1[1][2] as f32],
-                [d.1[2][0] as f32, d.1[2][1] as f32, d.1[2][2] as f32],
+                [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
+                [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+                [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
             ];
+            let dm = d.0.density_max;
             spektrafilm_gpu::DirCouplersGpuParams {
                 couplers_matrix_scaled: matrix_f32,
-                density_max: [d.2[0] as f32, d.2[1] as f32, d.2[2] as f32],
-                is_positive: d.7,
-                diffusion_size_px: (d.4 / d.3) as f32,
-                diffusion_tail_px: (d.5 / d.3) as f32,
-                diffusion_tail_weight: d.6 as f32,
-                density_curves_0: &d.0,
+                density_max: [dm[0] as f32, dm[1] as f32, dm[2] as f32],
+                is_positive: d.5,
+                diffusion_size_px: (d.2 / d.1) as f32,
+                diffusion_tail_px: (d.3 / d.1) as f32,
+                diffusion_tail_weight: d.4 as f32,
+                density_curves_0: &d.0.curves_0,
                 log_exposure: &film_log_exp,
-                gamma_factor: d.8,
+                gamma_factor: d.6,
             }
         });
 
-        // Grain in the resident chain — the composite sampler only
-        // (`try_gpu_resident` bails out first when the layered model is
-        // active). Same per-channel particle math as
-        // `apply_grain_to_density`. The GPU uses normal-approximation
-        // sampling; CPU does the same whenever λ > 30 / var > 9, which is
-        // the typical regime for ≥ 1 MP images.
-        let grain = if self.params.film_render.grain.active {
-            let g = &self.params.film_render.grain;
-            let pixel_area = pixel_size_um * pixel_size_um;
-            let n_sub = g.n_sub_layers.max(1);
-            let film_curves_f32 = self.film.density_curves_f32();
-            let norm_curves_f32 =
-                spektrafilm_model::density_curves::normalize_density_curves(&film_curves_f32);
-            let dmax_curves = spektrafilm_model::density_curves::max_density(&norm_curves_f32);
-            let mut density_max = [0.0f32; 3];
-            for c in 0..3 {
-                density_max[c] = dmax_curves[c] + g.density_min[c] as f32;
-            }
-            // Python's grain sampler uses this explicit particle area;
-            // `rms_granularity` is a profile/UI control only.
-            let particle_area_um2 = g.particle_area_um2;
-            // GPU shaders are f32 — narrow the f64 grain params at the boundary.
-            let mut npp = [0.0f32; 3];
-            for c in 0..3 {
-                let particle_area = particle_area_um2 * g.particle_scale[c];
-                npp[c] = ((pixel_area as f64 / particle_area) / n_sub as f64) as f32;
-            }
-            Some(spektrafilm_gpu::GrainGpuParams {
-                density_min: [
-                    g.density_min[0] as f32,
-                    g.density_min[1] as f32,
-                    g.density_min[2] as f32,
-                ],
-                density_max,
-                n_particles_per_pixel: npp,
-                grain_uniformity: [
-                    g.uniformity[0] as f32,
-                    g.uniformity[1] as f32,
-                    g.uniformity[2] as f32,
-                ],
-                n_sub_layers: n_sub,
-                base_seed: self.params.random_seed as u32,
-                grain_blur: g.blur,
-                monochrome: g.monochrome,
-            })
-        } else {
-            None
-        };
 
         // Glare in the resident chain — applied after scan_spectral on the
         // final RGB buffer. Mirrors the CPU lognormal + blur + add. Python
@@ -1659,29 +1625,16 @@ impl Pipeline {
             .then(|| &self.params.print_render.glare)
             .filter(|g| g.active && g.percent > 0.0)
             .map(|g| {
-                // LogNormal parameters (same derivation as `compute_random_glare_amount`).
-                let m = g.percent as f64;
-                let s = (g.roughness * g.percent) as f64;
-                let sigma2 = (1.0 + (s * s) / (m * m)).ln();
-                let sigma = sigma2.sqrt();
-                let mu = m.ln() - sigma2 / 2.0;
+                // LogNormal parameters shared with `compute_random_glare_amount`.
+                let (mu, sigma) = spektrafilm_model::glare::lognormal_params(g.percent, g.roughness);
                 // glare_rgb_offset = (XYZ→RGB) · illuminant_xyz / 100.
-                let mut illu_xyz = [0.0f64; 3];
-                for i in 0..n_wl {
-                    illu_xyz[0] += viewing_illu[i] * spektrafilm_math::spectral::CMF_X_F64[i];
-                    illu_xyz[1] += viewing_illu[i] * spektrafilm_math::spectral::CMF_Y_F64[i];
-                    illu_xyz[2] += viewing_illu[i] * spektrafilm_math::spectral::CMF_Z_F64[i];
-                }
-                for c in 0..3 {
-                    illu_xyz[c] /= scan_norm;
-                }
-                let mut offset_rgb = [0.0f32; 3];
-                for i in 0..3 {
-                    let v = scan_xyz_to_rgb[i][0] * illu_xyz[0]
-                        + scan_xyz_to_rgb[i][1] * illu_xyz[1]
-                        + scan_xyz_to_rgb[i][2] * illu_xyz[2];
-                    offset_rgb[i] = (v / 100.0) as f32;
-                }
+                let glare_rgb_offset =
+                    crate::chain_prep::glare_rgb_offset_f64(&scan_context);
+                let offset_rgb = [
+                    (glare_rgb_offset[0] / 100.0) as f32,
+                    (glare_rgb_offset[1] / 100.0) as f32,
+                    (glare_rgb_offset[2] / 100.0) as f32,
+                ];
                 spektrafilm_gpu::GlareGpuParams {
                     mu: mu as f32,
                     sigma: sigma as f32,
@@ -1749,7 +1702,6 @@ impl Pipeline {
             scan_film: self.params.io.scan_film,
             halation,
             dir_couplers,
-            grain,
             glare,
             gamut: self.output_gamut.gpu_params(),
             unsharp,
@@ -1757,6 +1709,15 @@ impl Pipeline {
             scanner_lens_blur_px,
             highlight_boost,
         };
+        if !params.gpu_blurs_supported() {
+            tracing::info!(
+                backend = backend.name(),
+                execution = "per_stage_cpu",
+                fallback_reasons = ?[ResidentFallbackReason::BlurRadiusExceedsBackendSupport],
+                "using per-stage path because a resident FIR blur exceeds backend support"
+            );
+            return None;
+        }
         backend.try_run_film_chain(&params)
     }
 

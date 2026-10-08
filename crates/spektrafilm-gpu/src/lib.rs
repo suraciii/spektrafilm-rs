@@ -1,3 +1,4 @@
+mod gpu_helpers;
 pub mod cpu_backend;
 #[cfg(feature = "cuda-backend")]
 pub mod cuda_backend;
@@ -234,11 +235,6 @@ pub struct FilmChainParams<'a> {
     /// `Some`, inserted on the film density buffer between filming and
     /// printing. Re-interpolates density curves using `density_curves_0`.
     pub dir_couplers: Option<DirCouplersGpuParams<'a>>,
-    /// Optional grain pass — Poisson-binomial particle model on the film
-    /// density buffer, after DIR couplers and before print spectral.
-    /// Uses normal-approximation sampling on the GPU (matches what the
-    /// CPU path does for typical λ > 30 / variance > 9 regimes).
-    pub grain: Option<GrainGpuParams>,
     /// Optional viewing glare pass — applied after scan spectral on the
     /// final RGB buffer. Lognormal-distributed per-pixel surface noise +
     /// blur + per-channel illuminant offset.
@@ -267,12 +263,11 @@ pub(crate) fn gpu_blur_supported(sigma: f32) -> bool {
 }
 
 impl FilmChainParams<'_> {
-    pub(crate) fn gpu_blurs_supported(&self) -> bool {
+    pub fn gpu_blurs_supported(&self) -> bool {
         let supports = gpu_blur_supported;
         self.camera_lens_blur_px.is_none_or(supports)
             && self.scanner_lens_blur_px.is_none_or(supports)
             && self.unsharp.is_none_or(|p| supports(p.sigma_px))
-            && self.grain.is_none_or(|p| supports(p.grain_blur))
             && self.glare.is_none_or(|p| supports(p.blur_px))
             && self.dir_couplers.is_none_or(|p| {
                 supports(p.diffusion_size_px) && supports(p.diffusion_tail_px)
@@ -328,23 +323,6 @@ pub struct DirCouplersGpuParams<'a> {
     pub gamma_factor: f64,
 }
 
-/// Grain parameters for the GPU-resident Poisson-binomial particle model.
-/// Mirrors `apply_grain_to_density`: per-channel n_particles_per_pixel
-/// already divided by `n_sub_layers`, density_max already includes
-/// `density_min`, etc.
-#[derive(Debug, Clone, Copy)]
-pub struct GrainGpuParams {
-    pub density_min: [f32; 3],
-    pub density_max: [f32; 3],
-    pub n_particles_per_pixel: [f32; 3],
-    pub grain_uniformity: [f32; 3],
-    pub n_sub_layers: u32,
-    pub base_seed: u32,
-    pub grain_blur: f32,
-    /// One shared noise field across all channels (B&W single emulsion)
-    /// instead of independent per-channel RNG streams.
-    pub monochrome: bool,
-}
 
 /// Output gamut compression parameters for the GPU-resident per-pixel pass.
 /// CPU equivalent: `OutputGamutCompress::compress`. The `C_max(L, h)` table

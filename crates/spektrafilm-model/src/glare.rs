@@ -5,6 +5,18 @@ use spektrafilm_math::gaussian::gaussian_blur_channel;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::numpy_rng::GaussRng;
 use spektrafilm_math::precision::{Scalar, from_f32, from_f64};
+/// LogNormal parameters `(mu, sigma)` inverted from the linear-space mean
+/// `percent` and std `roughness * percent`. Shared by the CPU sampler and
+/// the GPU-resident glare pass so the derivation cannot drift:
+///   sigma = sqrt( ln(1 + (s²/m²)) ),  mu = ln(m) - sigma²/2
+pub fn lognormal_params(percent: f32, roughness: f32) -> (f64, f64) {
+    let m = percent as f64;
+    let s = roughness as f64 * m;
+    let sigma2 = (1.0 + (s * s) / (m * m)).ln();
+    let sigma = sigma2.sqrt();
+    let mu = m.ln() - sigma2 / 2.0;
+    (mu, sigma)
+}
 
 /// Generate the per-pixel glare_amount field (lognormal sampled, then blurred, then /100).
 ///
@@ -29,11 +41,7 @@ pub fn compute_random_glare_amount(
     if percent <= 0.0 {
         return vec![Scalar::default(); n_pixels];
     }
-    let m = percent as f64;
-    let s = roughness as f64 * m;
-    let sigma2 = (1.0 + (s * s) / (m * m)).ln();
-    let sigma = sigma2.sqrt();
-    let mu = m.ln() - sigma2 / 2.0;
+    let (mu, sigma) = lognormal_params(percent, roughness);
     let mut rng = GaussRng::new(seed as u32);
 
     // The upstream fast_lognormal kernel skips normal draws below this
