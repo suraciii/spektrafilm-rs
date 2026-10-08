@@ -19,17 +19,10 @@
   },
   "grain": {
     "active": true,
-    "sublayers_active": true,
-    "particle_area_um2": 0.2,
-    "particle_scale": [
-      1.6,
-      1.6,
-      3.2
-    ],
-    "particle_scale_layers": [
-      2.0,
-      1.0,
-      0.5
+    "rms_granularity": [
+      6,
+      8,
+      10
     ],
     "density_min": [
       0.03,
@@ -38,16 +31,22 @@
     ],
     "uniformity": [
       0.97,
-      0.99,
+      0.97,
       0.97
     ],
-    "blur": 0.65,
-    "blur_dye_clouds_um": 1.0,
+    "particle_scale_sublayers": [
+      1,
+      0.5,
+      0.25
+    ],
+    "blur": 0.89,
+    "mult_usm_sigma": 0.7,
+    "mult_usm_amount": 1.5,
+    "blur_dye_clouds_um": 2,
     "micro_structure": [
       0.2,
       30
-    ],
-    "n_sub_layers": 1
+    ]
   },
   "preflashing": {
     "illuminant": "TH-KG3",

@@ -1642,47 +1642,6 @@ impl App {
                 }
             });
 
-        // ── Grain ───────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Grain")
-            .default_open(true)
-            .show(ui, |ui| {
-                let g = &mut self.params.film_render.grain;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut g.active, "Active").changed();
-                changed |= ui
-                    .checkbox(&mut g.sublayers_active, "Layered sublayer grain")
-                    .on_hover_text(
-                        "Split the composite density into the emulsion's sublayers and grain \
-                         each with its own particle field, dye-cloud blur and micro-structure \
-                         (the Python 0.3.4 default). Off = single composite-density sampler.",
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut g.particle_area_um2, 0.05..=1.0)
-                            .text("Particle area (µm²)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut g.blur, 0.0..=3.0).text("Post-blur σ"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut g.blur_dye_clouds_um, 0.0..=10.0)
-                            .text("Dye-cloud blur (µm)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut g.n_sub_layers, 1..=4).text("Sub-layers"))
-                    .on_hover_text(
-                        "Composite-sampler sub-layer count (layered grain always uses the \
-                         profile's 3 emulsion sublayers).",
-                    )
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
 
         }
         if self.gui_tab == GuiTab::Print {

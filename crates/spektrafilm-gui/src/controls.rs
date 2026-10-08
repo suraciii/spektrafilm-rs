@@ -153,13 +153,80 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value, tab: &s
         });
         }
         if tab == "FILM" {
-        ui.collapsing("Layered grain details", |ui| {
+        ui.collapsing("Grain", |ui| {
             let grain = &mut params.film_render.grain;
-            flags.runtime_changed |= tuple(ui, "Particle scale (R, G, B)", &mut grain.particle_scale, 0.0, f64::INFINITY, 0.05);
-            flags.runtime_changed |= tuple(ui, "Particle scale (fast, mid, slow)", &mut grain.particle_scale_layers, 0.0, f64::INFINITY, 0.25);
-            flags.runtime_changed |= tuple(ui, "Minimum density (R, G, B)", &mut grain.density_min, 0.0, f64::INFINITY, 0.01);
-            flags.runtime_changed |= tuple(ui, "Uniformity (R, G, B)", &mut grain.uniformity, 0.0, 1.0, 0.01);
-            flags.runtime_changed |= tuple(ui, "Micro structure (blur µm, clump nm)", &mut grain.micro_structure, 0.0, f64::INFINITY, 0.1);
+            flags.runtime_changed |= ui.checkbox(&mut grain.active, "Active").changed();
+            flags.runtime_changed |= tuple(
+                ui,
+                "RMS granularity (R, G, B)",
+                &mut grain.rms_granularity,
+                0.0,
+                f64::INFINITY,
+                1.0,
+            );
+            ui.collapsing("pixel statistics", |ui| {
+                flags.runtime_changed |= tuple(
+                    ui,
+                    "Minimum density (R, G, B)",
+                    &mut grain.density_min,
+                    0.0,
+                    f64::INFINITY,
+                    0.01,
+                );
+                flags.runtime_changed |= tuple(
+                    ui,
+                    "Uniformity (R, G, B)",
+                    &mut grain.uniformity,
+                    0.0,
+                    1.0,
+                    0.01,
+                );
+                flags.runtime_changed |= tuple(
+                    ui,
+                    "Particle scale sublayers (fast, mid, slow)",
+                    &mut grain.particle_scale_sublayers,
+                    0.0,
+                    f64::INFINITY,
+                    0.25,
+                );
+            });
+            ui.collapsing("texture", |ui| {
+                flags.runtime_changed |= number(ui, "Blur", &mut grain.blur, 0.0, f64::INFINITY, 0.05);
+                flags.runtime_changed |= number(
+                    ui,
+                    "Multiplicative USM amount",
+                    &mut grain.mult_usm_amount,
+                    0.0,
+                    f64::INFINITY,
+                    0.1,
+                );
+                flags.runtime_changed |= number(
+                    ui,
+                    "Multiplicative USM sigma",
+                    &mut grain.mult_usm_sigma,
+                    0.0,
+                    f64::INFINITY,
+                    0.1,
+                );
+            });
+            ui.collapsing("micro substructure", |ui| {
+                flags.runtime_changed |= number(
+                    ui,
+                    "Blur dye clouds (µm)",
+                    &mut grain.blur_dye_clouds_um,
+                    0.0,
+                    f64::INFINITY,
+                    0.1,
+                );
+                flags.runtime_changed |= tuple(
+                    ui,
+                    "Micro structure (blur µm, clump nm)",
+                    &mut grain.micro_structure,
+                    0.0,
+                    f64::INFINITY,
+                    0.1,
+                );
+            });
         });
         }
         if tab == "FILM" {

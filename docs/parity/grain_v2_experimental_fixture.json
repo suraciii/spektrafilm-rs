@@ -1,0 +1,31 @@
+{
+  "name": "grain-v2-experimental-16x12",
+  "upstream_commit": "28bf883e1672e884307edc75852549376e13644e",
+  "film_profile": "kodak_portra_400",
+  "print_profile": "kodak_portra_endura",
+  "seed": 0,
+  "input": {
+    "width": 16,
+    "height": 12,
+    "channels": 3,
+    "linear_rgb": [
+      "0.05 + 0.70*x/15",
+      "0.10 + 0.50*y/11",
+      "0.15 + 0.45*(x + 16*y)/192"
+    ],
+    "pixel_size_um": 12.0
+  },
+  "state_fixture": "crates/spektrafilm-gui/src/factory_state.json",
+  "canonical_grain_fields": [
+    "active",
+    "rms_granularity",
+    "density_min",
+    "uniformity",
+    "particle_scale_sublayers",
+    "blur",
+    "mult_usm_sigma",
+    "mult_usm_amount",
+    "blur_dye_clouds_um",
+    "micro_structure"
+  ]
+}

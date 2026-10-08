@@ -34,6 +34,24 @@ fn flatten(source: &Value, groups: &[&str]) -> Value {
     }
     flat
 }
+fn normalize_grain_section(section: &mut Value) {
+    let Some(object) = section.as_object_mut() else { return; };
+    if !object.contains_key("particle_scale_sublayers") {
+        if let Some(value) = object.get("particle_scale_layers").cloned() {
+            object.insert("particle_scale_sublayers".to_string(), value);
+        }
+    }
+    for key in [
+        "sublayers_active",
+        "particle_area_um2",
+        "particle_scale",
+        "particle_scale_layers",
+        "n_sub_layers",
+        "monochrome",
+    ] {
+        object.remove(key);
+    }
+}
 
 impl GuiState {
     pub fn factory() -> Self {
@@ -60,6 +78,18 @@ impl GuiState {
             // Flat top-level GUI-only sections override nested gui_only.
             let original = value.get(section).or_else(|| value["gui_only"].get(section));
             if let Some(original) = original { normalized[section] = flatten(original, &["settings"]); }
+        }
+        normalize_grain_section(&mut normalized["grain"]);
+        if let Some(grain) = normalized
+            .get_mut("rust")
+            .and_then(Value::as_object_mut)
+            .and_then(|rust| rust.get_mut("runtime"))
+            .and_then(Value::as_object_mut)
+            .and_then(|runtime| runtime.get_mut("film_render"))
+            .and_then(Value::as_object_mut)
+            .and_then(|film_render| film_render.get_mut("grain"))
+        {
+            normalize_grain_section(grain);
         }
         merge(&mut state.sections, &normalized);
         if let Some(extension) = value.get("rust") {
@@ -219,6 +249,99 @@ mod tests {
         assert_eq!(loaded.sections["rust"]["viewer"]["zoom"],3.0);
         assert_eq!(loaded.sections,saved.sections);
     }
+    #[test]
+    fn grain_v2_migration_strips_runtime_only_fields() {
+        let state = GuiState::from_value(json!({
+            "grain": {
+                "particle_scale_layers": [2.0, 1.0, 0.5],
+                "particle_area_um2": 0.2,
+                "n_sub_layers": 3
+            },
+            "rust": {
+                "version": 1,
+                "runtime": {
+                    "film_render": {
+                        "grain": {
+                            "particle_scale_layers": [2.0, 1.0, 0.5],
+                            "particle_area_um2": 0.2
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let grain = state.sections["grain"].as_object().unwrap();
+        assert_eq!(grain["particle_scale_sublayers"], json!([2.0, 1.0, 0.5]));
+        for key in [
+            "sublayers_active",
+            "particle_area_um2",
+            "particle_scale",
+            "particle_scale_layers",
+            "n_sub_layers",
+            "monochrome",
+        ] {
+            assert!(!grain.contains_key(key), "legacy field leaked into state: {key}");
+        }
+        let params = state.runtime_params().unwrap();
+        let runtime_grain = serde_json::to_value(params).unwrap()["film_render"]["grain"].clone();
+        assert!(runtime_grain.get("particle_scale_layers").is_none());
+        assert_eq!(runtime_grain["particle_scale_sublayers"], json!([2.0, 1.0, 0.5]));
+    }
+    #[test]
+    fn grain_v2_canonical_fields_roundtrip_through_state_and_runtime() {
+        let factory = GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        let grain = &mut params.film_render.grain;
+        grain.active = false;
+        grain.rms_granularity = [11.0, 13.0, 17.0];
+        grain.density_min = [0.11, 0.22, 0.33];
+        grain.uniformity = [0.91, 0.92, 0.93];
+        grain.particle_scale_sublayers = [1.0, 0.75, 0.5];
+        grain.blur = 1.25;
+        grain.mult_usm_sigma = 1.1;
+        grain.mult_usm_amount = 2.2;
+        grain.blur_dye_clouds_um = 3.3;
+        grain.micro_structure = [0.4, 24.0];
+
+        let saved = GuiState::from_runtime(
+            &params,
+            "kodak_gold_200",
+            "kodak_supra_endura",
+            &factory.sections,
+        )
+        .unwrap();
+        let loaded = GuiState::from_value(saved.sections.clone()).unwrap();
+        let restored = loaded.runtime_params().unwrap().film_render.grain;
+
+        assert!(!restored.active);
+        assert_eq!(restored.rms_granularity, [11.0, 13.0, 17.0]);
+        assert_eq!(restored.density_min, [0.11, 0.22, 0.33]);
+        assert_eq!(restored.uniformity, [0.91, 0.92, 0.93]);
+        assert_eq!(restored.particle_scale_sublayers, [1.0, 0.75, 0.5]);
+        assert_eq!(restored.blur, 1.25);
+        assert_eq!(restored.mult_usm_sigma, 1.1);
+        assert_eq!(restored.mult_usm_amount, 2.2);
+        assert_eq!(restored.blur_dye_clouds_um, 3.3);
+        assert_eq!(restored.micro_structure, [0.4, 24.0]);
+
+        let object = loaded.sections["grain"].as_object().unwrap();
+        assert_eq!(object.len(), 10);
+        for key in [
+            "active",
+            "rms_granularity",
+            "density_min",
+            "uniformity",
+            "particle_scale_sublayers",
+            "blur",
+            "mult_usm_sigma",
+            "mult_usm_amount",
+            "blur_dye_clouds_um",
+            "micro_structure",
+        ] {
+            assert!(object.contains_key(key), "canonical field missing: {key}");
+        }
+    }
+
     #[test]
     fn malformed_controls_and_future_extensions_fail_before_application() {
         for value in [json!([]),json!({"camera":{"auto_exposure":"bad"}}),json!({"rust":{"version":9}}),json!({"special":{"film_channel_swap":[0,1,3]}}),json!({"simulation":{"auto_preview":"false"}})] {
