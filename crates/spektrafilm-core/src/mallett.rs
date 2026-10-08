@@ -432,11 +432,10 @@ pub fn compute_core_matrix(sensitivity: &[[f64; 3]], illuminant: &[f64]) -> [[f6
             midgray[m] += illu * MIDGRAY * sensitivity[wl][m];
         }
     }
-    let g = midgray[1];
     let mut core = [[0.0f64; 3]; 3];
     for m in 0..3 {
         for k in 0..3 {
-            core[m][k] = m_mallett[k][m] / g;
+            core[m][k] = m_mallett[k][m] / midgray[m];
         }
     }
     core

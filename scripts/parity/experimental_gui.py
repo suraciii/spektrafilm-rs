@@ -101,7 +101,7 @@ class ExperimentalDesktop(X11):
             tokens = words(' '.join(w[0] for w in line))
             expected = words(label)
             if exact:
-                if len(tokens) == len(expected) + 1 and line[0][1] < image.width - 400:
+                if len(tokens) == len(expected) + 1 and (line[0][1] < image.width - 400 or tokens[0] in ('v', 'y', 'vy')):
                     tokens = tokens[1:]
                 if tokens != expected:
                     continue
@@ -333,6 +333,8 @@ def main():
         driver.click('Select file')
         driver.dialog(source)
         driver.wait_text(r'Loaded|input\.tif', 'imported-rgb')
+        driver.click('PREVIEW', bottom=True)
+        driver.rendered('initial-preview')
         for index, route in enumerate(ROUTES):
             driver.choose_route(index)
             state_path = root/f'route-{index}.json'
@@ -343,8 +345,10 @@ def main():
             require('workflow' not in state['simulation'], 'Legacy nested workflow persisted')
             driver.click('PREVIEW', bottom=True)
             status = driver.rendered(f'route-{index}-preview')
+            driver.state_action('Save current to file', root/f'route-{index}-before-scan.json', save=True)
+            driver.wait_text(r'Saved GUI state', f'route-{index}-before-scan')
             driver.click('SCAN', bottom=True)
-            status = driver.rendered(f'route-{index}-scan', render_count(status))
+            status = driver.rendered(f'route-{index}-scan')
             output = root/f'route-{index}.tif'
             driver.click('SAVE', bottom=True)
             driver.dialog(output, save=True)

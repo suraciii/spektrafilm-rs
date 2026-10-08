@@ -319,8 +319,7 @@ spektrafilm-rs macOS
 Run Spektrafilm.app for the GUI.
 
 Backends:
-- macOS uses the WGSL/wgpu backend through Metal by default.
-- CUDA is not available on modern macOS builds.
+- macOS uses the WGPU/WGSL backend through Metal by default, with CPU fallback when no usable adapter is available.
 
 Native image support:
 - decode_raw_gui, LibRaw, Lensfun, Exiv2, GLib and OpenImageIO are bundled.

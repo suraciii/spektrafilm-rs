@@ -1,3 +1,4 @@
+pub mod chain_prep;
 pub mod color_reference;
 pub mod data;
 pub mod enlarger;

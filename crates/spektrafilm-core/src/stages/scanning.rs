@@ -7,7 +7,6 @@ use spektrafilm_math::colorspace;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::{Scalar, from_f64};
-use spektrafilm_math::spectral;
 
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
@@ -188,54 +187,17 @@ pub fn scan_with_options(
     let illuminant = scan_illuminant
         .map(select_illuminant_f64)
         .unwrap_or_else(|| select_illuminant_f64(&profile.info.viewing_illuminant));
-    let n_wl = illuminant
-        .len()
-        .min(channel_density.len())
-        .min(spectral::N_WAVELENGTHS);
-
-    // Compute normalization in f64 — Python parity (81-element sum).
-    // Use f64 CMF_Y for the same precision reason.
-    let normalization: f64 = (0..n_wl)
-        .map(|i| illuminant[i] * spectral::CMF_Y_F64[i])
-        .sum();
-    // Build XYZ→RGB matrix with chromatic adaptation from viewing illuminant to output colorspace white.
-    // Python's `colour.XYZ_to_RGB` applies CAT and the XYZ→RGB matrix as
-    // TWO sequential matrix multiplies per pixel; pre-combining them
-    // into one (M_rgb @ M_cat) loses ~1 ULP per output channel and
-    // accumulates to ~5e-6 scan-stage drift. We keep them split for
-    // CPU bit-parity; the GPU path can collapse them for performance.
-    //
-    // Compute viewing_white at runtime (matches Python's
-    // `XYZ_to_xy(integrate(illu, CMFs)/norm) → xy_to_xyZ`). The
-    // pre-computed `illuminant_xyz_f64` constant is 3 ULPs off the
-    // runtime value because Python's `contract(...)/norm` rounds Y
-    // slightly off 1.0, which xy_to_xyY then corrects — replaying that
-    // chain is bit-exact.
-    let mut illu_xyz_runtime = [0.0f64; 3];
-    let illu_y_sum: f64 = (0..n_wl)
-        .map(|i| illuminant[i] * spectral::CMF_Y_F64[i])
-        .sum();
-    for i in 0..n_wl {
-        illu_xyz_runtime[0] += illuminant[i] * spectral::CMF_X_F64[i];
-        illu_xyz_runtime[1] += illuminant[i] * spectral::CMF_Y_F64[i];
-        illu_xyz_runtime[2] += illuminant[i] * spectral::CMF_Z_F64[i];
-    }
-    let _ = illu_y_sum;
-    for c in 0..3 {
-        illu_xyz_runtime[c] /= normalization;
-    }
-    // XYZ_to_xy then xy_to_xyz roundtrip (renormalizes Y to exactly 1).
-    let sum_xyz = illu_xyz_runtime[0] + illu_xyz_runtime[1] + illu_xyz_runtime[2];
-    let vx = illu_xyz_runtime[0] / sum_xyz;
-    let vy = illu_xyz_runtime[1] / sum_xyz;
-    let viewing_white = [vx / vy, 1.0f64, (1.0 - vx - vy) / vy];
     let output_space = colorspace::resolve(&params.io.output_color_space)
         .expect("output color space must be validated before scanning");
-    let adapt = colorspace::chromatic_adaptation_matrix_f64(
-        viewing_white,
-        output_space.whitepoint_xyz(),
+    let scan_context = crate::chain_prep::ScanColorContext::build(
+        illuminant.into_owned(),
+        channel_density.len(),
+        &params.io.output_color_space,
     );
-    let base_xyz_to_rgb = output_space.matrix_xyz_to_rgb;
+    let illuminant = &scan_context.illuminant;
+    let normalization = scan_context.normalization;
+    let adapt = scan_context.adapt;
+    let base_xyz_to_rgb = scan_context.base_xyz_to_rgb;
 
     // Dispatch spectral integration to backend (GPU or CPU). The backend
     // applies the two matrices in sequence — we pass them separately.
@@ -299,41 +261,11 @@ pub fn scan_with_options(
         .then(|| &params.print_render.glare)
         .filter(|g| g.active && g.percent > 0.0);
     if let Some(glare) = glare {
-        // Illuminant XYZ (Y=1) from the SPD (matches Python `contract('k,kl->l', illu, CMFs)/norm`).
-        // Use the unnormalized integration here — the scaling cancels because we apply M next.
-        let mut illu_xyz = [0.0f64; 3];
-        for i in 0..n_wl {
-            illu_xyz[0] += illuminant[i] * spectral::CMF_X_F64[i];
-            illu_xyz[1] += illuminant[i] * spectral::CMF_Y_F64[i];
-            illu_xyz[2] += illuminant[i] * spectral::CMF_Z_F64[i];
-        }
-        for c in 0..3 {
-            illu_xyz[c] /= normalization;
-        }
-        // Two-step: M_base @ M_cat @ illu_xyz — same order as the
-        // per-pixel scan path so the glare offset stays consistent.
-        let xyz_adapt = [
-            adapt[0][0] * illu_xyz[0] + adapt[0][1] * illu_xyz[1] + adapt[0][2] * illu_xyz[2],
-            adapt[1][0] * illu_xyz[0] + adapt[1][1] * illu_xyz[1] + adapt[1][2] * illu_xyz[2],
-            adapt[2][0] * illu_xyz[0] + adapt[2][1] * illu_xyz[1] + adapt[2][2] * illu_xyz[2],
-        ];
-        let glare_rgb_offset: [Scalar; 3] = [
-            from_f64(
-                base_xyz_to_rgb[0][0] * xyz_adapt[0]
-                    + base_xyz_to_rgb[0][1] * xyz_adapt[1]
-                    + base_xyz_to_rgb[0][2] * xyz_adapt[2],
-            ),
-            from_f64(
-                base_xyz_to_rgb[1][0] * xyz_adapt[0]
-                    + base_xyz_to_rgb[1][1] * xyz_adapt[1]
-                    + base_xyz_to_rgb[1][2] * xyz_adapt[2],
-            ),
-            from_f64(
-                base_xyz_to_rgb[2][0] * xyz_adapt[0]
-                    + base_xyz_to_rgb[2][1] * xyz_adapt[1]
-                    + base_xyz_to_rgb[2][2] * xyz_adapt[2],
-            ),
-        ];
+        // Shared scan context keeps the CPU two-step CAT→RGB operation
+        // order used by the reference path.
+        let glare_rgb_offset_f64 =
+            crate::chain_prep::glare_rgb_offset_f64(&scan_context);
+        let glare_rgb_offset: [Scalar; 3] = glare_rgb_offset_f64.map(from_f64);
         let glare_amount = spektrafilm_model::glare::compute_random_glare_amount(
             rgb.width,
             rgb.height,
@@ -368,15 +300,48 @@ pub fn scan_with_options(
             spektrafilm_model::diffusion::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
+    // Grain V2 is a display-domain effect. Apply it after optical scan
+    // effects and before destination transfer encoding. V1 remains in the
+    // filming density stage above and is never touched by this branch.
+    if params.film_render.grain.active
+        && matches!(
+            params.film_render.grain.engine,
+            crate::params::GrainEngine::V2
+        )
+    {
+        let mut grain = params.film_render.grain.resolved_grain_v2();
+        if params.debug.deactivate_spatial_effects {
+            grain.resolution_factor = 100.0;
+        }
+        grain.seed = grain.seed.wrapping_add(params.random_seed as u32);
+        let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
+            mode: grain.mode as u32,
+            amount: grain.amount,
+            shadows: grain.shadows,
+            midtones: grain.midtones,
+            highlights: grain.highlights,
+            raw_scale: grain.size,
+            cluster_size: grain.cluster_size,
+            rotation: grain.rotation,
+            color: grain.color,
+            resolution_factor: grain.resolution_factor,
+            resolution_type: grain.resolution_type,
+            seed: grain.seed,
+            colored: grain.colored,
+            clustered: grain.clustered,
+        };
+        rgb = backend
+            .grain_v2(&rgb, &gpu_params)
+            .unwrap_or_else(|| spektrafilm_model::grain_v2::apply_cpu(&rgb, grain));
+    }
+
     // Match colour.RGB_to_RGB(cs, cs): apply the stored same-space matrix
     // roundtrip and destination CCTF. Preserve values outside [0, 1] for
     // formats and later consumers that support extended range.
     if params.io.output_cctf_encoding {
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-            let encoded = colorspace::encode_rgb(
-                [px[0] as f64, px[1] as f64, px[2] as f64],
-                output_space,
-            );
+            let encoded =
+                colorspace::encode_rgb([px[0] as f64, px[1] as f64, px[2] as f64], output_space);
             px[0] = from_f64(encoded[0]);
             px[1] = from_f64(encoded[1]);
             px[2] = from_f64(encoded[2]);
@@ -407,5 +372,3 @@ pub fn process(
 ) -> ImageBuf {
     scan(density_cmy, profile, params, backend, color_ref, gamut)
 }
-
-

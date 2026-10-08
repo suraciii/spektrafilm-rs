@@ -18,6 +18,14 @@ Files:
 | `lut_acceptance.py` | Real CLI LUT bakes, pinned QA/format comparisons, OCIO processors and delivered artifact checks |
 | `package_smoke.py` | Installed image/metadata/RAW paths, LUT/OCIO/QA delivery and actual native GUI operations |
 | `gui_viewer_acceptance.py` | Native viewer controls, float probes, animation frames, profile/non-sRGB paths and Save/Export isolation |
+| `grain_v2_acceptance.py` | Twelve Grain V2 presets, real CPU/GPU dispatch parity, parameter inheritance and f64 float TIFF render/export roundtrips |
+
+Grain V2 acceptance: run `python3 scripts/parity/grain_v2_acceptance.py`.
+The GPU comparison dispatches the actual shader across multiple workgroups for all twelve profiles in Analogue and Noise modes, with a maximum absolute error budget of 0.005 against the independent CPU implementation. A missing WGPU adapter is reported as a skip; it is not GPU evidence. Film Resolution/FastBlur and procedural gradient hashing are compatibility implementations, not a claim of bit-exact Dehancer output.
+
+Local verification on 2026-10-08: workspace tests passed (240 tests); native f32 WGPU and f64 GUI previews rendered, the V2 mode control was exercised, and native Save/f64 Export wrote readable TIFF files. CLI V2 processing and six f32/f64 render/export roundtrips passed. The local native dependency prefix was `/data/deps/libraw-0.22.2` (real LibRaw 0.22.2). Hardware render-node access was denied, so this establishes WGPU execution with the available adapter, not discrete-GPU performance. Strict all-features clippy stopped in unchanged math sources on existing diagnostics.
+
+The subsequent V2 sky-stripe repair passed eight grain tests in both f32 and f64, the shader device check, profile inheritance checks, and all six render/export roundtrips. Final Noise host scale, half-effective Amount and Film Resolution behavior are included. A separate f64 CLI run exported and decoded a 768×512 synthetic sky TIFF with spatial grain residual RMS 0.00799 against grain disabled. These checks do not establish a fix for an unavailable original user photo or hardware-GPU performance.
 
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
@@ -108,6 +116,38 @@ cargo build -p spektrafilm-cli --features precision-f64 \
 Override locations with `SPEKTRAFILM_PY`, `SPEKTRAFILM_PY_REPO` and
 `SPEKTRAFILM_RS_BIN` if they differ from the defaults.
 
+For CI or another checkout, `SPEKTRAFILM_RUNTIME_REPO` points the provenance
+and data/work-directory checks at a separate clean exact-a191 runtime
+worktree while the parity script itself remains the candidate checkout. This
+keeps PR merge refs testable without weakening the exact-commit gate.
+
+
+### Fresh provenance gate
+
+Runtime evidence is accepted only for the exact Rust runtime commit
+`a1910231fbd2c049c5177b539b6e7963c97f4e90`. `run_parity.py` rejects another
+checkout, a dirty worktree (including untracked files), or a non-executable
+CLI. Its report records the complete lowercase SHA256 of the executable.
+`gen_matrix.py` re-checks that commit, requires `rust_worktree_dirty: false`,
+requires a syntactically complete executable hash, and compares the hash with
+the recorded binary when that path is available. It therefore rejects copied
+or stale runtime reports rather than treating old rows as fresh evidence.
+
+Keep source and evidence separate when running the clean a191 runtime
+worktree. For example, with the report artifacts outside the checkout:
+
+```bash
+RUNTIME=/tmp/spektrafilm-a191-20261007
+OUT=/tmp/spektrafilm-a191-parity-fresh
+SPEKTRAFILM_RS_BIN=/tmp/spektrafilm-a191-target/release/spektrafilm-f64 \
+  python3 "$RUNTIME/scripts/parity/run_parity.py" --out-root "$OUT"
+python3 "$RUNTIME/scripts/parity/gen_matrix.py" \
+  --report "$OUT/parity_report.json"
+```
+
+The runtime checkout itself must remain clean; `--out-root` is intentionally
+outside it. A report from another commit, a dirty checkout, or a replaced
+binary fails before matrix generation.
 ## Running the matrix
 
 ```bash
@@ -250,6 +290,17 @@ reports record the Rust HEAD, executable SHA256, platform and reference pin.
 
 `--raw-fixture PATH` reuses the pinned Kodak KDC download when network access
 is unavailable; the same required SHA256 check runs before decoding.
+
+`raw_wb_audit.json` is the pinned decoded-buffer fixture matrix for RAW
+white-balance repair issue #26. It covers Kodak KDC and Canon 40D CR2 across
+`as_shot`, `daylight`, `tungsten` and `custom(5000K, tint=1.05)` with
+`lens_correction=false`, records the source URLs/SHA256/dimensions and the
+current verified decoder/reference provenance. The report binds the eight
+passing rows to the audited Rust commit and decoder SHA256; all rows must
+remain within `max_abs <= 1e-5` and `mean_abs <= 1e-6`. Download the public
+fixtures, verify their hashes, then rerun `raw_reference_compare.py` to
+regenerate the evidence. This gate compares decoded float buffers; visual
+screenshots or PNG-clamped comparisons are not substitutes.
 
 
 The package smoke exports the pinned 0.3.4 bare-chain midgray through the real

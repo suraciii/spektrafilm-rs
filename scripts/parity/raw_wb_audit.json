@@ -1,0 +1,53 @@
+{
+  "schema": "spektrafilm-raw-wb-audit/1",
+  "issue": "https://github.com/suraciii/spektrafilm-rs/issues/26",
+  "reference_commit": "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc",
+  "rust_commit": "499edb1a06a733bdb834703002ad6f8d44b2eb1b",
+  "rust_worktree_dirty": false,
+  "rust_bin": "/tmp/spektrafilm-wb-target/release/decode_raw_gui",
+  "rust_bin_sha256": "6bae5a23b3ce03b7dd0ca23a9b01c7c38b9630e16275494f56c8bee53a892fbb",
+  "libraw": "0.22.0",
+  "rawpy_version": "0.26.1",
+  "rawpy_libraw_version": [0, 22, 0],
+  "verification_status": "verified",
+  "comparison": {
+    "lens_correction": false,
+    "max_abs_budget": 1e-5,
+    "mean_abs_budget": 1e-6,
+    "modes": ["as_shot", "daylight", "tungsten", "custom_5000K_tint_1.05"]
+  },
+  "fixtures": [
+    {
+      "name": "RAW_KODAK_DC50_é.KDC",
+      "source_url": "https://raw.githubusercontent.com/letmaik/rawpy/main/test/RAW_KODAK_DC50_%C3%A9.KDC",
+      "sha256": "37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc",
+      "bytes": 92675,
+      "decoded_shape": [512, 768, 3],
+      "observed": {
+        "as_shot": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "daylight": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "tungsten": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "custom_5000K_tint_1.05": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true}
+      }
+    },
+    {
+      "name": "RAW_CANON_40D_SRAW_V103.CR2",
+      "source_url": "https://raw.githubusercontent.com/letmaik/rawpy/main/test/RAW_CANON_40D_SRAW_V103.CR2",
+      "sha256": "152382ce4dbf644899d12b41b4c577f07638aa3ec5745ac344c36bad93826125",
+      "bytes": 6800865,
+      "decoded_shape": [1296, 1944, 3],
+      "camera_white_balance": [2341, 1024, 1570, 1024],
+      "observed": {
+        "as_shot": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "daylight": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "tungsten": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true},
+        "custom_5000K_tint_1.05": {"max_abs": 0.0, "mean_abs": 0.0, "pass": true}
+      }
+    }
+  ],
+  "notes": [
+    "Binaries are not redistributed; download and verify the pinned public fixtures before running.",
+    "Fresh decoded-buffer comparison passed all eight rows at max_abs <= 1e-5 and mean_abs <= 1e-6.",
+    "Lens bridge parity is audited separately with known and absent metadata cases."
+  ]
+}

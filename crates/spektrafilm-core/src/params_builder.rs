@@ -493,7 +493,9 @@ mod tests {
         let film = film_profile("fujifilm_velvia_100", "positive", "still", "strong");
         let print = blank_profile();
         let d = digest_params(RuntimeParams::default(), &film, &print, None, true);
-        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.108, 0.072, 0.054]);
+        // The Velvia stock preset wins over the incidental RuntimeParams
+        // default when stock-specific application is requested.
+        assert_eq!(d.film_render.dir_couplers.gamma_samelayer_rgb, [0.2398, 0.0662, 0.144]);
 
         // apply_stocks_specifics=false keeps user values (GUI edit path).
         let mut user = RuntimeParams::default();

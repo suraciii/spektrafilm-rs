@@ -30,11 +30,10 @@ import argparse
 import hashlib
 import platform
 import json
-import hashlib
 import shutil
-import platform
 import math
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -49,7 +48,13 @@ from scenarios import (  # noqa: E402
     RS_COMMIT,
 )
 
-REPO_ROOT = HERE.parent.parent
+EXPECTED_RUST_COMMIT = "a1910231fbd2c049c5177b539b6e7963c97f4e90"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+REPO_ROOT = Path(os.environ.get(
+    "SPEKTRAFILM_RUNTIME_REPO", str(HERE.parent.parent)
+)).resolve()
+
 PY_REPO = Path(os.environ.get("SPEKTRAFILM_PY_REPO", "/home/szf/repos/spektrafilm"))
 PY_BIN = Path(os.environ.get("SPEKTRAFILM_PY", "/tmp/spektrafilm-034-venv/bin/python"))
 RS_BIN = Path(os.environ.get(
@@ -126,16 +131,33 @@ def preflight_python() -> dict:
 
 
 def preflight_rust() -> dict:
-    if not RS_BIN.exists():
+    if not RS_BIN.is_file():
         raise Missing(
             f"Rust f64 CLI not found at {RS_BIN}. Build it with: "
             f"cargo build -p spektrafilm-cli --features precision-f64 "
             f"--bin spektrafilm-f64 --release   (run from {REPO_ROOT})"
         )
+    if not os.access(RS_BIN, os.X_OK):
+        raise Missing(f"Rust f64 CLI is not executable: {RS_BIN}")
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip()
+    if commit != EXPECTED_RUST_COMMIT:
+        raise Missing(
+            f"Rust checkout is at {commit}, expected exact runtime commit "
+            f"{EXPECTED_RUST_COMMIT}; checkout the a191 runtime worktree."
+        )
+    dirty = bool(subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=REPO_ROOT, text=True).strip())
+    if dirty:
+        raise Missing(f"Rust worktree is dirty: {REPO_ROOT}; use a clean runtime worktree")
+    binary_hash = hashlib.sha256(RS_BIN.read_bytes()).hexdigest()
+    if not SHA256_RE.fullmatch(binary_hash):
+        raise Missing(f"Rust f64 CLI produced an invalid SHA256: {RS_BIN}")
     return {"rust_bin": str(RS_BIN.resolve()),
-            "rust_bin_sha256": hashlib.sha256(RS_BIN.read_bytes()).hexdigest(),
-            "rust_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip(),
-            "rust_worktree_dirty": bool(subprocess.check_output(["git", "diff", "--name-only", "HEAD"], cwd=REPO_ROOT, text=True).strip()),
+            "rust_bin_sha256": binary_hash,
+            "rust_commit": commit,
+            "rust_worktree_dirty": False,
             "platform": platform.platform()}
 
 

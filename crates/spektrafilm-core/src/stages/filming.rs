@@ -502,7 +502,7 @@ pub fn develop(
     // emulsion sublayers. Runtime-only compatibility flags are not GUI
     // controls and do not alter this path.
     let grain = &params.film_render.grain;
-    if grain.active {
+    if grain.active && matches!(grain.engine, crate::params::GrainEngine::V1) {
         let t = Instant::now();
         let norm_curves_f64 = spektrafilm_model::density_curves::normalize_density_curves_f64(
             &film.density_curves_f64(),

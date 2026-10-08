@@ -1512,14 +1512,9 @@ mod tests {
     #[test]
     fn camera_uv_ir_filter_parity() {
         let mut sensitivity = portra_sensitivity();
-        // Synthetic illuminant shared with the numpy reference generator.
-        let illuminant: Vec<f64> = (0..N_WAVELENGTHS)
-            .map(|i| {
-                let wl =
-                    spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
-                1.0 + 0.1 * (2.0 * std::f64::consts::PI * (wl - 380.0) / 200.0).sin()
-            })
-            .collect();
+        // The film profile's reference illuminant is D55; this is the same
+        // illuminant used by the filming runtime for filter normalization.
+        let illuminant = spectral::ILLUMINANT_D55_F64.to_vec();
         let before = sensitivity.clone();
         apply_camera_uv_ir_band_pass(
             &mut sensitivity,
@@ -1528,19 +1523,14 @@ mod tests {
             &illuminant,
         );
 
-        // The reference normalization (per channel) is
-        // sum((sens*bpf)*illu) / sum(sens*illu); it is verified through the
-        // filtered-sensitivity reference values and the white-balance
-        // invariant below.
-
-        // Filtered sensitivity reference values (numpy replication of the
-        // pinned Python code on kodak_portra_400).
+        // Filtered sensitivity reference values from the pinned upstream
+        // filming path (D55 normalization).
         let cases = [
-            (0usize, 0usize, 1.1642260239412059e-08_f64),
-            (10, 1, 0.02784849204707196),
-            (40, 2, 6.28451085206133e-05),
-            (60, 0, 0.0015911279650580939),
-            (80, 2, 4.0318729265567765e-16),
+            (0usize, 0usize, 8.9233947803746231e-05_f64),
+            (10, 1, 0.02811757780387461),
+            (40, 2, 4.9000721126212758e-05),
+            (60, 0, 0.0019786738339406741),
+            (80, 2, 1.2709441518568956e-07),
         ];
         for (wl, c, want) in cases {
             assert_close(

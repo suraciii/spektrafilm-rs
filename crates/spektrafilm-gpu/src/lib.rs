@@ -1,10 +1,30 @@
+mod gpu_helpers;
 pub mod cpu_backend;
-#[cfg(feature = "cuda-backend")]
-pub mod cuda_backend;
 #[cfg(feature = "wgpu-backend")]
 pub mod wgpu_backend;
 
 use spektrafilm_math::image::ImageBuf;
+
+/// f32 boundary representation shared by the WGPU Grain V2 shader and the
+/// core parameter mapper. The field groups mirror the shader's 64-byte
+/// uniform layout.
+#[derive(Debug, Clone, Copy)]
+pub struct GrainV2GpuParams {
+    pub mode: u32,
+    pub amount: f32,
+    pub shadows: f32,
+    pub midtones: f32,
+    pub highlights: f32,
+    pub raw_scale: f32,
+    pub cluster_size: f32,
+    pub rotation: f32,
+    pub color: f32,
+    pub resolution_factor: f32,
+    pub resolution_type: u32,
+    pub seed: u32,
+    pub colored: bool,
+    pub clustered: bool,
+}
 
 /// Compute backend abstraction. Each method corresponds to a GPU-friendly
 /// operation in the film simulation pipeline.
@@ -146,6 +166,12 @@ pub trait ComputeBackend: Send + Sync {
         spektrafilm_math::interp::fast_interp_image_f64(log_raw, &scaled, density_curves)
     }
 
+    /// Return a rendered Grain V2 image when this backend supports the shader.
+    /// The caller uses the independent CPU reference when this returns None.
+    fn grain_v2(&self, _image: &ImageBuf, _params: &GrainV2GpuParams) -> Option<ImageBuf> {
+        None
+    }
+
     /// Optional fused fast-path: runs filming + printing + scanning as a single
     /// GPU-resident command buffer (one upload at start, one readback at end).
     /// Returns linear RGB, or `None` to fall back to per-stage trait methods.
@@ -207,11 +233,6 @@ pub struct FilmChainParams<'a> {
     /// `Some`, inserted on the film density buffer between filming and
     /// printing. Re-interpolates density curves using `density_curves_0`.
     pub dir_couplers: Option<DirCouplersGpuParams<'a>>,
-    /// Optional grain pass — Poisson-binomial particle model on the film
-    /// density buffer, after DIR couplers and before print spectral.
-    /// Uses normal-approximation sampling on the GPU (matches what the
-    /// CPU path does for typical λ > 30 / variance > 9 regimes).
-    pub grain: Option<GrainGpuParams>,
     /// Optional viewing glare pass — applied after scan spectral on the
     /// final RGB buffer. Lognormal-distributed per-pixel surface noise +
     /// blur + per-channel illuminant offset.
@@ -240,12 +261,11 @@ pub(crate) fn gpu_blur_supported(sigma: f32) -> bool {
 }
 
 impl FilmChainParams<'_> {
-    pub(crate) fn gpu_blurs_supported(&self) -> bool {
+    pub fn gpu_blurs_supported(&self) -> bool {
         let supports = gpu_blur_supported;
         self.camera_lens_blur_px.is_none_or(supports)
             && self.scanner_lens_blur_px.is_none_or(supports)
             && self.unsharp.is_none_or(|p| supports(p.sigma_px))
-            && self.grain.is_none_or(|p| supports(p.grain_blur))
             && self.glare.is_none_or(|p| supports(p.blur_px))
             && self.dir_couplers.is_none_or(|p| {
                 supports(p.diffusion_size_px) && supports(p.diffusion_tail_px)
@@ -301,23 +321,6 @@ pub struct DirCouplersGpuParams<'a> {
     pub gamma_factor: f64,
 }
 
-/// Grain parameters for the GPU-resident Poisson-binomial particle model.
-/// Mirrors `apply_grain_to_density`: per-channel n_particles_per_pixel
-/// already divided by `n_sub_layers`, density_max already includes
-/// `density_min`, etc.
-#[derive(Debug, Clone, Copy)]
-pub struct GrainGpuParams {
-    pub density_min: [f32; 3],
-    pub density_max: [f32; 3],
-    pub n_particles_per_pixel: [f32; 3],
-    pub grain_uniformity: [f32; 3],
-    pub n_sub_layers: u32,
-    pub base_seed: u32,
-    pub grain_blur: f32,
-    /// One shared noise field across all channels (B&W single emulsion)
-    /// instead of independent per-channel RNG streams.
-    pub monochrome: bool,
-}
 
 /// Output gamut compression parameters for the GPU-resident per-pixel pass.
 /// CPU equivalent: `OutputGamutCompress::compress`. The `C_max(L, h)` table
@@ -398,7 +401,7 @@ pub struct Lut3D {
 }
 
 /// Select the available compute backend. Reference f64 builds default to CPU.
-/// Explicit `SPEKTRAFILM_BACKEND=cuda|wgpu` requests select f32 preview arithmetic,
+/// Explicit `SPEKTRAFILM_BACKEND=wgpu` requests select f32 preview arithmetic,
 /// including in an f64 binary. Unavailable requests report a faithful CPU fallback.
 pub fn select_backend() -> Box<dyn ComputeBackend> {
     let requested = std::env::var("SPEKTRAFILM_BACKEND")
@@ -413,22 +416,6 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     if requested.as_deref() == Some("cpu") {
         tracing::info!(backend = cpu_backend::CpuBackend.name(), "using CPU backend");
         return Box::new(cpu_backend::CpuBackend);
-    }
-
-    #[cfg(feature = "cuda-backend")]
-    {
-        if requested.as_deref() == Some("cuda") {
-            if let Some(cuda) = cuda_backend::CudaBackend::new() {
-                tracing::info!(precision = "f32", reference = false, "using CUDA preview backend");
-                return Box::new(cuda);
-            }
-            tracing::warn!("CUDA backend requested but unavailable; falling back");
-        }
-    }
-
-    #[cfg(not(feature = "cuda-backend"))]
-    if requested.as_deref() == Some("cuda") {
-        tracing::warn!("CUDA backend requested but spektrafilm-gpu was built without cuda-backend");
     }
 
     #[cfg(not(feature = "wgpu-backend"))]

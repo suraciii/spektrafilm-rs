@@ -83,17 +83,21 @@ def _display_line(driver, words):
 
 
 def _drag_white_border(driver):
-    # CONFIG's current viewer row is stable at the required 1460x980 window:
-    # the slider is x=1240..1335 and the text label starts near x=1380.
-    # Clicking the slider itself avoids the label, and Desktop.xd translates
-    # these window-relative coordinates on Windows/macOS.
-    image, _, _ = driver.read()
+    # The White border DragValue sits left of its label in the CONFIG
+    # sidebar; its row shifts with the surrounding controls. Drag the
+    # slider track itself rather than the numeric DragValue text, because
+    # horizontal motion over the text field is ignored by egui.
+    image, line = _display_line(driver, ("white", "borde"))
     _require(image.width >= 1460 and image.height >= 980,
              "White-border probe requires the pinned 1460x980 window")
-    y = 158 + (30 if sys.platform == "darwin" else 0)
-    driver.xd("mousemove", "--window", driver.window, 1240, y)
+    numeric = [word for word in line if re.match(r"^\d", word[0])]
+    _require(numeric, "White border value not visible")
+    value = numeric[0]
+    slider_x = int(value[1] - 50)
+    y = value[2] + value[4] / 2
+    driver.xd("mousemove", "--window", driver.window, slider_x, int(y))
     driver.xd("mousedown", 1)
-    driver.xd("mousemove", "--window", driver.window, 1290, y)
+    driver.xd("mousemove", "--window", driver.window, slider_x + 35, int(y))
     driver.xd("mouseup", 1)
     time.sleep(0.25)
     return image
@@ -290,7 +294,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.click("18% gray", False)
     gray_image, _ = _record_snap(driver, records, "viewer-gray-canvas-toggled")
     gray = np.asarray(_viewer_crop(gray_image), dtype=np.float32)
-    driver.click("18% gray", False)
+    driver.reclick_last_control()
     gray_restored_image, _ = _record_snap(driver, records, "viewer-gray-canvas-restored")
     gray_restored = np.asarray(_viewer_crop(gray_restored_image), dtype=np.float32)
     gray_delta = float(np.mean(np.abs(gray - gray_restored)))
@@ -380,7 +384,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.click("spline36", False)
     driver.click("nearest", False)
     driver.click("18% gray", False)
-    driver.click("18% gray", False)
+    driver.reclick_last_control()
     driver.click("Reveal", False)
     driver.click("Reveal", False)
     driver.click("Crossfade", False)
@@ -421,6 +425,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.file_action("Save state", profile_before_path, True)
     _wait_file(profile_before_path, "viewer profile baseline state")
     profile_before = json.loads(profile_before_path.read_text())
+    driver.tab("MAIN")
     _select_profile(driver, "Film stock", film_label)
     _select_profile(driver, "Print paper", paper_label)
     driver.click("Preview")

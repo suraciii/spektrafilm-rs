@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
-use spektrafilm_core::params::RuntimeParams;
+use spektrafilm_core::params::{GrainEngine, GrainV2Mode, RuntimeParams};
 use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
 use spektrafilm_gpu::ComputeBackend;
@@ -188,7 +188,7 @@ fn gui_renderer() -> eframe::Renderer {
                 eframe::Renderer::Wgpu
             } else {
                 // Keep the UI compositor away from wgpu/D3D12 by default on
-                // Windows/Linux; CUDA/WGSL compute backends are selected separately.
+                // Windows/Linux; the WGPU compute backend is selected separately.
                 eframe::Renderer::Glow
             }
         }
@@ -1310,6 +1310,7 @@ impl App {
                         self.sync_profile_defaults();
                         self.dirty = true;
                     }
+
                 });
                 for section in ["Enlarger", "Scanner", "Output"] { self.parameter_section(ui, section); }
             }

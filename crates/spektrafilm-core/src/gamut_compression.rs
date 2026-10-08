@@ -643,6 +643,38 @@ fn build_cmax_table(space: Space, destination: &RgbColorSpace, cam: &Cam16Viewin
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn default_oklch_matches_fresh_python_edge_references() {
+        let inputs = [
+            [2.0, 0.0, 0.0],
+            [0.0, 2.0, 2.0],
+            [0.0, 0.0, 0.0],
+            [1.2, -0.1, 0.4],
+        ];
+        // Independently generated against pinned upstream runtime 0.3.4.
+        // Keep these values fixed: they guard the default algorithm and its
+        // one-sided lightness compression, rather than repinning Rust output.
+        let expected = [
+            [1.000131672083069, 0.3335526009210533, 0.26771081930716234],
+            [0.9608581941201273, 1.0002332007940766, 0.9981825436644369],
+            [0.0, 0.0, 0.0],
+            [0.9402427137627506, 0.0003375188741574854, 0.36596656377169123],
+        ];
+        let compressor = OutputGamutCompress::build(
+            &OutputGamutCompressParams::default(),
+            "sRGB",
+        ).unwrap();
+        for (rgb, want) in inputs.into_iter().zip(expected) {
+            let got = compressor.compress(rgb);
+            for i in 0..3 {
+                assert!(
+                    (got[i] - want[i]).abs() < 1e-6,
+                    "{rgb:?}: {got:?}, expected {want:?}"
+                );
+            }
+        }
+    }
     #[test]
     fn jzazbz_forward_inverse_match_fresh_python_constants() {
         let cases = [
