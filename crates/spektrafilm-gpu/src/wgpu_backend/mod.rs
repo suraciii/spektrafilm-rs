@@ -284,6 +284,7 @@ impl WgpuBackend {
         result
     }
 
+
     /// GPU separable Gaussian blur via two FIR passes (horizontal then vertical).
     /// Kernel weights are computed on CPU and uploaded as a storage buffer.
     /// Two ping-pong image buffers minimize allocations.

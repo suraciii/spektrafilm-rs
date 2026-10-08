@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, io::Write};
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::image_io::{self, BitDepth, SaveOptions};
@@ -32,6 +32,9 @@ struct Cli {
 enum Commands {
     /// Process an image through the film simulation pipeline.
     Process {
+        /// Compute backend (cpu or gpu). If omitted, uses SPEKTRAFILM_BACKEND/default selection.
+        #[arg(long, value_enum)]
+        backend: Option<Backend>,
         /// Input image (TIFF, EXR, PNG, JPEG, or camera RAW).
         input: PathBuf,
         /// Output image path (TIFF, EXR, PNG, or JPEG).
@@ -133,6 +136,12 @@ enum Commands {
         data_dir: PathBuf,
     },
 }
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Backend {
+    Cpu,
+    Gpu,
+}
+
 #[derive(clap::Args)]
 struct WorkflowOptions {
     #[arg(long)]
@@ -179,6 +188,7 @@ fn main() -> Result<()> {
             raw_out,
             iters,
             data_dir,
+            backend,
         } => {
             let data_dir = resolve_data_dir(data_dir);
             cmd_process(
@@ -194,6 +204,7 @@ fn main() -> Result<()> {
                 raw_out.as_deref(),
                 iters,
                 &data_dir,
+                backend,
             )?;
         }
         Commands::ListProfiles { data_dir } => {
@@ -252,9 +263,23 @@ fn cmd_process(
     raw_out: Option<&Path>,
     iters: usize,
     data_dir: &Path,
+    backend_choice: Option<Backend>,
 ) -> Result<()> {
     let total_start = Instant::now();
     let depth = BitDepth::try_from(bit_depth)?;
+    let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
+        Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+        Some(Backend::Gpu) => Box::new(
+            spektrafilm_gpu::wgpu_backend::WgpuBackend::new().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "GPU backend unavailable: no compatible WGPU adapter/device was found; \
+                     check your graphics drivers or use --backend cpu"
+                )
+            })?,
+        ),
+        None => spektrafilm_gpu::select_backend(),
+    };
+    eprintln!("Backend: {}", backend.name());
 
     // Load profiles
     let t = Instant::now();
@@ -371,10 +396,6 @@ fn cmd_process(
         (image.pixel_count() as f64 / 1e6 * 10.0).round() / 10.0,
         t.elapsed().as_millis()
     );
-
-    // Select backend
-    let backend = spektrafilm_gpu::select_backend();
-    eprintln!("Backend: {}", backend.name());
 
     // Run pipeline — full Hanatos2025 spectral upsampling, no simplified
     // fallback: the identity front end is not a calibrated substitute, so

@@ -22,6 +22,7 @@
     "engine": "v1",
     "v2_profile": "35mm250",
     "v2_mode": "analogue",
+    "v2_film_type": "negative",
     "v2_size": null,
     "v2_amount": null,
     "v2_shadows": null,
@@ -29,8 +30,6 @@
     "v2_highlights": null,
     "v2_chroma": null,
     "v2_resolution_factor": null,
-    "v2_resolution_type": 1,
-    "v2_timer": 0.0,
     "sublayers_active": true,
     "particle_area_um2": 0.2,
     "particle_scale": [

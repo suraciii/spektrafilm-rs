@@ -259,6 +259,7 @@ struct App {
     input_rotation: i32,
     source_metadata: Option<ImageMetadata>,
     save_depth: BitDepth,
+    export_backend: ExportBackend,
     /// Last rendered pipeline output (post sRGB encode + clip). Retained
     /// so the Save button can write it without re-running the pipeline.
     output_image: Option<ImageBuf>,
@@ -298,7 +299,7 @@ struct App {
     /// render from the UI thread is what keeps sliders responsive —
     /// the 250–500 ms pipeline used to block input handling.
     render_job: Option<RenderJob>,
-    /// In-flight f64 export job. `Some` while the subprocess is
+    /// In-flight export job. `Some` while the subprocess is
     /// running; the `update()` loop polls the receiver each frame and
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
@@ -333,7 +334,31 @@ struct RenderResult {
 }
 
 
-/// One in-flight f64 export. The worker thread owns the child
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ExportBackend {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
+impl ExportBackend {
+    fn from_state(state: &serde_json::Value) -> Self {
+        match state["rust"]["export_backend"].as_str() {
+            Some("gpu") => Self::Gpu,
+            _ => Self::Cpu,
+        }
+    }
+
+    fn argument(self) -> &'static str {
+        match self { Self::Cpu => "cpu", Self::Gpu => "gpu" }
+    }
+
+    fn label(self) -> &'static str {
+        match self { Self::Cpu => "CPU (f64)", Self::Gpu => "GPU (WGPU f32)" }
+    }
+}
+
+/// One in-flight export. The worker thread owns the child
 /// process and polls `cancel` in its wait loop. On completion the
 /// worker sends the staged image with `Ok(elapsed_seconds, output_filename)`
 /// or `Err(msg)`. The UI publishes it only if cancellation was not requested.
@@ -344,6 +369,7 @@ struct ExportJob {
     handle: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
     started_at: Instant,
+    backend: ExportBackend,
 }
 
 enum CalibrationResult {
@@ -388,6 +414,7 @@ impl App {
             .unwrap_or_default();
         let print_dev_times = profile_dev_times(&data_dir, &print_name);
         let save_depth = match gui_state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
+        let export_backend = ExportBackend::from_state(&gui_state.sections);
 
         let mut app = Self {
             backend,
@@ -409,6 +436,7 @@ impl App {
             raw_lens_info: None,
             source_metadata: None,
             save_depth,
+            export_backend,
             output_image: None,
             viewer: display::Viewer::new(),
             gui_tab: GuiTab::default(),
@@ -448,6 +476,7 @@ impl App {
         if !extras["rust"].is_object() { extras["rust"] = serde_json::json!({"version":1}); }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
         extras["rust"]["save_bit_depth"] = serde_json::json!(self.save_depth.bits());
+        extras["rust"]["export_backend"] = serde_json::json!(self.export_backend.argument());
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
     }
 
@@ -463,6 +492,7 @@ impl App {
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
         self.params = params;
         self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
+        self.export_backend = ExportBackend::from_state(&state.sections);
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
         self.raw_lens_info = None;
@@ -934,16 +964,8 @@ impl App {
         }
     }
 
-    /// Export the current frame by subprocessing the f64-built
-    /// `spektrafilm` CLI. The GUI runs the pipeline at f32 on the GPU
-    /// for fast iteration; export re-runs the pipeline at f64 (CPU)
-    /// using the same params and writes a PNG/TIFF/JPEG/EXR.
-    ///
-    /// The f64 CLI is located via, in order: `$SPEKTRAFILM_F64_CLI`,
-    /// then `spektrafilm-f64` on `PATH`, then `target/release/spektrafilm-f64`
-    /// relative to `CARGO_MANIFEST_DIR`. Build it with
-    /// `cargo build --release --features precision-f64 -p spektrafilm-cli`
-    /// and either rename / symlink it to `spektrafilm-f64` or set the env var.
+    /// Re-render at full export resolution using the selected compute backend.
+    /// The f64 executable preserves reference CPU arithmetic; WGPU shaders use f32.
     fn export_dialog(&mut self, ctx: &egui::Context) {
         let Some(input_path) = self.image_path.clone() else {
             self.status = "Load an image before exporting.".into();
@@ -960,7 +982,8 @@ impl App {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("spektrafilm");
-        let default_name = format!("{stem}_{}_spektra_f64.png", self.film_name);
+        let export_backend = self.export_backend;
+        let default_name = format!("{stem}_{}_spektra_{}.png", self.film_name, export_backend.argument());
         let Some(out_path) = self.file_dialog("export")
             .add_filter("Image", &["jpg", "jpeg", "png", "tif", "tiff", "exr"])
             .set_file_name(&default_name)
@@ -974,12 +997,6 @@ impl App {
         // keeps drawing. The cancel flag is shared with the worker so
         // the Cancel button (and `on_exit`) can kill the child cleanly
         // instead of letting it orphan after the GUI window closes.
-        //
-        // Enlarger + scanner LUTs are toggled on for the export only.
-        // The GUI preview runs on wgpu (fast at full spectral
-        // integration; LUT round-trip via CPU PCHIP would only slow
-        // it down), but the f64 CPU export gets a 5-10× speedup from
-        // the LUT path — matching Python's typical export config.
         let film = self.film_name.clone();
         let paper = self.print_name.clone();
         let params = match self.digested_params(false) {
@@ -1019,7 +1036,7 @@ impl App {
                     if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
                     let input_for_export = rotated_input_guard.as_ref()
                         .map(|guard| guard.0.as_path()).unwrap_or(&input_path);
-                    run_f64_export(
+                    run_export(
                     &cli_path,
                     input_for_export,
                     &out_path,
@@ -1029,6 +1046,7 @@ impl App {
                     &data_dir,
                     save_depth,
                     &export_state,
+                    export_backend,
                     &cancel_for_worker,
                 )
                 })();
@@ -1045,12 +1063,13 @@ impl App {
                 ctx_for_worker.request_repaint();
             })
             .expect("OS thread spawn");
-        self.status = "Exporting at f64 (CPU)…".into();
+        self.status = format!("Exporting with {}…", export_backend.label());
         self.export_job = Some(ExportJob {
             rx,
             handle: Some(handle),
             cancel,
             started_at,
+            backend: export_backend,
         });
     }
 
@@ -1083,7 +1102,7 @@ impl App {
                 self.status = if job.cancel.load(Ordering::SeqCst) {
                     format!("Cancelling export… ({secs}s)")
                 } else {
-                    format!("Exporting at f64 (CPU)… ({secs}s)")
+                    format!("Exporting with {}… ({secs}s)", job.backend.label())
                 };
                 ctx.request_repaint_after(Duration::from_secs(1));
                 return;
@@ -1098,11 +1117,12 @@ impl App {
             let _ = h.join();
         }
         let cancelled = job.cancel.load(Ordering::SeqCst);
+        let backend = job.backend;
         self.export_job = None;
         self.status = match msg {
             Ok((_, _, _)) if cancelled => "Export cancelled.".into(),
             Ok((secs, name, staged)) => match staged.publish() {
-                Ok(()) => format!("Exported (f64 CPU) {name} in {secs:.1} s"),
+                Ok(()) => format!("Exported ({}) {name} in {secs:.1} s", backend.label()),
                 Err(e) => format!("Export error: {e:#}"),
             },
             Err(e) if e.contains("cancelled") => "Export cancelled.".into(),
@@ -1295,7 +1315,7 @@ impl App {
             if export_busy {
                 if ui
                     .button("Cancel")
-                    .on_hover_text("Stop the in-flight f64 CPU export and kill the child process.")
+                    .on_hover_text("Stop the in-flight export and kill the child process.")
                     .clicked()
                 {
                     self.cancel_export();
@@ -1305,15 +1325,25 @@ impl App {
                 if ui
                     .add_enabled(export_enabled, egui::Button::new("Export…"))
                     .on_hover_text(
-                        "Re-run the pipeline at f64 precision (CPU, via the spektrafilm-f64 \
-                         CLI subprocess) and write a PNG/TIFF/JPEG/EXR. The live preview stays \
-                         at f32 GPU for speed; export trades time for precision.",
+                        "Re-render the full image using the selected export backend and write PNG/TIFF/JPEG/EXR.",
                     )
                     .on_disabled_hover_text("Load an image first")
                     .clicked()
                 {
                     self.export_dialog(ctx);
                 }
+            }
+        });
+        ui.add_enabled_ui(self.export_job.is_none(), |ui| {
+            egui::ComboBox::from_label("Export backend")
+                .selected_text(self.export_backend.label())
+                .show_ui(ui, |ui| {
+                    for backend in [ExportBackend::Cpu, ExportBackend::Gpu] {
+                        ui.selectable_value(&mut self.export_backend, backend, backend.label());
+                    }
+                });
+            if self.export_backend == ExportBackend::Gpu {
+                ui.small("GPU uses f32; unsupported effects run on CPU. A GPU adapter is required.");
             }
         });
         egui::ComboBox::from_label("Save bit depth")
@@ -1965,9 +1995,7 @@ impl eframe::App for App {
 
     /// Called once when the window is closing. If an export is still
     /// in-flight, set the cancel flag and join the worker thread so
-    /// the child process is SIGKILLed before the GUI exits. Without
-    /// this the f64 CLI orphans into its own process group and keeps
-    /// hammering the CPU long after the window is gone.
+    /// the child process is stopped before the GUI exits.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let Some(job) = self.export_job.take() else {
             return;
@@ -2258,9 +2286,8 @@ fn locate_f64_cli() -> Result<PathBuf, String> {
             }
         }
     }
-    Err("no f64 CLI found. Build it with \
-         `cargo build --release --features precision-f64 -p spektrafilm-cli`, \
-         rename `target/release/spektrafilm` to `spektrafilm-f64`, \
+    Err("no export CLI found. Build it with \
+         `cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64`, \
          and either put it on PATH or set $SPEKTRAFILM_F64_CLI."
         .into())
 }
@@ -2303,14 +2330,9 @@ impl Drop for TempPath {
     }
 }
 
-/// Run the f64 CLI as a child process. Writes the current
-/// `RuntimeParams` to a temp JSON file, invokes
-/// `spektrafilm-f64 process …`, polls for completion while watching
-/// `cancel`, and surfaces the CLI's stderr verbatim on failure. If
-/// `cancel` is set the child is SIGKILLed and `Err("cancelled")` is
-/// returned — this prevents the orphan-process / system-freeze bug
-/// where closing the GUI mid-export left the CPU pipeline running.
-fn run_f64_export(
+/// Run the exporter with an explicit backend and a temporary parameter snapshot.
+/// Cancellation kills and reaps the child; only a successful export is published.
+fn run_export(
     cli_path: &Path,
     input: &Path,
     output: &Path,
@@ -2320,6 +2342,7 @@ fn run_f64_export(
     data_dir: &Path,
     save_depth: BitDepth,
     gui_state: &serde_json::Value,
+    backend: ExportBackend,
     cancel: &AtomicBool,
 ) -> Result<TempPath> {
     let nanos = std::time::SystemTime::now()
@@ -2345,12 +2368,13 @@ fn run_f64_export(
             .context("serializing params to JSON")?;
     }
 
+    let stderr_path = TempPath(temp.0.with_extension("stderr"), None);
+    let stderr_file = std::fs::File::create(&stderr_path.0)
+        .context("creating export error log")?;
     let mut cmd = std::process::Command::new(cli_path);
-    // Force the CPU backend: the wgpu shaders run f32 even in a
-    // precision-f64 build (WGSL has no f64). Letting the child default
-    // to GPU would silently demote the export back to f32 math.
-    cmd.env("SPEKTRAFILM_BACKEND", "cpu")
-        .arg("process")
+    cmd.arg("process")
+        .arg("--backend")
+        .arg(backend.argument())
         .arg(input)
         .arg("-o")
         .arg(&staged.0)
@@ -2364,8 +2388,8 @@ fn run_f64_export(
         .arg(&temp.0)
         .arg("--data-dir")
         .arg(data_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(stderr_file));
     if params.io.scan_film {
         cmd.arg("--scan-film");
     }
@@ -2392,8 +2416,8 @@ fn run_f64_export(
         .spawn()
         .with_context(|| format!("spawning {}", cli_path.display()))?;
 
-    // Poll loop. 100 ms is responsive to a Cancel click without
-    // burning CPU while the export grinds through CPU f64 math.
+    // Poll cancellation without blocking the UI; logs go to a file so verbose
+    // GPU driver output cannot fill an unread pipe and stall the child.
     let status = loop {
         let completed = match child.try_wait() {
             Ok(status) => status,
@@ -2414,12 +2438,8 @@ fn run_f64_export(
         std::thread::sleep(Duration::from_millis(100));
     };
 
-    // The child has exited; piped buffers are drained safely.
-    let mut stderr_buf = String::new();
-    if let Some(mut s) = child.stderr.take() {
-        use std::io::Read;
-        let _ = s.read_to_string(&mut stderr_buf);
-    }
+    let stderr_buf = std::fs::read_to_string(&stderr_path.0)
+        .context("reading export error log")?;
 
     if !status.success() {
         let trimmed = stderr_buf.trim();

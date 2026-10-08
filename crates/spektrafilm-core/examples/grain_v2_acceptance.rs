@@ -1,6 +1,6 @@
 use spektrafilm_core::{
     image_io::{self, BitDepth, SaveOptions},
-    params::{grain::{GrainEngine, GrainV2Mode}, RuntimeParams},
+    params::{grain::{GrainEngine, GrainV2FilmType, GrainV2Mode}, RuntimeParams},
     pipeline::Pipeline,
     profile,
 };
@@ -25,22 +25,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paper = profile::load_profile_by_name(&root, "kodak_portra_endura")?;
     for scan_film in [false, true] {
         for engine in [GrainEngine::V1, GrainEngine::V2] {
-            for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-                if engine == GrainEngine::V1 && mode == GrainV2Mode::Noise {
+            for (mode, film_type) in [
+                (GrainV2Mode::Analogue, GrainV2FilmType::Negative),
+                (GrainV2Mode::Analogue, GrainV2FilmType::Positive),
+                (GrainV2Mode::Noise, GrainV2FilmType::Negative),
+                (GrainV2Mode::Noise, GrainV2FilmType::Positive),
+            ] {
+                if engine == GrainEngine::V1
+                    && (mode == GrainV2Mode::Noise || film_type == GrainV2FilmType::Positive)
+                {
                     continue;
                 }
                 let mut params = RuntimeParams::default();
                 params.camera.auto_exposure = false;
                 params.io.scan_film = scan_film;
                 params.film_render.grain.engine = engine;
+                params.film_render.grain.select_custom_grain_v2();
                 params.film_render.grain.v2_mode = mode;
+                params.film_render.grain.v2_film_type = film_type;
                 params.validate()?;
                 let pipeline =
                     Pipeline::new_with_spectral(film.clone(), paper.clone(), params, &root)?;
                 let result = pipeline.process(image.clone(), &CpuBackend)?;
                 assert_eq!((result.width, result.height), (32, 24));
                 assert!(result.data.iter().all(|v| v.is_finite()));
-                let path = output.join(format!("{engine:?}-{mode:?}-{scan_film}.tif"));
+                let path =
+                    output.join(format!("{engine:?}-{mode:?}-{film_type:?}-{scan_film}.tif"));
                 image_io::save(
                     &path,
                     &result,

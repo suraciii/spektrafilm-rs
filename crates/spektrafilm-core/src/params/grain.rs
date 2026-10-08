@@ -34,12 +34,12 @@ fn default_grain_v2_profile() -> String {
     "35mm250".to_owned()
 }
 
-const fn default_grain_v2_resolution_type() -> u32 {
-    1
-}
-
-const fn default_grain_v2_timer() -> f32 {
-    0.0
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrainV2FilmType {
+    #[default]
+    Negative,
+    Positive,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,13 +50,15 @@ pub struct GrainParams {
     /// Selects the grain implementation; V1 preserves the historical default.
     #[serde(default)]
     pub engine: GrainEngine,
-    /// Procedural Grain V2 profile id.
+    /// Dehancer grain profile id, or "custom" for explicit controls.
     #[serde(default = "default_grain_v2_profile")]
     pub v2_profile: String,
     #[serde(default)]
+    pub v2_film_type: GrainV2FilmType,
+    #[serde(default)]
     pub v2_mode: GrainV2Mode,
-    /// Optional controls inherit the selected profile when unset.
-    /// Size uses the profile scale range 1..=48; tonal controls use 0..=1.
+    /// Custom controls; omitted values use the default 35mm250 profile.
+    /// Size uses 1..=48; Amount, tonal controls and Chroma use 0..=100.
     #[serde(default)]
     pub v2_size: Option<f32>,
     #[serde(default)]
@@ -72,12 +74,6 @@ pub struct GrainParams {
     /// Film Resolution override, 0..=100. Unset inherits the profile.
     #[serde(default)]
     pub v2_resolution_factor: Option<f32>,
-    /// 0 = Gaussian FIR, 1 = fractional box FIR approximating FastBlur.
-    #[serde(default = "default_grain_v2_resolution_type")]
-    pub v2_resolution_type: u32,
-    /// Stable animation phase; photos should leave this at zero.
-    #[serde(default = "default_grain_v2_timer")]
-    pub v2_timer: f32,
     #[serde(default = "default_true")]
     pub sublayers_active: bool,
     // f64 to preserve Python JSON precision through the Poisson/Binomial
@@ -137,6 +133,7 @@ impl Default for GrainParams {
             engine: GrainEngine::V1,
             v2_profile: default_grain_v2_profile().to_owned(),
             v2_mode: GrainV2Mode::Analogue,
+            v2_film_type: GrainV2FilmType::Negative,
             v2_size: None,
             v2_amount: None,
             v2_shadows: None,
@@ -144,8 +141,6 @@ impl Default for GrainParams {
             v2_highlights: None,
             v2_chroma: None,
             v2_resolution_factor: None,
-            v2_resolution_type: default_grain_v2_resolution_type(),
-            v2_timer: default_grain_v2_timer(),
             sublayers_active: true,
             particle_area_um2: 0.2,
             particle_scale: [1.6, 1.6, 3.2],
@@ -163,29 +158,56 @@ impl Default for GrainParams {
 }
 
 impl GrainParams {
-    /// Resolve profile defaults and explicit overrides after RuntimeParams::validate.
-    /// The returned seed contains the timer phase; callers add the runtime seed.
+    /// Resolve the selected Dehancer preset or custom controls.
     pub fn resolved_grain_v2(&self) -> spektrafilm_model::grain::v2::GrainV2Params {
         use spektrafilm_model::grain::v2::{self, GrainV2Params};
-        let index = v2::profile_index(&self.v2_profile)
+        let custom = self.v2_profile == "custom";
+        let index = v2::profile_index(if custom { "35mm250" } else { &self.v2_profile })
             .expect("Grain V2 profile must be validated before rendering");
         let mut params = GrainV2Params::for_profile(index);
-        params.mode = match self.v2_mode {
-            GrainV2Mode::Analogue => v2::GrainV2Mode::Analogue,
-            GrainV2Mode::Noise => v2::GrainV2Mode::Noise,
-        };
-        params.size = self.v2_size.unwrap_or(params.size);
-        params.amount = self.v2_amount.unwrap_or(params.amount);
-        params.shadows = self.v2_shadows.unwrap_or(params.shadows);
-        params.midtones = self.v2_midtones.unwrap_or(params.midtones);
-        params.highlights = self.v2_highlights.unwrap_or(params.highlights);
-        params.color = self.v2_chroma.unwrap_or(params.color);
-        params.resolution_factor = self.v2_resolution_factor.unwrap_or(params.resolution_factor);
-        params.resolution_type = self.v2_resolution_type;
-        params.seed = self.v2_timer as u32;
+        params.amount = self.v2_amount.map_or(params.amount, |v| v / 100.0);
+        if custom {
+            params.film_type = match self.v2_film_type {
+                GrainV2FilmType::Negative => 0,
+                GrainV2FilmType::Positive => 1,
+            };
+            params.mode = match self.v2_mode {
+                GrainV2Mode::Analogue => v2::GrainV2Mode::Analogue,
+                GrainV2Mode::Noise => v2::GrainV2Mode::Noise,
+            };
+            params.size = self.v2_size.unwrap_or(params.size);
+            params.shadows = self.v2_shadows.map_or(params.shadows, |v| v / 100.0);
+            params.midtones = self.v2_midtones.map_or(params.midtones, |v| v / 100.0);
+            params.highlights = self.v2_highlights.map_or(params.highlights, |v| v / 100.0);
+            params.color = self.v2_chroma.map_or(params.color, |v| v / 100.0);
+            params.resolution_factor = self.v2_resolution_factor.unwrap_or(params.resolution_factor);
+        }
         params
     }
+
+    /// Custom starts with the values of the last selected preset.
+    pub fn select_custom_grain_v2(&mut self) {
+        let params = self.resolved_grain_v2();
+        self.v2_profile = "custom".into();
+        self.v2_film_type = if params.film_type == 0 {
+            GrainV2FilmType::Negative
+        } else {
+            GrainV2FilmType::Positive
+        };
+        self.v2_mode = match params.mode {
+            spektrafilm_model::grain::v2::GrainV2Mode::Analogue => GrainV2Mode::Analogue,
+            spektrafilm_model::grain::v2::GrainV2Mode::Noise => GrainV2Mode::Noise,
+        };
+        self.v2_size = Some(params.size);
+        self.v2_amount = Some(params.amount * 100.0);
+        self.v2_shadows = Some(params.shadows * 100.0);
+        self.v2_midtones = Some(params.midtones * 100.0);
+        self.v2_highlights = Some(params.highlights * 100.0);
+        self.v2_chroma = Some(params.color * 100.0);
+        self.v2_resolution_factor = Some(params.resolution_factor);
+    }
 }
+
 fn default_065() -> f32 {
     0.65
 }

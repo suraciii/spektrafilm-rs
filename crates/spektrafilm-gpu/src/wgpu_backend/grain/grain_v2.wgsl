@@ -1,7 +1,7 @@
 // Grain V2: independent deterministic noise, display-domain composition.
 // Uniform layout: dimensions [width,height,seed,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
-// [resolution_factor,resolution_type,colored,clustered]. 64 bytes total.
+// [resolution_factor,film_type,colored,clustered]. 64 bytes total.
 struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> input_rgb:array<f32>;
@@ -41,7 +41,7 @@ fn generator(pos:vec2<f32>,size:vec2<f32>,luma:f32,rgb:vec3<f32>,digital:bool)->
  let color=select(0.,clamp(p.geometry.w,0.,1.),p.flags.z!=0.);
  n.y=mix(n.x,n.y,color);n.z=mix(n.x,n.z,color);return n+0.5;
 }
-fn effective_control(v:f32)->f32 {let t=clamp(v,0.,1.);return select(0.,0.12*t*t+0.68*t+0.2,t>0.);}
+fn effective_control(v:f32)->f32 {let t=clamp(v,0.,1.);return 0.12*t*t+0.68*t+0.2;}
 fn overlay(b:f32,g:f32)->f32 {return clamp(select(1.-2.*(1.-b)*(1.-g),2.*b*g,b<0.5),0.,1.);}
 fn opacity(v:f32,c:f32)->f32 {let d=(v-c)*5.;return exp(-0.5*d*d);}
 fn weight(d:i32,r:f32,optical:bool)->f32 {if(optical){let v=f32(d)/max(r,0.001);return exp(-0.5*v*v);}return clamp(r+1.-f32(abs(d)),0.,1.);}
@@ -58,7 +58,6 @@ fn source(x:u32,y:u32,r:f32)->vec3<f32>{
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>){
  let idx=gid.x+gid.y*grid.x*256u;let width=p.dimensions.x;let height=p.dimensions.y;if(idx>=width*height){return;}let i=idx*3u;
- if(p.controls.x==0.){for(var c=0u;c<3u;c++){output_rgb[i+c]=input_rgb[i+c];}return;}
  let x=idx%width;let y=idx/width;let raw_a=clamp(p.controls.x,0.,1.);let effective_a=effective_control(raw_a);let a=effective_a*select(1.,0.5,p.dimensions.w!=0u);let gsf=max(5200./f32(width),3100./f32(height));let k=select(1.6,1.2,p.flags.y==1.);
  let base_radius=(1.+(p.geometry.x-1.)/47.)*(1.-clamp(p.flags.x,0.,100.)/100.)/gsf;
  let radius=base_radius*select(k*(0.7*raw_a*raw_a+0.3*raw_a+0.05),1.87*effective_a,p.dimensions.w!=0u);let rgb=source(x,y,radius);let luma=dot(rgb,vec3<f32>(0.2125,0.7154,0.0721));

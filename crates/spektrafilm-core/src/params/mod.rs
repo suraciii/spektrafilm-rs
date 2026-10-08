@@ -144,6 +144,7 @@ impl Default for ScannerParams {
 }
 
 
+
 fn default_one_f64() -> f64 {
     1.0
 }
@@ -624,27 +625,25 @@ impl RuntimeParams {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_color()?;
         let grain = &self.film_render.grain;
-        if spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none() {
+        if grain.v2_profile != "custom"
+            && spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none()
+        {
             return Err(format!("film_render.grain.v2_profile: unknown profile {:?}", grain.v2_profile));
         }
         for (name, value, min, max) in [
             ("v2_size", grain.v2_size, 1.0, 48.0),
-            ("v2_amount", grain.v2_amount, 0.0, 1.0),
-            ("v2_shadows", grain.v2_shadows, 0.0, 1.0),
-            ("v2_midtones", grain.v2_midtones, 0.0, 1.0),
-            ("v2_highlights", grain.v2_highlights, 0.0, 1.0),
-            ("v2_chroma", grain.v2_chroma, 0.0, 1.0),
+            ("v2_amount", grain.v2_amount, 0.0, 100.0),
+            ("v2_shadows", grain.v2_shadows, 0.0, 100.0),
+            ("v2_midtones", grain.v2_midtones, 0.0, 100.0),
+            ("v2_highlights", grain.v2_highlights, 0.0, 100.0),
+            ("v2_chroma", grain.v2_chroma, 0.0, 100.0),
             ("v2_resolution_factor", grain.v2_resolution_factor, 0.0, 100.0),
-            ("v2_timer", Some(grain.v2_timer), 0.0, 65535.0),
         ] {
             if let Some(value) = value {
                 if !value.is_finite() || !(min..=max).contains(&value) {
                     return Err(format!("film_render.grain.{name}: must be finite and in {min}..={max}"));
                 }
             }
-        }
-        if grain.v2_resolution_type > 1 {
-            return Err("film_render.grain.v2_resolution_type: expected 0 or 1".into());
         }
         let spectral_shape = crate::spectral_service::SpectralShape::new(self.settings.spectral_shape)
             .map_err(|e| format!("settings.spectral_shape: {e}"))?;
@@ -898,19 +897,37 @@ mod tests {
     #[test]
     fn grain_v2_profile_inheritance_and_overrides() {
         let mut params = super::RuntimeParams::default();
-        for (i, name) in spektrafilm_model::grain::v2::PROFILE_NAMES.iter().enumerate() {
-            params.film_render.grain.v2_profile = (*name).into();
-            let expected = spektrafilm_model::grain::v2::GrainV2Params::for_profile(i);
-            let actual = params.film_render.grain.resolved_grain_v2();
-            assert_eq!(actual.amount, expected.amount);
-            assert_eq!(actual.resolution_factor, expected.resolution_factor);
+        let grain = &mut params.film_render.grain;
+        grain.v2_profile = "8mm500".into();
+        grain.v2_amount = Some(25.0);
+        grain.v2_mode = super::grain::GrainV2Mode::Noise;
+        grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
+        let preset = grain.resolved_grain_v2();
+        assert_eq!(preset.amount, 0.25);
+        assert_eq!(preset.mode, spektrafilm_model::grain::v2::GrainV2Mode::Analogue);
+        assert_eq!(preset.film_type, 1);
+        grain.select_custom_grain_v2();
+        assert_eq!(grain.v2_amount, Some(25.0));
+        assert_eq!(grain.v2_size, Some(48.0));
+        assert_eq!(grain.v2_resolution_factor, Some(75.0));
+        grain.v2_amount = Some(25.0);
+        grain.v2_mode = super::grain::GrainV2Mode::Noise;
+        grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
+        let roundtrip: super::RuntimeParams = serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
+        let custom = roundtrip.film_render.grain.resolved_grain_v2();
+        assert_eq!(custom.amount, 0.25);
+        assert_eq!(custom.mode, spektrafilm_model::grain::v2::GrainV2Mode::Noise);
+        assert_eq!(custom.film_type, 0);
+        params.film_render.grain.v2_profile = "35mm250".into();
+        params.film_render.grain.v2_amount = None;
+        params.film_render.grain.select_custom_grain_v2();
+        assert_eq!(params.film_render.grain.v2_amount, Some(35.0));
+        assert_eq!(params.film_render.grain.v2_mode, super::grain::GrainV2Mode::Analogue);
+        for value in [0.0, 100.0] {
+            params.film_render.grain.v2_amount = Some(value);
             params.validate().unwrap();
         }
-        params.film_render.grain.v2_amount = Some(0.0);
-        assert_eq!(params.film_render.grain.resolved_grain_v2().amount, 0.0);
-        let roundtrip: super::RuntimeParams = serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
-        assert_eq!(roundtrip.film_render.grain.resolved_grain_v2().amount, 0.0);
-        for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+        for value in [f32::NAN, f32::INFINITY, -0.1, 100.1] {
             params.film_render.grain.v2_amount = Some(value);
             assert!(params.validate().is_err());
         }
