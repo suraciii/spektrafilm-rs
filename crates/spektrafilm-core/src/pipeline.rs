@@ -1196,7 +1196,7 @@ impl Pipeline {
 
         // GPU fast path: dispatch the whole filming→printing→scanning chain
         // (or filming→scanning when scan_film) as a single GPU command
-        // buffer — one upload + one readback total. CUDA and WGSL run the
+        // buffer — one upload + one readback total. WGSL runs the
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
         // path; backends without resident support return `None`.

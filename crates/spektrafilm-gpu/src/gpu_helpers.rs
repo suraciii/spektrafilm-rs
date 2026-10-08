@@ -55,41 +55,10 @@ pub(crate) fn sanitize_spectral_inputs(
     (cd, bd)
 }
 
-#[cfg(feature = "cuda-backend")]
-#[inline]
-pub(crate) fn matrix_f32(m: &[[f64; 3]; 3]) -> Vec<f32> {
-    m.iter()
-        .flat_map(|row| row.iter().map(|&value| value as f32))
-        .collect()
-}
-#[cfg(feature = "cuda-backend")]
-#[inline]
-pub(crate) fn flatten_curves_f32(v: &[[f64; 3]]) -> Vec<f32> {
-    v.iter()
-        .flat_map(|row| {
-            row.iter()
-                .map(|&value| if value.is_nan() { 0.0 } else { value as f32 })
-        })
-        .collect()
-}
-
-/// Detect the step-based uniform grid used by the CUDA density kernels.
-#[cfg(feature = "cuda-backend")]
-#[inline]
-pub(crate) fn is_uniform_grid(xs: &[f64]) -> bool {
-    if xs.len() < 3 {
-        return true;
-    }
-    let step = xs[1] - xs[0];
-    let tol = step.abs().max(1.0) * 1e-6;
-    xs.windows(2).all(|w| ((w[1] - w[0]) - step).abs() <= tol)
-}
-
-/// Detect the stricter endpoint-derived grid expected by WGPU density shaders.
+/// Detect the endpoint-derived grid expected by WGPU density shaders.
 ///
 /// The shader's direct-index path assumes every point lies on the grid formed
-/// by the endpoints. Keep this predicate separate from the CUDA check: the
-/// two kernels use different tolerance contracts.
+/// by the endpoints, including small deviations in exposure spacing.
 #[inline]
 pub(crate) fn is_uniform_grid_endpoint(xs: &[f64]) -> bool {
     if xs.len() < 3 {
@@ -113,13 +82,6 @@ mod tests {
             sanitize_spectral_inputs(&[[f64::NAN, 2.0, 3.0], [4.0, 5.0, 6.0]], &[7.0], 2);
         assert_eq!(channel, vec![0.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
         assert_eq!(base, vec![1000.0, 1000.0]);
-    }
-
-    #[cfg(feature = "cuda-backend")]
-    #[test]
-    fn detects_cuda_uniform_grid() {
-        assert!(is_uniform_grid(&[0.0, 0.5, 1.0]));
-        assert!(!is_uniform_grid(&[0.0, 0.5, 1.1]));
     }
 
     #[test]

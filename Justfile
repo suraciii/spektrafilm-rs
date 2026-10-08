@@ -19,13 +19,6 @@ build-f64:
 decode-raw:
     cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui
 
-# Build the optional CUDA-enabled GUI and f32 CLI. CUDA is not available on macOS.
-build-cuda:
-    cargo build --locked --release -p spektrafilm-gui --features spektrafilm-gpu/cuda-backend
-    cargo build --locked --release -p spektrafilm-cli --bin spektrafilm --features spektrafilm-gpu/cuda-backend
-    cargo build --locked --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
-    cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui
-
 check:
     cargo check --locked --workspace
 

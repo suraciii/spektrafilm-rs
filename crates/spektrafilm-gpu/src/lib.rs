@@ -1,7 +1,5 @@
 mod gpu_helpers;
 pub mod cpu_backend;
-#[cfg(feature = "cuda-backend")]
-pub mod cuda_backend;
 #[cfg(feature = "wgpu-backend")]
 pub mod wgpu_backend;
 
@@ -403,7 +401,7 @@ pub struct Lut3D {
 }
 
 /// Select the available compute backend. Reference f64 builds default to CPU.
-/// Explicit `SPEKTRAFILM_BACKEND=cuda|wgpu` requests select f32 preview arithmetic,
+/// Explicit `SPEKTRAFILM_BACKEND=wgpu` requests select f32 preview arithmetic,
 /// including in an f64 binary. Unavailable requests report a faithful CPU fallback.
 pub fn select_backend() -> Box<dyn ComputeBackend> {
     let requested = std::env::var("SPEKTRAFILM_BACKEND")
@@ -418,22 +416,6 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     if requested.as_deref() == Some("cpu") {
         tracing::info!(backend = cpu_backend::CpuBackend.name(), "using CPU backend");
         return Box::new(cpu_backend::CpuBackend);
-    }
-
-    #[cfg(feature = "cuda-backend")]
-    {
-        if requested.as_deref() == Some("cuda") {
-            if let Some(cuda) = cuda_backend::CudaBackend::new() {
-                tracing::info!(precision = "f32", reference = false, "using CUDA preview backend");
-                return Box::new(cuda);
-            }
-            tracing::warn!("CUDA backend requested but unavailable; falling back");
-        }
-    }
-
-    #[cfg(not(feature = "cuda-backend"))]
-    if requested.as_deref() == Some("cuda") {
-        tracing::warn!("CUDA backend requested but spektrafilm-gpu was built without cuda-backend");
     }
 
     #[cfg(not(feature = "wgpu-backend"))]

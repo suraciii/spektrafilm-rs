@@ -7,7 +7,6 @@ license.workspace = true
 [features]
 default = ["wgpu-backend"]
 wgpu-backend = ["dep:wgpu"]
-cuda-backend = ["dep:cudarc"]
 precision-f64 = ["spektrafilm-math/precision-f64"]
 
 [dependencies]
@@ -16,7 +15,6 @@ rayon.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 wgpu = { workspace = true, optional = true, features = ["wgsl"] }
-cudarc = { version = "0.19.7", optional = true, default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-12000"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "0.4"
 

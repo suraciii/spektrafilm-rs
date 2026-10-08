@@ -1,7 +1,7 @@
 param(
     [string]$IconSource = "assets\spektrafilm-icon.jpg",
     [string]$BuildTargetDir = "target\windows-app",
-    [string]$DistDir = "dist\spektrafilm-windows-cuda",
+    [string]$DistDir = "dist\spektrafilm-windows",
     [switch]$Aio,
     [string]$NativePrefix = $env:SPEKTRAFILM_NATIVE_PREFIX,
     [string]$LensfunDatabase = $env:SPEKTRAFILM_LENSFUN_DATABASE
@@ -374,7 +374,7 @@ try {
         $oldEmbed = $env:SPEKTRAFILM_EMBED_MANIFEST
         try {
             $env:SPEKTRAFILM_EMBED_MANIFEST = (Resolve-Path -LiteralPath $manifestPath).Path
-            cargo build --release -p spektrafilm-gui --features spektrafilm-gpu/cuda-backend --target-dir $BuildTargetDir
+            cargo build --release -p spektrafilm-gui --target-dir $BuildTargetDir
             if ($LASTEXITCODE -ne 0) { throw "Failed building embedded GUI" }
         } finally {
             if ($null -eq $oldEmbed) {
@@ -409,14 +409,13 @@ On first launch it extracts the embedded payload to:
 %LOCALAPPDATA%\spektrafilm\embedded
 
 Backends:
-- Default launch uses WGSL/wgpu when available, then CPU.
-- Set SPEKTRAFILM_BACKEND=cuda to request native CUDA on NVIDIA systems.
+- Default launch uses WGPU/WGSL when available, then CPU.
 "@ | Set-Content -Encoding UTF8 (Join-Path $DistDir "README.txt")
 
         Write-Host "Packaged AIO: $(Resolve-Path -LiteralPath $aioExe)"
         Write-Host "Icon:         $(Resolve-Path -LiteralPath $iconPath)"
     } else {
-        cargo build --release -p spektrafilm-gui --features spektrafilm-gpu/cuda-backend --target-dir $BuildTargetDir
+        cargo build --release -p spektrafilm-gui --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building GUI" }
         cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }

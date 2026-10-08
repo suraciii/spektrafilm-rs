@@ -1,6 +1,15 @@
 # spektrafilm-rs CPU/GPU 统一重构实施计划
 
-状态：实施完成；本文件记录已落地的边界、保留的 GPU 限制和验证结果。
+状态：历史实施记录；CUDA 支持部分已被后续移除并由当前 CPU/WGPU 架构取代。本文件保留当时的原始边界、证据和验证结果；其中 CUDA 内容仅代表历史，不是当前构建或使用说明。
+## 当前移除记录（2026-10-08）
+
+- 当前架构仅保留 CPU（f64 reference/export）与 WGPU（f32 interactive preview）；Grain V2 及 CPU grain 保留。
+- CUDA 后端、Cargo feature、构建/运行入口和 CUDA 打包选项已从当前实现与用户文档移除。
+- 本次未运行真实 GPU parity、性能或平台打包验证；下文 CUDA 内容仅为历史证据。
+- 验证通过：workspace 全 feature 编译；默认测试 180 项、precision-f64 测试 181 项；GPU crate 无默认 feature 的 f64 编译；CLI help；CPU f64 CLI 输出 2752×1536 PNG；V1、V2 Analogue、V2 Noise 在直扫/印相下共 6 个 CPU f64 渲染及 TIFF 回读场景。
+- `just --list` 已无 CUDA 命令，macOS 打包脚本通过 Bash 语法检查；本机未运行 Windows PowerShell 打包。
+
+## 历史实施计划（已 superseded）
 
 ## 1. 目标
 

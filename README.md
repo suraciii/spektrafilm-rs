@@ -29,11 +29,9 @@ git clone <this-repo> && cd spektrafilm-rs
 # GUI (wgpu/Metal preview, eframe)
 cargo build --release -p spektrafilm-gui
 
-# f32 CLI — fast batch processor, defaults to GPU backend
+# f32 CLI — fast batch processor, defaults to WGPU
 cargo build --release -p spektrafilm-cli
 
-# f32 CLI with experimental native CUDA backend option
-cargo build --release -p spektrafilm-cli --features spektrafilm-gpu/cuda-backend
 
 # f64 CLI — reference precision (CPU only; WGSL has no f64)
 cargo build --release --features precision-f64 -p spektrafilm-cli --bin spektrafilm-f64
@@ -79,7 +77,7 @@ The public Canon EOS 40D sRAW CR2 fixture also matches all four modes at zero ma
 
 The rebuilt f64 CLI and its relocated Linux archive also passed eight fresh RAW comparisons against the pinned Python loader: all four white-balance modes on Kodak 768×512 with missing-lens correction, and Canon 1944×1296 with injected known-lens EXIF. The unbounded `rgb_in` boundary matched exactly (maximum and mean absolute error zero). The relocated RAW helper independently matched Kodak pixels exactly under a clean environment; the packaged GUI launched under Xvfb and prepared-image export preserved EXIF/IPTC/XMP and ICC bytes.
 
-WGSL is the default GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`. An experimental native CUDA backend can be built with `--features spektrafilm-gpu/cuda-backend` and selected with `SPEKTRAFILM_BACKEND=cuda`. It uses CUDA 12 driver/NVRTC bindings through dynamic loading, so the NVIDIA driver and NVRTC runtime DLLs must be available. Set `SPEKTRAFILM_CUDA_DEVICE=1` (or another zero-based index) to pick a non-default CUDA device. Both GPU paths have a resident preview implementation: front pass, highlight boost, camera diffusion, camera lens blur, halation, DIR couplers, grain, density curves, enlarger diffusion, print/scan spectral reductions, glare, output gamut compression, scanner lens blur, unsharp, and one readback.
+WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. The interactive preview uses f32 GPU arithmetic where supported and faithful CPU per-stage routing for effects without a faithful GPU implementation. Reference export remains CPU f64.
 The `just` command surface also covers packaging and per-user installation:
 
 ```bash
@@ -136,10 +134,6 @@ executable.
 ./target/release/spektrafilm process input.ORF -o out.png \
     --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
-# f32 native CUDA, when built with spektrafilm-gpu/cuda-backend
-SPEKTRAFILM_BACKEND=cuda \
-    ./target/release/spektrafilm process input.ORF -o out.png \
-    --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
 # f64 CPU (reference)
 SPEKTRAFILM_BACKEND=cpu \
@@ -279,11 +273,11 @@ With grain on, the binomial sampler's rejection step is sensitive to upstream UL
 
 The numbers above are the historical 0.3.2 session measurements. The current parity target is the pinned upstream **0.3.4** (commit `3bb2c2d`): see [`docs/parity/baseline_evidence.md`](docs/parity/baseline_evidence.md) for the preserved 4×4 bare-chain evidence (≈1.14 × 10⁻⁸ max abs, f64) and the budget table, [`docs/parity/parity_matrix.md`](docs/parity/parity_matrix.md) for the field/asset inventory, and [`scripts/parity/README.md`](scripts/parity/README.md) for the reproducible differential harness.
 
-Backend selection in a `precision-f64` binary defaults to genuine CPU f64 arithmetic, even when GPU features are compiled in. `SPEKTRAFILM_BACKEND=wgpu` or `cuda` explicitly requests f32 preview arithmetic; backend initialization reports `precision=f32` and `reference=false`. An unavailable requested adapter reports its unavailability and uses CPU; that fallback is not evidence of a GPU pass. CUDA adapter execution remains unavailable in the migration environment.
+Backend selection in a `precision-f64` binary defaults to genuine CPU f64 arithmetic. `SPEKTRAFILM_BACKEND=wgpu` explicitly requests f32 WGPU preview arithmetic; backend initialization reports `precision=f32` and `reference=false`. An unavailable WGPU adapter reports its unavailability and uses CPU; that fallback is not evidence of a GPU pass.
 
-Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_295`). Larger JSON seeds are rejected before rendering because the CUDA and WGSL stochastic paths use 32-bit seed state; silently truncating a caller-provided 64-bit seed would violate deterministic recipe semantics.
+Recipe `seed` values are admitted in the unsigned 32-bit range (`0..=4_294_967_295`) because the WGPU stochastic path uses 32-bit seed state; silently truncating a caller-provided 64-bit seed would violate deterministic recipe semantics.
 
-Resident WGSL/CUDA chains return unclipped linear destination RGB. The shared CPU post-scan stage applies the destination's same-space matrix roundtrip and optional transfer curve, preserving negative values and highlights above one even when encoding is disabled. Input transfer decoding, grain, active unsupported gamut algorithms/spaces, and camera/enlarger optical diffusion use an explicitly reported faithful per-stage path. Optical diffusion uses the finite sampled, normalized PSF with reflected-boundary FFT convolution on CPU; the discarded Gaussian mixture drifted by **0.08603** on a 48-pixel black-pro-mist hotspot at spatial scale 0.05, exceeding its unchanged **0.005** regression limit.
+The WGPU resident chain returns unclipped linear destination RGB. The shared CPU post-scan stage applies the destination's same-space matrix roundtrip and optional transfer curve, preserving negative values and highlights above one even when encoding is disabled. Input transfer decoding, grain, active unsupported gamut algorithms/spaces, and camera/enlarger optical diffusion use an explicitly reported faithful per-stage path. Optical diffusion uses the finite sampled, normalized PSF with reflected-boundary FFT convolution on CPU; the discarded Gaussian mixture drifted by **0.08603** on a 48-pixel black-pro-mist hotspot at spatial scale 0.05, exceeding its unchanged **0.005** regression limit.
 
 Requests for enlarger/scanner PCHIP spectral LUTs also select the per-stage path, preserving the requested sampling and interpolation rather than substituting direct resident spectral integration. GPU shader pipeline caches and one-upload/one-readback batching remain active for supported resident configurations.
 
@@ -301,7 +295,7 @@ Noise uses a resolution-scaled sampling denominator `(1 + (Size - 1) / 47) * 2.4
 
 V1 grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (default, matching 0.3.4) runs the layered model — the composite density is split through `density_curves_layers` into per-sublayer densities, each sublayer samples its own Poisson-binomial particle field with per-layer density maxima/fractions, particle scaling, dye-cloud blur and lognormal micro-structure — while `sublayers_active: false` keeps the single composite-density sampler. `settings.use_fast_stats` switches the layered sampler to the `fast_stats` kernels like upstream; the micro-structure clumping field always uses them (upstream does too) and is pinned to a documented deterministic seed because Python draws it from numba's unseeded thread-global RNG.
 
-Both V1 composite and layered grain use the CPU sampler during preview and export; no resident WGSL/CUDA V1 grain shader is maintained. Active V1 grain rendering selects the faithful per-stage path. The separate Grain V2 implementation remains available.
+Both V1 composite and layered grain use the CPU sampler during preview and export; no resident WGPU V1 grain shader is maintained. Active V1 grain rendering selects the faithful per-stage path. The separate Grain V2 implementation remains available.
 
 The LUT path (`use_enlarger_lut` + `use_scanner_lut`) ports Python's PCHIP 3D interpolation (`crates/spektrafilm-math/src/pchip3d.rs` ↔ `spektrafilm/utils/fast_interp_lut.py`). The executed f64 LUT-reduction scenarios passed the **1e-5** maximum absolute-error budget; the 265 delivered LUT stock/topology/transport cases passed independent Python comparisons.
 
@@ -331,7 +325,7 @@ What gets it there:
 - **Accelerate BLAS dgemm** for the spectral reductions — a single `cblas_dgemm` per contraction, parallelised internally by Accelerate. (It is not safe to call concurrently from multiple threads, so the matmul is never split across rayon.)
 - **Parallelised hot per-pixel loops** in the printing and scanning post-stages.
 
-GPU preview uses f32 wgpu compute shaders (`crates/spektrafilm-shaders/wgsl/`) and optional f32 CUDA kernels. Faithful CPU stages and destination post-scan handling participate where required. Historical Apple Silicon preview timings (~250 ms at 6 MP, ~700 ms at 16 MP) describe the earlier supported chain; they are not measured performance claims for the migrated controls or CPU fallback paths.
+GPU preview uses f32 WGPU compute shaders (`crates/spektrafilm-shaders/wgsl/`). Faithful CPU stages and destination post-scan handling participate where required. Historical Apple Silicon preview timings (~250 ms at 6 MP, ~700 ms at 16 MP) describe the earlier supported chain; they are not measured performance claims for the migrated controls or CPU fallback paths.
 
 ## Layout
 
@@ -341,7 +335,7 @@ crates/
   spektrafilm-model/   stochastic + physical models (grain, halation, DIR couplers, glare)
   spektrafilm-core/    pipeline orchestration, profiles, stage definitions
   spektrafilm-gpu/     ComputeBackend trait + CPU (rayon + BLAS) and wgpu backends
-  spektrafilm-shaders/ WGSL / Metal / CUDA compute shaders
+  spektrafilm-shaders/ WGSL / Metal compute shaders
   spektrafilm-cli/     `spektrafilm` / `spektrafilm-f64` (process, list-profiles, lut, export-lut) + `decode_raw_gui`
   spektrafilm-gui/     egui/eframe preview (wgpu renderer, Metal-backed on macOS)
   spektrafilm-raw/     shared native LibRaw white balance and Lensfun correction

@@ -188,7 +188,7 @@ fn gui_renderer() -> eframe::Renderer {
                 eframe::Renderer::Wgpu
             } else {
                 // Keep the UI compositor away from wgpu/D3D12 by default on
-                // Windows/Linux; CUDA/WGSL compute backends are selected separately.
+                // Windows/Linux; the WGPU compute backend is selected separately.
                 eframe::Renderer::Glow
             }
         }
