@@ -300,27 +300,11 @@ pub fn scan_with_options(
             crate::params::grain::GrainEngine::V2
         )
     {
-        let mut grain = params.film_render.grain.resolved_grain_v2();
-        if params.debug.deactivate_spatial_effects {
-            grain.resolution_factor = 100.0;
-        }
-        grain.seed = params.random_seed as u32;
-        let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
-            mode: grain.mode as u32,
-            film_type: grain.film_type,
-            amount: grain.amount,
-            shadows: grain.shadows,
-            midtones: grain.midtones,
-            highlights: grain.highlights,
-            raw_scale: grain.size,
-            cluster_size: grain.cluster_size,
-            rotation: grain.rotation,
-            color: grain.color,
-            resolution_factor: grain.resolution_factor,
-            seed: grain.seed,
-            colored: grain.colored,
-            clustered: grain.clustered,
-        };
+        let grain = params.film_render.grain.resolved_grain_v2();
+        let gpu_params = params
+            .film_render
+            .grain
+            .gpu_params(params.random_seed, params.debug.deactivate_spatial_effects);
         rgb = backend
             .grain_v2(&rgb, &gpu_params)
             .unwrap_or_else(|| spektrafilm_model::grain::v2::apply_cpu(&rgb, grain));

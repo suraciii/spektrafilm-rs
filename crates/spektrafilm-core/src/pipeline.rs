@@ -1004,7 +1004,12 @@ impl Pipeline {
         {
             reasons.push(ResidentFallbackReason::ActiveOpticalDiffusion);
         }
-        if self.params.film_render.grain.active {
+        if self.params.film_render.grain.active
+            && matches!(
+                self.params.film_render.grain.engine,
+                crate::params::grain::GrainEngine::V1
+            )
+        {
             reasons.push(ResidentFallbackReason::FaithfulGrainDistribution);
         }
         if self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none() {
@@ -1348,6 +1353,18 @@ impl Pipeline {
         } else {
             None
         };
+        let grain_v2 = if self.params.film_render.grain.active
+            && matches!(
+                self.params.film_render.grain.engine,
+                crate::params::grain::GrainEngine::V2
+            ) {
+            Some(self.params.film_render.grain.gpu_params(
+                self.params.random_seed,
+                self.params.debug.deactivate_spatial_effects,
+            ))
+        } else {
+            None
+        };
 
         let params = spektrafilm_gpu::FilmChainParams {
             image,
@@ -1376,6 +1393,7 @@ impl Pipeline {
             glare,
             gamut: self.output_gamut.gpu_params(),
             unsharp,
+            grain_v2,
             camera_lens_blur_px,
             scanner_lens_blur_px,
             highlight_boost,
@@ -1431,6 +1449,35 @@ mod spectral_invalidation_tests {
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap()
+    }
+
+    #[test]
+    fn grain_engine_controls_resident_fallback() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.settings.use_enlarger_lut = false;
+        params.settings.use_scanner_lut = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
+        let mut pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+
+        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::V1;
+        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
+            panic!("V1 grain must remain on the per-stage path");
+        };
+        assert!(
+            reasons.iter().any(|reason| {
+                matches!(reason, ResidentFallbackReason::FaithfulGrainDistribution)
+            })
+        );
     }
 
     fn lut_data(pipeline: &Pipeline) -> Vec<f64> {

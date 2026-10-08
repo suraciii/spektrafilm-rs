@@ -1354,6 +1354,11 @@ impl WgpuBackend {
                 self,
             )
         });
+        // Grain V2 is a display-domain pass. Keep it inside the resident
+        // command buffer so it does not force a full-image readback.
+        let grain_v2_state = p.grain_v2.as_ref().map(|gp| {
+            build_grain_v2_state(&self.device, gp, image.width, image.height, &buf_b, self)
+        });
 
         // ── Output gamut compression state ───────────────────────────────
         // Single per-pixel dispatch in place on buf_b, after glare and
@@ -1503,6 +1508,12 @@ impl WgpuBackend {
         if let Some(us) = unsharp_state.as_ref() {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
             us.encode_passes(&mut encoder, n_pixels, wg_xy, &buf_b, img_bytes as u64);
+
+        }
+        // 6e. Grain V2 is the last resident pass, before CPU destination
+        // transfer encoding. It writes back to the final ping-pong buffer.
+        if let Some(gs) = grain_v2_state.as_ref() {
+            gs.encode_pass(&mut encoder, n_pixels, &buf_b);
         }
 
         // Zero-copy path: when buf_b is mappable, skip the blit and map it
@@ -2008,6 +2019,9 @@ use gamut::*;
 #[cfg(feature = "wgpu-backend")]
 use glare::*;
 #[cfg(feature = "wgpu-backend")]
+use grain::*;
+#[cfg(feature = "wgpu-backend")]
+
 use halation::*;
 #[cfg(feature = "wgpu-backend")]
 use highlight::*;

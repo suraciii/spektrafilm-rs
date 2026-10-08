@@ -432,10 +432,11 @@ pub fn compute_core_matrix(sensitivity: &[[f64; 3]], illuminant: &[f64]) -> [[f6
             midgray[m] += illu * MIDGRAY * sensitivity[wl][m];
         }
     }
+    let g = midgray[1];
     let mut core = [[0.0f64; 3]; 3];
     for m in 0..3 {
         for k in 0..3 {
-            core[m][k] = m_mallett[k][m] / midgray[m];
+            core[m][k] = m_mallett[k][m] / g;
         }
     }
     core
@@ -444,9 +445,9 @@ pub fn compute_core_matrix(sensitivity: &[[f64; 3]], illuminant: &[f64]) -> [[f6
 /// Input colour space → linear sRGB with the registry's stored matrices and
 /// CAT02 adaptation. No fallback primary set is selected for unknown names.
 pub fn input_cs_to_srgb(color_space: &str) -> [[f64; 3]; 3] {
-    spektrafilm_math::colorspace::resolve(color_space)
-        .expect("validated input colour space")
-        .display_matrix()
+    let space =
+        spektrafilm_math::colorspace::resolve(color_space).expect("validated input colour space");
+    spektrafilm_math::colorspace::display_matrix(space)
 }
 
 /// Full per-pixel matrix `core · M_cs` mapping input-colour-space RGB to raw.
@@ -467,7 +468,16 @@ pub fn apply(m: &[[f64; 3]; 3], rgb: [f64; 3]) -> [f64; 3] {
 #[cfg(test)]
 mod parity_tests {
     use super::*;
-    use crate::test_support::data_dir;
+    use std::path::{Path, PathBuf};
+
+    fn data_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data")
+    }
 
     fn sensitivity(film: &crate::profile::Profile) -> Vec<[f64; 3]> {
         film.log_sensitivity_f64()
@@ -582,7 +592,7 @@ mod parity_tests {
         let g = from_f64(0.184);
         let img = ImageBuf::from_data(2, 2, vec![g; 12]);
         let out = pipeline
-            .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
             .unwrap();
         assert_eq!((out.width, out.height), (2, 2));
         assert!(
@@ -601,7 +611,10 @@ mod parity_tests {
         use spektrafilm_math::image::ImageBuf;
         use spektrafilm_math::precision::from_f64;
 
-        let gpu = spektrafilm_gpu::test_support::adapter();
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
 
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
@@ -613,7 +626,7 @@ mod parity_tests {
         // matrix is exercised, not just the identity case.
         params.camera.exposure_compensation_ev = 0.5;
         params.film_render.grain.active = true;
-        params.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
         // Output gamut compression forces the per-stage path — keep it off
         // so this test exercises the GPU-resident chain.
         params.io.output_gamut_compress.algorithm = "off".into();
@@ -627,9 +640,9 @@ mod parity_tests {
             .collect();
         let img = ImageBuf::from_data(w, h, data);
 
-        let out_gpu = pipeline.process(img.clone(), gpu.backend()).unwrap();
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
         let out_cpu = pipeline
-            .process(img, &spektrafilm_backend::cpu_backend::CpuBackend)
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
             .unwrap();
 
         let mut max_diff = 0.0f64;
