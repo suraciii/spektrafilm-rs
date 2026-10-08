@@ -1,6 +1,7 @@
-use super::blur::DispatchJob;
 use super::*;
+use super::blur::DispatchJob;
 
+#[cfg(feature = "wgpu-backend")]
 pub(super) struct HighlightBoostState {
     _buffers: Vec<wgpu::Buffer>,
     reductions: Vec<(DispatchJob, u32)>,
@@ -8,13 +9,15 @@ pub(super) struct HighlightBoostState {
     n_values: u32,
 }
 
+#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_highlight_boost_state(
-    device: &ObservedDevice,
-    hp: &spektrafilm_backend::HighlightBoostGpuParams,
+    device: &wgpu::Device,
+    hp: &crate::HighlightBoostGpuParams,
     n_pixels: u32,
     img: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> HighlightBoostState {
+    use wgpu::util::DeviceExt;
     let n_values = n_pixels * 3;
     let mut counts = Vec::new();
     let mut values = n_values;
@@ -155,8 +158,9 @@ pub(super) fn build_highlight_boost_state(
     }
 }
 
+#[cfg(feature = "wgpu-backend")]
 impl HighlightBoostState {
-    pub(super) fn encode_passes(&self, encoder: &mut ObservedEncoder) {
+    pub(super) fn encode_passes(&self, encoder: &mut wgpu::CommandEncoder) {
         for (job, blocks) in &self.reductions {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("highlight_reduce"),
@@ -176,3 +180,5 @@ impl HighlightBoostState {
         dispatch_linear(&mut pass, self.n_values);
     }
 }
+
+

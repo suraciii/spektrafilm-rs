@@ -1,8 +1,8 @@
 //! Optical diffusion filters: discrete PSFs and reflected FFT convolution.
 
-use spektrafilm_backend::ComputeBackend;
+use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
+use spektrafilm_math::precision::{Scalar, from_f64};
 
 // ===========================================================================
 // Lens diffusion filter (Black Pro Mist family).
@@ -174,7 +174,12 @@ fn family_shape(family: &str) -> Option<FamilyShape> {
 
 /// The four valid diffusion-filter families (Python
 /// `_DIFFUSION_FILTER_SHAPES` keys / `DIFFUSION_FILTER_FAMILIES`).
-pub const VALID_FAMILIES: [&str; 4] = ["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"];
+pub const VALID_FAMILIES: [&str; 4] = [
+    "glimmerglass",
+    "black_pro_mist",
+    "pro_mist",
+    "cinebloom",
+];
 
 /// Reject an unknown diffusion-filter family with an actionable error.
 /// Python 0.3.4 raises
@@ -446,10 +451,10 @@ pub fn apply_diffusion_filter_um(
     let psf = diffusion_filter_psf(k, &cfg, df.spatial_scale, pixel_size_um, df.halo_warmth);
 
     let mut out = ImageBuf::new(image.width, image.height);
-    for (c, channel_psf) in psf.iter().enumerate() {
+    for c in 0..3 {
         let chan_s = image.extract_channel(c);
-        let chan: Vec<f64> = chan_s.iter().map(|&v| to_f64(v)).collect();
-        let blurred = convolve2d_reflect(&chan, h, w, channel_psf, k);
+        let chan: Vec<f64> = chan_s.iter().map(|&v| v as f64).collect();
+        let blurred = convolve2d_reflect(&chan, h, w, &psf[c], k);
         let mixed: Vec<Scalar> = (0..h * w)
             .map(|i| from_f64((1.0 - p_s) * chan[i] + p_s * blurred[i]))
             .collect();
@@ -524,10 +529,7 @@ mod family_tests {
                 err.starts_with("Unknown diffusion filter family: '"),
                 "message should mirror Python's ValueError, got: {err}"
             );
-            assert!(
-                err.contains("glimmerglass"),
-                "must list the available families"
-            );
+            assert!(err.contains("glimmerglass"), "must list the available families");
         }
     }
 
@@ -542,10 +544,24 @@ mod family_tests {
             &img,
             &df("black_promist", 0.5),
             10.0,
-            &spektrafilm_backend::cpu_backend::CpuBackend,
+            &spektrafilm_gpu::cpu_backend::CpuBackend,
         )
         .unwrap_err();
         assert!(e.contains("Unknown diffusion filter family"));
+    }
+
+    #[test]
+    fn ineffective_filter_never_reaches_the_family_check() {
+        // Python returns the image before the family lookup when
+        // strength/spatial_scale ≤ 0 — a bogus name must not error there.
+        let img = ramp(32);
+        let mut f = df("black_promist", 0.0);
+        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+        assert_eq!(out.data.len(), img.data.len());
+        f.strength = 0.5;
+        f.spatial_scale = 0.0;
+        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+        assert_eq!(out.data.len(), img.data.len());
     }
 
     #[test]
@@ -560,11 +576,9 @@ mod family_tests {
                 .data
                 .iter()
                 .zip(img.data.iter())
-                .map(|(a, b)| {
-                    (spektrafilm_math::precision::to_f64(*a)
-                        - spektrafilm_math::precision::to_f64(*b))
-                    .abs()
-                })
+                .map(|(a, b)| (spektrafilm_math::precision::to_f64(*a)
+                    - spektrafilm_math::precision::to_f64(*b))
+                .abs())
                 .fold(0.0f64, f64::max);
             assert!(
                 max_shift > 1e-3,
@@ -578,11 +592,9 @@ mod family_tests {
                     .data
                     .iter()
                     .zip(ob.data.iter())
-                    .map(|(a, b)| {
-                        (spektrafilm_math::precision::to_f64(*a)
-                            - spektrafilm_math::precision::to_f64(*b))
-                        .abs()
-                    })
+                    .map(|(a, b)| (spektrafilm_math::precision::to_f64(*a)
+                        - spektrafilm_math::precision::to_f64(*b))
+                    .abs())
                     .fold(0.0f64, f64::max);
                 assert!(
                     max_diff > 1e-4,
@@ -654,88 +666,24 @@ mod preview_parity_tests {
             &img,
             &df,
             10.0,
-            &spektrafilm_backend::cpu_backend::CpuBackend,
+            &spektrafilm_gpu::cpu_backend::CpuBackend,
         )
         .unwrap();
         // (x, y, RGB): dark/hot corners, both sides of the hotspot boundary,
         // its inner corner (the former approximation's maximum-error pixel),
         // the surrounding ramp, and the opposite image edges.
         let expected = [
-            (
-                0,
-                0,
-                [
-                    0.0001656748356651663,
-                    0.00011847992803590178,
-                    0.00006887024631659705,
-                ],
-            ),
-            (
-                47,
-                0,
-                [0.9999611456128636, 0.8999656676998947, 0.7999702399825238],
-            ),
-            (
-                35,
-                0,
-                [
-                    0.22733680364241327,
-                    0.20389738797708928,
-                    0.18040232965255765,
-                ],
-            ),
-            (
-                36,
-                0,
-                [0.9959659137605512, 0.897091112168781, 0.7982732190282742],
-            ),
-            (
-                35,
-                11,
-                [
-                    0.22599846102267726,
-                    0.20297636539409727,
-                    0.17992097812422198,
-                ],
-            ),
-            (
-                36,
-                11,
-                [0.9933886879364295, 0.8951923565049538, 0.7970861067471279],
-            ),
-            (
-                36,
-                12,
-                [
-                    0.23237456842784404,
-                    0.20871619741761965,
-                    0.18502464005050112,
-                ],
-            ),
-            (
-                47,
-                12,
-                [0.303522512644374, 0.27253741571669504, 0.24150242300582822],
-            ),
-            (
-                24,
-                24,
-                [
-                    0.15327507540634389,
-                    0.13793224324917236,
-                    0.12258820284520613,
-                ],
-            ),
-            (
-                0,
-                47,
-                [0.2998862907538783, 0.2699192696864028, 0.23995395227045013],
-            ),
-            (
-                47,
-                47,
-                [0.29993825634342175, 0.2699570193008415, 0.2399767747872168],
-            ),
+            (0, 0, [0.0001656748356651663, 0.00011847992803590178, 0.00006887024631659705]),
+            (47, 0, [0.9999611456128636, 0.8999656676998947, 0.7999702399825238]),
+            (35, 0, [0.22733680364241327, 0.20389738797708928, 0.18040232965255765]),
+            (36, 0, [0.9959659137605512, 0.897091112168781, 0.7982732190282742]),
+            (35, 11, [0.22599846102267726, 0.20297636539409727, 0.17992097812422198]),
+            (36, 11, [0.9933886879364295, 0.8951923565049538, 0.7970861067471279]),
+            (36, 12, [0.23237456842784404, 0.20871619741761965, 0.18502464005050112]),
+            (47, 12, [0.303522512644374, 0.27253741571669504, 0.24150242300582822]),
+            (24, 24, [0.15327507540634389, 0.13793224324917236, 0.12258820284520613]),
+            (0, 47, [0.2998862907538783, 0.2699192696864028, 0.23995395227045013]),
+            (47, 47, [0.29993825634342175, 0.2699570193008415, 0.2399767747872168]),
         ];
         let mut max_diff = 0.0f64;
         for (x, y, rgb) in expected {

@@ -1,6 +1,6 @@
-use super::blur::{self, BlurJob, DispatchJob};
-use super::params::AddScaledParams;
 use super::*;
+use super::blur::{BlurJob, DispatchJob};
+
 
 /// Pre-built halation passes — owns the per-sigma kernel buffers, params
 /// buffers, and bind groups so they live long enough for the encoder.
@@ -9,6 +9,7 @@ use super::*;
 /// All passes operate on the resident image buffer (passed in as `buf_b`),
 /// using `buf_a` as blur intermediate and two newly-allocated buffers
 /// `buf_c` / `buf_d` for scatter outputs and the halation accumulator.
+#[cfg(feature = "wgpu-backend")]
 pub(super) struct HalationState {
     // Owns all the auxiliary buffers + bind groups; only `encode_passes` is
     // called from the hot path.
@@ -24,15 +25,18 @@ pub(super) struct HalationState {
     blur_pipe_v: CachedPipelineRef,
 }
 
+
+#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_halation_state(
-    device: &ObservedDevice,
-    hp: &spektrafilm_backend::HalationGpuParams,
+    device: &wgpu::Device,
+    hp: &crate::HalationGpuParams,
     width: u32,
     height: u32,
     buf_a: &wgpu::Buffer,
     buf_b: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> HalationState {
+    use wgpu::util::DeviceExt;
     let n_pixels = (width as usize) * (height as usize);
     let img_bytes = (n_pixels * 3 * 4) as u64;
 
@@ -49,41 +53,119 @@ pub(super) fn build_halation_state(
     let buf_c = mk_buf("halation_c"); // scatter core / blur output
     let buf_d = mk_buf("halation_d"); // scatter tail / accumulator
 
+    let blur_layout = &[
+        wgpu::BufferBindingType::Uniform,
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: false },
+    ];
     let blur_pipe_h = backend.cached_pipeline(
         include_str!("../blur/gaussian_blur_h.wgsl"),
-        &blur::BLUR_LAYOUT,
+        blur_layout,
     );
     let blur_pipe_v = backend.cached_pipeline(
         include_str!("../blur/gaussian_blur_v.wgsl"),
-        &blur::BLUR_LAYOUT,
+        blur_layout,
     );
+
+    // Helper: build a single H/V blur job from source → output, using buf_a
+    // (the freed RGB upload) as blur scratch (mid).
+    let make_blur_job =
+        |sigma: f32, src: &wgpu::Buffer, out: &wgpu::Buffer, label: &str| -> BlurJob {
+            let sigma = sigma.max(0.01);
+            let radius = fir_blur_radius(sigma);
+            let kernel_size = (2 * radius + 1) as usize;
+            let sigma_f64 = sigma as f64;
+            let two_sigma_sq = 2.0 * sigma_f64 * sigma_f64;
+            let r_i32 = radius as i32;
+            let mut kernel = Vec::with_capacity(kernel_size);
+            for k in 0..kernel_size {
+                let x = (k as i32 - r_i32) as f64;
+                kernel.push((-x * x / two_sigma_sq).exp());
+            }
+            let sum: f64 = kernel.iter().sum();
+            let kernel_f32: Vec<f32> = kernel.into_iter().map(|v| (v / sum) as f32).collect();
+
+            let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("halation_blur_kernel_{label}")),
+                contents: bytemuck::cast_slice(&kernel_f32),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct BlurParams {
+                width: u32,
+                height: u32,
+                radius: u32,
+                _pad: u32,
+            }
+            let params = BlurParams {
+                width,
+                height,
+                radius,
+                _pad: 0,
+            };
+            let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("halation_blur_params_{label}")),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("halation_blur_h_{label}")),
+                layout: &blur_pipe_h.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: src.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: kernel_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: buf_a.as_entire_binding(),
+                    }, // mid
+                ],
+            });
+            let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("halation_blur_v_{label}")),
+                layout: &blur_pipe_v.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buf_a.as_entire_binding(),
+                    }, // mid
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: kernel_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: out.as_entire_binding(),
+                    },
+                ],
+            });
+            BlurJob {
+                _kernel_buf: kernel_buf,
+                _params_buf: params_buf,
+                bg_h,
+                bg_v,
+            }
+        };
 
     // ── Scatter blurs (core → buf_c, tail → buf_d) ─────────────────────
     let scatter_blurs = vec![
-        blur::make_blur_job(
-            backend,
-            hp.scatter_core_px,
-            width,
-            height,
-            buf_b,
-            buf_a,
-            &buf_c,
-            "halation_scatter_core",
-            &blur_pipe_h,
-            &blur_pipe_v,
-        ),
-        blur::make_blur_job(
-            backend,
-            hp.scatter_tail_px,
-            width,
-            height,
-            buf_b,
-            buf_a,
-            &buf_d,
-            "halation_scatter_tail",
-            &blur_pipe_h,
-            &blur_pipe_v,
-        ),
+        make_blur_job(hp.scatter_core_px, buf_b, &buf_c, "scatter_core"),
+        make_blur_job(hp.scatter_tail_px, buf_b, &buf_d, "scatter_tail"),
     ];
 
     // ── Scatter mix: result = (1-sa)*result + sa*((1-atw)*core + atw*tail)
@@ -154,8 +236,6 @@ pub(super) fn build_halation_state(
     let n = hp.halation_n_bounces as usize;
     // Pre-compute normalized decay weights.
     let mut decay = vec![0.0f32; n];
-    // The bounce index also determines the decay exponent.
-    #[allow(clippy::needless_range_loop)]
     for k in 0..n {
         decay[k] = hp.halation_bounce_decay.powi(k as i32);
     }
@@ -177,21 +257,24 @@ pub(super) fn build_halation_state(
             wgpu::BufferBindingType::Storage { read_only: false },
         ],
     );
+    #[repr(C)]
+    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+    struct AddScaledParams {
+        n_pixels: u32,
+        scale: f32,
+        clear_first: u32,
+        _pad: u32,
+    }
+
     let mut halation_blurs = Vec::with_capacity(n);
     let mut halation_accumulate = Vec::with_capacity(n);
     for (k, &wk) in decay.iter().enumerate() {
         let sigma_k = hp.halation_first_sigma_px * ((k as f32) + 1.0).sqrt();
-        halation_blurs.push(blur::make_blur_job(
-            backend,
+        halation_blurs.push(make_blur_job(
             sigma_k,
-            width,
-            height,
             buf_b,
-            buf_a,
             &buf_c,
-            &format!("halation_bounce_{k}"),
-            &blur_pipe_h,
-            &blur_pipe_v,
+            &format!("bounce_{k}"),
         ));
 
         let acc_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -364,15 +447,16 @@ pub(super) fn build_halation_state(
     }
 }
 
+#[cfg(feature = "wgpu-backend")]
 impl HalationState {
     pub(super) fn encode_passes(
         &self,
-        encoder: &mut ObservedEncoder,
+        encoder: &mut wgpu::CommandEncoder,
         n_pixels: u32,
         wg_xy: (u32, u32),
     ) {
         let _ = (&self.buf_c, &self.buf_d); // owned, just keepalive
-        let dispatch_blur = |enc: &mut ObservedEncoder, job: &BlurJob| {
+        let dispatch_blur = |enc: &mut wgpu::CommandEncoder, job: &BlurJob| {
             {
                 let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("halation_blur_h"),
@@ -392,7 +476,7 @@ impl HalationState {
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
         };
-        let dispatch_linear = |enc: &mut ObservedEncoder, job: &DispatchJob| {
+        let dispatch_linear = |enc: &mut wgpu::CommandEncoder, job: &DispatchJob| {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("halation_linear"),
                 timestamp_writes: None,
@@ -427,3 +511,4 @@ impl HalationState {
         }
     }
 }
+

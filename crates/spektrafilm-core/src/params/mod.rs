@@ -9,17 +9,15 @@ pub mod diffusion;
 pub mod glare;
 pub mod grain;
 pub mod halation;
-pub mod sources;
 
-pub(crate) mod validation;
 use couplers::DirCouplersParams;
-pub use diffusion::DiffusionFilterParams;
+use diffusion::DiffusionFilterParams;
 use glare::GlareParams;
-pub use grain::{FotufilmGrainParams, FotufilmMaterial};
-pub use grain::{GrainEngine, GrainParams};
-pub use halation::HalationParams;
+use grain::GrainParams;
+use halation::HalationParams;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CameraParams {
     #[serde(default)]
@@ -39,10 +37,7 @@ pub struct CameraParams {
     /// Stable camera taking-filter identifier. `"none"` preserves the
     /// historical no-filter behavior; named values are loaded from the
     /// shipped measured transmission curves.
-    #[serde(
-        default = "default_color_filter",
-        deserialize_with = "deserialize_color_filter"
-    )]
+    #[serde(default)]
     pub color_filter: String,
     #[serde(default)]
     pub diffusion_filter: DiffusionFilterParams,
@@ -64,56 +59,17 @@ impl Default for CameraParams {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrintExposureMode {
-    /// Apply `print_exposure` without midgray normalization.
-    Manual,
-    /// Normalize the print exposure so the developed midgray density prints
-    /// to the paper midgray, and follow camera exposure compensation.
-    #[default]
-    Auto,
-}
-impl PrintExposureMode {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Manual => "manual",
-            Self::Auto => "auto",
-        }
-    }
-}
-
-/// Legacy carry-over of the two intermediate print-exposure behaviors that
-/// the `manual | auto` pair cannot express. `follow_mode` tracks in `auto`
-/// and does not track in `manual`; `never` disables tracking in `auto`;
-/// `always` applies the relative compensation factor in `manual`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrintExposureEvTracking {
-    #[default]
-    FollowMode,
-    Never,
-    Always,
-}
-impl PrintExposureEvTracking {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::FollowMode => "follow_mode",
-            Self::Never => "never",
-            Self::Always => "always",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnlargerParams {
     #[serde(default = "default_th_kg3")]
     pub illuminant: String,
     #[serde(default = "default_one")]
     pub print_exposure: f32,
-    #[serde(default)]
-    pub print_exposure_mode: PrintExposureMode,
+    #[serde(default = "default_true")]
+    pub print_exposure_compensation: bool,
+    #[serde(default = "default_true")]
+    pub normalize_print_exposure: bool,
     #[serde(default)]
     pub y_filter_shift: f32,
     #[serde(default)]
@@ -141,7 +97,8 @@ impl Default for EnlargerParams {
         Self {
             illuminant: "TH-KG3".into(),
             print_exposure: 1.0,
-            print_exposure_mode: PrintExposureMode::Auto,
+            print_exposure_compensation: true,
+            normalize_print_exposure: true,
             y_filter_shift: 0.0,
             m_filter_shift: 0.0,
             y_filter_neutral: 55.0,
@@ -156,101 +113,11 @@ impl Default for EnlargerParams {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReceiverProfile {
-    #[default]
-    LegacyColorimetric,
-    LabScanApprox,
-    DigitalReference,
-}
-impl ReceiverProfile {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::LegacyColorimetric => "legacy_colorimetric",
-            Self::LabScanApprox => "lab_scan_approx",
-            Self::DigitalReference => "digital_reference",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NegativeConversionMethod {
-    /// Read record densities directly: the film's own monotone characteristic
-    /// curves, with no synthetic capture in the loop.
-    #[default]
-    Density,
-    /// Interpret a receiver capture through a per-channel monotone inverse.
-    Separable,
-    /// Interpret a receiver capture through the three-channel coupled inverse.
-    Coupled,
-    /// Common modeled receiver and fixed Reference Exposure response.
-    DigitalReference,
-}
-impl NegativeConversionMethod {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Density => "density",
-            Self::Separable => "separable",
-            Self::Coupled => "coupled",
-            Self::DigitalReference => "digital_reference",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScannerAutoSetup {
-    #[default]
-    Off,
-    PerFrame,
-}
-impl ScannerAutoSetup {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::PerFrame => "per_frame",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScannerFinish {
-    #[default]
-    Neutral,
-    LabScan,
-}
-impl ScannerFinish {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Neutral => "neutral",
-            Self::LabScan => "lab_scan",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
     #[serde(default)]
-    pub receiver_profile: ReceiverProfile,
-    #[serde(default)]
-    pub negative_conversion_method: NegativeConversionMethod,
-    #[serde(default)]
-    pub auto_setup: ScannerAutoSetup,
-    #[serde(default)]
-    pub finish: ScannerFinish,
-    #[serde(default = "default_finish_strength")]
-    pub finish_strength: f64,
-    #[serde(default)]
     pub lens_blur: f32,
-    /// Scan output polarity: `direct_scan` preserves the scanner capture;
-    /// `negative_to_positive` interprets each negative dye record's density as a
-    /// positive image.
-    #[serde(default = "default_direct_scan")]
-    pub scan_output: String,
     #[serde(default)]
     pub white_correction: bool,
     #[serde(default)]
@@ -261,76 +128,148 @@ pub struct ScannerParams {
     pub black_level: f32,
     #[serde(default = "default_unsharp")]
     pub unsharp_mask: [f64; 2],
-    #[serde(default)]
-    pub black_point: [f64; 3],
-    #[serde(default = "default_scanner_white_point")]
-    pub white_point: [f64; 3],
-    #[serde(default = "default_conversion_brightness_ev")]
-    pub conversion_brightness_ev: f64,
-    #[serde(default)]
-    pub conversion_balance_ev: [f64; 3],
-    #[serde(default = "default_conversion_contrast")]
-    pub conversion_contrast: f64,
-    #[serde(default = "default_conversion_dmax")]
-    pub conversion_dmax: f64,
-    /// Output-relative stops after the fixed reference response.
-    #[serde(default)]
-    pub reference_exposure_ev: f64,
-    /// Independent linear-sRGB output-relative stops, before output-space mapping.
-    #[serde(default)]
-    pub reference_balance_ev: [f64; 3],
 }
 
 impl Default for ScannerParams {
     fn default() -> Self {
         Self {
-            receiver_profile: ReceiverProfile::default(),
-            negative_conversion_method: NegativeConversionMethod::default(),
-            auto_setup: ScannerAutoSetup::default(),
-            finish: ScannerFinish::default(),
-            finish_strength: default_finish_strength(),
             lens_blur: 0.0,
-            scan_output: default_direct_scan(),
             white_correction: false,
             black_correction: false,
             white_level: 0.98,
             black_level: 0.01,
             unsharp_mask: [0.7, 0.7],
-            black_point: [0.0; 3],
-            white_point: default_scanner_white_point(),
-            conversion_brightness_ev: default_conversion_brightness_ev(),
-            conversion_balance_ev: [0.0; 3],
-            conversion_contrast: default_conversion_contrast(),
-            conversion_dmax: default_conversion_dmax(),
-            reference_exposure_ev: 0.0,
-            reference_balance_ev: [0.0; 3],
         }
     }
 }
 
-fn default_finish_strength() -> f64 {
-    1.0
+<<<<<<<< HEAD:crates/spektrafilm-core/src/params.rs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrainParams {
+    #[serde(default = "default_true")]
+    pub active: bool,
+    #[serde(default = "default_true")]
+    pub sublayers_active: bool,
+    // f64 to preserve Python JSON precision through the Poisson/Binomial
+    // RNG pipeline — the f32 truncation of these values shifts the
+    // Poisson lambda by ~5e-8 and produces a different RNG stream.
+    // Field names mirror upstream 0.3.4 `GrainParams` exactly
+    // (`particle_area_um2` / `particle_scale` / `particle_scale_layers`).
+    #[serde(default = "default_02_f64")]
+    pub particle_area_um2: f64,
+    #[serde(default = "default_particle_scale_f64")]
+    pub particle_scale: [f64; 3],
+    #[serde(default = "default_particle_scale_layers_f64")]
+    pub particle_scale_layers: [f64; 3],
+    #[serde(default = "default_rms_granularity_f64")]
+    pub rms_granularity: [f64; 3],
+    #[serde(default = "default_density_min_f64")]
+    pub density_min: [f64; 3],
+    #[serde(default = "default_uniformity_f64")]
+    pub uniformity: [f64; 3],
+    #[serde(default = "default_065")]
+    pub blur: f32,
+    #[serde(default = "default_one")]
+    pub blur_dye_clouds_um: f32,
+    #[serde(default = "default_micro_structure")]
+    pub micro_structure: [f32; 2],
+    #[serde(default = "default_1i")]
+    pub n_sub_layers: u32,
+    /// One shared noise field across all channels instead of independent
+    /// per-channel RNG streams. Set by the pipeline for B&W films
+    /// (upstream n_channels==1 has a single emulsion); not user-facing.
+    #[serde(default)]
+    pub monochrome: bool,
 }
 
-fn default_scanner_white_point() -> [f64; 3] {
-    [1.0; 3]
+fn default_02_f64() -> f64 {
+    0.2
+}
+fn default_particle_scale_f64() -> [f64; 3] {
+    [1.6, 1.6, 3.2]
+}
+fn default_particle_scale_layers_f64() -> [f64; 3] {
+    [2.0, 1.0, 0.5]
+}
+fn default_density_min_f64() -> [f64; 3] {
+    [0.03, 0.03, 0.03]
+}
+fn default_rms_granularity_f64() -> [f64; 3] {
+    [0.0, 0.0, 0.0]
+}
+fn default_uniformity_f64() -> [f64; 3] {
+    [0.97, 0.99, 0.97]
+}
+impl Default for GrainParams {
+    fn default() -> Self {
+        Self {
+            active: true,
+            sublayers_active: true,
+            particle_area_um2: 0.2,
+            particle_scale: [1.6, 1.6, 3.2],
+            particle_scale_layers: [2.0, 1.0, 0.5],
+            rms_granularity: [0.0, 0.0, 0.0],
+            density_min: [0.03, 0.03, 0.03],
+            uniformity: [0.97, 0.99, 0.97],
+            blur: 0.65,
+            blur_dye_clouds_um: 1.0,
+            micro_structure: [0.2, 30.0],
+            n_sub_layers: 1,
+            monochrome: false,
+        }
+    }
 }
 
-fn default_conversion_brightness_ev() -> f64 {
-    0.8781766618
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HalationParams {
+    #[serde(default = "default_true")]
+    pub active: bool,
+    // f64 to match Python's `np.asarray(..., dtype=np.float64)` —
+    // f32 storage truncates ~7 decimals which shifts every sigma/lambda
+    // by ~3e-8, accumulating through Gaussian/exponential kernels.
+    #[serde(default = "default_one_f64")]
+    pub scatter_amount: f64,
+    #[serde(default = "default_one_f64")]
+    pub scatter_spatial_scale: f64,
+    #[serde(default = "default_one_f64")]
+    pub halation_amount: f64,
+    #[serde(default = "default_one_f64")]
+    pub halation_spatial_scale: f64,
+    #[serde(default = "default_scatter_core_f64")]
+    pub scatter_core_um: [f64; 3],
+    #[serde(default = "default_scatter_tail_f64")]
+    pub scatter_tail_um: [f64; 3],
+    #[serde(default = "default_scatter_tail_weight_f64")]
+    pub scatter_tail_weight: [f64; 3],
+    #[serde(default)]
+    pub boost_ev: f32,
+    #[serde(default = "default_03")]
+    pub boost_range: f32,
+    #[serde(default = "default_4")]
+    pub protect_ev: f32,
+    #[serde(default = "default_halation_strength_f64")]
+    pub halation_strength: [f64; 3],
+    #[serde(default = "default_halation_sigma_f64")]
+    pub halation_first_sigma_um: [f64; 3],
+    #[serde(default = "default_3i")]
+    pub halation_n_bounces: u32,
+    #[serde(default = "default_half_f64")]
+    pub halation_bounce_decay: f64,
+    #[serde(default = "default_true")]
+    pub halation_renormalize: bool,
 }
-fn default_conversion_contrast() -> f64 {
-    0.73551400058216643
-}
-fn default_conversion_dmax() -> f64 {
-    1.5625841465572565
-}
+========
+>>>>>>>> 8accdfff (refactor: organize film effects into feature modules):crates/spektrafilm-core/src/params/mod.rs
 
 fn default_one_f64() -> f64 {
     1.0
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilmBaseParams {
     #[serde(default = "default_true")]
@@ -347,19 +286,10 @@ pub struct FilmBaseParams {
     pub yellow: f64,
 }
 impl Default for FilmBaseParams {
-    fn default() -> Self {
-        Self {
-            active: true,
-            scale: 1.0,
-            tilt: 0.0,
-            cyan: 1.0,
-            magenta: 1.0,
-            yellow: 1.0,
-        }
-    }
+    fn default() -> Self { Self { active: true, scale: 1.0, tilt: 0.0, cyan: 1.0, magenta: 1.0, yellow: 1.0 } }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintBaseParams {
     #[serde(default = "default_true")]
@@ -374,18 +304,10 @@ pub struct PrintBaseParams {
     pub yellow: f64,
 }
 impl Default for PrintBaseParams {
-    fn default() -> Self {
-        Self {
-            active: true,
-            scale: 1.0,
-            cyan: 1.0,
-            magenta: 1.0,
-            yellow: 1.0,
-        }
-    }
+    fn default() -> Self { Self { active: true, scale: 1.0, cyan: 1.0, magenta: 1.0, yellow: 1.0 } }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConvertFilmParams {
     #[serde(default = "default_d55")]
@@ -398,53 +320,18 @@ pub struct ConvertFilmParams {
     pub calibration: String,
 }
 impl Default for ConvertFilmParams {
-    fn default() -> Self {
-        Self {
-            scan_illuminant: "D55".into(),
-            exposure_compensation_ev: 0.0,
-            base_percentile: 99.0,
-            calibration: default_calibration(),
-        }
-    }
+    fn default() -> Self { Self { scan_illuminant: "D55".into(), exposure_compensation_ev: 0.0, base_percentile: 99.0, calibration: default_calibration() } }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MagazinePrintColorParams {
-    #[serde(default)]
-    pub active: bool,
-    #[serde(default = "default_one_f64")]
-    pub strength: f64,
-}
-impl Default for MagazinePrintColorParams {
-    fn default() -> Self {
-        Self {
-            active: false,
-            strength: 1.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowParams {
     #[serde(default = "default_route")]
     pub route: String,
 }
-impl Default for WorkflowParams {
-    fn default() -> Self {
-        Self {
-            route: default_route(),
-        }
-    }
-}
-impl WorkflowParams {
-    pub fn route_enum(&self) -> crate::WorkflowRoute {
-        crate::WorkflowRoute::parse(&self.route)
-    }
-}
+impl Default for WorkflowParams { fn default() -> Self { Self { route: default_route() } } }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilmRenderingParams {
     #[serde(default = "default_one")]
@@ -482,7 +369,7 @@ impl Default for FilmRenderingParams {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintRenderingParams {
     #[serde(default = "default_one")]
@@ -493,10 +380,7 @@ pub struct PrintRenderingParams {
     pub development_time: Option<f64>,
     #[serde(default)]
     pub glare: GlareParams,
-    #[serde(
-        default = "default_print_density_curves_morph",
-        deserialize_with = "deserialize_print_density_curves_morph"
-    )]
+    #[serde(default = "default_print_density_curves_morph", deserialize_with = "deserialize_print_density_curves_morph")]
     pub density_curves_morph: PrintCurvesMorphParams,
     #[serde(default)]
     pub base: PrintBaseParams,
@@ -514,43 +398,28 @@ impl Default for PrintRenderingParams {
     }
 }
 
-fn default_color_filter() -> String {
-    "none".into()
-}
-
-fn deserialize_color_filter<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer)
-        .map(|value| value.unwrap_or_else(default_color_filter))
-}
-
 fn default_print_density_curves_morph() -> PrintCurvesMorphParams {
-    PrintCurvesMorphParams {
-        active: false,
-        ..PrintCurvesMorphParams::default()
-    }
+    PrintCurvesMorphParams { active: false, ..PrintCurvesMorphParams::default() }
 }
 
-fn deserialize_print_density_curves_morph<'de, D>(
-    deserializer: D,
-) -> Result<PrintCurvesMorphParams, D::Error>
+fn deserialize_print_density_curves_morph<'de, D>(deserializer: D) -> Result<PrintCurvesMorphParams, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let mut value = serde_json::Value::deserialize(deserializer)?;
     if let Some(object) = value.as_object_mut() {
-        object
-            .entry("active")
-            .or_insert(serde_json::Value::Bool(false));
+        object.entry("active").or_insert(serde_json::Value::Bool(false));
     }
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
-/// Film and print chemistry controls. Kept in f64 for parity-sensitive curve
-/// evaluation; both stages default to active in the experimental contract.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// User-facing controls for the s023 print density-curve morph (see
+/// `crate::print_morph`). Kept in f64 — the morph is a parity-sensitive f64
+/// computation. The standalone helper defaults `active` to `true`, matching
+/// upstream `PrintCurvesMorphParams`; nested print-render controls default
+/// it to `false`, matching `PrintRenderingParams`. Development still evaluates
+/// a profile's fitted model when present; `active` controls coupled-gamma morphing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintCurvesMorphParams {
     #[serde(default = "default_true")]
@@ -586,7 +455,7 @@ impl Default for PrintCurvesMorphParams {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IoParams {
     #[serde(default = "default_prophoto")]
@@ -645,11 +514,7 @@ pub struct InputGamutCompressParams {
     pub active: bool,
     #[serde(default = "default_xy")]
     pub algorithm: String,
-    #[serde(default = "default_gamut_boundary")]
-    pub boundary: String,
-    #[serde(default = "default_hull_detail")]
-    pub hull_detail: f64,
-    #[serde(default = "default_input_gamut_knee")]
+    #[serde(default = "default_gamut_knee")]
     pub knee: [f32; 3],
 }
 
@@ -658,75 +523,50 @@ impl Default for InputGamutCompressParams {
         Self {
             active: true,
             algorithm: "xy".into(),
-            boundary: "inscribed_hull".into(),
-            hull_detail: 5.0,
-            knee: [0.815, 1.0, 1.2],
+            knee: [0.0, 1.0, 6.0],
         }
     }
 }
 
-/// Output gamut compression applies chroma reduction against the destination RGB cube.
-/// `"off"` passes RGB through unchanged.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Output gamut compression config — mirrors upstream `OutputGamutCompressSpec`.
+/// `"cam16ucs"` (the default, matching upstream 0.3.4) applies the CAM16-UCS
+/// chroma knee + one-sided lightness roll-off; `"off"` passes RGB through
+/// unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputGamutCompressParams {
-    #[serde(default = "default_output_gamut_algorithm")]
+    #[serde(default = "default_cam16ucs")]
     pub algorithm: String,
     #[serde(default = "default_gamut_knee")]
     pub knee: [f32; 3],
+    #[serde(default = "default_gamut_lightness")]
+    pub lightness_compression: Option<[f32; 3]>,
 }
 
 impl Default for OutputGamutCompressParams {
     fn default() -> Self {
         Self {
-            algorithm: "oklch".into(),
-            knee: [0.95, 1.0, 1.6],
+            algorithm: "cam16ucs".into(),
+            knee: [0.0, 1.0, 6.0],
+            lightness_compression: Some([0.7, 1.0, 2.2]),
         }
     }
 }
 
-fn default_gamut_boundary() -> String {
-    "inscribed_hull".into()
-}
-fn default_hull_detail() -> f64 {
-    5.0
-}
 fn default_xy() -> String {
     "xy".into()
 }
-fn default_output_gamut_algorithm() -> String {
-    "oklch".into()
-}
-fn default_input_gamut_knee() -> [f32; 3] {
-    [0.815, 1.0, 1.2]
+fn default_cam16ucs() -> String {
+    "cam16ucs".into()
 }
 fn default_gamut_knee() -> [f32; 3] {
-    [0.95, 1.0, 1.6]
+    [0.0, 1.0, 6.0]
+}
+fn default_gamut_lightness() -> Option<[f32; 3]> {
+    Some([0.7, 1.0, 2.2])
 }
 
-/// Overall effect amount in the common linear output color space.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct OutputMixParams {
-    pub amount: f64,
-}
-
-impl Default for OutputMixParams {
-    fn default() -> Self {
-        Self { amount: 1.0 }
-    }
-}
-
-impl OutputMixParams {
-    pub fn validate(&self) -> Result<(), String> {
-        if !self.amount.is_finite() || !(0.0..=1.0).contains(&self.amount) {
-            return Err("output_mix.amount: must be finite and in 0..=1".into());
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsParams {
     /// Working wavelength grid: [start_nm, end_nm, step_nm].
@@ -760,11 +600,6 @@ pub struct SettingsParams {
     /// CAT02 0.3.2 behavior.
     #[serde(default = "default_true")]
     pub use_cat16: bool,
-    /// Legacy carry-over of the two intermediate print-exposure behaviors
-    /// that `enlarger.print_exposure_mode` cannot express. See
-    /// `PrintExposureEvTracking`.
-    #[serde(default)]
-    pub print_exposure_ev_tracking: PrintExposureEvTracking,
 }
 
 impl Default for SettingsParams {
@@ -783,10 +618,10 @@ impl Default for SettingsParams {
             preview_mode: false,
             neutral_print_filters_from_database: true,
             use_cat16: true,
-            print_exposure_ev_tracking: PrintExposureEvTracking::default(),
         }
     }
 }
+
 
 /// Debug switches — mirrors upstream 0.3.4 `DebugParams`.
 ///
@@ -799,7 +634,7 @@ impl Default for SettingsParams {
 /// but is a no-op at digest time — upstream 0.3.4 declares it without ever
 /// reading it (timing output goes through the `Simulator.print_timings()`
 /// call-site flag instead), so it is preserved as an upstream no-op.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugParams {
     #[serde(default)]
@@ -812,6 +647,17 @@ pub struct DebugParams {
     pub lut_mode: bool,
 }
 
+impl Default for DebugParams {
+    fn default() -> Self {
+        Self {
+            deactivate_spatial_effects: false,
+            deactivate_stochastic_effects: false,
+            print_timings: false,
+            lut_mode: false,
+        }
+    }
+}
+
 /// Pipeline tap configuration — mirrors upstream 0.3.4 `TapsParams`.
 ///
 /// `inject` and `collect` name the entry and exit points in the pipeline
@@ -819,7 +665,7 @@ pub struct DebugParams {
 /// `cmy_print`, `rgb_out`). Defaults of `None` mean "normal end-to-end run"
 /// (inject at `rgb_in`, collect at `rgb_out`); call-site overrides passed to
 /// `Pipeline::process_with_taps` win over these persistent values.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TapsParams {
     #[serde(default)]
@@ -860,21 +706,6 @@ impl Tap {
         }
     }
 
-    /// The boundary's position in the chain, counted from the input side. A
-    /// route that skips a stage removes it instead of renumbering the rest, so
-    /// positions stay comparable across topologies.
-    pub const fn position(self) -> u8 {
-        match self {
-            Self::RgbIn => 0,
-            Self::RgbPre => 1,
-            Self::LogEFilm => 2,
-            Self::CmyFilm => 3,
-            Self::LogEPrint => 4,
-            Self::CmyPrint => 5,
-            Self::RgbOut => 6,
-        }
-    }
-
     /// The wire name (upstream `Tap` attribute values).
     pub fn name(self) -> &'static str {
         match self {
@@ -891,70 +722,146 @@ impl Tap {
 
 impl RuntimeParams {
     /// Validate enum-like string fields against the values the engine
-    /// actually implements. The validation rules live in `validation` so
-    /// this module remains the schema/default aggregation point.
+    /// actually implements. Mirrors the upstream failures that Python
+    /// raises for unknown color spaces (`colour` `KeyError`), unknown
+    /// `rgb_to_raw_method` (`ValueError` in `FilmingStage`), unknown
+    /// gamut algorithms (`ValueError` in the specs' `__post_init__`),
+    /// unknown diffusion filter families (`ValueError` in
+    /// `apply_diffusion_filter_um`) and unknown tap names — all surfaced
+    /// *before* any artifact is produced. Returns the first failure.
     pub fn validate(&self) -> Result<(), String> {
-        validation::validate(self)
-    }
-
-    /// Snapshot preparation ownership for state carriers that keep it beside
-    /// the parameters. The filter flags also persist in the parameter
-    /// document itself so replays reproduce their render.
-    pub fn render_preparation_state(&self) -> RenderPreparationState {
-        RenderPreparationState {
-            explicit_section_paths: self.explicit_section_paths.iter().cloned().collect(),
-            neutral_print_filters_protected: self
-                .neutral_print_filters_protected
-                .unwrap_or([false; 3]),
+        self.validate_color()?;
+<<<<<<<< HEAD:crates/spektrafilm-core/src/params.rs
+========
+        let grain = &self.film_render.grain;
+        if spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none() {
+            return Err(format!("film_render.grain.v2_profile: unknown profile {:?}", grain.v2_profile));
         }
-    }
-
-    /// Restore ownership, ignoring leaves removed from the editable schema.
-    /// Values and paths need not belong to any currently known preset section.
-    pub fn restore_render_preparation_state(&mut self, state: &RenderPreparationState) {
-        self.explicit_section_paths.clear();
-        self.explicit_section_paths.extend(
-            state
-                .explicit_section_paths
-                .iter()
-                .filter(|path| sources::describe_field(path).is_ok())
-                .cloned(),
-        );
-        self.neutral_print_filters_protected = Some(state.neutral_print_filters_protected);
+        for (name, value, min, max) in [
+            ("v2_size", grain.v2_size, 1.0, 48.0),
+            ("v2_amount", grain.v2_amount, 0.0, 1.0),
+            ("v2_shadows", grain.v2_shadows, 0.0, 1.0),
+            ("v2_midtones", grain.v2_midtones, 0.0, 1.0),
+            ("v2_highlights", grain.v2_highlights, 0.0, 1.0),
+            ("v2_chroma", grain.v2_chroma, 0.0, 1.0),
+            ("v2_resolution_factor", grain.v2_resolution_factor, 0.0, 100.0),
+            ("v2_timer", Some(grain.v2_timer), 0.0, 65535.0),
+        ] {
+            if let Some(value) = value {
+                if !value.is_finite() || !(min..=max).contains(&value) {
+                    return Err(format!("film_render.grain.{name}: must be finite and in {min}..={max}"));
+                }
+            }
+        }
+        if grain.v2_resolution_type > 1 {
+            return Err("film_render.grain.v2_resolution_type: expected 0 or 1".into());
+        }
+>>>>>>>> 8accdfff (refactor: organize film effects into feature modules):crates/spektrafilm-core/src/params/mod.rs
+        let spectral_shape = crate::spectral_service::SpectralShape::new(self.settings.spectral_shape)
+            .map_err(|e| format!("settings.spectral_shape: {e}"))?;
+        if spectral_shape.bounds != crate::spectral_service::default_spectral_shape() {
+            return Err(format!(
+                "settings.spectral_shape: only the bundled {:?} grid is supported by the current profile/CMF/LUT contract, got {:?}",
+                crate::spectral_service::default_spectral_shape(),
+                spectral_shape.bounds
+            ));
+        }
+        let calibration_values = self
+            .film_render
+            .convert
+            .calibration
+            .split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | ';' | '[' | ']' | '(' | ')'))
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                part.parse::<f64>()
+                    .map_err(|_| format!("film_render.convert.calibration contains non-numeric token {part:?}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if calibration_values.len() != 9 || calibration_values.iter().any(|value| !value.is_finite()) {
+            return Err(format!(
+                "film_render.convert.calibration must contain exactly 9 finite numbers, got {}",
+                calibration_values.len()
+            ));
+        }
+        if !crate::spectral_service::is_supported_color_filter(&self.camera.color_filter) {
+            let supported = crate::spectral_service::available_color_filters().join(", ");
+            return Err(format!(
+                "camera.color_filter: unsupported filter {:?}; supported: {supported}",
+                self.camera.color_filter
+            ));
+        }
+        if !matches!(
+            self.settings.rgb_to_raw_method.as_str(),
+            "hanatos2025" | "mallett2019" | "arctic2026alpha02" | "arctic2026beta04"
+                | "gauss-lasers" | "jakob2019" | "otsu2018"
+        ) {
+            return Err(format!(
+                "settings.rgb_to_raw_method: unsupported method {:?}; supported: \
+                 hanatos2025, mallett2019, arctic2026alpha02, arctic2026beta04, \
+                 gauss-lasers, jakob2019, otsu2018",
+                self.settings.rgb_to_raw_method
+            ));
+        }
+        if !crate::spectral_service::is_supported_illuminant(&self.enlarger.illuminant) {
+            let supported = crate::spectral_service::available_illuminants().join(", ");
+            return Err(format!(
+                "enlarger.illuminant: unsupported illuminant {:?}; supported: {supported}",
+                self.enlarger.illuminant
+            ));
+        }
+        if !crate::spectral_service::is_supported_illuminant(&self.film_render.convert.scan_illuminant) {
+            let supported = crate::spectral_service::available_illuminants().join(", ");
+            return Err(format!(
+                "film_render.convert.scan_illuminant: unsupported illuminant {:?}; supported: {supported}",
+                self.film_render.convert.scan_illuminant
+            ));
+        }
+        const FILTER_FAMILIES: &str =
+            "glimmerglass, black_pro_mist, pro_mist, cinebloom";
+        for (label, df) in [
+            (
+                "camera.diffusion_filter.filter_family",
+                &self.camera.diffusion_filter,
+            ),
+            (
+                "enlarger.diffusion_filter.filter_family",
+                &self.enlarger.diffusion_filter,
+            ),
+        ] {
+            if df.active && df.strength > 0.0 && df.spatial_scale > 0.0
+                && !matches!(
+                    df.filter_family.as_str(),
+                    "glimmerglass" | "black_pro_mist" | "pro_mist" | "cinebloom"
+                ) {
+                return Err(format!(
+                    "{label}: unknown diffusion filter family {:?}; available: \
+                     {FILTER_FAMILIES}",
+                    df.filter_family
+                ));
+            }
+        }
+        if let Some(t) = self.taps.inject.as_deref() {
+            Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
+        }
+        if !matches!(self.workflow.route.as_str(),
+            "input" | "input > film > scan" | "input > film > print > scan" |
+            "input > convert-film > print > scan" | "input > convert-film > scan-minus-base" |
+            "input > convert-film > scan") {
+            return Err(format!("workflow.route: unsupported route {:?}", self.workflow.route));
+        }
+        if let Some(t) = self.taps.collect.as_deref() {
+            Tap::parse(t).map_err(|e| format!("taps.collect: {e}"))?;
+        }
+        Ok(())
     }
 }
-/// Serde-visible GUI state carrier for runtime preparation ownership.
-/// Kept beside the parameter document so state restoration can override the
-/// persisted flags explicitly.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RenderPreparationState {
-    pub explicit_section_paths: Vec<String>,
-    pub neutral_print_filters_protected: [bool; 3],
-}
-
 /// Top-level runtime parameters. Combines all sub-parameter groups.
 ///
 /// Mirrors upstream 0.3.4 `RuntimePhotoParams` minus the `film` / `print`
 /// profile objects (Rust passes `Profile` values alongside the params).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeParams {
-    /// Per-render stochastic seed. The recipe runner sets this out-of-band so
-    /// it does not become part of the user parameter schema or digest.
-    #[serde(skip)]
-    pub random_seed: u64,
-    /// CMY axes owned by a resolved look, explicit parameter edits, or
-    /// restored state. Calibration uses database precision only for
-    /// baseline (unprotected) axes. `None` marks documents without the
-    /// flags; resolution then treats every axis as baseline unless a look,
-    /// explicit edit, or restored state marked it authored.
-    #[serde(default)]
-    pub neutral_print_filters_protected: Option<[bool; 3]>,
-    /// Editable leaves explicitly supplied by section documents. Stock initialization
-    /// retains these values; legacy parameter decoding does not populate this set.
-    #[serde(skip)]
-    pub(crate) explicit_section_paths: std::collections::BTreeSet<String>,
     #[serde(default)]
     pub camera: CameraParams,
     #[serde(default)]
@@ -970,15 +877,28 @@ pub struct RuntimeParams {
     #[serde(default)]
     pub workflow: WorkflowParams,
     #[serde(default)]
-    pub magazine_print_color: MagazinePrintColorParams,
-    #[serde(default)]
-    pub output_mix: OutputMixParams,
-    #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]
     pub debug: DebugParams,
     #[serde(default)]
     pub taps: TapsParams,
+}
+
+impl Default for RuntimeParams {
+    fn default() -> Self {
+        Self {
+            camera: CameraParams::default(),
+            enlarger: EnlargerParams::default(),
+            scanner: ScannerParams::default(),
+            film_render: FilmRenderingParams::default(),
+            print_render: PrintRenderingParams::default(),
+            io: IoParams::default(),
+            workflow: WorkflowParams::default(),
+            settings: SettingsParams::default(),
+            debug: DebugParams::default(),
+            taps: TapsParams::default(),
+        }
+    }
 }
 
 impl RuntimeParams {
@@ -1029,10 +949,6 @@ fn default_55() -> f32 {
 fn default_65() -> f32 {
     65.0
 }
-fn default_direct_scan() -> String {
-    "direct_scan".into()
-}
-
 fn default_098() -> f32 {
     0.98
 }
@@ -1063,76 +979,16 @@ fn default_17() -> u32 {
 fn default_640() -> u32 {
     640
 }
-fn default_d55() -> String {
-    "D55".into()
-}
-fn default_99() -> f64 {
-    99.0
-}
-fn default_calibration() -> String {
-    "1 0 0  0 1 0  0 0 1".into()
-}
-fn default_route() -> String {
-    "input > film > print > scan".into()
-}
+fn default_d55() -> String { "D55".into() }
+fn default_99() -> f64 { 99.0 }
+fn default_calibration() -> String { "1 0 0  0 1 0  0 0 1".into() }
+fn default_route() -> String { "input > film > print > scan".into() }
+<<<<<<<< HEAD:crates/spektrafilm-core/src/params.rs
+========
 
 #[cfg(test)]
 mod tests {
-    use super::{CameraParams, RuntimeParams};
-    #[test]
-    fn scanner_selector_defaults_and_sparse_edits_are_compatible() {
-        let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
-        assert_eq!(
-            legacy.receiver_profile,
-            super::ReceiverProfile::LegacyColorimetric
-        );
-        assert_eq!(
-            legacy.negative_conversion_method,
-            super::NegativeConversionMethod::Density
-        );
-        assert_eq!(legacy.auto_setup, super::ScannerAutoSetup::Off);
-        assert_eq!(legacy.finish, super::ScannerFinish::Neutral);
-        assert_eq!(legacy.finish_strength, 1.0);
-        for (path, allowed) in [
-            (
-                "scanner.receiver_profile",
-                &[
-                    "legacy_colorimetric",
-                    "lab_scan_approx",
-                    "digital_reference",
-                ][..],
-            ),
-            (
-                "scanner.negative_conversion_method",
-                &["density", "separable", "coupled", "digital_reference"][..],
-            ),
-            ("scanner.auto_setup", &["off", "per_frame"][..]),
-            ("scanner.finish", &["neutral", "lab_scan"][..]),
-            ("enlarger.print_exposure_mode", &["manual", "auto"][..]),
-            (
-                "settings.print_exposure_ev_tracking",
-                &["follow_mode", "never", "always"][..],
-            ),
-        ] {
-            for value in allowed {
-                assert!(super::sources::ParameterEdits::parse(&format!("{path}={value}")).is_ok());
-            }
-            assert!(super::sources::ParameterEdits::parse(&format!("{path}=unknown")).is_err());
-        }
-        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=1.1").is_err());
-        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=-0.1").is_err());
-        let encoded = serde_json::to_value(&legacy).unwrap();
-        assert_eq!(encoded["receiver_profile"], "legacy_colorimetric");
-        assert_eq!(encoded["negative_conversion_method"], "density");
-        let enlarger = serde_json::to_value(super::EnlargerParams::default()).unwrap();
-        assert_eq!(enlarger["print_exposure_mode"], "auto");
-        assert!(
-            enlarger.get("normalize_print_exposure").is_none()
-                && enlarger.get("print_exposure_compensation").is_none()
-        );
-        let settings = serde_json::to_value(super::SettingsParams::default()).unwrap();
-        assert_eq!(settings["print_exposure_ev_tracking"], "follow_mode");
-    }
+    use super::CameraParams;
 
     #[test]
     fn null_or_missing_camera_color_filter_uses_no_filter() {
@@ -1142,248 +998,32 @@ mod tests {
         let missing: CameraParams = serde_json::from_str("{}").unwrap();
         assert_eq!(missing.color_filter, "none");
 
-        let named: CameraParams = serde_json::from_str(r#"{"color_filter":"hoya_r1"}"#).unwrap();
+        let named: CameraParams =
+            serde_json::from_str(r#"{"color_filter":"hoya_r1"}"#).unwrap();
         assert_eq!(named.color_filter, "hoya_r1");
-    }
-
-    #[test]
-    fn scanner_output_defaults_to_direct_and_rejects_removed_or_unknown_modes() {
-        let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.scan_output, "direct_scan");
-
-        let mut params = RuntimeParams::default();
-        params.scanner.scan_output = "negative_to_positive".into();
-        params.validate().unwrap();
-        let encoded = serde_json::to_string(&params).unwrap();
-        let decoded: RuntimeParams = serde_json::from_str(&encoded).unwrap();
-        decoded.validate().unwrap();
-        assert_eq!(decoded.scanner.scan_output, "negative_to_positive");
-        assert!(
-            super::sources::ParameterEdits::parse("scanner.scan_output=negative_to_positive")
-                .is_ok()
-        );
-        for mode in ["positive_scan", "unknown"] {
-            params.scanner.scan_output = mode.into();
-            let error = params.validate().unwrap_err();
-            assert!(error.contains("scanner.scan_output"));
-            assert!(
-                super::sources::ParameterEdits::parse(&format!("scanner.scan_output={mode}"))
-                    .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn scanner_points_validate_each_channel_without_partial_pairs() {
-        let mut params = RuntimeParams::default();
-        params.scanner.black_point = [0.0, 0.2, 0.4];
-        params.scanner.white_point = [0.5, 0.7, 1.0];
-        params.validate().unwrap();
-        for channel in 0..3 {
-            let valid = params.scanner.clone();
-            for value in [-0.01, 1.01, f64::NAN, f64::INFINITY] {
-                params.scanner.black_point[channel] = value;
-                assert!(params.validate().is_err());
-                params.scanner = valid.clone();
-                params.scanner.white_point[channel] = value;
-                assert!(params.validate().is_err());
-                params.scanner = valid.clone();
-            }
-            params.scanner.black_point[channel] = params.scanner.white_point[channel];
-            assert!(params.validate().is_err());
-            params.scanner.black_point[channel] += 0.1;
-            assert!(params.validate().is_err());
-            params.scanner = valid;
-        }
     }
     #[test]
     fn grain_v2_profile_inheritance_and_overrides() {
         let mut params = super::RuntimeParams::default();
-        let grain = &mut params.film_render.grain;
-        grain.v2_profile = "8mm500".into();
-        grain.v2_amount = Some(25.0);
-        grain.v2_mode = super::grain::GrainV2Mode::Noise;
-        grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
-        grain.v2_resolution_type = 0;
-        grain.v2_timer = 0.25;
-        let preset = grain.resolved_grain_v2();
-        assert_eq!(preset.amount, 0.25);
-        assert_eq!(
-            preset.mode,
-            spektrafilm_model::grain::v2::GrainV2Mode::Analogue
-        );
-        assert_eq!(preset.resolution_type, 0);
-        assert_eq!(preset.timer, Some(0.25));
-        assert_eq!(preset.film_type, 0);
-        grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
-        assert_eq!(grain.resolved_grain_v2().film_type, 0);
-        assert_eq!(grain.resolved_grain_v2().resolution_type, 0);
-        grain.select_custom_grain_v2();
-        grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
-        assert_eq!(grain.v2_resolution_type, 0);
-        assert_eq!(grain.v2_timer, 0.25);
-        assert_eq!(grain.v2_amount, Some(25.0));
-        assert_eq!(grain.v2_size, Some(48.0));
-        assert_eq!(grain.v2_resolution_factor, Some(75.0));
-        grain.v2_amount = Some(25.0);
-        grain.v2_mode = super::grain::GrainV2Mode::Noise;
-        grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
-        let roundtrip: super::RuntimeParams =
-            serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
-        let custom = roundtrip.film_render.grain.resolved_grain_v2();
-        assert_eq!(custom.amount, 0.25);
-        assert_eq!(
-            custom.mode,
-            spektrafilm_model::grain::v2::GrainV2Mode::Noise
-        );
-        assert_eq!(custom.resolution_type, 0);
-        assert_eq!(custom.timer, Some(0.25));
-        params.film_render.grain.v2_profile = "35mm250".into();
-        params.film_render.grain.v2_amount = None;
-        params.film_render.grain.select_custom_grain_v2();
-        assert_eq!(params.film_render.grain.v2_amount, Some(35.0));
-        assert_eq!(
-            params.film_render.grain.v2_mode,
-            super::grain::GrainV2Mode::Analogue
-        );
-        for value in [0.0, 100.0] {
-            params.film_render.grain.v2_amount = Some(value);
+        for (i, name) in spektrafilm_model::grain::v2::PROFILE_NAMES.iter().enumerate() {
+            params.film_render.grain.v2_profile = (*name).into();
+            let expected = spektrafilm_model::grain::v2::GrainV2Params::for_profile(i);
+            let actual = params.film_render.grain.resolved_grain_v2();
+            assert_eq!(actual.amount, expected.amount);
+            assert_eq!(actual.resolution_factor, expected.resolution_factor);
             params.validate().unwrap();
         }
-        for value in [f32::NAN, f32::INFINITY, -0.1, 100.1] {
+        params.film_render.grain.v2_amount = Some(0.0);
+        assert_eq!(params.film_render.grain.resolved_grain_v2().amount, 0.0);
+        let roundtrip: super::RuntimeParams = serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
+        assert_eq!(roundtrip.film_render.grain.resolved_grain_v2().amount, 0.0);
+        for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
             params.film_render.grain.v2_amount = Some(value);
             assert!(params.validate().is_err());
         }
-        params.film_render.grain.v2_resolution_type = 2;
-        assert!(params.validate().is_err());
-        params.film_render.grain.v2_resolution_type = 0;
-        params.film_render.grain.v2_timer = 1.0;
-        assert!(params.validate().is_err());
-        params.film_render.grain.v2_timer = f32::NAN;
-        assert!(params.validate().is_err());
-        params.film_render.grain.v2_timer = 0.0;
         params.film_render.grain.v2_amount = None;
         params.film_render.grain.v2_profile = "unknown".into();
         assert!(params.validate().is_err());
     }
-    #[test]
-    fn legacy_zero_timer_keeps_seed_derived_phase() {
-        let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
-        value["film_render"]["grain"]["v2_timer"] = serde_json::json!(0.0);
-        let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
-        assert_eq!(params.film_render.grain.v2_timer, 0.0);
-        assert_eq!(params.film_render.grain.resolved_grain_v2().timer, None);
-    }
-    #[test]
-    fn v3_engine_and_controls_round_trip() {
-        let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
-        // Spektra stays the default for existing recipes.
-        let default: super::RuntimeParams = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(
-            default.film_render.grain.engine,
-            super::grain::GrainEngine::Spektra
-        );
-        assert_eq!(default.film_render.grain.v3_dye_support_um, 3.5);
-        assert_eq!(default.film_render.grain.v3_event_area_um2, 1.28);
-        assert_eq!(default.film_render.grain.channel_correlation, 0.0);
-        // Recipes saved before the Dye event area and the channel
-        // correlation existed get their defaults.
-        let mut legacy = value.clone();
-        legacy["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("v3_event_area_um2");
-        legacy["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("channel_correlation");
-        let legacy: super::RuntimeParams = serde_json::from_value(legacy).unwrap();
-        assert_eq!(legacy.film_render.grain.v3_event_area_um2, 1.28);
-        assert_eq!(legacy.film_render.grain.channel_correlation, 0.0);
-        value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
-        value["film_render"]["grain"]["v3_dye_support_um"] = serde_json::json!(4.5);
-        value["film_render"]["grain"]["v3_event_area_um2"] = serde_json::json!(0.6);
-        value["film_render"]["grain"]["channel_correlation"] = serde_json::json!(0.35);
-        let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
-        let reparsed: super::RuntimeParams =
-            serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
-        for grain in [&params.film_render.grain, &reparsed.film_render.grain] {
-            assert_eq!(grain.engine, super::grain::GrainEngine::Dye);
-            assert_eq!(grain.v3_dye_support_um, 4.5);
-            assert_eq!(grain.v3_event_area_um2, 0.6);
-            assert_eq!(grain.channel_correlation, 0.35);
-        }
-        assert!(serde_json::from_str::<super::GrainParams>(r#"{"engine":"unknown"}"#).is_err());
-    }
-    #[test]
-    fn v3_controls_must_be_finite_and_positive() {
-        let mut params = super::RuntimeParams::default();
-        params.film_render.grain.engine = super::grain::GrainEngine::Dye;
-        params.validate().unwrap();
-        for value in [0.0, -0.5, f32::NAN, f32::INFINITY] {
-            let mut bad = params.clone();
-            bad.film_render.grain.v3_dye_support_um = value;
-            let error = bad.validate().unwrap_err();
-            assert!(
-                error.contains("film_render.grain.v3_dye_support_um"),
-                "unexpected error for {value}: {error}"
-            );
-            let mut bad = params.clone();
-            bad.film_render.grain.v3_event_area_um2 = f64::from(value);
-            let error = bad.validate().unwrap_err();
-            assert!(
-                error.contains("film_render.grain.v3_event_area_um2"),
-                "unexpected error for {value}: {error}"
-            );
-        }
-        // The channel correlation is bounded by the measured record-coherence
-        // band, so a value the evidence attributes to scanner processing is
-        // rejected rather than stored.
-        for value in [-0.5, 0.4500001, 1.0, f64::NAN, f64::INFINITY] {
-            let mut bad = params.clone();
-            bad.film_render.grain.channel_correlation = value;
-            let error = bad.validate().unwrap_err();
-            assert!(
-                error.contains("film_render.grain.channel_correlation"),
-                "unexpected error for {value}: {error}"
-            );
-        }
-        for value in [0.0, 0.342, 0.45] {
-            let mut ok = params.clone();
-            ok.film_render.grain.channel_correlation = value;
-            ok.validate().unwrap();
-        }
-        // Spektra ignores the controls, but stored values stay validated so a
-        // later switch to Dye cannot render from an invalid recipe.
-        params.film_render.grain.engine = super::grain::GrainEngine::Spektra;
-        params.film_render.grain.v3_event_area_um2 = -1.0;
-        assert!(params.validate().is_err());
-    }
-
-    #[test]
-    fn film_format_validation_and_persistence() {
-        let mut params = super::RuntimeParams::default();
-        assert_eq!(params.camera.film_format_mm, 35.0);
-        for engine in [
-            super::GrainEngine::Spektra,
-            super::GrainEngine::Procedural,
-            super::GrainEngine::Dye,
-        ] {
-            params.film_render.grain.engine = engine;
-            for mm in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-                params.camera.film_format_mm = mm;
-                let error = params.validate().unwrap_err();
-                assert!(error.contains("camera.film_format_mm"), "{error}");
-            }
-            for mm in [8.0, 35.0, 35.5, 120.0, 150.25] {
-                params.camera.film_format_mm = mm;
-                params.validate().unwrap();
-                let saved = serde_json::to_vec(&params).unwrap();
-                let restored: super::RuntimeParams = serde_json::from_slice(&saved).unwrap();
-                restored.validate().unwrap();
-                assert_eq!(restored.camera.film_format_mm, mm);
-                assert_eq!(restored.film_render.grain.engine, engine);
-            }
-        }
-    }
 }
+>>>>>>>> 8accdfff (refactor: organize film effects into feature modules):crates/spektrafilm-core/src/params/mod.rs

@@ -1,31 +1,24 @@
-use super::blur::{self, BlurJob, DispatchJob};
-use super::params::AddScaledParams;
 use super::*;
+use super::blur::{BlurJob, DispatchJob};
 
 /// Pre-built DIR coupler passes — owns scratch buffers, kernel buffers,
 /// and bind groups so they live for the encoder.
 ///
 /// CPU equivalent: `spektrafilm_model::couplers::apply_density_correction`.
-/// Encodes: per-pixel matmul (silver flip + donor Langmuir) → Gaussian
-/// blur of the correction → weighted lerp of the 3-Gaussian exponential
-/// tail → in-place subtract from log_raw with the receiver Langmuir →
-/// re-interpolation of `density_curves_0`.
+/// Encodes per-pixel matmul → two Gaussian blurs of the correction →
+/// weighted lerp via `add_scaled` → in-place subtract from log_raw via
+/// `add_scaled(scale=-1)` → re-interpolation of `density_curves_0`.
+#[cfg(feature = "wgpu-backend")]
 pub(super) struct DirState {
-    _buf_correction: wgpu::Buffer, // raw matmul output (blur source)
-    _buf_gaussian: wgpu::Buffer,   // blur scratch / gaussian_part
-    _buf_mix: wgpu::Buffer,        // weighted blend → subtract source
+    _buf_correction: wgpu::Buffer, // matmul output → tail_part (after blur2)
+    _buf_gaussian: wgpu::Buffer,   // gaussian_part output (after blur1)
+    _buf_mix: wgpu::Buffer,        // weighted lerp output → final correction
     matmul: DispatchJob,
-    /// `None` when the spatial blend is disabled (`diffusion_size_px <= 0`),
-    /// matching the CPU's `if diffusion_size_pixel > 0.0` gate; the matmul
-    /// then writes `buf_mix` directly.
-    blur_gaussian: Option<BlurJob>,
-    lerp_clear: Option<DispatchJob>, // buf_mix = (1-w) * buf_gaussian
-    /// Exponential-tail components in `EXPONENTIAL_GAUSSIAN_FITS` order:
-    /// optional blur into `buf_gaussian`, then the `w * amp` accumulate
-    /// into `buf_mix` (from the pristine `buf_correction` when the
-    /// component σ is non-positive — a degenerate identity blur).
-    tail_ops: Vec<(Option<BlurJob>, DispatchJob)>,
-    subtract: DispatchJob,        // buf_b -= receiver_langmuir?(buf_mix)
+    blur_gaussian: BlurJob,
+    blur_tail: BlurJob,
+    lerp_clear: DispatchJob,      // buf_mix = (1-w) * buf_gaussian
+    lerp_accumulate: DispatchJob, // buf_mix += w * buf_correction (tail_part)
+    subtract: DispatchJob,        // buf_b -= buf_mix
     density_curve_0: DispatchJob, // re-interp density curves
     blur_pipe_h: CachedPipelineRef,
     blur_pipe_v: CachedPipelineRef,
@@ -34,35 +27,17 @@ pub(super) struct DirState {
     _owned: Vec<wgpu::Buffer>,
 }
 
-/// Sanitize an optional Langmuir knee into `(k, mask)` GPU uniforms:
-/// `None` (no Langmuir on this side) and non-finite knees both mean
-/// "linear" — the CPU short-circuits `k.is_infinite()` and the caller
-/// passes `None` when the polarity has no donor/receiver term — so the
-/// channel is masked off and the sanitized `k` keeps the
-/// unconditionally-evaluated saturation term finite.
-fn langmuir_uniforms(k: Option<[f32; 3]>) -> ([f32; 4], [f32; 4]) {
-    let mut k_out = [1.0_f32; 4];
-    let mut mask = [0.0_f32; 4];
-    if let Some(k) = k {
-        for c in 0..3 {
-            if k[c].is_finite() {
-                k_out[c] = k[c];
-                mask[c] = 1.0;
-            }
-        }
-    }
-    (k_out, mask)
-}
-
+#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_dir_state(
-    device: &ObservedDevice,
-    dp: &spektrafilm_backend::DirCouplersGpuParams<'_>,
+    device: &wgpu::Device,
+    dp: &crate::DirCouplersGpuParams<'_>,
     width: u32,
     height: u32,
     buf_a: &wgpu::Buffer,
     buf_b: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> DirState {
+    use wgpu::util::DeviceExt;
     let n_pixels = (width as usize) * (height as usize);
     let img_bytes = (n_pixels * 3 * 4) as u64;
 
@@ -76,19 +51,15 @@ pub(super) fn build_dir_state(
             mapped_at_creation: false,
         })
     };
-    // buf_correction holds the pristine matmul output — every blur reads
-    // it and writes buf_gaussian (reused per component, since each blur
-    // completes before the next starts). buf_mix accumulates the weighted
-    // blend that ultimately gets subtracted from log_raw.
+    // buf_correction holds the matmul output, then is overwritten by the
+    // tail blur (in-place via the V pass of a separable blur — H and V
+    // are separate compute passes so wgpu does NOT see the input/output
+    // as aliasing). buf_gaussian holds the first blur's output.
+    // buf_mix holds the weighted lerp result that ultimately gets
+    // subtracted from log_raw.
     let buf_correction = mk_buf("dir_correction");
     let buf_gaussian = mk_buf("dir_gaussian");
     let buf_mix = mk_buf("dir_mix");
-
-    // CPU gates the whole spatial blend on `diffusion_size_pixel > 0`
-    // (`compute_exposure_correction`); without it the matmul output feeds
-    // the subtract pass directly.
-    let diffuse = dp.diffusion_size_px > 0.0;
-    let matmul_target = if diffuse { &buf_correction } else { &buf_mix };
 
     // ── 1. dir_matmul ─────────────────────────────────────────────────
     let matmul_pipe = backend.cached_pipeline(
@@ -107,24 +78,17 @@ pub(super) fn build_dir_state(
         _pad0: u32,
         _pad1: u32,
         density_max: [f32; 4],
-        donor_k: [f32; 4],
-        donor_ref: [f32; 4],
-        donor_mask: [f32; 4],
         m_row0: [f32; 4],
         m_row1: [f32; 4],
         m_row2: [f32; 4],
     }
     let m = &dp.couplers_matrix_scaled;
-    let (donor_k, donor_mask) = langmuir_uniforms(dp.donor_k);
     let matmul_params = DirMatmulParams {
         n_pixels: n_pixels as u32,
         positive: if dp.is_positive { 1 } else { 0 },
         _pad0: 0,
         _pad1: 0,
         density_max: [dp.density_max[0], dp.density_max[1], dp.density_max[2], 0.0],
-        donor_k,
-        donor_ref: [dp.donor_ref[0], dp.donor_ref[1], dp.donor_ref[2], 0.0],
-        donor_mask,
         m_row0: [m[0][0], m[0][1], m[0][2], 0.0],
         m_row1: [m[1][0], m[1][1], m[1][2], 0.0],
         m_row2: [m[2][0], m[2][1], m[2][2], 0.0],
@@ -148,7 +112,7 @@ pub(super) fn build_dir_state(
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: matmul_target.as_entire_binding(),
+                resource: buf_correction.as_entire_binding(),
             },
         ],
     });
@@ -159,47 +123,149 @@ pub(super) fn build_dir_state(
     };
 
     // ── 2. Two Gaussian blurs of the correction ───────────────────────
+    let blur_layout = &[
+        wgpu::BufferBindingType::Uniform,
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: false },
+    ];
     let blur_pipe_h = backend.cached_pipeline(
         include_str!("../blur/gaussian_blur_h.wgsl"),
-        &blur::BLUR_LAYOUT,
+        blur_layout,
     );
     let blur_pipe_v = backend.cached_pipeline(
         include_str!("../blur/gaussian_blur_v.wgsl"),
-        &blur::BLUR_LAYOUT,
+        blur_layout,
     );
 
-    // Each blur reads `buf_correction` (the matmul output, which stays
-    // pristine — never the blur destination) and uses `buf_a` as the
-    // horizontal mid buffer, free once the matmul has run.
-    let make_blur = |sigma: f32, src: &wgpu::Buffer, out: &wgpu::Buffer, label: &str| -> BlurJob {
-        blur::make_blur_job(
-            backend,
-            sigma,
-            width,
-            height,
-            src,
-            buf_a,
-            out,
-            label,
-            &blur_pipe_h,
-            &blur_pipe_v,
-        )
-    };
-    // Gaussian component of the blend: correction → buf_gaussian. Skipped
-    // entirely (with the rest of the spatial blend) when the CPU gate is
-    // off — `diffuse` is the mirror of `diffusion_size_pixel > 0`.
-    let blur_gaussian = diffuse.then(|| {
-        make_blur(
-            dp.diffusion_size_px,
-            &buf_correction,
-            &buf_gaussian,
-            "dir_blur_gaussian",
-        )
-    });
+    // Blur reads `buf_correction`, uses `buf_a` as mid (free after matmul),
+    // writes to `output`. Two blurs: gaussian → buf_correction (overwrite),
+    // tail → buf_acc. Wait — we can't blur buf_correction in-place because
+    // the V pass reads mid, and our first blur uses buf_a as mid, output to
+    // … hmm we'd need a 3rd buffer or sequential reuse.
+    //
+    // Sequential reuse: blur1 reads buf_correction → writes mid into buf_a
+    // → writes output into buf_acc. Then buf_correction is still untouched
+    // and ready for blur2. Blur2 reads buf_correction → mid into buf_a →
+    // output into… we already wrote buf_acc. Solution: swap roles. The
+    // gaussian part can go into buf_acc, tail into buf_correction
+    // (overwriting the matmul output — fine, we don't need it after both
+    // blurs are done).
+    //
+    // After blur2 buf_acc = gaussian_part, buf_correction = tail_part.
+    // The weighted lerp writes the result into buf_acc (`buf_acc *=
+    // (1-w)` then `buf_acc += w * buf_correction`).
+    let make_blur_job =
+        |sigma: f32, src: &wgpu::Buffer, out: &wgpu::Buffer, label: &str| -> BlurJob {
+            let sigma = sigma.max(0.01);
+            let radius = fir_blur_radius(sigma);
+            let kernel_size = (2 * radius + 1) as usize;
+            let sigma_f64 = sigma as f64;
+            let two_sigma_sq = 2.0 * sigma_f64 * sigma_f64;
+            let r_i32 = radius as i32;
+            let mut kernel = Vec::with_capacity(kernel_size);
+            for k in 0..kernel_size {
+                let x = (k as i32 - r_i32) as f64;
+                kernel.push((-x * x / two_sigma_sq).exp());
+            }
+            let sum: f64 = kernel.iter().sum();
+            let kernel_f32: Vec<f32> = kernel.into_iter().map(|v| (v / sum) as f32).collect();
 
-    // ── 3. Weighted blend via add_scaled passes ───────────────────────
+            let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("dir_blur_kernel_{label}")),
+                contents: bytemuck::cast_slice(&kernel_f32),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct BlurParams {
+                width: u32,
+                height: u32,
+                radius: u32,
+                _pad: u32,
+            }
+            let params = BlurParams {
+                width,
+                height,
+                radius,
+                _pad: 0,
+            };
+            let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("dir_blur_params_{label}")),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("dir_blur_h_{label}")),
+                layout: &blur_pipe_h.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: src.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: kernel_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: buf_a.as_entire_binding(),
+                    }, // mid
+                ],
+            });
+            let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("dir_blur_v_{label}")),
+                layout: &blur_pipe_v.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buf_a.as_entire_binding(),
+                    }, // mid
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: kernel_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: out.as_entire_binding(),
+                    },
+                ],
+            });
+            BlurJob {
+                _kernel_buf: kernel_buf,
+                _params_buf: params_buf,
+                bg_h,
+                bg_v,
+            }
+        };
+    // Blur1: correction → buf_gaussian (gaussian_part)
+    let blur_gaussian = make_blur_job(
+        dp.diffusion_size_px,
+        &buf_correction,
+        &buf_gaussian,
+        "gaussian",
+    );
+    // Blur2: correction → correction (in place; H writes mid via buf_a,
+    // V reads mid and writes buf_correction in a separate compute pass
+    // so wgpu does not see input/output aliasing).
+    let blur_tail = make_blur_job(
+        dp.diffusion_tail_px,
+        &buf_correction,
+        &buf_correction,
+        "tail",
+    );
+
+    // ── 3. Weighted lerp via two add_scaled passes ────────────────────
     // buf_mix = (1-w) * buf_gaussian   (clear_first writes scale*src into dst)
-    // buf_mix += (w * amp_k) * tail_k  (one accumulate per fitted component)
+    // buf_mix += w * buf_correction  (tail_part)
     let add_scaled_pipe = backend.cached_pipeline(
         include_str!("../halation/add_scaled.wgsl"),
         &[
@@ -208,145 +274,100 @@ pub(super) fn build_dir_state(
             wgpu::BufferBindingType::Storage { read_only: false },
         ],
     );
-    let w = dp.diffusion_tail_weight;
-    let lerp_clear = diffuse.then(|| {
-        let lerp_clear_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("dir_lerp_clear_params"),
-            contents: bytemuck::bytes_of(&AddScaledParams {
-                n_pixels: n_pixels as u32,
-                scale: 1.0 - w,
-                clear_first: 1,
-                _pad: 0,
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        // src = buf_gaussian (read), dst = buf_mix (write). With clear_first=1
-        // this is `buf_mix = (1-w) * buf_gaussian`. Different buffers, no
-        // aliasing.
-        let lerp_clear_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("dir_lerp_clear_bg"),
-            layout: &add_scaled_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: lerp_clear_params.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_gaussian.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: buf_mix.as_entire_binding(),
-                },
-            ],
-        });
-        DispatchJob {
-            _params_buf: lerp_clear_params,
-            pipeline: add_scaled_pipe.clone(),
-            bg: lerp_clear_bg,
-        }
-    });
-
-    // Exponential tail: the CPU's `exponential_filter_channel` is a fixed
-    // 3-Gaussian mixture (Python `_EXPONENTIAL_GAUSSIAN_FITS[3]`), so the
-    // GPU reproduces it as one blur plus one weighted accumulate per
-    // component. A non-positive component σ degrades to an identity blur
-    // on the CPU (`gaussian_blur_channel` clones its input), so the
-    // accumulate reads the pristine correction directly instead of
-    // jumping through the blur.
-    let mut tail_ops: Vec<(Option<BlurJob>, DispatchJob)> = Vec::new();
-    if diffuse {
-        for (amp, ratio) in spektrafilm_math::gaussian::EXPONENTIAL_GAUSSIAN_FITS {
-            let sigma = ratio as f32 * dp.diffusion_tail_px;
-            let blur = (sigma > 0.0)
-                .then(|| make_blur(sigma, &buf_correction, &buf_gaussian, "dir_blur_tail"));
-            let src = if blur.is_some() {
-                &buf_gaussian
-            } else {
-                &buf_correction
-            };
-            let accum_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("dir_tail_acc_params"),
-                contents: bytemuck::bytes_of(&AddScaledParams {
-                    n_pixels: n_pixels as u32,
-                    scale: (w as f64 * amp) as f32,
-                    clear_first: 0,
-                    _pad: 0,
-                }),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let accum_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("dir_tail_acc_bg"),
-                layout: &add_scaled_pipe.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: accum_params.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: src.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: buf_mix.as_entire_binding(),
-                    },
-                ],
-            });
-            tail_ops.push((
-                blur,
-                DispatchJob {
-                    _params_buf: accum_params,
-                    pipeline: add_scaled_pipe.clone(),
-                    bg: accum_bg,
-                },
-            ));
-        }
-    }
-
-    // ── 4. Subtract: buf_b -= receiver_langmuir?(buf_mix) ────────────
-    let subtract_pipe = backend.cached_pipeline(
-        include_str!("dir_subtract.wgsl"),
-        &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ],
-    );
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct DirSubtractParams {
+    struct AddScaledParams {
         n_pixels: u32,
-        _pad0: u32,
-        _pad1: u32,
-        _pad2: u32,
-        receiver_k: [f32; 4],
-        receiver_ref: [f32; 4],
-        receiver_mask: [f32; 4],
+        scale: f32,
+        clear_first: u32,
+        _pad: u32,
     }
-    let (receiver_k, receiver_mask) = langmuir_uniforms(dp.receiver_knee);
+    let w = dp.diffusion_tail_weight;
+    let lerp_clear_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("dir_lerp_clear_params"),
+        contents: bytemuck::bytes_of(&AddScaledParams {
+            n_pixels: n_pixels as u32,
+            scale: 1.0 - w,
+            clear_first: 1,
+            _pad: 0,
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    // src = buf_gaussian (read), dst = buf_mix (write). With clear_first=1
+    // this is `buf_mix = (1-w) * buf_gaussian`. Different buffers, no
+    // aliasing.
+    let lerp_clear_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("dir_lerp_clear_bg"),
+        layout: &add_scaled_pipe.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lerp_clear_params.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buf_gaussian.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buf_mix.as_entire_binding(),
+            },
+        ],
+    });
+    let lerp_clear = DispatchJob {
+        _params_buf: lerp_clear_params,
+        pipeline: add_scaled_pipe.clone(),
+        bg: lerp_clear_bg,
+    };
+
+    let lerp_acc_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("dir_lerp_acc_params"),
+        contents: bytemuck::bytes_of(&AddScaledParams {
+            n_pixels: n_pixels as u32,
+            scale: w,
+            clear_first: 0,
+            _pad: 0,
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let lerp_acc_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("dir_lerp_acc_bg"),
+        layout: &add_scaled_pipe.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lerp_acc_params.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buf_correction.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buf_mix.as_entire_binding(),
+            },
+        ],
+    });
+    let lerp_accumulate = DispatchJob {
+        _params_buf: lerp_acc_params,
+        pipeline: add_scaled_pipe.clone(),
+        bg: lerp_acc_bg,
+    };
+
+    // ── 4. Subtract: buf_b -= buf_mix ────────────────────────────────
     let subtract_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("dir_subtract_params"),
-        contents: bytemuck::bytes_of(&DirSubtractParams {
+        contents: bytemuck::bytes_of(&AddScaledParams {
             n_pixels: n_pixels as u32,
-            _pad0: 0,
-            _pad1: 0,
-            _pad2: 0,
-            receiver_k,
-            receiver_ref: [
-                dp.receiver_ref[0],
-                dp.receiver_ref[1],
-                dp.receiver_ref[2],
-                0.0,
-            ],
-            receiver_mask,
+            scale: -1.0,
+            clear_first: 0,
+            _pad: 0,
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let subtract_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("dir_subtract_bg"),
-        layout: &subtract_pipe.layout,
+        layout: &add_scaled_pipe.layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -364,7 +385,7 @@ pub(super) fn build_dir_state(
     });
     let subtract = DispatchJob {
         _params_buf: subtract_params,
-        pipeline: subtract_pipe,
+        pipeline: add_scaled_pipe,
         bg: subtract_bg,
     };
 
@@ -395,15 +416,21 @@ pub(super) fn build_dir_state(
         contents: bytemuck::cast_slice(&curves_f32),
         usage: wgpu::BufferUsages::STORAGE,
     });
+    #[repr(C)]
+    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+    struct DensityParams {
+        width: u32,
+        height: u32,
+        k: u32,
+        uniform_grid: u32,
+        gamma_inv: [f32; 3],
+        _pad: f32,
+    }
     let density_params = DensityParams {
         width,
         height,
         k: dp.log_exposure.len() as u32,
-        uniform_grid: if is_uniform_grid_endpoint(dp.log_exposure) {
-            1
-        } else {
-            0
-        },
+        uniform_grid: if is_uniform_grid_endpoint(dp.log_exposure) { 1 } else { 0 },
         gamma_inv: [(1.0 / dp.gamma_factor) as f32; 3],
         _pad: 0.0,
     };
@@ -455,8 +482,9 @@ pub(super) fn build_dir_state(
         _buf_mix: buf_mix,
         matmul,
         blur_gaussian,
+        blur_tail,
         lerp_clear,
-        tail_ops,
+        lerp_accumulate,
         subtract,
         density_curve_0,
         blur_pipe_h,
@@ -465,14 +493,15 @@ pub(super) fn build_dir_state(
     }
 }
 
+#[cfg(feature = "wgpu-backend")]
 impl DirState {
     pub(super) fn encode_passes(
         &self,
-        encoder: &mut ObservedEncoder,
+        encoder: &mut wgpu::CommandEncoder,
         n_pixels: u32,
         wg_xy: (u32, u32),
     ) {
-        let dispatch_linear = |enc: &mut ObservedEncoder, job: &DispatchJob| {
+        let dispatch_linear = |enc: &mut wgpu::CommandEncoder, job: &DispatchJob| {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("dir_linear"),
                 timestamp_writes: None,
@@ -481,7 +510,7 @@ impl DirState {
             pass.set_bind_group(0, &job.bg, &[]);
             dispatch_linear(&mut pass, n_pixels);
         };
-        let dispatch_blur = |enc: &mut ObservedEncoder, job: &BlurJob| {
+        let dispatch_blur = |enc: &mut wgpu::CommandEncoder, job: &BlurJob| {
             {
                 let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("dir_blur_h"),
@@ -503,160 +532,12 @@ impl DirState {
         };
 
         dispatch_linear(encoder, &self.matmul);
-        if let Some(job) = self.blur_gaussian.as_ref() {
-            dispatch_blur(encoder, job);
-        }
-        if let Some(job) = self.lerp_clear.as_ref() {
-            dispatch_linear(encoder, job); // buf_mix = (1-w) * buf_gaussian
-        }
-        for (blur, accum) in &self.tail_ops {
-            if let Some(blur) = blur.as_ref() {
-                dispatch_blur(encoder, blur); // buf_correction → buf_gaussian
-            }
-            dispatch_linear(encoder, accum); // buf_mix += w*amp_k * component
-        }
-        dispatch_linear(encoder, &self.subtract); // buf_b -= receiver?(buf_mix)
+        dispatch_blur(encoder, &self.blur_gaussian); // buf_correction → buf_acc
+        dispatch_blur(encoder, &self.blur_tail); // buf_correction → buf_correction (overwrite)
+        dispatch_linear(encoder, &self.lerp_clear); // buf_acc *= (1-w)
+        dispatch_linear(encoder, &self.lerp_accumulate); // buf_acc += w * buf_correction
+        dispatch_linear(encoder, &self.subtract); // buf_b -= buf_acc
         dispatch_linear(encoder, &self.density_curve_0); // buf_b → buf_a (corrected)
     }
 }
 
-#[cfg(all(test, feature = "wgpu-backend"))]
-mod tests {
-    use super::*;
-
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct MatmulParams {
-        n_pixels: u32,
-        positive: u32,
-        _pad0: u32,
-        _pad1: u32,
-        density_max: [f32; 4],
-        donor_k: [f32; 4],
-        donor_ref: [f32; 4],
-        donor_mask: [f32; 4],
-        m_row0: [f32; 4],
-        m_row1: [f32; 4],
-        m_row2: [f32; 4],
-    }
-
-    #[test]
-    fn dir_matmul_shader_matches_reference_math() {
-        let b = crate::test_support::adapter();
-        let density: Vec<f32> = vec![2.511903, 2.7011967, 0.26266688, 0.34336, 0.07575, 0.05212];
-        let params = MatmulParams {
-            n_pixels: 2,
-            positive: 1,
-            _pad0: 0,
-            _pad1: 0,
-            density_max: [2.511998, 2.8034478, 2.810454, 0.0],
-            donor_k: [1.0; 4],
-            donor_ref: [0.0; 4],
-            donor_mask: [0.0; 4],
-            m_row0: [0.341, 0.355, 0.305, 0.0],
-            m_row1: [0.154, 0.324, 0.358, 0.0],
-            m_row2: [0.171, 0.225, 0.273, 0.0],
-        };
-        let input = b.pipe.upload_image(&density, 2);
-        let out = b.pipe.dispatch_device(
-            include_str!("dir_matmul.wgsl"),
-            &input,
-            &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
-            2,
-            "dir_matmul_test",
-        );
-        let got = b.pipe.readback_image(&out);
-        // silver = dmax - density; correction = M^T silver.
-        let dmax = [2.511998f32, 2.8034478, 2.810454];
-        let mut expected = Vec::new();
-        for px in 0..2 {
-            let s: Vec<f32> = (0..3).map(|c| dmax[c] - density[px * 3 + c]).collect();
-            for m in 0..3 {
-                expected.push(
-                    s[0] * [0.341, 0.355, 0.305][m]
-                        + s[1] * [0.154, 0.324, 0.358][m]
-                        + s[2] * [0.171, 0.225, 0.273][m],
-                );
-            }
-        }
-        eprintln!("matmul got={got:?} expected={expected:?}");
-        for (g, e) in got.iter().zip(expected.iter()) {
-            assert!((g - e).abs() < 1e-5, "got {got:?} expected {expected:?}");
-        }
-    }
-
-    #[test]
-    fn langmuir_uniforms_masks_absent_and_non_finite_knees() {
-        // No knee on this side (the caller passes `None`): the shader must
-        // not apply the saturation, so every channel is masked off.
-        let (k, mask) = langmuir_uniforms(None);
-        assert_eq!(mask, [0.0, 0.0, 0.0, 0.0]);
-        assert_eq!(k, [1.0, 1.0, 1.0, 1.0]);
-        // `K = inf` means "linear" on the CPU (`k.is_infinite()`); the
-        // channel is masked off and the uniform stays finite so the
-        // unconditionally-evaluated ratio cannot divide by infinity.
-        let (k, mask) = langmuir_uniforms(Some([f64::INFINITY as f32, 1.5, 3.0]));
-        assert_eq!(mask, [0.0, 1.0, 1.0, 0.0]);
-        assert_eq!(k, [1.0, 1.5, 3.0, 1.0]);
-        let (k, mask) = langmuir_uniforms(Some([0.0, 2.0, 4.0]));
-        assert_eq!(mask, [1.0, 1.0, 1.0, 0.0]);
-        assert_eq!(k, [0.0, 2.0, 4.0, 1.0]);
-    }
-
-    #[test]
-    fn dir_matmul_shader_applies_donor_langmuir_on_masked_channels() {
-        let b = crate::test_support::adapter();
-        // Negative film at the acceptor, where the donor langmuir runs.
-        let density: Vec<f32> = vec![0.4, 1.6, 2.4, 0.9, 0.2, 1.1];
-        let donor_k = [1.0f32, 2.0, 1.0, 1.0];
-        let donor_ref = [0.5f32, 1.0, 0.5, 0.0];
-        // Channel 1 sits behind a non-finite knee: linear there.
-        let donor_mask = [1.0f32, 0.0, 1.0, 0.0];
-        let params = MatmulParams {
-            n_pixels: 2,
-            positive: 0,
-            _pad0: 0,
-            _pad1: 0,
-            density_max: [1.0; 4],
-            donor_k,
-            donor_ref,
-            donor_mask,
-            m_row0: [0.341, 0.355, 0.305, 0.0],
-            m_row1: [0.154, 0.324, 0.358, 0.0],
-            m_row2: [0.171, 0.225, 0.273, 0.0],
-        };
-        let input = b.pipe.upload_image(&density, 2);
-        let out = b.pipe.dispatch_device(
-            include_str!("dir_matmul.wgsl"),
-            &input,
-            &[GpuBuffer::uniform(bytemuck::bytes_of(&params))],
-            2,
-            "dir_matmul_donor_test",
-        );
-        let got = b.pipe.readback_image(&out);
-        let mut expected = Vec::new();
-        for px in 0..2 {
-            // silver = density, then g(v) = v*(k+ref)/(k+v) per masked channel.
-            let s: Vec<f32> = (0..3)
-                .map(|c| {
-                    let v = density[px * 3 + c];
-                    if donor_mask[c] > 0.5 {
-                        v * (donor_k[c] + donor_ref[c]) / (donor_k[c] + v)
-                    } else {
-                        v
-                    }
-                })
-                .collect();
-            for m in 0..3 {
-                expected.push(
-                    s[0] * [0.341, 0.355, 0.305][m]
-                        + s[1] * [0.154, 0.324, 0.358][m]
-                        + s[2] * [0.171, 0.225, 0.273][m],
-                );
-            }
-        }
-        for (g, e) in got.iter().zip(expected.iter()) {
-            assert!((g - e).abs() < 1e-5, "got {got:?} expected {expected:?}");
-        }
-    }
-}

@@ -1,9 +1,8 @@
-// Minimal interactive preview for spektrafilm.
+// Interactive spektrafilm preview and export GUI.
 //
-// Loads an image, exposes the most impactful runtime parameters as
-// egui controls, and re-renders the full GPU-resident pipeline whenever
-// a control changes. The output texture is uploaded to egui once per
-// render; the panel scales it to fit.
+// The egui shell follows the pinned Python 0.3.4 workflow: a tabbed sidebar
+// groups the main, film, print, advanced and configuration controls, while
+// the central viewer owns the input/output/paper-back presentation.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,12 +19,20 @@ use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
+mod panels;
 mod state;
 mod controls;
 mod display;
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
 const IN_FLIGHT_REPAINT: Duration = Duration::from_millis(16);
+const IMAGE_FILE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "tif", "tiff", "exr",
+    // Keep this list in lockstep with image_io::is_raw.
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef",
+    "srw", "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef", "kdc", "ari", "bay", "dcr",
+    "drf", "erf", "fff", "k25", "mos", "ptx",
+];
 
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt()
@@ -55,7 +62,7 @@ fn main() -> eframe::Result<()> {
     let backend: Arc<dyn ComputeBackend> = Arc::from(backend);
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1460.0, 980.0]),
         renderer: gui_renderer(),
         // egui's default device descriptor hardcodes
         // `max_texture_dimension_2d: 8192`, so uploading the preview of an
@@ -182,7 +189,7 @@ fn gui_renderer() -> eframe::Renderer {
                 eframe::Renderer::Wgpu
             } else {
                 // Keep the UI compositor away from wgpu/D3D12 by default on
-                // Windows/Linux; CUDA/WGSL compute backends are selected separately.
+                // Windows/Linux; the WGPU compute backend is selected separately.
                 eframe::Renderer::Glow
             }
         }
@@ -198,6 +205,30 @@ struct ProfileEntry {
     stock: String,
     display: String,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum GuiTab {
+    #[default]
+    Main,
+    Film,
+    Print,
+    Advanced,
+    Config,
+}
+
+impl GuiTab {
+    const ALL: [Self; 5] = [Self::Main, Self::Film, Self::Print, Self::Advanced, Self::Config];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Main => "MAIN",
+            Self::Film => "FILM",
+            Self::Print => "PRINT",
+            Self::Advanced => "ADVANCED",
+            Self::Config => "CONFIG",
+        }
+    }
+}
+
 
 struct App {
     backend: Arc<dyn ComputeBackend>,
@@ -217,14 +248,22 @@ struct App {
     gui_state: state::GuiState,
     force_preview: bool,
     full_scan_requested: bool,
+    /// Original correction switches captured while Scan-for-print is active.
+    /// This transient workflow state is deliberately excluded from persistence.
+    scan_for_print_snapshot: Option<(bool, bool, bool)>,
     image_path: Option<PathBuf>,
     image: Option<Arc<ImageBuf>>,
+    raw_lens_info: Option<String>,
+    /// Number of quarter turns applied to the in-memory input relative to the
+    /// file on disk. Export uses the rotated buffer when this is non-zero.
+    input_rotation: i32,
     source_metadata: Option<ImageMetadata>,
     save_depth: BitDepth,
     /// Last rendered pipeline output (post sRGB encode + clip). Retained
     /// so the Save button can write it without re-running the pipeline.
     output_image: Option<ImageBuf>,
     viewer: display::Viewer,
+    gui_tab: GuiTab,
     output_color_space: String,
     output_cctf_encoding: bool,
     pipeline_cache_key: Option<String>,
@@ -363,12 +402,16 @@ impl App {
             gui_state,
             force_preview: false,
             full_scan_requested: false,
+            scan_for_print_snapshot: None,
             image_path: None,
+            input_rotation: 0,
             image: None,
+            raw_lens_info: None,
             source_metadata: None,
             save_depth,
             output_image: None,
             viewer: display::Viewer::new(),
+            gui_tab: GuiTab::default(),
             output_color_space: "sRGB".into(),
             output_cctf_encoding: true,
             pipeline_cache_key: None,
@@ -421,6 +464,8 @@ impl App {
         self.params = params;
         self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
         self.gui_state = state;
+        self.scan_for_print_snapshot = None;
+        self.raw_lens_info = None;
         self.pipeline_cache_key = None;
         self.pipeline_cache = None;
         self.dirty = true;
@@ -432,13 +477,13 @@ impl App {
 
     fn refresh_viewing_artifacts(&mut self) {
         if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding) {
+            match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
                 Ok(raster) => self.viewer.replace_input_display(raster),
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
         }
         if let Some(output) = self.output_image.as_ref() {
-            match display::output_display_raster(output,&self.output_color_space,self.output_cctf_encoding,self.viewer.settings.use_display_transform,self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new)) {
+            match display::output_display_raster(output,&self.output_color_space,self.output_cctf_encoding,self.viewer.settings.use_display_transform,self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new),self.params.settings.preview_max_size as usize) {
                 Ok((raster,status)) => { self.viewer.replace_output_display(raster); self.viewer.transform_status=status; }
                 Err(e) => self.status = format!("Viewer display error: {e}"),
             }
@@ -469,8 +514,46 @@ impl App {
                 let result = state::reset_factory().and_then(|s|self.apply_state(s));
                 self.status = match result { Ok(()) => "Restored factory default GUI state".into(), Err(e) => format!("Factory reset error: {e:#}") };
             }
-            if ui.button("Preview").clicked() { self.dirty = true; self.force_preview = true; self.full_scan_requested = false; }
-            if ui.button("Scan").clicked() { self.dirty = true; self.force_preview = true; self.full_scan_requested = true; }
+        });
+    }
+
+    fn toggle_scan_for_print(&mut self) {
+        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
+            self.params.scanner.white_correction = white;
+            self.params.scanner.black_correction = black;
+            self.params.print_render.glare.active = glare;
+        } else {
+            self.scan_for_print_snapshot = Some((
+                self.params.scanner.white_correction,
+                self.params.scanner.black_correction,
+                self.params.print_render.glare.active,
+            ));
+            self.params.scanner.white_correction = true;
+            self.params.scanner.black_correction = true;
+            self.params.print_render.glare.active = false;
+        }
+        self.pipeline_cache_key = None;
+        self.pipeline_cache = None;
+        self.dirty = true;
+        self.force_preview = true;
+    }
+
+    fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let scan_label = if self.scan_for_print_snapshot.is_some() { "Scan-for-print: ON" } else { "Scan-for-print" };
+            if ui.button(scan_label).clicked() {
+                self.toggle_scan_for_print();
+            }
+            if ui.button("Preview").clicked() {
+                self.dirty = true;
+                self.force_preview = true;
+                self.full_scan_requested = false;
+            }
+            if ui.button("Scan").clicked() {
+                self.dirty = true;
+                self.force_preview = true;
+                self.full_scan_requested = true;
+            }
         });
     }
 
@@ -495,7 +578,8 @@ impl App {
         params.settings.preview_mode = preview;
         let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
         let paper = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
-        let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir);
+        let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
+            .map_err(anyhow::Error::msg)?;
         Ok(spektrafilm_core::params_builder::digest_params(params, &film, &paper, Some(&database), false))
     }
 
@@ -504,9 +588,11 @@ impl App {
             let params = self.current_state()?.runtime_params()?;
             let film = profile::load_profile_by_name(&self.data_dir,&self.film_name)?;
             let paper = profile::load_profile_by_name(&self.data_dir,&self.print_name)?;
-            let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir);
+            let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
+                .map_err(anyhow::Error::msg)?;
             self.params = spektrafilm_core::params_builder::digest_params(params,&film,&paper,Some(&database),true);
             self.params.io.scan_film = film.is_positive();
+            self.scan_for_print_snapshot = None;
             self.pipeline_cache_key = None;
             self.pipeline_cache = None;
             Ok(())
@@ -517,6 +603,7 @@ impl App {
     fn load_image_from_path(&mut self, path: &Path) {
         let t = Instant::now();
         let raw = image_io::is_raw(path);
+        let mut raw_lens_info = None;
         let loaded = if raw {
             let settings = &self.gui_state.sections["load_raw"];
             let options = spektrafilm_raw::RawOptions {
@@ -530,8 +617,9 @@ impl App {
                 tint: settings["tint"].as_f64(),
                 lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
             };
-            spektrafilm_raw::load(path, &options).map(|result| LoadedImage {
-                image: result.image, metadata: image_io::read_metadata(path),
+            spektrafilm_raw::load(path, &options).map(|result| {
+                raw_lens_info = Some(result.lens_info);
+                LoadedImage { image: result.image, metadata: image_io::read_metadata(path) }
             }).map_err(anyhow::Error::msg)
         } else { image_io::load(path).map_err(anyhow::Error::from) };
         match loaded {
@@ -541,6 +629,7 @@ impl App {
                     self.params.io.input_cctf_decoding = false;
                 }
                 self.source_metadata = metadata;
+                self.input_rotation = 0;
                 self.status = format!(
                     "Loaded {} × {} ({:.1} MP) in {:.0} ms",
                     img.width,
@@ -548,9 +637,16 @@ impl App {
                     (img.pixel_count() as f64 / 1e6),
                     t.elapsed().as_secs_f32() * 1000.0
                 );
+                self.raw_lens_info = raw_lens_info;
+                if raw {
+                    match self.raw_lens_info.as_deref() {
+                        Some(info) if !info.is_empty() => self.status.push_str(&format!("; Lens correction applied ({info})")),
+                        _ => self.status.push_str("; Lens correction not applied"),
+                    }
+                }
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.image = Some(Arc::new(img));
-                match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding) {
+                match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
                     Ok(raster) => self.viewer.set_input(raster,[self.image.as_ref().unwrap().width as usize,self.image.as_ref().unwrap().height as usize]),
                     Err(e) => self.status = format!("Viewer input error: {e}"),
                 }
@@ -564,6 +660,38 @@ impl App {
         }
     }
 
+    fn rotate_input_image(&mut self, clockwise: bool) {
+        let Some(image) = self.image.as_ref() else {
+            self.status = "Load an image before rotating.".into();
+            return;
+        };
+        let quarter_turns = if clockwise { -1 } else { 1 };
+        let rotated = image.rotated_quarter_turns(quarter_turns);
+        self.image = Some(Arc::new(rotated));
+        self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
+        self.output_image = None;
+        if let Some(image) = self.image.as_ref() {
+            match display::input_display_raster(image, &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
+                Ok(raster) => self.viewer.set_input(raster, [image.width as usize, image.height as usize]),
+                Err(e) => self.status = format!("Viewer input error: {e}"),
+            }
+        }
+        self.dirty = true;
+        self.force_preview = true;
+        self.status = format!(
+            "Rotated input {}°",
+            self.input_rotation as i32 * 90
+        );
+    }
+
+    fn rotate_input_image_clockwise(&mut self) {
+        self.rotate_input_image(true);
+    }
+
+    fn rotate_input_image_counterclockwise(&mut self) {
+        self.rotate_input_image(false);
+    }
+
     fn preview_pipeline(
         &mut self,
         film_name: &str,
@@ -575,7 +703,7 @@ impl App {
         if self.pipeline_cache_key.as_deref() == Some(key.as_str())
             && let Some(pipeline) = self.pipeline_cache.as_ref()
         {
-            return Ok((pipeline.clone().with_params(params.clone()), t.elapsed().as_secs_f32() * 1000.0));
+            return Ok((pipeline.clone().with_params(params.clone())?, t.elapsed().as_secs_f32() * 1000.0));
         }
 
         let mut film = profile::load_profile_by_name(&self.data_dir, film_name)
@@ -652,12 +780,12 @@ impl App {
                         spektrafilm_core::params_builder::resize_for_preview(&image, params.settings.preview_max_size)
                     } else { (*image).clone() };
                     let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
-                    let pipeline = pipeline_template.with_params(params);
+                    let pipeline = pipeline_template.with_params(params)?;
                     let t = Instant::now();
                     let output = pipeline.process(working_image, backend.as_ref())?;
                     let render_ms = t.elapsed().as_secs_f32() * 1000.0;
                     let t_preview = Instant::now();
-                    let (preview, display_status) = display::output_display_raster(&output,&pipeline.params.io.output_color_space,pipeline.params.io.output_cctf_encoding,display_enabled,display_profile.as_deref())?;
+                    let (preview, display_status) = display::output_display_raster(&output,&pipeline.params.io.output_color_space,pipeline.params.io.output_cctf_encoding,display_enabled,display_profile.as_deref(),pipeline.params.settings.preview_max_size as usize)?;
                     let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                     let worker_total_ms = t_total.elapsed().as_secs_f32() * 1000.0;
                     Ok(RenderResult {
@@ -861,6 +989,10 @@ impl App {
         let data_dir = self.data_dir.clone();
         let save_depth = self.save_depth;
         let export_state = self.gui_state.sections.clone();
+        let rotated_input = (self.input_rotation != 0).then(|| (
+            Arc::clone(self.image.as_ref().expect("export requires loaded image")),
+            self.source_metadata.clone(),
+        ));
         let (tx, rx) = mpsc::channel();
         let ctx_for_worker = ctx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -869,9 +1001,27 @@ impl App {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-export".into())
             .spawn(move || {
-                let res = run_f64_export(
+                let res = (|| -> Result<_> {
+                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
+                    let rotated_input_guard = if let Some((image, metadata)) = rotated_input {
+                        let nanos = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+                        let guard = TempPath(std::env::temp_dir().join(format!(
+                            "spektrafilm-export-input-{}-{nanos}.tif", std::process::id()
+                        )), None);
+                        image_io::save(&guard.0, &image, SaveOptions {
+                            depth: BitDepth::ThirtyTwo,
+                            color_space: &params.io.input_color_space,
+                            cctf_encoding: params.io.input_cctf_decoding,
+                        }, metadata.as_ref())?;
+                        Some(guard)
+                    } else { None };
+                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
+                    let input_for_export = rotated_input_guard.as_ref()
+                        .map(|guard| guard.0.as_path()).unwrap_or(&input_path);
+                    run_f64_export(
                     &cli_path,
-                    &input_path,
+                    input_for_export,
                     &out_path,
                     &film,
                     &paper,
@@ -880,7 +1030,8 @@ impl App {
                     save_depth,
                     &export_state,
                     &cancel_for_worker,
-                );
+                )
+                })();
                 let name = out_path
                     .file_name()
                     .and_then(|s| s.to_str())
@@ -1094,11 +1245,14 @@ impl App {
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.heading("spektrafilm");
-        ui.add_space(6.0);
-        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding);
+        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size);
         self.state_toolbar(ui);
-        let changes = controls::show(ui, &mut self.params, &mut self.gui_state.sections);
+        let changes = controls::show(
+            ui,
+            &mut self.params,
+            &mut self.gui_state.sections,
+            self.gui_tab.label(),
+        );
         if changes.runtime_changed {
             self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
             self.dirty = true;
@@ -1114,18 +1268,14 @@ impl App {
             if let Some(path) = self.image_path.clone() { self.load_image_from_path(&path); }
         }
 
+        if self.gui_tab == GuiTab::Main {
         // ── File ────────────────────────────────────────────────────────
         ui.horizontal(|ui| {
             if ui.button("Open…").clicked() {
                 if let Some(path) = self.file_dialog("load")
                     .add_filter(
                         "Image",
-                        &[
-                            "jpg", "jpeg", "png", "tif", "tiff", "exr", // standard
-                            "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf",
-                            "rw2", "pef", "srw", "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef",
-                            "kdc",
-                        ],
+                        IMAGE_FILE_EXTENSIONS,
                     )
                     .pick_file()
                 {
@@ -1183,6 +1333,42 @@ impl App {
             );
         }
         ui.add_space(4.0);
+
+        egui::CollapsingHeader::new("Input image")
+            .default_open(false)
+            .show(ui, |ui| {
+                let mut changed = false;
+                egui::ComboBox::from_label("Input colour space")
+                    .selected_text(self.params.io.input_color_space.clone())
+                    .show_ui(ui, |ui| {
+                        for opt in [
+                            "sRGB",
+                            "ProPhoto RGB",
+                            "ITU-R BT.2020",
+                            "ACES2065-1",
+                            "Adobe RGB (1998)",
+                            "Display P3",
+                            "DCI-P3",
+                        ] {
+                            changed |= ui
+                                .selectable_value(
+                                    &mut self.params.io.input_color_space,
+                                    opt.to_string(),
+                                    opt,
+                                )
+                                .changed();
+                        }
+                    });
+                changed |= ui
+                    .checkbox(
+                        &mut self.params.io.input_cctf_decoding,
+                        "Decode input transfer function",
+                    )
+                    .changed();
+                if changed {
+                    self.dirty = true;
+                }
+            });
 
         // ── Profiles ────────────────────────────────────────────────────
         egui::CollapsingHeader::new("Profiles")
@@ -1325,215 +1511,26 @@ impl App {
                 }
             });
 
-        // ── Halation ────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Halation")
-            .default_open(true)
-            .show(ui, |ui| {
-                let h = &mut self.params.film_render.halation;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut h.active, "Active").changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.halation_amount, 0.0..=3.0)
-                            .text("Halation amount"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.halation_spatial_scale, 0.1..=5.0)
-                            .text("Halation scale"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut h.scatter_amount, 0.0..=3.0).text("Scatter amount"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.scatter_spatial_scale, 0.1..=5.0)
-                            .text("Scatter scale"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut h.halation_n_bounces, 1..=5).text("Bounces"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.halation_bounce_decay, 0.0..=1.0)
-                            .text("Bounce decay"),
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(&mut h.halation_renormalize, "Renormalize")
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── DIR couplers ────────────────────────────────────────────────
-        egui::CollapsingHeader::new("DIR couplers")
-            .default_open(true)
-            .show(ui, |ui| {
-                let d = &mut self.params.film_render.dir_couplers;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut d.active, "Active").changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut d.amount, 0.0..=2.0).text("Amount"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut d.diffusion_size_um, 0.0..=100.0)
-                            .text("Diffusion size (µm)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut d.diffusion_tail_um, 0.0..=400.0)
-                            .text("Diffusion tail (µm)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut d.diffusion_tail_weight, 0.0..=1.0)
-                            .text("Tail weight"),
-                    )
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Diffusion filter (lens) ─────────────────────────────────────
-        egui::CollapsingHeader::new("Diffusion filter (lens)")
-            .default_open(true)
-            .show(ui, |ui| {
-                let df = &mut self.params.camera.diffusion_filter;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut df.active, "Active").changed();
-                egui::ComboBox::from_label("Family")
-                    .selected_text(df.filter_family.clone())
-                    .show_ui(ui, |ui| {
-                        for fam in ["black_pro_mist", "glimmerglass", "pro_mist", "cinebloom"] {
-                            changed |= ui
-                                .selectable_value(&mut df.filter_family, fam.to_string(), fam)
-                                .changed();
-                        }
-                    });
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.strength, 0.0..=2.0).text("Strength"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.spatial_scale, 0.1..=3.0).text("Spatial scale"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.halo_warmth, -1.5..=1.5).text("Halo warmth"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut df.core_intensity, 0.0..=2.0).text("Core intensity"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut df.halo_intensity, 0.0..=2.0).text("Halo intensity"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut df.bloom_intensity, 0.0..=2.0)
-                            .text("Bloom intensity"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.halo_size, 0.1..=3.0).text("Halo size"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.bloom_size, 0.1..=3.0).text("Bloom size"))
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Grain ───────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Grain")
-            .default_open(true)
-            .show(ui, |ui| {
-                let g = &mut self.params.film_render.grain;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut g.active, "Active").changed();
-                changed |= ui
-                    .checkbox(&mut g.sublayers_active, "Layered sublayer grain")
-                    .on_hover_text(
-                        "Split the composite density into the emulsion's sublayers and grain \
-                         each with its own particle field, dye-cloud blur and micro-structure \
-                         (the Python 0.3.4 default). Off = single composite-density sampler.",
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut g.particle_area_um2, 0.05..=1.0)
-                            .text("Particle area (µm²)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut g.blur, 0.0..=3.0).text("Post-blur σ"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut g.blur_dye_clouds_um, 0.0..=10.0)
-                            .text("Dye-cloud blur (µm)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut g.n_sub_layers, 1..=4).text("Sub-layers"))
-                    .on_hover_text(
-                        "Composite-sampler sub-layer count (layered grain always uses the \
-                         profile's 3 emulsion sublayers).",
-                    )
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Glare ───────────────────────────────────────────────────────
-        // Print-paper viewing glare only — upstream 0.3.4 disables glare
-        // entirely for direct-film scans (`glare = None`), so the panel is
-        // inert in scan-film mode; disable it and say why rather than let
-        // it silently affect nothing.
-        egui::CollapsingHeader::new("Glare")
-            .default_open(false)
-            .show(ui, |ui| {
-                if self.params.io.scan_film {
-                    ui.label(
-                        egui::RichText::new(
-                            "Direct film scan — viewing glare is disabled (print-only effect).",
-                        )
-                        .italics()
-                        .small(),
-                    );
-                }
-                let scan_film = self.params.io.scan_film;
-                let g = &mut self.params.print_render.glare;
-                let mut changed = false;
-                ui.add_enabled_ui(!scan_film, |ui| {
-                    changed |= ui.checkbox(&mut g.active, "Active").changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut g.percent, 0.0..=0.2).text("Percent"))
-                        .changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut g.roughness, 0.0..=2.0).text("Roughness"))
-                        .changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut g.blur, 0.0..=5.0).text("Blur σ (px)"))
-                        .changed();
-                });
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
+        }
+        if self.gui_tab == GuiTab::Film {
+        if panels::halation::show(ui, &mut self.params.film_render.halation) {
+            self.dirty = true;
+        }
+        if panels::couplers::show(ui, &mut self.params.film_render.dir_couplers) {
+            self.dirty = true;
+        }
+        if panels::diffusion::show(ui, &mut self.params.camera.diffusion_filter) {
+            self.dirty = true;
+        }
+        if panels::grain::show(ui, &mut self.params.film_render.grain) {
+            self.dirty = true;
+        }
+        }
+        if self.gui_tab == GuiTab::Print {
+            let scan_film = self.params.io.scan_film;
+            if panels::glare::show(ui, &mut self.params.print_render.glare, scan_film) {
+                self.dirty = true;
+            }
         // ── Print curves (s023 morph) ───────────────────────────────────
         egui::CollapsingHeader::new("Print curves")
             .default_open(false)
@@ -1586,6 +1583,8 @@ impl App {
                 }
             });
 
+        }
+        if self.gui_tab == GuiTab::Main {
         // ── Scanner ─────────────────────────────────────────────────────
         egui::CollapsingHeader::new("Scanner")
             .default_open(false)
@@ -1626,6 +1625,8 @@ impl App {
                 }
             });
 
+        }
+        if self.gui_tab == GuiTab::Advanced {
         // ── Color management ────────────────────────────────────────────
         egui::CollapsingHeader::new("Color management")
             .default_open(false)
@@ -1639,17 +1640,6 @@ impl App {
                             changed |= ui.selectable_value(algo, opt.to_string(), opt).changed();
                         }
                     });
-                for (label, space) in [
-                    ("Input colour space", &mut self.params.io.input_color_space),
-                    ("Output colour space", &mut self.params.io.output_color_space),
-                ] {
-                    egui::ComboBox::from_label(label).selected_text(space.clone()).show_ui(ui, |ui| {
-                        for opt in ["sRGB", "ProPhoto RGB", "ITU-R BT.2020", "ACES2065-1", "Adobe RGB (1998)", "Display P3", "DCI-P3"] {
-                            changed |= ui.selectable_value(space, opt.to_string(), opt).changed();
-                        }
-                    });
-                }
-                changed |= ui.checkbox(&mut self.params.io.input_cctf_decoding, "Decode input transfer function").changed();
                 changed |= ui.checkbox(&mut self.params.io.input_gamut_compress.active, "Compress input gamut").changed();
                 // Input gamut compression — baked into the tc_lut at build time,
                 // so changing it rebuilds the LUT on the next pass. "xy" is the
@@ -1686,6 +1676,8 @@ impl App {
                 }
             });
 
+        }
+        if self.gui_tab == GuiTab::Main {
         // ── Enlarger ────────────────────────────────────────────────────
         egui::CollapsingHeader::new("Enlarger")
             .default_open(false)
@@ -1746,6 +1738,27 @@ impl App {
             .show(ui, |ui| {
                 let io = &mut self.params.io;
                 let mut changed = false;
+                egui::ComboBox::from_label("Output colour space")
+                    .selected_text(io.output_color_space.clone())
+                    .show_ui(ui, |ui| {
+                        for opt in [
+                            "sRGB",
+                            "ProPhoto RGB",
+                            "ITU-R BT.2020",
+                            "ACES2065-1",
+                            "Adobe RGB (1998)",
+                            "Display P3",
+                            "DCI-P3",
+                        ] {
+                            changed |= ui
+                                .selectable_value(
+                                    &mut io.output_color_space,
+                                    opt.to_string(),
+                                    opt,
+                                )
+                                .changed();
+                        }
+                    });
                 let mut scan_film = io.scan_film;
                 changed |= ui
                     .checkbox(&mut scan_film, "Scan film (skip printing)")
@@ -1776,6 +1789,31 @@ impl App {
                 }
             });
 
+        }
+        if self.gui_tab == GuiTab::Config {
+            ui.separator();
+            ui.heading("Display");
+            let display_transform_before = self.viewer.settings.use_display_transform;
+            self.viewer.controls(ui);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Display ICC…").clicked() {
+                    if let Some(path) = self
+                        .file_dialog("display_icc")
+                        .add_filter("ICC profile", &["icc", "icm"])
+                        .pick_file()
+                    {
+                        self.remember_dialog("display_icc", &path);
+                        self.gui_state.sections["rust"]["display_profile"] =
+                            serde_json::json!(path.to_string_lossy());
+                        self.refresh_viewing_artifacts();
+                    }
+                }
+                ui.label(&self.viewer.transform_status);
+            });
+            if display_transform_before != self.viewer.settings.use_display_transform {
+                self.refresh_viewing_artifacts();
+            }
+        }
         // ── Metrics ─────────────────────────────────────────────────────
         ui.add_space(10.0);
         ui.separator();
@@ -1803,7 +1841,10 @@ impl App {
         ));
         ui.monospace(format!("backend: {}", self.backend.name()));
         ui.label(egui::RichText::new(&self.status).small());
-        if input_view_before != (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding) { self.refresh_viewing_artifacts(); }
+        if let Some(info) = self.raw_lens_info.as_deref() {
+            ui.label(if info.is_empty() { "Lens correction not applied".to_owned() } else { format!("Lens correction applied ({info})") });
+        }
+        if input_view_before != (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size) { self.refresh_viewing_artifacts(); }
     }
 }
 
@@ -1853,25 +1894,59 @@ impl eframe::App for App {
         self.poll_calibration_job(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
-            .exact_width(340.0)
+            .exact_width(420.0)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.controls_panel(ui, ctx));
+                ui.heading("spektrafilm");
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    for tab in GuiTab::ALL {
+                        ui.selectable_value(&mut self.gui_tab, tab, tab.label());
+                    }
+                });
+                ui.separator();
+                if self.gui_tab == GuiTab::Config {
+                    self.state_toolbar(ui);
+                    ui.separator();
+                }
+                let scroll_height = (ui.available_height() - 36.0).max(1.0);
+                ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("controls-scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.controls_panel(ui, ctx));
+                });
+                ui.separator();
+                self.simulation_action_bar(ui);
             });
         egui::CentralPanel::default().show(ctx, |ui| {
-            let before = self.viewer.settings.use_display_transform;
-            self.viewer.controls(ui);
+            egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut self.viewer.settings.use_display_transform,"Display transform");
-                if ui.button("Display ICC…").clicked() {
-                    if let Some(path)=self.file_dialog("display_icc").add_filter("ICC profile", &["icc","icm"]).pick_file() {
-                        self.remember_dialog("display_icc", &path);
-                        self.gui_state.sections["rust"]["display_profile"] = serde_json::json!(path.to_string_lossy());
-                        self.refresh_viewing_artifacts();
+                if ui.button("ccw rotate").clicked() {
+                    self.rotate_input_image_counterclockwise();
+                    ui.ctx().request_repaint();
+                }
+                if ui.button("cw rotate").clicked() {
+                    self.rotate_input_image_clockwise();
+                    ui.ctx().request_repaint();
+                }
+                for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
+                    if ui.button(label).clicked() {
+                        self.viewer.set_zoom_percent(percent);
+                        ui.ctx().request_repaint();
                     }
                 }
-                ui.label(&self.viewer.transform_status);
+                if ui.button("reset view").clicked() {
+                    self.viewer.reset_view();
+                    ui.ctx().request_repaint();
+                }
+                let zoom = self.viewer.zoom_percent().map_or_else(
+                    || format!("{:.0}% fit", self.viewer.zoom * 100.0),
+                    |percent| format!("{percent:.0}%"),
+                );
+                ui.label(format!("{} · zoom {zoom}", self.status));
             });
-            if before != self.viewer.settings.use_display_transform { self.refresh_viewing_artifacts(); }
+            });
+            self.viewer.layer_controls(ui);
             self.viewer.show(ui,self.image.as_deref(),self.output_image.as_ref());
         });
 
