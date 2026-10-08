@@ -10,7 +10,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use rayon::prelude::*;
-use spektrafilm_math::precision::from_f64;
+use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::spectral::TcLut;
@@ -207,23 +207,16 @@ pub(crate) fn apply_base_tuning(
     }
 }
 
-fn apply_film_chemistry(profile: &mut Profile, chemistry: &crate::params::PrintCurvesMorphParams) {
-    if !chemistry.active
-        || (chemistry.gamma_factor - 1.0).abs() < f64::EPSILON
-            && (chemistry.gamma_factor_fast - 1.0).abs() < f64::EPSILON
-            && (chemistry.gamma_factor_slow - 1.0).abs() < f64::EPSILON
-            && (chemistry.gamma_factor_red - 1.0).abs() < f64::EPSILON
-            && (chemistry.gamma_factor_green - 1.0).abs() < f64::EPSILON
-            && (chemistry.gamma_factor_blue - 1.0).abs() < f64::EPSILON
-            && chemistry.developer_exhaustion.abs() < f64::EPSILON
-    {
-        return;
-    }
-    let Some(model) = profile.data.density_curves_model.as_ref() else { return; };
-    if let Ok(curves) = crate::print_morph::morph_density_curves(
-        &profile.log_exposure_f64(), model, chemistry, profile.is_positive()) {
-        profile.data.density_curves = curves.iter().map(|row| row.to_vec()).collect();
-    }
+fn apply_film_chemistry(profile: &mut Profile, chemistry: &crate::params::PrintCurvesMorphParams) -> Result<(), String> {
+    let Some(model) = profile.data.density_curves_model.as_ref() else { return Ok(()); };
+    if model.n_layers() == 0 { return Ok(()); }
+    let (curves, layers) = crate::print_morph::morph_density_curves_with_layers(
+        &profile.log_exposure_f64(), model, chemistry, profile.is_positive(),
+    )?;
+    let has_sublayers = model.n_layers() > 1;
+    profile.data.density_curves = curves.into_iter().map(|row| row.to_vec()).collect();
+    profile.data.density_curves_layers = if has_sublayers { layers } else { Vec::new() };
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -457,7 +450,7 @@ impl Pipeline {
         crate::params_builder::broadcast_monochrome_layout(&film, &mut params);
         let mut print = crate::profile::resolve_for_render(print, params.print_render.development_time);
         apply_base_tuning(&mut film, &params.film_render.base, None);
-        apply_film_chemistry(&mut film, &params.film_render.chemistry);
+        apply_film_chemistry(&mut film, &params.film_render.chemistry).expect("invalid film chemistry");
         apply_base_tuning(&mut print, &params.film_render.base, Some(&params.print_render.base));
         let print_illuminant = enlarger::enlarger_filtered_illuminant_f64(
             &params.enlarger.illuminant,
@@ -508,7 +501,7 @@ impl Pipeline {
         let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);
         let mut print = crate::profile::resolve_for_render(print, params.print_render.development_time);
         apply_base_tuning(&mut film, &params.film_render.base, None);
-        apply_film_chemistry(&mut film, &params.film_render.chemistry);
+        apply_film_chemistry(&mut film, &params.film_render.chemistry)?;
         apply_base_tuning(&mut print, &params.film_render.base, Some(&params.print_render.base));
 
         // Stock defaults belong to profile selection / digest_params, so
@@ -1767,6 +1760,44 @@ mod spectral_invalidation_tests {
             .parent()
             .unwrap()
             .join("data")
+    }
+
+    #[test]
+    fn film_chemistry_rebuilds_total_and_grain_layers_from_the_fitted_model() {
+        let mut film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let fitted = film.data.density_curves.clone();
+        let fitted_layers = film.data.density_curves_layers.clone();
+        for active in [false, true] {
+            film.data.density_curves.iter_mut().flatten().for_each(|v| *v = 0.5);
+            film.data.density_curves_layers.iter_mut().flatten().flatten().for_each(|v| *v = 0.1);
+            apply_film_chemistry(&mut film, &crate::params::PrintCurvesMorphParams {
+                active, ..Default::default()
+            }).unwrap();
+            for (got, want) in film.data.density_curves.iter().flatten().zip(fitted.iter().flatten()) {
+                assert!((got - want).abs() < 1e-12);
+            }
+            for (got, want) in film.data.density_curves_layers.iter().flatten().flatten()
+                .zip(fitted_layers.iter().flatten().flatten()) {
+                assert!((got - want).abs() < 1e-12);
+            }
+        }
+        apply_film_chemistry(&mut film, &crate::params::PrintCurvesMorphParams {
+            gamma_factor: 1.1, gamma_factor_fast: 0.9, gamma_factor_slow: 1.2,
+            developer_exhaustion: 0.3, ..Default::default()
+        }).unwrap();
+        // Pinned 28bf883e apply_print_curves_morph_with_layers, Portra 400 sample 128.
+        let expected = [
+            [0.5911804126249434, 0.5581332496586162, 0.6521190325040326],
+            [0.4509958575813556, 0.4580461526112701, 0.5776553146563388],
+            [0.017750303385221305, 0.026894456204068887, 0.034051265456119285],
+        ];
+        for channel in 0..3 {
+            for layer in 0..3 {
+                assert!((film.data.density_curves_layers[128][layer][channel] - expected[layer][channel]).abs() < 1e-9);
+            }
+            let sum: f64 = expected.iter().map(|layer| layer[channel]).sum();
+            assert!((film.data.density_curves[128][channel] - sum).abs() < 1e-9);
+        }
     }
 
     fn build() -> Pipeline {

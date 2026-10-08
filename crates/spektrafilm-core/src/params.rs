@@ -513,7 +513,7 @@ pub struct DirCouplersParams {
     pub diffusion_size_um: f64,
     #[serde(default = "default_200_f64")]
     pub diffusion_tail_um: f64,
-    #[serde(default = "default_006_f64")]
+    #[serde(default = "default_coupler_tail_weight")]
     pub diffusion_tail_weight: f64,
 }
 
@@ -538,8 +538,8 @@ fn default_20_f64() -> f64 {
 fn default_200_f64() -> f64 {
     200.0
 }
-fn default_006_f64() -> f64 {
-    0.06
+fn default_coupler_tail_weight() -> f64 {
+    0.03
 }
 
 impl Default for DirCouplersParams {
@@ -557,7 +557,7 @@ impl Default for DirCouplersParams {
             gamma_interlayer_b_to_rg: [0.171, 0.225],
             diffusion_size_um: 20.0,
             diffusion_tail_um: 200.0,
-            diffusion_tail_weight: 0.06,
+            diffusion_tail_weight: 0.03,
         }
     }
 }
@@ -727,7 +727,7 @@ where
 }
 
 fn default_print_density_curves_morph() -> PrintCurvesMorphParams {
-    PrintCurvesMorphParams { active: false, ..PrintCurvesMorphParams::default() }
+    PrintCurvesMorphParams::default()
 }
 
 fn deserialize_print_density_curves_morph<'de, D>(deserializer: D) -> Result<PrintCurvesMorphParams, D::Error>
@@ -736,17 +736,13 @@ where
 {
     let mut value = serde_json::Value::deserialize(deserializer)?;
     if let Some(object) = value.as_object_mut() {
-        object.entry("active").or_insert(serde_json::Value::Bool(false));
+        object.entry("active").or_insert(serde_json::Value::Bool(true));
     }
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
-/// User-facing controls for the s023 print density-curve morph (see
-/// `crate::print_morph`). Kept in f64 — the morph is a parity-sensitive f64
-/// computation. The standalone helper defaults `active` to `true`, matching
-/// upstream `PrintCurvesMorphParams`; nested print-render controls default
-/// it to `false`, matching `PrintRenderingParams`. Development still evaluates
-/// a profile's fitted model when present; `active` controls coupled-gamma morphing.
+/// Film and print chemistry controls. Kept in f64 for parity-sensitive curve
+/// evaluation; both stages default to active in the experimental contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintCurvesMorphParams {

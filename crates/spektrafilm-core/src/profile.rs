@@ -476,40 +476,21 @@ pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
     // families when a specific time is requested.
     let idx = development_time_index(&profile.data.development_time, None);
     profile.data.base_density = base_density_column(&profile.data.base_density_rows, idx);
-    let curves_stale = profile.data.density_curves.is_empty()
-        || profile
-            .data
-            .density_curves
-            .iter()
-            .flatten()
-            .any(|value| !value.is_finite() || value.abs() > 10.0);
     let model = profile.data.density_curves_model.clone();
     if let Some(model) = model.as_ref() {
-        let expected_exposures = profile.data.log_exposure.len();
-        let expected_layers = model.n_layers();
-        let layers_stale = expected_layers > 1
-            && (profile.data.density_curves_layers.len() != expected_exposures
-                || profile.data.density_curves_layers.iter().any(|row| {
-                    row.len() != expected_layers
-                        || row.iter().any(|layer| {
-                            layer.len() != 3
-                        || layer.iter().any(|value| !value.is_finite())
-                        })
-                }));
-        if curves_stale {
-            profile.data.density_curves =
-                spektrafilm_model::density_curves::evaluate_density_curves(
-                    &profile.data.log_exposure,
-                    &model.model_type,
-                    &model.centers,
-                    &model.amplitudes,
-                    &model.sigmas,
-                    model.alphas.as_deref(),
-                    profile.is_positive(),
-                )
-                .map_err(ProfileError::Validation)?;
-        }
-        if expected_layers > 1 && (curves_stale || layers_stale) {
+        // Fitted models are authoritative even when cached samples look valid.
+        profile.data.density_curves =
+            spektrafilm_model::density_curves::evaluate_density_curves(
+                &profile.data.log_exposure,
+                &model.model_type,
+                &model.centers,
+                &model.amplitudes,
+                &model.sigmas,
+                model.alphas.as_deref(),
+                profile.is_positive(),
+            )
+            .map_err(ProfileError::Validation)?;
+        if model.n_layers() > 1 {
             profile.data.density_curves_layers =
                 spektrafilm_model::density_curves::evaluate_density_curves_layers(
                     &profile.data.log_exposure,
@@ -521,7 +502,7 @@ pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
                     profile.is_positive(),
                 )
                 .map_err(ProfileError::Validation)?;
-        } else if expected_layers <= 1 && curves_stale {
+        } else {
             profile.data.density_curves_layers.clear();
         }
     }
@@ -1011,8 +992,8 @@ mod tests {
                     "channel_density":[[0.0,0.0,0.0]],
                     "base_density":[[0.0]],
                     "log_exposure":[-4.0,0.0,4.0],
-                    "density_curves":[[99.0,99.0,99.0],[99.0,99.0,99.0],[99.0,99.0,99.0]],
-                    "density_curves_layers":[[[99.0,99.0,99.0]]],
+                    "density_curves":[[0.2,0.2,0.2],[0.8,0.8,0.8],[1.8,1.8,1.8]],
+                    "density_curves_layers":[[[0.2,0.2,0.2]]],
                     "density_curves_model":{"model_type":model_type,"centers":[[0.0],[0.0],[0.0]],"amplitudes":[[2.0],[2.0],[2.0]],"sigmas":[[1.0],[1.0],[1.0]],"alphas":[[0.6],[0.6],[0.6]]}
                 }
             });

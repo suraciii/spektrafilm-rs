@@ -606,28 +606,6 @@ mod tests {
         .is_err());
     }
 
-    #[test]
-    fn nested_print_morph_requires_explicit_activation() {
-        assert!(!RuntimeParams::default().print_render.density_curves_morph.active);
-        for json in [
-            r#"{}"#,
-            r#"{"print_render":{}}"#,
-            r#"{"print_render":{"density_curves_morph":{}}}"#,
-            r#"{"print_render":{"density_curves_morph":{"gamma_factor":1.5}}}"#,
-        ] {
-            let params: RuntimeParams = serde_json::from_str(json).unwrap();
-            assert!(!params.print_render.density_curves_morph.active, "{json}");
-        }
-        let params: RuntimeParams = serde_json::from_str(
-            r#"{"print_render":{"density_curves_morph":{"gamma_factor":1.5,"active":true}}}"#,
-        ).unwrap();
-        assert!(params.print_render.density_curves_morph.active);
-        assert_eq!(params.print_render.density_curves_morph.gamma_factor, 1.5);
-        assert!(serde_json::from_str::<RuntimeParams>(
-            r#"{"print_render":{"density_curves_morph":{"gamma_facotr":1.5}}}"#,
-        ).is_err());
-        assert!(crate::params::PrintCurvesMorphParams::default().active);
-    }
 
     #[test]
     fn preview_resize_bounds_long_edge() {

@@ -177,7 +177,7 @@ impl GuiState {
     }
     pub fn from_runtime(params: &RuntimeParams, film: &str, paper: &str, extras: &Value) -> Result<Self> {
         let mut state = Self::from_value(extras.clone())?;
-        let runtime = serde_json::to_value(params)?;
+        let mut runtime = serde_json::to_value(params)?;
         let s = &mut state.sections;
         for group in ["camera","scanner"] { merge(&mut s[group],&runtime[group]); }
         for &(section, group, leaf) in RUNTIME_GROUPS { merge(&mut s[section], &runtime[group][leaf]); }
@@ -196,6 +196,16 @@ impl GuiState {
         s["display"]["preview_max_size"] = runtime["settings"]["preview_max_size"].clone();
         s["rust"] = extras["rust"].as_object().map(|v| Value::Object(v.clone())).unwrap_or_else(||json!({}));
         s["rust"]["version"] = json!(1);
+        // Route owns the derived scan decision; do not persist the legacy
+        // `scan_film` flag or a second workflow owner in the Rust snapshot.
+        runtime["io"]
+            .as_object_mut()
+            .map(|io| io.remove("scan_film"));
+        runtime
+            .as_object_mut()
+            .and_then(|root| root.get_mut("workflow"))
+            .and_then(Value::as_object_mut)
+            .map(|workflow| workflow.remove("route"));
         s["rust"]["runtime"] = runtime;
         Ok(state)
     }
@@ -423,6 +433,28 @@ mod tests {
         assert!(saved["camera"].get("filter_ir").is_none());
         assert!(saved["special"].get("film_gamma_factor").is_none());
     }
+    #[test]
+    fn runtime_snapshot_does_not_reown_workflow_route() -> anyhow::Result<()> {
+        let factory = GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        params.workflow.route = "input > film > scan".into();
+        let saved = GuiState::from_runtime(
+            &params,
+            factory.film(),
+            factory.paper(),
+            &factory.sections,
+        )
+        .unwrap();
+        assert!(saved.sections["rust"]["runtime"]["io"].get("scan_film").is_none());
+        assert!(saved.sections["rust"]["runtime"]["workflow"]
+            .get("route")
+            .is_none());
+        assert_eq!(saved.sections["simulation"]["route"], "input > film > scan");
+        let loaded = GuiState::from_value(saved.sections).unwrap();
+        assert_eq!(loaded.runtime_params()?.workflow.route, "input > film > scan");
+        Ok::<(), anyhow::Error>(())
+    }
+
 
     #[test]
     fn canonical_chemistry_base_and_route_override_runtime_extension() {

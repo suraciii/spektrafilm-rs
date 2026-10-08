@@ -1016,19 +1016,23 @@ pub fn compute_registered_tc_lut(
 }
 
 
-/// Contract the spectra cube against the sensitivity through the erf4 spectral
-/// bandpass window, normalizing against the reference illuminant.
+/// Contract through the erf4 window, preserving the LUT's reconstructed neutral.
 fn contract_with_window(
     spectra_cube: &SpectraCube,
     sensitivity: &[[f64; 3]],
     window_params: &[f64],
-    illuminant: &[f64],
+    reference_xy: (f64, f64),
 ) -> TcLut {
     let n_wl = spectra_cube
         .n_wavelengths
         .min(sensitivity.len())
         .min(N_WAVELENGTHS);
     let window = eval_erf4_bandpass(window_params);
+    let (tx, ty) = spectral::xy_to_tc(reference_xy.0, reference_xy.1);
+    let neutral = spektrafilm_math::lut::bicubic_2d_f64(
+        &spectra_cube.data, spectra_cube.size, spectra_cube.size, spectra_cube.n_wavelengths,
+        tx * (spectra_cube.size - 1) as f64, ty * (spectra_cube.size - 1) as f64,
+    );
     let mut num_per_wl = [
         Vec::<f64>::with_capacity(n_wl),
         Vec::with_capacity(n_wl),
@@ -1041,7 +1045,7 @@ fn contract_with_window(
     ];
     for wl in 0..n_wl {
         for c in 0..3 {
-            let si = sensitivity[wl][c] * illuminant[wl];
+            let si = sensitivity[wl][c] * neutral[wl];
             num_per_wl[c].push(si * window[wl][c]);
             den_per_wl[c].push(si);
         }
@@ -1121,8 +1125,8 @@ pub struct Hanatos2025Adaptation<'a> {
 /// 1. `spectral_gaussian_blur > 0` → Gaussian-blur the spectra cube along
 ///    the wavelength axis (`scipy.ndimage.gaussian_filter` semantics).
 /// 2. `apply_window` → contract through the erf4 bandpass window,
-///    normalized against the reference illuminant so white balance is
-///    preserved; otherwise contract the sensitivity directly.
+///    normalized against the reconstructed neutral at the reference white;
+///    otherwise contract the sensitivity directly.
 /// 3. `apply_surface` → multiply by `2 ** surface`, the poly4
 ///    log-exposure-correction surface centered on the illuminant.
 ///
@@ -1165,7 +1169,7 @@ pub fn compute_hanatos2025_tc_lut(
             &cube,
             sensitivity,
             adaptation.window_params,
-            adaptation.reference_illuminant,
+            adaptation.reference_illuminant_xy,
         )
     } else {
         compute_tc_lut(&cube, sensitivity)
@@ -1726,6 +1730,18 @@ mod tests {
         assert!(base.data.iter().zip(&blurred.data).any(|(a, b)| a != b));
         assert!(base.data.iter().zip(&surfaced.data).any(|(a, b)| a != b));
         assert!(base.data.iter().zip(&windowless.data).any(|(a, b)| a != b));
+        // Windowing must preserve the reconstructed neutral in every channel.
+        // The reference SPD has the same chromaticity but a different spectrum.
+        let (tx, ty) = spectral::xy_to_tc(xy.0, xy.1);
+        let sample = |lut: &TcLut| spektrafilm_math::lut::bicubic_2d_f64(
+            &lut.data, lut.size, lut.size, lut.channels,
+            tx * (lut.size - 1) as f64, ty * (lut.size - 1) as f64,
+        );
+        let neutral = sample(&windowless);
+        let windowed_neutral = sample(&base);
+        for channel in 0..3 {
+            assert!((neutral[channel] - windowed_neutral[channel]).abs() < 1e-12);
+        }
 
         // Malformed window (Python unpacks exactly 4 erf4 parameters).
         let short_window = [1.0, 2.0, 3.0];

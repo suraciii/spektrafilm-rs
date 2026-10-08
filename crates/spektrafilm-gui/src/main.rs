@@ -6,7 +6,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -14,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
-use spektrafilm_core::params::{GrainEngine, GrainV2Mode, RuntimeParams};
+use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
 use spektrafilm_gpu::ComputeBackend;
@@ -297,11 +296,6 @@ struct App {
     /// render from the UI thread is what keeps sliders responsive —
     /// the 250–500 ms pipeline used to block input handling.
     render_job: Option<RenderJob>,
-    /// In-flight f64 export job. `Some` while the subprocess is
-    /// running; the `update()` loop polls the receiver each frame and
-    /// surfaces success/failure in `status` when the worker thread
-    /// completes. Joined eagerly to release the thread.
-    export_job: Option<ExportJob>,
     /// In-flight Convert controller action. The epoch drops results made stale
     /// by later parameter edits or a newer action.
     calibration_job: Option<CalibrationJob>,
@@ -332,18 +326,6 @@ struct RenderResult {
 }
 
 
-/// One in-flight f64 export. The worker thread owns the child
-/// process and polls `cancel` in its wait loop. On completion the
-/// worker sends the staged image with `Ok(elapsed_seconds, output_filename)`
-/// or `Err(msg)`. The UI publishes it only if cancellation was not requested.
-/// The join handle is held so we can `join()` after consuming the
-/// message and on `on_exit` to drain the worker before the process dies.
-struct ExportJob {
-    rx: mpsc::Receiver<Result<(f32, String, TempPath), String>>,
-    handle: Option<JoinHandle<()>>,
-    cancel: Arc<AtomicBool>,
-    started_at: Instant,
-}
 
 enum CalibrationResult {
     Base {
@@ -428,7 +410,6 @@ impl App {
             dirty: false,
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,
-            export_job: None,
             calibration_job: None,
             calibration_epoch: 0,
         };
@@ -941,181 +922,8 @@ impl App {
         }
     }
 
-    /// Export the current frame by subprocessing the f64-built
-    /// `spektrafilm` CLI. The GUI runs the pipeline at f32 on the GPU
-    /// for fast iteration; export re-runs the pipeline at f64 (CPU)
-    /// using the same params and writes a PNG/TIFF/JPEG/EXR.
-    ///
-    /// The f64 CLI is located via, in order: `$SPEKTRAFILM_F64_CLI`,
-    /// then `spektrafilm-f64` on `PATH`, then `target/release/spektrafilm-f64`
-    /// relative to `CARGO_MANIFEST_DIR`. Build it with
-    /// `cargo build --release --features precision-f64 -p spektrafilm-cli`
-    /// and either rename / symlink it to `spektrafilm-f64` or set the env var.
-    fn export_dialog(&mut self, ctx: &egui::Context) {
-        let Some(input_path) = self.image_path.clone() else {
-            self.status = "Load an image before exporting.".into();
-            return;
-        };
-        let cli_path = match locate_f64_cli() {
-            Ok(p) => p,
-            Err(e) => {
-                self.status = format!("Export: {e}");
-                return;
-            }
-        };
-        let stem = input_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("spektrafilm");
-        let default_name = format!("{stem}_{}_spektra_f64.png", self.film_name);
-        let Some(out_path) = self.file_dialog("export")
-            .add_filter("Image", &["jpg", "jpeg", "png", "tif", "tiff", "exr"])
-            .set_file_name(&default_name)
-            .save_file()
-        else {
-            return;
-        };
-        self.remember_dialog("export", &out_path);
 
-        // Spawn the export on a worker thread so the egui event loop
-        // keeps drawing. The cancel flag is shared with the worker so
-        // the Cancel button (and `on_exit`) can kill the child cleanly
-        // instead of letting it orphan after the GUI window closes.
-        //
-        // Enlarger + scanner LUTs are toggled on for the export only.
-        // The GUI preview runs on wgpu (fast at full spectral
-        // integration; LUT round-trip via CPU PCHIP would only slow
-        // it down), but the f64 CPU export gets a 5-10× speedup from
-        // the LUT path — matching Python's typical export config.
-        let film = self.film_name.clone();
-        let paper = self.print_name.clone();
-        let params = match self.digested_params(false) {
-            Ok(params) => params,
-            Err(e) => { self.status = format!("Export state error: {e:#}"); return; }
-        };
-        let data_dir = self.data_dir.clone();
-        let save_depth = self.save_depth;
-        let export_state = self.gui_state.sections.clone();
-        let rotated_input = (self.input_rotation != 0).then(|| (
-            Arc::clone(self.image.as_ref().expect("export requires loaded image")),
-            self.source_metadata.clone(),
-        ));
-        let (tx, rx) = mpsc::channel();
-        let ctx_for_worker = ctx.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let cancel_for_worker = Arc::clone(&cancel);
-        let started_at = Instant::now();
-        let handle = std::thread::Builder::new()
-            .name("spektrafilm-export".into())
-            .spawn(move || {
-                let res = (|| -> Result<_> {
-                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
-                    let rotated_input_guard = if let Some((image, metadata)) = rotated_input {
-                        let nanos = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)?.as_nanos();
-                        let guard = TempPath(std::env::temp_dir().join(format!(
-                            "spektrafilm-export-input-{}-{nanos}.tif", std::process::id()
-                        )), None);
-                        image_io::save(&guard.0, &image, SaveOptions {
-                            depth: BitDepth::ThirtyTwo,
-                            color_space: &params.io.input_color_space,
-                            cctf_encoding: params.io.input_cctf_decoding,
-                        }, metadata.as_ref())?;
-                        Some(guard)
-                    } else { None };
-                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
-                    let input_for_export = rotated_input_guard.as_ref()
-                        .map(|guard| guard.0.as_path()).unwrap_or(&input_path);
-                    run_f64_export(
-                    &cli_path,
-                    input_for_export,
-                    &out_path,
-                    &film,
-                    &paper,
-                    &params,
-                    &data_dir,
-                    save_depth,
-                    &export_state,
-                    &cancel_for_worker,
-                )
-                })();
-                let name = out_path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("(file)")
-                    .to_string();
-                let msg = match res {
-                    Ok(staged) => Ok((started_at.elapsed().as_secs_f32(), name, staged)),
-                    Err(e) => Err(format!("{e:#}")),
-                };
-                let _ = tx.send(msg);
-                ctx_for_worker.request_repaint();
-            })
-            .expect("OS thread spawn");
-        self.status = "Exporting at f64 (CPU)…".into();
-        self.export_job = Some(ExportJob {
-            rx,
-            handle: Some(handle),
-            cancel,
-            started_at,
-        });
-    }
 
-    /// Request cancellation of the in-flight export. The worker thread
-    /// observes the flag in its `try_wait` poll loop and SIGKILLs the
-    /// child; `poll_export_job` then drains the resulting error message
-    /// on the next `update()` tick.
-    fn cancel_export(&mut self) {
-        let Some(job) = self.export_job.as_ref() else {
-            return;
-        };
-        if !job.cancel.swap(true, Ordering::SeqCst) {
-            self.status = "Cancelling export…".into();
-        }
-    }
-
-    /// Called once per `update()`. If the export is still in-flight,
-    /// refreshes the status with elapsed time and requests a repaint a
-    /// second from now (so the timer ticks without us busy-looping).
-    /// If the job finished, drains the result into the status bar and
-    /// joins the worker thread.
-    fn poll_export_job(&mut self, ctx: &egui::Context) {
-        let Some(job) = self.export_job.as_mut() else {
-            return;
-        };
-        let msg = match job.rx.try_recv() {
-            Ok(m) => m,
-            Err(mpsc::TryRecvError::Empty) => {
-                let secs = job.started_at.elapsed().as_secs();
-                self.status = if job.cancel.load(Ordering::SeqCst) {
-                    format!("Cancelling export… ({secs}s)")
-                } else {
-                    format!("Exporting at f64 (CPU)… ({secs}s)")
-                };
-                ctx.request_repaint_after(Duration::from_secs(1));
-                return;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.status = "Export error: worker thread vanished".into();
-                self.export_job = None;
-                return;
-            }
-        };
-        if let Some(h) = job.handle.take() {
-            let _ = h.join();
-        }
-        let cancelled = job.cancel.load(Ordering::SeqCst);
-        self.export_job = None;
-        self.status = match msg {
-            Ok((_, _, _)) if cancelled => "Export cancelled.".into(),
-            Ok((secs, name, staged)) => match staged.publish() {
-                Ok(()) => format!("Exported (f64 CPU) {name} in {secs:.1} s"),
-                Err(e) => format!("Export error: {e:#}"),
-            },
-            Err(e) if e.contains("cancelled") => "Export cancelled.".into(),
-            Err(e) => format!("Export error: {e}"),
-        };
-    }
 
     fn start_calibration(&mut self, action: controls::CalibrationAction) {
         if self.calibration_job.is_some() {
@@ -1383,7 +1191,6 @@ impl eframe::App for App {
             ctx.request_repaint_after(IN_FLIGHT_REPAINT);
         }
         self.poll_render_job(ctx);
-        self.poll_export_job(ctx);
         self.poll_calibration_job(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
@@ -1452,20 +1259,6 @@ impl eframe::App for App {
         }
     }
 
-    /// Called once when the window is closing. If an export is still
-    /// in-flight, set the cancel flag and join the worker thread so
-    /// the child process is SIGKILLed before the GUI exits. Without
-    /// this the f64 CLI orphans into its own process group and keeps
-    /// hammering the CPU long after the window is gone.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let Some(job) = self.export_job.take() else {
-            return;
-        };
-        job.cancel.store(true, Ordering::SeqCst);
-        if let Some(h) = job.handle {
-            let _ = h.join();
-        }
-    }
 }
 
 /// Extract the human-readable payload from a caught panic. Panics carry
@@ -1627,21 +1420,6 @@ fn profile_combo(
     prev != *selected_stock
 }
 
-fn fps_label(ms: f32) -> &'static str {
-    if ms < 16.0 {
-        "60 fps"
-    } else if ms < 33.0 {
-        "30 fps"
-    } else if ms < 67.0 {
-        "15 fps"
-    } else if ms < 200.0 {
-        "5 fps"
-    } else if ms < 400.0 {
-        "2 fps"
-    } else {
-        ""
-    }
-}
 
 fn preview_pipeline_cache_key(
     film_name: &str,
@@ -1700,234 +1478,12 @@ fn preview_pipeline_cache_key(
 
 
 
-/// Locate the f64-built `spektrafilm` CLI binary. Search order:
-///   1. `$SPEKTRAFILM_F64_CLI` — explicit override, full path.
-///   2. `spektrafilm-f64` next to the running GUI executable (release
-///      builds: both binaries live in `target/release/`).
-///   3. `spektrafilm-f64` on `$PATH`.
-///   4. `target/release/spektrafilm-f64` relative to `CARGO_MANIFEST_DIR`
-///      (handy when running via `cargo run`).
-///
-/// Returns a path that exists and is executable, or an explanatory
-/// error pointing to the build command.
-fn locate_f64_cli() -> Result<PathBuf, String> {
-    if let Ok(p) = std::env::var("SPEKTRAFILM_F64_CLI") {
-        let path = PathBuf::from(&p);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(format!(
-            "SPEKTRAFILM_F64_CLI points at {p} but no such file"
-        ));
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        for name in f64_cli_names() {
-            let p = dir.join(name);
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-    for name in f64_cli_names() {
-        if let Some(p) = which_on_path(name) {
-            return Ok(p);
-        }
-    }
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        for name in f64_cli_names() {
-            let p = PathBuf::from(&manifest)
-                .join("..")
-                .join("..")
-                .join("target")
-                .join("release")
-                .join(name);
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-    Err("no f64 CLI found. Build it with \
-         `cargo build --release --features precision-f64 -p spektrafilm-cli`, \
-         rename `target/release/spektrafilm` to `spektrafilm-f64`, \
-         and either put it on PATH or set $SPEKTRAFILM_F64_CLI."
-        .into())
-}
 
-fn f64_cli_names() -> &'static [&'static str] {
-    if cfg!(windows) {
-        &["spektrafilm-f64.exe", "spektrafilm-f64"]
-    } else {
-        &["spektrafilm-f64"]
-    }
-}
 
-/// Minimal PATH lookup so we don't pull in the `which` crate for one call.
-fn which_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
-/// Removes export state and staged images on cancellation, failure, or close.
-/// A staged image keeps its destination so only the UI can publish completion.
-struct TempPath(PathBuf, Option<PathBuf>);
 
-impl TempPath {
-    fn publish(self) -> Result<()> {
-        let destination = self.1.as_ref().context("missing export destination")?;
-        std::fs::rename(&self.0, destination)
-            .with_context(|| format!("publishing export {}", destination.display()))
-    }
-}
 
-impl Drop for TempPath {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
 
-/// Run the f64 CLI as a child process. Writes the current
-/// `RuntimeParams` to a temp JSON file, invokes
-/// `spektrafilm-f64 process …`, polls for completion while watching
-/// `cancel`, and surfaces the CLI's stderr verbatim on failure. If
-/// `cancel` is set the child is SIGKILLed and `Err("cancelled")` is
-/// returned — this prevents the orphan-process / system-freeze bug
-/// where closing the GUI mid-export left the CPU pipeline running.
-fn run_f64_export(
-    cli_path: &Path,
-    input: &Path,
-    output: &Path,
-    film: &str,
-    paper: &str,
-    params: &spektrafilm_core::params::RuntimeParams,
-    data_dir: &Path,
-    save_depth: BitDepth,
-    gui_state: &serde_json::Value,
-    cancel: &AtomicBool,
-) -> Result<TempPath> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let temp = TempPath(std::env::temp_dir().join(format!(
-        "spektrafilm-export-{}-{nanos}.json",
-        std::process::id()
-    )), None);
-    // Preserve the extension for CLI format selection and keep staging on
-    // the destination filesystem so publication is one atomic rename.
-    let staged_name = format!(
-        "spektrafilm-export-{}-{nanos}.{}",
-        std::process::id(),
-        output.extension().and_then(|s| s.to_str()).unwrap_or("png")
-    );
-    let staged = TempPath(output.with_file_name(staged_name), Some(output.to_path_buf()));
-    {
-        let f = std::fs::File::create(&temp.0)
-            .with_context(|| format!("creating params tempfile {}", temp.0.display()))?;
-        serde_json::to_writer(std::io::BufWriter::new(f), params)
-            .context("serializing params to JSON")?;
-    }
-
-    let mut cmd = std::process::Command::new(cli_path);
-    // Force the CPU backend: the wgpu shaders run f32 even in a
-    // precision-f64 build (WGSL has no f64). Letting the child default
-    // to GPU would silently demote the export back to f32 math.
-    cmd.env("SPEKTRAFILM_BACKEND", "cpu")
-        .arg("process")
-        .arg(input)
-        .arg("-o")
-        .arg(&staged.0)
-        .arg("--bit-depth")
-        .arg(save_depth.bits().to_string())
-        .arg("--film")
-        .arg(film)
-        .arg("--paper")
-        .arg(paper)
-        .arg("--params")
-        .arg(&temp.0)
-        .arg("--data-dir")
-        .arg(data_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    if params.io.scan_film {
-        cmd.arg("--scan-film");
-    }
-    cmd.arg("--saving-color-space").arg(gui_state["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB"))
-        .arg("--saving-cctf-encoding").arg(if gui_state["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true) {"true"} else {"false"});
-    for (key,flag) in [("film_channel_swap","--film-channel-swap"),("print_channel_swap","--print-channel-swap")] {
-        if let Some(order) = gui_state["special"][key].as_array() {
-            cmd.arg(flag).arg(order.iter().map(|v|v.as_u64().unwrap_or(0).to_string()).collect::<Vec<_>>().join(","));
-        }
-    }
-    let raw = &gui_state["load_raw"];
-    cmd.arg("--raw-white-balance").arg(raw["white_balance"].as_str().unwrap_or("as_shot").replace('_', "-"))
-        .arg("--raw-temperature").arg(raw["temperature"].as_f64().unwrap_or(5500.0).to_string())
-        .arg("--raw-tint").arg(raw["tint"].as_f64().unwrap_or(1.0).to_string());
-    if raw["lens_correction"].as_bool().unwrap_or(false) { cmd.arg("--lens-correction"); }
-    #[cfg(windows)]
-    if let Some(parent) = cli_path.parent() {
-        let mut directories = vec![parent.to_path_buf()];
-        if let Some(path) = std::env::var_os("PATH") { directories.extend(std::env::split_paths(&path)); }
-        if let Ok(path) = std::env::join_paths(directories) { cmd.env("PATH",path); }
-    }
-
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawning {}", cli_path.display()))?;
-
-    // Poll loop. 100 ms is responsive to a Cancel click without
-    // burning CPU while the export grinds through CPU f64 math.
-    let status = loop {
-        let completed = match child.try_wait() {
-            Ok(status) => status,
-            Err(e) => {
-                let _ = child.kill();
-                child.wait().context("reaping f64 CLI after wait failure")?;
-                return Err(e).context("waiting for f64 CLI");
-            }
-        };
-        if cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            child.wait().context("reaping cancelled f64 CLI")?;
-            anyhow::bail!("cancelled");
-        }
-        if let Some(status) = completed {
-            break status;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-
-    // The child has exited; piped buffers are drained safely.
-    let mut stderr_buf = String::new();
-    if let Some(mut s) = child.stderr.take() {
-        use std::io::Read;
-        let _ = s.read_to_string(&mut stderr_buf);
-    }
-
-    if !status.success() {
-        let trimmed = stderr_buf.trim();
-        let code = status
-            .code()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "(signal)".into());
-        anyhow::bail!(
-            "f64 CLI exited {code} — {}",
-            if trimmed.is_empty() {
-                "(no stderr)"
-            } else {
-                trimmed
-            }
-        );
-    }
-    Ok(staged)
-}
 
 /// macOS only: walk from the eframe `RawWindowHandle` down to the
 /// `CAMetalLayer` and tag its colorspace as sRGB. Without this the

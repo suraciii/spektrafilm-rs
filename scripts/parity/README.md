@@ -42,7 +42,7 @@ does not establish experimental acceptance. Build the recorded implementation
 commit first, then run from a clean worktree with an unused evidence directory:
 
 ```bash
-dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1100x24' \
+xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- \
   /tmp/spektrafilm-034-venv/bin/python scripts/parity/experimental_gui.py \
   --gui target/debug/spektrafilm-gui \
   --upstream /tmp/spektrafilm-upstream-28bf \
@@ -56,6 +56,12 @@ rendered with PREVIEW and SCAN, saved as TIFF, and loaded/saved again to verify
 state roundtrip. The report records executable, input, state, profile/preset,
 observation, and screenshot hashes. Numerical upstream parity remains a
 separate runtime gate; native rendering alone does not establish it.
+
+Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver performs
+an initial preview before saving state to establish the output viewing layer.
+It distinguishes the SCAN action from the Scan for print checkbox and observes
+a saved-state status before each new SCAN completion; image dimensions in the
+Rendered status are not an execution counter.
 
 `--development-smoke` permits an uncommitted iteration and always reports
 `development-smoke`, never acceptance `pass`. Missing controls, clipped labels,

@@ -100,6 +100,9 @@ class ExperimentalDesktop(X11):
                 continue
             tokens = words(' '.join(w[0] for w in line))
             expected = words(label)
+            if bottom and label in ('PREVIEW', 'SCAN', 'SAVE'):
+                if not all(action in tokens for action in ('preview', 'scan', 'save')):
+                    continue
             if exact:
                 if len(tokens) == len(expected) + 1 and (line[0][1] < image.width - 400 or tokens[0] in ('v', 'y', 'vy')):
                     tokens = tokens[1:]
@@ -155,18 +158,13 @@ class ExperimentalDesktop(X11):
             if line[0][1] >= image.width - 420 and re.match(r'^input\b', text, re.I):
                 rows.append((line[0][2], line))
         rows.sort(key=lambda item: item[0])
-        # Popup has all six options plus, sometimes, the selected collapsed row.
-        groups = []
-        for start in range(max(0, len(rows) - 5)):
-            group = rows[start:start + 6]
-            if (len(group) == 6
-                    and all(10 < group[j+1][0]-group[j][0] < 35 for j in range(5))
-                    and all(words(' '.join(w[0] for w in line)) == words(route)
-                            for (_, line), route in zip(group, ROUTES))):
-                groups.append(group)
-        require(len(groups) == 1, f'Cannot identify six Workflow menu rows: {rows}')
+        # Match the requested route exactly; OCR may omit the highlighted current
+        # row. Saved canonical state independently verifies the chosen route.
+        matching = [line for _, line in rows
+                    if words(' '.join(w[0] for w in line)) == words(ROUTES[index])]
+        require(len(matching) == 1, f'Cannot identify Workflow option {ROUTES[index]}: {rows}')
         self.snap('workflow-options', image, lines)
-        line = groups[0][index][1]
+        line = matching[0]
         self.xd('mousemove', '--window', self.window,
                 int(line[0][1] + 15), int(line[0][2] + line[0][4] / 2))
         self.xd('click', 1)
