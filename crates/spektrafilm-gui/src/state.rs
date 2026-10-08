@@ -146,7 +146,7 @@ impl GuiState {
         // Dedicated diffusion panels override passthrough camera/preflash groups.
         merge(&mut runtime["camera"]["diffusion_filter"],&s["camera_diffusion"]);
         merge(&mut runtime["enlarger"]["diffusion_filter"],&s["enlarger_diffusion"]);
-        copy_fields(&mut runtime["enlarger"],&s["preflashing"], &["preflash_exposure","preflash_y_filter_shift","preflash_m_filter_shift"]);
+        merge(&mut runtime["enlarger"], &s["preflashing"]);
         for (from,to) in [("print_illuminant","illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("print_y_filter_shift","y_filter_shift"),("print_m_filter_shift","m_filter_shift")] { runtime["enlarger"][to] = s["simulation"][from].clone(); }
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
         runtime["io"]["scan_film"] = json!(s["simulation"]["route"] == "input > film > scan");
@@ -453,6 +453,18 @@ mod tests {
         let loaded = GuiState::from_value(saved.sections).unwrap();
         assert_eq!(loaded.runtime_params()?.workflow.route, "input > film > scan");
         Ok::<(), anyhow::Error>(())
+    }
+    #[test]
+    fn factory_enlarger_neutral_filters_survive_state_conversion() {
+        let factory = GuiState::factory();
+        let params = factory.runtime_params().unwrap();
+        assert_eq!(params.enlarger.m_filter_neutral, 58.8453);
+        assert_eq!(params.enlarger.y_filter_neutral, 55.2848);
+
+        let loaded = GuiState::from_value(factory.sections.clone()).unwrap();
+        let restored = loaded.runtime_params().unwrap();
+        assert_eq!(restored.enlarger.m_filter_neutral, 58.8453);
+        assert_eq!(restored.enlarger.y_filter_neutral, 55.2848);
     }
 
 
