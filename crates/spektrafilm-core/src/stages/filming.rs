@@ -357,7 +357,7 @@ pub fn expose(
     // optical-scatter effects. No-op when boost_ev == 0.
     let hal_boost = &params.film_render.halation;
     if hal_boost.boost_ev != 0.0 {
-        raw = spektrafilm_model::diffusion::boost_highlights(
+        raw = spektrafilm_model::optics::boost_highlights(
             &raw,
             hal_boost.boost_ev as f64,
             hal_boost.boost_range as f64,
@@ -389,7 +389,7 @@ pub fn expose(
 
     // Lens blur
     if params.camera.lens_blur_um > 0.0 {
-        raw = spektrafilm_model::diffusion::apply_gaussian_blur_um(
+        raw = spektrafilm_model::optics::apply_gaussian_blur_um(
             &raw,
             params.camera.lens_blur_um,
             pix_um,
@@ -400,7 +400,7 @@ pub fn expose(
     // Halation (on linear raw)
     let halation = &params.film_render.halation;
     if halation.active {
-        raw = spektrafilm_model::diffusion::apply_halation_um(
+        raw = spektrafilm_model::halation::apply_halation_um(
             &raw,
             pix_um,
             halation.scatter_amount,
@@ -503,7 +503,7 @@ pub fn develop(
     // model always samples the profile's 3 emulsion sublayers) and
     // `use_fast_stats` only by the layered path, exactly like upstream.
     let grain = &params.film_render.grain;
-    if grain.active && matches!(grain.engine, crate::params::GrainEngine::V1) {
+    if grain.active && matches!(grain.engine, crate::params::grain::GrainEngine::V1) {
         let t = Instant::now();
         // Use f64 throughout — Python reads these from JSON as f64; the
         // f32 storage in `GrainParams` would otherwise truncate to ~7
@@ -546,7 +546,7 @@ pub fn develop(
                  density_curves_layers)",
                 film.info.stock.as_deref().unwrap_or("<unnamed>"),
             );
-            density_cmy = spektrafilm_model::grain::apply_grain_to_density_layers(
+            density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density_layers(
                 &density_cmy_layers,
                 &density_max_layers,
                 density_cmy.width,
@@ -568,7 +568,7 @@ pub fn develop(
         } else {
             let density_max =
                 spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
-            density_cmy = spektrafilm_model::grain::apply_grain_to_density(
+            density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density(
                 &density_cmy,
                 pixel_size_um,
                 particle_area_um2,

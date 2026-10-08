@@ -1302,7 +1302,7 @@ impl Pipeline {
         {
             reasons.push(ResidentFallbackReason::RequestedSpectralLut);
         }
-        let diffusion_effective = |df: &crate::params::DiffusionFilterParams| {
+        let diffusion_effective = |df: &crate::params::diffusion::DiffusionFilterParams| {
             df.active && df.strength > 0.0 && df.spatial_scale > 0.0
         };
         if diffusion_effective(&self.params.camera.diffusion_filter)

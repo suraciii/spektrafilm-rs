@@ -17,7 +17,7 @@
       "exposure_compensation_ev": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -27,7 +27,7 @@
       "auto_exposure": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -37,7 +37,7 @@
       "auto_exposure_method": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -47,7 +47,7 @@
       "lens_blur_um": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -57,7 +57,7 @@
       "film_format_mm": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -67,7 +67,7 @@
       "filter_uv": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -77,7 +77,7 @@
       "filter_ir": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -87,7 +87,7 @@
       "diffusion_filter.active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -97,7 +97,7 @@
       "diffusion_filter.filter_family": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -107,7 +107,7 @@
       "diffusion_filter.strength": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -117,7 +117,7 @@
       "diffusion_filter.spatial_scale": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -127,7 +127,7 @@
       "diffusion_filter.halo_warmth": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -137,7 +137,7 @@
       "diffusion_filter.core_intensity": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -147,7 +147,7 @@
       "diffusion_filter.core_size": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -157,7 +157,7 @@
       "diffusion_filter.halo_intensity": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -167,7 +167,7 @@
       "diffusion_filter.halo_size": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -177,7 +177,7 @@
       "diffusion_filter.bloom_intensity": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -187,7 +187,7 @@
       "diffusion_filter.bloom_size": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -199,7 +199,7 @@
       "illuminant": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -209,7 +209,7 @@
       "print_exposure": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -219,7 +219,7 @@
       "print_exposure_compensation": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -229,7 +229,7 @@
       "normalize_print_exposure": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -239,7 +239,7 @@
       "y_filter_shift": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -249,7 +249,7 @@
       "m_filter_shift": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -259,7 +259,7 @@
       "y_filter_neutral": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -269,7 +269,7 @@
       "m_filter_neutral": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -279,7 +279,7 @@
       "c_filter_neutral": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -289,7 +289,7 @@
       "lens_blur": {
         "rust_status": "noop_upstream",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Explicit upstream no-op; implementation intentionally does not read this field.",
         "audit_baseline": {
           "rust_status": "noop_upstream",
@@ -299,7 +299,7 @@
       "diffusion_filter": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -309,7 +309,7 @@
       "preflash_exposure": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -319,7 +319,7 @@
       "preflash_y_filter_shift": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -329,7 +329,7 @@
       "preflash_m_filter_shift": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -341,7 +341,7 @@
       "lens_blur": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -351,7 +351,7 @@
       "white_correction": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -361,7 +361,7 @@
       "black_correction": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -371,7 +371,7 @@
       "white_level": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -381,7 +381,7 @@
       "black_level": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -391,7 +391,7 @@
       "unsharp_mask": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -403,7 +403,7 @@
       "density_curve_gamma": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -413,7 +413,7 @@
       "grain.active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -423,7 +423,7 @@
       "grain.sublayers_active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -433,7 +433,7 @@
       "grain.particle_area_um2": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -443,7 +443,7 @@
       "grain.particle_scale": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -453,7 +453,7 @@
       "grain.particle_scale_layers": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -463,7 +463,7 @@
       "grain.density_min": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -473,7 +473,7 @@
       "grain.uniformity": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -483,7 +483,7 @@
       "grain.blur": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -493,7 +493,7 @@
       "grain.blur_dye_clouds_um": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -503,7 +503,7 @@
       "grain.micro_structure": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -513,7 +513,7 @@
       "grain.n_sub_layers": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -523,7 +523,7 @@
       "halation.active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -533,7 +533,7 @@
       "halation.scatter_amount": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -543,7 +543,7 @@
       "halation.scatter_spatial_scale": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -553,7 +553,7 @@
       "halation.halation_amount": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -563,7 +563,7 @@
       "halation.halation_spatial_scale": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -573,7 +573,7 @@
       "halation.scatter_core_um": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -583,7 +583,7 @@
       "halation.scatter_tail_um": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -593,7 +593,7 @@
       "halation.scatter_tail_weight": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -603,7 +603,7 @@
       "halation.boost_ev": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -613,7 +613,7 @@
       "halation.boost_range": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -623,7 +623,7 @@
       "halation.protect_ev": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -633,7 +633,7 @@
       "halation.halation_strength": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -643,7 +643,7 @@
       "halation.halation_first_sigma_um": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -653,7 +653,7 @@
       "halation.halation_n_bounces": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -663,7 +663,7 @@
       "halation.halation_bounce_decay": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -673,7 +673,7 @@
       "halation.halation_renormalize": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -683,7 +683,7 @@
       "dir_couplers.active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -693,7 +693,7 @@
       "dir_couplers.amount": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -703,7 +703,7 @@
       "dir_couplers.inhibition_samelayer": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -713,7 +713,7 @@
       "dir_couplers.inhibition_interlayer": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -723,7 +723,7 @@
       "dir_couplers.gamma_samelayer_rgb": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -733,7 +733,7 @@
       "dir_couplers.gamma_interlayer_r_to_gb": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -743,7 +743,7 @@
       "dir_couplers.gamma_interlayer_g_to_rb": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -753,7 +753,7 @@
       "dir_couplers.gamma_interlayer_b_to_rg": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -763,7 +763,7 @@
       "dir_couplers.diffusion_size_um": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -773,7 +773,7 @@
       "dir_couplers.diffusion_tail_um": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -783,7 +783,7 @@
       "dir_couplers.diffusion_tail_weight": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -793,7 +793,7 @@
       "glare.active": {
         "rust_status": "noop_upstream",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Explicit upstream no-op; implementation intentionally does not read this field.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -803,7 +803,7 @@
       "glare.percent": {
         "rust_status": "noop_upstream",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Explicit upstream no-op; implementation intentionally does not read this field.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -813,7 +813,7 @@
       "glare.roughness": {
         "rust_status": "noop_upstream",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Explicit upstream no-op; implementation intentionally does not read this field.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -823,7 +823,7 @@
       "glare.blur": {
         "rust_status": "noop_upstream",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Explicit upstream no-op; implementation intentionally does not read this field.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -835,7 +835,7 @@
       "glare.active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -845,7 +845,7 @@
       "glare.percent": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -855,7 +855,7 @@
       "glare.roughness": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -865,7 +865,7 @@
       "glare.blur": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -875,7 +875,7 @@
       "density_curves_morph.active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -885,7 +885,7 @@
       "density_curves_morph.gamma_factor": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -895,7 +895,7 @@
       "density_curves_morph.gamma_factor_fast": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -905,7 +905,7 @@
       "density_curves_morph.gamma_factor_slow": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -915,7 +915,7 @@
       "density_curves_morph.gamma_factor_red": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -925,7 +925,7 @@
       "density_curves_morph.gamma_factor_green": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -935,7 +935,7 @@
       "density_curves_morph.gamma_factor_blue": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -945,7 +945,7 @@
       "density_curves_morph.developer_exhaustion": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -957,7 +957,7 @@
       "input_color_space": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -967,7 +967,7 @@
       "input_cctf_decoding": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -977,7 +977,7 @@
       "output_color_space": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -987,7 +987,7 @@
       "output_cctf_encoding": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -997,7 +997,7 @@
       "input_gamut_compress.active": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -1007,7 +1007,7 @@
       "input_gamut_compress.algorithm": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -1017,7 +1017,7 @@
       "input_gamut_compress.knee": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -1027,7 +1027,7 @@
       "output_gamut_compress.algorithm": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -1037,7 +1037,7 @@
       "output_gamut_compress.knee": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -1047,7 +1047,7 @@
       "output_gamut_compress.lightness_compression": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -1057,7 +1057,7 @@
       "crop": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1067,7 +1067,7 @@
       "crop_center": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1077,7 +1077,7 @@
       "crop_size": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1087,7 +1087,7 @@
       "upscale_factor": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -1097,7 +1097,7 @@
       "scan_film": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -1109,7 +1109,7 @@
       "deactivate_spatial_effects": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "absent_from_rust",
@@ -1119,7 +1119,7 @@
       "deactivate_stochastic_effects": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "absent_from_rust",
@@ -1129,7 +1129,7 @@
       "print_timings": {
         "rust_status": "noop_upstream",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Explicit upstream no-op; implementation intentionally does not read this field.",
         "audit_baseline": {
           "rust_status": "absent_from_rust",
@@ -1139,7 +1139,7 @@
       "lut_mode": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "absent_from_rust",
@@ -1151,7 +1151,7 @@
       "inject": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "absent_from_rust",
@@ -1161,7 +1161,7 @@
       "collect": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "absent_from_rust",
@@ -1173,7 +1173,7 @@
       "rgb_to_raw_method": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "divergent",
@@ -1183,7 +1183,7 @@
       "apply_hanatos2025_adaptation_window": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -1193,7 +1193,7 @@
       "apply_hanatos2025_adaptation_surface": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1203,7 +1203,7 @@
       "spectral_gaussian_blur": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1213,7 +1213,7 @@
       "use_enlarger_lut": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1223,7 +1223,7 @@
       "use_scanner_lut": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -1233,7 +1233,7 @@
       "lut_resolution": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1243,7 +1243,7 @@
       "use_fast_stats": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1253,7 +1253,7 @@
       "preview_max_size": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1263,7 +1263,7 @@
       "preview_mode": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
@@ -1273,7 +1273,7 @@
       "neutral_print_filters_from_database": {
         "rust_status": "supported",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
@@ -1283,7 +1283,7 @@
       "use_cat16": {
         "rust_status": "rust_only_extra",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
         "verification": "Rust-only extension outside pinned upstream 0.3.4 scope.",
         "audit_baseline": {
           "rust_status": "rust_only_extra",

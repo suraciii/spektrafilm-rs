@@ -209,7 +209,7 @@ mod tests {
         let mut params=factory.runtime_params().unwrap();
         params.io.output_cctf_encoding=false;
         params.film_render.development_time=Some(9.0);
-        params.film_render.grain.engine=spektrafilm_core::params::GrainEngine::V2;
+        params.film_render.grain.engine=spektrafilm_core::params::grain::GrainEngine::V2;
         params.film_render.grain.v2_profile="8mm500".into();
         params.film_render.grain.v2_amount=Some(0.0);
         let mut extras=factory.sections.clone();
@@ -219,7 +219,7 @@ mod tests {
         let restored=loaded.runtime_params().unwrap();
         assert!(!restored.io.output_cctf_encoding);
         assert_eq!(restored.film_render.development_time,Some(9.0));
-        assert_eq!(restored.film_render.grain.engine,spektrafilm_core::params::GrainEngine::V2);
+        assert_eq!(restored.film_render.grain.engine,spektrafilm_core::params::grain::GrainEngine::V2);
         assert_eq!(restored.film_render.grain.v2_profile,"8mm500");
         assert_eq!(restored.film_render.grain.resolved_grain_v2().amount,0.0);
         assert_eq!(loaded.sections["rust"]["viewer"]["zoom"],3.0);

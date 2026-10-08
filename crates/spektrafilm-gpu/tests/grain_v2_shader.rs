@@ -3,7 +3,7 @@
 /// Validate the standalone shader with a WGPU device when one is available.
 #[test]
 fn grain_v2_shader_compiles() {
-    let source = include_str!("../../spektrafilm-shaders/wgsl/grain_v2.wgsl");
+    let source = include_str!("../src/wgpu_backend/grain/grain_v2.wgsl");
     let instance = wgpu::Instance::default();
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()));

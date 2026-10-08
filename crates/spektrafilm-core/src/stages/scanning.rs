@@ -297,7 +297,7 @@ pub fn scan_with_options(
     let [usm_sigma, usm_amount] = params.scanner.unsharp_mask;
     if usm_sigma > 0.0 && usm_amount > 0.0 {
         rgb =
-            spektrafilm_model::diffusion::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
+            spektrafilm_model::optics::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
     // Grain V2 is a display-domain effect. Apply it after optical scan
@@ -306,7 +306,7 @@ pub fn scan_with_options(
     if params.film_render.grain.active
         && matches!(
             params.film_render.grain.engine,
-            crate::params::GrainEngine::V2
+            crate::params::grain::GrainEngine::V2
         )
     {
         let mut grain = params.film_render.grain.resolved_grain_v2();
@@ -332,7 +332,7 @@ pub fn scan_with_options(
         };
         rgb = backend
             .grain_v2(&rgb, &gpu_params)
-            .unwrap_or_else(|| spektrafilm_model::grain_v2::apply_cpu(&rgb, grain));
+            .unwrap_or_else(|| spektrafilm_model::grain::v2::apply_cpu(&rgb, grain));
     }
 
     // Match colour.RGB_to_RGB(cs, cs): apply the stored same-space matrix

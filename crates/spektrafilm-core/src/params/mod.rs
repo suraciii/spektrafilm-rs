@@ -4,69 +4,18 @@
 /// matching the Python implementation.
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DiffusionFilterParams {
-    #[serde(default)]
-    pub active: bool,
-    #[serde(default = "default_bpm")]
-    pub filter_family: String,
-    #[serde(default = "default_half")]
-    pub strength: f32,
-    #[serde(default = "default_one")]
-    pub spatial_scale: f32,
-    #[serde(default)]
-    pub halo_warmth: f32,
-    #[serde(default = "default_one")]
-    pub core_intensity: f32,
-    #[serde(default = "default_one")]
-    pub core_size: f32,
-    #[serde(default = "default_one")]
-    pub halo_intensity: f32,
-    #[serde(default = "default_one")]
-    pub halo_size: f32,
-    #[serde(default = "default_one")]
-    pub bloom_intensity: f32,
-    #[serde(default = "default_one")]
-    pub bloom_size: f32,
-}
+pub mod couplers;
+pub mod diffusion;
+pub mod glare;
+pub mod grain;
+pub mod halation;
 
-impl DiffusionFilterParams {
-    /// Borrowed view as the model crate's `DiffusionFilter` (f64), for the
-    /// CPU diffusion-filter apply. `family` borrows `self.filter_family`.
-    pub fn to_model(&self) -> spektrafilm_model::diffusion::DiffusionFilter<'_> {
-        spektrafilm_model::diffusion::DiffusionFilter {
-            family: &self.filter_family,
-            strength: self.strength as f64,
-            spatial_scale: self.spatial_scale as f64,
-            halo_warmth: self.halo_warmth as f64,
-            core_intensity: self.core_intensity as f64,
-            core_size: self.core_size as f64,
-            halo_intensity: self.halo_intensity as f64,
-            halo_size: self.halo_size as f64,
-            bloom_intensity: self.bloom_intensity as f64,
-            bloom_size: self.bloom_size as f64,
-        }
-    }
-}
+use couplers::DirCouplersParams;
+use diffusion::DiffusionFilterParams;
+use glare::GlareParams;
+use grain::GrainParams;
+use halation::HalationParams;
 
-impl Default for DiffusionFilterParams {
-    fn default() -> Self {
-        Self {
-            active: false,
-            filter_family: "black_pro_mist".into(),
-            strength: 0.5,
-            spatial_scale: 1.0,
-            halo_warmth: 0.0,
-            core_intensity: 1.0,
-            core_size: 1.0,
-            halo_intensity: 1.0,
-            halo_size: 1.0,
-            bloom_intensity: 1.0,
-            bloom_size: 1.0,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -194,372 +143,12 @@ impl Default for ScannerParams {
     }
 }
 
-/// Selects the film-grain implementation. V1 remains the default for
-/// backwards-compatible recipes; V2 is procedural grain in linear scanner RGB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GrainEngine {
-    V1,
-    V2,
-}
-
-impl Default for GrainEngine {
-    fn default() -> Self {
-        Self::V1
-    }
-}
-
-/// Procedural Grain V2 generation mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GrainV2Mode {
-    Analogue,
-    Noise,
-}
-
-impl Default for GrainV2Mode {
-    fn default() -> Self {
-        Self::Analogue
-    }
-}
-
-fn default_grain_v2_profile() -> String {
-    "35mm250".to_owned()
-}
-
-const fn default_grain_v2_resolution_type() -> u32 {
-    1
-}
-
-const fn default_grain_v2_timer() -> f32 {
-    0.0
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GrainParams {
-    #[serde(default = "default_true")]
-    pub active: bool,
-    /// Selects the grain implementation; V1 preserves the historical default.
-    #[serde(default)]
-    pub engine: GrainEngine,
-    /// Procedural Grain V2 profile id.
-    #[serde(default = "default_grain_v2_profile")]
-    pub v2_profile: String,
-    #[serde(default)]
-    pub v2_mode: GrainV2Mode,
-    /// Optional controls inherit the selected profile when unset.
-    /// Size uses the profile scale range 1..=48; tonal controls use 0..=1.
-    #[serde(default)]
-    pub v2_size: Option<f32>,
-    #[serde(default)]
-    pub v2_amount: Option<f32>,
-    #[serde(default)]
-    pub v2_shadows: Option<f32>,
-    #[serde(default)]
-    pub v2_midtones: Option<f32>,
-    #[serde(default)]
-    pub v2_highlights: Option<f32>,
-    #[serde(default)]
-    pub v2_chroma: Option<f32>,
-    /// Film Resolution override, 0..=100. Unset inherits the profile.
-    #[serde(default)]
-    pub v2_resolution_factor: Option<f32>,
-    /// 0 = Gaussian FIR, 1 = fractional box FIR approximating FastBlur.
-    #[serde(default = "default_grain_v2_resolution_type")]
-    pub v2_resolution_type: u32,
-    /// Stable animation phase; photos should leave this at zero.
-    #[serde(default = "default_grain_v2_timer")]
-    pub v2_timer: f32,
-    #[serde(default = "default_true")]
-    pub sublayers_active: bool,
-    // f64 to preserve Python JSON precision through the Poisson/Binomial
-    // RNG pipeline — the f32 truncation of these values shifts the
-    // Poisson lambda by ~5e-8 and produces a different RNG stream.
-    // Field names mirror upstream 0.3.4 `GrainParams` exactly
-    // (`particle_area_um2` / `particle_scale` / `particle_scale_layers`).
-    #[serde(default = "default_02_f64")]
-    pub particle_area_um2: f64,
-    #[serde(default = "default_particle_scale_f64")]
-    pub particle_scale: [f64; 3],
-    #[serde(default = "default_particle_scale_layers_f64")]
-    pub particle_scale_layers: [f64; 3],
-    #[serde(default = "default_rms_granularity_f64")]
-    pub rms_granularity: [f64; 3],
-    #[serde(default = "default_density_min_f64")]
-    pub density_min: [f64; 3],
-    #[serde(default = "default_uniformity_f64")]
-    pub uniformity: [f64; 3],
-    #[serde(default = "default_065")]
-    pub blur: f32,
-    #[serde(default = "default_one")]
-    pub blur_dye_clouds_um: f32,
-    #[serde(default = "default_micro_structure")]
-    pub micro_structure: [f32; 2],
-    #[serde(default = "default_1i")]
-    pub n_sub_layers: u32,
-    /// One shared noise field across all channels instead of independent
-    /// per-channel RNG streams. Set by the pipeline for B&W films
-    /// (upstream n_channels==1 has a single emulsion); not user-facing.
-    #[serde(default)]
-    pub monochrome: bool,
-}
-
-fn default_02_f64() -> f64 {
-    0.2
-}
-fn default_particle_scale_f64() -> [f64; 3] {
-    [1.6, 1.6, 3.2]
-}
-fn default_particle_scale_layers_f64() -> [f64; 3] {
-    [2.0, 1.0, 0.5]
-}
-fn default_density_min_f64() -> [f64; 3] {
-    [0.03, 0.03, 0.03]
-}
-fn default_rms_granularity_f64() -> [f64; 3] {
-    [0.0, 0.0, 0.0]
-}
-fn default_uniformity_f64() -> [f64; 3] {
-    [0.97, 0.99, 0.97]
-}
-impl Default for GrainParams {
-    fn default() -> Self {
-        Self {
-            active: true,
-            engine: GrainEngine::V1,
-            v2_profile: default_grain_v2_profile().to_owned(),
-            v2_mode: GrainV2Mode::Analogue,
-            v2_size: None,
-            v2_amount: None,
-            v2_shadows: None,
-            v2_midtones: None,
-            v2_highlights: None,
-            v2_chroma: None,
-            v2_resolution_factor: None,
-            v2_resolution_type: default_grain_v2_resolution_type(),
-            v2_timer: default_grain_v2_timer(),
-            sublayers_active: true,
-            particle_area_um2: 0.2,
-            particle_scale: [1.6, 1.6, 3.2],
-            particle_scale_layers: [2.0, 1.0, 0.5],
-            rms_granularity: [0.0, 0.0, 0.0],
-            density_min: [0.03, 0.03, 0.03],
-            uniformity: [0.97, 0.99, 0.97],
-            blur: 0.65,
-            blur_dye_clouds_um: 1.0,
-            micro_structure: [0.2, 30.0],
-            n_sub_layers: 1,
-            monochrome: false,
-        }
-    }
-}
-
-impl GrainParams {
-    /// Resolve profile defaults and explicit overrides after RuntimeParams::validate.
-    /// The returned seed contains the timer phase; callers add the runtime seed.
-    pub fn resolved_grain_v2(&self) -> spektrafilm_model::grain_v2::GrainV2Params {
-        use spektrafilm_model::grain_v2::{self, GrainV2Params};
-        let index = grain_v2::profile_index(&self.v2_profile)
-            .expect("Grain V2 profile must be validated before rendering");
-        let mut params = GrainV2Params::for_profile(index);
-        params.mode = match self.v2_mode {
-            GrainV2Mode::Analogue => grain_v2::GrainV2Mode::Analogue,
-            GrainV2Mode::Noise => grain_v2::GrainV2Mode::Noise,
-        };
-        params.size = self.v2_size.unwrap_or(params.size);
-        params.amount = self.v2_amount.unwrap_or(params.amount);
-        params.shadows = self.v2_shadows.unwrap_or(params.shadows);
-        params.midtones = self.v2_midtones.unwrap_or(params.midtones);
-        params.highlights = self.v2_highlights.unwrap_or(params.highlights);
-        params.color = self.v2_chroma.unwrap_or(params.color);
-        params.resolution_factor = self.v2_resolution_factor.unwrap_or(params.resolution_factor);
-        params.resolution_type = self.v2_resolution_type;
-        params.seed = self.v2_timer as u32;
-        params
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HalationParams {
-    #[serde(default = "default_true")]
-    pub active: bool,
-    // f64 to match Python's `np.asarray(..., dtype=np.float64)` —
-    // f32 storage truncates ~7 decimals which shifts every sigma/lambda
-    // by ~3e-8, accumulating through Gaussian/exponential kernels.
-    #[serde(default = "default_one_f64")]
-    pub scatter_amount: f64,
-    #[serde(default = "default_one_f64")]
-    pub scatter_spatial_scale: f64,
-    #[serde(default = "default_one_f64")]
-    pub halation_amount: f64,
-    #[serde(default = "default_one_f64")]
-    pub halation_spatial_scale: f64,
-    #[serde(default = "default_scatter_core_f64")]
-    pub scatter_core_um: [f64; 3],
-    #[serde(default = "default_scatter_tail_f64")]
-    pub scatter_tail_um: [f64; 3],
-    #[serde(default = "default_scatter_tail_weight_f64")]
-    pub scatter_tail_weight: [f64; 3],
-    #[serde(default)]
-    pub boost_ev: f32,
-    #[serde(default = "default_03")]
-    pub boost_range: f32,
-    #[serde(default = "default_4")]
-    pub protect_ev: f32,
-    #[serde(default = "default_halation_strength_f64")]
-    pub halation_strength: [f64; 3],
-    #[serde(default = "default_halation_sigma_f64")]
-    pub halation_first_sigma_um: [f64; 3],
-    #[serde(default = "default_3i")]
-    pub halation_n_bounces: u32,
-    #[serde(default = "default_half_f64")]
-    pub halation_bounce_decay: f64,
-    #[serde(default = "default_true")]
-    pub halation_renormalize: bool,
-}
 
 fn default_one_f64() -> f64 {
     1.0
 }
-fn default_half_f64() -> f64 {
-    0.5
-}
-fn default_scatter_core_f64() -> [f64; 3] {
-    [2.2, 2.0, 1.6]
-}
-fn default_scatter_tail_f64() -> [f64; 3] {
-    [9.3, 9.7, 9.1]
-}
-fn default_scatter_tail_weight_f64() -> [f64; 3] {
-    [0.78, 0.65, 0.67]
-}
-fn default_halation_strength_f64() -> [f64; 3] {
-    [0.05, 0.015, 0.0]
-}
-fn default_halation_sigma_f64() -> [f64; 3] {
-    [65.0, 65.0, 65.0]
-}
 
-impl Default for HalationParams {
-    fn default() -> Self {
-        Self {
-            active: true,
-            scatter_amount: 1.0,
-            scatter_spatial_scale: 1.0,
-            halation_amount: 1.0,
-            halation_spatial_scale: 1.0,
-            scatter_core_um: [2.2, 2.0, 1.6],
-            scatter_tail_um: [9.3, 9.7, 9.1],
-            scatter_tail_weight: [0.78, 0.65, 0.67],
-            boost_ev: 0.0,
-            boost_range: 0.3,
-            protect_ev: 4.0,
-            halation_strength: [0.05, 0.015, 0.0],
-            halation_first_sigma_um: [65.0, 65.0, 65.0],
-            halation_n_bounces: 3,
-            halation_bounce_decay: 0.5,
-            halation_renormalize: true,
-        }
-    }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DirCouplersParams {
-    #[serde(default = "default_true")]
-    pub active: bool,
-    // f64 throughout — Python reads these as JSON floats (f64). The
-    // f32 truncation of values like 0.341 (→ 0.3409999907... in f32 vs
-    // 0.341 = 0.34100000000000003 in f64) shifts every coupler weight
-    // and diffusion sigma by ~3e-8 and amplifies through the per-channel
-    // density correction.
-    #[serde(default = "default_one_f64")]
-    pub amount: f64,
-    #[serde(default = "default_one_f64")]
-    pub inhibition_samelayer: f64,
-    #[serde(default = "default_one_f64")]
-    pub inhibition_interlayer: f64,
-    #[serde(default = "default_gamma_same_f64")]
-    pub gamma_samelayer_rgb: [f64; 3],
-    #[serde(default = "default_gamma_r_gb_f64")]
-    pub gamma_interlayer_r_to_gb: [f64; 2],
-    #[serde(default = "default_gamma_g_rb_f64")]
-    pub gamma_interlayer_g_to_rb: [f64; 2],
-    #[serde(default = "default_gamma_b_rg_f64")]
-    pub gamma_interlayer_b_to_rg: [f64; 2],
-    #[serde(default = "default_20_f64")]
-    pub diffusion_size_um: f64,
-    #[serde(default = "default_200_f64")]
-    pub diffusion_tail_um: f64,
-    #[serde(default = "default_006_f64")]
-    pub diffusion_tail_weight: f64,
-}
-
-fn default_gamma_same_f64() -> [f64; 3] {
-    [0.341, 0.324, 0.273]
-}
-fn default_gamma_r_gb_f64() -> [f64; 2] {
-    [0.355, 0.305]
-}
-fn default_gamma_g_rb_f64() -> [f64; 2] {
-    [0.154, 0.358]
-}
-fn default_gamma_b_rg_f64() -> [f64; 2] {
-    [0.171, 0.225]
-}
-fn default_20_f64() -> f64 {
-    20.0
-}
-fn default_200_f64() -> f64 {
-    200.0
-}
-fn default_006_f64() -> f64 {
-    0.06
-}
-
-impl Default for DirCouplersParams {
-    fn default() -> Self {
-        Self {
-            active: true,
-            amount: 1.0,
-            inhibition_samelayer: 1.0,
-            inhibition_interlayer: 1.0,
-            gamma_samelayer_rgb: [0.341, 0.324, 0.273],
-            gamma_interlayer_r_to_gb: [0.355, 0.305],
-            gamma_interlayer_g_to_rb: [0.154, 0.358],
-            gamma_interlayer_b_to_rg: [0.171, 0.225],
-            diffusion_size_um: 20.0,
-            diffusion_tail_um: 200.0,
-            diffusion_tail_weight: 0.06,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GlareParams {
-    #[serde(default = "default_true")]
-    pub active: bool,
-    #[serde(default = "default_003")]
-    pub percent: f32,
-    #[serde(default = "default_07")]
-    pub roughness: f32,
-    #[serde(default = "default_half")]
-    pub blur: f32,
-}
-
-impl Default for GlareParams {
-    fn default() -> Self {
-        Self {
-            active: true,
-            percent: 0.03,
-            roughness: 0.7,
-            blur: 0.5,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1035,7 +624,7 @@ impl RuntimeParams {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_color()?;
         let grain = &self.film_render.grain;
-        if spektrafilm_model::grain_v2::profile_index(&grain.v2_profile).is_none() {
+        if spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none() {
             return Err(format!("film_render.grain.v2_profile: unknown profile {:?}", grain.v2_profile));
         }
         for (name, value, min, max) in [
@@ -1225,9 +814,6 @@ impl RuntimeParams {
 }
 
 // Default value helpers
-fn default_bpm() -> String {
-    "black_pro_mist".into()
-}
 fn default_half() -> f32 {
     0.5
 }
@@ -1266,30 +852,6 @@ fn default_001() -> f32 {
 }
 fn default_unsharp() -> [f64; 2] {
     [0.7, 0.7]
-}
-fn default_065() -> f32 {
-    0.65
-}
-fn default_micro_structure() -> [f32; 2] {
-    [0.2, 30.0]
-}
-fn default_1i() -> u32 {
-    1
-}
-fn default_03() -> f32 {
-    0.3
-}
-fn default_4() -> f32 {
-    4.0
-}
-fn default_3i() -> u32 {
-    3
-}
-fn default_003() -> f32 {
-    0.03
-}
-fn default_07() -> f32 {
-    0.7
 }
 fn default_prophoto() -> String {
     "ProPhoto RGB".into()
@@ -1336,9 +898,9 @@ mod tests {
     #[test]
     fn grain_v2_profile_inheritance_and_overrides() {
         let mut params = super::RuntimeParams::default();
-        for (i, name) in spektrafilm_model::grain_v2::PROFILE_NAMES.iter().enumerate() {
+        for (i, name) in spektrafilm_model::grain::v2::PROFILE_NAMES.iter().enumerate() {
             params.film_render.grain.v2_profile = (*name).into();
-            let expected = spektrafilm_model::grain_v2::GrainV2Params::for_profile(i);
+            let expected = spektrafilm_model::grain::v2::GrainV2Params::for_profile(i);
             let actual = params.film_render.grain.resolved_grain_v2();
             assert_eq!(actual.amount, expected.amount);
             assert_eq!(actual.resolution_factor, expected.resolution_factor);

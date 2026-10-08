@@ -14,11 +14,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
-use spektrafilm_core::params::{GrainEngine, GrainV2Mode, RuntimeParams};
+use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
+mod panels;
 mod state;
 mod controls;
 mod display;
@@ -1512,314 +1513,24 @@ impl App {
 
         }
         if self.gui_tab == GuiTab::Film {
-        // ── Halation ────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Halation")
-            .default_open(true)
-            .show(ui, |ui| {
-                let h = &mut self.params.film_render.halation;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut h.active, "Active").changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.halation_amount, 0.0..=3.0)
-                            .text("Halation amount"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.halation_spatial_scale, 0.1..=5.0)
-                            .text("Halation scale"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut h.scatter_amount, 0.0..=3.0).text("Scatter amount"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.scatter_spatial_scale, 0.1..=5.0)
-                            .text("Scatter scale"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut h.halation_n_bounces, 1..=5).text("Bounces"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut h.halation_bounce_decay, 0.0..=1.0)
-                            .text("Bounce decay"),
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(&mut h.halation_renormalize, "Renormalize")
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── DIR couplers ────────────────────────────────────────────────
-        egui::CollapsingHeader::new("DIR couplers")
-            .default_open(true)
-            .show(ui, |ui| {
-                let d = &mut self.params.film_render.dir_couplers;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut d.active, "Active").changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut d.amount, 0.0..=2.0).text("Amount"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut d.diffusion_size_um, 0.0..=100.0)
-                            .text("Diffusion size (µm)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut d.diffusion_tail_um, 0.0..=400.0)
-                            .text("Diffusion tail (µm)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut d.diffusion_tail_weight, 0.0..=1.0)
-                            .text("Tail weight"),
-                    )
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Diffusion filter (lens) ─────────────────────────────────────
-        egui::CollapsingHeader::new("Diffusion filter (lens)")
-            .default_open(true)
-            .show(ui, |ui| {
-                let df = &mut self.params.camera.diffusion_filter;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut df.active, "Active").changed();
-                egui::ComboBox::from_label("Family")
-                    .selected_text(df.filter_family.clone())
-                    .show_ui(ui, |ui| {
-                        for fam in ["black_pro_mist", "glimmerglass", "pro_mist", "cinebloom"] {
-                            changed |= ui
-                                .selectable_value(&mut df.filter_family, fam.to_string(), fam)
-                                .changed();
-                        }
-                    });
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.strength, 0.0..=2.0).text("Strength"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.spatial_scale, 0.1..=3.0).text("Spatial scale"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.halo_warmth, -1.5..=1.5).text("Halo warmth"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut df.core_intensity, 0.0..=2.0).text("Core intensity"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut df.halo_intensity, 0.0..=2.0).text("Halo intensity"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut df.bloom_intensity, 0.0..=2.0)
-                            .text("Bloom intensity"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.halo_size, 0.1..=3.0).text("Halo size"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut df.bloom_size, 0.1..=3.0).text("Bloom size"))
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Grain ───────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Grain")
-            .default_open(true)
-            .show(ui, |ui| {
-                let g = &mut self.params.film_render.grain;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut g.active, "Active").changed();
-                egui::ComboBox::from_label("Engine")
-                    .selected_text(match g.engine {
-                        GrainEngine::V1 => "V1 — emulsion grain",
-                        GrainEngine::V2 => "V2 — procedural grain",
-                    })
-                    .show_ui(ui, |ui| {
-                        changed |= ui
-                            .selectable_value(
-                                &mut g.engine,
-                                GrainEngine::V1,
-                                "V1 — emulsion grain",
-                            )
-                            .changed();
-                        changed |= ui
-                            .selectable_value(
-                                &mut g.engine,
-                                GrainEngine::V2,
-                                "V2 — procedural grain",
-                            )
-                            .changed();
-                    });
-                if matches!(g.engine, GrainEngine::V2) {
-                    let mut profile_changed = false;
-                    egui::ComboBox::from_label("V2 profile")
-                        .selected_text(g.v2_profile.clone())
-                        .show_ui(ui, |ui| {
-                            for profile in spektrafilm_model::grain_v2::PROFILE_NAMES {
-                                profile_changed |= ui
-                                    .selectable_value(
-                                        &mut g.v2_profile,
-                                        profile.to_owned(),
-                                        profile,
-                                    )
-                                    .changed();
-                            }
-                        });
-                    if profile_changed || ui.button("Reset V2 controls to profile").clicked() {
-                        for value in [
-                            &mut g.v2_size,
-                            &mut g.v2_amount,
-                            &mut g.v2_shadows,
-                            &mut g.v2_midtones,
-                            &mut g.v2_highlights,
-                            &mut g.v2_chroma,
-                            &mut g.v2_resolution_factor,
-                        ] {
-                            *value = None;
-                        }
-                        changed = true;
-                    }
-                    egui::ComboBox::from_label("V2 mode")
-                        .selected_text(match g.v2_mode {
-                            GrainV2Mode::Analogue => "Analogue",
-                            GrainV2Mode::Noise => "Noise",
-                        })
-                        .show_ui(ui, |ui| {
-                            changed |= ui
-                                .selectable_value(
-                                    &mut g.v2_mode,
-                                    GrainV2Mode::Analogue,
-                                    "Analogue",
-                                )
-                                .changed();
-                            changed |= ui
-                                .selectable_value(&mut g.v2_mode, GrainV2Mode::Noise, "Noise")
-                                .changed();
-                        });
-                    let resolved = g.resolved_grain_v2();
-                    for (label, value, inherited, min, max) in [
-                        ("Size", &mut g.v2_size, resolved.size, 1.0, 48.0),
-                        ("Amount", &mut g.v2_amount, resolved.amount, 0.0, 1.0),
-                        ("Shadows", &mut g.v2_shadows, resolved.shadows, 0.0, 1.0),
-                        ("Midtones", &mut g.v2_midtones, resolved.midtones, 0.0, 1.0),
-                        ("Highlights", &mut g.v2_highlights, resolved.highlights, 0.0, 1.0),
-                        ("Chroma", &mut g.v2_chroma, resolved.color, 0.0, 1.0),
-                        ("Film Resolution", &mut g.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0),
-                    ] {
-                        let mut displayed = value.unwrap_or(inherited);
-                        if ui.add(egui::Slider::new(&mut displayed, min..=max).text(label)).changed() {
-                            *value = Some(displayed);
-                            changed = true;
-                        }
-                    }
-                    egui::ComboBox::from_label("Resolution filter")
-                        .selected_text(if g.v2_resolution_type == 0 { "Gaussian" } else { "Fast box FIR" })
-                        .show_ui(ui, |ui| {
-                            changed |= ui.selectable_value(&mut g.v2_resolution_type, 0, "Gaussian").changed();
-                            changed |= ui.selectable_value(&mut g.v2_resolution_type, 1, "Fast box FIR").changed();
-                        });
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut g.v2_timer, 0.0..=65535.0)
-                                .text("V2 timer"),
-                        )
-                        .changed();
-                } else {
-                changed |= ui
-                    .checkbox(&mut g.sublayers_active, "Layered sublayer grain")
-                    .on_hover_text(
-                        "Split the composite density into the emulsion's sublayers and grain \
-                         each with its own particle field, dye-cloud blur and micro-structure \
-                         (the Python 0.3.4 default). Off = single composite-density sampler.",
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut g.particle_area_um2, 0.05..=1.0)
-                            .text("Particle area (µm²)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut g.blur, 0.0..=3.0).text("Post-blur σ"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut g.blur_dye_clouds_um, 0.0..=10.0)
-                            .text("Dye-cloud blur (µm)"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut g.n_sub_layers, 1..=4).text("Sub-layers"))
-                    .on_hover_text(
-                        "Composite-sampler sub-layer count (layered grain always uses the \
-                         profile's 3 emulsion sublayers).",
-                    )
-                    .changed();
-                }
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
+        if panels::halation::show(ui, &mut self.params.film_render.halation) {
+            self.dirty = true;
+        }
+        if panels::couplers::show(ui, &mut self.params.film_render.dir_couplers) {
+            self.dirty = true;
+        }
+        if panels::diffusion::show(ui, &mut self.params.camera.diffusion_filter) {
+            self.dirty = true;
+        }
+        if panels::grain::show(ui, &mut self.params.film_render.grain) {
+            self.dirty = true;
+        }
         }
         if self.gui_tab == GuiTab::Print {
-        // ── Glare ───────────────────────────────────────────────────────
-        // Print-paper viewing glare only — upstream 0.3.4 disables glare
-        // entirely for direct-film scans (`glare = None`), so the panel is
-        // inert in scan-film mode; disable it and say why rather than let
-        // it silently affect nothing.
-        egui::CollapsingHeader::new("Glare")
-            .default_open(false)
-            .show(ui, |ui| {
-                if self.params.io.scan_film {
-                    ui.label(
-                        egui::RichText::new(
-                            "Direct film scan — viewing glare is disabled (print-only effect).",
-                        )
-                        .italics()
-                        .small(),
-                    );
-                }
-                let scan_film = self.params.io.scan_film;
-                let g = &mut self.params.print_render.glare;
-                let mut changed = false;
-                ui.add_enabled_ui(!scan_film, |ui| {
-                    changed |= ui.checkbox(&mut g.active, "Active").changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut g.percent, 0.0..=0.2).text("Percent"))
-                        .changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut g.roughness, 0.0..=2.0).text("Roughness"))
-                        .changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut g.blur, 0.0..=5.0).text("Blur σ (px)"))
-                        .changed();
-                });
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
+            let scan_film = self.params.io.scan_film;
+            if panels::glare::show(ui, &mut self.params.print_render.glare, scan_film) {
+                self.dirty = true;
+            }
         // ── Print curves (s023 morph) ───────────────────────────────────
         egui::CollapsingHeader::new("Print curves")
             .default_open(false)

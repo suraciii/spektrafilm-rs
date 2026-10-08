@@ -325,7 +325,7 @@ What gets it there:
 - **Accelerate BLAS dgemm** for the spectral reductions — a single `cblas_dgemm` per contraction, parallelised internally by Accelerate. (It is not safe to call concurrently from multiple threads, so the matmul is never split across rayon.)
 - **Parallelised hot per-pixel loops** in the printing and scanning post-stages.
 
-GPU preview uses f32 WGPU compute shaders (`crates/spektrafilm-shaders/wgsl/`). Faithful CPU stages and destination post-scan handling participate where required. Historical Apple Silicon preview timings (~250 ms at 6 MP, ~700 ms at 16 MP) describe the earlier supported chain; they are not measured performance claims for the migrated controls or CPU fallback paths.
+GPU preview uses f32 WGPU compute shaders. Effect-specific shaders live beside their Rust dispatch code in `crates/spektrafilm-gpu/src/wgpu_backend/`; spectral shaders remain in `crates/spektrafilm-shaders/wgsl/spectral/`. Faithful CPU stages and destination post-scan handling participate where required. Historical Apple Silicon preview timings (~250 ms at 6 MP, ~700 ms at 16 MP) describe the earlier supported chain; they are not measured performance claims for the migrated controls or CPU fallback paths.
 
 ## Layout
 
@@ -335,7 +335,7 @@ crates/
   spektrafilm-model/   stochastic + physical models (grain, halation, DIR couplers, glare)
   spektrafilm-core/    pipeline orchestration, profiles, stage definitions
   spektrafilm-gpu/     ComputeBackend trait + CPU (rayon + BLAS) and wgpu backends
-  spektrafilm-shaders/ WGSL / Metal compute shaders
+  spektrafilm-shaders/ spectral WGSL shaders and standalone Metal sources
   spektrafilm-cli/     `spektrafilm` / `spektrafilm-f64` (process, list-profiles, lut, export-lut) + `decode_raw_gui`
   spektrafilm-gui/     egui/eframe preview (wgpu renderer, Metal-backed on macOS)
   spektrafilm-raw/     shared native LibRaw white balance and Lensfun correction
@@ -347,6 +347,17 @@ data/
   license/             canonical spectral-data license
 scripts/parity/        Python 0.3.4 ↔ Rust differential harness (scenarios.py, py_reference.py, run_parity.py, gen_matrix.py)
 ```
+
+Feature ownership stays inside the existing crates:
+
+- `spektrafilm-model/src/`: `grain/{v1,v2}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests; `optics/` owns shared physical blur, unsharp masking, and highlight boost.
+- `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate; serialized JSON fields are unchanged.
+- `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. Shared blur infrastructure stays in `blur/`; `mod.rs` retains device setup and film-chain orchestration.
+- `spektrafilm-gui/src/panels/`: effect panels edit typed parameters and return whether controls changed; the application retains preview scheduling and persistence.
+
+Canonical Rust paths include `spektrafilm_model::grain::v1`, `spektrafilm_model::grain::v2`, and `spektrafilm_core::params::grain::GrainParams`; the former flat module paths have been removed.
+
+The feature-directory refactor was checked with the workspace's all-target/all-feature build, 182 existing default tests, and 183 existing f64 tests. CPU f64 V1, V2 Analogue, and V2 Noise renders in both print and film-scan modes produced float TIFF pixels identical to the pre-refactor baseline (maximum absolute difference 0). Native Linux GUI smoke covered the extracted Film/Print panels and a V1-to-V2 switch followed by preview rendering. No new tests were added for directory structure or forwarding. Hardware GPU execution and performance were not verified by this refactor's acceptance run.
 
 ## Credits
 
