@@ -88,8 +88,11 @@ class ExperimentalDesktop(X11):
         self.xd('windowactivate', '--sync', self.window)
         self.xd('windowsize', '--sync', self.window, 1460, 980)
         self.xd('windowmove', '--sync', self.window, 0, 0)
-        wait_for(lambda: self.locate('MAIN') and self.locate('CONFIG'),
-                 'rendered experimental tabs', 30)
+        def tabs_visible():
+            _, _, lines = self.read()
+            return all(self.match(lines, label, right=True)
+                       for label in ('MAIN', 'CONFIG'))
+        wait_for(tabs_visible, 'rendered experimental tabs', 30)
 
     def locate(self, label, *, exact=False, bottom=False):
         image, _, lines = self.read()
