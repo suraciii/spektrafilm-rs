@@ -167,10 +167,6 @@ impl GrainParams {
         let mut params = GrainV2Params::for_profile(index);
         params.amount = self.v2_amount.map_or(params.amount, |v| v / 100.0);
         if custom {
-            params.film_type = match self.v2_film_type {
-                GrainV2FilmType::Negative => 0,
-                GrainV2FilmType::Positive => 1,
-            };
             params.mode = match self.v2_mode {
                 GrainV2Mode::Analogue => v2::GrainV2Mode::Analogue,
                 GrainV2Mode::Noise => v2::GrainV2Mode::Noise,
@@ -219,11 +215,6 @@ impl GrainParams {
     pub fn select_custom_grain_v2(&mut self) {
         let params = self.resolved_grain_v2();
         self.v2_profile = "custom".into();
-        self.v2_film_type = if params.film_type == 0 {
-            GrainV2FilmType::Negative
-        } else {
-            GrainV2FilmType::Positive
-        };
         self.v2_mode = match params.mode {
             spektrafilm_model::grain::v2::GrainV2Mode::Analogue => GrainV2Mode::Analogue,
             spektrafilm_model::grain::v2::GrainV2Mode::Noise => GrainV2Mode::Noise,

@@ -25,7 +25,7 @@ fn shader_params(width: u32, height: u32, params: &crate::GrainV2GpuParams) -> S
         ],
         flags: [
             params.resolution_factor,
-            params.film_type as f32,
+            params.resolution_type as f32,
             params.colored as u32 as f32,
             params.clustered as u32 as f32,
         ],
@@ -38,6 +38,7 @@ impl WgpuBackend {
         let shader_uniform = shader_params(img.width, img.height, params);
         let input = scalars_to_f32(&img.data);
         let output = vec![0u8; input.len() * std::mem::size_of::<f32>()];
+
         let output = self.dispatch_compute(
             include_str!("grain_v2.wgsl"),
             &[

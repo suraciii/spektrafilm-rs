@@ -832,6 +832,9 @@ mod tests {
             spektrafilm_model::grain::v2::GrainV2Mode::Analogue
         );
         assert_eq!(preset.film_type, 1);
+        assert_eq!(preset.resolution_type, 1);
+        grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
+        assert_eq!(grain.resolved_grain_v2().resolution_type, 1);
         grain.select_custom_grain_v2();
         assert_eq!(grain.v2_amount, Some(25.0));
         assert_eq!(grain.v2_size, Some(48.0));
@@ -848,6 +851,7 @@ mod tests {
             spektrafilm_model::grain::v2::GrainV2Mode::Noise
         );
         assert_eq!(custom.film_type, 0);
+        assert_eq!(custom.resolution_type, 1);
         params.film_render.grain.v2_profile = "35mm250".into();
         params.film_render.grain.v2_amount = None;
         params.film_render.grain.select_custom_grain_v2();
