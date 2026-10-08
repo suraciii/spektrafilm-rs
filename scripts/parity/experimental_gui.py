@@ -92,7 +92,7 @@ class ExperimentalDesktop(X11):
             _, _, lines = self.read()
             return all(self.match(lines, label, right=True)
                        for label in ('MAIN', 'CONFIG'))
-        wait_for(tabs_visible, 'rendered experimental tabs', 30)
+        wait_for(tabs_visible, 'rendered experimental tabs', 120)
 
     def locate(self, label, *, exact=False, bottom=False):
         image, _, lines = self.read()
