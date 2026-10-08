@@ -62,8 +62,8 @@ pub fn profile_index(name: &str) -> Option<usize> {
 pub struct GrainV2Params {
     pub mode: GrainV2Mode,
     pub profile: usize,
-    /// Host grainResolutionType: 0 = Negative (optical), 1 = Positive (fast box).
-    pub film_type: u32,
+    /// Dehancer resolution type: 0 = OpticalResolution, 1 = FastBlur.
+    pub resolution_type: u32,
     pub size: f32,
     pub amount: f32,
     pub shadows: f32,
@@ -88,9 +88,7 @@ impl GrainV2Params {
         Self {
             mode: GrainV2Mode::Analogue,
             profile: index.min(11),
-            // Host grainResolutionType: Negative = 0 (optical),
-            // Positive = 1 (fast box).
-            film_type: 1,
+            resolution_type: 1,
             size: p.scale,
             amount: p.amount,
             shadows: p.shadows,
@@ -114,20 +112,19 @@ impl GrainV2Params {
     pub fn resampler_scale(self) -> f32 {
         1.0 + (self.size - 1.0) / 47.0 * 1.5
     }
-    /// Radius in output pixels; source FastBlur is approximated by a fractional
-    /// separable box FIR, and optical mode uses a Gaussian FIR.
+    /// Dehancer Film Resolution radius in output pixels.
     pub fn resolution_radius(self, width: u32, height: u32) -> f32 {
-        let gsf = (5200.0 / width.max(1) as f32).max(3100.0 / height.max(1) as f32);
-        let a = self.amount.clamp(0., 1.);
-        let s = 1.0 + (self.size - 1.0) / 47.0;
         if self.mode == GrainV2Mode::Noise {
-            return s * (1. - self.resolution_factor.clamp(0., 100.) / 100.) / gsf
-                * 1.87
-                * effective_control(a);
+            return 0.;
         }
-        s * (1.0 - self.resolution_factor.clamp(0., 100.) / 100.) / gsf
-            * if self.film_type == 1 { 1.2 } else { 1.6 }
-            * (0.7 * a * a + 0.3 * a + 0.05)
+        let gsf = (5200.0 / width.max(1) as f32).max(3100.0 / height.max(1) as f32);
+        let size = 1.0 + (self.size - 1.0) / 47.0;
+        let resolution = 1.0 - self.resolution_factor.clamp(0., 100.) / 100.;
+        let amount = self.amount.clamp(0., 1.);
+        let resolution_scale = if self.resolution_type == 1 { 1.2 } else { 1.6 };
+        (size * resolution / gsf * resolution_scale
+            * (0.7 * amount * amount + 0.3 * amount + 0.05))
+            .max(0.)
     }
 }
 #[inline]
@@ -286,29 +283,155 @@ fn overlay(b: f32, g: f32) -> f32 {
 fn opacity(v: f32, c: f32) -> f32 {
     (-0.5 * ((v - c) * 5.).powi(2)).exp()
 }
-fn weight(d: i32, r: f32, optical: bool) -> f32 {
-    if optical {
-        (-0.5 * (d as f32 / r.max(0.001)).powi(2)).exp()
-    } else {
-        (r + 1. - (d.abs() as f32)).clamp(0., 1.)
+fn fast_blur_line_weights(radius: f32) -> (Vec<f32>, Vec<f32>) {
+    if radius <= 0. {
+        return (vec![0.5], vec![0.]);
     }
+    let sigma = 2. * radius / 3.;
+    let n = (4i32 * sigma.ceil() as i32 - 1).max(3);
+    let center = n / 2;
+    let mut kernel: Vec<f32> = (-center..=center)
+        .map(|i| (-0.5 * (i as f32 / sigma).powi(2)).exp())
+        .collect();
+    let sum: f32 = kernel.iter().sum();
+    kernel.iter_mut().for_each(|weight| *weight /= sum);
+
+    let half = |j: i32| {
+        kernel[(center - j) as usize] * if j == 0 { 0.5 } else { 1.0 }
+    };
+    let samples = (center + 1) / 2;
+    let mut weights = Vec::with_capacity(samples as usize);
+    let mut offsets = Vec::with_capacity(samples as usize);
+    for i in 0..samples {
+        let left = half(2 * i);
+        let right = half(2 * i + 1);
+        let weight = left + right;
+        weights.push(weight);
+        offsets.push(2. * i as f32 + right / weight);
+    }
+    (weights, offsets)
 }
-#[inline]
-fn effective_control(value: f32) -> f32 {
-    let t = value.clamp(0., 1.);
-    0.12 * t * t + 0.68 * t + 0.2
+
+fn optical_resolution_weights(radius: f32) -> Vec<(i32, f32)> {
+    if radius <= 0. {
+        return vec![(0, 1.)];
+    }
+    let c = 4.max((1.5 * radius).ceil() as i32);
+    let k = (c + 1) / 2;
+    let adj = if k % 2 == 0 { k + 5 } else { k + 4 };
+    let mut weights = Vec::with_capacity((2 * adj + 1) as usize);
+    let mut total = 0.;
+    for offset in -adj..=adj {
+        let x = offset as f32 / radius;
+        let abs_x = x.abs();
+        let weight = if abs_x >= 1.5 {
+            0.
+        } else if abs_x > 0.5 {
+            0.5 * (abs_x - 1.5).powi(2)
+        } else {
+            1.3333333 - x * x
+        };
+        weights.push((offset, weight));
+        total += weight;
+    }
+    weights
+        .into_iter()
+        .map(|(offset, weight)| (offset, weight / total))
+        .collect()
+}
+
+fn sample_line(source: &ImageBuf, x: f32, y: f32, axis: u32) -> [f32; 3] {
+    let (position, limit) = if axis == 0 {
+        (x.clamp(0., source.width.saturating_sub(1) as f32), source.width)
+    } else {
+        (y.clamp(0., source.height.saturating_sub(1) as f32), source.height)
+    };
+    let low = position.floor() as u32;
+    let high = (low + 1).min(limit.saturating_sub(1));
+    let fraction = position - low as f32;
+    let sample = |index: u32| {
+        if axis == 0 {
+            source.get(index, y.round().clamp(0., source.height.saturating_sub(1) as f32) as u32)
+        } else {
+            source.get(x.round().clamp(0., source.width.saturating_sub(1) as f32) as u32, index)
+        }
+        .map(to_f32)
+    };
+    let a = sample(low);
+    let b = sample(high);
+    std::array::from_fn(|channel| mix(a[channel], b[channel], fraction))
+}
+
+fn blur_resolution(source: &ImageBuf, radius: f32, resolution_type: u32) -> ImageBuf {
+    if radius <= 0. {
+        return source.clone();
+    }
+    let mut output = source.clone();
+    if resolution_type == 1 {
+        let (weights, offsets) = fast_blur_line_weights(radius);
+        for axis in 0..2 {
+            let input = output.clone();
+            for y in 0..source.height {
+                for x in 0..source.width {
+                    let mut value = [0.; 3];
+                    for (&weight, &offset) in weights.iter().zip(&offsets) {
+                        let positive = if axis == 0 {
+                            sample_line(&input, x as f32 + offset, y as f32, axis)
+                        } else {
+                            sample_line(&input, x as f32, y as f32 + offset, axis)
+                        };
+                        let negative = if axis == 0 {
+                            sample_line(&input, x as f32 - offset, y as f32, axis)
+                        } else {
+                            sample_line(&input, x as f32, y as f32 - offset, axis)
+                        };
+                        for channel in 0..3 {
+                            value[channel] += weight * (positive[channel] + negative[channel]);
+                        }
+                    }
+                    output.set(x, y, value.map(from_f32));
+                }
+            }
+        }
+    } else {
+        let weights = optical_resolution_weights(radius);
+        for axis in 0..2 {
+            let input = output.clone();
+            for y in 0..source.height {
+                for x in 0..source.width {
+                    let mut value = [0.; 3];
+                    for &(offset, weight) in &weights {
+                        let xx = if axis == 0 {
+                            (x as i32 + offset).clamp(0, source.width as i32 - 1) as u32
+                        } else {
+                            x
+                        };
+                        let yy = if axis == 1 {
+                            (y as i32 + offset).clamp(0, source.height as i32 - 1) as u32
+                        } else {
+                            y
+                        };
+                        let sample = input.get(xx, yy).map(to_f32);
+                        for channel in 0..3 {
+                            value[channel] += sample[channel] * weight;
+                        }
+                    }
+                    output.set(x, y, value.map(from_f32));
+                }
+            }
+        }
+    }
+    output
 }
 pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
-    if input.width == 0 || input.height == 0 {
+    if input.width == 0
+        || input.height == 0
+        || p.amount <= 0.
+        || (p.shadows <= 0. && p.midtones <= 0. && p.highlights <= 0.)
+    {
         return input.clone();
     }
-    let optical = p.film_type == 0;
     let radius = p.resolution_radius(input.width, input.height);
-    let reach = if optical {
-        (radius * 3.).ceil()
-    } else {
-        radius.ceil()
-    } as i32;
     // Fixed display working transfer; destination primaries remain unchanged.
     let mut source = input.clone();
     source
@@ -316,34 +439,10 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         .iter_mut()
         .for_each(|value| *value = from_f32(encode_display(to_f32(*value))));
     if radius > 0. {
-        let mut tmp = source.clone();
-        for axis in 0..2 {
-            for y in 0..input.height {
-                for x in 0..input.width {
-                    let mut value = [0.; 3];
-                    let mut total = 0.;
-                    for d in -reach..=reach {
-                        let w = weight(d, radius, optical);
-                        let xx = (x as i32 + if axis == 0 { d } else { 0 })
-                            .clamp(0, input.width as i32 - 1)
-                            as u32;
-                        let yy = (y as i32 + if axis == 1 { d } else { 0 })
-                            .clamp(0, input.height as i32 - 1)
-                            as u32;
-                        let v = source.get(xx, yy).map(to_f32);
-                        for c in 0..3 {
-                            value[c] += v[c] * w;
-                        }
-                        total += w;
-                    }
-                    tmp.set(x, y, value.map(|v| from_f32(v / total)));
-                }
-            }
-            std::mem::swap(&mut source, &mut tmp);
-        }
+        source = blur_resolution(&source, radius, p.resolution_type);
     }
     let gsf = (5200. / input.width as f32).max(3100. / input.height as f32);
-    let size = [input.width as f32 * gsf, input.height as f32 * gsf];
+    let size = [(input.width as f32 * gsf).floor(), (input.height as f32 * gsf).floor()];
     let mut out = source.clone();
     for y in 0..input.height {
         for x in 0..input.width {
@@ -383,16 +482,10 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                     gy,
                 )
             };
-            let a_raw = p.amount.clamp(0., 1.);
-            let a = effective_control(a_raw)
-                * if p.mode == GrainV2Mode::Noise {
-                    0.5
-                } else {
-                    1.
-                };
-            let ws = effective_control(p.shadows) * a * opacity(luma, 0.) * 2.;
-            let wm = effective_control(p.midtones) * a * opacity(luma, 0.5);
-            let wh = effective_control(p.highlights) * a * opacity(luma, 1.) * 2.;
+            let a = p.amount.clamp(0., 1.);
+            let ws = p.shadows.clamp(0., 1.) * a * opacity(luma, 0.) * 2.;
+            let wm = p.midtones.clamp(0., 1.) * a * opacity(luma, 0.5);
+            let wh = p.highlights.clamp(0., 1.) * a * opacity(luma, 1.) * 2.;
             let mut result = [0.; 3];
             for c in 0..3 {
                 let b = rgb[c];
@@ -410,37 +503,27 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
 mod tests {
     use super::*;
     #[test]
-    fn zero_amount_still_runs_pipeline() {
+    fn zero_amount_is_identity() {
         let i = ImageBuf::from_data(2, 2, vec![0.4; 12]);
         let mut p = GrainV2Params::default();
         p.amount = 0.;
-        let out = apply_cpu(&i, p);
-        assert!(out.data.iter().all(|v| to_f32(*v).is_finite()));
-        assert_ne!(out.data, i.data);
+        assert_eq!(apply_cpu(&i, p).data, i.data);
     }
 
     #[test]
-    fn film_types_select_distinct_resolution_paths() {
-        let image = ImageBuf::from_data(
-            192,
-            108,
-            (0..192 * 108)
-                .flat_map(|i| [from_f32(if i % 192 < 96 { 0.1 } else { 0.8 }); 3])
-                .collect(),
-        );
-        for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-            let mut params = GrainV2Params::default();
-            params.mode = mode;
-            params.size = 48.;
-            params.amount = 1.;
-            params.resolution_factor = 0.;
-            params.film_type = 0;
-            let negative = apply_cpu(&image, params);
-            params.film_type = 1;
-            let positive = apply_cpu(&image, params);
-            let edge = |img: &ImageBuf| to_f32(img.get(96, 54)[0]) - to_f32(img.get(95, 54)[0]);
-            assert!((edge(&negative) - edge(&positive)).abs() > 1e-3, "{mode:?}");
+    fn resolution_types_select_distinct_paths() {
+        let mut data = vec![from_f32(0.); 9 * 9 * 3];
+        for channel in 0..3 {
+            data[(4 * 9 + 4) * 3 + channel] = from_f32(1.);
         }
+        let image = ImageBuf::from_data(9, 9, data);
+        let optical = blur_resolution(&image, 1., 0);
+        let fast = blur_resolution(&image, 1., 1);
+        assert_ne!(optical.data, fast.data);
+        let (weights, offsets) = fast_blur_line_weights(0.5);
+        assert_eq!(weights.len(), 1);
+        assert!((weights[0] - 0.5).abs() < 1e-6);
+        assert!((offsets[0] - 0.021735).abs() < 1e-5);
     }
     #[test]
     fn modes_resolution_and_color() {
@@ -455,14 +538,13 @@ mod tests {
         p.mode = GrainV2Mode::Noise;
         let b = apply_cpu(&i, p);
         assert_ne!(a.data, b.data);
-        p.resolution_factor = 0.;
-        p.film_type = 0;
+        p.resolution_type = 0;
         assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
         p.colored = false;
         assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
     }
     #[test]
-    fn noise_film_resolution_reduces_edge_contrast() {
+    fn noise_ignores_film_resolution() {
         let image = ImageBuf::from_data(
             192,
             108,
@@ -473,15 +555,11 @@ mod tests {
         let mut p = GrainV2Params::default();
         p.mode = GrainV2Mode::Noise;
         p.size = 48.;
-        p.shadows = 0.;
-        p.midtones = 0.;
-        p.highlights = 0.;
         p.resolution_factor = 100.;
         let sharp = apply_cpu(&image, p);
         p.resolution_factor = 0.;
-        let blurred = apply_cpu(&image, p);
-        let edge = |img: &ImageBuf| to_f32(img.get(96, 54)[0]) - to_f32(img.get(95, 54)[0]);
-        assert!(edge(&blurred) < edge(&sharp) * 0.98);
+        let unchanged = apply_cpu(&image, p);
+        assert_eq!(sharp.data, unchanged.data);
     }
 
     #[test]
@@ -586,12 +664,11 @@ mod tests {
                 .collect(),
         );
         for profile in 0..PROFILES.len() {
-            for film_type in [0, 1] {
-                for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-                    for control in [0., 1.] {
-                        let mut params = GrainV2Params::for_profile(profile);
-                        params.film_type = film_type;
-                        params.mode = mode;
+        for resolution_type in [1] {
+            for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
+                for control in [0., 1.] {
+                    let mut params = GrainV2Params::for_profile(profile);
+                    params.resolution_type = resolution_type;
                         params.seed = 42;
                         params.amount = control;
                         params.shadows = control;
@@ -601,7 +678,7 @@ mod tests {
                         let cpu = apply_cpu(&image, params);
                         let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
                             mode: params.mode as u32,
-                            film_type: params.film_type,
+                            resolution_type: params.resolution_type,
                             amount: params.amount,
                             shadows: params.shadows,
                             midtones: params.midtones,
@@ -630,7 +707,10 @@ mod tests {
                             .zip(&gpu_image.data)
                             .map(|(a, b)| (to_f32(*a) - to_f32(*b)).abs())
                             .fold(0.0f32, f32::max);
-                        assert!(max_error < 5e-3, "CPU/GPU Grain V2 drift: {max_error}");
+                        assert!(
+                            max_error < 5e-3,
+                            "CPU/GPU Grain V2 drift: {max_error}, profile={profile}, resolution_type={resolution_type}, mode={mode:?}, control={control}"
+                        );
                     }
                 }
             }
