@@ -13,7 +13,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Spectral pipeline.** Hanatos2025 RGB→raw spectral upsampling with its full sensitivity adaptation (camera UV/IR band-pass filters with reference-illuminant normalization, erf4 band-pass window, poly4 log-exposure surface, spectral Gaussian blur), full 81-wavelength film/print/scanner spectral integration, density-curve interpolation, halation, DIR couplers, grain (bit-exact numpy `MT19937` port), glare, output CCTF encoding.
 - **Interactive preview** through wgpu (Metal on macOS), with CPU stages for exact optical diffusion and V1 grain sampling; V2 uses a compute shader. Frame rate depends on image size, controls and hardware.
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
-- **Decoupled preview + export.** GUI uses f32 GPU for iteration, then shells out to the f64 CPU binary for the final write. The export runs in a worker thread with a cancel button and proper child-process lifecycle.
+- **Selectable CPU/GPU export.** Choose `CPU (f64)` (default) or `GPU (WGPU f32)` in the GUI's **Export backend** menu. Both re-render at export resolution through `spektrafilm-f64`, independently of preview, with cancellation and atomic output publication. The choice is saved with GUI state. GPU uses f32 shaders and retains CPU stages for unsupported effects; it is not f64 reference output. An unavailable WGPU adapter is an error for explicit GPU export.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
 - **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
@@ -130,15 +130,13 @@ executable.
 ### CLI
 
 ```bash
-# f32 GPU (fast)
-./target/release/spektrafilm process input.ORF -o out.png \
-    --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
+# GPU export: WGPU f32 shaders, CPU stages where required
+./target/release/spektrafilm-f64 process input.ORF -o out.png \
+    --backend gpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
-
-# f64 CPU (reference)
-SPEKTRAFILM_BACKEND=cpu \
-    ./target/release/spektrafilm-f64 process input.ORF -o out.png \
-    --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
+# CPU f64 reference export
+./target/release/spektrafilm-f64 process input.ORF -o out.png \
+    --backend cpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json
@@ -146,6 +144,8 @@ SPEKTRAFILM_BACKEND=cpu \
 # List available film + paper profiles
 ./target/release/spektrafilm list-profiles --data-dir data
 ```
+
+`process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth (`--bit-depth`) is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
 Working geometry follows Python 0.3.4 (`3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`). In JSON, set `io.crop`, `io.crop_center: [x, y]`, `io.crop_size: [width, height]`, and `io.upscale_factor`. Center coordinates are normalized to the source axes; both size components are fractions of the source's long edge. Bounds and rounding follow the upstream NumPy slice convention, including negative-index slicing when a crop exceeds the short edge. Empty crops and nonpositive/nonfinite resize factors return errors before output is written.
 
