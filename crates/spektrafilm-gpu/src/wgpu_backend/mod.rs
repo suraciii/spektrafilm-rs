@@ -1,17 +1,16 @@
 /// wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 #[cfg(feature = "wgpu-backend")]
-
-use std::borrow::Cow;
+use parking_lot::Mutex;
 #[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
+use std::borrow::Cow;
 
-#[cfg(feature = "wgpu-backend")]
-use crate::{ComputeBackend, Lut3D, cpu_backend};
 use crate::gpu_helpers::{
     f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
 };
-
+#[cfg(feature = "wgpu-backend")]
+use crate::{ComputeBackend, Lut3D, cpu_backend};
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
@@ -42,17 +41,13 @@ fn fir_blur_radius(sigma: f32) -> u32 {
     ((3.0_f32 * sigma).ceil() as u32).min(MAX_BLUR_RADIUS)
 }
 
-
-
-
-
 #[cfg(feature = "wgpu-backend")]
 pub struct WgpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     /// Cache compiled compute pipelines keyed by shader source pointer.
     /// `&'static str` is fine because all our shader sources come from `include_str!`.
-    pipeline_cache: std::sync::Mutex<std::collections::HashMap<usize, CachedPipeline>>,
+    pipeline_cache: Mutex<std::collections::HashMap<usize, CachedPipeline>>,
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -120,7 +115,7 @@ impl WgpuBackend {
         Some(Self {
             device,
             queue,
-            pipeline_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            pipeline_cache: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -130,12 +125,12 @@ impl WgpuBackend {
         &self,
         shader_source: &'static str,
         layout_entries_fn: F,
-    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<usize, CachedPipeline>>
+    ) -> CachedPipelineRef
     where
         F: FnOnce() -> Vec<wgpu::BindGroupLayoutEntry>,
     {
         let key = shader_source.as_ptr() as usize;
-        let mut cache = self.pipeline_cache.lock().unwrap();
+        let mut cache = self.pipeline_cache.lock();
         if !cache.contains_key(&key) {
             let shader = self
                 .device
@@ -175,7 +170,11 @@ impl WgpuBackend {
                 },
             );
         }
-        cache
+        let cached = cache.get(&key).unwrap();
+        CachedPipelineRef {
+            pipeline: cached.pipeline.clone(),
+            layout: cached.bind_group_layout.clone(),
+        }
     }
 
     /// Generic GPU compute dispatch helper.
@@ -205,11 +204,9 @@ impl WgpuBackend {
             })
             .collect();
         let entries_for_compile = layout_entries.clone();
-        let cache = self.get_or_compile_pipeline(shader_source, || entries_for_compile);
-        let key = shader_source.as_ptr() as usize;
-        let cached = cache.get(&key).expect("pipeline just inserted");
+        let cached = self.get_or_compile_pipeline(shader_source, || entries_for_compile);
         let pipeline = &cached.pipeline;
-        let bind_group_layout = &cached.bind_group_layout;
+        let bind_group_layout = &cached.layout;
         let t_compile = t_start.elapsed();
 
         // Create GPU buffers
@@ -283,7 +280,6 @@ impl WgpuBackend {
         let _ = t_compile;
         result
     }
-
 
     /// GPU separable Gaussian blur via two FIR passes (horizontal then vertical).
     /// Kernel weights are computed on CPU and uploaded as a storage buffer.
@@ -368,14 +364,8 @@ impl WgpuBackend {
             wgpu::BufferBindingType::Storage { read_only: true },
             wgpu::BufferBindingType::Storage { read_only: false },
         ];
-        let h_pipe = self.cached_pipeline(
-            include_str!("blur/gaussian_blur_h.wgsl"),
-            layout,
-        );
-        let v_pipe = self.cached_pipeline(
-            include_str!("blur/gaussian_blur_v.wgsl"),
-            layout,
-        );
+        let h_pipe = self.cached_pipeline(include_str!("blur/gaussian_blur_h.wgsl"), layout);
+        let v_pipe = self.cached_pipeline(include_str!("blur/gaussian_blur_v.wgsl"), layout);
 
         let bg_h = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bg_blur_h"),
@@ -477,7 +467,10 @@ impl WgpuBackend {
     pub fn gaussian_blur_multi_gpu(&self, img: &ImageBuf, sigmas: &[f32]) -> Vec<ImageBuf> {
         use wgpu::util::DeviceExt;
         assert!(!sigmas.is_empty(), "gaussian_blur_multi_gpu: empty sigmas");
-        if sigmas.iter().any(|&sigma| sigma <= 0.0 || !crate::gpu_blur_supported(sigma)) {
+        if sigmas
+            .iter()
+            .any(|&sigma| sigma <= 0.0 || !crate::gpu_blur_supported(sigma))
+        {
             tracing::info!(execution = "cpu", "using faithful CPU Gaussian blur batch");
             return cpu_backend::CpuBackend.gaussian_blur_multi(img, sigmas);
         }
@@ -520,14 +513,8 @@ impl WgpuBackend {
             wgpu::BufferBindingType::Storage { read_only: true },
             wgpu::BufferBindingType::Storage { read_only: false },
         ];
-        let h_pipe = self.cached_pipeline(
-            include_str!("blur/gaussian_blur_h.wgsl"),
-            layout,
-        );
-        let v_pipe = self.cached_pipeline(
-            include_str!("blur/gaussian_blur_v.wgsl"),
-            layout,
-        );
+        let h_pipe = self.cached_pipeline(include_str!("blur/gaussian_blur_h.wgsl"), layout);
+        let v_pipe = self.cached_pipeline(include_str!("blur/gaussian_blur_v.wgsl"), layout);
 
         #[repr(C)]
         #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -932,7 +919,11 @@ impl WgpuBackend {
             width: image.width,
             height: image.height,
             k: film_log_exposure.len() as u32,
-            uniform_grid: if is_uniform_grid_endpoint(film_log_exposure) { 1 } else { 0 },
+            uniform_grid: if is_uniform_grid_endpoint(film_log_exposure) {
+                1
+            } else {
+                0
+            },
             gamma_inv: [(1.0 / film_gamma) as f32; 3],
             _pad: 0.0,
         };
@@ -963,7 +954,11 @@ impl WgpuBackend {
             width: image.width,
             height: image.height,
             k: print_log_exposure.len() as u32,
-            uniform_grid: if is_uniform_grid_endpoint(print_log_exposure) { 1 } else { 0 },
+            uniform_grid: if is_uniform_grid_endpoint(print_log_exposure) {
+                1
+            } else {
+                0
+            },
             gamma_inv: [(1.0 / print_gamma) as f32; 3],
             _pad: 0.0,
         };
@@ -1051,7 +1046,9 @@ impl WgpuBackend {
                 let tc_lut_f32: Vec<f32> = tc_lut.data.iter().map(|&v| v as f32).collect();
                 let tc_lut_buf = mk_storage("tc_lut", bytemuck::cast_slice(&tc_lut_f32));
                 let pipe = self.cached_pipeline(
-                    include_str!("../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"),
+                    include_str!(
+                        "../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"
+                    ),
                     &[
                         wgpu::BufferBindingType::Uniform,
                         wgpu::BufferBindingType::Storage { read_only: true },
@@ -1085,7 +1082,9 @@ impl WgpuBackend {
             }
             crate::FrontPass::Mallett2019 { .. } => {
                 let pipe = self.cached_pipeline(
-                    include_str!("../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"),
+                    include_str!(
+                        "../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
+                    ),
                     &[
                         wgpu::BufferBindingType::Uniform,
                         wgpu::BufferBindingType::Storage { read_only: true },
@@ -1319,9 +1318,10 @@ impl WgpuBackend {
 
         // ── Highlight boost state ────────────────────────────────────────
         // Runs on raw film exposure immediately after the front pass.
-        let highlight_state = p.highlight_boost.as_ref().map(|hp| {
-            build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self)
-        });
+        let highlight_state = p
+            .highlight_boost
+            .as_ref()
+            .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self));
 
         let camera_lens_blur_state = p.camera_lens_blur_px.and_then(|sigma| {
             (sigma > 0.0).then(|| {
@@ -1396,7 +1396,6 @@ impl WgpuBackend {
                 )
             })
         });
-
 
         // ── DIR couplers state ────────────────────────────────────────────
         // Allocated lazily when the DIR stage is active. Reads buf_a
@@ -1503,13 +1502,7 @@ impl WgpuBackend {
         //     back to buf_b so the readback path below is unchanged.
         if let Some(us) = unsharp_state.as_ref() {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
-            us.encode_passes(
-                &mut encoder,
-                n_pixels,
-                wg_xy,
-                &buf_b,
-                img_bytes as u64,
-            );
+            us.encode_passes(&mut encoder, n_pixels, wg_xy, &buf_b, img_bytes as u64);
         }
 
         // Zero-copy path: when buf_b is mappable, skip the blit and map it
@@ -1572,54 +1565,7 @@ impl WgpuBackend {
                 count: None,
             })
             .collect();
-        let entries_for_compile = entries;
-        let mut cache = self.pipeline_cache.lock().unwrap();
-        let key = shader_source.as_ptr() as usize;
-        if !cache.contains_key(&key) {
-            let shader = self
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("compute_shader"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_source)),
-                });
-            let bind_group_layout =
-                self.device
-                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("compute_layout"),
-                        entries: &entries_for_compile,
-                    });
-            let pipeline_layout =
-                self.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("compute_pipeline_layout"),
-                        bind_group_layouts: &[&bind_group_layout],
-                        push_constant_ranges: &[],
-                    });
-            let pipeline = self
-                .device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("compute_pipeline"),
-                    layout: Some(&pipeline_layout),
-                    module: &shader,
-                    entry_point: Some("main"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
-            cache.insert(
-                key,
-                CachedPipeline {
-                    bind_group_layout,
-                    pipeline,
-                },
-            );
-        }
-        // Drop the guard but the underlying Arc keeps the entries alive.
-        // Return cloned handles.
-        let cached = cache.get(&key).unwrap();
-        CachedPipelineRef {
-            pipeline: cached.pipeline.clone(),
-            layout: cached.bind_group_layout.clone(),
-        }
+        self.get_or_compile_pipeline(shader_source, || entries)
     }
 }
 
@@ -1673,11 +1619,7 @@ impl ComputeBackend for WgpuBackend {
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
         cpu_backend::CpuBackend.cctf_decode_srgb(img)
     }
-    fn grain_v2(
-        &self,
-        img: &ImageBuf,
-        params: &crate::GrainV2GpuParams,
-    ) -> Option<ImageBuf> {
+    fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
         Some(self.grain_v2_gpu(img, params))
     }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
@@ -1685,7 +1627,11 @@ impl ComputeBackend for WgpuBackend {
             return img.clone();
         }
         if !crate::gpu_blur_supported(sigma) {
-            tracing::info!(sigma, execution = "cpu", "Gaussian blur exceeds GPU FIR support");
+            tracing::info!(
+                sigma,
+                execution = "cpu",
+                "Gaussian blur exceeds GPU FIR support"
+            );
             return cpu_backend::CpuBackend.gaussian_blur(img, sigma);
         }
         // For very small sigmas the FIR overhead dominates; CPU path is fine.
@@ -1696,8 +1642,14 @@ impl ComputeBackend for WgpuBackend {
         if sigmas.is_empty() {
             return Vec::new();
         }
-        if sigmas.iter().any(|&sigma| !crate::gpu_blur_supported(sigma)) {
-            tracing::info!(execution = "cpu", "Gaussian blur batch exceeds GPU FIR support");
+        if sigmas
+            .iter()
+            .any(|&sigma| !crate::gpu_blur_supported(sigma))
+        {
+            tracing::info!(
+                execution = "cpu",
+                "Gaussian blur batch exceeds GPU FIR support"
+            );
             return cpu_backend::CpuBackend.gaussian_blur_multi(img, sigmas);
         }
         self.gaussian_blur_multi_gpu(img, sigmas)
@@ -2013,12 +1965,14 @@ impl ComputeBackend for WgpuBackend {
 
     fn try_run_film_chain(&self, params: &crate::FilmChainParams<'_>) -> Option<ImageBuf> {
         if !params.gpu_blurs_supported() {
-            tracing::info!(execution = "per_stage_cpu_blur", "resident blur exceeds GPU FIR support");
+            tracing::info!(
+                execution = "per_stage_cpu_blur",
+                "resident blur exceeds GPU FIR support"
+            );
             return None;
         }
         Some(self.run_film_chain(params))
     }
-
 
     fn is_gpu(&self) -> bool {
         true
@@ -2029,34 +1983,33 @@ impl ComputeBackend for WgpuBackend {
     }
 }
 
-
-#[cfg(feature = "wgpu-backend")]
-mod grain;
 #[cfg(feature = "wgpu-backend")]
 mod blur;
+#[cfg(feature = "wgpu-backend")]
+mod couplers;
+#[cfg(feature = "wgpu-backend")]
+mod gamut;
+#[cfg(feature = "wgpu-backend")]
+mod glare;
+#[cfg(feature = "wgpu-backend")]
+mod grain;
 #[cfg(feature = "wgpu-backend")]
 mod halation;
 #[cfg(feature = "wgpu-backend")]
 mod highlight;
 #[cfg(feature = "wgpu-backend")]
-mod couplers;
-#[cfg(feature = "wgpu-backend")]
 mod unsharp;
 #[cfg(feature = "wgpu-backend")]
-mod glare;
-#[cfg(feature = "wgpu-backend")]
-mod gamut;
-#[cfg(feature = "wgpu-backend")]
 use blur::*;
+#[cfg(feature = "wgpu-backend")]
+use couplers::*;
+#[cfg(feature = "wgpu-backend")]
+use gamut::*;
+#[cfg(feature = "wgpu-backend")]
+use glare::*;
 #[cfg(feature = "wgpu-backend")]
 use halation::*;
 #[cfg(feature = "wgpu-backend")]
 use highlight::*;
 #[cfg(feature = "wgpu-backend")]
-use couplers::*;
-#[cfg(feature = "wgpu-backend")]
 use unsharp::*;
-#[cfg(feature = "wgpu-backend")]
-use glare::*;
-#[cfg(feature = "wgpu-backend")]
-use gamut::*;
