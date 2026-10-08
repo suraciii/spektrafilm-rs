@@ -6,6 +6,7 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 COMMANDS = [
     ["cargo", "test", "-p", "spektrafilm-model", "grain_v2::tests", "--", "--nocapture"],
+    ["cargo", "test", "-p", "spektrafilm-model", "--features", "precision-f64", "grain_v2::tests", "--", "--nocapture"],
     ["cargo", "test", "-p", "spektrafilm-gpu", "--test", "grain_v2_shader", "--", "--nocapture"],
     ["cargo", "test", "-p", "spektrafilm-core", "grain_v2_profile_inheritance_and_overrides"],
     ["cargo", "run", "-p", "spektrafilm-core", "--example", "grain_v2_acceptance", "--features", "precision-f64"],

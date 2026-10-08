@@ -25,6 +25,8 @@ The GPU comparison dispatches the actual shader across multiple workgroups for a
 
 Local verification on 2026-10-08: workspace tests passed (240 tests); native f32 WGPU and f64 GUI previews rendered, the V2 mode control was exercised, and native Save/f64 Export wrote readable TIFF files. CLI V2 processing and six f32/f64 render/export roundtrips passed. The local native dependency prefix was `/data/deps/libraw-0.22.2` (real LibRaw 0.22.2). Hardware render-node access was denied, so this establishes WGPU execution with the available adapter, not discrete-GPU performance. Strict all-features clippy stopped in unchanged math sources on existing diagnostics.
 
+The subsequent V2 sky-stripe repair passed eight grain tests in both f32 and f64, the shader device check, profile inheritance checks, and all six render/export roundtrips. Final Noise host scale, half-effective Amount and Film Resolution behavior are included. A separate f64 CLI run exported and decoded a 768×512 synthetic sky TIFF with spatial grain residual RMS 0.00799 against grain disabled. These checks do not establish a fix for an unavailable original user photo or hardware-GPU performance.
+
 Evidence, budgets and provenance live in
 [`docs/parity/baseline_evidence.md`](../../docs/parity/baseline_evidence.md);
 the machine-readable inventory is

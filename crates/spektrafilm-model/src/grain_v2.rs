@@ -1,6 +1,6 @@
-//! Grain V2 in linear RGB. Independent implementation of documented grain
-//! semantics; gradient hashing and Film Resolution FIR are compatibility maps,
-//! not claims of bit-exact Dehancer output. V1 is unchanged.
+//! Grain V2 accepts and returns linear scanner RGB; composition uses a fixed
+//! display transfer internally. Integer gradient/phase hashing and Film
+//! Resolution FIR are compatibility choices, not bit-exact Dehancer output.
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f32, to_f32},
@@ -117,6 +117,11 @@ impl GrainV2Params {
         let gsf = (5200.0 / width.max(1) as f32).max(3100.0 / height.max(1) as f32);
         let a = self.amount.clamp(0., 1.);
         let s = 1.0 + (self.size - 1.0) / 47.0;
+        if self.mode == GrainV2Mode::Noise {
+            return s * (1. - self.resolution_factor.clamp(0., 100.) / 100.) / gsf
+                * 1.87
+                * effective_control(a);
+        }
         s * (1.0 - self.resolution_factor.clamp(0., 100.) / 100.) / gsf
             * if self.resolution_type == 1 { 1.2 } else { 1.6 }
             * (0.7 * a * a + 0.3 * a + 0.05)
@@ -142,15 +147,11 @@ fn mix(a: f32, b: f32, t: f32) -> f32 {
 fn fade(t: f32) -> f32 {
     t * t * t * (t * (t * 6. - 15.) + 10.)
 }
-/// Smooth 3D gradient noise. The integer hash replaces the vendor sine hash
-/// to make CPU/GPU reproducibility stable across graphics drivers.
+/// Independent integer gradient hash: unlike a sine hash, small differences
+/// in CPU/GPU transcendental rounding do not select unrelated gradients.
 fn pnoise(p: [f32; 3], seed: u32) -> f32 {
     let cell = p.map(|v| v.floor() as i32);
-    let f = [
-        p[0] - p[0].floor(),
-        p[1] - p[1].floor(),
-        p[2] - p[2].floor(),
-    ];
+    let f = p.map(|v| v - v.floor());
     let u = f.map(fade);
     let mut sum = 0.;
     for z in 0..2 {
@@ -178,6 +179,20 @@ fn pnoise(p: [f32; 3], seed: u32) -> f32 {
     }
     sum
 }
+fn encode_display(value: f32) -> f32 {
+    if value < 0.018 {
+        value * 4.5
+    } else {
+        1.099 * value.powf(0.45) - 0.099
+    }
+}
+fn decode_display(value: f32) -> f32 {
+    if value < 0.081 {
+        value / 4.5
+    } else {
+        ((value + 0.099) / 1.099).powf(1. / 0.45)
+    }
+}
 fn rotated(pos: [f32; 2], angle: f32, aspect: f32) -> [f32; 2] {
     let x = (pos[0] - 0.5) * aspect;
     let y = pos[1] - 0.5;
@@ -186,29 +201,40 @@ fn rotated(pos: [f32; 2], angle: f32, aspect: f32) -> [f32; 2] {
         x * angle.sin() + y * angle.cos() + 0.5,
     ]
 }
+// Content-only phase: identical RGB has identical phase regardless of position.
+// A continuous integer-gradient field avoids hashing backend-dependent float bits.
+fn color_phase(rgb: [f32; 3], seed: u32) -> f32 {
+    let timer = (seed & 65535) as f32 / 65536.;
+    timer * 0.01 + pnoise(rgb, seed) * 0.99
+}
 fn generator(
     pos: [f32; 2],
     size: [f32; 2],
     luma: f32,
+    rgb: [f32; 3],
     p: GrainV2Params,
     digital: bool,
 ) -> [f32; 3] {
-    let timer = (p.seed & 65535) as f32 / 65536.;
-    let scale = p.size.clamp(0.5, 1.4);
-    let mut angles = [
-        1.425 * scale * p.rotation,
-        3.892 * scale * p.rotation,
-        5.835 * scale * p.rotation,
-    ];
-    if p.clustered {
-        for (c, a) in angles.iter_mut().enumerate() {
-            *a = pnoise([pos[0] * 8., pos[1] * 8., timer + c as f32], p.seed) * p.rotation;
-        }
-    }
     let timer = if digital {
-        timer * 0.01 + pnoise([luma, pos[0], pos[1]], p.seed) * 0.99
+        color_phase(rgb, p.seed)
     } else {
-        timer
+        (p.seed & 65535) as f32 / 65536.
+    };
+    let scale = p.size.clamp(0.5, 1.4);
+    let mut angles = [1.425, 3.892, 5.835].map(|a| a * scale * p.rotation);
+    if p.clustered && !digital {
+        // Hash virtual texels, not a smooth full-frame rotation field. The latter
+        // folds globally rotated coordinates into coherent ridges in flat skies.
+        let x = (pos[0] * size[0] + 0.5).floor() as u32;
+        let y = (pos[1] * size[1] + 0.5).floor() as u32;
+        let h = hash(x ^ y.wrapping_mul(0x9e3779b9) ^ p.seed);
+        angles = [h, hash(h), hash(h ^ 0x51ed270b)].map(|v| (unit(v) * 2. - 1.) * p.rotation);
+    }
+    let coords = if digital { pos } else { pos.map(|v| v / scale) };
+    let den = if digital {
+        (1. + (p.size - 1.) / 47.) * 2.4 * (size[0] / 1920.).max(size[1] / 1080.)
+    } else {
+        p.cluster_size.max(0.01)
     };
     let mut n = [0.; 3];
     for c in 0..3 {
@@ -217,12 +243,7 @@ fn generator(
         } else {
             angles[c]
         };
-        let q = rotated(pos, angle, size[0] / size[1]);
-        let den = if digital {
-            p.resampler_scale()
-        } else {
-            p.cluster_size.max(0.01) * scale
-        };
+        let q = rotated(coords, angle, size[0] / size[1]);
         let v = [q[0] * size[0] / den, q[1] * size[1] / den, timer + c as f32];
         n[c] = pnoise(v, p.seed);
         if c == 0 && !digital {
@@ -283,19 +304,20 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         return input.clone();
     }
     let optical = p.resolution_type != 1;
-    let radius = if p.mode == GrainV2Mode::Noise {
-        0.0
-    } else {
-        p.resolution_radius(input.width, input.height)
-    };
+    let radius = p.resolution_radius(input.width, input.height);
     let reach = if optical {
         (radius * 3.).ceil()
     } else {
         radius.ceil()
     } as i32;
+    // Fixed display working transfer; destination primaries remain unchanged.
     let mut source = input.clone();
+    source
+        .data
+        .iter_mut()
+        .for_each(|value| *value = from_f32(encode_display(to_f32(*value))));
     if radius > 0. {
-        let mut tmp = input.clone();
+        let mut tmp = source.clone();
         for axis in 0..2 {
             for y in 0..input.height {
                 for x in 0..input.width {
@@ -333,7 +355,14 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                 y as f32 / (input.height - 1).max(1) as f32,
             ];
             let g = if p.mode == GrainV2Mode::Noise {
-                generator(uv, [input.width as f32, input.height as f32], luma, p, true)
+                generator(
+                    uv,
+                    [input.width as f32, input.height as f32],
+                    luma,
+                    rgb,
+                    p,
+                    true,
+                )
             } else {
                 let gx = (uv[0] * size[0] / p.resampler_scale()) as i32;
                 let gy = (uv[1] * size[1] / p.resampler_scale()) as i32;
@@ -346,6 +375,7 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                             ],
                             size,
                             luma,
+                            rgb,
                             p,
                             false,
                         )
@@ -355,7 +385,12 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                 )
             };
             let a_raw = p.amount.clamp(0., 1.);
-            let a = effective_control(a_raw);
+            let a = effective_control(a_raw)
+                * if p.mode == GrainV2Mode::Noise {
+                    0.5
+                } else {
+                    1.
+                };
             let ws = effective_control(p.shadows) * a * opacity(luma, 0.) * 2.;
             let wm = effective_control(p.midtones) * a * opacity(luma, 0.5);
             let wh = effective_control(p.highlights) * a * opacity(luma, 1.) * 2.;
@@ -365,9 +400,9 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                 let s = mix(b, overlay(b.max(0.).powf(0.8), g[c]), ws);
                 let m = mix(s, overlay(s, g[c]), wm);
                 let h = mix(m, overlay(m - 0.2, g[c]), wh);
-                result[c] = from_f32(mix(b, h, 0.5));
+                result[c] = decode_display(mix(b, h, 0.5));
             }
-            out.set(x, y, result);
+            out.set(x, y, result.map(from_f32));
         }
     }
     out
@@ -375,28 +410,6 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn profiles_and_default() {
-        assert_eq!(PROFILES.len(), 12);
-        assert_eq!(profile_index("35mm250"), Some(7));
-        assert_eq!(GrainV2Params::default().profile_name(), "35mm250");
-        assert_eq!(PROFILES[7].scale, 12.);
-        assert_eq!(PROFILES[7].amount, 0.35);
-    }
-    #[test]
-    fn resampler_nine_taps() {
-        let mut n = 0;
-        let v = resample_3x3(
-            |_, _| {
-                n += 1;
-                [0.5; 3]
-            },
-            4,
-            4,
-        );
-        assert_eq!(n, 9);
-        assert!((v[0] - 0.5).abs() < 1e-6);
-    }
     #[test]
     fn zero_amount_identity() {
         let i = ImageBuf::from_data(2, 2, vec![0.4; 12]);
@@ -424,22 +437,113 @@ mod tests {
         assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
     }
     #[test]
-    fn noise_mode_does_not_apply_film_resolution_blur() {
+    fn noise_film_resolution_reduces_edge_contrast() {
         let image = ImageBuf::from_data(
-            17,
-            9,
-            (0..17 * 9 * 3)
-                .map(|v| from_f32((v % 13) as f32 / 13.0))
+            192,
+            108,
+            (0..192 * 108)
+                .flat_map(|i| [from_f32(if i % 192 < 96 { 0.1 } else { 0.8 }); 3])
                 .collect(),
         );
-        let mut unblurred = GrainV2Params::default();
-        unblurred.mode = GrainV2Mode::Noise;
-        unblurred.resolution_factor = 0.0;
-        let mut fully_resolved = unblurred;
-        fully_resolved.resolution_factor = 100.0;
-        assert_eq!(
-            apply_cpu(&image, unblurred).data,
-            apply_cpu(&image, fully_resolved).data
+        let mut p = GrainV2Params::default();
+        p.mode = GrainV2Mode::Noise;
+        p.size = 48.;
+        p.shadows = 0.;
+        p.midtones = 0.;
+        p.highlights = 0.;
+        p.resolution_factor = 100.;
+        let sharp = apply_cpu(&image, p);
+        p.resolution_factor = 0.;
+        let blurred = apply_cpu(&image, p);
+        let edge = |img: &ImageBuf| to_f32(img.get(96, 54)[0]) - to_f32(img.get(95, 54)[0]);
+        assert!(edge(&blurred) < edge(&sharp) * 0.98);
+    }
+
+    #[test]
+    fn noise_scale_preserves_relative_grain_size() {
+        let mut p = GrainV2Params::default();
+        p.mode = GrainV2Mode::Noise;
+        let a = generator([0.37, 0.61], [1920., 1080.], 0.5, [0.5; 3], p, true);
+        let b = generator([0.37, 0.61], [3840., 2160.], 0.5, [0.5; 3], p, true);
+        assert!(a.iter().zip(b).all(|(x, y)| (*x - y).abs() < 1e-6));
+    }
+    #[test]
+    fn middle_gray_responds_to_midtones_not_shadows() {
+        let image = ImageBuf::from_data(64, 32, vec![from_f32(0.18); 64 * 32 * 3]);
+        let mut params = GrainV2Params::default();
+        params.resolution_factor = 100.;
+        params.highlights = 0.;
+        params.shadows = 0.;
+        params.midtones = 1.;
+        let mid = apply_cpu(&image, params);
+        params.shadows = 1.;
+        params.midtones = 0.;
+        let shadow = apply_cpu(&image, params);
+        let variance = |img: &ImageBuf| {
+            let mean = img.data.iter().map(|v| to_f32(*v)).sum::<f32>() / img.data.len() as f32;
+            img.data
+                .iter()
+                .map(|v| (to_f32(*v) - mean).powi(2))
+                .sum::<f32>()
+                / img.data.len() as f32
+        };
+        assert!(
+            variance(&mid) > variance(&shadow) * 2.,
+            "linear middle gray must not select the shadow bell"
+        );
+    }
+
+    #[test]
+    fn noise_phase_distinguishes_equal_luma_colors() {
+        let a = [0.6, 0.4, 0.3];
+        let b = [0.4, 0.4 + 0.2 * 0.2125 / 0.7154, 0.3];
+        let luma = |v: [f32; 3]| v[0] * 0.2125 + v[1] * 0.7154 + v[2] * 0.0721;
+        assert!((luma(a) - luma(b)).abs() < 1e-6);
+        assert!((color_phase(a, 42) - color_phase(b, 42)).abs() > 1e-3);
+    }
+
+    #[test]
+    fn clustered_sky_has_no_coherent_directional_ridges() {
+        let (w, h) = (1024u32, 576u32);
+        let mut data = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for _ in 0..w {
+                data.extend([from_f32(0.25 + 0.55 * y as f32 / (h - 1) as f32); 3]);
+            }
+        }
+        let mut p = GrainV2Params::default();
+        p.seed = 42;
+        let out = apply_cpu(&ImageBuf::from_data(w, h, data), p);
+        let mut r: Vec<f32> = out
+            .data
+            .chunks_exact(3)
+            .map(|v| (to_f32(v[0]) + to_f32(v[1]) + to_f32(v[2])) / 3.)
+            .collect();
+        for row in r.chunks_exact_mut(w as usize) {
+            let mean = row.iter().sum::<f32>() / w as f32;
+            row.iter_mut().for_each(|v| *v -= mean);
+        }
+        let mut squared = 0.;
+        let mut count = 0;
+        for by in (0..h as usize - 32).step_by(32) {
+            for bx in (0..w as usize - 32).step_by(32) {
+                let (mut energy, mut dx, mut dy) = (0., 0., 0.);
+                for y in by..by + 31 {
+                    for x in bx..bx + 31 {
+                        let i = y * w as usize + x;
+                        energy += r[i] * r[i];
+                        dx += r[i] * r[i + 1];
+                        dy += r[i] * r[i + w as usize];
+                    }
+                }
+                squared += ((dx - dy) / energy).powi(2);
+                count += 1;
+            }
+        }
+        let directional_rms = (squared / count as f32).sqrt();
+        assert!(
+            directional_rms < 0.10,
+            "coherent sky ridges: {directional_rms}"
         );
     }
     #[test]

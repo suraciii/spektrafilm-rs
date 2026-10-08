@@ -38,7 +38,7 @@ Dehancer 的颗粒不是叠加噪声贴图，而是三段式管线（`FilmGrainK
          9 邻域采样 grainTexture → 分区(暗/中/高) Overlay 混合进图像
 ```
 
-另有一条**单遍快速路径** `kernel_scan_grain`（`ScanGrainKernel`），对应 UI 的 **Digital (Experimental)/Noise 模式**：直接在图像分辨率上算噪声，无独立纹理、无预模糊，用于草稿/抗色带。
+另有直接在图像分辨率上算噪声的 `kernel_scan_grain`（`ScanGrainKernel`），对应 **Digital (Experimental)/Noise 模式**：无独立颗粒纹理，但宿主先执行 Film Resolution 模糊，再原地调用 Noise kernel。不能仅从 kernel 本身推断没有预模糊。
 
 ## 2. 颗粒 profile 数据（全部 12 条）
 
@@ -158,7 +158,7 @@ resampler_scale = 1.0 + (scale−1)/47 × 1.5   ∈ [1.0, 2.5]
 | 12 (35mm250) | 1.35 |
 | 25 (16mm) | 1.77 |
 | 40 (8mm50) | 2.25 |
-| 48 (8mm250) | 2.47 |
+| 48 (8mm250) | 2.50 |
 
 kernel 逻辑（还原）：
 
@@ -192,7 +192,7 @@ rgb = mix(rgb, overlay(rgb − 0.2,     grain), highlights· amount · op_hi  ·
 - **scale 即画布→图像的缩放倍率**：图像只覆盖颗粒纹理的 `1/scale` 区域并放大显示。scale∈[1,2.5]：65mm 细颗粒 scale=1（整幅画布映射到图像，2–3× 超采样平均后颗粒细腻）；8mm 粗颗粒 scale≈2.5（画布中心区域放大 2.5×，颗粒单元成比例变大）。
 - **颗粒以 Overlay（叠加）模式、乘以分区权重后混入**，且三个分区分别做了基底修正：暗部 `pow(rgb,0.8)`（提亮基底让 Overlay 在暗部可见）、高光 `rgb−0.2`（压暗基底避免高光过曝放大）；暗部/高光系数 ×2、中间调 ×1。
 - **分区权重是 σ=0.2 的三个高斯钟**（中心 0 / 0.5 / 1），互相有交叠 → "Shadows/Midtones/Highlights" 三个滑杆的实际作用域。
-- **Overlay + 0.5 中性点** 意味着 grain=0.5 处图像不变；颗粒双向（亮/暗）调制——这是"图像由颗粒构成"观感的关键，比 `additive noise` 或 `soft-light` 更接近负片密度涨落。
+- **Overlay 的 0.5 中性点只针对未经修改的 base**；完整合成含暗部 `pow0.8` 和高光 `−0.2`，因此 grain=0.5 仍可改变图像均值，不能把最终图像的均值变化全部计作随机颗粒。
 - 最终 `result.w=0.5; blend_normal(in, result)` —— 颗粒层以 50% 不透明度叠加，等效强度减半。
 - **Digital 模式（kernel_scan_grain）**：无独立纹理，`r = rotCoords × (W/scale, H/scale)`，`texel = cluster_size/256`，其余分区混合公式完全相同；`timer` 额外被 `snoise(timer, inColor)` 抖动。用于性能优先场景。
 
@@ -251,9 +251,27 @@ if (radius > 0) {
 
 ## 10. 工件位置（本机）
 
-- 安装包与解包：`/tmp/dehancer/x/plugin/DehancerProOpenCL_x86_64_v7.ofx.bundle/`
-- 提取的完整 OpenCL 源（含全部 112 个 kernel）：`/tmp/dehancer/artifacts/DehancerKernel_preprocessed.cl`
-- 颗粒相关 kernel 摘录：`/tmp/dehancer/artifacts/grain_kernels_extracted.cl`
-- 颗粒 profile：`/tmp/dehancer/artifacts/grain_index_film.json`
+- 当前研究仓库：`/home/szf/repos/dehancer-re/`。
+- 色彩域证据：`report/dehancer-color-domain.md:21–40`（Photo `by_pass` 保持输入显示编码；并未证明所有输入的唯一 transfer）。
+- 核函数证据：`artifacts/DehancerKernel_complete.cl`：亮度分区/Overlay 5073–5091、原 `snoise` 5102–5127、Analogue 5340–5385、Noise 5425–5472；Rec.709 分段 transfer helpers 位于 3944–3970。
+- 原宿主二进制与反汇编工具：该仓库 `plugin/` 和 `tools/dis_f.py`。
 
-（以上 /tmp 工件仅供个人学习研究，请勿再分发。）
+以上原始工件只读参考，不复制到本仓库。
+
+## 11. V2 天空条纹审查与修正（2026-10-08）
+
+**域偏差成立，但编码方向须纠正。** scanner 提供 linear RGB；纯 gamma 的编码是 `linear^(1/2.2)`，解码才是 `encoded^2.2`。V2 现在在内部使用固定 Rec.709 分段 transfer，将 Film Resolution、亮度分区、双场亮度混合和 Overlay 放入显示编码域，再返回 linear，由 scanner 完成目的输出编码。固定 transfer 是明确的兼容选择；不将辅助函数的存在解释成 Photo `by_pass` 强制使用该 transfer。目的色域 primaries 未转换，非 Rec.709 输出仍属于兼容实现。分段线性趾保留负值，未额外裁掉扩展范围。
+
+**合成天空的波纹与旧 clustered 旋转有关。** 原 V2 用低频 `pnoise(pos*8)` 改变绕整幅中心旋转的角度，使采样坐标形成局部方向性脊纹。1024×576 渐变天空、35mm250、seed=42 的隔离实验中，关闭 clustered 后脊纹消失；修正为按虚拟纹理 texel 的整数 hash 产生旋转角，同时按原 kernel 的顺序先对 pos 除 generator scale，再旋转和乘 canvas/cluster。该方向 hash 保留 CPU/GPU 的可重复性，不声称复刻原浮点位 hash。
+
+**Noise 的位置种子偏差成立。** 原 kernel 用 `snoise(timer, inColor)`，输入包含 RGBA；RGB-only 框架的 alpha 是常量，不能用 luma 代替 alpha，也不能把 XY 混入相位。V2 使用 RGB-only 连续整数梯度场构造相位，保证相同 RGB 的相位不依赖位置，并对同亮度异色输入作区分。这修正依赖关系，但不是原 `snoise` 或 sine permutation texture 的数值复刻；原 Noise 的 `cluster/256` 与 Analogue 的 `1/(256*cluster)` 仍是独立哈希方案的已知兼容边界。
+
+Analogue 仍对九个重采样 tap 共用目标像素亮度；原生成器在每个虚拟 texel 读取源图亮度。该差异可能影响强边缘附近的颗粒，属于尚未逐值复刻的边界，与本次低频旋转导致的天空脊纹分开记录。
+
+**Noise 宿主绑定已反汇编确认。** `ScanGrainKernel::process()` 在 `0x5eef32` 注册匿名 execute 回调 `0x5ef280`。回调 `0x5ef31b–0x5ef446` 将 scale 绑定为 `(1+(s−1)/47) * 2.4 * max(W/1920,H/1080)`；`Segment::get_value()` 位于 `0x5f53f0`，常量 `0x25754e0/e4/e8` 分别为 1920/1080/2.4。这既不是原始 1–48，也不是 Analogue 重采样范围 1–2.5。`0x5ef454` 将 effective amount 乘 0.5 后绑定 arg3；`process()` 的 `0x5eea57–0x5eeadf` 先计算 `s_segment * resolution_normalized / gsf * 1.87 * effective(amount)`，随后选择 FastBlur 或 OpticalResolution。CPU/WGSL 已同步这些映射，删除了错误的“Noise 不模糊”测试，以边缘对比度和跨分辨率颗粒尺度回归替代。PSF 仍为兼容 FIR，resolution Limits 的端点仍按本节产品语义解释。
+
+**零值保持产品关闭语义。** Amount=0 原样返回，Shadows/Midtones/Highlights=0 对应分区权重为零。与 `effective(0)=0.2` 的参考多项式有意不同；不能把 `0.2×0.2` 简化为任意像素统一“4%残留颗粒”，还存在 bell、分区系数、50%合成及宿主调度。
+
+**GSF 已实现，不是漏掉固定画布。** 实际虚拟尺寸为 `image*max(5200/W,3100/H)`，保持宽高比。`−0.2` 取整微调未复刻；按需程序采样不分配画布纹理，因此不施加某张显卡的 texture cap。封顶在极端宽高比下可能远大于 1px，不能一概称为微小项。当前 photo 管线无 overscan/damage mask 输入；未引入虚假的 mask 接线。
+
+**验证范围。** 1024×576 天空局部横纵相关性差 RMS：旧代码 `0.15443`，修正后 `0.04676`，回归门槛 `0.10`；同一临时 runner 对旧/新模块实测。最终 f64 Grain V2 测试 8 项通过，含中灰分区、同亮度异色 Noise 相位、Noise 边缘/尺度、12 profiles × 2 modes CPU/GPU 对照。768×512 f64 CLI 32-bit TIFF 开启/关闭对照以 ffmpeg 解码，去行均值残差 RMS 为 Analogue `0.00401`、最终 Noise `0.00799`；纸基扫描 16-bit TIFF 也完成导出及读取。6000×4000 合成天空与额外 GPU smoke 是宿主 Noise 映射修正前的证据，不作为最终 Noise 数值验收。这些均为合成输入，不构成用户原始照片已修复的证明。
