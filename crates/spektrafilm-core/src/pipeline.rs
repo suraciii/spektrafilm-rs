@@ -383,6 +383,8 @@ fn spectral_controls_key(params: &RuntimeParams) -> SpectralControlsKey {
         color_filter: params.camera.color_filter.clone(),
         input_gamut_active: params.io.input_gamut_compress.active,
         input_gamut_algorithm: params.io.input_gamut_compress.algorithm.clone(),
+        input_gamut_boundary: params.io.input_gamut_compress.boundary.clone(),
+        input_gamut_hull_detail: params.io.input_gamut_compress.hull_detail,
         input_gamut_knee: params.io.input_gamut_compress.knee,
     }
 }
@@ -399,6 +401,8 @@ struct SpectralControlsKey {
     color_filter: String,
     input_gamut_active: bool,
     input_gamut_algorithm: String,
+    input_gamut_boundary: String,
+    input_gamut_hull_detail: f64,
     input_gamut_knee: [f32; 3],
 }
 
@@ -1277,9 +1281,26 @@ impl Pipeline {
         pixel_size_um: f64,
         ae_ev: f64,
     ) -> Option<ImageBuf> {
+        if !matches!(self.params.workflow.route.as_str(), "input > film > scan" | "input > film > print > scan") {
+            return None;
+        }
         if self.params.io.input_cctf_decoding
             || (self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none())
         {
+            return None;
+        }
+        // Resident DIR kernels implement only the linear donor/receiver law.
+        // Evaluate finite Langmuir chemistry through the shared model instead
+        // of silently rendering a different law on GPU.
+        let dir = &self.params.film_render.dir_couplers;
+        let nonlinear_dir = if self.film.is_positive() {
+            dir.langmuir_receiver_k_rgb.iter().any(|k| k.is_finite())
+        } else {
+            dir.langmuir_donor_k_rgb.iter().any(|k| k.is_finite())
+        };
+        if dir.active && nonlinear_dir {
+            tracing::info!(backend = backend.name(), stage = "dir_couplers", execution = "per_stage",
+                "using shared model for Langmuir DIR chemistry");
             return None;
         }
         if self.params.settings.use_scanner_lut

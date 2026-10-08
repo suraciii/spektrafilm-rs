@@ -3,7 +3,7 @@
 
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::from_f64;
+use spektrafilm_math::precision::{from_f64, to_f64};
 use rayon::prelude::*;
 
 use crate::density_curves::{max_density_f64, normalize_density_curves_f64};
@@ -44,6 +44,10 @@ pub fn compute_exposure_correction(
     diffusion_tail_pixel: f32,
     diffusion_tail_weight: f64,
     positive: bool,
+    donor_k: Option<[f64; 3]>,
+    donor_ref: [f64; 3],
+    receiver_k: Option<[f64; 3]>,
+    receiver_ref: [f64; 3],
     _backend: &dyn ComputeBackend,
 ) -> ImageBuf {
     let mut density_silver = density_cmy.clone();
@@ -58,6 +62,11 @@ pub fn compute_exposure_correction(
             for c in 0..3 {
                 px[c] = dmax[c] - px[c];
             }
+        });
+    }
+    if let Some(k) = donor_k {
+        density_silver.par_pixels_mut().for_each(|px| {
+            for c in 0..3 { px[c] = from_f64(langmuir(to_f64(px[c]), k[c], donor_ref[c])); }
         });
     }
 
@@ -89,7 +98,6 @@ pub fn compute_exposure_correction(
                 out[m] = px[0] * cm[0][m] + px[1] * cm[1][m] + px[2] * cm[2][m];
             }
         });
-
     if diffusion_size_pixel > 0.0 {
         // Python: `(1 - w) * fast_gaussian_filter(corr, σ_size)
         //         + w * fast_exponential_filter(corr, σ_tail)`.
@@ -117,6 +125,15 @@ pub fn compute_exposure_correction(
         }
     }
 
+    // Reversal receiver responds to inhibitor arriving after spatial diffusion.
+    if let Some(k) = receiver_k {
+        correction.par_pixels_mut().for_each(|px| {
+            for c in 0..3 {
+                px[c] = from_f64(langmuir(to_f64(px[c]), k[c], receiver_ref[c]));
+            }
+        });
+    }
+
     let mut result = log_raw.clone();
     result.data.par_iter_mut().zip(correction.data.par_iter()).for_each(|(r, c)| {
         *r -= c;
@@ -128,6 +145,79 @@ pub fn compute_exposure_correction(
 ///
 /// Port of Python `apply_density_correction_dir_couplers`.
 #[allow(clippy::too_many_arguments)]
+fn langmuir(value: f64, k: f64, reference: f64) -> f64 {
+    if k.is_infinite() { value } else { value * (k + reference) / (k + value) }
+}
+
+fn langmuir_params(
+    curves: &[[f64; 3]],
+    donor_k: [f64; 3],
+) -> ([f64; 3], [f64; 3]) {
+    let mut dmax = [0.0_f64; 3];
+    for row in curves {
+        for c in 0..3 { dmax[c] = dmax[c].max(row[c]); }
+    }
+    let dref = [dmax[0] * 0.5, dmax[1] * 0.5, dmax[2] * 0.5];
+    let k = [donor_k[0] * dmax[0], donor_k[1] * dmax[1], donor_k[2] * dmax[2]];
+    (k, dref)
+}
+
+fn receiver_params(
+    donor_ref: [f64; 3], matrix_unit: &[[f64; 3]; 3], receiver_k: [f64; 3],
+) -> ([f64; 3], [f64; 3]) {
+    let mut reference = [0.0; 3];
+    let mut knee = [0.0; 3];
+    for c in 0..3 {
+        reference[c] = (0..3).map(|k| donor_ref[k] * matrix_unit[k][c]).sum();
+        knee[c] = receiver_k[c] * 2.0 * reference[c];
+    }
+    (knee, reference)
+}
+
+fn curves_before_dir_langmuir(
+    curves: &[[f64; 3]], exposure: &[f64], matrix: &[[f64; 3]; 3],
+    positive: bool, donor_k: [f64; 3], donor_ref: [f64; 3],
+    receiver: Option<([f64; 3], [f64; 3])>,
+) -> Vec<[f64; 3]> {
+    let mut dmax = [0.0_f64; 3];
+    for row in curves { for c in 0..3 { dmax[c] = dmax[c].max(row[c]); } }
+    let mut out = vec![[0.0; 3]; curves.len()];
+    for c in 0..3 {
+        let mut shifted = Vec::with_capacity(curves.len());
+        for row in curves {
+            let mut donor = [row[0], row[1], row[2]];
+            if positive { for k in 0..3 { donor[k] = dmax[k] - donor[k]; } }
+            let mut inhibitor = 0.0;
+            for k in 0..3 {
+                let d = if positive { donor[k] } else { langmuir(donor[k], donor_k[k], donor_ref[k]) };
+                inhibitor += d * matrix[k][c];
+            }
+            if let Some((knee, reference)) = receiver {
+                inhibitor = langmuir(inhibitor, knee[c], reference[c]);
+            }
+            shifted.push(exposure[shifted.len()] - inhibitor);
+        }
+        let values: Vec<f64> = curves.iter().map(|r| r[c]).collect();
+        let neg_values: Vec<f64> = values.iter().map(|v| -*v).collect();
+        for j in 0..curves.len() {
+            let q = exposure[j];
+            if q <= shifted[0] {
+                out[j][c] = if positive { -neg_values[0] } else { values[0] };
+            } else if q >= shifted[shifted.len()-1] {
+                out[j][c] = if positive { -neg_values[values.len()-1] } else { values[values.len()-1] };
+            } else {
+                let i = shifted.partition_point(|&v| v <= q) - 1;
+                let weight = (q-shifted[i])/(shifted[i+1]-shifted[i]);
+                let value = neg_values[i] + weight * (neg_values[i+1]-neg_values[i]);
+                out[j][c] = if positive { -value } else {
+                    values[i] + weight * (values[i+1]-values[i])
+                };
+            }
+        }
+    }
+    out
+}
+
 pub fn apply_density_correction(
     density_cmy: &ImageBuf,
     log_raw: &ImageBuf,
@@ -141,6 +231,8 @@ pub fn apply_density_correction(
     diffusion_tail_weight: f64,
     positive: bool,
     gamma_factor: f32,
+    langmuir_donor_k: [f64; 3],
+    langmuir_receiver_k: [f64; 3],
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
     let mut matrix_scaled = *couplers_matrix;
@@ -151,23 +243,24 @@ pub fn apply_density_correction(
     }
 
     let norm_curves = normalize_density_curves_f64(density_curves);
-    let density_curves_0 =
-        compute_curves_before_dir(&norm_curves, log_exposure, &matrix_scaled, positive);
+    let (dk, dref) = langmuir_params(&norm_curves, langmuir_donor_k);
+    let receiver_params = receiver_params(dref, couplers_matrix, langmuir_receiver_k);
+    let (donor, receiver, rref) = if positive {
+        (None, Some(receiver_params.0), receiver_params.1)
+    } else {
+        (Some(dk), None, [0.0; 3])
+    };
+    let density_curves_0 = curves_before_dir_langmuir(
+        &norm_curves, log_exposure, &matrix_scaled, positive,
+        dk, dref, positive.then_some(receiver_params),
+    );
     let density_max = max_density_f64(&norm_curves);
-
     let diffusion_size_px = (diffusion_size_um / pixel_size_um as f64) as f32;
     let diffusion_tail_px = (diffusion_tail_um / pixel_size_um as f64) as f32;
-
     let log_raw_corrected = compute_exposure_correction(
-        log_raw,
-        density_cmy,
-        density_max,
-        &matrix_scaled,
-        diffusion_size_px,
-        diffusion_tail_px,
-        diffusion_tail_weight,
-        positive,
-        backend,
+        log_raw, density_cmy, density_max, &matrix_scaled,
+        diffusion_size_px, diffusion_tail_px, diffusion_tail_weight,
+        positive, donor, dref, receiver, rref, backend,
     );
 
     // Profile tables stay at their native precision until the backend boundary.

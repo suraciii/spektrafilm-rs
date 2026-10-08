@@ -26,6 +26,56 @@ the machine-readable inventory is
 
 Pass `--gui-report path/to/gui-acceptance/observations.json` to `gen_matrix.py` to retain the executed native GUI records and their SHA256 alongside the spectral report. A failed or incomplete GUI report is rejected. Each named scenario remains scoped to its actual assertions; Linux desktop evidence does not establish Windows/macOS display behavior.
 
+## Experimental GUI gate
+
+`experimental_gui.py` targets upstream experimental commit
+`28bf883e1672e884307edc75852549376e13644e`. The historical 0.3.4 catalog below
+does not establish experimental acceptance. Build the recorded implementation
+commit first, then run from a clean worktree with an unused evidence directory:
+
+```bash
+dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1100x24' \
+  /tmp/spektrafilm-034-venv/bin/python scripts/parity/experimental_gui.py \
+  --gui target/debug/spektrafilm-gui \
+  --upstream /tmp/spektrafilm-upstream-28bf \
+  --evidence /tmp/spektrafilm-experimental-native
+```
+
+The Linux gate uses real X11 input, OCR, and native file choosers. It checks the
+five tab section order, consolidated effect fields, fixed actions, and each
+of the six Workflow selections. Every route is saved to canonical state,
+rendered with PREVIEW and SCAN, saved as TIFF, and loaded/saved again to verify
+state roundtrip. The report records executable, input, state, profile/preset,
+observation, and screenshot hashes. Numerical upstream parity remains a
+separate runtime gate; native rendering alone does not establish it.
+
+`--development-smoke` permits an uncommitted iteration and always reports
+`development-smoke`, never acceptance `pass`. Missing controls, clipped labels,
+failed file dialogs, incorrect state, nonfinite pixels, and changed provenance
+fail explicitly. Evidence from this Linux gate does not establish Windows or
+macOS behavior.
+
+`experimental_runtime.py` runs the same deterministic 32×24 RGB fixture against
+all six upstream and Rust routes. Both sides explicitly disable grain, print
+glare, and auto exposure and use linear sRGB input/output. The maximum absolute difference
+budget is fixed at `1e-5`; missing routes, nonfinite output, and execution errors
+fail the gate. It retains each parameter snapshot, raw output, process log, and
+their hashes. Use a newly built f64 CLI from the recorded commit:
+
+```bash
+SPEKTRAFILM_RS_BIN="$PWD/target/release/spektrafilm-f64" \
+SPEKTRAFILM_UPSTREAM=/tmp/spektrafilm-upstream-28bf \
+  /tmp/spektrafilm-034-venv/bin/python scripts/parity/experimental_runtime.py \
+  --out /tmp/spektrafilm-experimental-runtime
+```
+
+The runtime gate also rejects a dirty checkout unless `--development-smoke` is
+explicitly set. Its JSON status distinguishes a development run from acceptance.
+Build logs must bind the binary hash to the recorded Rust commit; a commit field
+alone does not prove binary provenance.
+
+
+
 ## Reference environment (one-time setup)
 
 Python 3.13 venv with the 0.3.4 runtime stack (core only — the GUI and

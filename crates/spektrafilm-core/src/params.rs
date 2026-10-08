@@ -215,6 +215,8 @@ pub struct GrainParams {
     pub mult_usm_amount: f32,
     #[serde(default = "default_2")]
     pub blur_dye_clouds_um: f32,
+    #[serde(default = "default_micro_sublayers")]
+    pub micro_sublayers: u32,
     #[serde(default = "default_grain_micro_structure")]
     pub micro_structure: [f32; 2],
 
@@ -243,6 +245,9 @@ fn default_15() -> f32 {
 fn default_2() -> f32 {
     2.0
 }
+fn default_micro_sublayers() -> u32 {
+    1
+}
 fn default_grain_micro_structure() -> [f32; 2] {
     [0.2, 30.0]
 }
@@ -270,6 +275,7 @@ impl Default for GrainParams {
             mult_usm_sigma: 0.7,
             mult_usm_amount: 1.5,
             blur_dye_clouds_um: 2.0,
+            micro_sublayers: 1,
             micro_structure: [0.2, 30.0],
             sublayers_active: true,
             particle_area_um2: 0.2,
@@ -391,6 +397,10 @@ pub struct DirCouplersParams {
     pub gamma_interlayer_g_to_rb: [f64; 2],
     #[serde(default = "default_gamma_b_rg_f64")]
     pub gamma_interlayer_b_to_rg: [f64; 2],
+    #[serde(default = "default_one_rgb_f64")]
+    pub langmuir_donor_k_rgb: [f64; 3],
+    #[serde(default = "default_one_rgb_f64")]
+    pub langmuir_receiver_k_rgb: [f64; 3],
     #[serde(default = "default_20_f64")]
     pub diffusion_size_um: f64,
     #[serde(default = "default_200_f64")]
@@ -399,6 +409,9 @@ pub struct DirCouplersParams {
     pub diffusion_tail_weight: f64,
 }
 
+fn default_one_rgb_f64() -> [f64; 3] {
+    [1.0, 1.0, 1.0]
+}
 fn default_gamma_same_f64() -> [f64; 3] {
     [0.341, 0.324, 0.273]
 }
@@ -431,6 +444,8 @@ impl Default for DirCouplersParams {
             gamma_samelayer_rgb: [0.341, 0.324, 0.273],
             gamma_interlayer_r_to_gb: [0.355, 0.305],
             gamma_interlayer_g_to_rb: [0.154, 0.358],
+            langmuir_donor_k_rgb: [1.0, 1.0, 1.0],
+            langmuir_receiver_k_rgb: [1.0, 1.0, 1.0],
             gamma_interlayer_b_to_rg: [0.171, 0.225],
             diffusion_size_um: 20.0,
             diffusion_tail_um: 200.0,
@@ -719,7 +734,11 @@ pub struct InputGamutCompressParams {
     pub active: bool,
     #[serde(default = "default_xy")]
     pub algorithm: String,
-    #[serde(default = "default_gamut_knee")]
+    #[serde(default = "default_gamut_boundary")]
+    pub boundary: String,
+    #[serde(default = "default_hull_detail")]
+    pub hull_detail: f64,
+    #[serde(default = "default_input_gamut_knee")]
     pub knee: [f32; 3],
 }
 
@@ -728,7 +747,9 @@ impl Default for InputGamutCompressParams {
         Self {
             active: true,
             algorithm: "xy".into(),
-            knee: [0.0, 1.0, 6.0],
+            boundary: "inscribed_hull".into(),
+            hull_detail: 5.0,
+            knee: [0.815, 1.0, 1.2],
         }
     }
 }
@@ -758,11 +779,20 @@ impl Default for OutputGamutCompressParams {
     }
 }
 
+fn default_gamut_boundary() -> String {
+    "inscribed_hull".into()
+}
+fn default_hull_detail() -> f64 {
+    5.0
+}
 fn default_xy() -> String {
     "xy".into()
 }
 fn default_cam16ucs() -> String {
     "cam16ucs".into()
+}
+fn default_input_gamut_knee() -> [f32; 3] {
+    [0.815, 1.0, 1.2]
 }
 fn default_gamut_knee() -> [f32; 3] {
     [0.0, 1.0, 6.0]
