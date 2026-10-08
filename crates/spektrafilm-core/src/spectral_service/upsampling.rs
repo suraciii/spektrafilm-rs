@@ -91,7 +91,7 @@ pub fn gaussian_blur_wavelength(cube: &SpectraCube, sigma: f64) -> SpectraCube {
         .enumerate()
         .for_each(|(cell, out)| {
             let row = &src[cell * n..cell * n + n];
-            for (i, value) in out.iter_mut().enumerate() {
+            for i in 0..n {
                 let mut acc = 0.0f64;
                 for k in -lw..=lw {
                     // scipy's symmetric ('reflect') extension — it keeps
@@ -101,7 +101,7 @@ pub fn gaussian_blur_wavelength(cube: &SpectraCube, sigma: f64) -> SpectraCube {
                     let j = if j >= n_i64 { 2 * n_i64 - 1 - j } else { j };
                     acc += kernel[(k + lw) as usize] * row[j as usize];
                 }
-                *value = acc;
+                out[i] = acc;
             }
         });
 
@@ -255,22 +255,13 @@ fn contract_with_window(
     spectra_cube: &SpectraCube,
     sensitivity: &[[f64; 3]],
     window_params: &[f64],
-    reference_xy: (f64, f64),
+    illuminant: &[f64],
 ) -> TcLut {
     let n_wl = spectra_cube
         .n_wavelengths
         .min(sensitivity.len())
         .min(N_WAVELENGTHS);
     let window = eval_erf4_bandpass(window_params);
-    let (tx, ty) = spectral::xy_to_tc(reference_xy.0, reference_xy.1);
-    let neutral = spektrafilm_math::lut::bicubic_2d_f64(
-        &spectra_cube.data,
-        spectra_cube.size,
-        spectra_cube.size,
-        spectra_cube.n_wavelengths,
-        tx * (spectra_cube.size - 1) as f64,
-        ty * (spectra_cube.size - 1) as f64,
-    );
     let mut num_per_wl = [
         Vec::<f64>::with_capacity(n_wl),
         Vec::with_capacity(n_wl),
@@ -283,7 +274,7 @@ fn contract_with_window(
     ];
     for wl in 0..n_wl {
         for c in 0..3 {
-            let si = sensitivity[wl][c] * neutral[wl];
+            let si = sensitivity[wl][c] * illuminant[wl];
             num_per_wl[c].push(si * window[wl][c]);
             den_per_wl[c].push(si);
         }
@@ -407,7 +398,7 @@ pub fn compute_hanatos2025_tc_lut(
             &cube,
             sensitivity,
             adaptation.window_params,
-            adaptation.reference_illuminant_xy,
+            adaptation.reference_illuminant,
         )
     } else {
         compute_tc_lut(&cube, sensitivity)
@@ -534,8 +525,6 @@ pub fn compute_band_pass_filter(filter_uv: [f64; 3], filter_ir: [f64; 3]) -> [f6
     let amp_uv = filter_uv[0].clamp(0.0, 1.0);
     let amp_ir = filter_ir[0].clamp(0.0, 1.0);
     let mut band_pass = [0.0f64; N_WAVELENGTHS];
-    // The index defines the wavelength used in the filter arithmetic.
-    #[allow(clippy::needless_range_loop)]
     for i in 0..N_WAVELENGTHS {
         let wl = spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
         let edge_uv = 1.0 - amp_uv + amp_uv * sigmoid_erf(wl, filter_uv[1], filter_uv[2]);
@@ -664,8 +653,6 @@ fn eval_erf4_bandpass(params: &[f64]) -> Vec<[f64; 3]> {
     let sigma_ir = params[3];
 
     let mut window = vec![[0.0f64; 3]; N_WAVELENGTHS];
-    // The index defines the wavelength used in the window arithmetic.
-    #[allow(clippy::needless_range_loop)]
     for i in 0..N_WAVELENGTHS {
         let wl = spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
         let edge_uv = 0.5 * (1.0 + erf((wl - c_uv) / (sigma_uv * sqrt2)));

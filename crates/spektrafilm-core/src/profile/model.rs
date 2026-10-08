@@ -35,7 +35,7 @@ where
     }
 }
 
-fn ser_f64_vec<S>(values: &[f64], serializer: S) -> Result<S::Ok, S::Error>
+fn ser_f64_vec<S>(values: &Vec<f64>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -46,7 +46,7 @@ where
         .serialize(serializer)
 }
 
-fn ser_f64_matrix<S>(values: &[Vec<f64>], serializer: S) -> Result<S::Ok, S::Error>
+fn ser_f64_matrix<S>(values: &Vec<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -61,7 +61,7 @@ where
         .serialize(serializer)
 }
 
-fn ser_f64_tensor<S>(values: &[Vec<Vec<f64>>], serializer: S) -> Result<S::Ok, S::Error>
+fn ser_f64_tensor<S>(values: &Vec<Vec<Vec<f64>>>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -81,7 +81,7 @@ where
         .serialize(serializer)
 }
 
-fn ser_base_density<S>(values: &[Vec<f64>], serializer: S) -> Result<S::Ok, S::Error>
+fn ser_base_density<S>(values: &Vec<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -384,10 +384,5 @@ impl Profile {
     }
     pub fn is_printing(&self) -> bool {
         self.info.stage == "printing"
-    }
-    /// A stock that can serve as the print stage: a paper or a print film
-    /// (`support` paper or film) recorded at the printing stage.
-    pub fn is_print_stock(&self) -> bool {
-        (self.is_paper() || self.is_film()) && self.is_printing()
     }
 }

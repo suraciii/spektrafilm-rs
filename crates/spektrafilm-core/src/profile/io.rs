@@ -7,21 +7,24 @@ use super::{Profile, ProfileError, development_time_index, validate_profile};
 
 /// Load a profile from a JSON file on disk.
 pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
-    let bytes = std::fs::read(path).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
-    load_profile_bytes(&bytes, &path.display().to_string())
-}
-
-/// Parse and resolve exactly the bytes whose content identity a caller retains.
-pub fn load_profile_bytes(bytes: &[u8], source: &str) -> Result<Profile, ProfileError> {
-    let mut profile: Profile =
-        serde_json::from_slice(bytes).map_err(|e| ProfileError::Parse(source.to_owned(), e))?;
+    let file =
+        std::fs::File::open(path).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    let reader = std::io::BufReader::new(file);
+    let mut profile: Profile = serde_json::from_reader(reader)
+        .map_err(|e| ProfileError::Parse(path.display().to_string(), e))?;
     validate_profile(&profile)?;
     // Resolve the default base+fog column so the field is usable straight
     // after load. `resolve_for_render` re-selects it for B&W development-time
     // families when a specific time is requested.
     let idx = development_time_index(&profile.data.development_time, None);
     profile.data.base_density = base_density_column(&profile.data.base_density_rows, idx);
-    let curves_stale = true;
+    let curves_stale = profile.data.density_curves.is_empty()
+        || profile
+            .data
+            .density_curves
+            .iter()
+            .flatten()
+            .any(|value| !value.is_finite() || value.abs() > 10.0);
     let model = profile.data.density_curves_model.clone();
     if let Some(model) = model.as_ref() {
         let expected_exposures = profile.data.log_exposure.len();
@@ -94,27 +97,13 @@ pub fn save_profile(
         .ok_or_else(|| ProfileError::Validation("profile stock is missing".into()))?;
     stock.push_str(suffix);
     let path = data_dir.join("profiles").join(format!("{stock}.json"));
-    save_profile_to(&path, &saved)?;
-    Ok(path)
-}
-
-/// Save a profile to an explicit path, validating it first.
-///
-/// The parent directory is created when missing, and the profile is validated
-/// before anything is written.
-pub fn save_profile_to(path: &Path, profile: &Profile) -> Result<(), ProfileError> {
-    validate_profile(profile)?;
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
-    }
-    let json = serde_json::to_vec_pretty(profile)
+    validate_profile(&saved)?;
+    std::fs::create_dir_all(path.parent().expect("profile path has parent"))
+        .map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    let json = serde_json::to_vec_pretty(&saved)
         .map_err(|e| ProfileError::Serialize(path.display().to_string(), e))?;
-    std::fs::write(path, json).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
-    Ok(())
+    std::fs::write(&path, json).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    Ok(path)
 }
 
 /// Compatibility spelling for callers that used the upstream split API.
@@ -135,10 +124,10 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<String>, ProfileError> {
     {
         let entry = entry.map_err(|e| ProfileError::Io(root.display().to_string(), e))?;
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "json")
-            && let Some(stem) = path.file_stem().and_then(|name| name.to_str())
-        {
-            names.push(stem.to_owned());
+        if path.extension().is_some_and(|ext| ext == "json") {
+            if let Some(stem) = path.file_stem().and_then(|name| name.to_str()) {
+                names.push(stem.to_owned());
+            }
         }
     }
     names.sort();

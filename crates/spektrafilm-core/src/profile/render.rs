@@ -10,7 +10,7 @@ impl Profile {
             .iter()
             .map(|row| {
                 [
-                    row.first().copied().unwrap_or(0.0),
+                    row.get(0).copied().unwrap_or(0.0),
                     row.get(1).copied().unwrap_or(0.0),
                     row.get(2).copied().unwrap_or(0.0),
                 ]
@@ -23,6 +23,41 @@ impl Profile {
         self.data.log_exposure.clone()
     }
 
+    /// Get density curves as [N][3] f32 array for fast interpolation.
+    pub fn density_curves_f32(&self) -> Vec<[f32; 3]> {
+        self.data
+            .density_curves
+            .iter()
+            .map(|row| {
+                [
+                    row.get(0).copied().unwrap_or(0.0) as f32,
+                    row.get(1).copied().unwrap_or(0.0) as f32,
+                    row.get(2).copied().unwrap_or(0.0) as f32,
+                ]
+            })
+            .collect()
+    }
+
+    /// Get log_exposure as f32 slice.
+    pub fn log_exposure_f32(&self) -> Vec<f32> {
+        self.data.log_exposure.iter().map(|&v| v as f32).collect()
+    }
+
+    /// Get log_sensitivity as [81][3] f32 array.
+    pub fn log_sensitivity_f32(&self) -> Vec<[f32; 3]> {
+        self.data
+            .log_sensitivity
+            .iter()
+            .map(|row| {
+                [
+                    row.get(0).copied().unwrap_or(0.0) as f32,
+                    row.get(1).copied().unwrap_or(0.0) as f32,
+                    row.get(2).copied().unwrap_or(0.0) as f32,
+                ]
+            })
+            .collect()
+    }
+
     /// Get log_sensitivity as [81][3] f64 array (precision-preserving).
     pub fn log_sensitivity_f64(&self) -> Vec<[f64; 3]> {
         self.data
@@ -30,27 +65,10 @@ impl Profile {
             .iter()
             .map(|row| {
                 [
-                    row.first().copied().unwrap_or(0.0),
+                    row.get(0).copied().unwrap_or(0.0),
                     row.get(1).copied().unwrap_or(0.0),
                     row.get(2).copied().unwrap_or(0.0),
                 ]
-            })
-            .collect()
-    }
-
-    /// Spectral sensitivity `nan_to_num(10 ** log_sensitivity)` — the one
-    /// authoritative expansion of the stored log-sensitivity arrays
-    /// (Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`).
-    pub fn sensitivity_f64(&self) -> Vec<[f64; 3]> {
-        self.log_sensitivity_f64()
-            .into_iter()
-            .map(|row| {
-                let mut out = [0.0f64; 3];
-                for c in 0..3 {
-                    let value = 10.0f64.powf(row[c]);
-                    out[c] = if value.is_nan() { 0.0 } else { value };
-                }
-                out
             })
             .collect()
     }

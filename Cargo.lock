@@ -3478,6 +3478,7 @@ dependencies = [
  "cblas",
  "cudarc",
  "openblas-src",
+ "parking_lot",
  "pollster",
  "rayon",
  "spektrafilm-math",
