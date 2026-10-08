@@ -12,15 +12,20 @@ pub struct GuiState { pub sections: Value }
 
 /// Merge known leaves only, like upstream's dataclass merge. Unknown fields
 /// never become runtime fields; Rust additions live in the versioned extension.
-fn merge(target: &mut Value, source: &Value) {
-    if let (Some(dst), Some(src)) = (target.as_object_mut(), source.as_object()) {
-        for (key, value) in src {
-            if let Some(current) = dst.get_mut(key) {
-                if current.is_object() { merge(current, value); }
-                else { *current = value.clone(); }
-            }
+fn merge(target: &mut Value, source: &Value) -> Result<()> {
+    let (Some(dst), Some(src)) = (target.as_object_mut(), source.as_object()) else {
+        if target.is_object() && !source.is_null() {
+            bail!("Expected a JSON object, got {source}");
+        }
+        return Ok(());
+    };
+    for (key, value) in src {
+        if let Some(current) = dst.get_mut(key) {
+            if current.is_object() { merge(current, value)?; }
+            else { *current = value.clone(); }
         }
     }
+    Ok(())
 }
 fn copy_fields(target: &mut Value, source: &Value, names: &[&str]) {
     for name in names { if let Some(value) = source.get(*name) { target[*name] = value.clone(); } }
@@ -61,7 +66,7 @@ impl GuiState {
             let original = value.get(section).or_else(|| value["gui_only"].get(section));
             if let Some(original) = original { normalized[section] = flatten(original, &["settings"]); }
         }
-        merge(&mut state.sections, &normalized);
+        merge(&mut state.sections, &normalized)?;
         if let Some(extension) = value.get("rust") {
             if extension["version"] != 1 { bail!("Unsupported Rust GUI state extension version"); }
             state.sections["rust"] = extension.clone();
@@ -85,15 +90,15 @@ impl GuiState {
     pub fn runtime_params(&self) -> Result<RuntimeParams> {
         let s = &self.sections;
         let mut runtime = serde_json::to_value(RuntimeParams::default())?;
-        if let Some(extra) = s["rust"].get("runtime") { merge(&mut runtime,extra); }
-        for group in ["camera","scanner"] { merge(&mut runtime[group], &s[group]); }
-        for (section,group,leaf) in [("grain","film_render","grain"),("halation","film_render","halation"),("couplers","film_render","dir_couplers"),("chemistry","print_render","density_curves_morph"),("glare","print_render","glare")] { merge(&mut runtime[group][leaf], &s[section]); }
+        if let Some(extra) = s["rust"].get("runtime") { merge(&mut runtime,extra)?; }
+        for group in ["camera","scanner"] { merge(&mut runtime[group], &s[group])?; }
+        for (section,group,leaf) in [("grain","film_render","grain"),("halation","film_render","halation"),("couplers","film_render","dir_couplers"),("chemistry","print_render","density_curves_morph"),("glare","print_render","glare")] { merge(&mut runtime[group][leaf], &s[section])?; }
         copy_fields(&mut runtime["io"],&s["input_image"],INPUT_IO);
         copy_fields(&mut runtime["settings"],&s["input_image"],INPUT_SETTINGS);
-        for section in ["input_gamut_compress","output_gamut_compress"] { merge(&mut runtime["io"][section],&s[section]); }
+        for section in ["input_gamut_compress","output_gamut_compress"] { merge(&mut runtime["io"][section],&s[section])?; }
         // Dedicated diffusion panels override passthrough camera/preflash groups.
-        merge(&mut runtime["camera"]["diffusion_filter"],&s["camera_diffusion"]);
-        merge(&mut runtime["enlarger"]["diffusion_filter"],&s["enlarger_diffusion"]);
+        merge(&mut runtime["camera"]["diffusion_filter"],&s["camera_diffusion"])?;
+        merge(&mut runtime["enlarger"]["diffusion_filter"],&s["enlarger_diffusion"])?;
         copy_fields(&mut runtime["enlarger"],&s["preflashing"], &["preflash_exposure","preflash_y_filter_shift","preflash_m_filter_shift"]);
         for (from,to) in [("print_illuminant","illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("print_y_filter_shift","y_filter_shift"),("print_m_filter_shift","m_filter_shift")] { runtime["enlarger"][to] = s["simulation"][from].clone(); }
         runtime["workflow"]["route"] = s["simulation"]["workflow"]["route"].clone();
@@ -127,14 +132,14 @@ impl GuiState {
         let mut state = Self::from_value(extras.clone())?;
         let runtime = serde_json::to_value(params)?;
         let s = &mut state.sections;
-        for group in ["camera","scanner"] { merge(&mut s[group],&runtime[group]); }
-        for (section,group,leaf) in [("grain","film_render","grain"),("halation","film_render","halation"),("couplers","film_render","dir_couplers"),("chemistry","print_render","density_curves_morph"),("glare","print_render","glare")] { merge(&mut s[section],&runtime[group][leaf]); }
-        merge(&mut s["preflashing"],&runtime["enlarger"]);
+        for group in ["camera","scanner"] { merge(&mut s[group],&runtime[group])?; }
+        for (section,group,leaf) in [("grain","film_render","grain"),("halation","film_render","halation"),("couplers","film_render","dir_couplers"),("chemistry","print_render","density_curves_morph"),("glare","print_render","glare")] { merge(&mut s[section],&runtime[group][leaf])?; }
+        merge(&mut s["preflashing"],&runtime["enlarger"])?;
         s["camera_diffusion"] = runtime["camera"]["diffusion_filter"].clone();
         s["enlarger_diffusion"] = runtime["enlarger"]["diffusion_filter"].clone();
         copy_fields(&mut s["input_image"],&runtime["io"],INPUT_IO);
         copy_fields(&mut s["input_image"],&runtime["settings"],INPUT_SETTINGS);
-        for section in ["input_gamut_compress","output_gamut_compress"] { merge(&mut s[section], &runtime["io"][section]); }
+        for section in ["input_gamut_compress","output_gamut_compress"] { merge(&mut s[section], &runtime["io"][section])?; }
         s["simulation"]["film_stock"] = json!(film); s["simulation"]["print_paper"] = json!(paper);
         for (from,to) in [("illuminant","print_illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("y_filter_shift","print_y_filter_shift"),("m_filter_shift","print_m_filter_shift")] { s["simulation"][to]=runtime["enlarger"][from].clone(); }
         s["simulation"]["workflow"]["route"] = runtime["workflow"]["route"].clone();
@@ -230,7 +235,15 @@ mod tests {
     }
     #[test]
     fn malformed_controls_and_future_extensions_fail_before_application() {
-        for value in [json!([]),json!({"camera":{"auto_exposure":"bad"}}),json!({"rust":{"version":9}}),json!({"special":{"film_channel_swap":[0,1,3]}}),json!({"simulation":{"auto_preview":"false"}})] {
+        for value in [
+            json!([]),
+            json!({"camera":{"auto_exposure":"bad"}}),
+            json!({"camera":"bad"}),
+            json!({"rust":{"version":9}}),
+            json!({"rust":{"version":1,"runtime":"bad"}}),
+            json!({"special":{"film_channel_swap":[0,1,3]}}),
+            json!({"simulation":{"auto_preview":"false"}}),
+        ] {
             assert!(GuiState::from_value(value).is_err());
         }
     }
