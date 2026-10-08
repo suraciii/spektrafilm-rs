@@ -445,8 +445,8 @@ pub fn compute_core_matrix(sensitivity: &[[f64; 3]], illuminant: &[f64]) -> [[f6
 /// Input colour space → linear sRGB with the registry's stored matrices and
 /// CAT02 adaptation. No fallback primary set is selected for unknown names.
 pub fn input_cs_to_srgb(color_space: &str) -> [[f64; 3]; 3] {
-    let space = spektrafilm_math::colorspace::resolve(color_space)
-        .expect("validated input colour space");
+    let space =
+        spektrafilm_math::colorspace::resolve(color_space).expect("validated input colour space");
     spektrafilm_math::colorspace::display_matrix(space)
 }
 
@@ -591,7 +591,9 @@ mod parity_tests {
 
         let g = from_f64(0.184);
         let img = ImageBuf::from_data(2, 2, vec![g; 12]);
-        let out = pipeline.process(img, &spektrafilm_gpu::cpu_backend::CpuBackend).unwrap();
+        let out = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
         assert_eq!((out.width, out.height), (2, 2));
         assert!(
             out.data.iter().all(|v| (*v as f64).is_finite()),
@@ -623,7 +625,8 @@ mod parity_tests {
         // Nonzero EV so the resident path's exposure fold into the mallett
         // matrix is exercised, not just the identity case.
         params.camera.exposure_compensation_ev = 0.5;
-        params.film_render.grain.active = false;
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
         // Output gamut compression forces the per-stage path — keep it off
         // so this test exercises the GPU-resident chain.
         params.io.output_gamut_compress.algorithm = "off".into();
@@ -638,7 +641,9 @@ mod parity_tests {
         let img = ImageBuf::from_data(w, h, data);
 
         let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
-        let out_cpu = pipeline.process(img, &spektrafilm_gpu::cpu_backend::CpuBackend).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
 
         let mut max_diff = 0.0f64;
         let mut max_at = (0usize, 0.0f64, 0.0f64);

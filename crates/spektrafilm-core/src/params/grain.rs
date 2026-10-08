@@ -1,5 +1,5 @@
+use super::{default_one, default_true};
 use serde::{Deserialize, Serialize};
-use super::{default_true, default_one};
 
 /// Selects the film-grain implementation. V1 remains the default for
 /// backwards-compatible recipes; V2 is procedural grain in linear scanner RGB.
@@ -180,9 +180,39 @@ impl GrainParams {
             params.midtones = self.v2_midtones.map_or(params.midtones, |v| v / 100.0);
             params.highlights = self.v2_highlights.map_or(params.highlights, |v| v / 100.0);
             params.color = self.v2_chroma.map_or(params.color, |v| v / 100.0);
-            params.resolution_factor = self.v2_resolution_factor.unwrap_or(params.resolution_factor);
+            params.resolution_factor = self
+                .v2_resolution_factor
+                .unwrap_or(params.resolution_factor);
         }
         params
+    }
+    /// Convert the selected V2 profile to the shared f32 GPU boundary.
+    pub fn gpu_params(
+        &self,
+        random_seed: u64,
+        deactivate_spatial_effects: bool,
+    ) -> spektrafilm_gpu::GrainV2GpuParams {
+        let mut grain = self.resolved_grain_v2();
+        if deactivate_spatial_effects {
+            grain.resolution_factor = 100.0;
+        }
+        grain.seed = random_seed as u32;
+        spektrafilm_gpu::GrainV2GpuParams {
+            mode: grain.mode as u32,
+            film_type: grain.film_type,
+            amount: grain.amount,
+            shadows: grain.shadows,
+            midtones: grain.midtones,
+            highlights: grain.highlights,
+            raw_scale: grain.size,
+            cluster_size: grain.cluster_size,
+            rotation: grain.rotation,
+            color: grain.color,
+            resolution_factor: grain.resolution_factor,
+            seed: grain.seed,
+            colored: grain.colored,
+            clustered: grain.clustered,
+        }
     }
 
     /// Custom starts with the values of the last selected preset.
