@@ -245,9 +245,6 @@ fn apply_coupler_preset(params: &mut RuntimeParams, film: &Profile) {
         Some("fujifilm_velvia_100") => {
             d.gamma_samelayer_rgb = [0.108, 0.072, 0.054];
         }
-        Some("kodak_portra_400") => {
-            d.gamma_samelayer_rgb = [0.336, 0.319, 0.273];
-        }
         _ => {}
     }
 }
@@ -503,7 +500,7 @@ mod tests {
         let seeded = digest_params(params.clone(), &film, &print, None, true);
         assert_eq!(seeded.film_render.grain.rms_granularity, [4.5; 3]);
         assert_eq!(seeded.film_render.grain.uniformity, [0.97, 0.99, 0.97]);
-        assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.336, 0.319, 0.273]);
+        assert_eq!(seeded.film_render.dir_couplers.gamma_samelayer_rgb, [0.5159, 0.5934, 0.2829]);
         let edited = digest_params(params, &film, &print, None, false);
         assert_eq!(edited.film_render.grain.rms_granularity, [99.0; 3]);
         assert_eq!(edited.film_render.dir_couplers.gamma_samelayer_rgb, [0.9; 3]);

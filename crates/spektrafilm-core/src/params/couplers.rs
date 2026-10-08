@@ -32,7 +32,7 @@ pub struct DirCouplersParams {
     pub diffusion_size_um: f64,
     #[serde(default = "default_200_f64")]
     pub diffusion_tail_um: f64,
-    #[serde(default = "default_006_f64")]
+    #[serde(default = "default_coupler_tail_weight")]
     pub diffusion_tail_weight: f64,
 }
 fn default_one_rgb_f64() -> [f64; 3] {
@@ -56,8 +56,8 @@ fn default_20_f64() -> f64 {
 fn default_200_f64() -> f64 {
     200.0
 }
-fn default_006_f64() -> f64 {
-    0.06
+fn default_coupler_tail_weight() -> f64 {
+    0.03
 }
 
 impl Default for DirCouplersParams {
@@ -75,7 +75,7 @@ impl Default for DirCouplersParams {
             langmuir_receiver_k_rgb: [1.0; 3],
             diffusion_size_um: 20.0,
             diffusion_tail_um: 200.0,
-            diffusion_tail_weight: 0.06,
+            diffusion_tail_weight: 0.03,
         }
     }
 }
