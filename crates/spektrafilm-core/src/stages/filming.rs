@@ -357,7 +357,7 @@ pub fn expose(
     // optical-scatter effects. No-op when boost_ev == 0.
     let hal_boost = &params.film_render.halation;
     if hal_boost.boost_ev != 0.0 {
-        raw = spektrafilm_model::diffusion::boost_highlights(
+        raw = spektrafilm_model::optics::boost_highlights(
             &raw,
             hal_boost.boost_ev as f64,
             hal_boost.boost_range as f64,
@@ -389,7 +389,7 @@ pub fn expose(
 
     // Lens blur
     if params.camera.lens_blur_um > 0.0 {
-        raw = spektrafilm_model::diffusion::apply_gaussian_blur_um(
+        raw = spektrafilm_model::optics::apply_gaussian_blur_um(
             &raw,
             params.camera.lens_blur_um,
             pix_um,
@@ -400,7 +400,7 @@ pub fn expose(
     // Halation (on linear raw)
     let halation = &params.film_render.halation;
     if halation.active {
-        raw = spektrafilm_model::diffusion::apply_halation_um(
+        raw = spektrafilm_model::halation::apply_halation_um(
             &raw,
             pix_um,
             halation.scatter_amount,
@@ -498,64 +498,94 @@ pub fn develop(
         print_stage_timing(stage_timings, "filming_develop.dir_couplers", t);
     }
 
-    // Grain — the experimental contract always uses the profile's three
-    // emulsion sublayers. Runtime-only compatibility flags are not GUI
-    // controls and do not alter this path.
+    // Grain — Python `apply_grain` dispatch (model/grain.py):
+    // `sublayers_active == false` keeps the composite-density sampler,
+    // `true` runs the layered model on the interpolated sublayer densities.
+    // `n_sub_layers` is only consumed by the composite path (the layered
+    // model always samples the profile's 3 emulsion sublayers) and
+    // `use_fast_stats` only by the layered path, exactly like upstream.
     let grain = &params.film_render.grain;
-    if grain.active && matches!(grain.engine, crate::params::GrainEngine::V1) {
+    if grain.active && matches!(grain.engine, crate::params::grain::GrainEngine::V1) {
         let t = Instant::now();
+        // Use f64 throughout — Python reads these from JSON as f64; the
+        // f32 storage in `GrainParams` would otherwise truncate to ~7
+        // decimals and shift every Poisson lambda by ~5e-8, producing a
+        // visibly different grain pattern.
         let norm_curves_f64 = spektrafilm_model::density_curves::normalize_density_curves_f64(
             &film.density_curves_f64(),
         );
-        let layers_tensor = film.density_curves_layers_f64();
-        assert!(
-            !layers_tensor.is_empty(),
-            "grain requires the film profile to provide density_curves_layers \
-             ([n][3 sublayers][3 channels]); profile '{}' has none",
-            film.info.stock.as_deref().unwrap_or("<unnamed>"),
-        );
-        let density_cmy_layers =
-            spektrafilm_model::density_curves::interp_density_cmy_layers(
-                &density_cmy,
-                &norm_curves_f64,
-                &layers_tensor,
-                film.is_positive(),
+        // The upstream grain sampler uses `particle_area_um2` directly.
+        // `rms_granularity` is a profile/UI control only; it does not feed
+        // `apply_grain` in the Python runtime.
+        let particle_area_um2 = grain.particle_area_um2;
+        if grain.sublayers_active {
+            // Python `apply_grain_to_density_layers`: sublayer densities
+            // come from interpolating the composite density against the
+            // (normalized) composite curve, the layer maxima from the RAW
+            // `density_curves_layers` tensor — upstream normalizes only
+            // the composite curves before this call.
+            let layers_tensor = film.density_curves_layers_f64();
+            assert!(
+                !layers_tensor.is_empty(),
+                "grain.sublayers_active requires the film profile to provide \
+                 density_curves_layers ([n][3 sublayers][3 channels]); profile '{}' \
+                 has none — disable sublayers_active or fix the profile",
+                film.info.stock.as_deref().unwrap_or("<unnamed>"),
             );
-        let density_max_layers =
-            spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
-        assert!(
-            density_max_layers.iter().all(|row| row.iter().all(|&v| v > 0.0)),
-            "grain requires positive per-sublayer density maxima; profile '{}' yields zero maxima",
-            film.info.stock.as_deref().unwrap_or("<unnamed>"),
-        );
-        let particle_area_um2 = spektrafilm_model::grain::particle_area_from_rms_granularity(
-            &layers_tensor,
-            &density_max_layers,
-            grain.density_min,
-            grain.uniformity,
-            grain.rms_granularity,
-            grain.particle_scale_sublayers,
-        );
-        density_cmy = spektrafilm_model::grain::apply_grain_to_density_layers(
-            &density_cmy_layers,
-            &density_max_layers,
-            density_cmy.width,
-            density_cmy.height,
-            pixel_size_um,
-            particle_area_um2,
-            grain.particle_scale_sublayers,
-            grain.density_min,
-            grain.uniformity,
-            grain.blur,
-            grain.blur_dye_clouds_um,
-            grain.micro_structure,
-            grain.mult_usm_sigma,
-            grain.mult_usm_amount,
-            grain.monochrome,
-            params.settings.use_fast_stats,
-            params.random_seed,
-            backend,
-        );
+            let density_cmy_layers =
+                spektrafilm_model::density_curves::interp_density_cmy_layers(
+                    &density_cmy,
+                    &norm_curves_f64,
+                    &layers_tensor,
+                    film.is_positive(),
+                );
+            let density_max_layers =
+                spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
+            assert!(
+                density_max_layers.iter().all(|row| row.iter().all(|&v| v > 0.0)),
+                "grain.sublayers_active requires positive per-sublayer density \
+                 maxima; profile '{}' yields zero maxima (empty or all-zero \
+                 density_curves_layers)",
+                film.info.stock.as_deref().unwrap_or("<unnamed>"),
+            );
+            density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density_layers(
+                &density_cmy_layers,
+                &density_max_layers,
+                density_cmy.width,
+                density_cmy.height,
+                pixel_size_um,
+                [particle_area_um2; 3],
+                grain.particle_scale_sublayers,
+                grain.density_min,
+                grain.uniformity,
+                grain.blur,
+                grain.blur_dye_clouds_um,
+                grain.micro_structure,
+                grain.mult_usm_sigma,
+                grain.mult_usm_amount,
+                grain.monochrome,
+                params.settings.use_fast_stats,
+                params.random_seed,
+                backend,
+            );
+        } else {
+            let density_max =
+                spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
+            density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density(
+                &density_cmy,
+                pixel_size_um,
+                particle_area_um2,
+                grain.particle_scale,
+                grain.density_min,
+                density_max,
+                grain.uniformity,
+                grain.blur,
+                grain.n_sub_layers,
+                grain.monochrome,
+                params.random_seed,
+                backend,
+            );
+        }
         print_stage_timing(stage_timings, "filming_develop.grain", t);
     }
 
@@ -744,85 +774,49 @@ mod tests {
             assert_eq!(out.data, expected.data);
         }
 
+        /// The sublayer toggle must switch models: layered and composite
+        /// outputs differ, and each is deterministic across runs.
         #[test]
-        fn canonical_grain_groups_change_rendered_output() {
-            let Some(film) = portra() else { return };
-            let backend = CpuBackend;
-            let log_raw = log_raw();
-            let mut baseline_params = base_params();
-            baseline_params.film_render.grain.blur = 0.0;
-            baseline_params.film_render.grain.mult_usm_sigma = 0.0;
-            baseline_params.film_render.grain.mult_usm_amount = 0.0;
-            baseline_params.film_render.grain.blur_dye_clouds_um = 0.0;
-            baseline_params.film_render.grain.micro_structure = [0.0, 0.0];
-            let baseline = develop(&log_raw, &film, &baseline_params, &backend, 12.0);
-
-            let mut rms = baseline_params.clone();
-            rms.film_render.grain.rms_granularity = [18.0, 20.0, 22.0];
-            assert_ne!(
-                baseline.data,
-                develop(&log_raw, &film, &rms, &backend, 12.0).data,
-                "RMS granularity must affect grain output"
-            );
-
-            let mut statistics = baseline_params.clone();
-            statistics.film_render.grain.density_min = [0.2, 0.21, 0.22];
-            statistics.film_render.grain.uniformity = [0.7, 0.72, 0.74];
-            statistics.film_render.grain.particle_scale_sublayers = [1.5, 0.75, 0.35];
-            assert_ne!(
-                baseline.data,
-                develop(&log_raw, &film, &statistics, &backend, 12.0).data,
-                "pixel statistics must affect grain output"
-            );
-
-            let mut texture = baseline_params.clone();
-            texture.film_render.grain.blur = 1.1;
-            texture.film_render.grain.mult_usm_sigma = 0.8;
-            texture.film_render.grain.mult_usm_amount = 1.7;
-            assert_ne!(
-                baseline.data,
-                develop(&log_raw, &film, &texture, &backend, 12.0).data,
-                "texture controls must affect grain output"
-            );
-
-            let mut micro = baseline_params;
-            micro.film_render.grain.blur_dye_clouds_um = 3.0;
-            micro.film_render.grain.micro_structure = [0.6, 40.0];
-            assert_ne!(
-                baseline.data,
-                develop(&log_raw, &film, &micro, &backend, 12.0).data,
-                "micro substructure controls must affect grain output"
-            );
-        }
-
-        /// Runtime-only compatibility flags cannot create a second grain
-        /// model; the experimental route is always the three-sublayer path.
-        #[test]
-        fn runtime_only_layer_flags_do_not_change_experimental_output() {
+        fn sublayers_toggle_switches_models() {
             let Some(film) = portra() else { return };
             let backend = CpuBackend;
             let log_raw = log_raw();
             let mut params = base_params();
-            let baseline = develop(&log_raw, &film, &params, &backend, 12.0);
+            params.film_render.grain.sublayers_active = true;
+            let layered = develop(&log_raw, &film, &params, &backend, 12.0);
+            let layered_again = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_eq!(layered.data, layered_again.data);
+
             params.film_render.grain.sublayers_active = false;
-            params.film_render.grain.n_sub_layers = 4;
-            let migrated = develop(&log_raw, &film, &params, &backend, 12.0);
-            assert_eq!(baseline.data, migrated.data);
+            let composite = develop(&log_raw, &film, &params, &backend, 12.0);
+            let composite_again = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_eq!(composite.data, composite_again.data);
+            assert_ne!(layered.data, composite.data);
         }
 
-        /// `n_sub_layers` is a migration-only field and must not alter the
-        /// canonical experimental grain route.
+        /// `n_sub_layers` is a composite-path control (upstream consumes it
+        /// only in `apply_grain_to_density`): 1 vs 3 sub-layers must differ
+        /// there, and must not touch the layered path.
         #[test]
-        fn n_sub_layers_is_ignored_by_experimental_route() {
+        fn n_sub_layers_is_composite_only() {
             let Some(film) = portra() else { return };
             let backend = CpuBackend;
             let log_raw = log_raw();
+
             let mut params = base_params();
+            params.film_render.grain.sublayers_active = false;
             params.film_render.grain.n_sub_layers = 1;
             let one = develop(&log_raw, &film, &params, &backend, 12.0);
+            params.film_render.grain.n_sub_layers = 3;
+            let three = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_ne!(one.data, three.data);
+
+            params.film_render.grain.sublayers_active = true;
+            params.film_render.grain.n_sub_layers = 1;
+            let l1 = develop(&log_raw, &film, &params, &backend, 12.0);
             params.film_render.grain.n_sub_layers = 4;
-            let four = develop(&log_raw, &film, &params, &backend, 12.0);
-            assert_eq!(one.data, four.data);
+            let l4 = develop(&log_raw, &film, &params, &backend, 12.0);
+            assert_eq!(l1.data, l4.data);
         }
 
         /// `use_fast_stats` switches the layered sampler's RNG regime:
@@ -883,7 +877,7 @@ mod tests {
         /// actionable message instead of producing garbage — Python's
         /// `np.nanmax` on the empty tensor raises for the same condition.
         #[test]
-        #[should_panic(expected = "grain requires the film profile")]
+        #[should_panic(expected = "grain.sublayers_active requires the film profile")]
         fn sublayers_without_layer_curves_fails() {
             let Some(mut film) = portra() else { return };
             film.data.density_curves_layers.clear();
@@ -909,11 +903,12 @@ mod tests {
             );
             let backend = CpuBackend;
             let mut params = base_params();
-            // Mirror the B&W runtime layout: one shared noise field and
-            // channel-0 values for every canonical per-channel tuple.
+            // Mirror `Pipeline::apply_film_specific_params`: monochrome
+            // flag + channel-0-flattened per-channel grain tuples, so the
+            // broadcast 3-channel engine runs one shared noise field.
             params.film_render.grain.monochrome = true;
             let g = &mut params.film_render.grain;
-            g.rms_granularity = [g.rms_granularity[0]; 3];
+            g.particle_scale = [g.particle_scale[0]; 3];
             g.density_min = [g.density_min[0]; 3];
             g.uniformity = [g.uniformity[0]; 3];
             g.blur = 0.0;

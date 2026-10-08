@@ -20,9 +20,32 @@
   "grain": {
     "active": true,
     "rms_granularity": [
-      5,
-      5,
-      5
+      0.0,
+      0.0,
+      0.0
+    ],
+    "engine": "v1",
+    "v2_profile": "35mm250",
+    "v2_mode": "analogue",
+    "v2_film_type": "negative",
+    "v2_size": null,
+    "v2_amount": null,
+    "v2_shadows": null,
+    "v2_midtones": null,
+    "v2_highlights": null,
+    "v2_chroma": null,
+    "v2_resolution_factor": null,
+    "sublayers_active": true,
+    "particle_area_um2": 0.2,
+    "particle_scale": [
+      1.6,
+      1.6,
+      3.2
+    ],
+    "particle_scale_layers": [
+      2.0,
+      1.0,
+      0.5
     ],
     "density_min": [
       0.03,

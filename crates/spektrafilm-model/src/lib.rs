@@ -4,5 +4,6 @@ pub mod diffusion;
 pub mod emulsion;
 pub mod glare;
 pub mod grain;
-pub mod grain_v2;
+pub mod halation;
 pub mod illuminants;
+pub mod optics;

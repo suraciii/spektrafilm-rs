@@ -26,8 +26,8 @@ Dehancer 的颗粒不是叠加噪声贴图，而是三段式管线（`FilmGrainK
 输入图像（已过 film profile / print 阶段）
    │
    ├─① Film Resolution 预模糊（可选，默认 profile 均开启）
-   │     resolution_type=1 → FastBlur（box blur 多趟近似高斯）
-   │     resolution_type=0 → OpticalResolution（可分离卷积，宿主生成 PSF 权重）
+   │     resolution_type=1 → FastBlur（精确 Gaussian，水平/垂直各一遍）
+   │     resolution_type=0 → OpticalResolution（整数 tap 平顶重采样核）
    │
    ├─② 颗粒纹理生成 FilmGrainGenerator（在"虚拟胶片画布"分辨率上）
    │     kernel_film_grain_generator(_8bit)
@@ -38,7 +38,7 @@ Dehancer 的颗粒不是叠加噪声贴图，而是三段式管线（`FilmGrainK
          9 邻域采样 grainTexture → 分区(暗/中/高) Overlay 混合进图像
 ```
 
-另有直接在图像分辨率上算噪声的 `kernel_scan_grain`（`ScanGrainKernel`），对应 **Digital (Experimental)/Noise 模式**：无独立颗粒纹理，但宿主先执行 Film Resolution 模糊，再原地调用 Noise kernel。不能仅从 kernel 本身推断没有预模糊。
+另有直接在图像分辨率上算噪声的 `kernel_scan_grain`（`ScanGrainKernel`），对应 **Digital (Experimental)/Noise 模式**：不执行 Film Resolution 预模糊，直接从输入图像生成并合成噪声。
 
 ## 2. 颗粒 profile 数据（全部 12 条）
 
@@ -211,18 +211,18 @@ float radius = max(0, s_norm · res_norm / gsf)
              · amount_factor;
 
 if (radius > 0) {
-    if (resolution_type == 1)  FastBlur(src, dst, radius);           // box≈gauss
-    else                       OpticalResolution(src, dst, radius);  // 分离卷积 PSF
+    if (resolution_type == 1)  FastBlur(src, dst, radius);           // Gaussian folded bilinear taps
+    else                       OpticalResolution(src, dst, radius);  // integer-tap resampler
 }
 ```
 
 （历史版本 `get_resolution_radius_legacy` 用 `×1.87` 与 amount 的 effective 曲线，现行主路径如上。）
 
-语义与官方文档完全对应："胶片上最小细节不会小于颗粒尺寸"。**把源图预先模糊到颗粒尺度**，模糊半径同样除以 gsf → 分辨率等比；resolution_factor=100 保留原始清晰度，50 为"细节与颗粒平衡"，0 全糊。`resolution_type=1`（所有 profile 默认）走快速 box blur（水平/垂直滑动窗口均值，多趟近似高斯）；`=0` 走更精确的光学分辨率卷积。
+语义与官方文档完全对应："胶片上最小细节不会小于颗粒尺寸"。**把源图预先模糊到颗粒尺度**，模糊半径同样除以 gsf → 分辨率等比；resolution_factor=100 保留原始清晰度，50 为"细节与颗粒平衡"，0 全糊。`resolution_type=1`（所有 profile 默认）走精确 Gaussian FastBlur；`=0` 走整数 tap OpticalResolution。Noise/Digital 路径不使用 Film Resolution。
 
 ## 7. 颗粒类型（Negative / Positive）与 Expand
 
-- `type` 字段（0=Negative）在 GPU kernel 参数中不出现——**正/负片颗粒差异完全由 profile 参数实现**（分区权重分布不同：负片型 highlights 高、正片型低），符合官方"Positive grain uses the classic algorithm"的描述（即同一算法、不同参数预设）。
+- `type`、`Film Type` 与 `resolution_type` 是不同概念。当前 12 个 profile 的 JSON 为 `type=0`（负片）和 `resolution_type=1`；前者是 profile 元数据，后者才决定 Film Resolution 算法。SpektraFilm 不再让 Negative/Positive 选择 OpticalResolution/FastBlur。
 - 官方文档提示：颗粒影响黑白场（Overlay 在 0/1 处仍会推动），需要 **Expand** 工具恢复对比度——与 SpektraFilm 的 density_min/expand 概念同源。
 
 ## 8. 与 SpektraFilm 的对照与可借鉴设计
@@ -268,10 +268,22 @@ if (radius > 0) {
 
 Analogue 仍对九个重采样 tap 共用目标像素亮度；原生成器在每个虚拟 texel 读取源图亮度。该差异可能影响强边缘附近的颗粒，属于尚未逐值复刻的边界，与本次低频旋转导致的天空脊纹分开记录。
 
-**Noise 宿主绑定已反汇编确认。** `ScanGrainKernel::process()` 在 `0x5eef32` 注册匿名 execute 回调 `0x5ef280`。回调 `0x5ef31b–0x5ef446` 将 scale 绑定为 `(1+(s−1)/47) * 2.4 * max(W/1920,H/1080)`；`Segment::get_value()` 位于 `0x5f53f0`，常量 `0x25754e0/e4/e8` 分别为 1920/1080/2.4。这既不是原始 1–48，也不是 Analogue 重采样范围 1–2.5。`0x5ef454` 将 effective amount 乘 0.5 后绑定 arg3；`process()` 的 `0x5eea57–0x5eeadf` 先计算 `s_segment * resolution_normalized / gsf * 1.87 * effective(amount)`，随后选择 FastBlur 或 OpticalResolution。CPU/WGSL 已同步这些映射，删除了错误的“Noise 不模糊”测试，以边缘对比度和跨分辨率颗粒尺度回归替代。PSF 仍为兼容 FIR，resolution Limits 的端点仍按本节产品语义解释。
+**Noise 的 Film Resolution 语义已纠正。** `ScanGrainKernel` 直接从输入图像生成 Noise；SpektraFilm 的 V2 Noise 路径因此将 `resolution_radius` 固定为 0，不再使用历史 `1.87` 半径或 `effective(amount)×0.5` 强度。Noise 的 scale 仍按 `(1+(s−1)/47) * 2.4 * max(W/1920,H/1080)` 计算。
 
-**零值保持产品关闭语义。** Amount=0 原样返回，Shadows/Midtones/Highlights=0 对应分区权重为零。与 `effective(0)=0.2` 的参考多项式有意不同；不能把 `0.2×0.2` 简化为任意像素统一“4%残留颗粒”，还存在 bell、分区系数、50%合成及宿主调度。
+**零值遵循参数直通语义。** `Amount=0` 或三个亮度分区全部为 0 时，SpektraFilm V2 返回输入图像；单个分区强度直接使用 0–1 值，不经过额外 `effective_control()` 曲线。
+
+**GPU 路由边界。** `resolution_type=1` 的 FastBlur 路径有 CPU/WGPU 对照；`resolution_type=0` 的 OpticalResolution 保留 CPU 兼容实现，WGPU 路由回退 CPU。当前内置 profile 均使用 FastBlur。
 
 **GSF 已实现，不是漏掉固定画布。** 实际虚拟尺寸为 `image*max(5200/W,3100/H)`，保持宽高比。`−0.2` 取整微调未复刻；按需程序采样不分配画布纹理，因此不施加某张显卡的 texture cap。封顶在极端宽高比下可能远大于 1px，不能一概称为微小项。当前 photo 管线无 overscan/damage mask 输入；未引入虚假的 mask 接线。
 
 **验证范围。** 1024×576 天空局部横纵相关性差 RMS：旧代码 `0.15443`，修正后 `0.04676`，回归门槛 `0.10`；同一临时 runner 对旧/新模块实测。最终 f64 Grain V2 测试 8 项通过，含中灰分区、同亮度异色 Noise 相位、Noise 边缘/尺度、12 profiles × 2 modes CPU/GPU 对照。768×512 f64 CLI 32-bit TIFF 开启/关闭对照以 ffmpeg 解码，去行均值残差 RMS 为 Analogue `0.00401`、最终 Noise `0.00799`；纸基扫描 16-bit TIFF 也完成导出及读取。6000×4000 合成天空与额外 GPU smoke 是宿主 Noise 映射修正前的证据，不作为最终 Noise 数值验收。这些均为合成输入，不构成用户原始照片已修复的证明。
+
+## 12. 公开参数对齐（2026-10-08）
+
+- 对外保留 Grain Profiles / Custom、Film Type、Processing Mode、Size、Amount、Shadows、Midtones、Highlights、Film Resolution、Chroma、Enabled。移除独立 Resolution filter、V2 timer 和额外 reset 行为。静态相位复用 recipe `random_seed`。
+- Amount、三个亮度分区和 Chroma 的 GUI/JSON 范围均为 0–100，运行时除以 100；Size 为 1–48，Film Resolution 为 0–100。
+- 预设下 Amount 仍可调：构造函数 `0x57cb9a–0x57cba3` 将 grainAmount 存入 context+`0x28`，没有加入隐藏控件列表；`update_state` 在 `0x57e250–0x57e264` 复制预设后，`0x57e280–0x57e292` 再读取并覆盖 Amount。其他控件只在 Custom 下生效。GUI 切换 Custom 复制当前有效参数，选择新预设恢复其 Amount。
+- `Film Type` 不再选择滤波路径；`resolution_type` 单独控制 FastBlur/OpticalResolution。内置 profile 的 `resolution_type=1`，Custom 继承该值。
+- 本次验证：`cargo test -p spektrafilm-model --no-default-features --lib` 通过 40 项；`cargo test -p spektrafilm-core` 通过 138 项；`grain_v2_acceptance` 完成 10 个 TIFF render/export 往返，覆盖 V2 Analogue/Noise、Negative/Positive UI 状态及 film/paper scan。
+- FastBlur 边界单测锁定半径 0.5 的 Gaussian folded weight/offset；Noise 的 `resolution_factor` 不改变输出；Amount=0 为 identity；CPU/WGPU 对照覆盖 12 profiles、FastBlur、Analogue/Noise。
+- 这些结果证明当前 Rust 路由、参数边界和导出链可运行，不证明与 Dehancer 输出逐像素一致；OpticalResolution 的 GPU 路由仍明确回退 CPU。

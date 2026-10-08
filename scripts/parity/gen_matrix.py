@@ -671,7 +671,7 @@ def main() -> None:
         "runtime_fields": {
             group: {
                 field: integration_entry(status, owner, notes,
-                    "crates/spektrafilm-core/src/params.rs; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain.rs",
+                    "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
                     audit_status=AUDIT_RUNTIME_STATUSES.get(f"{group}.{field}", status))
                 for field, (status, owner, notes) in fields.items()
             }

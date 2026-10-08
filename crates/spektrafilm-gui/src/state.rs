@@ -27,7 +27,7 @@ fn merge(target: &mut Value, source: &Value) {
     if let (Some(dst), Some(src)) = (target.as_object_mut(), source.as_object()) {
         for (key, value) in src {
             if let Some(current) = dst.get_mut(key) {
-                if current.is_object() { merge(current, value); }
+                if current.is_object() && value.is_object() { merge(current, value); }
                 else { *current = value.clone(); }
             }
         }
@@ -47,10 +47,8 @@ fn flatten(source: &Value, groups: &[&str]) -> Value {
 }
 fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else { return; };
-    if !object.contains_key("particle_scale_sublayers") {
-        if let Some(value) = object.get("particle_scale_layers").cloned() {
-            object.insert("particle_scale_sublayers".to_string(), value);
-        }
+    if let Some(value) = object.get("particle_scale_layers").cloned() {
+        object.insert("particle_scale_sublayers".to_string(), value);
     }
     for key in [
         "sublayers_active",
@@ -63,6 +61,24 @@ fn normalize_grain_section(section: &mut Value) {
         object.remove(key);
     }
 }
+fn canonicalize_grain_state(section: &mut Value) {
+    let Some(object) = section.as_object_mut() else { return; };
+    const CANONICAL: &[&str] = &[
+        "active",
+        "rms_granularity",
+        "density_min",
+        "uniformity",
+        "particle_scale_sublayers",
+        "blur",
+        "mult_usm_sigma",
+        "mult_usm_amount",
+        "blur_dye_clouds_um",
+        "micro_structure",
+        "micro_sublayers",
+    ];
+    object.retain(|key, _| CANONICAL.contains(&key.as_str()));
+}
+
 
 impl GuiState {
     pub fn factory() -> Self {
@@ -111,7 +127,13 @@ impl GuiState {
         {
             normalize_grain_section(grain);
         }
+        for section in ["input_image", "simulation", "grain"] {
+            if value.get(section).is_none() {
+                normalized.as_object_mut().expect("state object").remove(section);
+            }
+        }
         merge(&mut state.sections, &normalized);
+        canonicalize_grain_state(&mut state.sections["grain"]);
         if let Some(extension) = normalized.get("rust") {
             if extension["version"] != 1 { bail!("Unsupported Rust GUI state extension version"); }
             state.sections["rust"] = extension.clone();
@@ -206,6 +228,14 @@ impl GuiState {
             .and_then(|root| root.get_mut("workflow"))
             .and_then(Value::as_object_mut)
             .map(|workflow| workflow.remove("route"));
+        if let Some(grain) = runtime
+            .get_mut("film_render")
+            .and_then(Value::as_object_mut)
+            .and_then(|film_render| film_render.get_mut("grain"))
+        {
+            normalize_grain_section(grain);
+        }
+        if let Some(grain) = s.get_mut("grain") { canonicalize_grain_state(grain); }
         s["rust"]["runtime"] = runtime;
         Ok(state)
     }

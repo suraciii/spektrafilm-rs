@@ -1,5 +1,5 @@
-mod gpu_helpers;
 pub mod cpu_backend;
+mod gpu_helpers;
 #[cfg(feature = "wgpu-backend")]
 pub mod wgpu_backend;
 
@@ -11,6 +11,8 @@ use spektrafilm_math::image::ImageBuf;
 #[derive(Debug, Clone, Copy)]
 pub struct GrainV2GpuParams {
     pub mode: u32,
+    /// Dehancer resolution type: 0 = OpticalResolution, 1 = FastBlur.
+    pub resolution_type: u32,
     pub amount: f32,
     pub shadows: f32,
     pub midtones: f32,
@@ -20,7 +22,6 @@ pub struct GrainV2GpuParams {
     pub rotation: f32,
     pub color: f32,
     pub resolution_factor: f32,
-    pub resolution_type: u32,
     pub seed: u32,
     pub colored: bool,
     pub clustered: bool,
@@ -92,8 +93,14 @@ pub trait ComputeBackend: Send + Sync {
         xyz_to_rgb: &[[f64; 3]; 3],
     ) -> ImageBuf {
         cpu_backend::scan_spectral_cpu_with_cmfs(
-            density_cmy, channel_density, base_density, illuminant, cmfs,
-            normalization, cat, xyz_to_rgb,
+            density_cmy,
+            channel_density,
+            base_density,
+            illuminant,
+            cmfs,
+            normalization,
+            cat,
+            xyz_to_rgb,
         )
     }
 
@@ -244,6 +251,9 @@ pub struct FilmChainParams<'a> {
     /// before readback). Blur σ in pixels + amount scalar; both come
     /// from `scanner.unsharp_mask`.
     pub unsharp: Option<UnsharpGpuParams>,
+    /// Optional Grain V2 pass — applied after all scanner-domain effects and
+    /// before the destination transfer curve on the CPU.
+    pub grain_v2: Option<GrainV2GpuParams>,
     /// Optional camera lens Gaussian blur on the raw film exposure buffer,
     /// before halation.
     pub camera_lens_blur_px: Option<f32>,
@@ -267,11 +277,12 @@ impl FilmChainParams<'_> {
             && self.scanner_lens_blur_px.is_none_or(supports)
             && self.unsharp.is_none_or(|p| supports(p.sigma_px))
             && self.glare.is_none_or(|p| supports(p.blur_px))
-            && self.dir_couplers.is_none_or(|p| {
-                supports(p.diffusion_size_px) && supports(p.diffusion_tail_px)
-            })
+            && self
+                .dir_couplers
+                .is_none_or(|p| supports(p.diffusion_size_px) && supports(p.diffusion_tail_px))
             && self.halation.is_none_or(|p| {
-                supports(p.scatter_core_px) && supports(p.scatter_tail_px)
+                supports(p.scatter_core_px)
+                    && supports(p.scatter_tail_px)
                     && supports(p.halation_first_sigma_px * (p.halation_n_bounces as f32).sqrt())
             })
     }
@@ -320,7 +331,6 @@ pub struct DirCouplersGpuParams<'a> {
     pub log_exposure: &'a [f64],
     pub gamma_factor: f64,
 }
-
 
 /// Output gamut compression parameters for the GPU-resident per-pixel pass.
 /// CPU equivalent: `OutputGamutCompress::compress`. The `C_max(L, h)` table
@@ -414,7 +424,10 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     }
 
     if requested.as_deref() == Some("cpu") {
-        tracing::info!(backend = cpu_backend::CpuBackend.name(), "using CPU backend");
+        tracing::info!(
+            backend = cpu_backend::CpuBackend.name(),
+            "using CPU backend"
+        );
         return Box::new(cpu_backend::CpuBackend);
     }
 
@@ -426,7 +439,11 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     {
         if requested.as_deref().is_none() || requested.as_deref() == Some("wgpu") {
             if let Some(gpu) = wgpu_backend::WgpuBackend::new() {
-                tracing::info!(precision = "f32", reference = false, "using wgpu preview backend");
+                tracing::info!(
+                    precision = "f32",
+                    reference = false,
+                    "using wgpu preview backend"
+                );
                 return Box::new(gpu);
             }
             if requested.as_deref() == Some("wgpu") {
@@ -434,6 +451,9 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
             }
         }
     }
-    tracing::info!(backend = cpu_backend::CpuBackend.name(), "using CPU backend");
+    tracing::info!(
+        backend = cpu_backend::CpuBackend.name(),
+        "using CPU backend"
+    );
     Box::new(cpu_backend::CpuBackend)
 }

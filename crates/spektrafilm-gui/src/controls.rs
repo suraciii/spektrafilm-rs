@@ -1,7 +1,7 @@
 //! Editors for the pinned experimental GUI sections.
 use egui::{DragValue, Ui};
 use serde_json::{Map, Value};
-use spektrafilm_core::params::{DiffusionFilterParams, RuntimeParams};
+use spektrafilm_core::params::{diffusion::DiffusionFilterParams, RuntimeParams};
 
 const COLOR_SPACES: &[&str] = &[
     "sRGB", "DCI-P3", "Display P3", "Adobe RGB (1998)", "ITU-R BT.2020",
