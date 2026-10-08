@@ -1678,7 +1678,9 @@ impl ComputeBackend for WgpuBackend {
         img: &ImageBuf,
         params: &crate::GrainV2GpuParams,
     ) -> Option<ImageBuf> {
-        Some(self.grain_v2_gpu(img, params))
+        // OpticalResolution is a CPU-only compatibility path. All bundled
+        // Dehancer profiles use resolution_type=1 (FastBlur).
+        (params.resolution_type == 1).then(|| self.grain_v2_gpu(img, params))
     }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
         if sigma <= 0.0 {

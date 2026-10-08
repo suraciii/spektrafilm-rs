@@ -34,7 +34,7 @@ impl WgpuBackend {
             ],
             flags: [
                 params.resolution_factor,
-                params.film_type as f32,
+                params.resolution_type as f32,
                 params.colored as u32 as f32,
                 params.clustered as u32 as f32,
             ],

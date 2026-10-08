@@ -316,7 +316,7 @@ pub fn scan_with_options(
         grain.seed = params.random_seed as u32;
         let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
             mode: grain.mode as u32,
-            film_type: grain.film_type,
+            resolution_type: grain.resolution_type,
             amount: grain.amount,
             shadows: grain.shadows,
             midtones: grain.midtones,

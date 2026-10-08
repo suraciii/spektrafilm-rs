@@ -11,8 +11,8 @@ use spektrafilm_math::image::ImageBuf;
 #[derive(Debug, Clone, Copy)]
 pub struct GrainV2GpuParams {
     pub mode: u32,
-    /// Film stock type: 0 = Negative, 1 = Positive.
-    pub film_type: u32,
+    /// Dehancer resolution type: 0 = OpticalResolution, 1 = FastBlur.
+    pub resolution_type: u32,
     pub amount: f32,
     pub shadows: f32,
     pub midtones: f32,
