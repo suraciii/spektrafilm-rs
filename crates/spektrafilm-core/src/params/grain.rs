@@ -195,7 +195,7 @@ impl GrainParams {
         grain.seed = random_seed as u32;
         spektrafilm_gpu::GrainV2GpuParams {
             mode: grain.mode as u32,
-            film_type: grain.film_type,
+            resolution_type: grain.resolution_type,
             amount: grain.amount,
             shadows: grain.shadows,
             midtones: grain.midtones,
