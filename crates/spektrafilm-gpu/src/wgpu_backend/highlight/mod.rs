@@ -1,5 +1,5 @@
-use super::*;
 use super::blur::DispatchJob;
+use super::*;
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) struct HighlightBoostState {

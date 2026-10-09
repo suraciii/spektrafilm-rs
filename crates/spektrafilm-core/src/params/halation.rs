@@ -1,5 +1,5 @@
+use super::{default_one_f64, default_true};
 use serde::{Deserialize, Serialize};
-use super::{default_true, default_one_f64};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

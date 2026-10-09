@@ -92,7 +92,6 @@ const ILLUMINANT_TH_KG3_F64: [f64; N_WAVELENGTHS] = [
     0.41455292589926274,
 ];
 
-
 /// TH-KG3 + default CMY dichroic filters (C=0, M=65, Y=55) at full f64 precision.
 /// Baked from Python's `color_enlarger(standard_illuminant('TH-KG3'), (0, 65, 55))`.
 pub const ILLUMINANT_TH_KG3_DEFAULT_FILTERS_F64: [f64; N_WAVELENGTHS] = [

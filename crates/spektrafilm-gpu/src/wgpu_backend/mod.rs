@@ -48,7 +48,6 @@ pub struct WgpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline_cache: PipelineCache,
-    name: String,
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -108,7 +107,6 @@ impl WgpuBackend {
         );
 
         Some(Self {
-            name: format!("WGPU f32 · {} ({:?}, {:?})", adapter_info.name, adapter_info.device_type, adapter_info.backend),
             device,
             queue,
             pipeline_cache: PipelineCache::default(),
@@ -129,9 +127,9 @@ impl WgpuBackend {
         let t_start = std::time::Instant::now();
         let binding_types: Vec<wgpu::BufferBindingType> =
             bindings.iter().map(|b| b.binding_type).collect();
-        let cached = self
-            .pipeline_cache
-            .get_or_compile(&self.device, shader_source, &binding_types);
+        let cached =
+            self.pipeline_cache
+                .get_or_compile(&self.device, shader_source, &binding_types);
         let pipeline = &cached.pipeline;
         let bind_group_layout = &cached.layout;
         let t_compile = t_start.elapsed();
@@ -1281,10 +1279,18 @@ impl WgpuBackend {
                 self,
             )
         });
-        // Grain V2 is a display-domain pass. Keep it inside the resident
-        // command buffer so it does not force a full-image readback.
+        // Encode the destination space before Grain V2 preparation; all
+        // resolution and grain passes stay in this resident command buffer.
         let grain_v2_state = p.grain_v2.as_ref().map(|gp| {
-            build_grain_v2_state(&self.device, gp, image.width, image.height, &buf_b, self)
+            build_grain_v2_state(
+                &self.device,
+                gp,
+                image.width,
+                image.height,
+                &buf_b,
+                Some(p.scan_output_space),
+                self,
+            )
         });
 
         // ── Output gamut compression state ───────────────────────────────
@@ -1435,10 +1441,9 @@ impl WgpuBackend {
         if let Some(us) = unsharp_state.as_ref() {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
             us.encode_passes(&mut encoder, n_pixels, wg_xy, &buf_b, img_bytes as u64);
-
         }
-        // 6e. Grain V2 is the last resident pass, before CPU destination
-        // transfer encoding. It writes back to the final ping-pong buffer.
+        // 6e. Encode native destination RGB, then apply Grain V2. The readback
+        // is encoded; the caller decodes only when linear output is requested.
         if let Some(gs) = grain_v2_state.as_ref() {
             gs.encode_pass(&mut encoder, n_pixels, &buf_b);
         }
@@ -1536,14 +1541,8 @@ impl ComputeBackend for WgpuBackend {
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
         cpu_backend::CpuBackend.cctf_decode_srgb(img)
     }
-    fn grain_v2(
-        &self,
-        img: &ImageBuf,
-        params: &crate::GrainV2GpuParams,
-    ) -> Option<ImageBuf> {
-        // OpticalResolution is a CPU-only compatibility path. All bundled
-        // Dehancer profiles use resolution_type=1 (FastBlur).
-        (params.resolution_type == 1).then(|| self.grain_v2_gpu(img, params))
+    fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
+        Some(self.grain_v2_gpu(img, params))
     }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
         if sigma <= 0.0 {
@@ -1902,7 +1901,7 @@ impl ComputeBackend for WgpuBackend {
     }
 
     fn name(&self) -> &str {
-        &self.name
+        "wgpu (f32 preview)"
     }
 }
 
@@ -1933,7 +1932,6 @@ use glare::*;
 #[cfg(feature = "wgpu-backend")]
 use grain::*;
 #[cfg(feature = "wgpu-backend")]
-
 use halation::*;
 #[cfg(feature = "wgpu-backend")]
 use highlight::*;

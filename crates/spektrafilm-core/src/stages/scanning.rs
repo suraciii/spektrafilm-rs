@@ -8,31 +8,9 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::{Scalar, from_f64};
 
+use super::build_lut_grid;
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
-use crate::spectral_service::select_illuminant_f64;
-
-/// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy grid.
-/// Same layout as the enlarger LUT helper in `printing.rs`.
-fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> ImageBuf {
-    let mut grid = ImageBuf::new(steps as u32, (steps * steps) as u32);
-    let step_inv = (steps - 1) as f64;
-    for i in 0..steps {
-        let x_r = data_min[0] + (data_max[0] - data_min[0]) * (i as f64) / step_inv;
-        for j in 0..steps {
-            let x_g = data_min[1] + (data_max[1] - data_min[1]) * (j as f64) / step_inv;
-            for k in 0..steps {
-                let x_b = data_min[2] + (data_max[2] - data_min[2]) * (k as f64) / step_inv;
-                let row = i * steps + j;
-                let base = (row * steps + k) * 3;
-                grid.data[base] = from_f64(x_r);
-                grid.data[base + 1] = from_f64(x_g);
-                grid.data[base + 2] = from_f64(x_b);
-            }
-        }
-    }
-    grid
-}
 
 /// Scanner LUT bounds. When scan_film=true: `-grain.density_min` to
 /// `nanmax(film.density_curves)`. Else: `nanmin..nanmax` of
@@ -172,16 +150,10 @@ pub fn scan_with_options(
         std::borrow::Cow::Owned(vec![0.0; profile.data.base_density.len()])
     };
 
-    let illuminant = scan_illuminant
-        .map(select_illuminant_f64)
-        .unwrap_or_else(|| select_illuminant_f64(&profile.info.viewing_illuminant));
     let output_space = colorspace::resolve(&params.io.output_color_space)
         .expect("output color space must be validated before scanning");
-    let scan_context = crate::chain_prep::ScanColorContext::build(
-        illuminant.into_owned(),
-        channel_density.len(),
-        &params.io.output_color_space,
-    );
+    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, scan_illuminant);
+    let scan_context = &prepared.scan;
     let illuminant = &scan_context.illuminant;
     let normalization = scan_context.normalization;
     let adapt = scan_context.adapt;
@@ -251,8 +223,7 @@ pub fn scan_with_options(
     if let Some(glare) = glare {
         // Shared scan context keeps the CPU two-step CAT→RGB operation
         // order used by the reference path.
-        let glare_rgb_offset_f64 =
-            crate::chain_prep::glare_rgb_offset_f64(&scan_context);
+        let glare_rgb_offset_f64 = crate::chain_prep::glare_rgb_offset_f64(&scan_context);
         let glare_rgb_offset: [Scalar; 3] = glare_rgb_offset_f64.map(from_f64);
         let glare_amount = spektrafilm_model::glare::compute_random_glare_amount(
             rgb.width,
@@ -284,55 +255,46 @@ pub fn scan_with_options(
     // Unsharp mask
     let [usm_sigma, usm_amount] = params.scanner.unsharp_mask;
     if usm_sigma > 0.0 && usm_amount > 0.0 {
-        rgb =
-            spektrafilm_model::optics::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
+        rgb = spektrafilm_model::optics::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
-    // Grain V2 is a display-domain effect. Apply it after optical scan
-    // effects and before destination transfer encoding. V1 remains in the
-    // filming density stage above and is never touched by this branch.
-    if params.film_render.grain.active
+    // Grain consumes native display-encoded RGB, with no internal transfer
+    // or primaries conversion. The scanned image supplies its output space.
+    let grain_v2_active = params.film_render.grain.active
+        && params.settings.rgb_to_raw_method != "mallett2019"
         && matches!(
             params.film_render.grain.engine,
             crate::params::grain::GrainEngine::V2
-        )
-    {
-        let mut grain = params.film_render.grain.resolved_grain_v2();
-        if params.debug.deactivate_spatial_effects {
-            grain.resolution_factor = 100.0;
-        }
-        grain.seed = params.random_seed as u32;
-        let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
-            mode: grain.mode as u32,
-            resolution_type: grain.resolution_type,
-            amount: grain.amount,
-            shadows: grain.shadows,
-            midtones: grain.midtones,
-            highlights: grain.highlights,
-            raw_scale: grain.size,
-            cluster_size: grain.cluster_size,
-            rotation: grain.rotation,
-            color: grain.color,
-            resolution_factor: grain.resolution_factor,
-            seed: grain.seed,
-            colored: grain.colored,
-            clustered: grain.clustered,
-        };
-        rgb = backend
-            .grain_v2(&rgb, &gpu_params)
-            .unwrap_or_else(|| spektrafilm_model::grain::v2::apply_cpu(&rgb, grain));
-    }
-
-    // Match colour.RGB_to_RGB(cs, cs): apply the stored same-space matrix
-    // roundtrip and destination CCTF. Preserve values outside [0, 1] for
-    // formats and later consumers that support extended range.
-    if params.io.output_cctf_encoding {
+        );
+    if params.io.output_cctf_encoding || grain_v2_active {
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
             let encoded =
                 colorspace::encode_rgb([px[0] as f64, px[1] as f64, px[2] as f64], output_space);
             px[0] = from_f64(encoded[0]);
             px[1] = from_f64(encoded[1]);
             px[2] = from_f64(encoded[2]);
+        });
+    }
+    if grain_v2_active {
+        let mut grain = params.film_render.grain.resolved_grain_v2();
+        if params.debug.deactivate_spatial_effects {
+            grain.resolution_factor = 100.0;
+        }
+        grain.seed = params.random_seed as u32;
+        let gpu_params = params
+            .film_render
+            .grain
+            .gpu_params(params.random_seed, params.debug.deactivate_spatial_effects);
+        rgb = backend
+            .grain_v2(&rgb, &gpu_params)
+            .unwrap_or_else(|| spektrafilm_model::grain::v2::apply_cpu(&rgb, grain));
+    }
+
+    // Linear exports retain the same grain realization as encoded exports.
+    // Decode only the transfer; the stored same-space matrix ran above once.
+    if grain_v2_active && !params.io.output_cctf_encoding {
+        rgb.data.par_iter_mut().for_each(|value| {
+            *value = from_f64(colorspace::cctf_decode(*value as f64, output_space.cctf));
         });
     }
 
@@ -347,7 +309,16 @@ pub fn scan(
     color_ref: &crate::color_reference::ColorReference,
     gamut: &crate::gamut_compression::OutputGamutCompress,
 ) -> ImageBuf {
-    scan_with_options(density_cmy, profile, params, backend, color_ref, gamut, None, true)
+    scan_with_options(
+        density_cmy,
+        profile,
+        params,
+        backend,
+        color_ref,
+        gamut,
+        None,
+        true,
+    )
 }
 
 pub fn process(

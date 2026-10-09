@@ -9,12 +9,7 @@ use std::path::Path;
 
 pub const IMPLEMENTATION: &str = "spektrafilm-rs";
 pub const ADAPTER_VERSION: &str = "spektrafilm-rs-adapter-1";
-pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-4";
-const LEGACY_PARAMETER_SCHEMA_VERSIONS: &[&str] = &[
-    "spektrafilm-rs-params-1",
-    "spektrafilm-rs-params-2",
-    "spektrafilm-rs-params-3",
-];
+pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-1";
 pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
 pub const MAX_EDGE: u32 = 9568;
@@ -45,9 +40,6 @@ pub struct RenderRecipe {
     pub output: OutputContract,
     #[serde(default)]
     pub seed: Option<u64>,
-    /// Built-in derived scanner provenance. Optional for legacy recipes.
-    #[serde(default)]
-    pub scanner_provenance: Option<Value>,
 }
 
 pub fn default_output(format: &str) -> OutputContract {
@@ -82,40 +74,22 @@ pub fn validate_seed(seed: u64) -> Result<()> {
 pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     let file =
         fs::File::open(path).with_context(|| format!("opening recipe {}", path.display()))?;
-    let mut recipe: RenderRecipe = serde_json::from_reader(file)
+    let recipe: RenderRecipe = serde_json::from_reader(file)
         .with_context(|| format!("parsing recipe {}", path.display()))?;
     if let Some(seed) = recipe.seed {
         validate_seed(seed)?;
     }
-    if !matches!(recipe.schema_version.as_str(), PARAMETER_SCHEMA_VERSION)
-        && !LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&recipe.schema_version.as_str())
-    {
+    if recipe.schema_version != PARAMETER_SCHEMA_VERSION {
         bail!("unsupported recipe schema {}", recipe.schema_version);
     }
     if recipe.film_profile.trim().is_empty() {
         bail!("filmProfile must not be empty");
     }
     validate_output(&recipe.output)?;
-    let mut parameters = canonical_parameters(recipe.parameters.clone())?;
-    if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&recipe.schema_version.as_str()) {
-        spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut parameters)
-            .map_err(anyhow::Error::msg)?;
-    }
-    let params = normalize_parameters(parameters.clone())?;
-    recipe.parameters = serde_json::to_value(&params)?;
-    recipe.schema_version = PARAMETER_SCHEMA_VERSION.into();
-    if let Some(provenance) = &recipe.scanner_provenance {
-        let expected = serde_json::to_value(
-            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
-        )?;
-        if provenance != &expected {
-            bail!("scannerProvenance does not match the typed scanner parameters");
-        }
-    }
     Ok(recipe)
 }
 
-fn canonical_parameters(value: Value) -> Result<Value> {
+pub fn normalize_parameters(value: Value) -> Result<RuntimeParams> {
     let mut object = value
         .as_object()
         .cloned()
@@ -133,19 +107,7 @@ fn canonical_parameters(value: Value) -> Result<Value> {
         object.insert("print_render".into(), value);
     }
     object.remove("output");
-    Ok(Value::Object(object))
-}
-
-pub fn normalize_parameters(value: Value) -> Result<RuntimeParams> {
-    if value["io"]["output_gamut_compress"]
-        .get("lightness_compression")
-        .is_some()
-    {
-        bail!(
-            "io.output_gamut_compress.lightness_compression is retired; explicitly remove this setting from the document"
-        );
-    }
-    let params: RuntimeParams = serde_json::from_value(canonical_parameters(value)?)
+    let params: RuntimeParams = serde_json::from_value(Value::Object(object))
         .context("parameters do not match the spektrafilm-rs RuntimeParams schema")?;
     params.validate().map_err(anyhow::Error::msg)?;
     Ok(params)
@@ -252,7 +214,6 @@ pub fn describe() -> Value {
         "scanner",
         "film_render",
         "print_render",
-        "magazine_print_color",
         "io",
         "settings",
         "debug",
@@ -278,7 +239,6 @@ pub fn describe() -> Value {
             .unwrap_or_else(|| "unknown".to_owned()),
         "adapterVersion": ADAPTER_VERSION,
         "parameterSchemaVersion": PARAMETER_SCHEMA_VERSION,
-        "modelVersion": spektrafilm_core::runtime::MODEL_VERSION,
         "parameterSchema": {
             "type": "object",
             "moduleOwned": true,
@@ -311,65 +271,6 @@ pub fn describe() -> Value {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn recipe_versions_migrate_only_null_retired_values_and_preserve_source() {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "spektrafilm-recipe-migration-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("recipe.json");
-        let mut versions: Vec<&str> = LEGACY_PARAMETER_SCHEMA_VERSIONS.to_vec();
-        versions.push(PARAMETER_SCHEMA_VERSION);
-        for version in versions {
-            for retired in [None, Some(Value::Null), Some(json!([0.95, 1.0, 1.6]))] {
-                let mut parameters = serde_json::to_value(RuntimeParams::default()).unwrap();
-                if let Some(value) = &retired {
-                    parameters["io"]["output_gamut_compress"]["lightness_compression"] =
-                        value.clone();
-                }
-                let source = serde_json::to_vec(&json!({"schemaVersion":version,"filmProfile":"kodak_gold_200","parameters":parameters,"output":default_output("jpeg")})).unwrap();
-                std::fs::write(&path, &source).unwrap();
-                let result = read_recipe(&path);
-                if retired.is_none()
-                    || (LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&version)
-                        && retired == Some(Value::Null))
-                {
-                    let accepted = result.unwrap();
-                    assert_eq!(accepted.schema_version, PARAMETER_SCHEMA_VERSION);
-                    assert_eq!(
-                        normalize_parameters(accepted.parameters)
-                            .unwrap()
-                            .output_mix
-                            .amount,
-                        1.0
-                    );
-                } else {
-                    assert!(
-                        format!("{:#}", result.unwrap_err())
-                            .contains("io.output_gamut_compress.lightness_compression")
-                    );
-                }
-                assert_eq!(std::fs::read(&path).unwrap(), source);
-            }
-        }
-        for invalid in [
-            json!({"film_render":{"response":{}}}),
-            json!({"print_render":{"response":{}}}),
-            json!({"enlarger":{"c_filter_shift":0.0}}),
-            json!({"output_mix":{"amount":1.01}}),
-            json!({"output_mix":{"amount":-0.01}}),
-        ] {
-            let source = serde_json::to_vec(&json!({"schemaVersion":PARAMETER_SCHEMA_VERSION,"filmProfile":"kodak_gold_200","parameters":invalid,"output":default_output("jpeg")})).unwrap();
-            std::fs::write(&path, &source).unwrap();
-            assert!(read_recipe(&path).is_err());
-            assert_eq!(std::fs::read(&path).unwrap(), source);
-        }
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
     use super::*;
 
     #[test]

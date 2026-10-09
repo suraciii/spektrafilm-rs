@@ -47,30 +47,46 @@ impl Spline {
                 second[j + 1] = (rhs[j] - upper[j] * second[j + 2]) / diagonal[j];
             }
             second[0] = ((h[0] + h[1]) * second[1] - h[0] * second[2]) / h[1];
-            second[n - 1] = ((h[n - 3] + h[n - 2]) * second[n - 2] - h[n - 2] * second[n - 3]) / h[n - 3];
+            second[n - 1] =
+                ((h[n - 3] + h[n - 2]) * second[n - 2] - h[n - 2] * second[n - 3]) / h[n - 3];
         }
         Ok(Self { x, y, second })
     }
 
     fn at(&self, x: f64) -> f64 {
-        let i = self.x.partition_point(|v| *v <= x).saturating_sub(1).min(self.x.len() - 2);
+        let i = self
+            .x
+            .partition_point(|v| *v <= x)
+            .saturating_sub(1)
+            .min(self.x.len() - 2);
         let h = self.x[i + 1] - self.x[i];
         let a = (self.x[i + 1] - x) / h;
         let b = (x - self.x[i]) / h;
-        a * self.y[i] + b * self.y[i + 1]
-            + ((a * a * a - a) * self.second[i] + (b * b * b - b) * self.second[i + 1]) * h * h / 6.0
+        a * self.y[i]
+            + b * self.y[i + 1]
+            + ((a * a * a - a) * self.second[i] + (b * b * b - b) * self.second[i + 1]) * h * h
+                / 6.0
     }
 }
 
 /// Invert each density channel with cubic interpolation between two density levels.
 /// Like upstream interp1d, sorts density samples and rejects out-of-range queries.
-pub fn measure_gamma(exposure: &[f64], density: &[[f64; 3]], d0: f64, d1: f64) -> Result<[f64; 3], String> {
+pub fn measure_gamma(
+    exposure: &[f64],
+    density: &[[f64; 3]],
+    d0: f64,
+    d1: f64,
+) -> Result<[f64; 3], String> {
     if exposure.len() != density.len() || !d0.is_finite() || !d1.is_finite() {
         return Err("invalid gamma samples or density levels".into());
     }
     let mut result = [0.0; 3];
     for c in 0..3 {
-        let mut pairs: Vec<_> = density.iter().zip(exposure).map(|(d, e)| (d[c], *e)).collect();
+        let mut pairs: Vec<_> = density
+            .iter()
+            .zip(exposure)
+            .map(|(d, e)| (d[c], *e))
+            .collect();
         if pairs.len() < 4 || pairs.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
             return Err("cubic gamma inversion requires four finite samples".into());
         }
@@ -83,23 +99,42 @@ pub fn measure_gamma(exposure: &[f64], density: &[[f64; 3]], d0: f64, d1: f64) -
             }
         }
         result[c] = (d1 - d0) / (spline.at(d1) - spline.at(d0));
-        if !result[c].is_finite() { return Err("degenerate gamma interval".into()); }
+        if !result[c].is_finite() {
+            return Err("degenerate gamma interval".into());
+        }
     }
     Ok(result)
 }
 
 /// Measure slopes over an exposure interval, excluding NaN density samples.
 /// Endpoint extrapolation follows upstream CubicSpline.
-pub fn measure_slopes_at_exposure(exposure: &[f64], density: &[[f64; 3]], reference: f64, range: f64) -> Result<[f64; 3], String> {
-    if exposure.len() != density.len() || !reference.is_finite() || !range.is_finite() || range == 0.0 {
+pub fn measure_slopes_at_exposure(
+    exposure: &[f64],
+    density: &[[f64; 3]],
+    reference: f64,
+    range: f64,
+) -> Result<[f64; 3], String> {
+    if exposure.len() != density.len()
+        || !reference.is_finite()
+        || !range.is_finite()
+        || range == 0.0
+    {
         return Err("invalid slope samples or exposure range".into());
     }
     let mut result = [0.0; 3];
     for c in 0..3 {
-        let (x, y) = exposure.iter().zip(density).filter(|(_, d)| !d[c].is_nan()).map(|(e, d)| (*e, d[c])).unzip();
+        let (x, y) = exposure
+            .iter()
+            .zip(density)
+            .filter(|(_, d)| !d[c].is_nan())
+            .map(|(e, d)| (*e, d[c]))
+            .unzip();
         let spline = Spline::new(x, y)?;
-        result[c] = (spline.at(reference + range / 2.0) - spline.at(reference - range / 2.0)) / range;
-        if !result[c].is_finite() { return Err("degenerate slope interval".into()); }
+        result[c] =
+            (spline.at(reference + range / 2.0) - spline.at(reference - range / 2.0)) / range;
+        if !result[c].is_finite() {
+            return Err("degenerate slope interval".into());
+        }
     }
     Ok(result)
 }

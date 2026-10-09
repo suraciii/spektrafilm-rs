@@ -91,9 +91,7 @@ pub fn measure_autoexposure_ev(
     // and propagates, exactly like `np.log2`.
     let ev = -exposure.log2();
     if ev.is_infinite() {
-        tracing::warn!(
-            "Autoexposure is Inf. Setting autoexposure compensation to 0 EV."
-        );
+        tracing::warn!("Autoexposure is Inf. Setting autoexposure compensation to 0 EV.");
         return 0.0;
     }
     tracing::info!(
@@ -114,10 +112,16 @@ pub fn measure_autoexposure_ev(
 /// preview downsample and the CCTF decode both happen inside the meter
 /// (decode after the preview, like upstream).
 pub fn meter_autoexposure_ev(image: &ImageBuf, params: &RuntimeParams) -> f64 {
-    let space = colorspace::resolve(&params.io.input_color_space).expect("validated input color space");
+    let space =
+        colorspace::resolve(&params.io.input_color_space).expect("validated input color space");
     let rgb_to_xyz = space.matrix_rgb_to_xyz;
     let cctf = params.io.input_cctf_decoding.then_some(space.cctf);
-    measure_autoexposure_ev(image, &rgb_to_xyz, cctf, &params.camera.auto_exposure_method)
+    measure_autoexposure_ev(
+        image,
+        &rgb_to_xyz,
+        cctf,
+        &params.camera.auto_exposure_method,
+    )
 }
 
 /// Normalized pixel coordinate along an axis: `(i/dim - 0.5) * (dim/maxdim)`,
@@ -519,17 +523,18 @@ pub fn develop(
                  has none — disable sublayers_active or fix the profile",
                 film.info.stock.as_deref().unwrap_or("<unnamed>"),
             );
-            let density_cmy_layers =
-                spektrafilm_model::density_curves::interp_density_cmy_layers(
-                    &density_cmy,
-                    &norm_curves_f64,
-                    &layers_tensor,
-                    film.is_positive(),
-                );
+            let density_cmy_layers = spektrafilm_model::density_curves::interp_density_cmy_layers(
+                &density_cmy,
+                &norm_curves_f64,
+                &layers_tensor,
+                film.is_positive(),
+            );
             let density_max_layers =
                 spektrafilm_model::density_curves::density_max_layers_f64(&layers_tensor);
             assert!(
-                density_max_layers.iter().all(|row| row.iter().all(|&v| v > 0.0)),
+                density_max_layers
+                    .iter()
+                    .all(|row| row.iter().all(|&v| v > 0.0)),
                 "grain.sublayers_active requires positive per-sublayer density \
                  maxima; profile '{}' yields zero maxima (empty or all-zero \
                  density_curves_layers)",
@@ -562,8 +567,7 @@ pub fn develop(
                 backend,
             );
         } else {
-            let density_max =
-                spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
+            let density_max = spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
             density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density(
                 &density_cmy,
                 pixel_size_um,
@@ -651,7 +655,9 @@ mod tests {
     #[test]
     fn autoexposure_methods_match_python_reference() {
         let img = synthetic_image();
-        let rgb_to_xyz = colorspace::resolve("sRGB").expect("registered space").matrix_rgb_to_xyz;
+        let rgb_to_xyz = colorspace::resolve("sRGB")
+            .expect("registered space")
+            .matrix_rgb_to_xyz;
         let cases = [
             ("average", -1.427705567203),
             ("median", -1.308011314552),
@@ -675,7 +681,9 @@ mod tests {
     #[test]
     fn autoexposure_unknown_method_is_zero_ev() {
         let img = synthetic_image();
-        let rgb_to_xyz = colorspace::resolve("sRGB").expect("registered space").matrix_rgb_to_xyz;
+        let rgb_to_xyz = colorspace::resolve("sRGB")
+            .expect("registered space")
+            .matrix_rgb_to_xyz;
         let ev = measure_autoexposure_ev(&img, &rgb_to_xyz, None, "bogus");
         assert_eq!(ev, 0.0);
     }
@@ -931,10 +939,7 @@ mod tests {
                 eprintln!("Skipping test — profile not found at {}", path.display());
                 return;
             }
-            let film = profile::resolve_for_render(
-                profile::load_profile(&path).unwrap(),
-                None,
-            );
+            let film = profile::resolve_for_render(profile::load_profile(&path).unwrap(), None);
             let backend = CpuBackend;
             let mut params = base_params();
             // Mirror `Pipeline::apply_film_specific_params`: monochrome

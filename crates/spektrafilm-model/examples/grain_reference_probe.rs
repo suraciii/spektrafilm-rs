@@ -1,5 +1,4 @@
-use spektrafilm_backend::GrainV2GpuParams;
-use spektrafilm_gpu::wgpu_backend::WgpuBackend;
+use spektrafilm_gpu::{GrainV2GpuParams, wgpu_backend::WgpuBackend};
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f32, to_f32},
@@ -20,9 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("input byte count mismatch".into());
     }
     let data: Vec<_> = raw
-        .as_chunks::<16>()
-        .0
-        .iter()
+        .chunks_exact(16)
         .flat_map(|p| {
             (0..3)
                 .map(move |c| from_f32(f32::from_le_bytes(p[c * 4..c * 4 + 4].try_into().unwrap())))
@@ -51,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let gpu = WgpuBackend::new().ok_or("no WGPU adapter")?;
     let gp = GrainV2GpuParams {
         mode: p.mode as u32,
-        resolution_type: p.resolution_type,
+        film_type: p.film_type,
         amount: p.amount,
         shadows: p.shadows,
         midtones: p.midtones,
@@ -62,7 +59,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         color: p.color,
         resolution_factor: p.resolution_factor,
         seed: p.seed,
-        timer: p.timer,
         colored: p.colored,
         clustered: p.clustered,
     };

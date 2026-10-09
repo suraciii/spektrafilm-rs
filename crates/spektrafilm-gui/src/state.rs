@@ -1,11 +1,23 @@
 //! GUI state and runtime ownership pinned to upstream 28bf883.
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use spektrafilm_core::params::RuntimeParams;
+use std::path::{Path, PathBuf};
 
-const INPUT_IO: &[&str] = &["input_color_space", "input_cctf_decoding", "upscale_factor", "crop", "crop_center", "crop_size"];
-const INPUT_SETTINGS: &[&str] = &["rgb_to_raw_method", "apply_hanatos2025_adaptation_window", "apply_hanatos2025_adaptation_surface", "spectral_gaussian_blur"];
+const INPUT_IO: &[&str] = &[
+    "input_color_space",
+    "input_cctf_decoding",
+    "upscale_factor",
+    "crop",
+    "crop_center",
+    "crop_size",
+];
+const INPUT_SETTINGS: &[&str] = &[
+    "rgb_to_raw_method",
+    "apply_hanatos2025_adaptation_window",
+    "apply_hanatos2025_adaptation_surface",
+    "spectral_gaussian_blur",
+];
 const RUNTIME_GROUPS: &[(&str, &str, &str)] = &[
     ("grain", "film_render", "grain"),
     ("halation", "film_render", "halation"),
@@ -19,7 +31,9 @@ const RUNTIME_GROUPS: &[(&str, &str, &str)] = &[
 ];
 
 #[derive(Clone, Debug)]
-pub struct GuiState { pub sections: Value }
+pub struct GuiState {
+    pub sections: Value,
+}
 
 /// Merge known leaves only, like upstream's dataclass merge. Unknown fields
 /// never become runtime fields; Rust additions live in the versioned extension.
@@ -27,26 +41,37 @@ fn merge(target: &mut Value, source: &Value) {
     if let (Some(dst), Some(src)) = (target.as_object_mut(), source.as_object()) {
         for (key, value) in src {
             if let Some(current) = dst.get_mut(key) {
-                if current.is_object() && value.is_object() { merge(current, value); }
-                else { *current = value.clone(); }
+                if current.is_object() && value.is_object() {
+                    merge(current, value);
+                } else {
+                    *current = value.clone();
+                }
             }
         }
     }
 }
 fn copy_fields(target: &mut Value, source: &Value, names: &[&str]) {
-    for name in names { if let Some(value) = source.get(*name) { target[*name] = value.clone(); } }
+    for name in names {
+        if let Some(value) = source.get(*name) {
+            target[*name] = value.clone();
+        }
+    }
 }
 fn flatten(source: &Value, groups: &[&str]) -> Value {
     let mut flat = source.clone();
     for group in groups {
         if let Some(values) = source.get(*group).and_then(Value::as_object) {
-            for (key,value) in values { flat[key] = value.clone(); }
+            for (key, value) in values {
+                flat[key] = value.clone();
+            }
         }
     }
     flat
 }
 fn normalize_grain_section(section: &mut Value) {
-    let Some(object) = section.as_object_mut() else { return; };
+    let Some(object) = section.as_object_mut() else {
+        return;
+    };
     if let Some(value) = object.get("particle_scale_layers").cloned() {
         object.insert("particle_scale_sublayers".to_string(), value);
     }
@@ -62,7 +87,9 @@ fn normalize_grain_section(section: &mut Value) {
     }
 }
 fn canonicalize_grain_state(section: &mut Value) {
-    let Some(object) = section.as_object_mut() else { return; };
+    let Some(object) = section.as_object_mut() else {
+        return;
+    };
     const CANONICAL: &[&str] = &[
         "active",
         "rms_granularity",
@@ -79,26 +106,47 @@ fn canonicalize_grain_state(section: &mut Value) {
     object.retain(|key, _| CANONICAL.contains(&key.as_str()));
 }
 
-
 impl GuiState {
     pub fn factory() -> Self {
-        Self { sections: serde_json::from_str(include_str!("factory_state.json")).expect("pinned factory JSON") }
+        Self {
+            sections: serde_json::from_str(include_str!("factory_state.json"))
+                .expect("pinned factory JSON"),
+        }
     }
     pub fn from_value(value: Value) -> Result<Self> {
-        if !value.is_object() { bail!("GUI state must be a JSON object"); }
+        if !value.is_object() {
+            bail!("GUI state must be a JSON object");
+        }
         let mut state = Self::factory();
         let mut normalized = value.clone();
         normalized["input_image"] = flatten(&value["input_image"], &["io", "settings"]);
-        for (old,new) in [("apply_cctf_decoding","input_cctf_decoding"),("spectral_upsampling_method","rgb_to_raw_method")] {
+        for (old, new) in [
+            ("apply_cctf_decoding", "input_cctf_decoding"),
+            ("spectral_upsampling_method", "rgb_to_raw_method"),
+        ] {
             if normalized["input_image"].get(new).is_none() {
-                if let Some(v) = value["input_image"].get(old) { normalized["input_image"][new] = v.clone(); }
+                if let Some(v) = value["input_image"].get(old) {
+                    normalized["input_image"][new] = v.clone();
+                }
             }
         }
         normalized["simulation"] = flatten(&value["simulation"], &["selection", "io"]);
-        copy_fields(&mut normalized["simulation"], &value["simulation"]["workflow"], &["saving_color_space", "saving_cctf_encoding", "auto_preview"]);
+        copy_fields(
+            &mut normalized["simulation"],
+            &value["simulation"]["workflow"],
+            &["saving_color_space", "saving_cctf_encoding", "auto_preview"],
+        );
         if let Some(enlarger) = value["simulation"].get("enlarger") {
-            for (from,to) in [("illuminant","print_illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("y_filter_shift","print_y_filter_shift"),("m_filter_shift","print_m_filter_shift")] {
-                if let Some(v) = enlarger.get(from) { normalized["simulation"][to] = v.clone(); }
+            for (from, to) in [
+                ("illuminant", "print_illuminant"),
+                ("print_exposure", "print_exposure"),
+                ("print_exposure_compensation", "print_exposure_compensation"),
+                ("y_filter_shift", "print_y_filter_shift"),
+                ("m_filter_shift", "print_m_filter_shift"),
+            ] {
+                if let Some(v) = enlarger.get(from) {
+                    normalized["simulation"][to] = v.clone();
+                }
             }
         }
         // Upstream accepts the former scan_film boolean only on flat input.
@@ -112,8 +160,12 @@ impl GuiState {
         }
         for section in ["load_raw", "display"] {
             // Flat top-level GUI-only sections override nested gui_only.
-            let original = value.get(section).or_else(|| value["gui_only"].get(section));
-            if let Some(original) = original { normalized[section] = flatten(original, &["settings"]); }
+            let original = value
+                .get(section)
+                .or_else(|| value["gui_only"].get(section));
+            if let Some(original) = original {
+                normalized[section] = flatten(original, &["settings"]);
+            }
         }
         normalize_grain_section(&mut normalized["grain"]);
         if let Some(grain) = normalized
@@ -129,13 +181,18 @@ impl GuiState {
         }
         for section in ["input_image", "simulation", "grain"] {
             if value.get(section).is_none() {
-                normalized.as_object_mut().expect("state object").remove(section);
+                normalized
+                    .as_object_mut()
+                    .expect("state object")
+                    .remove(section);
             }
         }
         merge(&mut state.sections, &normalized);
         canonicalize_grain_state(&mut state.sections["grain"]);
         if let Some(extension) = normalized.get("rust") {
-            if extension["version"] != 1 { bail!("Unsupported Rust GUI state extension version"); }
+            if extension["version"] != 1 {
+                bail!("Unsupported Rust GUI state extension version");
+            }
             if let Some(fields) = extension.as_object() {
                 for (key, value) in fields {
                     state.sections["rust"][key] = value.clone();
@@ -144,63 +201,148 @@ impl GuiState {
         }
         state.runtime_params()?;
         if normalized.get("rust").is_none() {
-            state.sections.as_object_mut().expect("GUI state object").remove("rust");
+            state
+                .sections
+                .as_object_mut()
+                .expect("GUI state object")
+                .remove("rust");
         }
         Ok(state)
     }
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path).with_context(|| format!("Read GUI state {}",path.display()))?;
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("Read GUI state {}", path.display()))?;
         Self::from_value(serde_json::from_str(&text).context("Invalid GUI state JSON")?)
     }
     pub fn save(&self, path: &Path) -> Result<()> {
         self.runtime_params()?;
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) { std::fs::create_dir_all(parent)?; }
-        std::fs::write(path,serde_json::to_vec_pretty(&self.sections)?)?;
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_vec_pretty(&self.sections)?)?;
         Ok(())
     }
-    pub fn film(&self) -> &str { self.sections["simulation"]["film_stock"].as_str().unwrap_or("kodak_gold_200") }
-    pub fn paper(&self) -> &str { self.sections["simulation"]["print_paper"].as_str().unwrap_or("kodak_supra_endura") }
-    pub fn auto_preview(&self) -> bool { self.sections["simulation"]["auto_preview"].as_bool().unwrap_or(true) }
+    pub fn film(&self) -> &str {
+        self.sections["simulation"]["film_stock"]
+            .as_str()
+            .unwrap_or("kodak_gold_200")
+    }
+    pub fn paper(&self) -> &str {
+        self.sections["simulation"]["print_paper"]
+            .as_str()
+            .unwrap_or("kodak_supra_endura")
+    }
+    pub fn auto_preview(&self) -> bool {
+        self.sections["simulation"]["auto_preview"]
+            .as_bool()
+            .unwrap_or(true)
+    }
     pub fn runtime_params(&self) -> Result<RuntimeParams> {
         let s = &self.sections;
         let mut runtime = serde_json::to_value(RuntimeParams::default())?;
-        if let Some(extra) = s["rust"].get("runtime") { merge(&mut runtime,extra); }
-        for group in ["camera","scanner"] { merge(&mut runtime[group], &s[group]); }
-        for &(section, group, leaf) in RUNTIME_GROUPS { merge(&mut runtime[group][leaf], &s[section]); }
-        runtime["film_render"]["development_time"] = s["film_chemistry"]["development_time"].clone();
+        if let Some(extra) = s["rust"].get("runtime") {
+            merge(&mut runtime, extra);
+        }
+        for group in ["camera", "scanner"] {
+            merge(&mut runtime[group], &s[group]);
+        }
+        for &(section, group, leaf) in RUNTIME_GROUPS {
+            merge(&mut runtime[group][leaf], &s[section]);
+        }
+        runtime["film_render"]["development_time"] =
+            s["film_chemistry"]["development_time"].clone();
         runtime["print_render"]["development_time"] = s["chemistry"]["development_time"].clone();
-        copy_fields(&mut runtime["io"],&s["input_image"],INPUT_IO);
-        copy_fields(&mut runtime["settings"],&s["input_image"],INPUT_SETTINGS);
-        for section in ["input_gamut_compress","output_gamut_compress"] { merge(&mut runtime["io"][section],&s[section]); }
+        copy_fields(&mut runtime["io"], &s["input_image"], INPUT_IO);
+        copy_fields(&mut runtime["settings"], &s["input_image"], INPUT_SETTINGS);
+        for section in ["input_gamut_compress", "output_gamut_compress"] {
+            merge(&mut runtime["io"][section], &s[section]);
+        }
         // Dedicated diffusion panels override passthrough camera/preflash groups.
-        merge(&mut runtime["camera"]["diffusion_filter"],&s["camera_diffusion"]);
-        merge(&mut runtime["enlarger"]["diffusion_filter"],&s["enlarger_diffusion"]);
+        merge(
+            &mut runtime["camera"]["diffusion_filter"],
+            &s["camera_diffusion"],
+        );
+        merge(
+            &mut runtime["enlarger"]["diffusion_filter"],
+            &s["enlarger_diffusion"],
+        );
         merge(&mut runtime["enlarger"], &s["preflashing"]);
-        for (from,to) in [("print_illuminant","illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("print_y_filter_shift","y_filter_shift"),("print_m_filter_shift","m_filter_shift")] { runtime["enlarger"][to] = s["simulation"][from].clone(); }
+        for (from, to) in [
+            ("print_illuminant", "illuminant"),
+            ("print_exposure", "print_exposure"),
+            ("print_exposure_compensation", "print_exposure_compensation"),
+            ("print_y_filter_shift", "y_filter_shift"),
+            ("print_m_filter_shift", "m_filter_shift"),
+        ] {
+            runtime["enlarger"][to] = s["simulation"][from].clone();
+        }
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
         runtime["io"]["scan_film"] = json!(s["simulation"]["route"] == "input > film > scan");
-        copy_fields(&mut runtime["io"],&s["simulation"], &["output_color_space"]);
+        copy_fields(
+            &mut runtime["io"],
+            &s["simulation"],
+            &["output_color_space"],
+        );
         runtime["settings"]["preview_max_size"] = s["display"]["preview_max_size"].clone();
-        for (key,value) in [("use_enlarger_lut",json!(true)),("use_scanner_lut",json!(true)),("lut_resolution",json!(17)),("use_fast_stats",json!(true))] { runtime["settings"][key] = value; }
-        let params: RuntimeParams = serde_json::from_value(runtime).context("Invalid GUI control value")?;
+        for (key, value) in [
+            ("use_enlarger_lut", json!(true)),
+            ("use_scanner_lut", json!(true)),
+            ("lut_resolution", json!(17)),
+            ("use_fast_stats", json!(true)),
+        ] {
+            runtime["settings"][key] = value;
+        }
+        let params: RuntimeParams =
+            serde_json::from_value(runtime).context("Invalid GUI control value")?;
         params.validate().map_err(anyhow::Error::msg)?;
-        for name in ["film_channel_swap","print_channel_swap"] {
-            let order = s["special"][name].as_array().context("Channel swap must be an array")?;
-            if order.len()!=3 || order.iter().any(|v| v.as_u64().is_none_or(|x| x>2)) { bail!("{name} must contain three channel indices in 0..2"); }
+        for name in ["film_channel_swap", "print_channel_swap"] {
+            let order = s["special"][name]
+                .as_array()
+                .context("Channel swap must be an array")?;
+            if order.len() != 3 || order.iter().any(|v| v.as_u64().is_none_or(|x| x > 2)) {
+                bail!("{name} must contain three channel indices in 0..2");
+            }
         }
-        if !matches!(s["load_raw"]["white_balance"].as_str(),Some("as_shot"|"as-shot"|"daylight"|"tungsten"|"custom")) { bail!("Unknown RAW white balance"); }
-        for (section,key) in [("simulation","auto_preview"),("simulation","saving_cctf_encoding"),("display","use_display_transform"),("display","gray_18_canvas"),("load_raw","lens_correction")] {
-            if !s[section][key].is_boolean() { bail!("{section}.{key} must be a boolean"); }
+        if !matches!(
+            s["load_raw"]["white_balance"].as_str(),
+            Some("as_shot" | "as-shot" | "daylight" | "tungsten" | "custom")
+        ) {
+            bail!("Unknown RAW white balance");
         }
-        for (section,key) in [("display","white_padding"),("load_raw","temperature"),("load_raw","tint")] {
-            if s[section][key].as_f64().is_none_or(|v|!v.is_finite()) { bail!("{section}.{key} must be a finite number"); }
+        for (section, key) in [
+            ("simulation", "auto_preview"),
+            ("simulation", "saving_cctf_encoding"),
+            ("display", "use_display_transform"),
+            ("display", "gray_18_canvas"),
+            ("load_raw", "lens_correction"),
+        ] {
+            if !s[section][key].is_boolean() {
+                bail!("{section}.{key} must be a boolean");
+            }
         }
-        if s["simulation"]["film_stock"].as_str().is_none() || s["simulation"]["print_paper"].as_str().is_none() { bail!("Film and paper selections must be strings"); }
-        let saving_space = s["simulation"]["saving_color_space"].as_str().context("Saving color space must be a string")?;
+        for (section, key) in [
+            ("display", "white_padding"),
+            ("load_raw", "temperature"),
+            ("load_raw", "tint"),
+        ] {
+            if s[section][key].as_f64().is_none_or(|v| !v.is_finite()) {
+                bail!("{section}.{key} must be a finite number");
+            }
+        }
+        if s["simulation"]["film_stock"].as_str().is_none()
+            || s["simulation"]["print_paper"].as_str().is_none()
+        {
+            bail!("Film and paper selections must be strings");
+        }
+        let saving_space = s["simulation"]["saving_color_space"]
+            .as_str()
+            .context("Saving color space must be a string")?;
         spektrafilm_math::colorspace::resolve(saving_space).map_err(anyhow::Error::msg)?;
         if let Some(rust) = s["rust"].as_object() {
             if let Some(depth) = rust.get("save_bit_depth") {
-                if !matches!(depth.as_u64(),Some(8|16|32)) { bail!("Saving bit depth must be 8, 16 or 32"); }
+                if !matches!(depth.as_u64(), Some(8 | 16 | 32)) {
+                    bail!("Saving bit depth must be 8, 16 or 32");
+                }
             }
             if let Some(space) = rust.get("export_saving_color_space") {
                 let space = space.as_str().context("Export saving color space must be a string")?;
@@ -220,40 +362,93 @@ impl GuiState {
                 }
             }
             if let Some(export_format) = rust.get("export_format") {
-                let export_format = export_format.as_str().context("Export format must be a string")?;
-                if !matches!(export_format, "jpeg"|"png"|"tiff"|"exr") { bail!("Unknown export format"); }
-                let quality = rust.get("jpeg_quality").and_then(Value::as_u64).context("JPEG quality must be an integer")?;
-                if !(1..=100).contains(&quality) { bail!("JPEG quality must be 1..=100"); }
-                if !matches!(rust.get("jpeg_subsampling").and_then(Value::as_str), Some("444"|"420")) { bail!("JPEG subsampling must be 444 or 420"); }
-                if !matches!(rust.get("export_compression").and_then(Value::as_str), Some("zip"|"none")) { bail!("Unknown export compression"); }
-                let depth = rust.get("save_bit_depth").and_then(Value::as_u64).unwrap_or(16);
-                if matches!(export_format, "jpeg"|"png") && depth != 8 { bail!("{export_format} exports require 8-bit depth"); }
-                if export_format == "exr" && !matches!(depth, 16|32) { bail!("EXR exports require 16- or 32-bit depth"); }
+                let export_format = export_format
+                    .as_str()
+                    .context("Export format must be a string")?;
+                if !matches!(export_format, "jpeg" | "png" | "tiff" | "exr") {
+                    bail!("Unknown export format");
+                }
+                let quality = rust
+                    .get("jpeg_quality")
+                    .and_then(Value::as_u64)
+                    .context("JPEG quality must be an integer")?;
+                if !(1..=100).contains(&quality) {
+                    bail!("JPEG quality must be 1..=100");
+                }
+                if !matches!(
+                    rust.get("jpeg_subsampling").and_then(Value::as_str),
+                    Some("444" | "420")
+                ) {
+                    bail!("JPEG subsampling must be 444 or 420");
+                }
+                if !matches!(
+                    rust.get("export_compression").and_then(Value::as_str),
+                    Some("zip" | "none")
+                ) {
+                    bail!("Unknown export compression");
+                }
+                let depth = rust
+                    .get("save_bit_depth")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(16);
+                if matches!(export_format, "jpeg" | "png") && depth != 8 {
+                    bail!("{export_format} exports require 8-bit depth");
+                }
+                if export_format == "exr" && !matches!(depth, 16 | 32) {
+                    bail!("EXR exports require 16- or 32-bit depth");
+                }
             }
         }
-        if s["display"]["output_interpolation"].as_str().is_none() { bail!("Output interpolation must be a string"); }
+        if s["display"]["output_interpolation"].as_str().is_none() {
+            bail!("Output interpolation must be a string");
+        }
         Ok(params)
     }
-    pub fn from_runtime(params: &RuntimeParams, film: &str, paper: &str, extras: &Value) -> Result<Self> {
-let mut base = Self::factory().sections;
+    pub fn from_runtime(
+        params: &RuntimeParams,
+        film: &str,
+        paper: &str,
+        extras: &Value,
+    ) -> Result<Self> {
+        let mut base = Self::factory().sections;
         merge(&mut base, &extras);
         let mut state = Self::from_value(base)?;
         let mut runtime = serde_json::to_value(params)?;
         let s = &mut state.sections;
-        for group in ["camera","scanner"] { merge(&mut s[group],&runtime[group]); }
-        for &(section, group, leaf) in RUNTIME_GROUPS { merge(&mut s[section], &runtime[group][leaf]); }
-        s["film_chemistry"]["development_time"] = runtime["film_render"]["development_time"].clone();
+        for group in ["camera", "scanner"] {
+            merge(&mut s[group], &runtime[group]);
+        }
+        for &(section, group, leaf) in RUNTIME_GROUPS {
+            merge(&mut s[section], &runtime[group][leaf]);
+        }
+        s["film_chemistry"]["development_time"] =
+            runtime["film_render"]["development_time"].clone();
         s["chemistry"]["development_time"] = runtime["print_render"]["development_time"].clone();
-        merge(&mut s["preflashing"],&runtime["enlarger"]);
+        merge(&mut s["preflashing"], &runtime["enlarger"]);
         s["camera_diffusion"] = runtime["camera"]["diffusion_filter"].clone();
         s["enlarger_diffusion"] = runtime["enlarger"]["diffusion_filter"].clone();
-        copy_fields(&mut s["input_image"],&runtime["io"],INPUT_IO);
-        copy_fields(&mut s["input_image"],&runtime["settings"],INPUT_SETTINGS);
-        for section in ["input_gamut_compress","output_gamut_compress"] { merge(&mut s[section], &runtime["io"][section]); }
-        s["simulation"]["film_stock"] = json!(film); s["simulation"]["print_paper"] = json!(paper);
-        for (from,to) in [("illuminant","print_illuminant"),("print_exposure","print_exposure"),("print_exposure_compensation","print_exposure_compensation"),("y_filter_shift","print_y_filter_shift"),("m_filter_shift","print_m_filter_shift")] { s["simulation"][to]=runtime["enlarger"][from].clone(); }
+        copy_fields(&mut s["input_image"], &runtime["io"], INPUT_IO);
+        copy_fields(&mut s["input_image"], &runtime["settings"], INPUT_SETTINGS);
+        for section in ["input_gamut_compress", "output_gamut_compress"] {
+            merge(&mut s[section], &runtime["io"][section]);
+        }
+        s["simulation"]["film_stock"] = json!(film);
+        s["simulation"]["print_paper"] = json!(paper);
+        for (from, to) in [
+            ("illuminant", "print_illuminant"),
+            ("print_exposure", "print_exposure"),
+            ("print_exposure_compensation", "print_exposure_compensation"),
+            ("y_filter_shift", "print_y_filter_shift"),
+            ("m_filter_shift", "print_m_filter_shift"),
+        ] {
+            s["simulation"][to] = runtime["enlarger"][from].clone();
+        }
         s["simulation"]["route"] = runtime["workflow"]["route"].clone();
-        copy_fields(&mut s["simulation"],&runtime["io"], &["output_color_space"]);
+        copy_fields(
+            &mut s["simulation"],
+            &runtime["io"],
+            &["output_color_space"],
+        );
         s["display"]["preview_max_size"] = runtime["settings"]["preview_max_size"].clone();
         if let Some(extra) = extras["rust"].as_object() {
             for (key, value) in extra {
@@ -280,100 +475,136 @@ let mut base = Self::factory().sections;
         {
             normalize_grain_section(grain);
         }
-        if let Some(grain) = s.get_mut("grain") { canonicalize_grain_state(grain); }
+        if let Some(grain) = s.get_mut("grain") {
+            canonicalize_grain_state(grain);
+        }
         s["rust"]["runtime"] = runtime;
         Ok(state)
     }
 }
 
 pub fn config_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("SPEKTRAFILM_CONFIG_DIR") { return path.into(); }
-    #[cfg(target_os="windows")]
-    if let Some(path) = std::env::var_os("APPDATA") { return PathBuf::from(path).join("spektrafilm"); }
-    #[cfg(target_os="macos")]
-    if let Some(home) = std::env::var_os("HOME") { return PathBuf::from(home).join("Library/Application Support/spektrafilm"); }
-    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME") { return PathBuf::from(path).join("spektrafilm"); }
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from(".")).join(".config/spektrafilm")
+    if let Some(path) = std::env::var_os("SPEKTRAFILM_CONFIG_DIR") {
+        return path.into();
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(path) = std::env::var_os("APPDATA") {
+        return PathBuf::from(path).join("spektrafilm");
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join("Library/Application Support/spektrafilm");
+    }
+    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME") {
+        return PathBuf::from(path).join("spektrafilm");
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config/spektrafilm")
 }
-pub fn default_path() -> PathBuf { config_dir().join("gui_default_state.json") }
+pub fn default_path() -> PathBuf {
+    config_dir().join("gui_default_state.json")
+}
 pub fn startup() -> Result<GuiState> {
     let path = default_path();
-    let mut state = if path.exists() { GuiState::load(&path)? } else { GuiState::factory() };
+    let mut state = if path.exists() {
+        GuiState::load(&path)?
+    } else {
+        GuiState::factory()
+    };
     let directories = config_dir().join("dialog_dirs.json");
     if directories.exists() {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(directories)?)?;
-        if !value.is_object() { bail!("File dialog directories must be a JSON object"); }
-        if !state.sections["rust"].is_object() { state.sections["rust"] = json!({"version":1}); }
+        if !value.is_object() {
+            bail!("File dialog directories must be a JSON object");
+        }
+        if !state.sections["rust"].is_object() {
+            state.sections["rust"] = json!({"version":1});
+        }
         state.sections["rust"]["dialog_dirs"] = value;
     }
     Ok(state)
 }
-pub fn reset_factory() -> Result<GuiState> { let path=default_path(); if path.exists() { std::fs::remove_file(path)?; } Ok(GuiState::factory()) }
+pub fn reset_factory() -> Result<GuiState> {
+    let path = default_path();
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(GuiState::factory())
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn partial_legacy_sections_use_factory_and_flat_gui_only_precedence() {
-        let state=GuiState::from_value(json!({
+        let state = GuiState::from_value(json!({
             "input_image":{"apply_cctf_decoding":true,"crop":true,"crop_center":[0.2,0.7]},
             "simulation":{"saving_color_space":"ITU-R BT.2020"},
             "gui_only":{"display":{"gray_18_canvas":false}},
             "display":{"white_padding":0.1}
-        })).unwrap();
-        let params=state.runtime_params().unwrap();
+        }))
+        .unwrap();
+        let params = state.runtime_params().unwrap();
         assert!(params.io.crop && params.io.input_cctf_decoding);
-        assert_eq!(params.io.crop_center,[0.2,0.7]);
-        assert_eq!(state.sections["display"]["gray_18_canvas"],true);
-        assert_eq!(state.sections["display"]["white_padding"],0.1);
-        assert_eq!(state.paper(),"kodak_supra_endura");
+        assert_eq!(params.io.crop_center, [0.2, 0.7]);
+        assert_eq!(state.sections["display"]["gray_18_canvas"], true);
+        assert_eq!(state.sections["display"]["white_padding"], 0.1);
+        assert_eq!(state.paper(), "kodak_supra_endura");
     }
     #[test]
     fn dedicated_diffusion_and_simulation_panels_win_over_passthrough_groups() {
-        let state=GuiState::from_value(json!({
+        let state = GuiState::from_value(json!({
             "camera":{"diffusion_filter":{"strength":1.5}},
             "camera_diffusion":{"strength":0.25},
             "preflashing":{"print_exposure":8.0,"preflash_exposure":0.2},
             "simulation":{"print_exposure":1.75}
-        })).unwrap();
-        let params=state.runtime_params().unwrap();
-        assert_eq!(params.camera.diffusion_filter.strength,0.25);
-        assert_eq!(params.enlarger.print_exposure,1.75);
-        assert_eq!(params.enlarger.preflash_exposure,0.2);
+        }))
+        .unwrap();
+        let params = state.runtime_params().unwrap();
+        assert_eq!(params.camera.diffusion_filter.strength, 0.25);
+        assert_eq!(params.enlarger.print_exposure, 1.75);
+        assert_eq!(params.enlarger.preflash_exposure, 0.2);
     }
     #[test]
     fn legacy_rust_extension_gets_new_export_defaults() {
-        let mut value=GuiState::factory().sections;
-        value["rust"]=json!({"version":1,"viewer":{"zoom":3.0}});
-        let state=GuiState::from_value(value).unwrap();
-        assert_eq!(state.sections["rust"]["viewer"]["zoom"],3.0);
-        assert_eq!(state.sections["rust"]["export_format"],"png");
-        assert_eq!(state.sections["rust"]["jpeg_quality"],95);
-        assert_eq!(state.sections["rust"]["jpeg_subsampling"],"444");
-        assert_eq!(state.sections["rust"]["export_compression"],"zip");
+        let mut value = GuiState::factory().sections;
+        value["rust"] = json!({"version":1,"viewer":{"zoom":3.0}});
+        let state = GuiState::from_value(value).unwrap();
+        assert_eq!(state.sections["rust"]["viewer"]["zoom"], 3.0);
+        assert_eq!(state.sections["rust"]["export_format"], "png");
+        assert_eq!(state.sections["rust"]["jpeg_quality"], 95);
+        assert_eq!(state.sections["rust"]["jpeg_subsampling"], "444");
+        assert_eq!(state.sections["rust"]["export_compression"], "zip");
     }
 
     #[test]
     fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
-        let factory=GuiState::factory();
-        let mut params=factory.runtime_params().unwrap();
-        params.io.output_cctf_encoding=false;
-        params.film_render.development_time=Some(9.0);
-        params.film_render.grain.engine=spektrafilm_core::params::GrainEngine::V2;
-        params.film_render.grain.v2_profile="8mm500".into();
-        params.film_render.grain.v2_amount=Some(0.0);
-        let mut extras=factory.sections.clone();
-        extras["rust"]=json!({"version":1,"viewer":{"zoom":3.0}});
-        let saved=GuiState::from_runtime(&params,"kodak_gold_200","kodak_supra_endura",&extras).unwrap();
-        let loaded=GuiState::from_value(saved.sections.clone()).unwrap();
-        let restored=loaded.runtime_params().unwrap();
+        let factory = GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        params.io.output_cctf_encoding = false;
+        params.film_render.development_time = Some(9.0);
+        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V2;
+        params.film_render.grain.v2_profile = "8mm500".into();
+        params.film_render.grain.v2_amount = Some(0.0);
+        let mut extras = factory.sections.clone();
+        extras["rust"] = json!({"version":1,"viewer":{"zoom":3.0}});
+        let saved =
+            GuiState::from_runtime(&params, "kodak_gold_200", "kodak_supra_endura", &extras)
+                .unwrap();
+        let loaded = GuiState::from_value(saved.sections.clone()).unwrap();
+        let restored = loaded.runtime_params().unwrap();
         assert!(!restored.io.output_cctf_encoding);
-        assert_eq!(restored.film_render.development_time,Some(9.0));
-        assert_eq!(restored.film_render.grain.engine,spektrafilm_core::params::GrainEngine::V2);
-        assert_eq!(restored.film_render.grain.v2_profile,"8mm500");
-        assert_eq!(restored.film_render.grain.resolved_grain_v2().amount,0.0);
-        assert_eq!(loaded.sections["rust"]["viewer"]["zoom"],3.0);
-        assert_eq!(loaded.sections,saved.sections);
+        assert_eq!(restored.film_render.development_time, Some(9.0));
+        assert_eq!(
+            restored.film_render.grain.engine,
+            spektrafilm_core::params::GrainEngine::V2
+        );
+        assert_eq!(restored.film_render.grain.v2_profile, "8mm500");
+        assert_eq!(restored.film_render.grain.resolved_grain_v2().amount, 0.0);
+        assert_eq!(loaded.sections["rust"]["viewer"]["zoom"], 3.0);
+        assert_eq!(loaded.sections, saved.sections);
     }
     #[test]
     fn grain_v2_migration_strips_runtime_only_fields() {
@@ -406,12 +637,18 @@ mod tests {
             "n_sub_layers",
             "monochrome",
         ] {
-            assert!(!grain.contains_key(key), "legacy field leaked into state: {key}");
+            assert!(
+                !grain.contains_key(key),
+                "legacy field leaked into state: {key}"
+            );
         }
         let params = state.runtime_params().unwrap();
         let runtime_grain = serde_json::to_value(params).unwrap()["film_render"]["grain"].clone();
         assert!(runtime_grain.get("particle_scale_layers").is_none());
-        assert_eq!(runtime_grain["particle_scale_sublayers"], json!([2.0, 1.0, 0.5]));
+        assert_eq!(
+            runtime_grain["particle_scale_sublayers"],
+            json!([2.0, 1.0, 0.5])
+        );
     }
     #[test]
     fn grain_v2_canonical_fields_roundtrip_through_state_and_runtime() {
@@ -491,28 +728,46 @@ mod tests {
         params.film_render.convert.base_percentile = 97.5;
         params.film_render.convert.calibration = "1.1 0 0  0 1 0  0 0 0.9".into();
         params.workflow.route = "input > convert-film > scan-minus-base".into();
-        let mut saved = GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections).unwrap().sections;
+        let mut saved =
+            GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+                .unwrap()
+                .sections;
         saved.as_object_mut().unwrap().remove("rust");
         let loaded = GuiState::from_value(saved.clone()).unwrap();
         let restored = loaded.runtime_params().unwrap();
         assert_eq!(restored.camera.film_format_mm, 70.0);
         assert_eq!(restored.camera.color_filter, "hoya_y2");
         assert_eq!(restored.film_render.grain.micro_sublayers, 3);
-        assert_eq!(restored.film_render.dir_couplers.langmuir_donor_k_rgb, [0.5, 1.5, 2.5]);
-        assert_eq!(restored.film_render.dir_couplers.langmuir_receiver_k_rgb, [0.75, 1.75, 2.75]);
+        assert_eq!(
+            restored.film_render.dir_couplers.langmuir_donor_k_rgb,
+            [0.5, 1.5, 2.5]
+        );
+        assert_eq!(
+            restored.film_render.dir_couplers.langmuir_receiver_k_rgb,
+            [0.75, 1.75, 2.75]
+        );
         assert_eq!(restored.io.input_gamut_compress.hull_detail, 9.0);
         assert_eq!(restored.io.input_gamut_compress.boundary, "locus");
         assert_eq!(restored.film_render.development_time, Some(9.0));
         assert_eq!(restored.print_render.development_time, Some(4.0));
         assert_eq!(restored.film_render.chemistry.gamma_factor_red, 1.25);
-        assert_eq!(restored.print_render.density_curves_morph.gamma_factor_blue, 0.75);
+        assert_eq!(
+            restored.print_render.density_curves_morph.gamma_factor_blue,
+            0.75
+        );
         assert_eq!(restored.film_render.base.tilt, 0.2);
         assert_eq!(restored.film_render.base.cyan, 1.2);
         assert_eq!(restored.print_render.base.scale, 0.8);
         assert_eq!(restored.film_render.convert.scan_illuminant, "D65");
         assert_eq!(restored.film_render.convert.base_percentile, 97.5);
-        assert_eq!(restored.film_render.convert.calibration, "1.1 0 0  0 1 0  0 0 0.9");
-        assert_eq!(restored.workflow.route, "input > convert-film > scan-minus-base");
+        assert_eq!(
+            restored.film_render.convert.calibration,
+            "1.1 0 0  0 1 0  0 0 0.9"
+        );
+        assert_eq!(
+            restored.workflow.route,
+            "input > convert-film > scan-minus-base"
+        );
         assert_eq!(loaded.sections, saved);
         assert!(saved["simulation"].get("workflow").is_none());
         assert!(saved["simulation"].get("scan_film").is_none());
@@ -525,20 +780,25 @@ mod tests {
         let factory = GuiState::factory();
         let mut params = factory.runtime_params().unwrap();
         params.workflow.route = "input > film > scan".into();
-        let saved = GuiState::from_runtime(
-            &params,
-            factory.film(),
-            factory.paper(),
-            &factory.sections,
-        )
-        .unwrap();
-        assert!(saved.sections["rust"]["runtime"]["io"].get("scan_film").is_none());
-        assert!(saved.sections["rust"]["runtime"]["workflow"]
-            .get("route")
-            .is_none());
+        let saved =
+            GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+                .unwrap();
+        assert!(
+            saved.sections["rust"]["runtime"]["io"]
+                .get("scan_film")
+                .is_none()
+        );
+        assert!(
+            saved.sections["rust"]["runtime"]["workflow"]
+                .get("route")
+                .is_none()
+        );
         assert_eq!(saved.sections["simulation"]["route"], "input > film > scan");
         let loaded = GuiState::from_value(saved.sections).unwrap();
-        assert_eq!(loaded.runtime_params()?.workflow.route, "input > film > scan");
+        assert_eq!(
+            loaded.runtime_params()?.workflow.route,
+            "input > film > scan"
+        );
         Ok::<(), anyhow::Error>(())
     }
     #[test]
@@ -553,7 +813,6 @@ mod tests {
         assert_eq!(restored.enlarger.m_filter_neutral, 58.8453);
         assert_eq!(restored.enlarger.y_filter_neutral, 55.2848);
     }
-
 
     #[test]
     fn canonical_chemistry_base_and_route_override_runtime_extension() {
@@ -574,7 +833,10 @@ mod tests {
         assert_eq!(params.film_render.development_time, Some(9.0));
         assert_eq!(params.print_render.development_time, Some(4.0));
         assert_eq!(params.film_render.chemistry.gamma_factor_red, 1.25);
-        assert_eq!(params.print_render.density_curves_morph.gamma_factor_blue, 0.75);
+        assert_eq!(
+            params.print_render.density_curves_morph.gamma_factor_blue,
+            0.75
+        );
         assert_eq!(params.film_render.base.cyan, 1.2);
         assert_eq!(params.print_render.base.scale, 0.8);
         assert_eq!(params.film_render.convert.base_percentile, 97.5);
@@ -584,9 +846,14 @@ mod tests {
     #[test]
     fn upstream_legacy_scan_flag_is_read_only_and_route_wins() {
         let legacy = GuiState::from_value(json!({"simulation": {"scan_film": true}})).unwrap();
-        assert_eq!(legacy.runtime_params().unwrap().workflow.route, "input > film > scan");
+        assert_eq!(
+            legacy.runtime_params().unwrap().workflow.route,
+            "input > film > scan"
+        );
         assert!(legacy.sections["simulation"].get("scan_film").is_none());
-        let explicit = GuiState::from_value(json!({"simulation": {"scan_film": true, "route": "input"}})).unwrap();
+        let explicit =
+            GuiState::from_value(json!({"simulation": {"scan_film": true, "route": "input"}}))
+                .unwrap();
         assert_eq!(explicit.runtime_params().unwrap().workflow.route, "input");
     }
 
@@ -611,13 +878,22 @@ mod tests {
         assert_eq!(params.io.output_color_space, "ITU-R BT.2020");
         assert_eq!(state.film(), "kodak_doublex");
         assert!(!state.auto_preview());
-        assert_eq!(state.sections["simulation"]["saving_color_space"], "ITU-R BT.2020");
+        assert_eq!(
+            state.sections["simulation"]["saving_color_space"],
+            "ITU-R BT.2020"
+        );
         assert!(state.sections["simulation"].get("workflow").is_none());
     }
 
     #[test]
     fn malformed_controls_and_future_extensions_fail_before_application() {
-        for value in [json!([]),json!({"camera":{"auto_exposure":"bad"}}),json!({"rust":{"version":9}}),json!({"special":{"film_channel_swap":[0,1,3]}}),json!({"simulation":{"auto_preview":"false"}})] {
+        for value in [
+            json!([]),
+            json!({"camera":{"auto_exposure":"bad"}}),
+            json!({"rust":{"version":9}}),
+            json!({"special":{"film_channel_swap":[0,1,3]}}),
+            json!({"simulation":{"auto_preview":"false"}}),
+        ] {
             assert!(GuiState::from_value(value).is_err());
         }
     }

@@ -144,14 +144,9 @@ mod tests {
     #[test]
     fn camera_uv_ir_filter_parity() {
         let mut sensitivity = portra_sensitivity();
-        // Synthetic illuminant shared with the numpy reference generator.
-        let illuminant: Vec<f64> = (0..N_WAVELENGTHS)
-            .map(|i| {
-                let wl =
-                    spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
-                1.0 + 0.1 * (2.0 * std::f64::consts::PI * (wl - 380.0) / 200.0).sin()
-            })
-            .collect();
+        // The film profile's reference illuminant is D55; this is the same
+        // illuminant used by the filming runtime for filter normalization.
+        let illuminant = spectral::ILLUMINANT_D55_F64.to_vec();
         let before = sensitivity.clone();
         apply_camera_uv_ir_band_pass(
             &mut sensitivity,
@@ -160,19 +155,14 @@ mod tests {
             &illuminant,
         );
 
-        // The reference normalization (per channel) is
-        // sum((sens*bpf)*illu) / sum(sens*illu); it is verified through the
-        // filtered-sensitivity reference values and the white-balance
-        // invariant below.
-
-        // Filtered sensitivity reference values (numpy replication of the
-        // pinned Python code on kodak_portra_400).
+        // Filtered sensitivity reference values from the pinned upstream
+        // filming path (D55 normalization).
         let cases = [
-            (0usize, 0usize, 8.9267062837658333e-05_f64),
-            (10, 1, 0.028524682793428562),
-            (40, 2, 5.2281691314240252e-05),
-            (60, 0, 0.0019794061694498643),
-            (80, 2, 1.3560445696968211e-07),
+            (0usize, 0usize, 8.9233947803746231e-05_f64),
+            (10, 1, 0.02811757780387461),
+            (40, 2, 4.9000721126212758e-05),
+            (60, 0, 0.0019786738339406741),
+            (80, 2, 1.2709441518568956e-07),
         ];
         for (wl, c, want) in cases {
             assert_close(
@@ -296,12 +286,12 @@ mod tests {
                 0usize,
                 0usize,
                 0usize,
-                1.9108227429072688_f64,
-                3.7602347794518272_f64,
+                1.910822742667304_f64,
+                3.7602347788263835_f64,
             ),
-            (96, 96, 1, -0.011682565105707881, 0.99193496128764136),
-            (191, 191, 2, 0.34181696988254229, 1.267351726964274),
-            (50, 130, 0, 0.084473213471850842, 1.0603005119142745),
+            (96, 96, 1, -0.01168258409209211, 0.9919349482334215),
+            (191, 191, 2, 0.3418168367578539, 1.2673516100193958),
+            (50, 130, 0, 0.08447324267349479, 1.0603005333758568),
         ];
         for (i, j, ch, want_s, want_pow) in cases {
             let got = at(i, j, ch);
@@ -368,6 +358,24 @@ mod tests {
         assert!(base.data.iter().zip(&blurred.data).any(|(a, b)| a != b));
         assert!(base.data.iter().zip(&surfaced.data).any(|(a, b)| a != b));
         assert!(base.data.iter().zip(&windowless.data).any(|(a, b)| a != b));
+        // Windowing must preserve the reconstructed neutral in every channel.
+        // The reference SPD has the same chromaticity but a different spectrum.
+        let (tx, ty) = spectral::xy_to_tc(xy.0, xy.1);
+        let sample = |lut: &TcLut| {
+            spektrafilm_math::lut::bicubic_2d_f64(
+                &lut.data,
+                lut.size,
+                lut.size,
+                lut.channels,
+                tx * (lut.size - 1) as f64,
+                ty * (lut.size - 1) as f64,
+            )
+        };
+        let neutral = sample(&windowless);
+        let windowed_neutral = sample(&base);
+        for channel in 0..3 {
+            assert!((neutral[channel] - windowed_neutral[channel]).abs() < 1e-12);
+        }
 
         // Malformed window (Python unpacks exactly 4 erf4 parameters).
         let short_window = [1.0, 2.0, 3.0];

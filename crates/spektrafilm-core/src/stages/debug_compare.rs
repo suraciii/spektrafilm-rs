@@ -298,5 +298,4 @@ mod tests {
             + 1.061405429 * t5;
         sign * (1.0 - poly * (-x * x).exp())
     }
-
 }

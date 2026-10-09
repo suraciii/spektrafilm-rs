@@ -133,7 +133,7 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
         lens_info = c_string(&summary);
     }
     if let Some(matrix) = adaptation {
-        for rgb in floats.as_chunks_mut::<3>().0 {
+        for rgb in floats.chunks_exact_mut(3) {
             let xyz = mv(ACES_TO_XYZ, [rgb[0] as f64, rgb[1] as f64, rgb[2] as f64]);
             let output = mv(XYZ_TO_ACES, mv(matrix, xyz));
             for c in 0..3 {
@@ -145,7 +145,7 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
         let tint = options.tint.unwrap_or(1.0);
         // Match numpy.isclose(tint, 1), including its default relative tolerance.
         if (tint - 1.0).abs() > 1.001e-5 {
-            for rgb in floats.as_chunks_mut::<3>().0 {
+            for rgb in floats.chunks_exact_mut(3) {
                 rgb[1] *= tint as f32;
             }
         }
@@ -198,9 +198,8 @@ impl RawOptions {
         let t = mv(CAT02, target);
         let mut scaled = CAT02;
         for r in 0..3 {
-            let factor = t[r] / s[r];
-            for value in &mut scaled[r] {
-                *value *= factor;
+            for c in 0..3 {
+                scaled[r][c] *= t[r] / s[r];
             }
         }
         Ok(Some(mm(inverse(CAT02), scaled)))

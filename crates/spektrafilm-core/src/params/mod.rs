@@ -14,6 +14,7 @@ pub(crate) mod validation;
 use couplers::DirCouplersParams;
 use diffusion::DiffusionFilterParams;
 use glare::GlareParams;
+pub use grain::GrainEngine;
 use grain::GrainParams;
 use halation::HalationParams;
 
