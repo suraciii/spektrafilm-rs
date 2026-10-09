@@ -1,7 +1,7 @@
-pub mod grain;
 pub mod colorspace;
 pub mod fft_conv;
 pub mod gaussian;
+pub mod grain;
 pub mod image;
 pub mod interp;
 pub mod lut;

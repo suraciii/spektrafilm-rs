@@ -1,11 +1,18 @@
 //! Editors for the pinned experimental GUI sections.
 use egui::{DragValue, Ui};
 use serde_json::{Map, Value};
-use spektrafilm_core::params::{diffusion::DiffusionFilterParams, RuntimeParams};
+use spektrafilm_core::params::{RuntimeParams, diffusion::DiffusionFilterParams};
 
 const COLOR_SPACES: &[&str] = &[
-    "sRGB", "DCI-P3", "Display P3", "Adobe RGB (1998)", "ITU-R BT.2020",
-    "ProPhoto RGB", "ACES2065-1", "DaVinci Wide Gamut", "V-Gamut",
+    "sRGB",
+    "DCI-P3",
+    "Display P3",
+    "Adobe RGB (1998)",
+    "ITU-R BT.2020",
+    "ProPhoto RGB",
+    "ACES2065-1",
+    "DaVinci Wide Gamut",
+    "V-Gamut",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +36,12 @@ pub struct ChangeFlags {
     pub action: Option<CalibrationAction>,
 }
 
-pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value, section: &str) -> ChangeFlags {
+pub fn show(
+    ui: &mut Ui,
+    params: &mut RuntimeParams,
+    extras: &mut Value,
+    section: &str,
+) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
     ui.push_id("supplemental_controls", |ui| {
         if section == "Input" {
@@ -267,77 +279,235 @@ pub fn show(ui: &mut Ui, params: &mut RuntimeParams, extras: &mut Value, section
 }
 
 fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams) -> bool {
-    let mut changed = toggle(ui, "active", &mut value.active, "Toggle the diffusion filter (Pro-Mist family).");
-    changed |= choice_tip(ui, "filter family", &mut value.filter_family, &["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"], "PSF family. pro_mist / glimmerglass / cinebloom are transparent (energy-preserving); black_pro_mist absorbs a fraction of the deflected light, lifting shadows by reducing local contrast.");
-    changed |= numeric(ui, "strength", &mut value.strength, 0.0, 2.0, 0.125, 2, "Commercial filter stop: 0, 1/8=0.125, 1/4=0.25, 1/2=0.5, 1, 2. Maps internally to the (p_s, p_a) deflected/absorbed photon fractions.");
-    changed |= numeric(ui, "spatial scale", &mut value.spatial_scale, 0.0, 1000000.0, 0.1, 2, "Multiplier on the image-plane PSF widths (all per-group lambdas). Adjust for image-format / print-size differences.");
-    changed |= numeric(ui, "halo warmth", &mut value.halo_warmth, -1.5, 1.5, 0.05, 2, "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default.");
-    changed |= numeric(ui, "core intensity", &mut value.core_intensity, 0.0, 4.0, 0.05, 2, "Advanced. Multiplier on the core weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.");
-    changed |= numeric(ui, "core size", &mut value.core_size, 0.1, 4.0, 0.05, 2, "Advanced. Multiplier on the core lambda. 1.0 = use family default.");
-    changed |= numeric(ui, "halo intensity", &mut value.halo_intensity, 0.0, 4.0, 0.05, 2, "Advanced. Multiplier on the halo weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.");
-    changed |= numeric(ui, "halo size", &mut value.halo_size, 0.1, 4.0, 0.05, 2, "Advanced. Multiplier on the halo lambda. 1.0 = use family default.");
-    changed |= numeric(ui, "bloom intensity", &mut value.bloom_intensity, 0.0, 4.0, 0.05, 2, "Advanced. Multiplier on the bloom weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.");
-    changed |= numeric(ui, "bloom size", &mut value.bloom_size, 0.1, 4.0, 0.05, 2, "Advanced. Multiplier on the bloom lambda. 1.0 = use family default.");
+    let mut changed = toggle(
+        ui,
+        "active",
+        &mut value.active,
+        "Toggle the diffusion filter (Pro-Mist family).",
+    );
+    changed |= choice_tip(
+        ui,
+        "filter family",
+        &mut value.filter_family,
+        &["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"],
+        "PSF family. pro_mist / glimmerglass / cinebloom are transparent (energy-preserving); black_pro_mist absorbs a fraction of the deflected light, lifting shadows by reducing local contrast.",
+    );
+    changed |= numeric(
+        ui,
+        "strength",
+        &mut value.strength,
+        0.0,
+        2.0,
+        0.125,
+        2,
+        "Commercial filter stop: 0, 1/8=0.125, 1/4=0.25, 1/2=0.5, 1, 2. Maps internally to the (p_s, p_a) deflected/absorbed photon fractions.",
+    );
+    changed |= numeric(
+        ui,
+        "spatial scale",
+        &mut value.spatial_scale,
+        0.0,
+        1000000.0,
+        0.1,
+        2,
+        "Multiplier on the image-plane PSF widths (all per-group lambdas). Adjust for image-format / print-size differences.",
+    );
+    changed |= numeric(
+        ui,
+        "halo warmth",
+        &mut value.halo_warmth,
+        -1.5,
+        1.5,
+        0.05,
+        2,
+        "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default.",
+    );
+    changed |= numeric(
+        ui,
+        "core intensity",
+        &mut value.core_intensity,
+        0.0,
+        4.0,
+        0.05,
+        2,
+        "Advanced. Multiplier on the core weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
+    );
+    changed |= numeric(
+        ui,
+        "core size",
+        &mut value.core_size,
+        0.1,
+        4.0,
+        0.05,
+        2,
+        "Advanced. Multiplier on the core lambda. 1.0 = use family default.",
+    );
+    changed |= numeric(
+        ui,
+        "halo intensity",
+        &mut value.halo_intensity,
+        0.0,
+        4.0,
+        0.05,
+        2,
+        "Advanced. Multiplier on the halo weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
+    );
+    changed |= numeric(
+        ui,
+        "halo size",
+        &mut value.halo_size,
+        0.1,
+        4.0,
+        0.05,
+        2,
+        "Advanced. Multiplier on the halo lambda. 1.0 = use family default.",
+    );
+    changed |= numeric(
+        ui,
+        "bloom intensity",
+        &mut value.bloom_intensity,
+        0.0,
+        4.0,
+        0.05,
+        2,
+        "Advanced. Multiplier on the bloom weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
+    );
+    changed |= numeric(
+        ui,
+        "bloom size",
+        &mut value.bloom_size,
+        0.1,
+        4.0,
+        0.05,
+        2,
+        "Advanced. Multiplier on the bloom lambda. 1.0 = use family default.",
+    );
     changed
 }
 
-
-
 // The pinned Qt editors default to two decimals, a step of one, and bounds
 // of +/-1e6. Preserve saved values until an explicit edit, even out of range.
-fn numeric<T: egui::emath::Numeric>(ui: &mut Ui, label: &str, value: &mut T, min: f64, max: f64, step: f64, decimals: usize, tooltip: &str) -> bool {
+fn numeric<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    tooltip: &str,
+) -> bool {
     let decimals = if T::INTEGRAL { 0 } else { decimals };
     ui.horizontal(|ui| {
         ui.label(label).on_hover_text(tooltip);
-        ui.add(DragValue::new(value).range(min..=max).clamp_existing_to_range(false).speed(step).fixed_decimals(decimals))
-            .on_hover_text(tooltip).changed()
-    }).inner
+        ui.add(
+            DragValue::new(value)
+                .range(min..=max)
+                .clamp_existing_to_range(false)
+                .speed(step)
+                .fixed_decimals(decimals),
+        )
+        .on_hover_text(tooltip)
+        .changed()
+    })
+    .inner
 }
 
-fn tuple<T: egui::emath::Numeric, const N: usize>(ui: &mut Ui, label: &str, values: &mut [T; N], min: f64, max: f64, step: f64, decimals: usize, tooltip: &str) -> bool {
+fn tuple<T: egui::emath::Numeric, const N: usize>(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [T; N],
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    tooltip: &str,
+) -> bool {
     ui.push_id(label, |ui| {
         ui.label(label).on_hover_text(tooltip);
         let decimals = if T::INTEGRAL { 0 } else { decimals };
         ui.horizontal(|ui| {
             let mut changed = false;
             for value in values {
-                changed |= ui.add(DragValue::new(value).range(min..=max).clamp_existing_to_range(false).speed(step).fixed_decimals(decimals))
-                    .on_hover_text(tooltip).changed();
+                changed |= ui
+                    .add(
+                        DragValue::new(value)
+                            .range(min..=max)
+                            .clamp_existing_to_range(false)
+                            .speed(step)
+                            .fixed_decimals(decimals),
+                    )
+                    .on_hover_text(tooltip)
+                    .changed();
             }
             changed
-        }).inner
-    }).inner
+        })
+        .inner
+    })
+    .inner
 }
 
 fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) -> bool {
     ui.checkbox(value, label).on_hover_text(tooltip).changed()
 }
 
-
-pub fn choice_tip(ui: &mut Ui, label: &str, value: &mut String, choices: &[&str], tooltip: &str) -> bool {
+pub fn choice_tip(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: &[&str],
+    tooltip: &str,
+) -> bool {
     let mut changed = false;
-    egui::ComboBox::from_label(label).selected_text(value.as_str()).show_ui(ui, |ui| {
-        for &option in choices {
-            // Allocate only when a selection changes, not for every option each frame.
-            if ui.selectable_label(value.as_str() == option, option).on_hover_text(tooltip).clicked() && value.as_str() != option {
-                *value = option.to_owned();
-                changed = true;
+    egui::ComboBox::from_label(label)
+        .selected_text(value.as_str())
+        .show_ui(ui, |ui| {
+            for &option in choices {
+                // Allocate only when a selection changes, not for every option each frame.
+                if ui
+                    .selectable_label(value.as_str() == option, option)
+                    .on_hover_text(tooltip)
+                    .clicked()
+                    && value.as_str() != option
+                {
+                    *value = option.to_owned();
+                    changed = true;
+                }
             }
-        }
-    }).response.on_hover_text(tooltip);
+        })
+        .response
+        .on_hover_text(tooltip);
     changed
 }
 
-fn extra_choice(ui: &mut Ui, extras: &mut Value, section: &str, key: &str, label: &str, default: &str, choices: &[&str], tooltip: &str) -> bool {
+fn extra_choice(
+    ui: &mut Ui,
+    extras: &mut Value,
+    section: &str,
+    key: &str,
+    label: &str,
+    default: &str,
+    choices: &[&str],
+    tooltip: &str,
+) -> bool {
     let current = extras[section][key].as_str().unwrap_or(default);
     let mut selected = None;
-    egui::ComboBox::from_label(label).selected_text(current).show_ui(ui, |ui| {
-        for &option in choices {
-            if ui.selectable_label(current == option, option).on_hover_text(tooltip).clicked() && current != option {
-                selected = Some(option);
+    egui::ComboBox::from_label(label)
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            for &option in choices {
+                if ui
+                    .selectable_label(current == option, option)
+                    .on_hover_text(tooltip)
+                    .clicked()
+                    && current != option
+                {
+                    selected = Some(option);
+                }
             }
-        }
-    }).response.on_hover_text(tooltip);
+        })
+        .response
+        .on_hover_text(tooltip);
     if let Some(selected) = selected {
         set_extra(extras, section, key, Value::from(selected));
         true
@@ -346,8 +516,15 @@ fn extra_choice(ui: &mut Ui, extras: &mut Value, section: &str, key: &str, label
     }
 }
 
-
-pub fn extra_bool_tip(ui: &mut Ui, extras: &mut Value, section: &str, key: &str, label: &str, default: bool, tooltip: &str) -> bool {
+pub fn extra_bool_tip(
+    ui: &mut Ui,
+    extras: &mut Value,
+    section: &str,
+    key: &str,
+    label: &str,
+    default: bool,
+    tooltip: &str,
+) -> bool {
     let mut value = extras[section][key].as_bool().unwrap_or(default);
     if toggle(ui, label, &mut value, tooltip) {
         set_extra(extras, section, key, Value::from(value));
@@ -357,7 +534,19 @@ pub fn extra_bool_tip(ui: &mut Ui, extras: &mut Value, section: &str, key: &str,
     }
 }
 
-fn extra_number(ui: &mut Ui, extras: &mut Value, section: &str, key: &str, label: &str, default: f64, min: f64, max: f64, step: f64, decimals: usize, tooltip: &str) -> bool {
+fn extra_number(
+    ui: &mut Ui,
+    extras: &mut Value,
+    section: &str,
+    key: &str,
+    label: &str,
+    default: f64,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    tooltip: &str,
+) -> bool {
     let mut value = extras[section][key].as_f64().unwrap_or(default);
     if numeric(ui, label, &mut value, min, max, step, decimals, tooltip) {
         set_extra(extras, section, key, Value::from(value));

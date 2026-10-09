@@ -1,15 +1,109 @@
 //! Backend-neutral preparation shared by the per-stage CPU path and the
 //! GPU-resident chain builder.
 //!
-//! Each helper here is the single authority for a derivation that both
-//! execution routes need (scan colour context, glare offsets). The math is
-//! lifted verbatim from the per-stage scanning stage — including its f64
-//! operation order — so the CPU reference path is bit-identical before and
-//! after this module existed; the GPU-resident path consumes the same values
-//! and narrows to f32 at its own boundary.
+//! Curve, spectral, DIR-control and scan-colour derivations stay f64 here.
+//! Execution routes retain their own operation order and narrow only at
+//! the GPU boundary.
 
 use spektrafilm_math::colorspace;
 use spektrafilm_math::spectral::{self, N_WAVELENGTHS};
+
+use crate::params::RuntimeParams;
+use crate::profile::Profile;
+
+pub(crate) struct FilmCurves<'a> {
+    pub log_exposure: &'a [f64],
+    pub raw: Vec<[f64; 3]>,
+    pub normalized: Vec<[f64; 3]>,
+}
+
+impl<'a> FilmCurves<'a> {
+    pub fn prepare(film: &'a Profile) -> Self {
+        let raw = film.density_curves_f64();
+        let normalized = spektrafilm_model::density_curves::normalize_density_curves_f64(&raw);
+        Self {
+            log_exposure: &film.data.log_exposure,
+            raw,
+            normalized,
+        }
+    }
+}
+
+pub(crate) struct PrintCurves<'a> {
+    pub log_exposure: &'a [f64],
+    pub density: Vec<[f64; 3]>,
+    pub gamma: f64,
+}
+
+impl<'a> PrintCurves<'a> {
+    pub fn prepare(print: &'a Profile, params: &RuntimeParams) -> Result<Self, String> {
+        let log_exposure = print.data.log_exposure.as_slice();
+        // Fitted models own their gamma; model-less profiles use raw stored curves.
+        let (density, gamma) = match print.data.density_curves_model.as_ref() {
+            Some(model) => (
+                crate::print_morph::morph_density_curves(
+                    log_exposure,
+                    model,
+                    &params.print_render.density_curves_morph,
+                    print.is_positive(),
+                )
+                .map_err(|error| format!("invalid print density-curve model: {error}"))?,
+                1.0,
+            ),
+            None => (
+                print.density_curves_f64(),
+                params.print_render.density_curve_gamma as f64,
+            ),
+        };
+        Ok(Self {
+            log_exposure,
+            density,
+            gamma,
+        })
+    }
+}
+
+pub(crate) fn channel_density(profile: &Profile) -> Vec<[f64; 3]> {
+    profile
+        .data
+        .channel_density
+        .iter()
+        .map(|row| {
+            [
+                row.first().copied().unwrap_or(0.0),
+                row.get(1).copied().unwrap_or(0.0),
+                row.get(2).copied().unwrap_or(0.0),
+            ]
+        })
+        .collect()
+}
+
+pub(crate) fn print_sensitivity(print: &Profile) -> Vec<[f64; 3]> {
+    print
+        .data
+        .log_sensitivity
+        .iter()
+        .map(|row| {
+            let mut sensitivity = [0.0; 3];
+            for c in 0..3 {
+                let value = 10.0f64.powf(row.get(c).copied().unwrap_or(0.0));
+                sensitivity[c] = if value.is_nan() { 0.0 } else { value };
+            }
+            sensitivity
+        })
+        .collect()
+}
+
+pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[f64; 3]; 3] {
+    spektrafilm_model::couplers::compute_dir_couplers_matrix(
+        dir.gamma_samelayer_rgb,
+        dir.gamma_interlayer_r_to_gb,
+        dir.gamma_interlayer_g_to_rb,
+        dir.gamma_interlayer_b_to_rg,
+        dir.inhibition_samelayer,
+        dir.inhibition_interlayer,
+    )
+}
 
 /// Colour context of one scan pass: viewing illuminant, its normalization,
 /// the derived chromatic-adaptation matrix, and the output XYZ→RGB matrix.

@@ -94,7 +94,8 @@ pub(crate) fn run(command: LutCommand) -> Result<()> {
     }
 }
 
-fn build(args: BuildArgs) -> Result<()> {
+/// Merge TOML and CLI overrides while leaving exposure normalization to the builder.
+fn load_bundle_spec(args: &BuildArgs) -> Result<BundleSpec> {
     let mut fields = if let Some(path) = &args.from_toml {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading BundleSpec TOML: {}", path.display()))?;
@@ -116,7 +117,24 @@ fn build(args: BuildArgs) -> Result<()> {
         ("resolution", json!(args.resolution)),
         ("target", json!(args.target)),
         ("container", json!(args.container)),
-        ("stops_above_midgray", args.stops_above_midgray.as_deref().map(|value| value.parse::<f64>().map_or_else(|_| if value == "null" { Value::Null } else { Value::String(value.into()) }, Value::from)).unwrap_or(Value::Null)),
+        (
+            "stops_above_midgray",
+            args.stops_above_midgray
+                .as_deref()
+                .map(|value| {
+                    value.parse::<f64>().map_or_else(
+                        |_| {
+                            if value == "null" {
+                                Value::Null
+                            } else {
+                                Value::String(value.into())
+                            }
+                        },
+                        Value::from,
+                    )
+                })
+                .unwrap_or(Value::Null),
+        ),
         ("exposure_ev", json!(args.exposure_ev)),
         ("qa_print_index", json!(args.qa_print_index)),
     ] {
@@ -149,10 +167,14 @@ fn build(args: BuildArgs) -> Result<()> {
             bail!("missing {flag} (or `{field}` in TOML)");
         }
     }
-    let mut spec: BundleSpec = serde_json::from_value(Value::Object(fields))
-        .context("invalid BundleSpec fields")?;
-    spec.normalize().map_err(anyhow::Error::msg)?;
+    let spec: BundleSpec =
+        serde_json::from_value(Value::Object(fields)).context("invalid BundleSpec fields")?;
     lut_delivery::validate_target(&spec)?;
+    Ok(spec)
+}
+
+fn build(args: BuildArgs) -> Result<()> {
+    let spec = load_bundle_spec(&args)?;
     let backend = spektrafilm_gpu::select_backend();
     let builder = if let Some(path) = &args.params {
         let text = std::fs::read_to_string(path)
@@ -180,14 +202,20 @@ fn build(args: BuildArgs) -> Result<()> {
     }
     if bundle.spec.qa {
         let qa_root = out.join("qa");
-        let report = spektrafilm_core::lut_qa::run(&bundle, &args.data_dir, backend.as_ref(), &qa_root)
-            .map_err(anyhow::Error::msg)?;
-        for path in spektrafilm_core::lut_qa::write_report(&report, &qa_root).map_err(anyhow::Error::msg)? {
-            lut_delivery::append_artifact(&mut meta, lut_delivery::ArtifactReference {
-                path: format!("qa/{}", path.to_string_lossy().replace('\\', "/")),
-                kind: "qa".into(),
-                description: "Pinned Python 0.3.4 LUT quality assessment".into(),
-            })?;
+        let report =
+            spektrafilm_core::lut_qa::run(&bundle, &args.data_dir, backend.as_ref(), &qa_root)
+                .map_err(anyhow::Error::msg)?;
+        for path in
+            spektrafilm_core::lut_qa::write_report(&report, &qa_root).map_err(anyhow::Error::msg)?
+        {
+            lut_delivery::append_artifact(
+                &mut meta,
+                lut_delivery::ArtifactReference {
+                    path: format!("qa/{}", path.to_string_lossy().replace('\\', "/")),
+                    kind: "qa".into(),
+                    description: "Pinned Python 0.3.4 LUT quality assessment".into(),
+                },
+            )?;
         }
         lut_delivery::append_quality_summary(&out, &report)?;
         println!("[qa] {}", if report.passed { "PASS" } else { "FAIL" });
@@ -197,11 +225,14 @@ fn build(args: BuildArgs) -> Result<()> {
     Ok(())
 }
 
-
 fn list(kind: ListKind, data_dir: &Path) -> Result<()> {
     match kind {
         ListKind::Film | ListKind::Print => {
-            let stage = if matches!(kind, ListKind::Film) { "filming" } else { "printing" };
+            let stage = if matches!(kind, ListKind::Film) {
+                "filming"
+            } else {
+                "printing"
+            };
             let directory = data_dir.join("profiles");
             let mut names = Vec::new();
             for entry in std::fs::read_dir(&directory)
@@ -214,7 +245,8 @@ fn list(kind: ListKind, data_dir: &Path) -> Result<()> {
                 let data: Value = serde_json::from_slice(&std::fs::read(&path)?)
                     .with_context(|| format!("reading profile metadata: {}", path.display()))?;
                 if data["info"]["stage"].as_str() == Some(stage) {
-                    let name = data["info"]["stock"].as_str()
+                    let name = data["info"]["stock"]
+                        .as_str()
                         .or_else(|| path.file_stem().and_then(|v| v.to_str()))
                         .context("profile filename is not valid UTF-8")?;
                     names.push(name.to_owned());
@@ -226,18 +258,31 @@ fn list(kind: ListKind, data_dir: &Path) -> Result<()> {
             }
         }
         ListKind::Input | ListKind::Output => {
-            let mut entries: Vec<_> = lut_transport::registry().iter()
-                .filter(|entry| if matches!(kind, ListKind::Input) { entry.input } else { entry.output })
+            let mut entries: Vec<_> = lut_transport::registry()
+                .iter()
+                .filter(|entry| {
+                    if matches!(kind, ListKind::Input) {
+                        entry.input
+                    } else {
+                        entry.output
+                    }
+                })
                 .collect();
             entries.sort_by_key(|entry| entry.name);
-            let width = entries.iter().map(|entry| entry.name.len()).max().unwrap_or(0);
+            let width = entries
+                .iter()
+                .map(|entry| entry.name.len())
+                .max()
+                .unwrap_or(0);
             for entry in entries {
                 println!("{:<width$}  {}", entry.name, entry.short_tag);
             }
         }
         ListKind::Target => {
-            let mut names: Vec<_> = lut_delivery::list_targets().iter()
-                .map(|target| target.name).collect();
+            let mut names: Vec<_> = lut_delivery::list_targets()
+                .iter()
+                .map(|target| target.name)
+                .collect();
             names.sort();
             for name in names {
                 println!("{name}");
@@ -261,7 +306,9 @@ pub(crate) fn export_lut(
     } else {
         let film = profile::load_profile_by_name(data_dir, film_name)
             .with_context(|| format!("loading film profile: {film_name}"))?;
-        film.info.target_print.context("no paper specified and film has no target_print; use --paper")?
+        film.info
+            .target_print
+            .context("no paper specified and film has no target_print; use --paper")?
     };
     let spec: BundleSpec = serde_json::from_value(json!({
         "film_profile": film_name,
@@ -272,9 +319,13 @@ pub(crate) fn export_lut(
         "resolution": resolution,
     }))?;
     let backend = spektrafilm_gpu::select_backend();
-    let bundle = BundleBuilder::new(spec).build(data_dir, backend.as_ref())
+    let bundle = BundleBuilder::new(spec)
+        .build(data_dir, backend.as_ref())
         .map_err(anyhow::Error::msg)?;
-    let (_, lut) = bundle.luts.first().context("canonical baker returned no LUT")?;
+    let (_, lut) = bundle
+        .luts
+        .first()
+        .context("canonical baker returned no LUT")?;
     lut.write_cube(output).map_err(anyhow::Error::msg)?;
     eprintln!("LUT saved: {}", output.display());
     Ok(())

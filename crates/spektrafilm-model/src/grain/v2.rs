@@ -144,7 +144,8 @@ fn hash(mut x: u32) -> u32 {
 }
 #[inline]
 fn random(v: [f32; 4]) -> f32 {
-    let h = hash(v[0].to_bits() ^ hash(v[1].to_bits()) ^ hash(v[2].to_bits()) ^ hash(v[3].to_bits()));
+    let h =
+        hash(v[0].to_bits() ^ hash(v[1].to_bits()) ^ hash(v[2].to_bits()) ^ hash(v[3].to_bits()));
     f32::from_bits((h & 0x007fffff) | 0x3f800000) - 1.0
 }
 #[inline]
@@ -152,7 +153,9 @@ fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 #[inline]
-fn fract(v: f32) -> f32 { v - v.floor() }
+fn fract(v: f32) -> f32 {
+    v - v.floor()
+}
 #[inline]
 fn fade(t: f32) -> f32 {
     t * t * t * (t * (t * 6. - 15.) + 10.)
@@ -185,8 +188,16 @@ fn trig_reduce(value: f32) -> (f32, u32) {
         return (f32::NAN, 0);
     }
     let mantissa = (bits & 0x007fffff) | 0x00800000;
-    let two_over_pi = [0xdebbc561u32, 0xfe5163ab, 0x3c439041, 0xdb629599,
-        0xf534ddc0, 0xfc2757d1, 0x4e441529, 0xa2f9836e];
+    let two_over_pi = [
+        0xdebbc561u32,
+        0xfe5163ab,
+        0x3c439041,
+        0xdb629599,
+        0xf534ddc0,
+        0xfc2757d1,
+        0x4e441529,
+        0xa2f9836e,
+    ];
     let mut product = [0u32; 9];
     let mut carry = 0u64;
     for i in 0..8 {
@@ -200,7 +211,9 @@ fn trig_reduce(value: f32) -> (f32, u32) {
         let i = (bit / 32) as usize;
         let offset = bit % 32;
         let mut word = product[i] >> offset;
-        if offset != 0 && i < 8 { word |= product[i + 1] << (32 - offset); }
+        if offset != 0 && i < 8 {
+            word |= product[i + 1] << (32 - offset);
+        }
         word
     };
     let round_up = (extract(shift - 1) & 1) as f32;
@@ -235,7 +248,11 @@ fn trig_polynomial(r: f32, cosine: bool) -> f32 {
 fn grain_sin(value: f32) -> f32 {
     let (r, q) = trig_reduce(value);
     let result = trig_polynomial(r, q & 1 != 0);
-    if (q & 2 != 0) ^ value.is_sign_negative() { -result } else { result }
+    if (q & 2 != 0) ^ value.is_sign_negative() {
+        -result
+    } else {
+        result
+    }
 }
 #[inline]
 fn grain_cos(value: f32) -> f32 {
@@ -265,8 +282,19 @@ fn pnoise(p: [f32; 3], timer: f32, texel: f32) -> f32 {
     let ux = fade(pf[0]);
     let uy = fade(pf[1]);
     let uz = fade(pf[2]);
-    mix(mix(mix(n[0][0][0], n[1][0][0], ux), mix(n[0][1][0], n[1][1][0], ux), uy),
-        mix(mix(n[0][0][1], n[1][0][1], ux), mix(n[0][1][1], n[1][1][1], ux), uy), uz)
+    mix(
+        mix(
+            mix(n[0][0][0], n[1][0][0], ux),
+            mix(n[0][1][0], n[1][1][0], ux),
+            uy,
+        ),
+        mix(
+            mix(n[0][0][1], n[1][0][1], ux),
+            mix(n[0][1][1], n[1][1][1], ux),
+            uy,
+        ),
+        uz,
+    )
 }
 fn rotated(pos: [f32; 2], angle: f32, aspect: f32) -> [f32; 2] {
     let x = (pos[0] * 2. - 1.) * aspect;
@@ -298,7 +326,11 @@ fn generator(
     };
     let scale = p.size.clamp(0.5, 1.4);
     let scaled_size = size.map(|v| v * scale);
-    let coords = if digital { pos } else { [pos[0] / scaled_size[0], pos[1] / scaled_size[1]] };
+    let coords = if digital {
+        pos
+    } else {
+        [pos[0] / scaled_size[0], pos[1] / scaled_size[1]]
+    };
     let mut angles = [1.425, 3.892, 5.835].map(|a| a * p.rotation * scale);
     if p.clustered && !digital {
         let noise = snoise(timer, [coords[0], timer, coords[1], timer]);
@@ -317,10 +349,18 @@ fn generator(
         } else {
             angles[c]
         };
-        let aspect = if digital { size[0] / size[1] } else { scaled_size[0] / scaled_size[1] };
+        let aspect = if digital {
+            size[0] / size[1]
+        } else {
+            scaled_size[0] / scaled_size[1]
+        };
         let q = rotated(coords, angle, aspect);
         let v = [q[0] * mult[0], q[1] * mult[1], c as f32];
-        let texel = if digital { p.cluster_size / 256. } else { 1. / 256. / p.cluster_size };
+        let texel = if digital {
+            p.cluster_size / 256.
+        } else {
+            1. / 256. / p.cluster_size
+        };
         n[c] = pnoise(v, timer, texel);
         if c == 0 && !digital {
             n[c] = mix(n[c], pnoise([v[0], v[1], 1.], timer * 0.5, texel), luma);
@@ -357,12 +397,25 @@ fn sample_grain_source(source: &ImageBuf, size: [f32; 2], x: i32, y: i32) -> [f3
     let py = y as f32 / (size[1] - 1.) * (source.height - 1) as f32 - 0.1;
     let ix = px.floor() as i32;
     let iy = py.floor() as i32;
-    let at = |dx: i32, dy: i32| source.get(
-        (ix + dx).clamp(0, source.width as i32 - 1) as u32,
-        (iy + dy).clamp(0, source.height as i32 - 1) as u32,
-    ).map(to_f32);
-    let a = at(0, 0); let b = at(1, 0); let c = at(0, 1); let d = at(1, 1);
-    std::array::from_fn(|i| mix(mix(a[i], b[i], px - px.floor()), mix(c[i], d[i], px - px.floor()), py - py.floor()))
+    let at = |dx: i32, dy: i32| {
+        source
+            .get(
+                (ix + dx).clamp(0, source.width as i32 - 1) as u32,
+                (iy + dy).clamp(0, source.height as i32 - 1) as u32,
+            )
+            .map(to_f32)
+    };
+    let a = at(0, 0);
+    let b = at(1, 0);
+    let c = at(0, 1);
+    let d = at(1, 1);
+    std::array::from_fn(|i| {
+        mix(
+            mix(a[i], b[i], px - px.floor()),
+            mix(c[i], d[i], px - px.floor()),
+            py - py.floor(),
+        )
+    })
 }
 fn overlay(b: f32, g: f32) -> f32 {
     if b < 0.5 {
@@ -411,17 +464,37 @@ fn fast_blur_pass(source: &ImageBuf, radius: f32, horizontal: bool) -> ImageBuf 
                     (x as f32, y as f32 - offset)
                 };
                 // FastBlur's line kernel resets an out-of-range sample to center.
-                let px = if px < 0. || px > source.width as f32 - 1. { x as f32 } else { px };
-                let nx = if nx < 0. || nx > source.width as f32 - 1. { x as f32 } else { nx };
-                let py = if py < 0. || py > source.height as f32 - 1. { y as f32 } else { py };
-                let ny = if ny < 0. || ny > source.height as f32 - 1. { y as f32 } else { ny };
+                let px = if px < 0. || px > source.width as f32 - 1. {
+                    x as f32
+                } else {
+                    px
+                };
+                let nx = if nx < 0. || nx > source.width as f32 - 1. {
+                    x as f32
+                } else {
+                    nx
+                };
+                let py = if py < 0. || py > source.height as f32 - 1. {
+                    y as f32
+                } else {
+                    py
+                };
+                let ny = if ny < 0. || ny > source.height as f32 - 1. {
+                    y as f32
+                } else {
+                    ny
+                };
                 let positive = resolution_sample(source, px, py);
                 let negative = resolution_sample(source, nx, ny);
                 for c in 0..3 {
                     value[c] += weight * (positive[c] + negative[c]);
                 }
             }
-            output.set(x, y, value.map(|v| from_f32(half::f16::from_f32(v).to_f32())));
+            output.set(
+                x,
+                y,
+                value.map(|v| from_f32(half::f16::from_f32(v).to_f32())),
+            );
         }
     }
     output
@@ -455,11 +528,15 @@ fn optical_pass(source: &ImageBuf, radius: f32, horizontal: bool, round_half: bo
                     value[c] += positive[c] * weights[i + half] + negative[c] * weights[i];
                 }
             }
-            output.set(x, y, if round_half {
-                value.map(|v| from_f32(half::f16::from_f32(v).to_f32()))
-            } else {
-                value.map(from_f32)
-            });
+            output.set(
+                x,
+                y,
+                if round_half {
+                    value.map(|v| from_f32(half::f16::from_f32(v).to_f32()))
+                } else {
+                    value.map(from_f32)
+                },
+            );
         }
     }
     output
@@ -498,7 +575,10 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         }
     }
     let gsf = (5200. / input.width as f32).max(3100. / input.height as f32);
-    let size = [(input.width as f32 * gsf).floor(), (input.height as f32 * gsf).floor()];
+    let size = [
+        (input.width as f32 * gsf).floor(),
+        (input.height as f32 * gsf).floor(),
+    ];
     let mut out = source.clone();
     for y in 0..input.height {
         for x in 0..input.width {
@@ -525,8 +605,10 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                     |a, b| {
                         let a = a.clamp(0, size[0] as i32 - 1);
                         let b = b.clamp(0, size[1] as i32 - 1);
-                        let grain_rgb = sample_grain_source(original.as_ref().unwrap_or(&source), size, a, b);
-                        let grain_luma = grain_rgb[0] * 0.2125 + grain_rgb[1] * 0.7154 + grain_rgb[2] * 0.0721;
+                        let grain_rgb =
+                            sample_grain_source(original.as_ref().unwrap_or(&source), size, a, b);
+                        let grain_luma =
+                            grain_rgb[0] * 0.2125 + grain_rgb[1] * 0.7154 + grain_rgb[2] * 0.0721;
                         generator(
                             [a as f32, b as f32],
                             size,
@@ -585,22 +667,34 @@ mod tests {
                 1.099 * value.powf(0.45) - 0.099
             }
         };
-        let input = ImageBuf::from_data(37, 19,
-            (0..37 * 19 * 3).map(|v| {
-                from_f32(half::f16::from_f32(historical_bt709((v % 17) as f32 / 17.)).to_f32())
-            }).collect());
+        let input = ImageBuf::from_data(
+            37,
+            19,
+            (0..37 * 19 * 3)
+                .map(|v| {
+                    from_f32(half::f16::from_f32(historical_bt709((v % 17) as f32 / 17.)).to_f32())
+                })
+                .collect(),
+        );
         for (mode, fixture) in [
-            (GrainV2Mode::Analogue, include_str!("fixtures/analogue_normalized_half.txt")),
-            (GrainV2Mode::Noise, include_str!("fixtures/noise_normalized_half.txt")),
+            (
+                GrainV2Mode::Analogue,
+                include_str!("fixtures/analogue_normalized_half.txt"),
+            ),
+            (
+                GrainV2Mode::Noise,
+                include_str!("fixtures/noise_normalized_half.txt"),
+            ),
         ] {
             let mut params = GrainV2Params::for_profile(0);
             params.seed = 5489;
             params.mode = mode;
             params.resolution_factor = 100.;
             let actual = apply_cpu(&input, params);
-            let expected: Vec<_> = fixture.split_whitespace().map(|v| {
-                half::f16::from_bits(u16::from_str_radix(v, 16).unwrap()).to_f32()
-            }).collect();
+            let expected: Vec<_> = fixture
+                .split_whitespace()
+                .map(|v| half::f16::from_bits(u16::from_str_radix(v, 16).unwrap()).to_f32())
+                .collect();
             assert_eq!(actual.data.len(), expected.len());
             for (index, (&value, reference)) in actual.data.iter().zip(expected).enumerate() {
                 let delta = (to_f32(value) - reference).abs();

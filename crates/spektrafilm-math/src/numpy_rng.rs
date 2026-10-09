@@ -111,11 +111,7 @@ pub fn fast_poisson(g: &mut GaussRng, lam: f64) -> u64 {
         let z = g.gauss();
         let sample = lam + lam.sqrt() * z;
         let sample_int = sample.round() as i64;
-        if sample_int < 0 {
-            0
-        } else {
-            sample_int as u64
-        }
+        if sample_int < 0 { 0 } else { sample_int as u64 }
     }
 }
 

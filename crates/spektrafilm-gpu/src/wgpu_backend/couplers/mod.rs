@@ -1,5 +1,5 @@
-use super::*;
 use super::blur::{BlurJob, DispatchJob};
+use super::*;
 
 /// Pre-built DIR coupler passes — owns scratch buffers, kernel buffers,
 /// and bind groups so they live for the encoder.
@@ -129,14 +129,10 @@ pub(super) fn build_dir_state(
         wgpu::BufferBindingType::Storage { read_only: true },
         wgpu::BufferBindingType::Storage { read_only: false },
     ];
-    let blur_pipe_h = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_h.wgsl"),
-        blur_layout,
-    );
-    let blur_pipe_v = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_v.wgsl"),
-        blur_layout,
-    );
+    let blur_pipe_h =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
+    let blur_pipe_v =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
 
     // Blur reads `buf_correction`, uses `buf_a` as mid (free after matmul),
     // writes to `output`. Two blurs: gaussian → buf_correction (overwrite),
@@ -430,7 +426,11 @@ pub(super) fn build_dir_state(
         width,
         height,
         k: dp.log_exposure.len() as u32,
-        uniform_grid: if is_uniform_grid_endpoint(dp.log_exposure) { 1 } else { 0 },
+        uniform_grid: if is_uniform_grid_endpoint(dp.log_exposure) {
+            1
+        } else {
+            0
+        },
         gamma_inv: [(1.0 / dp.gamma_factor) as f32; 3],
         _pad: 0.0,
     };

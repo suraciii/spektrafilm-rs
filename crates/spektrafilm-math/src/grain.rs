@@ -138,7 +138,9 @@ mod tests {
         assert!((optical[7] - 0.842104931).abs() < 1e-6);
         assert!((optical[6] - 0.078947535).abs() < 1e-6);
         for radius in [0.0, 0.1, 0.5, 1.0, 2.0, 4.0, 24.0] {
-            assert!((fast_blur_weights(radius).iter().map(|p| p[0]).sum::<f32>() - 0.5).abs() < 1e-6);
+            assert!(
+                (fast_blur_weights(radius).iter().map(|p| p[0]).sum::<f32>() - 0.5).abs() < 1e-6
+            );
             assert!((optical_weights(radius).iter().sum::<f32>() - 1.0).abs() < 1e-6);
         }
         let narrow = optical_weights(0.5);
