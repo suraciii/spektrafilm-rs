@@ -456,9 +456,9 @@ class X11:
             nonlocal dialog
             dialog = wait_for(find, 'active native file chooser', 15)
             self.xd('windowactivate', '--sync', dialog)
-            time.sleep(.3)
+            time.sleep(.8)
             self.xd('key', 'ctrl+l')
-            time.sleep(.2)
+            time.sleep(.5)
             self.xd('key', 'ctrl+a')
             subprocess.run(['xclip', '-selection', 'clipboard'], input=value,
                            text=True, check=True, timeout=10)
