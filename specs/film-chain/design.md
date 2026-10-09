@@ -1,0 +1,9 @@
+# Film chain design
+
+- `core::runtime` is the production entry point. `Pipeline` owns stage topology and stage state.
+- Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
+- `ComputeBackend` separates stage orchestration from CPU and WGPU execution. The CPU backend preserves f64 reference order; WGPU owns f32 conversion, resources, and dispatch.
+- A resident WGPU chain is an optimization, not a second product contract. `ResidentDecision` records capability and fallback reasons. Unsupported stages use the faithful per-stage route.
+- Working pixel pitch is carried with the image through crop and resize and is consumed by spatial stages; stages do not infer it from the current raster size.
+- Color-domain transitions are explicit. The chain does not apply an implicit transfer curve or primaries conversion inside an effect.
+- No generic graph or backend-specific public parameter schema is required; runtime parameters remain the single caller-facing model.
