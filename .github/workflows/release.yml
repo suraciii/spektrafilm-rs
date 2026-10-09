@@ -292,10 +292,6 @@ jobs:
           brew install libraw lensfun exiv2 glib openimageio pkg-config
           pkg-config --atleast-version=0.22.0 libraw
 
-      - name: Diagnose Metal grain arithmetic
-        run: cargo test -p spektrafilm-model --features precision-f64 metal_arithmetic_trace -- --ignored --nocapture
-
-
       - name: Package app bundle
         shell: bash
         run: |
