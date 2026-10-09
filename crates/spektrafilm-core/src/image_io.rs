@@ -192,6 +192,7 @@ unsafe extern "C" {
         jpeg_subsampling: i32,
         compression: i32,
         color_space: *const c_char,
+        export_metadata: bool,
         icc: *const u8,
         icc_len: usize,
         error: *mut *mut c_char,
@@ -267,7 +268,19 @@ pub fn save(
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
 ) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata)
+    save_inner(path, image, options, metadata, false)
+}
+
+/// Save an existing GUI output with the upstream extension and color semantics.
+/// Unlike the export contract, this preserves the selected transfer encoding for
+/// every format and leaves unspecified JPEG settings and EXR metadata to OIIO.
+pub fn save_rendered_output(
+    path: &Path,
+    image: &ImageBuf,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+) -> Result<SaveReport, ImageIoError> {
+    save_inner(path, image, options, metadata, true)
 }
 
 /// Compatibility helper for callers that need an explicit JPEG quality.
@@ -279,7 +292,7 @@ pub fn save_jpeg_quality(
     quality: u8,
 ) -> Result<SaveReport, ImageIoError> {
     options.jpeg_quality = Some(quality);
-    save_inner(path, image, options, metadata)
+    save_inner(path, image, options, metadata, false)
 }
 
 fn save_inner(
@@ -287,6 +300,7 @@ fn save_inner(
     image: &ImageBuf,
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
+    rendered_output: bool,
 ) -> Result<SaveReport, ImageIoError> {
     let format = ImageFormat::detect(path)?;
     let format_name = match format {
@@ -307,19 +321,25 @@ fn save_inner(
         }
         _ => {}
     }
-    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && !options.cctf_encoding {
+    if !rendered_output
+        && matches!(format, ImageFormat::Jpeg | ImageFormat::Png)
+        && !options.cctf_encoding
+    {
         return Err(ImageIoError::InvalidExport {
             format: format_name,
             reason: "JPEG and PNG require encoded output",
         });
     }
-    if format == ImageFormat::Exr && options.cctf_encoding {
+    if !rendered_output && format == ImageFormat::Exr && options.cctf_encoding {
         return Err(ImageIoError::InvalidExport {
             format: "EXR",
             reason: "EXR output must be linear",
         });
     }
-    if format == ImageFormat::Exr && !matches!(options.color_space, "sRGB" | "ACES2065-1") {
+    if !rendered_output
+        && format == ImageFormat::Exr
+        && !matches!(options.color_space, "sRGB" | "ACES2065-1")
+    {
         return Err(ImageIoError::InvalidExport {
             format: "EXR",
             reason: "EXR color space must be sRGB or ACES2065-1",
@@ -371,9 +391,11 @@ fn save_inner(
     #[cfg(not(feature = "precision-f64"))]
     let data: Vec<f64> = image.data.iter().copied().map(to_f64).collect();
     let mut error = std::ptr::null_mut();
-    let jpeg_subsampling = match options.jpeg_subsampling.unwrap_or(JpegSubsampling::Yuv444) {
-        JpegSubsampling::Yuv444 => 444,
-        JpegSubsampling::Yuv420 => 420,
+    let jpeg_subsampling = match options.jpeg_subsampling {
+        Some(JpegSubsampling::Yuv444) => 444,
+        Some(JpegSubsampling::Yuv420) => 420,
+        None if rendered_output => 0,
+        None => 444,
     };
     let compression = match options.compression.unwrap_or(Compression::Zip) {
         Compression::Zip => 1,
@@ -391,6 +413,7 @@ fn save_inner(
             jpeg_subsampling,
             compression,
             space.as_ptr(),
+            !rendered_output,
             icc.as_ptr(),
             icc.len(),
             &mut error,

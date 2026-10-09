@@ -297,6 +297,48 @@ fn export_settings_reject_format_mismatches() {
 }
 
 #[test]
+fn rendered_output_preserves_selected_encoding_and_float_samples() {
+    let directory =
+        std::env::temp_dir().join(format!("spektrafilm-rendered-save-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let samples = [-0.25, 0.5, 1.25];
+    let image = ImageBuf::from_data(1, 1, samples.map(from_f64).to_vec());
+    for (extension, depth, encoded) in [
+        ("exr", BitDepth::Sixteen, true),
+        ("exr", BitDepth::ThirtyTwo, true),
+        ("png", BitDepth::Eight, false),
+        ("tif", BitDepth::ThirtyTwo, false),
+    ] {
+        let path = directory.join(format!("{}.{extension}", depth.bits()));
+        image_io::save_rendered_output(
+            &path,
+            &image,
+            SaveOptions {
+                depth,
+                color_space: "Display P3",
+                cctf_encoding: encoded,
+                jpeg_quality: None,
+                jpeg_subsampling: None,
+                compression: None,
+            },
+            None,
+        )
+        .unwrap();
+        let decoded = image_io::load(&path).unwrap().image;
+        assert_eq!((decoded.width, decoded.height), (1, 1));
+        for (&actual, expected) in decoded.data.iter().zip(samples) {
+            let expected = if extension == "png" {
+                (expected.clamp(0.0, 1.0) * 255.0).trunc() / 255.0
+            } else {
+                expected
+            };
+            assert!((to_f64(actual) - expected).abs() < 1e-7);
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn concurrent_metadata_round_trips_initialize_xmp_once() {
     const CHILD: &str = "SPEKTRAFILM_TEST_COLD_XMP";
     // Other tests may have already initialized Exiv2 in this process. A fresh

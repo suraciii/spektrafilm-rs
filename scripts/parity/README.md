@@ -353,14 +353,17 @@ pass `--gui` only for a real desktop/Xvfb run. The release workflow currently
 omits `--gui` by design, so its three package jobs do not claim GUI coverage;
 the GUI driver remains available as a separate, explicit evidence command.
 When enabled, the driver operates real windows and file dialogs, records
-screenshots, saves/restores state across restart, decodes RAW, saves a float
-image, observes the bundled f64 exporter, and checks Cancel/window-close child
-cleanup. Linux GUI runs use Xvfb; Windows/macOS GUI runs require a real
-interactive desktop and platform permissions.
+screenshots, saves/restores state across restart, decodes RAW, saves the retained
+output, observes the GUI's independent Export worker, and checks cancellation
+and window-close cleanup. Linux GUI runs use Xvfb with a session bus created
+inside that display; Windows/macOS require a real interactive desktop and
+platform permissions.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
-engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo, zenity and
-ffmpeg. Package smoke also builds a ZIP bundle through the installed exporter, checks offline
+engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo,
+zenity, ffmpeg, gdbus, and a working GTK file chooser portal on the same display.
+The driver checks portal readiness before launching the GUI. Package smoke also
+builds a ZIP bundle through the installed exporter, checks offline
 report references and artifacts, and executes its delivered OCIO processors.
 `package_smoke.py` requires `--package-root` and writes `package_report.json`
 next to `observations.json`. It records the Rust HEAD, pinned reference commit,
@@ -370,7 +373,7 @@ that provenance is not publication evidence.
 For a single local gate, provide the built f64 CLI and portable package:
 
 ```bash
-xvfb-run -a -s '-screen 0 1600x1000x24' python3 scripts/parity/run_all.py \
+xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- python3 scripts/parity/run_all.py \
   --rust-bin target/release/spektrafilm-f64 \
   --data-dir data \
   --package-root dist/spektrafilm-linux-x64 \

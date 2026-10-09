@@ -97,7 +97,7 @@ int sf_image_load(const char* path, unsigned* width, unsigned* height, double** 
 }
 int sf_image_save(const char* path, unsigned width, unsigned height, const double* samples,
                   int depth, int format, int jpeg_quality, int jpeg_subsampling,
-                  int compression, const char* color_space,
+                  int compression, const char* color_space, bool export_metadata,
                   const unsigned char* icc, size_t icc_len, char** err) {
     try {
         // format: JPEG=0, PNG=1, TIFF=2, EXR=3. Quantization truncates, like numpy astype.
@@ -105,13 +105,14 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         if (format == 2) type = depth == 8 ? OIIO::TypeDesc::UINT8 : depth == 16 ? OIIO::TypeDesc::UINT16 : OIIO::TypeDesc::FLOAT;
         if (format == 3) type = depth == 16 ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
         OIIO::ImageSpec spec(width, height, 3, type);
-if (format == 0) {
+        if (format == 0) {
             if (jpeg_quality > 0) spec.attribute("CompressionQuality", jpeg_quality);
-            spec.attribute("jpeg:subsampling", jpeg_subsampling == 420 ? "4:2:0" : "4:4:4");
+            if (jpeg_subsampling != 0)
+                spec.attribute("jpeg:subsampling", jpeg_subsampling == 420 ? "4:2:0" : "4:4:4");
         }
         if (format == 2 || format == 3)
             spec.attribute("Compression", compression == 0 ? "none" : "zip");
-        if (format == 3) {
+        if (format == 3 && export_metadata) {
             const float srgb[] = {0.64f, 0.33f, 0.30f, 0.60f, 0.15f, 0.06f, 0.3127f, 0.3290f};
             const float aces[] = {0.7347f, 0.2653f, 0.0f, 1.0f, 0.0001f, -0.0770f, 0.32168f, 0.33767f};
             const float* chromaticities = std::strcmp(color_space, "ACES2065-1") == 0 ? aces : srgb;
