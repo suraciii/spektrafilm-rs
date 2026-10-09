@@ -41,23 +41,56 @@ Pass `--gui-report path/to/gui-acceptance/observations.json` to `gen_matrix.py` 
 `experimental_gui.py` targets upstream experimental commit
 `28bf883e1672e884307edc75852549376e13644e`. The historical 0.3.4 catalog below
 does not establish experimental acceptance. Build the recorded implementation
-commit first, then run from a clean worktree with an unused evidence directory:
+commit before running the native gate in a clean worktree with an unused evidence directory.
+
+The independent factory oracle is retained in `fixtures/gui_28bf883/` with
+the upstream commit, generation command, source/data hashes and artifact SHA-256
+in `provenance.json`. It is constructed from the actual upstream
+`PROJECT_DEFAULT_GUI_STATE` with real profiles/presets, executing upstream's
+pure serializer without importing Qt. Regenerate it and compare all 187 shared
+leaves (arrays count as one; the Rust extension is excluded):
+
+```bash
+/tmp/spektrafilm-034-venv/bin/python scripts/parity/gui_factory_reference.py generate \
+  --repo /path/to/pinned/upstream --out-dir scripts/parity/fixtures/gui_28bf883
+python3 scripts/parity/gui_factory_reference.py check \
+  --state crates/spektrafilm-gui/src/factory_state.json --report /tmp/factory-comparison.json
+```
+
+The factory JSON comparison is exact. Native state passes through existing f32
+runtime fields (for example `0.03` serializes as `0.029999999329447746`), so the
+native gate compares each shared numeric value at `1e-6` relative/absolute
+tolerance; it does not round or migrate saved user values. Missing fields,
+extra shared fields and altered oracle hashes fail explicitly.
+The retained `control_metadata.json` contains actual manifest field order, labels
+(declared and normalized), tooltips, enums, subsection layout and effective
+numeric bounds/steps/precision from upstream editor constructor defaults.
+The omitted Qt numeric step defaults to 1; stock-dependent development-time
+choices still require native/profile validation. Generation records reference
+data only; it does not establish native behavior or a passing comparison.
+
+Run the native gate separately:
 
 ```bash
 xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- \
   /tmp/spektrafilm-034-venv/bin/python scripts/parity/experimental_gui.py \
   --gui target/debug/spektrafilm-gui \
+  --exporter target/debug/spektrafilm-f64 \
+  --factory-reference scripts/parity/fixtures/gui_28bf883/factory_state.json \
+  --raw /path/to/RAW_KODAK_DC50_é.KDC \
   --upstream /tmp/spektrafilm-upstream-28bf \
   --evidence /tmp/spektrafilm-experimental-native
 ```
 
 The Linux gate uses real X11 input, OCR, and native file choosers. It checks the
-five tab section order, consolidated effect fields, fixed actions, and each
-of the six Workflow selections. Every route is saved to canonical state,
-rendered with PREVIEW and SCAN, saved as TIFF, and loaded/saved again to verify
-state roundtrip. The report records executable, input, state, profile/preset,
-observation, and screenshot hashes. Numerical upstream parity remains a
-separate runtime gate; native rendering alone does not establish it.
+five tab section order, manifest-derived labels, boundary edits, saved zero RMS,
+fresh startup and factory restore against the independent Python reference,
+profile reselection, and each of the six Workflow selections. Every route is
+saved to canonical state, rendered with PREVIEW and SCAN, saved as TIFF, and
+loaded/saved again. The unique Output/Export options extension exercises CPU
+export and in-flight cancellation. The report records executable, input, state,
+profile/preset, observation, and screenshot hashes. Numerical upstream parity
+remains a separate runtime gate; native rendering alone does not establish it.
 
 Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver performs
 an initial preview before saving state to establish the output viewing layer.

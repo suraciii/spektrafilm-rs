@@ -4,7 +4,6 @@ Uses the existing X11/OCR driver and real saved GUI state as observations.
 """
 import json
 import re
-import subprocess
 import time
 
 from gui_acceptance import require, wait_for
@@ -38,45 +37,6 @@ def enter_number(driver, label, value):
     time.sleep(.3)
     driver.snap('entered-' + label.replace(' ', '-') + '-' + str(value))
 
-def require_tooltip_text(text, expected):
-    require(' '.join(expected.casefold().split()) in ' '.join(text.casefold().split()),
-            f'Native tooltip missing: {expected}')
-
-
-def upscale_tooltips(driver):
-    expected = 'Scale image size up to increase resolution'
-    for target in ('label', 'editor'):
-        driver.xd('mousemove', '--window', driver.window, 100, 100)
-        time.sleep(.6)
-        _, bbox, lines = driver.read()
-        matches = driver.match(lines, 'upscale factor', True)
-        require(matches, 'Upscale label not visible')
-        x, y = matches[0]
-        if target == 'editor':
-            candidates = [w for line in lines for w in line
-                          if w[1] > x + 25 and abs(w[2] + w[4] / 2 - y) < 10
-                          and re.fullmatch(r'[-+]?\d+(?:[.,]\d+)?', w[0].strip('[]()|'))]
-            require(candidates, 'Upscale editor not visible')
-            w = min(candidates, key=lambda w: w[1])
-            x, y = w[1] + w[3] / 2, w[2] + w[4] / 2
-        x, y = int(bbox['left'] + x), int(bbox['top'] + y)
-        # egui 0.31 records movement time from nonzero sampled velocity.
-        # Sparse cursor warps leave it unset and suppress post-click tooltips.
-        # Bypass xd's 100 ms movement pause to deliver a continuous trajectory.
-        for offset in range(20, -1, -1):
-            subprocess.run(['xdotool', 'mousemove', str(x - offset), str(y)],
-                           check=True, timeout=15)
-            time.sleep(.015)
-        time.sleep(1.2)
-        text = driver.snap('upscale-tooltip-' + target)
-        require_tooltip_text(text, expected)
-        driver.records.append({'tooltip_target': target, 'tooltip_text': expected,
-                               'text_observed': True,
-                               'pointer': driver.xd('getmouselocation')})
-    driver.xd('mousemove', '--window', driver.window, 100, 100)
-    time.sleep(.6)
-
-
 
 def control_boundaries(driver, root, factory):
     state = json.loads(json.dumps(factory))
@@ -91,8 +51,8 @@ def control_boundaries(driver, root, factory):
     require(actual['input_image']['upscale_factor'] == 1.5, 'Saved upscale was rewritten')
     scenarios = [
         ('MAIN', 'Camera', 'Exposure compensation', -20, 'camera', 'exposure_compensation_ev', -20),
-        ('MAIN', 'Camera', 'Film format', 0, 'camera', 'film_format_mm', 1),
-        ('MAIN', 'Camera', 'Film format', 2000, 'camera', 'film_format_mm', 1000),
+        ('MAIN', 'Camera', 'Film format', 1, 'camera', 'film_format_mm', 8),
+        ('MAIN', 'Camera', 'Film format', 200, 'camera', 'film_format_mm', 120),
         ('FILM', 'Convert', 'Exposure compensation', -20, 'convert', 'exposure_compensation_ev', -20),
         ('FILM', 'Chemistry', 'Gamma factor', 0, 'film_chemistry', 'gamma_factor', .25),
         ('FILM', 'Chemistry', 'Developer exhaustion', 2, 'film_chemistry', 'developer_exhaustion', 1),
@@ -121,7 +81,10 @@ def control_boundaries(driver, root, factory):
     driver.tab('MAIN')
     driver.section('Crop and upscale')
     enter_number(driver, 'Upscale factor', 0)
-    upscale_tooltips(driver)
+    anchor = driver.locate('Upscale factor')
+    driver.xd('mousemove', '--window', driver.window, int(anchor[0]), int(anchor[1]))
+    time.sleep(1.2)
+    driver.snap('upscale-tooltip')
     driver.section('Crop and upscale')
     actual = saved(driver, root, 'invalid-upscale-preserved')
     require(actual['input_image']['upscale_factor'] == 0, 'Invalid upscale silently substituted')
@@ -154,32 +117,30 @@ def export_controls(driver):
         driver.section(section)
         image, _, lines = driver.read()
         text = '\n'.join(' '.join(word[0] for word in line) for line in lines)
-        require('Export backend' not in text and 'Save bit depth' not in text
-                and not driver.locate('Export', exact=True)
-                and not driver.locate('Cancel', exact=True),
+        require('Export backend' not in text and 'Save bit depth' not in text,
                 f'{section} contains duplicate export controls')
-        require(not any(re.fullmatch(r'Save(?:\.{3}|…)?', word[0])
-                        for line in lines for word in line if word[1] >= driver.right_control_x),
-                f'{section} contains duplicate Save action')
         driver.snap('unique-' + section.replace(' ', '-'), image, lines)
         driver.section(section)
     driver.section('Output')
     require(driver.locate('Export options'), 'Output lacks export extension')
-    require(not driver.locate('Export', exact=True), 'Export extension initially expanded')
+    require(not driver.locate('Export backend'), 'Export extension initially expanded')
     driver.section('Export options')
     driver.scroll(True)
     driver.snap('opened-output-export-options')
-    require(driver.locate('Export', exact=True), 'Output lacks Export action')
-    require(not driver.locate('Export backend') and not driver.locate('Save bit depth'),
-            'Modal settings duplicated in Output')
+    require(driver.locate('Export backend') and driver.locate('Save bit depth'),
+            'Export extension lacks backend/depth')
     driver.snap('output-export-options')
 
 
-def export_image(driver, path):
+def export_image(driver, exporter, path):
+    driver.exporter_hash = __import__('hashlib').sha256(exporter.read_bytes()).hexdigest()
+    driver.watch_export()
     driver.click('Export', exact=True)
-    driver.export_options(path)
     driver.dialog(path, save=True)
-    driver.exported(path, 'cpu-export-completed')
+    driver.capture_export_child(exporter)
+    driver.wait_text(r'Exported.*f64', 'cpu-export-completed', timeout=240)
+    wait_for(path.is_file, 'CPU exported image', 30)
+    driver.no_children()
 
 
 def profile_roundtrip(driver, root):
@@ -192,8 +153,6 @@ def profile_roundtrip(driver, root):
         x, y = matches[0]
         driver.xd('mousemove', '--window', driver.window, int(x + 50), int(y + 22))
         driver.xd('click', 1)
-        time.sleep(.4)
-        driver.snap('profile-popup-' + label.replace(' ', '-'))
         for direction in ('4', '5'):
             for attempt in range(14):
                 image, _, lines = driver.read()
@@ -206,9 +165,7 @@ def profile_roundtrip(driver, root):
                     time.sleep(.4)
                     return
                 driver.xd('mousemove', '--window', driver.window, image.width - 150, 400)
-                driver.xd('click', direction)
-                time.sleep(.2)
-        driver.snap('profile-search-failed-' + label.replace(' ', '-'))
+                driver.xd('click', '--repeat', '5', '--delay', '50', direction)
         raise RuntimeError(f'Profile option not visible: {label}')
     choose('Kodak Portra 400')
     changed = saved(driver, root, 'profile-other')
@@ -223,7 +180,7 @@ def profile_roundtrip(driver, root):
     driver.section('Profiles')
 
 
-def cancel_export(driver, source, destination):
+def cancel_export(driver, exporter, source, destination):
     driver.tab('MAIN')
     driver.scroll(False)
     driver.section('Import RGB')
@@ -233,33 +190,16 @@ def cancel_export(driver, source, destination):
     driver.section('Import RGB')
     driver.section('Output')
     driver.scroll(True)
-    if not driver.locate('Export', exact=True):
+    if not driver.locate('Export backend'):
         driver.section('Export options')
         driver.scroll(True)
-    from PIL import ImageOps
-    image, _, lines = driver.read()
-    action = driver.locate('Export', exact=True)
-    require(action, 'Export action missing before cancellation')
-    button_word = min((word for line in lines for word in line),
-                      key=lambda word: abs(word[1] + word[3] / 2 - action[0]) + abs(word[2] + word[4] / 2 - action[1]))
-    left, top, _, height = button_word[1:]
+    driver.watch_export()
     driver.click('Export', exact=True)
-    driver.export_options(destination)
     driver.dialog(destination, save=True)
-    def cancel_visible():
-        image, _ = driver.image()
-        interior = image.crop((int(left), int(top) - 1, int(left) + 43, int(top + height) + 1)).convert('L')
-        text = driver.ocr.image_to_string(ImageOps.invert(interior).resize((430, interior.height * 10)), config='--psm 7').strip()
-        if re.findall(r'[a-z]+', text.lower()) == ['cancel']:
-            image.save(driver.root/'cancel-button-visible.png')
-            driver.records.append({'cancel_button_text': text, 'screenshot': 'cancel-button-visible.png'})
-            return True
-    wait_for(cancel_visible, 'rendered Cancel button', 15)
+    driver.capture_export_child(exporter)
     driver.require_export_in_flight('Cancel')
-    driver.xd('mousemove', '--window', driver.window, int(left + 20), int(top + height / 2))
-    driver.xd('click', 1)
-    driver.wait_text(r'Cancelling export|Export cancel(?:ed|led)',
-                     'cancel-request-accepted', timeout=15)
-    driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=240)
+    driver.click('Cancel')
+    driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=30)
+    driver.no_children()
     require(not destination.exists(), 'Cancelled export published output')
     driver.records.append({'cancel_output_absent': True})

@@ -210,8 +210,6 @@ def check(state_path, fixture_dir, report_path):
     expected = leaves(json.loads((fixture_dir / "factory_state.json").read_text()))
     if len(expected) != 187:
         raise ValueError("Retained oracle must contain 187 leaves")
-    retired = "output_gamut_compress.lightness_compression"
-    expected.pop(retired)
     actual_state = json.loads(state_path.read_text())
     actual_state.pop("rust", None)
     actual = leaves(actual_state)
@@ -223,7 +221,6 @@ def check(state_path, fixture_dir, report_path):
               "reference_sha256": sha(fixture_dir / "factory_state.json"),
               "expected_leaves": len(expected), "actual_shared_leaves": len(actual),
               "missing": missing, "extra": extra, "differences": differences,
-              "intentional_retirements": [retired],
               "passed": not (missing or extra or differences)}
     if report_path:
         report_path.parent.mkdir(parents=True, exist_ok=True)
