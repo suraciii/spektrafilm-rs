@@ -108,7 +108,10 @@ impl WgpuBackend {
         );
 
         Some(Self {
-            name: format!("WGPU f32 · {} ({:?}, {:?})", adapter_info.name, adapter_info.device_type, adapter_info.backend),
+            name: format!(
+                "WGPU f32 · {} ({:?}, {:?})",
+                adapter_info.name, adapter_info.device_type, adapter_info.backend
+            ),
             device,
             queue,
             pipeline_cache: PipelineCache::default(),

@@ -12,11 +12,11 @@ pub mod halation;
 
 pub(crate) mod validation;
 use couplers::DirCouplersParams;
-use diffusion::DiffusionFilterParams;
+pub use diffusion::DiffusionFilterParams;
 use glare::GlareParams;
 pub use grain::GrainEngine;
-use grain::GrainParams;
-use halation::HalationParams;
+pub use grain::GrainParams;
+pub use halation::HalationParams;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
