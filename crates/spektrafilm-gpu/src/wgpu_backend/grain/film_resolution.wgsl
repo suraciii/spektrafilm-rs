@@ -1,10 +1,22 @@
 // Grain V2 working-domain resolution passes.
 // dimensions: width, height, axis (0/1; 2 = native encoded input), optical.
-struct Params { dimensions:vec4<u32>, taps:vec4<u32> }
+// taps: weight count, CCTF (0 = already encoded), reserved, reserved.
+struct Params { dimensions:vec4<u32>, taps:vec4<u32>, matrix:array<vec4<f32>,3> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> input:array<f32>;
 @group(0) @binding(2) var<storage,read> weights:array<vec2<f32>>;
 @group(0) @binding(3) var<storage,read_write> output:array<f32>;
+fn encode(v:f32)->f32 {
+ switch p.taps.y {
+  case 2u: {if(v<=0.0078125){return 10.5402377416545*v+0.0729055341958355;}return (log2(v)+9.72)/17.52;}
+  case 3u: {if(v<=0.0031308){return 12.92*v;}return 1.055*pow(v,1./2.4)-0.055;}
+  case 4u: {if(v<1./512.){return 16.*v;}return pow(v,1./1.8);}
+  case 5u: {if(v<0.018){return 4.5*v;}return 1.099*pow(v,0.45)-0.099;}
+  case 6u: {if(v<0.){return bitcast<f32>(0x7fc00000u);}return pow(v,256./563.);}
+  case 7u: {if(v<0.){return bitcast<f32>(0x7fc00000u);}return pow(v,1./2.6);}
+  default: {return v;}
+ }
+}
 fn half_round(v:f32)->f32 {
  let bits=bitcast<u32>(v);let sign=bits&0x80000000u;let exponent=(bits>>23u)&255u;let mantissa=bits&0x7fffffu;
  if(exponent==255u){return v;}
@@ -35,7 +47,16 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) gr
  if(idx>=width*height){return;}let i=idx*3u;let xy=vec2<i32>(i32(idx%width),i32(idx/width));
  var result=vec3<f32>(0.);
  if(p.dimensions.z==2u) {
-  for(var c=0u;c<3u;c++){output[i+c]=half_round(input[i+c]);}return;
+  var rgb=vec3(input[i],input[i+1u],input[i+2u]);
+  if(p.taps.y!=0u) {
+   var encoded=vec3<f32>(0.);
+   for(var c=0u;c<3u;c++) {
+    let row=p.matrix[c];let linear=row.x*rgb.x+row.y*rgb.y+row.z*rgb.z;
+    encoded[c]=encode(linear);
+   }
+   rgb=encoded;
+  }
+  for(var c=0u;c<3u;c++){output[i+c]=half_round(rgb[c]);}return;
  }
  let direction=select(vec2<i32>(1,0),vec2<i32>(0,1),p.dimensions.z==1u);
  if(p.dimensions.w!=0u) {

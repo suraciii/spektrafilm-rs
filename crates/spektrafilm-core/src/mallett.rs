@@ -432,11 +432,10 @@ pub fn compute_core_matrix(sensitivity: &[[f64; 3]], illuminant: &[f64]) -> [[f6
             midgray[m] += illu * MIDGRAY * sensitivity[wl][m];
         }
     }
-    let g = midgray[1];
     let mut core = [[0.0f64; 3]; 3];
     for m in 0..3 {
         for k in 0..3 {
-            core[m][k] = m_mallett[k][m] / g;
+            core[m][k] = m_mallett[k][m] / midgray[m];
         }
     }
     core
@@ -445,8 +444,8 @@ pub fn compute_core_matrix(sensitivity: &[[f64; 3]], illuminant: &[f64]) -> [[f6
 /// Input colour space → linear sRGB with the registry's stored matrices and
 /// CAT02 adaptation. No fallback primary set is selected for unknown names.
 pub fn input_cs_to_srgb(color_space: &str) -> [[f64; 3]; 3] {
-    let space = spektrafilm_math::colorspace::resolve(color_space)
-        .expect("validated input colour space");
+    let space =
+        spektrafilm_math::colorspace::resolve(color_space).expect("validated input colour space");
     spektrafilm_math::colorspace::display_matrix(space)
 }
 
@@ -511,19 +510,19 @@ mod parity_tests {
         let srgb_cases: [([f64; 3], [f64; 3]); 4] = [
             (
                 [0.184, 0.184, 0.184],
-                [1.0261271743289262, 1.0000480357869586, 0.90783645942343971],
+                [1.0000203802225522, 1.0000480357858643, 1.0000199147638913],
             ),
             (
                 [0.5, 0.2, 0.8],
-                [2.5959193807455856, 1.5669967316466955, 3.5305942856145802],
+                [2.529873904179984, 1.5669968248391737, 3.889097567855439],
             ),
             (
                 [0.9, 0.9, 0.1],
-                [4.9104478344325155, 4.2939918170777842, 1.1774257970182864],
+                [4.785515911788671, 4.293991693006348, 1.2969839268292678],
             ),
             (
                 [0.05, 0.4, 0.6],
-                [0.62562090012015215, 2.2862723969426275, 2.6767361929693676],
+                [0.6097037170945306, 2.2862724277886493, 2.9485370958094834],
             ),
         ];
         for (rgb, want) in srgb_cases {
@@ -542,19 +541,19 @@ mod parity_tests {
         let pp_cases: [([f64; 3], [f64; 3]); 4] = [
             (
                 [0.184, 0.184, 0.184],
-                [1.0258192985230492, 1.0001184102809104, 0.90765394681064204],
+                [0.9997203373890391, 1.0001184102694873, 0.9998188694722683],
             ),
             (
                 [0.5, 0.2, 0.8],
-                [3.1683155254726083, 1.3409379130249184, 3.879877239815936],
+                [3.0877071597957686, 1.3409380295703561, 4.273847378414339],
             ),
             (
                 [0.9, 0.9, 0.1],
-                [6.0080668280419696, 4.2229236844575118, 0.7785667495185622],
+                [5.855209277325933, 4.222923542776498, 0.8576239816767519],
             ),
             (
                 [0.05, 0.4, 0.6],
-                [-1.2797498408711341, 2.6305888165323061, 2.7163233124729302],
+                [-1.24719059106793, 2.6305888398515966, 2.9921439559768634],
             ),
         ];
         for (rgb, want) in pp_cases {
@@ -591,7 +590,9 @@ mod parity_tests {
 
         let g = from_f64(0.184);
         let img = ImageBuf::from_data(2, 2, vec![g; 12]);
-        let out = pipeline.process(img, &spektrafilm_gpu::cpu_backend::CpuBackend).unwrap();
+        let out = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
         assert_eq!((out.width, out.height), (2, 2));
         assert!(
             out.data.iter().all(|v| (*v as f64).is_finite()),
@@ -623,7 +624,8 @@ mod parity_tests {
         // Nonzero EV so the resident path's exposure fold into the mallett
         // matrix is exercised, not just the identity case.
         params.camera.exposure_compensation_ev = 0.5;
-        params.film_render.grain.active = false;
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
         // Output gamut compression forces the per-stage path — keep it off
         // so this test exercises the GPU-resident chain.
         params.io.output_gamut_compress.algorithm = "off".into();
@@ -638,7 +640,9 @@ mod parity_tests {
         let img = ImageBuf::from_data(w, h, data);
 
         let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
-        let out_cpu = pipeline.process(img, &spektrafilm_gpu::cpu_backend::CpuBackend).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
 
         let mut max_diff = 0.0f64;
         let mut max_at = (0usize, 0.0f64, 0.0f64);

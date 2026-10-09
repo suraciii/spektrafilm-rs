@@ -411,17 +411,8 @@ fn cmd_process(
              data_dir.display()
         )
     })?;
-    let route = pipeline.params.workflow.route.as_str();
     let run_once = |image: ImageBuf| -> Result<ImageBuf> {
-        let out = if route == "input" {
-            image_io::convert_image(
-                &image,
-                &pipeline.params.io.input_color_space,
-                pipeline.params.io.input_cctf_decoding,
-                &pipeline.params.io.output_color_space,
-                pipeline.params.io.output_cctf_encoding,
-            )?
-        } else if inject.is_none() && collect.is_none() {
+        let out = if inject.is_none() && collect.is_none() {
             pipeline.process(image, backend.as_ref()).map_err(anyhow::Error::msg)?
         } else {
             pipeline

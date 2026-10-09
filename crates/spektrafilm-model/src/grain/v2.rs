@@ -65,6 +65,8 @@ pub struct GrainV2Params {
     pub profile: usize,
     /// Host grainResolutionType: 0 = Negative (optical), 1 = Positive (FastBlur).
     pub film_type: u32,
+    /// Profile metadata; Film Type selects the actual resolution filter.
+    pub resolution_type: u32,
     pub size: f32,
     pub amount: f32,
     pub shadows: f32,
@@ -92,6 +94,7 @@ impl GrainV2Params {
             // Host grainResolutionType: Negative = 0 (optical),
             // Positive = 1 (folded Gaussian FastBlur).
             film_type: 1,
+            resolution_type: 1,
             size: p.scale,
             amount: p.amount,
             shadows: p.shadows,
@@ -461,6 +464,7 @@ fn optical_pass(source: &ImageBuf, radius: f32, horizontal: bool, round_half: bo
     }
     output
 }
+
 #[inline]
 fn effective_control(value: f32) -> f32 {
     let t = value.clamp(0., 1.);
@@ -617,6 +621,10 @@ mod tests {
 
     #[test]
     fn film_types_select_distinct_resolution_paths() {
+        let weights = fast_blur_weights(0.5);
+        assert_eq!(weights.len(), 1);
+        assert!((weights[0][0] - 0.5).abs() < 1e-6);
+        assert!((weights[0][1] - 0.021735).abs() < 1e-5);
         let image = ImageBuf::from_data(
             192,
             108,
@@ -809,7 +817,10 @@ mod tests {
                             .zip(&gpu_image.data)
                             .map(|(a, b)| (to_f32(*a) - to_f32(*b)).abs())
                             .fold(0.0f32, f32::max);
-                        assert!(max_error < 5e-3, "CPU/GPU Grain V2 drift: {max_error}");
+                        assert!(
+                            max_error < 5e-3,
+                            "CPU/GPU Grain V2 drift: {max_error}, profile={profile}, film_type={film_type}, mode={mode:?}, control={control}"
+                        );
                     }
                 }
             }

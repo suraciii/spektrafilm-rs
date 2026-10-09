@@ -541,7 +541,7 @@ mod parity_tests {
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
         let p = pipeline.preflash_raw();
 
-        let expect = [0.4567086334477163, 0.3959958805787103, 0.5172324967476551];
+        let expect = [0.45670880384496165, 0.39599598403601427, 0.5172322808628251];
         for c in 0..3 {
             assert!(
                 (p[c] - expect[c]).abs() < 1e-12,

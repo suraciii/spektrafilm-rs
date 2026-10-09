@@ -3458,6 +3458,7 @@ dependencies = [
  "bytemuck",
  "cblas",
  "openblas-src",
+ "parking_lot",
  "pollster",
  "rayon",
  "spektrafilm-math",

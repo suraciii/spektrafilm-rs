@@ -169,20 +169,20 @@ fn generator(pos:vec2<f32>,size:vec2<f32>,luma:f32,rgb:vec3<f32>,digital:bool)->
 fn effective_control(v:f32)->f32 {let t=clamp(v,0.,1.);return 0.12*t*t+0.68*t+0.2;}
 fn overlay(b:f32,g:f32)->f32 {return clamp(select(1.-2.*(1.-b)*(1.-g),2.*b*g,b<0.5),0.,1.);}
 fn opacity(v:f32,c:f32)->f32 {let d=(v-c)*5.;return exp(-0.5*d*d);}
-fn source(x:u32,y:u32,r:f32)->vec3<f32>{
+fn source(x:u32,y:u32)->vec3<f32>{
  let i=(y*p.dimensions.x+x)*3u;
  return vec3(input_rgb[i],input_rgb[i+1u],input_rgb[i+2u]);
 }
-fn grain_source(coord:vec2<i32>,size:vec2<f32>,radius:f32)->vec3<f32> {
+fn grain_source(coord:vec2<i32>,size:vec2<f32>)->vec3<f32> {
  let dims=p.dimensions.xy;
- if(all(size==vec2<f32>(dims))){return source(u32(coord.x),u32(coord.y),radius);}
+ if(all(size==vec2<f32>(dims))){return source(u32(coord.x),u32(coord.y));}
  let pos=vec2<f32>(coord)/(size-1.)*(vec2<f32>(dims)-1.)-0.1;
  let at=vec2<i32>(floor(pos));let f=fract(pos);let hi=vec2<i32>(dims)-1;
  let a=vec2<u32>(clamp(at,vec2<i32>(0),hi));
  let b=vec2<u32>(clamp(at+vec2(1,0),vec2<i32>(0),hi));
  let c=vec2<u32>(clamp(at+vec2(0,1),vec2<i32>(0),hi));
  let d=vec2<u32>(clamp(at+vec2(1,1),vec2<i32>(0),hi));
- return mix(mix(source(a.x,a.y,radius),source(b.x,b.y,radius),f.x),mix(source(c.x,c.y,radius),source(d.x,d.y,radius),f.x),f.y);
+ return mix(mix(source(a.x,a.y),source(b.x,b.y),f.x),mix(source(c.x,c.y),source(d.x,d.y),f.x),f.y);
 }
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) grid:vec3<u32>){
@@ -194,7 +194,7 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>,@builtin(num_workgroups) gr
   let at=vec2<i32>(uv*(size/(1.+(p.geometry.x-1.)/47.*1.5)));
   for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
    let coord=clamp(at+vec2<i32>(dx,dy),vec2<i32>(0),vec2<i32>(size)-1);
-   let grgb=grain_source(coord,size,0.);let gluma=dot(grgb,vec3(0.2125,0.7154,0.0721));
+   let grgb=grain_source(coord,size);let gluma=dot(grgb,vec3(0.2125,0.7154,0.0721));
    let generated=generator(vec2<f32>(coord),size,gluma,grgb,false);
    g+=vec3(half_round(generated.x),half_round(generated.y),half_round(generated.z));
   }}g*=1./9.;

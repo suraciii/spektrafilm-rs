@@ -453,11 +453,11 @@ impl App {
             pending_dirty: false,
             dirty_since: None,
             render_job: None,
+            export_job: None,
             status: startup_error.unwrap_or_else(|| String::from("Load an image to start.")),
             dirty: false,
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,
-            export_job: None,
             calibration_job: None,
             calibration_epoch: 0,
         };
@@ -522,21 +522,21 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save state…").clicked() {
+            if ui.button("Save current to file").clicked() {
                 if let Some(path) = self.file_dialog("state").set_file_name("gui_state.json").add_filter("JSON", &["json"]).save_file() {
                     self.remember_dialog("state", &path);
                     let result = self.current_state().and_then(|s| s.save(&path));
                     self.status = match result { Ok(()) => format!("Saved GUI state to {}",path.display()), Err(e) => format!("State save error: {e:#}") };
                 }
             }
-            if ui.button("Load state…").clicked() {
+            if ui.button("Load from file").clicked() {
                 if let Some(path) = self.file_dialog("state").add_filter("JSON", &["json"]).pick_file() {
                     self.remember_dialog("state", &path);
                     let result = state::GuiState::load(&path).and_then(|s|self.apply_state(s));
                     self.status = match result { Ok(()) => format!("Loaded GUI state from {}",path.display()), Err(e) => format!("State load error: {e:#}") };
                 }
             }
-            if ui.button("Save startup default").clicked() {
+            if ui.button("Save current as default").clicked() {
                 let result = self.current_state().and_then(|s|s.save(&state::default_path()));
                 self.status = match result { Ok(()) => "Saved current GUI state as startup default".into(), Err(e) => format!("Startup save error: {e:#}") };
             }
@@ -569,21 +569,29 @@ impl App {
     }
 
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            controls::extra_bool(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "Auto preview", true);
+            let mut scan_for_print = self.scan_for_print_snapshot.is_some();
+            if ui.checkbox(&mut scan_for_print, "Scan for print").changed() { self.toggle_scan_for_print(); }
+        });
         ui.horizontal(|ui| {
-            let scan_label = if self.scan_for_print_snapshot.is_some() { "Scan-for-print: ON" } else { "Scan-for-print" };
-            if ui.button(scan_label).clicked() {
-                self.toggle_scan_for_print();
-            }
-            if ui.button("Preview").clicked() {
+            if controls::choice(ui, "Workflow", &mut self.params.workflow.route, &[
+                "input", "input > film > scan", "input > film > print > scan",
+                "input > convert-film > print > scan", "input > convert-film > scan-minus-base", "input > convert-film > scan",
+            ]) {
+                self.params.io.scan_film = false;
                 self.dirty = true;
-                self.force_preview = true;
-                self.full_scan_requested = false;
+                self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
             }
-            if ui.button("Scan").clicked() {
-                self.dirty = true;
-                self.force_preview = true;
-                self.full_scan_requested = true;
+        });
+        ui.horizontal(|ui| {
+            if ui.button("PREVIEW").clicked() {
+                self.dirty = true; self.force_preview = true; self.full_scan_requested = false;
             }
+            if ui.button("SCAN").clicked() {
+                self.dirty = true; self.force_preview = true; self.full_scan_requested = true;
+            }
+            if ui.add_enabled(self.output_image.is_some(), egui::Button::new("SAVE")).clicked() { self.save_dialog(); }
         });
     }
 
@@ -1264,41 +1272,23 @@ impl App {
         ctx.request_repaint();
     }
 
-    fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size);
-        self.state_toolbar(ui);
-        let changes = controls::show(
-            ui,
-            &mut self.params,
-            &mut self.gui_state.sections,
-            self.gui_tab.label(),
-        );
+    fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str) {
+        let changes = controls::show(ui, &mut self.params, &mut self.gui_state.sections, section);
         if changes.runtime_changed {
             self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
             self.dirty = true;
         }
-        if let Some(action) = changes.action {
-            self.start_calibration(action);
-        }
-        if changes.preview_requested {
-            self.dirty = true;
-            self.force_preview = true;
-        }
+        if let Some(action) = changes.action { self.start_calibration(action); }
+        if changes.preview_requested { self.dirty = true; self.force_preview = true; }
         if changes.raw_reload {
             if let Some(path) = self.image_path.clone() { self.load_image_from_path(&path); }
         }
+    }
 
-        if self.gui_tab == GuiTab::Main {
-        // ── File ────────────────────────────────────────────────────────
-        ui.horizontal(|ui| {
-            if ui.button("Open…").clicked() {
-                if let Some(path) = self.file_dialog("load")
-                    .add_filter(
-                        "Image",
-                        IMAGE_FILE_EXTENSIONS,
-                    )
-                    .pick_file()
-                {
+    fn import_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, raw: bool) {
+        ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
+            if ui.button("Select file").clicked() {
+                if let Some(path) = self.file_dialog("load").add_filter("Image", IMAGE_FILE_EXTENSIONS).pick_file() {
                     self.remember_dialog("load", &path);
                     self.load_image_from_path(&path);
                 }
@@ -1364,516 +1354,68 @@ impl App {
         }
         ui.add_space(4.0);
 
-        egui::CollapsingHeader::new("Input image")
-            .default_open(false)
-            .show(ui, |ui| {
-                let mut changed = false;
-                egui::ComboBox::from_label("Input colour space")
-                    .selected_text(self.params.io.input_color_space.clone())
-                    .show_ui(ui, |ui| {
-                        for opt in [
-                            "sRGB",
-                            "ProPhoto RGB",
-                            "ITU-R BT.2020",
-                            "ACES2065-1",
-                            "Adobe RGB (1998)",
-                            "Display P3",
-                            "DCI-P3",
-                        ] {
-                            changed |= ui
-                                .selectable_value(
-                                    &mut self.params.io.input_color_space,
-                                    opt.to_string(),
-                                    opt,
-                                )
-                                .changed();
-                        }
-                    });
-                changed |= ui
-                    .checkbox(
-                        &mut self.params.io.input_cctf_decoding,
-                        "Decode input transfer function",
-                    )
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Profiles ────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Profiles")
-            .default_open(true)
-            .show(ui, |ui| {
-                let film_changed =
-                    profile_combo(ui, "film", "Film stock", &self.films, &mut self.film_name);
-                if film_changed {
-                    self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-                    self.params.film_render.development_time = None;
-                    if let Ok(film) = profile::load_profile_by_name(&self.data_dir, &self.film_name)
-                    {
-                        // Slide/positive stocks have no print paper — they
-                        // are scanned directly. Negatives print onto their
-                        // paired `target_print`. Auto-follow the film type
-                        // so switching stocks doesn't leave a wrong (or, for
-                        // a paperless slide, a failed) render.
-                        self.params.io.scan_film = film.is_positive();
-                        self.film_dev_times = film.data.development_time.clone();
-                        if let Some(target) = film.info.target_print.as_deref()
-                            && self.papers.iter().any(|p| p.stock == target)
-                            && self.print_name != target
-                        {
-                            self.print_name = target.to_string();
-                            self.print_dev_times =
-                                profile_dev_times(&self.data_dir, &self.print_name);
-                            self.params.print_render.development_time = None;
-                        }
-                    }
-                    self.sync_profile_defaults();
-                    self.dirty = true;
-                }
-                // B&W stocks are profiled at several development times —
-                // pick one (longer = more contrast). Hidden for the
-                // single-time / colour case.
-                if self.film_dev_times.len() > 1
-                    && dev_time_combo(
-                        ui,
-                        "film_dev_time",
-                        "Development time",
-                        &self.film_dev_times.clone(),
-                        &mut self.params.film_render.development_time,
-                    )
-                {
-                    self.dirty = true;
-                }
-                // Slide films are scanned directly, so the print paper is
-                // unused — disable the picker and say why rather than
-                // letting it silently affect nothing.
-                if self.params.io.scan_film {
-                    ui.label(
-                        egui::RichText::new("Slide film — scanned directly (no print paper).")
-                            .italics()
-                            .small(),
-                    );
-                }
-                let paper_changed = ui
-                    .add_enabled_ui(!self.params.io.scan_film, |ui| {
-                        profile_combo(
-                            ui,
-                            "paper",
-                            "Print paper",
-                            &self.papers,
-                            &mut self.print_name,
-                        )
-                    })
-                    .inner;
-                if paper_changed {
-                    self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-                    self.params.print_render.development_time = None;
-                    self.sync_profile_defaults();
-                    self.dirty = true;
-                }
-                if !self.params.io.scan_film
-                    && self.print_dev_times.len() > 1
-                    && dev_time_combo(
-                        ui,
-                        "print_dev_time",
-                        "Print development time",
-                        &self.print_dev_times.clone(),
-                        &mut self.params.print_render.development_time,
-                    )
-                {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Exposure ────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Exposure")
-            .default_open(true)
-            .show(ui, |ui| {
-                let mut changed = false;
-                changed |= ui
-                    .checkbox(&mut self.params.camera.auto_exposure, "Auto exposure")
-                    .changed();
-                if self.params.camera.auto_exposure {
-                    let method = &mut self.params.camera.auto_exposure_method;
-                    egui::ComboBox::from_label("Metering")
-                        .selected_text(method.clone())
-                        .show_ui(ui, |ui| {
-                            for opt in [
-                                "average",
-                                "median",
-                                "center_weighted",
-                                "partial",
-                                "matrix",
-                                "multi_zone",
-                                "highlight_weighted",
-                            ] {
-                                changed |=
-                                    ui.selectable_value(method, opt.to_string(), opt).changed();
-                            }
-                        });
-                }
-                changed |= ui
-                    .add(
-                        egui::Slider::new(
-                            &mut self.params.camera.exposure_compensation_ev,
-                            -5.0..=5.0,
-                        )
-                        .text("EV compensation")
-                        .step_by(0.1),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.params.camera.film_format_mm, 4.0..=120.0)
-                            .text("Film format (mm)")
-                            .logarithmic(true),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.params.camera.lens_blur_um, 0.0..=100.0)
-                            .text("Lens blur (µm)"),
-                    )
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        }
-        if self.gui_tab == GuiTab::Film {
-        if panels::halation::show(ui, &mut self.params.film_render.halation) {
-            self.dirty = true;
-        }
-        if panels::couplers::show(ui, &mut self.params.film_render.dir_couplers) {
-            self.dirty = true;
-        }
-        if panels::diffusion::show(ui, &mut self.params.camera.diffusion_filter) {
-            self.dirty = true;
-        }
-        if panels::grain::show(ui, &mut self.params.film_render.grain) {
-            self.dirty = true;
-        }
-        }
-        if self.gui_tab == GuiTab::Print {
-            let scan_film = self.params.io.scan_film;
-            if panels::glare::show(ui, &mut self.params.print_render.glare, scan_film) {
+    }
+    fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
+        ui.collapsing("Chemistry", |ui| {
+            let (times, selected) = if film {
+                (&self.film_dev_times, &mut self.params.film_render.development_time)
+            } else {
+                (&self.print_dev_times, &mut self.params.print_render.development_time)
+            };
+            if dev_time_combo(ui, if film { "film-time" } else { "print-time" }, "Development time", times, selected) {
                 self.dirty = true;
             }
-        // ── Print curves (s023 morph) ───────────────────────────────────
-        egui::CollapsingHeader::new("Print curves")
-            .default_open(false)
-            .show(ui, |ui| {
-                let m = &mut self.params.print_render.density_curves_morph;
-                let mut changed = false;
-                changed |= ui
-                    .checkbox(&mut m.active, "Morph density curves")
-                    .on_hover_text(
-                        "Rebuild the print density curves from the profile's parametric \
-                         model with coupled-gamma morphing. Off = use the stored curves.",
-                    )
-                    .changed();
-                if m.active {
-                    changed |= ui
-                        .add(egui::Slider::new(&mut m.gamma_factor, 0.5..=2.0).text("Gamma"))
-                        .changed();
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut m.gamma_factor_fast, 0.5..=2.0)
-                                .text("Gamma fast"),
-                        )
-                        .changed();
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut m.gamma_factor_slow, 0.5..=2.0)
-                                .text("Gamma slow"),
-                        )
-                        .changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut m.gamma_factor_red, 0.5..=2.0).text("Gamma R"))
-                        .changed();
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut m.gamma_factor_green, 0.5..=2.0).text("Gamma G"),
-                        )
-                        .changed();
-                    changed |= ui
-                        .add(egui::Slider::new(&mut m.gamma_factor_blue, 0.5..=2.0).text("Gamma B"))
-                        .changed();
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut m.developer_exhaustion, 0.0..=1.0)
-                                .text("Developer exhaustion"),
-                        )
-                        .changed();
-                }
-                if changed {
-                    self.dirty = true;
-                }
-            });
+            self.parameter_section(ui, if film { "Film chemistry" } else { "Print chemistry" });
+        });
+    }
 
-        }
-        if self.gui_tab == GuiTab::Main {
-        // ── Scanner ─────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Scanner")
-            .default_open(false)
-            .show(ui, |ui| {
-                let s = &mut self.params.scanner;
-                let mut changed = false;
-                changed |= ui
-                    .add(egui::Slider::new(&mut s.lens_blur, 0.0..=5.0).text("Lens blur σ (px)"))
-                    .changed();
-                let [mut sigma, mut amount] = s.unsharp_mask;
-                changed |= ui
-                    .add(egui::Slider::new(&mut sigma, 0.0..=3.0).text("Unsharp σ (px)"))
-                    .changed();
-                changed |= ui
-                    .add(egui::Slider::new(&mut amount, 0.0..=2.0).text("Unsharp amount"))
-                    .changed();
-                if changed {
-                    s.unsharp_mask = [sigma, amount];
-                }
-                changed |= ui
-                    .checkbox(&mut s.white_correction, "White correction")
-                    .changed();
-                if s.white_correction {
-                    changed |= ui
-                        .add(egui::Slider::new(&mut s.white_level, 0.5..=1.0).text("White level"))
-                        .changed();
-                }
-                changed |= ui
-                    .checkbox(&mut s.black_correction, "Black correction")
-                    .changed();
-                if s.black_correction {
-                    changed |= ui
-                        .add(egui::Slider::new(&mut s.black_level, 0.0..=0.5).text("Black level"))
-                        .changed();
-                }
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        }
-        if self.gui_tab == GuiTab::Advanced {
-        // ── Color management ────────────────────────────────────────────
-        egui::CollapsingHeader::new("Color management")
-            .default_open(false)
-            .show(ui, |ui| {
-                let algo = &mut self.params.io.output_gamut_compress.algorithm;
-                let mut changed = false;
-                egui::ComboBox::from_label("Gamut compression")
-                    .selected_text(algo.clone())
-                    .show_ui(ui, |ui| {
-                        for opt in ["off", "oklch", "oklrab", "jzazbz", "cam16ucs", "aces_rgc"] {
-                            changed |= ui.selectable_value(algo, opt.to_string(), opt).changed();
-                        }
-                    });
-                changed |= ui.checkbox(&mut self.params.io.input_gamut_compress.active, "Compress input gamut").changed();
-                // Input gamut compression — baked into the tc_lut at build time,
-                // so changing it rebuilds the LUT on the next pass. "xy" is the
-                // ACES-RGC-style radial compression toward the spectral locus.
-                let in_algo = &mut self.params.io.input_gamut_compress.algorithm;
-                egui::ComboBox::from_label("Input gamut compression")
-                    .selected_text(in_algo.clone())
-                    .show_ui(ui, |ui| {
-                        for opt in ["xy", "oklch"] {
-                            changed |= ui.selectable_value(in_algo, opt.to_string(), opt).changed();
-                        }
-                    });
-                // CAT16 (vs CAT02) for the input chromatic adaptation feeding
-                // Hanatos — better blue/violet behavior; matches upstream >=0.3.3.
-                changed |= ui
-                    .checkbox(
-                        &mut self.params.settings.use_cat16,
-                        "CAT16 input adaptation",
-                    )
-                    .changed();
-                // RGB → film raw spectral upsampler. hanatos2025 is the default
-                // spectral LUT; arctic2026alpha02 is the new memory-color
-                // reflectance LUT; mallett2019 is a faster matrix basis.
-                let method = &mut self.params.settings.rgb_to_raw_method;
-                egui::ComboBox::from_label("RGB→raw upsampling")
-                    .selected_text(method.clone())
-                    .show_ui(ui, |ui| {
-                        for opt in ["hanatos2025", "arctic2026alpha02", "mallett2019"] {
-                            changed |= ui.selectable_value(method, opt.to_string(), opt).changed();
-                        }
-                    });
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        }
-        if self.gui_tab == GuiTab::Main {
-        // ── Enlarger ────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Enlarger")
-            .default_open(false)
-            .show(ui, |ui| {
-                let e = &mut self.params.enlarger;
-                let mut changed = false;
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut e.print_exposure, 0.1..=5.0)
-                            .text("Print exposure")
-                            .logarithmic(true),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut e.m_filter_shift, -50.0..=50.0)
-                            .text("Magenta filter shift"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut e.y_filter_shift, -50.0..=50.0)
-                            .text("Yellow filter shift"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut e.preflash_exposure, 0.0..=0.5)
-                            .text("Preflash exposure"),
-                    )
-                    .on_hover_text(
-                        "Uniform low pre-exposure of the print through the film base. \
-                         Lifts shadow density and lowers print contrast. 0 = off.",
-                    )
-                    .changed();
-                if e.preflash_exposure > 0.0 {
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut e.preflash_m_filter_shift, -50.0..=50.0)
-                                .text("Preflash magenta shift"),
-                        )
-                        .changed();
-                    changed |= ui
-                        .add(
-                            egui::Slider::new(&mut e.preflash_y_filter_shift, -50.0..=50.0)
-                                .text("Preflash yellow shift"),
-                        )
-                        .changed();
-                }
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        // ── Output ──────────────────────────────────────────────────────
-        egui::CollapsingHeader::new("Output")
-            .default_open(false)
-            .show(ui, |ui| {
-                let io = &mut self.params.io;
-                let mut changed = false;
-                egui::ComboBox::from_label("Output colour space")
-                    .selected_text(io.output_color_space.clone())
-                    .show_ui(ui, |ui| {
-                        for opt in [
-                            "sRGB",
-                            "ProPhoto RGB",
-                            "ITU-R BT.2020",
-                            "ACES2065-1",
-                            "Adobe RGB (1998)",
-                            "Display P3",
-                            "DCI-P3",
-                        ] {
-                            changed |= ui
-                                .selectable_value(
-                                    &mut io.output_color_space,
-                                    opt.to_string(),
-                                    opt,
-                                )
-                                .changed();
-                        }
-                    });
-                let mut scan_film = io.scan_film;
-                changed |= ui
-                    .checkbox(&mut scan_film, "Scan film (skip printing)")
-                    .on_hover_text(
-                        "Scan the developed film directly instead of printing onto paper. \
-                         Auto-enabled for positive/slide stocks (no print paper); toggle \
-                         manually to scan a negative as-is.",
-                    )
-                    .changed();
-                if changed {
-                    io.scan_film = scan_film;
-                }
-                changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut io.upscale_factor).range(0.0..=f32::MAX).speed(0.5).prefix("Upscale factor "),
-                    )
-                    .on_hover_text(
-                        "Resize the working image before processing (Python upscale_factor). \
-                         Lower = faster preview + export at reduced resolution; 1.0 = full \
-                         resolution. The diffusion-filter cost scales with this.",
-                    )
-                    .changed();
-                changed |= ui
-                    .checkbox(&mut io.output_cctf_encoding, "Encode output transfer function")
-                    .changed();
-                if changed {
-                    self.dirty = true;
-                }
-            });
-
-        }
-        if self.gui_tab == GuiTab::Config {
-            ui.separator();
-            ui.heading("Display");
-            let display_transform_before = self.viewer.settings.use_display_transform;
-            self.viewer.controls(ui);
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Display ICC…").clicked() {
-                    if let Some(path) = self
-                        .file_dialog("display_icc")
-                        .add_filter("ICC profile", &["icc", "icm"])
-                        .pick_file()
-                    {
-                        self.remember_dialog("display_icc", &path);
-                        self.gui_state.sections["rust"]["display_profile"] =
-                            serde_json::json!(path.to_string_lossy());
-                        self.refresh_viewing_artifacts();
+    fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size);
+        match self.gui_tab {
+            GuiTab::Main => {
+                self.import_section(ui, ctx, false);
+                self.import_section(ui, ctx, true);
+                for section in ["Crop and upscale", "Input", "Camera"] { self.parameter_section(ui, section); }
+                ui.collapsing("Profiles", |ui| {
+                    if profile_combo(ui, "film", "Film profile", &self.films, &mut self.film_name) {
+                        self.params.film_render.development_time = None;
+                        self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
+                        self.sync_profile_defaults();
+                        self.dirty = true;
                     }
-                }
-                ui.label(&self.viewer.transform_status);
-            });
-            if display_transform_before != self.viewer.settings.use_display_transform {
-                self.refresh_viewing_artifacts();
+                    if profile_combo(ui, "paper", "Print profile", &self.papers, &mut self.print_name) {
+                        self.params.print_render.development_time = None;
+                        self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
+                        self.sync_profile_defaults();
+                        self.dirty = true;
+                    }
+
+                });
+                for section in ["Enlarger", "Scanner", "Output"] { self.parameter_section(ui, section); }
+            }
+            GuiTab::Film => {
+                self.chemistry_section(ui, true);
+                for section in ["Film base", "Halation", "Couplers", "Grain", "Camera diffusion", "Convert"] { self.parameter_section(ui, section); }
+            }
+            GuiTab::Print => {
+                self.chemistry_section(ui, false);
+                for section in ["Print base", "Preflash", "Glare", "Enlarger diffusion"] { self.parameter_section(ui, section); }
+            }
+            GuiTab::Advanced => {
+                for section in ["Spectral upsampling", "Input gamut compress", "Output gamut compress", "Experimental"] { self.parameter_section(ui, section); }
+            }
+            GuiTab::Config => {
+                ui.collapsing("GUI parameters", |ui| { self.state_toolbar(ui); });
+                ui.collapsing("Display", |ui| {
+                    let display_transform_before = self.viewer.settings.use_display_transform;
+                    self.viewer.controls(ui);
+                    self.parameter_section(ui, "Display");
+                    if display_transform_before != self.viewer.settings.use_display_transform { self.refresh_viewing_artifacts(); }
+                });
+                ui.collapsing("napari layers", |ui| { self.viewer.layer_controls(ui); });
             }
         }
-        // ── Metrics ─────────────────────────────────────────────────────
-        ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(6.0);
-        ui.monospace(format!(
-            "render:        {:>6.1} ms   {}",
-            self.last_render_ms,
-            fps_label(self.last_render_ms)
-        ));
-        ui.monospace(format!(
-            "pipeline build:{:>6.1} ms",
-            self.last_pipeline_build_ms
-        ));
-        ui.monospace(format!(
-            "input/resize:  {:>6.1} / {:>5.1} ms",
-            self.last_input_clone_ms, self.last_scale_ms
-        ));
-        ui.monospace(format!(
-            "preview pack:  {:>6.1} ms",
-            self.last_preview_ms
-        ));
-        ui.monospace(format!(
-            "worker total:  {:>6.1} ms",
-            self.last_worker_total_ms
-        ));
-        ui.monospace(format!("backend: {}", self.backend.name()));
         ui.label(egui::RichText::new(&self.status).small());
-        if let Some(info) = self.raw_lens_info.as_deref() {
-            ui.label(if info.is_empty() { "Lens correction not applied".to_owned() } else { format!("Lens correction applied ({info})") });
-        }
         if input_view_before != (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size) { self.refresh_viewing_artifacts(); }
     }
 }
@@ -1920,7 +1462,6 @@ impl eframe::App for App {
             ctx.request_repaint_after(IN_FLIGHT_REPAINT);
         }
         self.poll_render_job(ctx);
-        self.poll_export_job(ctx);
         self.poll_calibration_job(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
@@ -1934,11 +1475,7 @@ impl eframe::App for App {
                     }
                 });
                 ui.separator();
-                if self.gui_tab == GuiTab::Config {
-                    self.state_toolbar(ui);
-                    ui.separator();
-                }
-                let scroll_height = (ui.available_height() - 36.0).max(1.0);
+                let scroll_height = (ui.available_height() - 95.0).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("controls-scroll")
@@ -2117,6 +1654,7 @@ fn dev_time_combo(
     times: &[f64],
     selection: &mut Option<f64>,
 ) -> bool {
+    let times = if times.is_empty() { &[1.0][..] } else { times };
     // Same resolution as the render path, so the combo always highlights
     // exactly the entry the pipeline will use.
     let current_idx = profile::development_time_index(times, *selection);
@@ -2165,21 +1703,6 @@ fn profile_combo(
     prev != *selected_stock
 }
 
-fn fps_label(ms: f32) -> &'static str {
-    if ms < 16.0 {
-        "60 fps"
-    } else if ms < 33.0 {
-        "30 fps"
-    } else if ms < 67.0 {
-        "15 fps"
-    } else if ms < 200.0 {
-        "5 fps"
-    } else if ms < 400.0 {
-        "2 fps"
-    } else {
-        ""
-    }
-}
 
 fn preview_pipeline_cache_key(
     film_name: &str,
@@ -2292,6 +1815,11 @@ fn locate_f64_cli() -> Result<PathBuf, String> {
         .into())
 }
 
+
+
+
+
+
 fn f64_cli_names() -> &'static [&'static str] {
     if cfg!(windows) {
         &["spektrafilm-f64.exe", "spektrafilm-f64"]
@@ -2300,7 +1828,6 @@ fn f64_cli_names() -> &'static [&'static str] {
     }
 }
 
-/// Minimal PATH lookup so we don't pull in the `which` crate for one call.
 fn which_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -2312,8 +1839,6 @@ fn which_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Removes export state and staged images on cancellation, failure, or close.
-/// A staged image keeps its destination so only the UI can publish completion.
 struct TempPath(PathBuf, Option<PathBuf>);
 
 impl TempPath {

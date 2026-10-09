@@ -84,6 +84,8 @@ struct Converter {
     cmy_max: [f64; 3],
     calibration: [[f64; 3]; 3],
     gain: f64,
+    seed_log_rgb: [f64; 3],
+    seed_inverse: nalgebra::Matrix3<f64>,
 }
 
 impl Converter {
@@ -137,7 +139,7 @@ impl Converter {
                 cmy_max[channel] = (hi - lo).max(1e-6);
             }
         }
-        Ok(Self {
+        let mut converter = Self {
             dye,
             base,
             illuminant,
@@ -147,7 +149,19 @@ impl Converter {
             cmy_max,
             calibration: parse_calibration(&params.film_render.convert.calibration)?,
             gain: 2.0f64.powf(params.film_render.convert.exposure_compensation_ev),
-        })
+            seed_log_rgb: [0.0; 3],
+            seed_inverse: nalgebra::Matrix3::zeros(),
+        };
+        let (rgb, jacobian) = converter.forward_jacobian(cmy_max.map(|v| v * 0.5));
+        converter.seed_log_rgb = rgb.map(|v| v.max(1e-12).log10());
+        let gradient = nalgebra::Matrix3::from_fn(|row, column| {
+            -jacobian[row][column] / (rgb[row].max(1e-12) * LN10)
+        });
+        let svd = gradient.svd(true, true);
+        let cutoff = svd.singular_values.max() * 1e-15;
+        converter.seed_inverse = svd.pseudo_inverse(cutoff)
+            .map_err(|error| format!("Cannot initialize film conversion seed: {error}"))?;
+        Ok(converter)
     }
 
     fn forward_jacobian(&self, cmy: [f64; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
@@ -194,7 +208,13 @@ impl Converter {
                 + source[2] * self.calibration[2][j])
                 * self.gain;
         }
-        let mut cmy = [self.cmy_max[0] * 0.5, self.cmy_max[1] * 0.5, self.cmy_max[2] * 0.5];
+        let log_delta = nalgebra::Vector3::from_fn(|i, _| {
+            self.seed_log_rgb[i] - target[i].max(1e-12).log10()
+        });
+        let offset = self.seed_inverse * log_delta;
+        let mut cmy = std::array::from_fn(|i| {
+            (self.cmy_max[i] * 0.5 + offset[i]).clamp(0.0, self.cmy_max[i])
+        });
         for _ in 0..8 {
             let (rgb, jac) = self.forward_jacobian(cmy);
             let residual = [rgb[0] - target[0], rgb[1] - target[1], rgb[2] - target[2]];

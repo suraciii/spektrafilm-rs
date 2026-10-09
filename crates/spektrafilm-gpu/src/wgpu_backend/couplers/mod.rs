@@ -540,4 +540,3 @@ impl DirState {
         dispatch_linear(encoder, &self.density_curve_0); // buf_b → buf_a (corrected)
     }
 }
-

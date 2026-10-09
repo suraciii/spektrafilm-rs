@@ -547,15 +547,14 @@ mod parity_tests {
 
         assert!(cref.has_remap(), "print path must build a luminance remap");
         let (m, q) = cref.xyz_remap.unwrap();
-        // Reference values from upstream 0.3.4's color_reference.py print
-        // path (SimulationPipeline at default params, corrections on):
-        //   m = 1.1805080822518117
-        //   q = -3.99466139952556459e-3
-        //   printing_exposure_correction = 1.0644087236240962
-        assert!((m - 1.1805080822518117).abs() < 1e-6, "m = {m}");
-        assert!((q - -3.99466139952556459e-3).abs() < 1e-7, "q = {q}");
+        // Independently generated with upstream 28bf883e SimulationPipeline:
+        // init_params(portra_400, portra_endura), scanner corrections enabled,
+        // digest_params(apply_stocks_specifics=False), then process a 4x4 gray.
+        // Neutral database filters: Y=51.2543, M=51.8405; fitted model curves.
+        assert!((m - 1.1797488764714494).abs() < 1e-6, "m = {m}");
+        assert!((q - -0.004027927281174062).abs() < 1e-7, "q = {q}");
         assert!(
-            (cref.printing_exposure_correction - 1.0644087236240962).abs() < 1e-6,
+            (cref.printing_exposure_correction - 1.0637192613949777).abs() < 1e-6,
             "printing_exposure_correction = {}",
             cref.printing_exposure_correction
         );

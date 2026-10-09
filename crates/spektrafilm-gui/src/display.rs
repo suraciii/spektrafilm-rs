@@ -165,11 +165,10 @@ impl Viewer {
     pub fn controls(&mut self, ui: &mut egui::Ui) -> bool {
         let before=(self.settings.clone(),self.zoom,self.zoom_percent,self.pan);
         ui.horizontal_wrapped(|ui| {
-            egui::ComboBox::from_id_salt("viewer-interpolation").selected_text(self.settings.interpolation.name()).show_ui(ui,|ui| { for name in INTERPOLATIONS { ui.selectable_value(&mut self.settings.interpolation,Interpolation::parse(name),name); } });
-            ui.checkbox(&mut self.settings.gray_18_canvas,"18% gray");
-            ui.add(egui::Slider::new(&mut self.settings.white_padding,0.0..=1.0).text("White border"));
-            ui.checkbox(&mut self.settings.reveal,"Reveal"); ui.checkbox(&mut self.settings.crossfade,"Crossfade");
-            if ui.button("Fit").clicked() { self.reset_view(); }
+            egui::ComboBox::from_label("Output interpolation").selected_text(self.settings.interpolation.name()).show_ui(ui,|ui| { for name in INTERPOLATIONS { ui.selectable_value(&mut self.settings.interpolation,Interpolation::parse(name),name); } });
+            ui.checkbox(&mut self.settings.use_display_transform, "Use display transform");
+            ui.checkbox(&mut self.settings.gray_18_canvas,"Gray 18% canvas");
+            ui.add(egui::Slider::new(&mut self.settings.white_padding,0.0..=1.0).text("White padding"));
         });
         before!=(self.settings.clone(),self.zoom,self.zoom_percent,self.pan)
     }

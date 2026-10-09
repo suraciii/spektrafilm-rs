@@ -1,5 +1,5 @@
+use super::{default_one, default_true};
 use serde::{Deserialize, Serialize};
-use super::{default_true, default_one};
 
 /// Selects the film-grain implementation. V1 remains the default for
 /// backwards-compatible recipes; V2 is procedural grain in linear scanner RGB.
@@ -71,6 +71,18 @@ pub struct GrainParams {
     pub v2_highlights: Option<f32>,
     #[serde(default)]
     pub v2_chroma: Option<f32>,
+    #[serde(default = "default_grain_v2_resolution_type")]
+    pub v2_resolution_type: u32,
+    #[serde(default = "default_grain_v2_timer")]
+    pub v2_timer: f32,
+    #[serde(default = "default_particle_scale_sublayers_f64")]
+    pub particle_scale_sublayers: [f64; 3],
+    #[serde(default = "default_07")]
+    pub mult_usm_sigma: f32,
+    #[serde(default = "default_15")]
+    pub mult_usm_amount: f32,
+    #[serde(default = "default_micro_sublayers")]
+    pub micro_sublayers: u32,
     /// Film Resolution override, 0..=100. Unset inherits the profile.
     #[serde(default)]
     pub v2_resolution_factor: Option<f32>,
@@ -85,7 +97,7 @@ pub struct GrainParams {
     pub particle_area_um2: f64,
     #[serde(default = "default_particle_scale_f64")]
     pub particle_scale: [f64; 3],
-    #[serde(default = "default_particle_scale_layers_f64")]
+    #[serde(default = "default_particle_scale_layers_f64", skip_serializing)]
     pub particle_scale_layers: [f64; 3],
     #[serde(default = "default_rms_granularity_f64")]
     pub rms_granularity: [f64; 3],
@@ -117,6 +129,24 @@ fn default_particle_scale_f64() -> [f64; 3] {
 fn default_particle_scale_layers_f64() -> [f64; 3] {
     [2.0, 1.0, 0.5]
 }
+fn default_particle_scale_sublayers_f64() -> [f64; 3] {
+    [1.0, 0.4, 0.25]
+}
+fn default_grain_v2_resolution_type() -> u32 {
+    0
+}
+fn default_grain_v2_timer() -> f32 {
+    0.0
+}
+fn default_07() -> f32 {
+    0.7
+}
+fn default_15() -> f32 {
+    1.5
+}
+fn default_micro_sublayers() -> u32 {
+    1
+}
 fn default_density_min_f64() -> [f64; 3] {
     [0.03, 0.03, 0.03]
 }
@@ -124,7 +154,7 @@ fn default_rms_granularity_f64() -> [f64; 3] {
     [0.0, 0.0, 0.0]
 }
 fn default_uniformity_f64() -> [f64; 3] {
-    [0.97, 0.99, 0.97]
+    [0.97, 0.97, 0.97]
 }
 impl Default for GrainParams {
     fn default() -> Self {
@@ -140,6 +170,8 @@ impl Default for GrainParams {
             v2_midtones: None,
             v2_highlights: None,
             v2_chroma: None,
+            v2_resolution_type: 0,
+            v2_timer: 0.0,
             v2_resolution_factor: None,
             sublayers_active: true,
             particle_area_um2: 0.2,
@@ -147,9 +179,13 @@ impl Default for GrainParams {
             particle_scale_layers: [2.0, 1.0, 0.5],
             rms_granularity: [0.0, 0.0, 0.0],
             density_min: [0.03, 0.03, 0.03],
-            uniformity: [0.97, 0.99, 0.97],
-            blur: 0.65,
-            blur_dye_clouds_um: 1.0,
+            uniformity: [0.97, 0.97, 0.97],
+            particle_scale_sublayers: [1.0, 0.4, 0.25],
+            blur: 0.89,
+            mult_usm_sigma: 0.7,
+            mult_usm_amount: 1.5,
+            blur_dye_clouds_um: 2.0,
+            micro_sublayers: 1,
             micro_structure: [0.2, 30.0],
             n_sub_layers: 1,
             monochrome: false,
@@ -167,36 +203,66 @@ impl GrainParams {
         let mut params = GrainV2Params::for_profile(index);
         params.amount = self.v2_amount.map_or(params.amount, |v| v / 100.0);
         if custom {
-            params.film_type = match self.v2_film_type {
-                GrainV2FilmType::Negative => 0,
-                GrainV2FilmType::Positive => 1,
-            };
             params.mode = match self.v2_mode {
                 GrainV2Mode::Analogue => v2::GrainV2Mode::Analogue,
                 GrainV2Mode::Noise => v2::GrainV2Mode::Noise,
+            };
+            params.film_type = match self.v2_film_type {
+                GrainV2FilmType::Negative => 0,
+                GrainV2FilmType::Positive => 1,
             };
             params.size = self.v2_size.unwrap_or(params.size);
             params.shadows = self.v2_shadows.map_or(params.shadows, |v| v / 100.0);
             params.midtones = self.v2_midtones.map_or(params.midtones, |v| v / 100.0);
             params.highlights = self.v2_highlights.map_or(params.highlights, |v| v / 100.0);
             params.color = self.v2_chroma.map_or(params.color, |v| v / 100.0);
-            params.resolution_factor = self.v2_resolution_factor.unwrap_or(params.resolution_factor);
+            params.resolution_factor = self
+                .v2_resolution_factor
+                .unwrap_or(params.resolution_factor);
         }
         params
+    }
+    /// Convert the selected V2 profile to the shared f32 GPU boundary.
+    pub fn gpu_params(
+        &self,
+        random_seed: u64,
+        deactivate_spatial_effects: bool,
+    ) -> spektrafilm_gpu::GrainV2GpuParams {
+        let mut grain = self.resolved_grain_v2();
+        if deactivate_spatial_effects {
+            grain.resolution_factor = 100.0;
+        }
+        grain.seed = random_seed as u32;
+        spektrafilm_gpu::GrainV2GpuParams {
+            mode: grain.mode as u32,
+            film_type: grain.film_type,
+            amount: grain.amount,
+            shadows: grain.shadows,
+            midtones: grain.midtones,
+            highlights: grain.highlights,
+            raw_scale: grain.size,
+            cluster_size: grain.cluster_size,
+            rotation: grain.rotation,
+            color: grain.color,
+            resolution_factor: grain.resolution_factor,
+            seed: grain.seed,
+            colored: grain.colored,
+            clustered: grain.clustered,
+        }
     }
 
     /// Custom starts with the values of the last selected preset.
     pub fn select_custom_grain_v2(&mut self) {
         let params = self.resolved_grain_v2();
         self.v2_profile = "custom".into();
-        self.v2_film_type = if params.film_type == 0 {
-            GrainV2FilmType::Negative
-        } else {
-            GrainV2FilmType::Positive
-        };
         self.v2_mode = match params.mode {
             spektrafilm_model::grain::v2::GrainV2Mode::Analogue => GrainV2Mode::Analogue,
             spektrafilm_model::grain::v2::GrainV2Mode::Noise => GrainV2Mode::Noise,
+        };
+        self.v2_film_type = if params.film_type == 1 {
+            GrainV2FilmType::Positive
+        } else {
+            GrainV2FilmType::Negative
         };
         self.v2_size = Some(params.size);
         self.v2_amount = Some(params.amount * 100.0);

@@ -239,6 +239,7 @@ class X11:
             'main': {'main', 'mb', 'iain', 'jain', 'nn', 'n'},
             'open': {'open', 'pen', 'per', 'pe'},
             'save': {'save', 'ave', 'saye'},
+            'config': {'config', 'confic'},
         }
         matches = []
         for line in lines:

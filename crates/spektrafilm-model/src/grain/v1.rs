@@ -4,7 +4,7 @@
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::gaussian;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, ZERO, from_f64};
+use spektrafilm_math::precision::{Scalar, ZERO, from_f64, to_f64};
 use spektrafilm_math::stats::{self, FastStatsRng};
 use rayon::prelude::*;
 use std::time::Instant;
@@ -291,6 +291,45 @@ fn add_micro_structure(
         }
     }
 }
+/// Apply the upstream mass-conserving density-domain unsharp mask.
+fn apply_multiplicative_unsharp_mask(
+    image: &ImageBuf,
+    sigma: f32,
+    amount: f32,
+    backend: &dyn ComputeBackend,
+) -> ImageBuf {
+    if sigma <= 0.0 || amount <= 0.0 {
+        return image.clone();
+    }
+    let blurred = backend.gaussian_blur(image, sigma);
+    let mut out = image.clone();
+    let mut sums = [0.0f64; 3];
+    let mut out_sums = [0.0f64; 3];
+    for (i, px) in image.pixels().enumerate() {
+        let out_px = &mut out.data[i * 3..i * 3 + 3];
+        let blur_px = &blurred.data[i * 3..i * 3 + 3];
+        for c in 0..3 {
+            let density = to_f64(px[c]).max(0.0);
+            let blur_density = to_f64(blur_px[c]).max(1e-6);
+            let sharpened = if density <= 0.0 {
+                0.0
+            } else {
+                density.powf(1.0 + amount as f64) / blur_density.powf(amount as f64)
+            };
+            out_px[c] = from_f64(sharpened);
+            sums[c] += density;
+            out_sums[c] += sharpened;
+        }
+    }
+    for px in out.pixels_mut() {
+        for c in 0..3 {
+            if out_sums[c] > 0.0 {
+                px[c] = from_f64(to_f64(px[c]) * sums[c] / out_sums[c]);
+            }
+        }
+    }
+    out
+}
 
 /// Apply layered (per-sublayer) grain to a CMY density image.
 ///
@@ -310,6 +349,50 @@ fn add_micro_structure(
 /// are multiplied by the lognormal micro-structure, offset by the base
 /// `density_min`, and finally blurred by `grain_blur` (gated `> 0`, unlike
 /// the composite path's `> 0.4`).
+/// Derive the coarsest-sub-layer particle area from the datasheet RMS
+/// granularity, matching the upstream multilayer peak calculation.
+pub fn particle_area_from_rms_granularity(
+    density_curves_layers: &[[[f64; 3]; 3]],
+    density_max_layers: &[[f64; 3]; 3],
+    density_min: [f64; 3],
+    grain_uniformity: [f64; 3],
+    rms_granularity: [f64; 3],
+    particle_scale_sublayers: [f64; 3],
+) -> [f64; 3] {
+    const APERTURE_AREA_UM2: f64 = std::f64::consts::PI * 24.0 * 24.0;
+    let mut total = [0.0f64; 3];
+    for layer in density_max_layers {
+        for ch in 0..3 {
+            total[ch] += layer[ch];
+        }
+    }
+    let mut peak = [0.0f64; 3];
+    for ch in 0..3 {
+        let mut weighted = [0.0; 3];
+        for sl in 0..3 {
+            let fraction = density_max_layers[sl][ch] / total[ch].max(1e-12);
+            weighted[sl] = fraction * density_min[ch];
+        }
+        for curve in density_curves_layers {
+            let mut variance = 0.0;
+            for sl in 0..3 {
+                let density = curve[sl][ch] + weighted[sl];
+                let dmax = density_max_layers[sl][ch] + weighted[sl];
+                let fraction = density_max_layers[sl][ch] / total[ch].max(1e-12);
+                variance += (particle_scale_sublayers[sl] / fraction.max(1e-12))
+                    * density
+                    * (dmax - grain_uniformity[ch] * density);
+            }
+            peak[ch] = peak[ch].max(variance);
+        }
+    }
+    [
+        (rms_granularity[0] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[0].max(1e-9),
+        (rms_granularity[1] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[1].max(1e-9),
+        (rms_granularity[2] / 1000.0).powi(2) * APERTURE_AREA_UM2 / peak[2].max(1e-9),
+    ]
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn apply_grain_to_density_layers(
     density_cmy_layers: &[[Vec<Scalar>; 3]; 3],
@@ -317,14 +400,15 @@ pub fn apply_grain_to_density_layers(
     width: u32,
     height: u32,
     pixel_size_um: f64,
-    particle_area_um2: f64,
-    particle_scale: [f64; 3],
+    particle_area_um2: [f64; 3],
     particle_scale_layers: [f64; 3],
     density_min: [f64; 3],
     grain_uniformity: [f64; 3],
     grain_blur: f32,
     grain_blur_dye_clouds_um: f32,
     grain_micro_structure: [f32; 2],
+    mult_usm_sigma: f32,
+    mult_usm_amount: f32,
     monochrome: bool,
     use_fast_stats: bool,
     base_seed: u64,
@@ -355,7 +439,7 @@ pub fn apply_grain_to_density_layers(
             density_min_layers[sl][ch] = fractions[sl][ch] * density_min[ch];
             density_max_adj[sl][ch] = density_max_layers[sl][ch] + density_min_layers[sl][ch];
             let particle_area_layer =
-                particle_area_um2 * particle_scale[ch] * particle_scale_layers[sl];
+                particle_area_um2[ch] * particle_scale_layers[sl];
             n_particles[sl][ch] = pixel_area * fractions[sl][ch] / particle_area_layer;
         }
     }
@@ -412,18 +496,27 @@ pub fn apply_grain_to_density_layers(
 
     let mut out = ImageBuf::new(width, height);
     for ch in 0..3 {
-        let dmin_s = from_f64(density_min[ch]);
-        let plane: Vec<Scalar> = planes[ch].iter().map(|&v| v - dmin_s).collect();
-        out.write_channel(ch, &plane);
+        out.write_channel(ch, &planes[ch]);
     }
 
-    // Final blur — upstream gates the layered path on `grain_blur > 0`.
+    // Final blur and mass-conserving multiplicative USM operate on absolute
+    // density, before the per-channel density floor is removed.
     if grain_blur > 0.0 {
         let t = Instant::now();
         out = backend.gaussian_blur(&out, grain_blur);
         print_stage_timing(stage_timings, "grain.final_blur", t);
     }
-
+    out = apply_multiplicative_unsharp_mask(
+        &out,
+        mult_usm_sigma,
+        mult_usm_amount,
+        backend,
+    );
+    for px in out.pixels_mut() {
+        for ch in 0..3 {
+            px[ch] -= from_f64(density_min[ch]);
+        }
+    }
     out
 }
 
@@ -488,14 +581,15 @@ mod tests {
             3,
             3,
             pixel_size_um,
-            0.2,
-            PARTICLE_SCALE,
+            [0.2; 3],
             particle_scale_layers,
             DENSITY_MIN,
             UNIFORMITY,
             0.0,
             dye_blur,
             micro_structure,
+            0.0,
+            0.0,
             false,
             use_fast_stats,
             0,
@@ -610,14 +704,15 @@ mod tests {
                 3,
                 3,
                 12.0,
-                0.2,
-                [PARTICLE_SCALE[0]; 3],
+                [0.2; 3],
                 PARTICLE_SCALE_LAYERS,
                 DENSITY_MIN,
                 [0.97; 3],
                 0.0,
                 0.0,
                 [0.0, 0.0],
+                0.0,
+                0.0,
                 monochrome,
                 false,
                 0,
