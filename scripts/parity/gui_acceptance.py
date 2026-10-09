@@ -473,7 +473,9 @@ class X11:
             buttons = self.ocr.image_to_data(surface, config='--psm 11', output_type=self.ocr.Output.DICT)
             clicked = False
             for i, word in enumerate(buttons['text']):
-                if word.strip() in ('OK', 'Open', 'Select', 'Save'):
+                if (word.strip() in ('OK', 'Open', 'Select', 'Save')
+                        and 100 <= buttons['left'][i] <= 1000
+                        and 100 <= buttons['top'][i] <= 750):
                     self.xd('mousemove', buttons['left'][i] + buttons['width'][i] // 2,
                             buttons['top'][i] + buttons['height'][i] // 2)
                     self.xd('click', 1)
