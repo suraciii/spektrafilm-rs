@@ -1,8 +1,70 @@
+pub mod converting;
 mod debug_compare;
 pub mod filming;
 pub mod printing;
 pub mod scanning;
-pub mod converting;
+
+use spektrafilm_math::image::ImageBuf;
+use spektrafilm_math::precision::from_f64;
+
+/// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy
+/// grid. Layout mirrors Python's `_create_lut_3d`:
+///
+/// ```text
+///   reshape(meshgrid(x_r, x_g, x_b, indexing='ij'), (steps², steps, 3))
+/// ```
+///
+/// → pixel at (col=k, row=i*steps+j) carries cmy = (x_r[i], x_g[j], x_b[k]).
+/// Running the spectral function on this 2-D image then reshapes back to
+/// a `steps × steps × steps × 3` LUT indexed by `((i, j, k), c)`.
+fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> ImageBuf {
+    let mut grid = ImageBuf::new(steps as u32, (steps * steps) as u32);
+    let step_inv = (steps - 1) as f64;
+    for i in 0..steps {
+        let x_r = data_min[0] + (data_max[0] - data_min[0]) * (i as f64) / step_inv;
+        for j in 0..steps {
+            let x_g = data_min[1] + (data_max[1] - data_min[1]) * (j as f64) / step_inv;
+            for k in 0..steps {
+                let x_b = data_min[2] + (data_max[2] - data_min[2]) * (k as f64) / step_inv;
+                let row = i * steps + j;
+                let base = (row * steps + k) * 3;
+                grid.data[base] = from_f64(x_r);
+                grid.data[base + 1] = from_f64(x_g);
+                grid.data[base + 2] = from_f64(x_b);
+            }
+        }
+    }
+    grid
+}
+
+#[cfg(test)]
+mod lut_grid_tests {
+    use super::build_lut_grid;
+    use spektrafilm_math::precision::from_f64;
+
+    #[test]
+    fn grid_preserves_layout_and_negative_bounds_endpoints() {
+        let steps = 3;
+        let grid = build_lut_grid(steps, [-2.0, -4.0, -8.0], [2.0, 2.0, 0.0]);
+        assert_eq!((grid.width, grid.height), (3, 9));
+        assert_eq!(grid.data.len(), steps * steps * steps * 3);
+
+        for (i, r) in [-2.0, 0.0, 2.0].into_iter().enumerate() {
+            for (j, g) in [-4.0, -1.0, 2.0].into_iter().enumerate() {
+                for (k, b) in [-8.0, -4.0, 0.0].into_iter().enumerate() {
+                    let base = ((i * steps + j) * steps + k) * 3;
+                    for (channel, expected) in [r, g, b].into_iter().enumerate() {
+                        assert_eq!(
+                            grid.data[base + channel].to_bits(),
+                            from_f64(expected).to_bits(),
+                            "grid coordinate ({i}, {j}, {k}), channel {channel}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod integration_tests {
@@ -30,8 +92,13 @@ mod integration_tests {
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let paper = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
-        let image = ImageBuf::from_data(8, 6, (0..8 * 6 * 3)
-            .map(|i| from_f64(0.12 + (i % 29) as f64 / 40.0)).collect());
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(0.12 + (i % 29) as f64 / 40.0))
+                .collect(),
+        );
         for space_name in ["sRGB", "Display P3", "ProPhoto RGB", "ITU-R BT.2020"] {
             let space = colorspace::resolve(space_name).unwrap();
             for scan_film in [false, true] {
@@ -44,8 +111,11 @@ mod integration_tests {
                 params.io.scan_film = scan_film;
                 params.io.output_color_space = space_name.into();
                 params.random_seed = 5489;
-                let render = |p: RuntimeParams| Pipeline::new(film.clone(), paper.clone(), p)
-                    .process(image.clone(), &backend).unwrap();
+                let render = |p: RuntimeParams| {
+                    Pipeline::new(film.clone(), paper.clone(), p)
+                        .process(image.clone(), &backend)
+                        .unwrap()
+                };
                 let encoded_base = render(params.clone());
                 params.film_render.grain.active = true;
                 params.film_render.grain.engine = GrainEngine::V2;
@@ -59,13 +129,18 @@ mod integration_tests {
                     let encoded = render(params.clone());
                     params.io.output_cctf_encoding = false;
                     let linear = render(params.clone());
-                    for ((&actual, &reference), &linear_value) in encoded.data.iter()
-                        .zip(&expected.data).zip(&linear.data) {
-                        assert!((actual as f64 - reference as f64).abs() < 1e-6,
-                            "{space_name} {scan_film} {mode:?}: grain must consume native encoded scan RGB");
+                    for ((&actual, &reference), &linear_value) in
+                        encoded.data.iter().zip(&expected.data).zip(&linear.data)
+                    {
+                        assert!(
+                            (actual as f64 - reference as f64).abs() < 1e-6,
+                            "{space_name} {scan_film} {mode:?}: grain must consume native encoded scan RGB"
+                        );
                         let decoded = colorspace::cctf_decode(actual as f64, space.cctf);
-                        assert!((linear_value as f64 - decoded).abs() < 1e-6,
-                            "{space_name} {scan_film} {mode:?}: linear export changes grain realization");
+                        assert!(
+                            (linear_value as f64 - decoded).abs() < 1e-6,
+                            "{space_name} {scan_film} {mode:?}: linear export changes grain realization"
+                        );
                     }
                 }
             }
@@ -127,11 +202,8 @@ mod integration_tests {
             params.settings.use_scanner_lut = false;
             params.io.input_color_space = "sRGB".into();
             params.io.output_color_space = "sRGB".into();
-            let image = ImageBuf::from_data(
-                1,
-                1,
-                vec![from_f64(0.2), from_f64(0.3), from_f64(0.4)],
-            );
+            let image =
+                ImageBuf::from_data(1, 1, vec![from_f64(0.2), from_f64(0.3), from_f64(0.4)]);
             let result = Pipeline::new(film, print, params)
                 .process(image, &backend)
                 .unwrap();
@@ -198,7 +270,6 @@ mod integration_tests {
             }
         }
     }
-
 
     #[test]
     fn test_film_scan_pipeline() {
@@ -319,16 +390,34 @@ mod debug_tests {
         let img = ImageBuf::from_data(1, 1, vec![gray, gray, gray]);
         eprintln!("Input: {:?}", img.get(0, 0));
 
-        let ref_illuminant = crate::spectral_service::select_illuminant(&film.info.reference_illuminant);
-        let log_raw =
-            stages::filming::expose(&img, &film, &params, &backend, None, None, &ref_illuminant, 1.0, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1), 0.0);
+        let ref_illuminant =
+            crate::spectral_service::select_illuminant(&film.info.reference_illuminant);
+        let log_raw = stages::filming::expose(
+            &img,
+            &film,
+            &params,
+            &backend,
+            None,
+            None,
+            &ref_illuminant,
+            1.0,
+            crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1),
+            0.0,
+        );
         eprintln!("log_raw: {:?}", log_raw.get(0, 0));
 
-        let density_cmy = stages::filming::develop(&log_raw, &film, &params, &backend, crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1));
+        let density_cmy = stages::filming::develop(
+            &log_raw,
+            &film,
+            &params,
+            &backend,
+            crate::resizing::pixel_size_um(params.camera.film_format_mm, 1, 1),
+        );
         eprintln!("density_cmy: {:?}", density_cmy.get(0, 0));
 
         // Use simplified printing path for debug trace
-        let printed = stages::printing::process(&density_cmy, &film, &print, &params, &backend).unwrap();
+        let printed =
+            stages::printing::process(&density_cmy, &film, &print, &params, &backend).unwrap();
         eprintln!("density_print: {:?}", printed.get(0, 0));
         let density_print = printed;
         let rgb_out = stages::scanning::scan(
@@ -400,7 +489,8 @@ mod scan_semantics_tests {
         let mut quiet = quiet_params();
         quiet.io.scan_film = true;
         let base = Pipeline::new(film.clone(), film.clone(), quiet.clone())
-            .process(img.clone(), &backend).unwrap();
+            .process(img.clone(), &backend)
+            .unwrap();
 
         // Crank film_render.glare far past its normal range — upstream 0.3.4
         // sets `glare = None` on the scan_film path, so the output must be
@@ -409,7 +499,9 @@ mod scan_semantics_tests {
         quiet.film_render.glare.percent = 0.9;
         quiet.film_render.glare.roughness = 1.5;
         quiet.film_render.glare.blur = 2.0;
-        let loud = Pipeline::new(film.clone(), film, quiet).process(img, &backend).unwrap();
+        let loud = Pipeline::new(film.clone(), film, quiet)
+            .process(img, &backend)
+            .unwrap();
 
         assert_eq!(
             max_diff(&base, &loud),
@@ -431,12 +523,15 @@ mod scan_semantics_tests {
         low.print_render.glare.percent = 0.01;
         low.print_render.glare.roughness = 0.0;
         low.print_render.glare.blur = 0.0;
-        let out_low =
-            Pipeline::new(film.clone(), print.clone(), low.clone()).process(img.clone(), &backend).unwrap();
+        let out_low = Pipeline::new(film.clone(), print.clone(), low.clone())
+            .process(img.clone(), &backend)
+            .unwrap();
 
         let mut high = low;
         high.print_render.glare.percent = 0.15;
-        let out_high = Pipeline::new(film, print, high).process(img, &backend).unwrap();
+        let out_high = Pipeline::new(film, print, high)
+            .process(img, &backend)
+            .unwrap();
 
         let diff = max_diff(&out_low, &out_high);
         assert!(
@@ -452,7 +547,6 @@ mod scan_semantics_tests {
             .any(|(h, l)| to_f64(*h) < to_f64(*l) - 1e-6);
         assert!(!any_darker, "glare darkened pixels — wrong sign");
     }
-
 
     #[test]
     fn preflash_shifts_print_black_white_references() {
@@ -520,7 +614,9 @@ mod scan_semantics_tests {
         let mut params = RuntimeParams::default();
         params.camera.diffusion_filter.active = true;
         params.camera.diffusion_filter.filter_family = "nope".into();
-        let err = Pipeline::new_with_spectral(film, print, params, &dir).err().expect("effective unknown filter must fail");
+        let err = Pipeline::new_with_spectral(film, print, params, &dir)
+            .err()
+            .expect("effective unknown filter must fail");
         assert!(err.contains("unknown diffusion filter family"));
     }
 }

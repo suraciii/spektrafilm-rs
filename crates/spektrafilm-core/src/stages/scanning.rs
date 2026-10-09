@@ -8,30 +8,9 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::{Scalar, from_f64};
 
+use super::build_lut_grid;
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
-
-/// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy grid.
-/// Same layout as the enlarger LUT helper in `printing.rs`.
-fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> ImageBuf {
-    let mut grid = ImageBuf::new(steps as u32, (steps * steps) as u32);
-    let step_inv = (steps - 1) as f64;
-    for i in 0..steps {
-        let x_r = data_min[0] + (data_max[0] - data_min[0]) * (i as f64) / step_inv;
-        for j in 0..steps {
-            let x_g = data_min[1] + (data_max[1] - data_min[1]) * (j as f64) / step_inv;
-            for k in 0..steps {
-                let x_b = data_min[2] + (data_max[2] - data_min[2]) * (k as f64) / step_inv;
-                let row = i * steps + j;
-                let base = (row * steps + k) * 3;
-                grid.data[base] = from_f64(x_r);
-                grid.data[base + 1] = from_f64(x_g);
-                grid.data[base + 2] = from_f64(x_b);
-            }
-        }
-    }
-    grid
-}
 
 /// Scanner LUT bounds. When scan_film=true: `-grain.density_min` to
 /// `nanmax(film.density_curves)`. Else: `nanmin..nanmax` of
@@ -164,23 +143,11 @@ pub fn scan_with_options(
     scan_illuminant: Option<&str>,
     include_base: bool,
 ) -> ImageBuf {
-    // Python parity — channel_density / base_density are f64 in the JSON profile.
-    let channel_density: Vec<[f64; 3]> = profile
-        .data
-        .channel_density
-        .iter()
-        .map(|row| {
-            [
-                row.get(0).copied().unwrap_or(0.0),
-                row.get(1).copied().unwrap_or(0.0),
-                row.get(2).copied().unwrap_or(0.0),
-            ]
-        })
-        .collect();
-    let base_density: Vec<f64> = if include_base {
-        profile.data.base_density.clone()
+    let channel_density = crate::chain_prep::channel_density(profile);
+    let base_density = if include_base {
+        std::borrow::Cow::Borrowed(profile.data.base_density.as_slice())
     } else {
-        vec![0.0; profile.data.base_density.len()]
+        std::borrow::Cow::Owned(vec![0.0; profile.data.base_density.len()])
     };
 
     let output_space = colorspace::resolve(&params.io.output_color_space)
@@ -295,11 +262,14 @@ pub fn scan_with_options(
     // or primaries conversion. The scanned image supplies its output space.
     let grain_v2_active = params.film_render.grain.active
         && params.settings.rgb_to_raw_method != "mallett2019"
-        && matches!(params.film_render.grain.engine, crate::params::grain::GrainEngine::V2);
+        && matches!(
+            params.film_render.grain.engine,
+            crate::params::grain::GrainEngine::V2
+        );
     if params.io.output_cctf_encoding || grain_v2_active {
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-            let encoded = colorspace::encode_rgb(
-                [px[0] as f64, px[1] as f64, px[2] as f64], output_space);
+            let encoded =
+                colorspace::encode_rgb([px[0] as f64, px[1] as f64, px[2] as f64], output_space);
             px[0] = from_f64(encoded[0]);
             px[1] = from_f64(encoded[1]);
             px[2] = from_f64(encoded[2]);

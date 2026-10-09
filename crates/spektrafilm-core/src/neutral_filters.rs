@@ -30,11 +30,18 @@ impl NeutralFilters {
                 return Ok(Self { db: HashMap::new() });
             }
             Err(error) => {
-                return Err(format!("reading neutral filter database {}: {error}", path.display()));
+                return Err(format!(
+                    "reading neutral filter database {}: {error}",
+                    path.display()
+                ));
             }
         };
-        let raw: RawDb = serde_json::from_str(&text)
-            .map_err(|error| format!("parsing neutral filter database {}: {error}", path.display()))?;
+        let raw: RawDb = serde_json::from_str(&text).map_err(|error| {
+            format!(
+                "parsing neutral filter database {}: {error}",
+                path.display()
+            )
+        })?;
         Ok(Self { db: raw.0 })
     }
 
@@ -73,7 +80,10 @@ mod tests {
         .unwrap();
 
         let result = NeutralFilters::load(&root);
-        assert!(result.is_err(), "malformed filter data must not become an empty database");
+        assert!(
+            result.is_err(),
+            "malformed filter data must not become an empty database"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

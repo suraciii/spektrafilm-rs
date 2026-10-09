@@ -1,6 +1,5 @@
-use super::*;
 use super::blur::{BlurJob, DispatchJob};
-
+use super::*;
 
 /// Pre-built halation passes — owns the per-sigma kernel buffers, params
 /// buffers, and bind groups so they live long enough for the encoder.
@@ -24,7 +23,6 @@ pub(super) struct HalationState {
     blur_pipe_h: CachedPipelineRef,
     blur_pipe_v: CachedPipelineRef,
 }
-
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) fn build_halation_state(
@@ -59,14 +57,10 @@ pub(super) fn build_halation_state(
         wgpu::BufferBindingType::Storage { read_only: true },
         wgpu::BufferBindingType::Storage { read_only: false },
     ];
-    let blur_pipe_h = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_h.wgsl"),
-        blur_layout,
-    );
-    let blur_pipe_v = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_v.wgsl"),
-        blur_layout,
-    );
+    let blur_pipe_h =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
+    let blur_pipe_v =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
 
     // Helper: build a single H/V blur job from source → output, using buf_a
     // (the freed RGB upload) as blur scratch (mid).

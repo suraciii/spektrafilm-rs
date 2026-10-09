@@ -14,7 +14,6 @@ pub(super) struct DispatchJob {
     pub(super) bg: wgpu::BindGroup,
 }
 
-
 #[cfg(feature = "wgpu-backend")]
 pub(super) struct SimpleBlurState {
     _dst: wgpu::Buffer,
@@ -50,14 +49,8 @@ pub(super) fn build_simple_blur_state(
         wgpu::BufferBindingType::Storage { read_only: true },
         wgpu::BufferBindingType::Storage { read_only: false },
     ];
-    let blur_pipe_h = backend.cached_pipeline(
-        include_str!("gaussian_blur_h.wgsl"),
-        blur_layout,
-    );
-    let blur_pipe_v = backend.cached_pipeline(
-        include_str!("gaussian_blur_v.wgsl"),
-        blur_layout,
-    );
+    let blur_pipe_h = backend.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), blur_layout);
+    let blur_pipe_v = backend.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), blur_layout);
 
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]

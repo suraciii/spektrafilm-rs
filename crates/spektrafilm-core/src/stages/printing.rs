@@ -7,38 +7,9 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{PreparedPchip3d, pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::from_f64;
 
+use super::build_lut_grid;
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
-
-/// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy
-/// grid. Layout mirrors Python's `_create_lut_3d`:
-///
-/// ```text
-///   reshape(meshgrid(x_r, x_g, x_b, indexing='ij'), (steps², steps, 3))
-/// ```
-///
-/// → pixel at (col=k, row=i*steps+j) carries cmy = (x_r[i], x_g[j], x_b[k]).
-/// Running the spectral function on this 2-D image then reshapes back to
-/// a `steps × steps × steps × 3` LUT indexed by `((i, j, k), c)`.
-fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> ImageBuf {
-    let mut grid = ImageBuf::new(steps as u32, (steps * steps) as u32);
-    let step_inv = (steps - 1) as f64;
-    for i in 0..steps {
-        let x_r = data_min[0] + (data_max[0] - data_min[0]) * (i as f64) / step_inv;
-        for j in 0..steps {
-            let x_g = data_min[1] + (data_max[1] - data_min[1]) * (j as f64) / step_inv;
-            for k in 0..steps {
-                let x_b = data_min[2] + (data_max[2] - data_min[2]) * (k as f64) / step_inv;
-                let row = i * steps + j;
-                let base = (row * steps + k) * 3;
-                grid.data[base] = from_f64(x_r);
-                grid.data[base + 1] = from_f64(x_g);
-                grid.data[base + 2] = from_f64(x_b);
-            }
-        }
-    }
-    grid
-}
 
 /// Run `print_spectral` on a `steps³` grid of CMY inputs spanning
 /// `[data_min, data_max]` per channel, then PCHIP-interpolate the
@@ -162,33 +133,9 @@ pub fn expose_calibrated(
     bw_print_correction: f64,
     pixel_size_um: f64,
 ) -> ImageBuf {
-    // Python parity — `channel_density` and `base_density` are f64 in the profile JSON.
-    let channel_density: Vec<[f64; 3]> = film
-        .data
-        .channel_density
-        .iter()
-        .map(|row| {
-            [
-                row.get(0).copied().unwrap_or(0.0),
-                row.get(1).copied().unwrap_or(0.0),
-                row.get(2).copied().unwrap_or(0.0),
-            ]
-        })
-        .collect();
-    let base_density: Vec<f64> = film.data.base_density.clone();
-    // Python: `sensitivity = np.nan_to_num(10 ** log_sensitivity)` — f64 with NaN→0.
-    let print_sensitivity: Vec<[f64; 3]> = print
-        .log_sensitivity_f64()
-        .iter()
-        .map(|row| {
-            let mut out = [0.0f64; 3];
-            for c in 0..3 {
-                let v = 10.0f64.powf(row[c]);
-                out[c] = if v.is_nan() { 0.0 } else { v };
-            }
-            out
-        })
-        .collect();
+    let channel_density = crate::chain_prep::channel_density(film);
+    let base_density = &film.data.base_density;
+    let print_sensitivity = crate::chain_prep::print_sensitivity(print);
 
     // Stage 1: spectral integration → `log_raw_print` (Python parity).
     // print_spectral applies factor_midgray (exposure_factor) and the
@@ -299,37 +246,12 @@ pub fn develop(
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let log_exposure = print.log_exposure_f64();
-
-    // Mirrors Python `develop_print_morph`: model-backed profiles are always
-    // evaluated from the fitted model. Invalid custom models and morph
-    // parameters are returned to the caller rather than falling back to
-    // stored curves or panicking during rendering.
-    let morph = &params.print_render.density_curves_morph;
-    if let Some(model) = print.data.density_curves_model.as_ref() {
-        let curves = crate::print_morph::morph_density_curves(
-            &log_exposure,
-            model,
-            morph,
-            print.is_positive(),
-        )
-        .map_err(|error| format!("invalid print density-curve model: {error}"))?;
-        return Ok(backend.density_curve_interp(
-            log_raw_print,
-            &log_exposure,
-            &curves,
-            1.0,
-        ));
-    }
-
-    // Stored-curve path for profiles without a fitted model. Python parity
-    // note: print's `develop` uses `develop_simple` directly with RAW
-    // (un-normalized) density curves — no nanmin subtraction.
+    let curves = crate::chain_prep::PrintCurves::prepare(print, params)?;
     Ok(backend.density_curve_interp(
         log_raw_print,
-        &log_exposure,
-        &print.density_curves_f64(),
-        params.print_render.density_curve_gamma as f64,
+        curves.log_exposure,
+        &curves.density,
+        curves.gamma,
     ))
 }
 /// Full printing stage with pre-calibrated enlarger. `pixel_size_um`
@@ -379,32 +301,9 @@ pub fn process(
         (params.enlarger.m_filter_neutral + params.enlarger.m_filter_shift) as f64,
         (params.enlarger.y_filter_neutral + params.enlarger.y_filter_shift) as f64,
     );
-    // f64 throughout for Python parity.
-    let channel_density: Vec<[f64; 3]> = film
-        .data
-        .channel_density
-        .iter()
-        .map(|row| {
-            [
-                row.get(0).copied().unwrap_or(0.0),
-                row.get(1).copied().unwrap_or(0.0),
-                row.get(2).copied().unwrap_or(0.0),
-            ]
-        })
-        .collect();
-    let base_density: Vec<f64> = film.data.base_density.clone();
-    let print_sensitivity: Vec<[f64; 3]> = print
-        .log_sensitivity_f64()
-        .iter()
-        .map(|row| {
-            let mut out = [0.0f64; 3];
-            for c in 0..3 {
-                let v = 10.0f64.powf(row[c]);
-                out[c] = if v.is_nan() { 0.0 } else { v };
-            }
-            out
-        })
-        .collect();
+    let channel_density = crate::chain_prep::channel_density(film);
+    let base_density = &film.data.base_density;
+    let print_sensitivity = crate::chain_prep::print_sensitivity(print);
     let n_wl = illuminant
         .len()
         .min(channel_density.len())

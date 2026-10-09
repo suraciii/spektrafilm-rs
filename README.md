@@ -4,7 +4,7 @@
 
 A Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolpato/spektrafilm) — a spectral simulator for analogue colour film and the print-and-scan chain.
 
-The spectral chain (RGB → film dye density → enlarger illuminant → print paper → scanner RGB) is migrated against pinned Python spektrafilm 0.3.4 commit `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`. The GUI uses its native-precision Pipeline for Preview, Scan and Export; GPU arithmetic is f32, with CPU routing for effects without a faithful GPU implementation. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is assessed with per-scenario budgets, rather than universal bit identity.
+The spectral chain (RGB → film dye density → enlarger illuminant → print paper → scanner RGB) is migrated against pinned Python spektrafilm 0.3.4 commit `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`. The GUI uses its native-precision Runtime for Preview, Scan and Export; GPU arithmetic is f32, with CPU routing for effects without a faithful GPU implementation. The separate `spektrafilm-f64` CLI remains the CPU f64 reference. Numeric agreement is assessed with per-scenario budgets, rather than universal bit identity.
 
 ---
 
@@ -13,7 +13,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Spectral pipeline.** Hanatos2025 RGB→raw spectral upsampling with its full sensitivity adaptation (camera UV/IR band-pass filters with reference-illuminant normalization, erf4 band-pass window, poly4 log-exposure surface, spectral Gaussian blur), full 81-wavelength film/print/scanner spectral integration, density-curve interpolation, halation, DIR couplers, grain (bit-exact numpy `MT19937` port), glare, output CCTF encoding.
 - **Interactive preview** through wgpu (Metal on macOS), with CPU stages for exact optical diffusion and V1 grain sampling; V2 uses a compute shader. Frame rate depends on image size, controls and hardware.
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
-- **Independent GUI export.** **Export…** opens its own settings dialog, then a file chooser, and renders an immutable snapshot of the full input and simulation parameters through the GUI's Pipeline worker. CPU uses the GUI build's native precision; GPU uses WGPU f32 and faithful CPU stages where required. GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Cancellation discards work at the next boundary before atomic publication and may wait for an active computation.
+- **Independent GUI export.** **Export…** opens its own settings dialog, then a file chooser, and renders an immutable snapshot of the full input and simulation parameters through the GUI's Runtime worker. CPU uses the GUI build's native precision; GPU uses WGPU f32 and faithful CPU stages where required. GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Cancellation discards work at the next boundary before atomic publication and may wait for an active computation.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
 - **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
@@ -22,6 +22,8 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 ## Build
 
 Requires Rust stable (≥ 1.88), a C++17 compiler, pkg-config, OpenImageIO and Exiv2 development libraries. The locked `image` dependency requires Rust 1.88. Image I/O uses the same native libraries as Python 0.3.4, preserving float samples and EXIF/IPTC/XMP. On Debian/Ubuntu install `libopenimageio-dev libexiv2-dev libopenblas-dev`; Linux links the installed OpenBLAS library. On macOS use `brew install openimageio exiv2 pkg-config`. Windows packaging uses a matching MSYS2 UCRT64 native toolchain and pkg-config dependencies. The package scripts collect native runtime libraries; the build fails explicitly when required development libraries are absent.
+
+The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI checks all workspace targets with default and `precision-f64` features and runs the math unit tests, without release builds, Python parity or packaging. Pushes to `main-0.3.4` run the full three-platform release workflow: workspace tests, native builds and package smoke, plus the existing Linux Python parity and LUT acceptance checks. Version tags and manual dispatch also retain the full workflow.
 
 ```bash
 git clone <this-repo> && cd spektrafilm-rs
@@ -116,7 +118,7 @@ executable.
 - **Input image / Profiles** — choose input/output color workflow, film stock and print paper. Picking a film auto-selects its paired paper (`target_print` in the profile).
 - **Sliders** — exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger and output. Changes follow the selected sidebar tab and update the GPU preview according to Auto preview.
 - **Viewer controls** — `ccw rotate` and `cw rotate` physically rotate the in-memory input used by Preview, Scan and Export; Save writes the retained output of the latest render. `100%`, `200%` and `400%` map image pixels to exact device-pixel percentages; reset view returns to fit. Full-resolution Scan remains available in the viewport at these zoom levels instead of being capped by the preview long-edge limit.
-- **Export…** — open independent output settings, then choose a destination. The worker renders an immutable snapshot of the full input and simulation parameters through the same GUI Pipeline, independently of retained preview output. CPU uses native GUI precision; GPU uses WGPU f32 with faithful CPU stages where needed. JPEG exposes quality (1–100) and 4:4:4/4:2:0 chroma sampling, with a warning that JPEG remains lossy even at quality 100. TIFF/EXR expose their supported depth/compression settings. Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. The status bar shows elapsed time. **Cancel** signals the worker and discards its result before publication at the next boundary; it may wait for active computation. Closing the GUI cancels and joins the worker.
+- **Export…** — open independent output settings, then choose a destination. The worker renders an immutable snapshot of the full input and simulation parameters through the same GUI Runtime, independently of retained preview output. CPU uses native GUI precision; GPU uses WGPU f32 with faithful CPU stages where needed. JPEG exposes quality (1–100) and 4:4:4/4:2:0 chroma sampling, with a warning that JPEG remains lossy even at quality 100. TIFF/EXR expose their supported depth/compression settings. Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. The status bar shows elapsed time. **Cancel** signals the worker and discards its result before publication at the next boundary; it may wait for active computation. Closing the GUI cancels and joins the worker.
 - **Save…** — save the latest retained floating output without rerendering, using the current simulation saving color space and transfer encoding. The filename extension selects the format, with `.jpg` as the default: JPEG/PNG use 8-bit integer samples, TIFF uses 16-bit integer samples with ZIP compression, and OpenEXR uses 16-bit half samples. Save uses upstream OpenImageIO JPEG defaults rather than Export's quality/subsampling settings. Neither TIFF nor EXR forces ACES or linear encoding. Viewer borders, watermark and display ICC transforms stay out of saved pixels.
 - **Save state… / Load state…** — exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values; legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections or Rust extension versions appear in the status bar.
 - **Save startup default / Restore factory default** — persist the current controls, or remove that default and restore Kodak Gold 200 + Kodak Supra Endura. Startup files live in the platform configuration directory (`SPEKTRAFILM_CONFIG_DIR` overrides it); Rust-only runtime/viewer settings use the explicit `rust.version = 1` extension. File-dialog directories persist separately.
@@ -341,7 +343,7 @@ GPU preview uses f32 WGPU compute shaders. Effect-specific shaders live beside t
 crates/
   spektrafilm-math/    f64 reference math (spectral, interp, PCHIP, RNG, vForce bindings)
   spektrafilm-model/   stochastic + physical models (grain, halation, DIR couplers, glare)
-  spektrafilm-core/    pipeline orchestration, profiles, stage definitions
+  spektrafilm-core/    runtime facade, pipeline orchestration, profiles, stage definitions
   spektrafilm-gpu/     ComputeBackend trait + CPU (rayon + BLAS) and wgpu backends
   spektrafilm-shaders/ spectral WGSL shaders and standalone Metal sources
   spektrafilm-cli/     `spektrafilm` / `spektrafilm-f64` (process, list-profiles, lut, export-lut) + `decode_raw_gui`
@@ -355,6 +357,10 @@ data/
   license/             canonical spectral-data license
 scripts/parity/        Python 0.3.4 ↔ Rust differential harness (scenarios.py, py_reference.py, run_parity.py, gen_matrix.py)
 ```
+
+Production image execution enters through `spektrafilm_core::runtime`: `RuntimePhotoParams` owns the profile/data boundary and applies `DigestMode::PreserveUserEdits` for GUI edits or `DigestMode::ApplyStockSpecifics` for CLI/LUT construction. `Runtime` owns the calibrated pipeline and exposes processing/taps/timings. GUI Preview, Scan and independent Export use this facade directly with preserved user edits; Export owns its input and runtime snapshot. CPU f64 reference/export, WGPU f32 execution, and explicit per-stage CPU fallback remain backend-specific below this boundary.
+
+Shared film/print curve and spectral preparation lives in `chain_prep`; stages and the resident builder consume the same derivations. Backend-specific arithmetic, resource ownership and dispatch remain separate. See [the current P1+P2 record](GPU_UNIFY_PLAN.md#p1p2-当前实现2026-10-09) for the execution contract and verification limits.
 
 Feature ownership stays inside the existing crates:
 

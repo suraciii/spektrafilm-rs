@@ -14,9 +14,9 @@ pub(crate) mod validation;
 use couplers::DirCouplersParams;
 use diffusion::DiffusionFilterParams;
 use glare::GlareParams;
+pub use grain::GrainEngine;
 use grain::GrainParams;
 use halation::HalationParams;
-pub use grain::GrainEngine;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -340,7 +340,9 @@ where
 {
     let mut value = serde_json::Value::deserialize(deserializer)?;
     if let Some(object) = value.as_object_mut() {
-        object.entry("active").or_insert(serde_json::Value::Bool(false));
+        object
+            .entry("active")
+            .or_insert(serde_json::Value::Bool(false));
     }
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }

@@ -3,10 +3,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result, bail, ensure};
-use serde::{Deserialize, Serialize};
 use crate::lut_baker::{Bundle, BundleMeta, BundleSpec, Topology};
 use crate::lut_formats::{LutDocumentRef, LutFormat, write_lut_ref};
+use anyhow::{Context, Result, bail, ensure};
+use serde::{Deserialize, Serialize};
 
 pub const SOURCE_URL: &str = "https://github.com/andreavolpato/spektrafilm";
 pub const LICENSE_FILENAME: &str = "SPEKTRAFILM_LICENSE.txt";
@@ -30,47 +30,103 @@ pub struct DeliveryTarget {
 static TARGETS: [DeliveryTarget; 1] = [DeliveryTarget {
     name: "lumix_realtime_vlog",
     description: "Panasonic Lumix Real-Time LUT, V-Log input; camera display encoding output.",
-    format: "lumix", valid_inputs: &["Panasonic V-Log"], valid_outputs: &["sRGB", "Rec.709", "Rec.2020"],
-    recommended_resolution: 33, writer_kwargs: &[("photo_style_tag", "VLOG")],
-    cameras: &["Panasonic Lumix S5II", "Lumix S5IIX", "Lumix S9", "Lumix S1II", "Lumix S1IIE", "Lumix GH7"],
+    format: "lumix",
+    valid_inputs: &["Panasonic V-Log"],
+    valid_outputs: &["sRGB", "Rec.709", "Rec.2020"],
+    recommended_resolution: 33,
+    writer_kwargs: &[("photo_style_tag", "VLOG")],
+    cameras: &[
+        "Panasonic Lumix S5II",
+        "Lumix S5IIX",
+        "Lumix S9",
+        "Lumix S1II",
+        "Lumix S1IIE",
+        "Lumix GH7",
+    ],
     verified: "Upstream field-tested a 33^3 .cube with TITLE → #LUMIXPHOTOSTYLE VLOG → LUT_3D_SIZE → DOMAIN_MIN → DOMAIN_MAX → blank → data, imported through Lumix Lab and SD card. Reference: user's pre-spektrafilm script.",
     notes: "Only VLOG is field verified. Other resolutions are accepted by the upstream exporter but camera compatibility is not claimed. HLG and STD are not active targets.",
 }];
-pub fn list_targets() -> &'static [DeliveryTarget] { &TARGETS }
+pub fn list_targets() -> &'static [DeliveryTarget] {
+    &TARGETS
+}
 pub fn get_target(name: &str) -> Result<&'static DeliveryTarget> {
-    TARGETS.iter().find(|t| t.name == name).with_context(|| format!("Unknown delivery target {name:?}; registered: lumix_realtime_vlog"))
+    TARGETS.iter().find(|t| t.name == name).with_context(|| {
+        format!("Unknown delivery target {name:?}; registered: lumix_realtime_vlog")
+    })
 }
 pub fn validate_target(spec: &BundleSpec) -> Result<()> {
-    let mut normalized = spec.clone(); normalized.normalize().map_err(anyhow::Error::msg)?;
+    let mut normalized = spec.clone();
+    normalized.normalize().map_err(anyhow::Error::msg)?;
     if let Some(name) = normalized.target.as_deref() {
         let target = get_target(name)?;
-        ensure!(target.valid_inputs.contains(&normalized.input_color_space.as_str()), "target {name:?} requires input in {:?}; got {:?}", target.valid_inputs, normalized.input_color_space);
-        ensure!(target.valid_outputs.contains(&normalized.output_color_space.as_str()), "target {name:?} requires output in {:?}; got {:?}", target.valid_outputs, normalized.output_color_space);
+        ensure!(
+            target
+                .valid_inputs
+                .contains(&normalized.input_color_space.as_str()),
+            "target {name:?} requires input in {:?}; got {:?}",
+            target.valid_inputs,
+            normalized.input_color_space
+        );
+        ensure!(
+            target
+                .valid_outputs
+                .contains(&normalized.output_color_space.as_str()),
+            "target {name:?} requires output in {:?}; got {:?}",
+            target.valid_outputs,
+            normalized.output_color_space
+        );
     }
     Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArtifactReference { pub path: String, pub kind: String, pub description: String }
+pub struct ArtifactReference {
+    pub path: String,
+    pub kind: String,
+    pub description: String,
+}
 #[derive(Debug, Clone, Default)]
-pub struct DeliveryOptions { pub formats: Vec<LutFormat>, pub zip: bool, pub extra_artifacts: Vec<ArtifactReference> }
+pub struct DeliveryOptions {
+    pub formats: Vec<LutFormat>,
+    pub zip: bool,
+    pub extra_artifacts: Vec<ArtifactReference>,
+}
 
 fn relative_path(path: &str) -> Result<&Path> {
     let p = Path::new(path);
-    ensure!(!path.is_empty() && !path.contains('\\') && p.components().all(|c| matches!(c, Component::Normal(_))), "artifact path must be a portable relative path: {path:?}");
+    ensure!(
+        !path.is_empty()
+            && !path.contains('\\')
+            && p.components().all(|c| matches!(c, Component::Normal(_))),
+        "artifact path must be a portable relative path: {path:?}"
+    );
     Ok(p)
 }
 pub fn append_artifact(meta: &mut BundleMeta, artifact: ArtifactReference) -> Result<()> {
     relative_path(&artifact.path)?;
     ensure!(!artifact.kind.is_empty(), "artifact kind must not be empty");
     let value = serde_json::to_value(&artifact)?;
-    if !meta.artifacts.iter().any(|v| v.get("path").and_then(|p| p.as_str()) == Some(artifact.path.as_str())) { meta.artifacts.push(value); }
+    if !meta
+        .artifacts
+        .iter()
+        .any(|v| v.get("path").and_then(|p| p.as_str()) == Some(artifact.path.as_str()))
+    {
+        meta.artifacts.push(value);
+    }
     Ok(())
 }
 pub fn bundle_paths(path: &Path, zip: bool) -> (PathBuf, Option<PathBuf>) {
-    if !zip { return (path.to_owned(), None); }
-    if path.extension().is_some_and(|s| s.eq_ignore_ascii_case("zip")) { (path.with_extension(""), Some(path.to_owned())) }
-    else { (path.to_owned(), Some(path.with_extension("zip"))) }
+    if !zip {
+        return (path.to_owned(), None);
+    }
+    if path
+        .extension()
+        .is_some_and(|s| s.eq_ignore_ascii_case("zip"))
+    {
+        (path.with_extension(""), Some(path.to_owned()))
+    } else {
+        (path.to_owned(), Some(path.with_extension("zip")))
+    }
 }
 
 pub fn write_bundle(bundle: &Bundle, path: &Path, options: &DeliveryOptions) -> Result<BundleMeta> {
@@ -78,75 +134,228 @@ pub fn write_bundle(bundle: &Bundle, path: &Path, options: &DeliveryOptions) -> 
     let (root, expected_archive) = bundle_paths(path, zip);
     let meta = write_bundle_files(bundle, &root, options)?;
     let written = finalize_bundle(&root, &meta, zip)?;
-    if let Some(expected) = expected_archive { if expected != written { fs::rename(written, expected)?; } }
+    if let Some(expected) = expected_archive {
+        if expected != written {
+            fs::rename(written, expected)?;
+        }
+    }
     Ok(meta)
 }
-pub fn write_bundle_files(bundle: &Bundle, root: &Path, options: &DeliveryOptions) -> Result<BundleMeta> {
+pub fn write_bundle_files(
+    bundle: &Bundle,
+    root: &Path,
+    options: &DeliveryOptions,
+) -> Result<BundleMeta> {
     validate_target(&bundle.spec)?;
     let mut meta = bundle.meta.clone();
-    meta.provenance.insert("author".into(), "Andrea Volpato".into());
-    meta.provenance.insert("copyright".into(), "Copyright Andrea Volpato".into());
-    meta.provenance.insert("project_url".into(), SOURCE_URL.into());
+    meta.provenance
+        .insert("author".into(), "Andrea Volpato".into());
+    meta.provenance
+        .insert("copyright".into(), "Copyright Andrea Volpato".into());
+    meta.provenance
+        .insert("project_url".into(), SOURCE_URL.into());
     meta.provenance.insert("license".into(), ATTRIBUTION.into());
-    meta.provenance.insert("license_url".into(), "https://creativecommons.org/licenses/by-sa/4.0/".into());
-    meta.provenance.insert("reference_commit".into(), crate::lut_baker::REFERENCE_COMMIT.into());
-    meta.provenance.insert("modifications".into(), MODIFICATIONS.into());
-    meta.provenance.insert("created".into(), time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?);
+    meta.provenance.insert(
+        "license_url".into(),
+        "https://creativecommons.org/licenses/by-sa/4.0/".into(),
+    );
+    meta.provenance.insert(
+        "reference_commit".into(),
+        crate::lut_baker::REFERENCE_COMMIT.into(),
+    );
+    meta.provenance
+        .insert("modifications".into(), MODIFICATIONS.into());
+    meta.provenance.insert(
+        "created".into(),
+        time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?,
+    );
     meta.provenance.insert("notes".into(), "Deterministic developed-and-printed transform using the recorded runtime look controls. Spatial effects, grain and halation are disabled; digest_changes discloses neutralized per-image controls.".into());
     let target = bundle.spec.target.as_deref().map(get_target).transpose()?;
     let formats = if target.is_some() {
-        ensure!(options.formats.is_empty() || options.formats.iter().all(|f| matches!(f, LutFormat::Lumix)), "camera-target output must use its strict Lumix format");
+        ensure!(
+            options.formats.is_empty()
+                || options
+                    .formats
+                    .iter()
+                    .all(|f| matches!(f, LutFormat::Lumix)),
+            "camera-target output must use its strict Lumix format"
+        );
         vec![LutFormat::Lumix]
-    } else if options.formats.is_empty() { vec![LutFormat::Cube] } else { options.formats.clone() };
+    } else if options.formats.is_empty() {
+        vec![LutFormat::Cube]
+    } else {
+        options.formats.clone()
+    };
     let source_meta = meta.luts.clone();
     meta.luts.clear();
     fs::create_dir_all(root)?;
     let mut emitted = BTreeSet::new();
     for (original, lut) in &bundle.luts {
         relative_path(original)?;
-        let entry = source_meta.iter().find(|m| &m.path == original).with_context(|| format!("LUT {original} has no metadata"))?;
-        let document = LutDocumentRef { resolution: lut.resolution, table: &lut.table, title: &lut.title, domain_min:[0.0;3], domain_max:[1.0;3] };
+        let entry = source_meta
+            .iter()
+            .find(|m| &m.path == original)
+            .with_context(|| format!("LUT {original} has no metadata"))?;
+        let document = LutDocumentRef {
+            resolution: lut.resolution,
+            table: &lut.table,
+            title: &lut.title,
+            domain_min: [0.0; 3],
+            domain_max: [1.0; 3],
+        };
         for &format in &formats {
-            let rel = Path::new(original).with_extension(format.extension().trim_start_matches('.')).to_string_lossy().into_owned();
-            ensure!(emitted.insert(rel.clone()), "formats map to duplicate filename {rel:?}");
+            let rel = Path::new(original)
+                .with_extension(format.extension().trim_start_matches('.'))
+                .to_string_lossy()
+                .into_owned();
+            ensure!(
+                emitted.insert(rel.clone()),
+                "formats map to duplicate filename {rel:?}"
+            );
             let full = root.join(relative_path(&rel)?);
-            if let Some(parent) = full.parent() { fs::create_dir_all(parent)?; }
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent)?;
+            }
             let header = cube_header_lines(&meta, &rel, &entry.role, &entry.domain, &entry.range);
             write_lut_ref(format, &document, &full, &header, target.map(|_| "VLOG"))?;
-            let mut file_meta = entry.clone(); file_meta.path = rel.clone(); meta.luts.push(file_meta);
+            let mut file_meta = entry.clone();
+            file_meta.path = rel.clone();
+            meta.luts.push(file_meta);
             if matches!(format, LutFormat::HaldPng | LutFormat::Lumix) {
                 let notice_path = format!("{rel}.NOTICE.txt");
                 fs::write(root.join(&notice_path), notice_text(&meta, Some(&rel)))?;
-                append_artifact(&mut meta, ArtifactReference { path: notice_path, kind:"attribution".into(), description:format!("Author, source, license and modification notice for {rel}") })?;
+                append_artifact(
+                    &mut meta,
+                    ArtifactReference {
+                        path: notice_path,
+                        kind: "attribution".into(),
+                        description: format!(
+                            "Author, source, license and modification notice for {rel}"
+                        ),
+                    },
+                )?;
             }
         }
     }
     fs::write(root.join(LICENSE_FILENAME), SOURCE_LICENSE)?;
     fs::write(root.join("NOTICE.txt"), notice_text(&meta, None))?;
-    append_artifact(&mut meta, ArtifactReference { path:LICENSE_FILENAME.into(), kind:"license".into(), description:"Canonical upstream profile and LUT license bytes".into() })?;
-    append_artifact(&mut meta, ArtifactReference { path:"NOTICE.txt".into(), kind:"attribution".into(), description:"Profile and derivative attribution and modification provenance".into() })?;
-    for artifact in &options.extra_artifacts { append_artifact(&mut meta, artifact.clone())?; }
+    append_artifact(
+        &mut meta,
+        ArtifactReference {
+            path: LICENSE_FILENAME.into(),
+            kind: "license".into(),
+            description: "Canonical upstream profile and LUT license bytes".into(),
+        },
+    )?;
+    append_artifact(
+        &mut meta,
+        ArtifactReference {
+            path: "NOTICE.txt".into(),
+            kind: "attribution".into(),
+            description: "Profile and derivative attribution and modification provenance".into(),
+        },
+    )?;
+    for artifact in &options.extra_artifacts {
+        append_artifact(&mut meta, artifact.clone())?;
+    }
     finalize_bundle(root, &meta, false)?;
     Ok(meta)
 }
 
-pub fn cube_header_lines(meta: &BundleMeta, path: &str, role: &str, domain: &str, range: &str) -> Vec<String> {
-    let mut out = vec!["=".repeat(76), "spektrafilm LUT".into(), format!("Bundle: {} ({}, {}^3)",meta.name,meta.topology.name(),meta.resolution), format!("Film: {}",meta.stocks.film),format!("Print: {}",meta.stocks.prints.join(", "))];
-    for (key, label) in [("input","Input"),("output","Output")] { if let Some(cs) = meta.color_spaces.get(key) { out.push(format!("{label}: {} (cctf {})",cs.name,if cs.cctf {"on"} else {"off"})); } }
-    out.extend([format!("Project: {SOURCE_URL}"),ATTRIBUTION.into(),"License: https://creativecommons.org/licenses/by-sa/4.0/".into(),format!("Reference: {}",crate::lut_baker::REFERENCE_COMMIT),format!("Modifications: {MODIFICATIONS}"),format!("Role: {role} (domain={domain} → range={range})"),format!("File: {path} (see sibling bundle.json for full metadata)"),"=".repeat(76)]);
+pub fn cube_header_lines(
+    meta: &BundleMeta,
+    path: &str,
+    role: &str,
+    domain: &str,
+    range: &str,
+) -> Vec<String> {
+    let mut out = vec![
+        "=".repeat(76),
+        "spektrafilm LUT".into(),
+        format!(
+            "Bundle: {} ({}, {}^3)",
+            meta.name,
+            meta.topology.name(),
+            meta.resolution
+        ),
+        format!("Film: {}", meta.stocks.film),
+        format!("Print: {}", meta.stocks.prints.join(", ")),
+    ];
+    for (key, label) in [("input", "Input"), ("output", "Output")] {
+        if let Some(cs) = meta.color_spaces.get(key) {
+            out.push(format!(
+                "{label}: {} (cctf {})",
+                cs.name,
+                if cs.cctf { "on" } else { "off" }
+            ));
+        }
+    }
+    out.extend([
+        format!("Project: {SOURCE_URL}"),
+        ATTRIBUTION.into(),
+        "License: https://creativecommons.org/licenses/by-sa/4.0/".into(),
+        format!("Reference: {}", crate::lut_baker::REFERENCE_COMMIT),
+        format!("Modifications: {MODIFICATIONS}"),
+        format!("Role: {role} (domain={domain} → range={range})"),
+        format!("File: {path} (see sibling bundle.json for full metadata)"),
+        "=".repeat(76),
+    ]);
     out
 }
 fn notice_text(meta: &BundleMeta, path: Option<&str>) -> String {
-    format!("{ATTRIBUTION}\nSource: {SOURCE_URL}\nReference commit: {}\nLicense: https://creativecommons.org/licenses/by-sa/4.0/\nThe spectral profiles and their LUT derivatives retain CC BY-SA 4.0; the Rust program's GPL license does not replace the asset license.\n{MODIFICATIONS}\nBundle: {}\nArtifact: {}\nCanonical license: {LICENSE_FILENAME}\n",crate::lut_baker::REFERENCE_COMMIT,meta.name,path.unwrap_or("all selected spectral profiles and derived LUTs"))
+    format!(
+        "{ATTRIBUTION}\nSource: {SOURCE_URL}\nReference commit: {}\nLicense: https://creativecommons.org/licenses/by-sa/4.0/\nThe spectral profiles and their LUT derivatives retain CC BY-SA 4.0; the Rust program's GPL license does not replace the asset license.\n{MODIFICATIONS}\nBundle: {}\nArtifact: {}\nCanonical license: {LICENSE_FILENAME}\n",
+        crate::lut_baker::REFERENCE_COMMIT,
+        meta.name,
+        path.unwrap_or("all selected spectral profiles and derived LUTs")
+    )
 }
 
 pub fn bundle_readme_text(meta: &BundleMeta) -> String {
-    let mut s = format!("# spektrafilm LUT bundle\n\nThis folder contains exported LUT files plus machine-readable metadata and license.\n\n## What this is\n\nA physically based simulation of {} on {}, calibrated against published spectral dye response and characteristic curves. The LUT retains the runtime look controls recorded in params_snapshot. Spatial effects, grain and halation are disabled; digest_changes records the per-image controls neutralized for baking.\n\n## Quick info\n\n- Name: {}\n- Topology: {}\n- Resolution: {}^3\n- Delivery target: {}\n- Film stock: {}\n- Print stocks: {}\n", meta.stocks.film,meta.stocks.prints.join(", "),meta.name,meta.topology.name(),meta.resolution,meta.target.as_deref().unwrap_or("generic LUT"),meta.stocks.film,meta.stocks.prints.join(", "));
-    for key in ["input","output"] { if let Some(cs) = meta.color_spaces.get(key) { s.push_str(&format!("- {key} color space: {} (cctf {})\n",cs.name,if cs.cctf {"on"} else {"off"})); } }
-    if let Some(e) = &meta.input_exposure { s.push_str(&format!("\n## Input exposure\n\nThe input bridge targets {:.6} stops above midgray and bakes a linear gain of {}. Every decoded input value gets the same multiplier; the total gain and resolved stops are recorded in bundle.json and each parameter snapshot.\n",e.stops_above_midgray,e.gain)); }
+    let mut s = format!(
+        "# spektrafilm LUT bundle\n\nThis folder contains exported LUT files plus machine-readable metadata and license.\n\n## What this is\n\nA physically based simulation of {} on {}, calibrated against published spectral dye response and characteristic curves. The LUT retains the runtime look controls recorded in params_snapshot. Spatial effects, grain and halation are disabled; digest_changes records the per-image controls neutralized for baking.\n\n## Quick info\n\n- Name: {}\n- Topology: {}\n- Resolution: {}^3\n- Delivery target: {}\n- Film stock: {}\n- Print stocks: {}\n",
+        meta.stocks.film,
+        meta.stocks.prints.join(", "),
+        meta.name,
+        meta.topology.name(),
+        meta.resolution,
+        meta.target.as_deref().unwrap_or("generic LUT"),
+        meta.stocks.film,
+        meta.stocks.prints.join(", ")
+    );
+    for key in ["input", "output"] {
+        if let Some(cs) = meta.color_spaces.get(key) {
+            s.push_str(&format!(
+                "- {key} color space: {} (cctf {})\n",
+                cs.name,
+                if cs.cctf { "on" } else { "off" }
+            ));
+        }
+    }
+    if let Some(e) = &meta.input_exposure {
+        s.push_str(&format!("\n## Input exposure\n\nThe input bridge targets {:.6} stops above midgray and bakes a linear gain of {}. Every decoded input value gets the same multiplier; the total gain and resolved stops are recorded in bundle.json and each parameter snapshot.\n",e.stops_above_midgray,e.gain));
+    }
     s.push_str("\n## Files\n\n- bundle.json: full metadata payload and wire constants\n- README.md: consumer instructions\n");
-    for l in &meta.luts { s.push_str(&format!("- {}: {} ({} → {}; print {})\n",l.path,l.role,l.domain,l.range,l.print_profile.as_deref().unwrap_or("shared"))); }
-    for a in &meta.artifacts { if let Some(path) = a.get("path").and_then(|v|v.as_str()) { s.push_str(&format!("- {path}: {}\n",a.get("description").and_then(|v|v.as_str()).unwrap_or("bundle artifact"))); } }
+    for l in &meta.luts {
+        s.push_str(&format!(
+            "- {}: {} ({} → {}; print {})\n",
+            l.path,
+            l.role,
+            l.domain,
+            l.range,
+            l.print_profile.as_deref().unwrap_or("shared")
+        ));
+    }
+    for a in &meta.artifacts {
+        if let Some(path) = a.get("path").and_then(|v| v.as_str()) {
+            s.push_str(&format!(
+                "- {path}: {}\n",
+                a.get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("bundle artifact")
+            ));
+        }
+    }
     s.push_str("\n## Apply order\n\n");
     s.push_str(match meta.topology {
         Topology::One => "Apply the combined LUT for the chosen print in the declared input and output encodings.\n",
@@ -154,10 +363,22 @@ pub fn bundle_readme_text(meta: &BundleMeta) -> String {
         Topology::Three => "Apply L1 → L2 → the chosen print's L3. L1 and L2 are shared.\n",
         Topology::Four => "Apply L1 → L2 → the chosen print's L3 → L4. L1 and L2 are shared; L3 and L4 are print-specific.\n",
     });
-    if meta.topology != Topology::One { s.push_str("\nEvery intermediate LUT carries [0,1] codes. Do not cross-chain LUTs from different bundles: stock-specific wire constants differ. Decode density using D = code * (d_max - d_min) + d_min; decode log exposure using log10(E) = code * (max - min) + min. Use the matching wire in bundle.json. Modify physical units, then re-encode using the same constants.\n\nFilm-density code reserves negative base+fog headroom for downstream grain. The log_e_film tap is appropriate for light-domain halation and diffusion. The 4-LUT topology additionally exposes log_e_print for enlarger manipulation; the 3-LUT topology collapses this tap.\n"); }
-    if meta.luts.iter().any(|l| l.role.starts_with("subchain_")) { s.push_str("\n## Pre-collapsed sub-chains\n\nThe combinations directory contains contiguous sub-chains for consumers with fewer LUT slots. Each file's domain, range and print selection are listed above and in bundle.json. Apply a combination in place of its corresponding canonical stages; do not apply both.\n"); }
-    if let Some(target) = meta.target.as_deref().and_then(|n|get_target(n).ok()) { s.push_str(&format!("\n## Camera verification\n\n{}\n{}\n",target.verified,target.notes)); }
-    s.push_str(&format!("\n## Attribution and modifications\n\n{}\n",notice_text(meta,None)));
+    if meta.topology != Topology::One {
+        s.push_str("\nEvery intermediate LUT carries [0,1] codes. Do not cross-chain LUTs from different bundles: stock-specific wire constants differ. Decode density using D = code * (d_max - d_min) + d_min; decode log exposure using log10(E) = code * (max - min) + min. Use the matching wire in bundle.json. Modify physical units, then re-encode using the same constants.\n\nFilm-density code reserves negative base+fog headroom for downstream grain. The log_e_film tap is appropriate for light-domain halation and diffusion. The 4-LUT topology additionally exposes log_e_print for enlarger manipulation; the 3-LUT topology collapses this tap.\n");
+    }
+    if meta.luts.iter().any(|l| l.role.starts_with("subchain_")) {
+        s.push_str("\n## Pre-collapsed sub-chains\n\nThe combinations directory contains contiguous sub-chains for consumers with fewer LUT slots. Each file's domain, range and print selection are listed above and in bundle.json. Apply a combination in place of its corresponding canonical stages; do not apply both.\n");
+    }
+    if let Some(target) = meta.target.as_deref().and_then(|n| get_target(n).ok()) {
+        s.push_str(&format!(
+            "\n## Camera verification\n\n{}\n{}\n",
+            target.verified, target.notes
+        ));
+    }
+    s.push_str(&format!(
+        "\n## Attribution and modifications\n\n{}\n",
+        notice_text(meta, None)
+    ));
     s
 }
 
@@ -167,11 +388,26 @@ pub fn append_quality_summary(root: &Path, report: &crate::lut_qa::QaReport) -> 
         text = prefix.to_owned();
     }
     text.push_str("\n## Quality\n\n");
-    text.push_str(&format!("Status: **{}**. Reference: Python 0.3.4 commit `{}`. Backend: `{}` / {}.\n\n", if report.passed {"PASS"} else {"FAIL"}, report.reference_commit, report.backend, report.precision));
+    text.push_str(&format!(
+        "Status: **{}**. Reference: Python 0.3.4 commit `{}`. Backend: `{}` / {}.\n\n",
+        if report.passed { "PASS" } else { "FAIL" },
+        report.reference_commit,
+        report.backend,
+        report.precision
+    ));
     text.push_str("| Print | Scenario | Status |\n|---|---|---|\n");
     for print in &report.prints {
         for scenario in &print.results {
-            text.push_str(&format!("| {} | {} | {} |\n", print.print_name, scenario.name, match scenario.passed { Some(true) => "PASS", Some(false) => "FAIL", None => "INFO" }));
+            text.push_str(&format!(
+                "| {} | {} | {} |\n",
+                print.print_name,
+                scenario.name,
+                match scenario.passed {
+                    Some(true) => "PASS",
+                    Some(false) => "FAIL",
+                    None => "INFO",
+                }
+            ));
         }
     }
     fs::write(root.join("README.md"), text)?;
@@ -180,8 +416,15 @@ pub fn append_quality_summary(root: &Path, report: &crate::lut_qa::QaReport) -> 
 
 /// Rewrite sidecars after OCIO/QA append their references; archive the full tree.
 pub fn finalize_bundle(root: &Path, meta: &BundleMeta, zip: bool) -> Result<PathBuf> {
-    for path in meta.luts.iter().map(|l| l.path.as_str()).chain(meta.artifacts.iter().filter_map(|a| a.get("path").and_then(|p| p.as_str()))) {
-        ensure!(root.join(relative_path(path)?).is_file(), "missing referenced bundle artifact {path:?}");
+    for path in meta.luts.iter().map(|l| l.path.as_str()).chain(
+        meta.artifacts
+            .iter()
+            .filter_map(|a| a.get("path").and_then(|p| p.as_str())),
+    ) {
+        ensure!(
+            root.join(relative_path(path)?).is_file(),
+            "missing referenced bundle artifact {path:?}"
+        );
     }
     let mut metadata = serde_json::to_vec_pretty(meta)?;
     metadata.push(b'\n');
@@ -195,27 +438,52 @@ pub fn finalize_bundle(root: &Path, meta: &BundleMeta, zip: bool) -> Result<Path
         }
     }
     fs::write(root.join("README.md"), readme)?;
-    if !zip { return Ok(root.to_owned()); }
+    if !zip {
+        return Ok(root.to_owned());
+    }
     let archive = root.with_extension("zip");
     let file = fs::File::create(&archive)?;
     let mut writer = zip::ZipWriter::new(file);
-    let prefix = root.file_name().context("bundle root requires a directory name")?.to_str().context("bundle directory name must be UTF-8")?;
-    zip_directory(&mut writer,root,root,prefix)?;
+    let prefix = root
+        .file_name()
+        .context("bundle root requires a directory name")?
+        .to_str()
+        .context("bundle directory name must be UTF-8")?;
+    zip_directory(&mut writer, root, root, prefix)?;
     writer.finish()?;
     Ok(archive)
 }
-fn zip_directory(writer: &mut zip::ZipWriter<fs::File>, root: &Path, dir: &Path, prefix: &str) -> Result<()> {
+fn zip_directory(
+    writer: &mut zip::ZipWriter<fs::File>,
+    root: &Path,
+    dir: &Path,
+    prefix: &str,
+) -> Result<()> {
     let mut entries = fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
-    entries.sort_by_key(|e|e.file_name());
+    entries.sort_by_key(|e| e.file_name());
     for entry in entries {
-        let path = entry.path(); let ty = entry.file_type()?;
+        let path = entry.path();
+        let ty = entry.file_type()?;
         ensure!(!ty.is_symlink(), "bundle archive must not contain symlinks");
-        let rel = path.strip_prefix(root)?.to_str().context("bundle filenames must be UTF-8")?.replace('\\',"/");
+        let rel = path
+            .strip_prefix(root)?
+            .to_str()
+            .context("bundle filenames must be UTF-8")?
+            .replace('\\', "/");
         let name = format!("{prefix}/{rel}");
-        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).unix_permissions(0o644);
-        if ty.is_dir() { writer.add_directory(format!("{name}/"),options)?; zip_directory(writer,root,&path,prefix)?; }
-        else if ty.is_file() { writer.start_file(name,options)?; let mut file=fs::File::open(path)?; std::io::copy(&mut file,writer)?; }
-        else { bail!("unsupported file type in bundle"); }
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        if ty.is_dir() {
+            writer.add_directory(format!("{name}/"), options)?;
+            zip_directory(writer, root, &path, prefix)?;
+        } else if ty.is_file() {
+            writer.start_file(name, options)?;
+            let mut file = fs::File::open(path)?;
+            std::io::copy(&mut file, writer)?;
+        } else {
+            bail!("unsupported file type in bundle");
+        }
     }
     Ok(())
 }
@@ -231,59 +499,118 @@ mod tests {
         serde_json::from_value(value).unwrap()
     }
     fn temp_root(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("spektrafilm-delivery-{label}-{}-{}",std::process::id(),time::OffsetDateTime::now_utc().unix_timestamp_nanos()))
+        std::env::temp_dir().join(format!(
+            "spektrafilm-delivery-{label}-{}-{}",
+            std::process::id(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ))
     }
     #[test]
     fn formats_license_and_archive_have_resolvable_artifacts() {
-        let root=temp_root("formats"); let bundle=fixture(None);
-        let options=DeliveryOptions{formats:vec![LutFormat::Cube,LutFormat::ThreeDl,LutFormat::HaldPng],zip:true,extra_artifacts:vec![]};
-        let meta=write_bundle(&bundle,&root,&options).unwrap();
-        let delivered: BundleMeta = serde_json::from_slice(&fs::read(root.join("bundle.json")).unwrap()).unwrap();
-        assert_eq!(delivered.luts.iter().map(|l| &l.path).collect::<Vec<_>>(), meta.luts.iter().map(|l| &l.path).collect::<Vec<_>>());
-        assert_eq!(fs::read(root.join(LICENSE_FILENAME)).unwrap(),SOURCE_LICENSE);
-        assert_eq!(meta.luts.len(),3);
+        let root = temp_root("formats");
+        let bundle = fixture(None);
+        let options = DeliveryOptions {
+            formats: vec![LutFormat::Cube, LutFormat::ThreeDl, LutFormat::HaldPng],
+            zip: true,
+            extra_artifacts: vec![],
+        };
+        let meta = write_bundle(&bundle, &root, &options).unwrap();
+        let delivered: BundleMeta =
+            serde_json::from_slice(&fs::read(root.join("bundle.json")).unwrap()).unwrap();
+        assert_eq!(
+            delivered.luts.iter().map(|l| &l.path).collect::<Vec<_>>(),
+            meta.luts.iter().map(|l| &l.path).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fs::read(root.join(LICENSE_FILENAME)).unwrap(),
+            SOURCE_LICENSE
+        );
+        assert_eq!(meta.luts.len(), 3);
         for file in &meta.luts {
-            let format=if file.path.ends_with(".cube"){LutFormat::Cube}else if file.path.ends_with(".3dl"){LutFormat::ThreeDl}else{LutFormat::HaldPng};
-            let read=crate::lut_formats::read_lut(format,&root.join(&file.path)).unwrap();
-            for (a,b) in read.table.iter().zip(&bundle.luts[0].1.table) { for c in 0..3 { assert!((a[c]-b[c]).abs()<=0.5/255.0+1e-10); } }
+            let format = if file.path.ends_with(".cube") {
+                LutFormat::Cube
+            } else if file.path.ends_with(".3dl") {
+                LutFormat::ThreeDl
+            } else {
+                LutFormat::HaldPng
+            };
+            let read = crate::lut_formats::read_lut(format, &root.join(&file.path)).unwrap();
+            for (a, b) in read.table.iter().zip(&bundle.luts[0].1.table) {
+                for c in 0..3 {
+                    assert!((a[c] - b[c]).abs() <= 0.5 / 255.0 + 1e-10);
+                }
+            }
         }
-        let archive_path=root.with_extension("zip");
-        let mut archive=zip::ZipArchive::new(fs::File::open(&archive_path).unwrap()).unwrap();
-        let prefix=root.file_name().unwrap().to_str().unwrap();
+        let archive_path = root.with_extension("zip");
+        let mut archive = zip::ZipArchive::new(fs::File::open(&archive_path).unwrap()).unwrap();
+        let prefix = root.file_name().unwrap().to_str().unwrap();
         let mut archived_metadata = archive.by_name(&format!("{prefix}/bundle.json")).unwrap();
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut archived_metadata, &mut bytes).unwrap();
         assert_eq!(bytes, fs::read(root.join("bundle.json")).unwrap());
         drop(archived_metadata);
-        for path in meta.luts.iter().map(|l|l.path.as_str()).chain(meta.artifacts.iter().filter_map(|a|a["path"].as_str())) { assert!(archive.by_name(&format!("{prefix}/{path}")).is_ok()); }
-        assert_eq!(meta.provenance["author"],"Andrea Volpato");
+        for path in meta
+            .luts
+            .iter()
+            .map(|l| l.path.as_str())
+            .chain(meta.artifacts.iter().filter_map(|a| a["path"].as_str()))
+        {
+            assert!(archive.by_name(&format!("{prefix}/{path}")).is_ok());
+        }
+        assert_eq!(meta.provenance["author"], "Andrea Volpato");
         assert!(meta.provenance["license"].contains("CC BY-SA 4.0"));
-        fs::remove_dir_all(root).unwrap(); fs::remove_file(archive_path).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(archive_path).unwrap();
     }
     #[test]
     fn target_header_is_minimal_and_notice_is_external() {
-        let root=temp_root("lumix"); let bundle=fixture(Some("lumix_realtime_vlog"));
-        let meta=write_bundle(&bundle,&root,&DeliveryOptions::default()).unwrap();
-        let text=fs::read_to_string(root.join(&meta.luts[0].path)).unwrap();
-        let lines=text.lines().collect::<Vec<_>>();
-        assert_eq!(lines[1],"#LUMIXPHOTOSTYLE VLOG");
-        assert_eq!(lines[2],"LUT_3D_SIZE 4");
-        assert_eq!(text.lines().filter(|l|l.starts_with('#')).count(),1);
-        assert!(root.join(format!("{}.NOTICE.txt",meta.luts[0].path)).is_file());
+        let root = temp_root("lumix");
+        let bundle = fixture(Some("lumix_realtime_vlog"));
+        let meta = write_bundle(&bundle, &root, &DeliveryOptions::default()).unwrap();
+        let text = fs::read_to_string(root.join(&meta.luts[0].path)).unwrap();
+        let lines = text.lines().collect::<Vec<_>>();
+        assert_eq!(lines[1], "#LUMIXPHOTOSTYLE VLOG");
+        assert_eq!(lines[2], "LUT_3D_SIZE 4");
+        assert_eq!(text.lines().filter(|l| l.starts_with('#')).count(), 1);
+        assert!(
+            root.join(format!("{}.NOTICE.txt", meta.luts[0].path))
+                .is_file()
+        );
         assert!(!root.with_extension("zip").exists());
-        let mut invalid=bundle.spec.clone(); invalid.input_color_space="sRGB".into();
+        let mut invalid = bundle.spec.clone();
+        invalid.input_color_space = "sRGB".into();
         assert!(validate_target(&invalid).is_err());
-        invalid=bundle.spec.clone(); invalid.output_color_space="Display P3".into();
+        invalid = bundle.spec.clone();
+        invalid.output_color_space = "Display P3".into();
         assert!(validate_target(&invalid).is_err());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn missing_or_nonportable_artifacts_fail_before_archive() {
-        let root=temp_root("missing"); let mut meta=fixture(None).meta;
-        assert!(append_artifact(&mut meta,ArtifactReference{path:"../report.md".into(),kind:"qa".into(),description:"bad".into()}).is_err());
-        append_artifact(&mut meta,ArtifactReference{path:"qa/report.md".into(),kind:"qa".into(),description:"report".into()}).unwrap();
+        let root = temp_root("missing");
+        let mut meta = fixture(None).meta;
+        assert!(
+            append_artifact(
+                &mut meta,
+                ArtifactReference {
+                    path: "../report.md".into(),
+                    kind: "qa".into(),
+                    description: "bad".into()
+                }
+            )
+            .is_err()
+        );
+        append_artifact(
+            &mut meta,
+            ArtifactReference {
+                path: "qa/report.md".into(),
+                kind: "qa".into(),
+                description: "report".into(),
+            },
+        )
+        .unwrap();
         fs::create_dir_all(&root).unwrap();
-        assert!(finalize_bundle(&root,&meta,true).is_err());
+        assert!(finalize_bundle(&root, &meta, true).is_err());
         assert!(!root.with_extension("zip").exists());
         fs::remove_dir_all(root).unwrap();
     }

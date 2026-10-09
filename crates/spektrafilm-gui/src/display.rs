@@ -1,31 +1,118 @@
 // Viewer presentation. Pipeline floats are borrowed for inspection and bounded
 // full-resolution viewport sampling; DisplayRaster remains disposable fit data.
-use std::{path::{Path, PathBuf}, sync::Arc, time::Duration};
+use std::path::{Path, PathBuf};
 use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2};
 use serde_json::Value;
 use spektrafilm_math::image::ImageBuf;
+use std::{sync::Arc, time::Duration};
 
 pub const ANIMATION_MAX_PIXELS: usize = 1_500_000;
-pub const INTERPOLATIONS: [&str; 7] = ["nearest", "linear", "cubic", "spline16", "spline36", "lanczos", "blackman"];
+pub const INTERPOLATIONS: [&str; 7] = [
+    "nearest", "linear", "cubic", "spline16", "spline36", "lanczos", "blackman",
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ViewLayer { Input, #[default] Output, PaperBack }
+pub enum ViewLayer {
+    Input,
+    #[default]
+    Output,
+    PaperBack,
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Interpolation { Nearest, Linear, Cubic, Spline16, #[default] Spline36, Lanczos, Blackman }
+pub enum Interpolation {
+    Nearest,
+    Linear,
+    Cubic,
+    Spline16,
+    #[default]
+    Spline36,
+    Lanczos,
+    Blackman,
+}
 impl Interpolation {
-    pub fn parse(s: &str) -> Self { match s { "nearest" => Self::Nearest, "linear" => Self::Linear, "cubic" => Self::Cubic, "spline16" => Self::Spline16, "lanczos" => Self::Lanczos, "blackman" => Self::Blackman, _ => Self::Spline36 } }
-    pub fn name(self) -> &'static str { match self { Self::Nearest => "nearest", Self::Linear => "linear", Self::Cubic => "cubic", Self::Spline16 => "spline16", Self::Spline36 => "spline36", Self::Lanczos => "lanczos", Self::Blackman => "blackman" } }
-    fn radius(self) -> i32 { match self { Self::Nearest | Self::Linear => 1, Self::Cubic | Self::Spline16 => 2, Self::Spline36 => 3, _ => 4 } }
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "nearest" => Self::Nearest,
+            "linear" => Self::Linear,
+            "cubic" => Self::Cubic,
+            "spline16" => Self::Spline16,
+            "lanczos" => Self::Lanczos,
+            "blackman" => Self::Blackman,
+            _ => Self::Spline36,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Nearest => "nearest",
+            Self::Linear => "linear",
+            Self::Cubic => "cubic",
+            Self::Spline16 => "spline16",
+            Self::Spline36 => "spline36",
+            Self::Lanczos => "lanczos",
+            Self::Blackman => "blackman",
+        }
+    }
+    fn radius(self) -> i32 {
+        match self {
+            Self::Nearest | Self::Linear => 1,
+            Self::Cubic | Self::Spline16 => 2,
+            Self::Spline36 => 3,
+            _ => 4,
+        }
+    }
     pub fn weight(self, x: f32) -> f32 {
         let x = x.abs();
-        if x >= self.radius() as f32 { return 0.0; }
+        if x >= self.radius() as f32 {
+            return 0.0;
+        }
         match self {
-            Self::Nearest => if x < 0.5 { 1.0 } else { 0.0 },
-            Self::Linear => 1.0-x,
-            Self::Cubic => if x < 1.0 { (4.0-6.0*x*x+3.0*x*x*x)/6.0 } else { (2.0-x).powi(3)/6.0 },
-            Self::Spline16 => if x < 1.0 { ((x-1.8)*x-0.2)*x+1.0 } else { let y=x-1.0; ((-y/3.0+0.8)*y-7.0/15.0)*y },
-            Self::Spline36 => if x < 1.0 { ((13.0/11.0*x-453.0/209.0)*x-3.0/209.0)*x+1.0 } else if x < 2.0 { let y=x-1.0; ((-6.0/11.0*y+270.0/209.0)*y-156.0/209.0)*y } else { let y=x-2.0; ((y/11.0-45.0/209.0)*y+26.0/209.0)*y },
-            Self::Lanczos | Self::Blackman => { if x < 1e-7 { return 1.0; } let p=std::f32::consts::PI*x; let q=p/4.0; let window=if self == Self::Lanczos { q.sin()/q } else { 0.42+0.5*q.cos()+0.08*(2.0*q).cos() }; p.sin()/p*window }
+            Self::Nearest => {
+                if x < 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Linear => 1.0 - x,
+            Self::Cubic => {
+                if x < 1.0 {
+                    (4.0 - 6.0 * x * x + 3.0 * x * x * x) / 6.0
+                } else {
+                    (2.0 - x).powi(3) / 6.0
+                }
+            }
+            Self::Spline16 => {
+                if x < 1.0 {
+                    ((x - 1.8) * x - 0.2) * x + 1.0
+                } else {
+                    let y = x - 1.0;
+                    ((-y / 3.0 + 0.8) * y - 7.0 / 15.0) * y
+                }
+            }
+            Self::Spline36 => {
+                if x < 1.0 {
+                    ((13.0 / 11.0 * x - 453.0 / 209.0) * x - 3.0 / 209.0) * x + 1.0
+                } else if x < 2.0 {
+                    let y = x - 1.0;
+                    ((-6.0 / 11.0 * y + 270.0 / 209.0) * y - 156.0 / 209.0) * y
+                } else {
+                    let y = x - 2.0;
+                    ((y / 11.0 - 45.0 / 209.0) * y + 26.0 / 209.0) * y
+                }
+            }
+            Self::Lanczos | Self::Blackman => {
+                if x < 1e-7 {
+                    return 1.0;
+                }
+                let p = std::f32::consts::PI * x;
+                let q = p / 4.0;
+                let window = if self == Self::Lanczos {
+                    q.sin() / q
+                } else {
+                    0.42 + 0.5 * q.cos() + 0.08 * (2.0 * q).cos()
+                };
+                p.sin() / p * window
+            }
         }
     }
 }
@@ -42,55 +129,143 @@ pub struct DisplaySettings {
     pub use_display_transform: bool,
 }
 impl Default for DisplaySettings {
-    fn default() -> Self { Self { layer: ViewLayer::Output, interpolation: Interpolation::Spline36, gray_18_canvas: true, white_padding: 0.03, reveal: true, crossfade: true, use_display_transform: true } }
+    fn default() -> Self {
+        Self {
+            layer: ViewLayer::Output,
+            interpolation: Interpolation::Spline36,
+            gray_18_canvas: true,
+            white_padding: 0.03,
+            reveal: true,
+            crossfade: true,
+            use_display_transform: true,
+        }
+    }
 }
 impl DisplaySettings {
     pub fn from_json(v: &Value) -> Self {
-        let mut s=Self::default();
-        s.gray_18_canvas=v["gray_18_canvas"].as_bool().unwrap_or(s.gray_18_canvas);
-        s.white_padding=v["white_padding"].as_f64().filter(|x| x.is_finite()).unwrap_or(0.03).clamp(0.0,1.0) as f32;
-        s.interpolation=Interpolation::parse(v["output_interpolation"].as_str().unwrap_or("spline36"));
-        s.use_display_transform=v["use_display_transform"].as_bool().unwrap_or(s.use_display_transform);
-        s.reveal=v["reveal"].as_bool().unwrap_or(true); s.crossfade=v["crossfade"].as_bool().unwrap_or(true);
-        s.layer=match v["viewer_layer"].as_str() { Some("input") => ViewLayer::Input, Some("paper_back") => ViewLayer::PaperBack, _ => ViewLayer::Output }; s
+        let mut s = Self::default();
+        s.gray_18_canvas = v["gray_18_canvas"].as_bool().unwrap_or(s.gray_18_canvas);
+        s.white_padding = v["white_padding"]
+            .as_f64()
+            .filter(|x| x.is_finite())
+            .unwrap_or(0.03)
+            .clamp(0.0, 1.0) as f32;
+        s.interpolation =
+            Interpolation::parse(v["output_interpolation"].as_str().unwrap_or("spline36"));
+        s.use_display_transform = v["use_display_transform"]
+            .as_bool()
+            .unwrap_or(s.use_display_transform);
+        s.reveal = v["reveal"].as_bool().unwrap_or(true);
+        s.crossfade = v["crossfade"].as_bool().unwrap_or(true);
+        s.layer = match v["viewer_layer"].as_str() {
+            Some("input") => ViewLayer::Input,
+            Some("paper_back") => ViewLayer::PaperBack,
+            _ => ViewLayer::Output,
+        };
+        s
     }
-    pub fn to_json(&self) -> Value { serde_json::json!({"viewer_layer":match self.layer { ViewLayer::Input=>"input",ViewLayer::Output=>"output",ViewLayer::PaperBack=>"paper_back" },"output_interpolation":self.interpolation.name(),"gray_18_canvas":self.gray_18_canvas,"white_padding":self.white_padding,"reveal":self.reveal,"crossfade":self.crossfade,"use_display_transform":self.use_display_transform}) }
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({"viewer_layer":match self.layer { ViewLayer::Input=>"input",ViewLayer::Output=>"output",ViewLayer::PaperBack=>"paper_back" },"output_interpolation":self.interpolation.name(),"gray_18_canvas":self.gray_18_canvas,"white_padding":self.white_padding,"reveal":self.reveal,"crossfade":self.crossfade,"use_display_transform":self.use_display_transform})
+    }
 }
 
 #[derive(Clone)]
-pub struct DisplayRaster { pub size: [usize; 2], pub rgb: Arc<[[f32; 3]]> }
+pub struct DisplayRaster {
+    pub size: [usize; 2],
+    pub rgb: Arc<[[f32; 3]]>,
+}
 impl DisplayRaster {
     pub fn new(size: [usize; 2], rgb: Vec<[f32; 3]>) -> Result<Self, String> {
-        if size.contains(&0) || size[0].checked_mul(size[1]) != Some(rgb.len()) { return Err("Invalid viewer raster dimensions".into()); }
-        Ok(Self { size, rgb: rgb.into() })
+        if size.contains(&0) || size[0].checked_mul(size[1]) != Some(rgb.len()) {
+            return Err("Invalid viewer raster dimensions".into());
+        }
+        Ok(Self {
+            size,
+            rgb: rgb.into(),
+        })
     }
     pub fn from_rgba(size: [usize; 2], rgba: &[u8]) -> Result<Self, String> {
-        if size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) { return Err("Invalid viewer RGBA dimensions".into()); }
-        Self::new(size, rgba.chunks_exact(4).map(|p| [p[0] as f32/255.0,p[1] as f32/255.0,p[2] as f32/255.0]).collect())
+        if size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
+            return Err("Invalid viewer RGBA dimensions".into());
+        }
+        Self::new(
+            size,
+            rgba.chunks_exact(4)
+                .map(|p| {
+                    [
+                        p[0] as f32 / 255.0,
+                        p[1] as f32 / 255.0,
+                        p[2] as f32 / 255.0,
+                    ]
+                })
+                .collect(),
+        )
     }
     pub fn from_float(image: &ImageBuf) -> Result<Self, String> {
-        Self::new([image.width as usize,image.height as usize], image.data.chunks_exact(3).map(|p| [p[0] as f32,p[1] as f32,p[2] as f32]).collect())
+        Self::new(
+            [image.width as usize, image.height as usize],
+            image
+                .data
+                .chunks_exact(3)
+                .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+                .collect(),
+        )
     }
     pub fn sample(&self, x: f32, y: f32, mode: Interpolation) -> [f32; 3] {
-        let pixel=|x: i32,y: i32| self.rgb[y.clamp(0,self.size[1] as i32-1) as usize*self.size[0]+x.clamp(0,self.size[0] as i32-1) as usize];
-        if mode == Interpolation::Nearest { return pixel((x+0.5).floor() as i32,(y+0.5).floor() as i32); }
-        let r=mode.radius(); let bx=x.floor() as i32; let by=y.floor() as i32;
-        let mut wx=[0.0;8]; let mut wy=[0.0;8];
-        for i in 0..2*r { wx[i as usize]=mode.weight(x-(bx+i-r+1) as f32); wy[i as usize]=mode.weight(y-(by+i-r+1) as f32); }
-        let mut out=[0.0;3];
-        for j in 0..2*r { for i in 0..2*r { let w=wx[i as usize]*wy[j as usize]; let p=pixel(bx+i-r+1,by+j-r+1); for c in 0..3 { out[c]+=w*p[c]; } } } out
+        let pixel = |x: i32, y: i32| {
+            self.rgb[y.clamp(0, self.size[1] as i32 - 1) as usize * self.size[0]
+                + x.clamp(0, self.size[0] as i32 - 1) as usize]
+        };
+        if mode == Interpolation::Nearest {
+            return pixel((x + 0.5).floor() as i32, (y + 0.5).floor() as i32);
+        }
+        let r = mode.radius();
+        let bx = x.floor() as i32;
+        let by = y.floor() as i32;
+        let mut wx = [0.0; 8];
+        let mut wy = [0.0; 8];
+        for i in 0..2 * r {
+            wx[i as usize] = mode.weight(x - (bx + i - r + 1) as f32);
+            wy[i as usize] = mode.weight(y - (by + i - r + 1) as f32);
+        }
+        let mut out = [0.0; 3];
+        for j in 0..2 * r {
+            for i in 0..2 * r {
+                let w = wx[i as usize] * wy[j as usize];
+                let p = pixel(bx + i - r + 1, by + j - r + 1);
+                for c in 0..3 {
+                    out[c] += w * p[c];
+                }
+            }
+        }
+        out
     }
 }
 
 /// [width,height], with a common long edge of one. The output is fitted into
 /// this input bounding box rather than independently normalized.
-pub fn normalized_world_size(size: [usize;2]) -> Vec2 { let long=size[0].max(size[1]).max(1) as f32; Vec2::new(size[0] as f32/long,size[1] as f32/long) }
-pub fn fitted_world_size(size: [usize;2], bounds: Vec2) -> Vec2 { let p=Vec2::new(size[0].max(1) as f32,size[1].max(1) as f32); p*(bounds.x/p.x).min(bounds.y/p.y) }
+pub fn normalized_world_size(size: [usize; 2]) -> Vec2 {
+    let long = size[0].max(size[1]).max(1) as f32;
+    Vec2::new(size[0] as f32 / long, size[1] as f32 / long)
+}
+pub fn fitted_world_size(size: [usize; 2], bounds: Vec2) -> Vec2 {
+    let p = Vec2::new(size[0].max(1) as f32, size[1].max(1) as f32);
+    p * (bounds.x / p.x).min(bounds.y / p.y)
+}
 
 #[derive(Clone, Copy, Debug)]
-pub struct PixelInspection { pub layer: ViewLayer, pub x: u32, pub y: u32, pub rgb: [f64;3] }
+pub struct PixelInspection {
+    pub layer: ViewLayer,
+    pub x: u32,
+    pub y: u32,
+    pub rgb: [f64; 3],
+}
 
-struct Transition { start: f64, previous: Option<DisplayRaster>, polaroid: Option<PolaroidState> }
+struct Transition {
+    start: f64,
+    previous: Option<DisplayRaster>,
+    polaroid: Option<PolaroidState>,
+}
 #[derive(Default)]
 pub struct Viewer {
     pub settings: DisplaySettings,
@@ -103,8 +278,8 @@ pub struct Viewer {
     pub input: Option<DisplayRaster>,
     pub output: Option<DisplayRaster>,
     /// Original source dimensions, independent of the capped display raster.
-    pub input_size: Option<[usize;2]>,
-    pub output_size: Option<[usize;2]>,
+    pub input_size: Option<[usize; 2]>,
+    pub output_size: Option<[usize; 2]>,
     pub transform_status: String,
     paper: Option<DisplayRaster>,
     transition: Option<Transition>,
@@ -119,9 +294,23 @@ pub struct Viewer {
     revision: u64,
 }
 impl Viewer {
-    pub fn new() -> Self { Self { zoom: 1.0, zoom_percent: None, ..Self::default() } }
-    pub fn set_input(&mut self, raster: DisplayRaster, original_size: [usize;2]) {
-        self.input_size=Some(original_size); self.paper=None; self.input=Some(raster); self.output=None; self.output_size=None; self.transition=None; self.settings.layer=ViewLayer::PaperBack; self.reset_view(); self.revision+=1;
+    pub fn new() -> Self {
+        Self {
+            zoom: 1.0,
+            zoom_percent: None,
+            ..Self::default()
+        }
+    }
+    pub fn set_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
+        self.input_size = Some(original_size);
+        self.paper = None;
+        self.input = Some(raster);
+        self.output = None;
+        self.output_size = None;
+        self.transition = None;
+        self.settings.layer = ViewLayer::PaperBack;
+        self.reset_view();
+        self.revision += 1;
     }
     /// Call only after accepting the latest asynchronous job. Retains the old
     /// display frame for a ten-step fade; it never retains or modifies export data.
@@ -159,20 +348,42 @@ impl Viewer {
     /// pixel, independent of viewport size and white padding.
     pub fn set_zoom_percent(&mut self, percent: f32) {
         if percent.is_finite() {
-            self.zoom_percent=Some(percent.max(0.0).clamp(0.1, 3200.0));
-            self.zoom=1.0;
+            self.zoom_percent = Some(percent.max(0.0).clamp(0.1, 3200.0));
+            self.zoom = 1.0;
         }
     }
-    pub fn zoom_percent(&self) -> Option<f32> { self.zoom_percent }
+    pub fn zoom_percent(&self) -> Option<f32> {
+        self.zoom_percent
+    }
     pub fn persistent_state(&self) -> Value {
         serde_json::json!({"settings":self.settings.to_json(),"zoom":self.zoom,"zoom_percent":self.zoom_percent,"pan":[self.pan.x,self.pan.y]})
     }
     pub fn restore_state(&mut self, value: &Value) {
-        if !value.is_object() { return; }
-        if value["settings"].is_object() { self.settings=DisplaySettings::from_json(&value["settings"]); }
-        self.zoom=value["zoom"].as_f64().filter(|x| x.is_finite()).unwrap_or(1.0).clamp(0.1,32.0) as f32;
-        self.zoom_percent=value["zoom_percent"].as_f64().filter(|x| x.is_finite()).map(|x| (x as f32).clamp(0.1,3200.0));
-        self.pan=Vec2::new(value["pan"][0].as_f64().filter(|x| x.is_finite()).unwrap_or(0.0) as f32,value["pan"][1].as_f64().filter(|x| x.is_finite()).unwrap_or(0.0) as f32);
+        if !value.is_object() {
+            return;
+        }
+        if value["settings"].is_object() {
+            self.settings = DisplaySettings::from_json(&value["settings"]);
+        }
+        self.zoom = value["zoom"]
+            .as_f64()
+            .filter(|x| x.is_finite())
+            .unwrap_or(1.0)
+            .clamp(0.1, 32.0) as f32;
+        self.zoom_percent = value["zoom_percent"]
+            .as_f64()
+            .filter(|x| x.is_finite())
+            .map(|x| (x as f32).clamp(0.1, 3200.0));
+        self.pan = Vec2::new(
+            value["pan"][0]
+                .as_f64()
+                .filter(|x| x.is_finite())
+                .unwrap_or(0.0) as f32,
+            value["pan"][1]
+                .as_f64()
+                .filter(|x| x.is_finite())
+                .unwrap_or(0.0) as f32,
+        );
     }
     pub fn layer_controls(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.settings.layer;
@@ -187,14 +398,41 @@ impl Viewer {
     }
 
     pub fn controls(&mut self, ui: &mut egui::Ui) -> bool {
-        let before=(self.settings.clone(),self.zoom,self.zoom_percent,self.pan);
+        let before = (
+            self.settings.clone(),
+            self.zoom,
+            self.zoom_percent,
+            self.pan,
+        );
         ui.horizontal_wrapped(|ui| {
-            egui::ComboBox::from_label("Output interpolation").selected_text(self.settings.interpolation.name()).show_ui(ui,|ui| { for name in INTERPOLATIONS { ui.selectable_value(&mut self.settings.interpolation,Interpolation::parse(name),name); } });
-            ui.checkbox(&mut self.settings.use_display_transform, "Use display transform");
-            ui.checkbox(&mut self.settings.gray_18_canvas,"Gray 18% canvas");
-            ui.add(egui::Slider::new(&mut self.settings.white_padding,0.0..=1.0).text("White padding"));
+            egui::ComboBox::from_label("Output interpolation")
+                .selected_text(self.settings.interpolation.name())
+                .show_ui(ui, |ui| {
+                    for name in INTERPOLATIONS {
+                        ui.selectable_value(
+                            &mut self.settings.interpolation,
+                            Interpolation::parse(name),
+                            name,
+                        );
+                    }
+                });
+            ui.checkbox(
+                &mut self.settings.use_display_transform,
+                "Use display transform",
+            );
+            ui.checkbox(&mut self.settings.gray_18_canvas, "Gray 18% canvas");
+            ui.add(
+                egui::Slider::new(&mut self.settings.white_padding, 0.0..=1.0)
+                    .text("White padding"),
+            );
         });
-        before!=(self.settings.clone(),self.zoom,self.zoom_percent,self.pan)
+        before
+            != (
+                self.settings.clone(),
+                self.zoom,
+                self.zoom_percent,
+                self.pan,
+            )
     }
     /// Draws only visible pixels into a bounded texture. Large source images and
     /// offscreen pans therefore cannot exceed the GPU texture dimension limit.
@@ -288,14 +526,62 @@ impl Viewer {
             if let Some(texture)=self.texture.as_mut() { texture.set(image,TextureOptions::NEAREST); } else { self.texture=Some(ui.ctx().load_texture("viewer-presentation",image,TextureOptions::NEAREST)); }
             self.cache_key=Some(key);
         }
-        if let Some(texture)=self.texture.as_ref() { ui.painter_at(rect).image(texture.id(),rect,Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0)),Color32::WHITE); }
-        let source=match layer { ViewLayer::Input => input_float, ViewLayer::Output => output_float, ViewLayer::PaperBack => None };
-        let inspection=response.hover_pos().filter(|p| image_rect.contains(*p)).and_then(|p| source.map(|source| {
-            let uv=(p-image_rect.min)/image_rect.size(); let x=(uv.x*source.width as f32).floor().max(0.0) as u32; let y=(uv.y*source.height as f32).floor().max(0.0) as u32;
-            let x=x.min(source.width.saturating_sub(1)); let y=y.min(source.height.saturating_sub(1)); PixelInspection { layer,x,y,rgb: source.get(x,y).map(|v| v as f64) }
-        }));
-        let text=if let Some(p)=inspection { format!("{:?} ({}, {}) RGB {:.6}, {:.6}, {:.6}",p.layer,p.x,p.y,p.rgb[0],p.rgb[1],p.rgb[2]) } else { format!("{:?} · zoom {:.2}% · double-click to fit",layer,self.zoom_percent.unwrap_or(self.zoom*100.0)) };
-        let painter=ui.painter_at(rect); let text_rect=Rect::from_min_size(rect.min+Vec2::splat(8.0),Vec2::new(rect.width().min(650.0)-16.0,24.0)); painter.rect_filled(text_rect,3.0,Color32::from_black_alpha(180)); painter.text(text_rect.min+Vec2::new(5.0,4.0),egui::Align2::LEFT_TOP,text,egui::FontId::monospace(12.0),Color32::WHITE);
+        if let Some(texture) = self.texture.as_ref() {
+            ui.painter_at(rect).image(
+                texture.id(),
+                rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        let source = match layer {
+            ViewLayer::Input => input_float,
+            ViewLayer::Output => output_float,
+            ViewLayer::PaperBack => None,
+        };
+        let inspection = response
+            .hover_pos()
+            .filter(|p| image_rect.contains(*p))
+            .and_then(|p| {
+                source.map(|source| {
+                    let uv = (p - image_rect.min) / image_rect.size();
+                    let x = (uv.x * source.width as f32).floor().max(0.0) as u32;
+                    let y = (uv.y * source.height as f32).floor().max(0.0) as u32;
+                    let x = x.min(source.width.saturating_sub(1));
+                    let y = y.min(source.height.saturating_sub(1));
+                    PixelInspection {
+                        layer,
+                        x,
+                        y,
+                        rgb: source.get(x, y).map(|v| v as f64),
+                    }
+                })
+            });
+        let text = if let Some(p) = inspection {
+            format!(
+                "{:?} ({}, {}) RGB {:.6}, {:.6}, {:.6}",
+                p.layer, p.x, p.y, p.rgb[0], p.rgb[1], p.rgb[2]
+            )
+        } else {
+            format!(
+                "{:?} · zoom {:.2}% · double-click to fit",
+                layer,
+                self.zoom_percent.unwrap_or(self.zoom * 100.0)
+            )
+        };
+        let painter = ui.painter_at(rect);
+        let text_rect = Rect::from_min_size(
+            rect.min + Vec2::splat(8.0),
+            Vec2::new(rect.width().min(650.0) - 16.0, 24.0),
+        );
+        painter.rect_filled(text_rect, 3.0, Color32::from_black_alpha(180));
+        painter.text(
+            text_rect.min + Vec2::new(5.0, 4.0),
+            egui::Align2::LEFT_TOP,
+            text,
+            egui::FontId::monospace(12.0),
+            Color32::WHITE,
+        );
         inspection
     }
 }
@@ -315,171 +601,541 @@ fn sample_image_with(image: &ImageBuf, p: Pos2, rect: Rect, mode: Interpolation,
 fn pack(p: [f32;3]) -> Color32 { Color32::from_rgb((p[0].clamp(0.0,1.0)*255.0).round() as u8,(p[1].clamp(0.0,1.0)*255.0).round() as u8,(p[2].clamp(0.0,1.0)*255.0).round() as u8) }
 
 /// Prepared nine-layer chemical development, using the pinned Python formulas.
-pub struct PolaroidState { size: [usize;2], layers: Vec<[[f32;3];9]> }
+pub struct PolaroidState {
+    size: [usize; 2],
+    layers: Vec<[[f32; 3]; 9]>,
+}
 impl PolaroidState {
     pub fn new(image: &DisplayRaster) -> Self {
-        let divisor=if image.rgb.iter().flatten().copied().fold(0.0,f32::max)>1.0 { 255.0 } else { 1.0 };
-        let density: Vec<[f32;3]>=image.rgb.iter().map(|p| p.map(|v| (-(v/divisor).clamp(1e-4,1.0).powf(2.2).ln()).clamp(0.0,6.0))).collect();
-        let mut dmax=[0.0_f32;3]; let mut cmax=[0.0_f32;3]; let mut nmax=0.0_f32;
-        for d in &density { let n=d.iter().copied().fold(f32::INFINITY,f32::min); nmax=nmax.max(n); for c in 0..3 { dmax[c]=dmax[c].max(d[c]); cmax[c]=cmax[c].max(d[c]-n); } }
-        let layers=density.iter().map(|d| {
-            let n=d.iter().copied().fold(f32::INFINITY,f32::min); let ch=d.map(|v| v-n); let dl=std::array::from_fn::<_,3,_>(|c| d[c]/(dmax[c]+1e-4)); let cl=std::array::from_fn::<_,3,_>(|c| ch[c]/(cmax[c]+1e-4));
-            let shadow=(d[0]*0.34+d[1]*0.39+d[2]*0.27).clamp(0.0,1.75)/1.75; let h=1.0-shadow; let strength=cl.iter().copied().fold(0.0,f32::max); let warmth=((ch[1]+1.25*ch[2]-0.85*ch[0])/(ch.iter().sum::<f32>()+1e-4)).clamp(0.0,1.0); let silver=(0.24+0.46*shadow+0.30*n/(nmax+1e-4)).clamp(0.0,1.0);
-            let mut l=[[0.0;3];9]; l[0]=[n;3]; l[1][2]=ch[2]; l[2][1]=ch[1]; l[3][0]=ch[0];
+        let divisor = if image.rgb.iter().flatten().copied().fold(0.0, f32::max) > 1.0 {
+            255.0
+        } else {
+            1.0
+        };
+        let density: Vec<[f32; 3]> = image
+            .rgb
+            .iter()
+            .map(|p| p.map(|v| (-(v / divisor).clamp(1e-4, 1.0).powf(2.2).ln()).clamp(0.0, 6.0)))
+            .collect();
+        let mut dmax = [0.0_f32; 3];
+        let mut cmax = [0.0_f32; 3];
+        let mut nmax = 0.0_f32;
+        for d in &density {
+            let n = d.iter().copied().fold(f32::INFINITY, f32::min);
+            nmax = nmax.max(n);
             for c in 0..3 {
-                l[4][c]=(0.30+0.70*h)*[0.04,0.08,0.15][c];
-                l[5][c]=(silver*[0.18,0.19,0.20][c]+cl[(c+1)%3]*[0.03,0.02,0.04][c]).clamp(0.0,0.28);
-                l[6][c]=(h*[0.10,0.06,0.02][c]+(1.0-dl[(c+2)%3])*[0.13,0.07,0.18][c]+cl[(c+1)%3]*[0.04,0.02,0.06][c])*(0.40+0.60*h);
-                l[7][c]=(0.24+0.42*h+0.34*warmth.max(strength))*[0.02,0.08,0.19][c]; l[8][c]=h*[0.03,0.06,0.11][c];
-            } l
-        }).collect(); Self { size: image.size,layers }
+                dmax[c] = dmax[c].max(d[c]);
+                cmax[c] = cmax[c].max(d[c] - n);
+            }
+        }
+        let layers = density
+            .iter()
+            .map(|d| {
+                let n = d.iter().copied().fold(f32::INFINITY, f32::min);
+                let ch = d.map(|v| v - n);
+                let dl = std::array::from_fn::<_, 3, _>(|c| d[c] / (dmax[c] + 1e-4));
+                let cl = std::array::from_fn::<_, 3, _>(|c| ch[c] / (cmax[c] + 1e-4));
+                let shadow = (d[0] * 0.34 + d[1] * 0.39 + d[2] * 0.27).clamp(0.0, 1.75) / 1.75;
+                let h = 1.0 - shadow;
+                let strength = cl.iter().copied().fold(0.0, f32::max);
+                let warmth = ((ch[1] + 1.25 * ch[2] - 0.85 * ch[0])
+                    / (ch.iter().sum::<f32>() + 1e-4))
+                    .clamp(0.0, 1.0);
+                let silver = (0.24 + 0.46 * shadow + 0.30 * n / (nmax + 1e-4)).clamp(0.0, 1.0);
+                let mut l = [[0.0; 3]; 9];
+                l[0] = [n; 3];
+                l[1][2] = ch[2];
+                l[2][1] = ch[1];
+                l[3][0] = ch[0];
+                for c in 0..3 {
+                    l[4][c] = (0.30 + 0.70 * h) * [0.04, 0.08, 0.15][c];
+                    l[5][c] = (silver * [0.18, 0.19, 0.20][c]
+                        + cl[(c + 1) % 3] * [0.03, 0.02, 0.04][c])
+                        .clamp(0.0, 0.28);
+                    l[6][c] = (h * [0.10, 0.06, 0.02][c]
+                        + (1.0 - dl[(c + 2) % 3]) * [0.13, 0.07, 0.18][c]
+                        + cl[(c + 1) % 3] * [0.04, 0.02, 0.06][c])
+                        * (0.40 + 0.60 * h);
+                    l[7][c] =
+                        (0.24 + 0.42 * h + 0.34 * warmth.max(strength)) * [0.02, 0.08, 0.19][c];
+                    l[8][c] = h * [0.03, 0.06, 0.11][c];
+                }
+                l
+            })
+            .collect();
+        Self {
+            size: image.size,
+            layers,
+        }
     }
-    pub fn frame(&self,t: f32) -> DisplayRaster { let k=layer_coefficients(t); let rgb=self.layers.iter().map(|l| std::array::from_fn(|c| { let d=(0..9).map(|i| k[i]*l[i][c]).sum::<f32>().clamp(0.0,8.0); (-d/2.2).exp() })).collect(); DisplayRaster { size: self.size,rgb } }
+    pub fn frame(&self, t: f32) -> DisplayRaster {
+        let k = layer_coefficients(t);
+        let rgb = self
+            .layers
+            .iter()
+            .map(|l| {
+                std::array::from_fn(|c| {
+                    let d = (0..9).map(|i| k[i] * l[i][c]).sum::<f32>().clamp(0.0, 8.0);
+                    (-d / 2.2).exp()
+                })
+            })
+            .collect();
+        DisplayRaster {
+            size: self.size,
+            rgb,
+        }
+    }
 }
-pub fn layer_coefficients(t: f32) -> [f32;9] {
-    let t=t.clamp(0.0,1.0); let sigmoid=|t: f32,c: f32,s: f32| { let expit=|x: f32| 1.0/(1.0+(-x.clamp(-60.0,60.0)).exp()); let start=expit(-c*s); ((expit((t-c)*s)-start)/(expit((1.0-c)*s)-start+1e-4)).clamp(0.0,1.0) };
-    let rise=|c,s,p| { let r=sigmoid(t,c,s); r+(1.0-r)*t.powf(p) }; let pulse=|a,b,c,d,p| sigmoid(t,a,b)*(1.0-sigmoid(t,c,d))*(1.0-t).powf(p);
-    let body=rise(0.19,7.4,3.8); [body*rise(0.12,8.0,2.8),body*rise(0.22,11.0,3.0),body*rise(0.31,10.2,3.4),body*rise(0.52,9.4,5.4),1.08*(1.0-t).powf(0.46),pulse(0.05,32.0,0.44,8.0,0.24),1.22*pulse(0.10,54.0,0.28,28.0,0.18),0.96*pulse(0.12,20.0,0.80,6.5,0.34),0.68*pulse(0.03,24.0,0.98,4.0,0.08)]
+pub fn layer_coefficients(t: f32) -> [f32; 9] {
+    let t = t.clamp(0.0, 1.0);
+    let sigmoid = |t: f32, c: f32, s: f32| {
+        let expit = |x: f32| 1.0 / (1.0 + (-x.clamp(-60.0, 60.0)).exp());
+        let start = expit(-c * s);
+        ((expit((t - c) * s) - start) / (expit((1.0 - c) * s) - start + 1e-4)).clamp(0.0, 1.0)
+    };
+    let rise = |c, s, p| {
+        let r = sigmoid(t, c, s);
+        r + (1.0 - r) * t.powf(p)
+    };
+    let pulse = |a, b, c, d, p| sigmoid(t, a, b) * (1.0 - sigmoid(t, c, d)) * (1.0 - t).powf(p);
+    let body = rise(0.19, 7.4, 3.8);
+    [
+        body * rise(0.12, 8.0, 2.8),
+        body * rise(0.22, 11.0, 3.0),
+        body * rise(0.31, 10.2, 3.4),
+        body * rise(0.52, 9.4, 5.4),
+        1.08 * (1.0 - t).powf(0.46),
+        pulse(0.05, 32.0, 0.44, 8.0, 0.24),
+        1.22 * pulse(0.10, 54.0, 0.28, 28.0, 0.18),
+        0.96 * pulse(0.12, 20.0, 0.80, 6.5, 0.34),
+        0.68 * pulse(0.03, 24.0, 0.98, 4.0, 0.08),
+    ]
 }
 
 // Original pinned virtual_paper_watermark.png embedded so the viewer requires no
 // Python installation or runtime asset path.
-fn logo_alpha() -> (usize,usize,Vec<f32>) {
-    let image=image::load_from_memory(include_bytes!("../assets/virtual_paper_watermark.png")).expect("embedded watermark PNG").to_rgba8();
-    (image.width() as usize,image.height() as usize,image.pixels().map(|p| p[3] as f32/255.0).collect())
+fn logo_alpha() -> (usize, usize, Vec<f32>) {
+    let image = image::load_from_memory(include_bytes!("../assets/virtual_paper_watermark.png"))
+        .expect("embedded watermark PNG")
+        .to_rgba8();
+    (
+        image.width() as usize,
+        image.height() as usize,
+        image.pixels().map(|p| p[3] as f32 / 255.0).collect(),
+    )
 }
 // NumPy default_rng(0): PCG64 with the pinned SeedSequence state. NumPy consumes
 // low then high u32 words for float32, and discards their low eight bits.
-struct PaperRng { state: u128, pending: Option<u32> }
+struct PaperRng {
+    state: u128,
+    pending: Option<u32>,
+}
 impl PaperRng {
-    fn new() -> Self { Self { state:35399562948360463058890781895381311971,pending:None } }
+    fn new() -> Self {
+        Self {
+            state: 35399562948360463058890781895381311971,
+            pending: None,
+        }
+    }
     fn next(&mut self) -> f32 {
-        let word=if let Some(word)=self.pending.take() { word } else {
-            self.state=self.state.wrapping_mul(47026247687942121848144207491837523525).wrapping_add(87136372517582989555478159403783844777);
-            let hi=(self.state>>64) as u64; let lo=self.state as u64; let value=(hi^lo).rotate_right((self.state>>122) as u32); self.pending=Some((value>>32) as u32); value as u32
-        }; (word>>8) as f32*(1.0/16777216.0)
+        let word = if let Some(word) = self.pending.take() {
+            word
+        } else {
+            self.state = self
+                .state
+                .wrapping_mul(47026247687942121848144207491837523525)
+                .wrapping_add(87136372517582989555478159403783844777);
+            let hi = (self.state >> 64) as u64;
+            let lo = self.state as u64;
+            let value = (hi ^ lo).rotate_right((self.state >> 122) as u32);
+            self.pending = Some((value >> 32) as u32);
+            value as u32
+        };
+        (word >> 8) as f32 * (1.0 / 16777216.0)
     }
 }
-fn alpha_sample(alpha: &[f32],width: usize,height: usize,x: f32,y: f32) -> f32 {
-    if x<0.0 || y<0.0 || x>(width-1) as f32 || y>(height-1) as f32 { return 0.0; }
-    let x0=x.floor() as usize; let y0=y.floor() as usize; let x1=(x0+1).min(width-1); let y1=(y0+1).min(height-1); let a=x-x0 as f32;let b=y-y0 as f32;
-    (alpha[y0*width+x0]*(1.0-a)+alpha[y0*width+x1]*a)*(1.0-b)+(alpha[y1*width+x0]*(1.0-a)+alpha[y1*width+x1]*a)*b
+fn alpha_sample(alpha: &[f32], width: usize, height: usize, x: f32, y: f32) -> f32 {
+    if x < 0.0 || y < 0.0 || x > (width - 1) as f32 || y > (height - 1) as f32 {
+        return 0.0;
+    }
+    let x0 = x.floor() as usize;
+    let y0 = y.floor() as usize;
+    let x1 = (x0 + 1).min(width - 1);
+    let y1 = (y0 + 1).min(height - 1);
+    let a = x - x0 as f32;
+    let b = y - y0 as f32;
+    (alpha[y0 * width + x0] * (1.0 - a) + alpha[y0 * width + x1] * a) * (1.0 - b)
+        + (alpha[y1 * width + x0] * (1.0 - a) + alpha[y1 * width + x1] * a) * b
 }
 /// Pinned 72° rhombic watermark lattice, 16° rotation, seed-zero paper glare.
-pub fn virtual_paper_back(size: [usize;2]) -> DisplayRaster {
-    let (sw,sh,mut alpha)=logo_alpha(); let long=size[0].max(size[1]) as f32; let scale=0.22*long/sw.max(sh) as f32;
-    let sigma=(0.5/scale-0.5).max(0.0);
-    if sigma>0.0 {
-        let radius=(4.0*sigma+0.5).floor() as i32; let mut kernel: Vec<f32>=(-radius..=radius).map(|i| (-(i*i) as f32/(2.0*sigma*sigma)).exp()).collect();let sum=kernel.iter().sum::<f32>();for w in &mut kernel { *w/=sum; }
-        let mut temp=vec![0.0;alpha.len()];
-        for y in 0..sh { for x in 0..sw { temp[y*sw+x]=(-radius..=radius).map(|i| alpha[y*sw+(x as i32+i).clamp(0,sw as i32-1) as usize]*kernel[(i+radius) as usize]).sum(); } }
-        for y in 0..sh { for x in 0..sw { alpha[y*sw+x]=(-radius..=radius).map(|i| temp[(y as i32+i).clamp(0,sh as i32-1) as usize*sw+x]*kernel[(i+radius) as usize]).sum(); } }
+pub fn virtual_paper_back(size: [usize; 2]) -> DisplayRaster {
+    let (sw, sh, mut alpha) = logo_alpha();
+    let long = size[0].max(size[1]) as f32;
+    let scale = 0.22 * long / sw.max(sh) as f32;
+    let sigma = (0.5 / scale - 0.5).max(0.0);
+    if sigma > 0.0 {
+        let radius = (4.0 * sigma + 0.5).floor() as i32;
+        let mut kernel: Vec<f32> = (-radius..=radius)
+            .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp())
+            .collect();
+        let sum = kernel.iter().sum::<f32>();
+        for w in &mut kernel {
+            *w /= sum;
+        }
+        let mut temp = vec![0.0; alpha.len()];
+        for y in 0..sh {
+            for x in 0..sw {
+                temp[y * sw + x] = (-radius..=radius)
+                    .map(|i| {
+                        alpha[y * sw + (x as i32 + i).clamp(0, sw as i32 - 1) as usize]
+                            * kernel[(i + radius) as usize]
+                    })
+                    .sum();
+            }
+        }
+        for y in 0..sh {
+            for x in 0..sw {
+                alpha[y * sw + x] = (-radius..=radius)
+                    .map(|i| {
+                        temp[(y as i32 + i).clamp(0, sh as i32 - 1) as usize * sw + x]
+                            * kernel[(i + radius) as usize]
+                    })
+                    .sum();
+            }
+        }
     }
-    let tw=(sw as f32*scale).round().max(1.0) as usize;let th=(sh as f32*scale).round().max(1.0) as usize;
-    let mut tile=vec![0.0;tw*th];
-    for y in 0..th { for x in 0..tw { tile[y*tw+x]=alpha_sample(&alpha,sw,sh,x as f32*(sw-1) as f32/(tw-1).max(1) as f32,y as f32*(sh-1) as f32/(th-1).max(1) as f32); } }
-    let angle=16_f32.to_radians();let (sin,cos)=angle.sin_cos();let rw=(cos.abs()*tw as f32+sin.abs()*th as f32+0.5).floor() as usize;let rh=(sin.abs()*tw as f32+cos.abs()*th as f32+0.5).floor() as usize;
-    let mut rotated=vec![0.0;rw*rh]; let mut xmin=rw;let mut xmax=0;let mut ymin=rh;let mut ymax=0;
-    for y in 0..rh { for x in 0..rw { let dx=x as f32-(rw-1) as f32/2.0;let dy=y as f32-(rh-1) as f32/2.0; let a=alpha_sample(&tile,tw,th,cos*dx-sin*dy+(tw-1) as f32/2.0,sin*dx+cos*dy+(th-1) as f32/2.0);rotated[y*rw+x]=a; if a>1e-4 { xmin=xmin.min(x);xmax=xmax.max(x);ymin=ymin.min(y);ymax=ymax.max(y); } } }
-    let stamp_w=xmax-xmin+1;let stamp_h=ymax-ymin+1;let radius=0.5*((stamp_w*stamp_w+stamp_h*stamp_h) as f32).sqrt();
-    let half=36_f32.to_radians();let distance=0.25*long;
-    let basis=[[distance*(half.cos()*cos+half.sin()*sin),distance*(-half.cos()*sin+half.sin()*cos)],[distance*(half.cos()*cos-half.sin()*sin),distance*(-half.cos()*sin-half.sin()*cos)]];
-    let limit=(((size[0] as f32).hypot(size[1] as f32)+2.0*radius)/distance).ceil() as i32+2;let mut centers=Vec::new();
-    for i in -limit..=limit { for j in -limit..=limit { let x=size[0] as f32*0.5+i as f32*basis[0][0]+j as f32*basis[1][0];let y=size[1] as f32*0.5+i as f32*basis[0][1]+j as f32*basis[1][1];if x>=-radius && x<=size[0] as f32+radius && y>=-radius && y<=size[1] as f32+radius { centers.push((x,y)); } } }
-    centers.sort_by(|a,b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
-    let mut trans=vec![1.0;size[0]*size[1]];
-    for (cx,cy) in centers { let x0=(cx-0.5*stamp_w as f32).round_ties_even() as i32;let y0=(cy-0.5*stamp_h as f32).round_ties_even() as i32;
-        for y in 0..stamp_h { let dy=y0+y as i32;if dy<0 || dy>=size[1] as i32 { continue; } for x in 0..stamp_w { let dx=x0+x as i32;if dx>=0 && dx<size[0] as i32 { trans[dy as usize*size[0]+dx as usize]*=1.0-rotated[(y+ymin)*rw+x+xmin]; } } }
+    let tw = (sw as f32 * scale).round().max(1.0) as usize;
+    let th = (sh as f32 * scale).round().max(1.0) as usize;
+    let mut tile = vec![0.0; tw * th];
+    for y in 0..th {
+        for x in 0..tw {
+            tile[y * tw + x] = alpha_sample(
+                &alpha,
+                sw,
+                sh,
+                x as f32 * (sw - 1) as f32 / (tw - 1).max(1) as f32,
+                y as f32 * (sh - 1) as f32 / (th - 1).max(1) as f32,
+            );
+        }
     }
-    let mut rng=PaperRng::new();let a:Vec<f32>=(0..trans.len()).map(|_| rng.next()).collect();
-    let rgb=trans.iter().enumerate().map(|(i,&t)| { let g=0.88*a[i]+0.12*rng.next().powf(10.0); let paper=0.30+0.70*t;let variation=1.0+(2.0*g-1.0)*paper*0.07*0.25;let lift=g.powi(6)*paper*0.42*0.25;let base=(215.0/255.0+t*27.0/255.0)*variation;let value=(base+(1.0-base)*lift).clamp(0.0,1.0);let value=(value*255.0).round_ties_even()/255.0;[value;3] }).collect();
-    DisplayRaster { size,rgb }
+    let angle = 16_f32.to_radians();
+    let (sin, cos) = angle.sin_cos();
+    let rw = (cos.abs() * tw as f32 + sin.abs() * th as f32 + 0.5).floor() as usize;
+    let rh = (sin.abs() * tw as f32 + cos.abs() * th as f32 + 0.5).floor() as usize;
+    let mut rotated = vec![0.0; rw * rh];
+    let mut xmin = rw;
+    let mut xmax = 0;
+    let mut ymin = rh;
+    let mut ymax = 0;
+    for y in 0..rh {
+        for x in 0..rw {
+            let dx = x as f32 - (rw - 1) as f32 / 2.0;
+            let dy = y as f32 - (rh - 1) as f32 / 2.0;
+            let a = alpha_sample(
+                &tile,
+                tw,
+                th,
+                cos * dx - sin * dy + (tw - 1) as f32 / 2.0,
+                sin * dx + cos * dy + (th - 1) as f32 / 2.0,
+            );
+            rotated[y * rw + x] = a;
+            if a > 1e-4 {
+                xmin = xmin.min(x);
+                xmax = xmax.max(x);
+                ymin = ymin.min(y);
+                ymax = ymax.max(y);
+            }
+        }
+    }
+    let stamp_w = xmax - xmin + 1;
+    let stamp_h = ymax - ymin + 1;
+    let radius = 0.5 * ((stamp_w * stamp_w + stamp_h * stamp_h) as f32).sqrt();
+    let half = 36_f32.to_radians();
+    let distance = 0.25 * long;
+    let basis = [
+        [
+            distance * (half.cos() * cos + half.sin() * sin),
+            distance * (-half.cos() * sin + half.sin() * cos),
+        ],
+        [
+            distance * (half.cos() * cos - half.sin() * sin),
+            distance * (-half.cos() * sin - half.sin() * cos),
+        ],
+    ];
+    let limit =
+        (((size[0] as f32).hypot(size[1] as f32) + 2.0 * radius) / distance).ceil() as i32 + 2;
+    let mut centers = Vec::new();
+    for i in -limit..=limit {
+        for j in -limit..=limit {
+            let x = size[0] as f32 * 0.5 + i as f32 * basis[0][0] + j as f32 * basis[1][0];
+            let y = size[1] as f32 * 0.5 + i as f32 * basis[0][1] + j as f32 * basis[1][1];
+            if x >= -radius
+                && x <= size[0] as f32 + radius
+                && y >= -radius
+                && y <= size[1] as f32 + radius
+            {
+                centers.push((x, y));
+            }
+        }
+    }
+    centers.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let mut trans = vec![1.0; size[0] * size[1]];
+    for (cx, cy) in centers {
+        let x0 = (cx - 0.5 * stamp_w as f32).round_ties_even() as i32;
+        let y0 = (cy - 0.5 * stamp_h as f32).round_ties_even() as i32;
+        for y in 0..stamp_h {
+            let dy = y0 + y as i32;
+            if dy < 0 || dy >= size[1] as i32 {
+                continue;
+            }
+            for x in 0..stamp_w {
+                let dx = x0 + x as i32;
+                if dx >= 0 && dx < size[0] as i32 {
+                    trans[dy as usize * size[0] + dx as usize] *=
+                        1.0 - rotated[(y + ymin) * rw + x + xmin];
+                }
+            }
+        }
+    }
+    let mut rng = PaperRng::new();
+    let a: Vec<f32> = (0..trans.len()).map(|_| rng.next()).collect();
+    let rgb = trans
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| {
+            let g = 0.88 * a[i] + 0.12 * rng.next().powf(10.0);
+            let paper = 0.30 + 0.70 * t;
+            let variation = 1.0 + (2.0 * g - 1.0) * paper * 0.07 * 0.25;
+            let lift = g.powi(6) * paper * 0.42 * 0.25;
+            let base = (215.0 / 255.0 + t * 27.0 / 255.0) * variation;
+            let value = (base + (1.0 - base) * lift).clamp(0.0, 1.0);
+            let value = (value * 255.0).round_ties_even() / 255.0;
+            [value; 3]
+        })
+        .collect();
+    DisplayRaster { size, rgb }
 }
 
 /// Primary display profile discovery matching Pillow get_display_profile().
 #[cfg(windows)]
 pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> {
     use std::{ffi::c_void, os::windows::ffi::OsStringExt};
-    #[link(name="user32")] unsafe extern "system" { fn GetDC(hwnd: *mut c_void) -> *mut c_void; fn ReleaseDC(hwnd: *mut c_void,dc: *mut c_void) -> i32; }
-    #[link(name="gdi32")] unsafe extern "system" { fn GetICMProfileW(dc: *mut c_void,size: *mut u32,path: *mut u16) -> i32; }
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetDC(hwnd: *mut c_void) -> *mut c_void;
+        fn ReleaseDC(hwnd: *mut c_void, dc: *mut c_void) -> i32;
+    }
+    #[link(name = "gdi32")]
+    unsafe extern "system" {
+        fn GetICMProfileW(dc: *mut c_void, size: *mut u32, path: *mut u16) -> i32;
+    }
     unsafe {
-        let dc=GetDC(std::ptr::null_mut()); if dc.is_null() { return Err("Cannot acquire Windows display context".into()); }
-        let mut len=0; GetICMProfileW(dc,&mut len,std::ptr::null_mut());
-        if len==0 { ReleaseDC(std::ptr::null_mut(),dc); return Ok(None); }
-        let mut path=vec![0_u16;len as usize]; let ok=GetICMProfileW(dc,&mut len,path.as_mut_ptr()); ReleaseDC(std::ptr::null_mut(),dc);
-        if ok==0 { return Err("Cannot discover Windows display ICC profile".into()); }
-        let end=path.iter().position(|&c| c==0).unwrap_or(path.len()); Ok(Some(std::ffi::OsString::from_wide(&path[..end]).into()))
+        let dc = GetDC(std::ptr::null_mut());
+        if dc.is_null() {
+            return Err("Cannot acquire Windows display context".into());
+        }
+        let mut len = 0;
+        GetICMProfileW(dc, &mut len, std::ptr::null_mut());
+        if len == 0 {
+            ReleaseDC(std::ptr::null_mut(), dc);
+            return Ok(None);
+        }
+        let mut path = vec![0_u16; len as usize];
+        let ok = GetICMProfileW(dc, &mut len, path.as_mut_ptr());
+        ReleaseDC(std::ptr::null_mut(), dc);
+        if ok == 0 {
+            return Err("Cannot discover Windows display ICC profile".into());
+        }
+        let end = path.iter().position(|&c| c == 0).unwrap_or(path.len());
+        Ok(Some(std::ffi::OsString::from_wide(&path[..end]).into()))
     }
 }
 #[cfg(not(windows))]
 #[allow(dead_code)]
-pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> { Ok(None) }
+pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> {
+    Ok(None)
+}
 
 /// Takes already encoded sRGB viewing pixels, never an export ImageBuf.
 /// ICC conversion is quantized to RGB8 as in the pinned Pillow workflow.
-pub fn apply_display_profile(raster: &DisplayRaster, path: &std::path::Path) -> Result<DisplayRaster,String> {
-    use lcms2::{Profile,Transform,PixelFormat,Intent};
-    let source=Profile::new_srgb(); let destination=Profile::new_file(path).map_err(|e| e.to_string())?;
-    let transform: Transform<[u8;3],[u8;3]>=Transform::new(&source,PixelFormat::RGB_8,&destination,PixelFormat::RGB_8,Intent::Perceptual).map_err(|e| e.to_string())?;
-    let mut rgb:Vec<[u8;3]>=raster.rgb.iter().map(|p| p.map(|v| (v.clamp(0.0,1.0)*255.0) as u8)).collect(); transform.transform_in_place(&mut rgb);
-    DisplayRaster::new(raster.size,rgb.into_iter().map(|p| p.map(|v| v as f32/255.0)).collect())
+pub fn apply_display_profile(
+    raster: &DisplayRaster,
+    path: &std::path::Path,
+) -> Result<DisplayRaster, String> {
+    use lcms2::{Intent, PixelFormat, Profile, Transform};
+    let source = Profile::new_srgb();
+    let destination = Profile::new_file(path).map_err(|e| e.to_string())?;
+    let transform: Transform<[u8; 3], [u8; 3]> = Transform::new(
+        &source,
+        PixelFormat::RGB_8,
+        &destination,
+        PixelFormat::RGB_8,
+        Intent::Perceptual,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut rgb: Vec<[u8; 3]> = raster
+        .rgb
+        .iter()
+        .map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8))
+        .collect();
+    transform.transform_in_place(&mut rgb);
+    DisplayRaster::new(
+        raster.size,
+        rgb.into_iter()
+            .map(|p| p.map(|v| v as f32 / 255.0))
+            .collect(),
+    )
 }
 
 /// A disabled transform explicitly views values in the output space. An
 /// enabled transform always starts from the separate encoded-sRGB preview;
 /// an ICC profile only adds the final device conversion.
-pub fn prepare_display_raster(raw_output: DisplayRaster, srgb_preview: Option<DisplayRaster>, enabled: bool, selected_profile: Option<&std::path::Path>) -> (DisplayRaster,String) {
-    if !enabled { return (raw_output,"Display transform: disabled; viewing output-space values".into()); }
-    let Some(srgb) = srgb_preview else {
-        return (raw_output,"Display transform: missing sRGB preview; viewing output-space values".into());
-    };
-    #[cfg(windows)] {
-        let discovered=if selected_profile.is_none() { discover_display_profile() } else { Ok(None) };
-        let profile=selected_profile.map(std::path::Path::to_path_buf).or_else(|| discovered.ok().flatten());
-        if let Some(path)=profile {
-            match apply_display_profile(&srgb,&path) {
-                Ok(raster)=>return (raster,format!("Display transform: active ({})",path.display())),
-                Err(e)=>return (srgb,format!("Display transform: ICC failed ({e}); viewing sRGB preview")),
-            }
-        }
-        return (srgb,"Display transform: sRGB preview; no display profile".into());
+pub fn prepare_display_raster(
+    raw_output: DisplayRaster,
+    srgb_preview: Option<DisplayRaster>,
+    enabled: bool,
+    selected_profile: Option<&std::path::Path>,
+) -> (DisplayRaster, String) {
+    if !enabled {
+        return (
+            raw_output,
+            "Display transform: disabled; viewing output-space values".into(),
+        );
     }
-    #[cfg(not(windows))] {
-        if let Some(path)=selected_profile {
-            match apply_display_profile(&srgb,path) {
-                Ok(raster)=>return (raster,format!("Display transform: active ({})",path.display())),
-                Err(e)=>return (srgb,format!("Display transform: ICC failed ({e}); viewing sRGB preview")),
+    let Some(srgb) = srgb_preview else {
+        return (
+            raw_output,
+            "Display transform: missing sRGB preview; viewing output-space values".into(),
+        );
+    };
+    #[cfg(windows)]
+    {
+        let discovered = if selected_profile.is_none() {
+            discover_display_profile()
+        } else {
+            Ok(None)
+        };
+        let profile = selected_profile
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| discovered.ok().flatten());
+        if let Some(path) = profile {
+            match apply_display_profile(&srgb, &path) {
+                Ok(raster) => {
+                    return (
+                        raster,
+                        format!("Display transform: active ({})", path.display()),
+                    );
+                }
+                Err(e) => {
+                    return (
+                        srgb,
+                        format!("Display transform: ICC failed ({e}); viewing sRGB preview"),
+                    );
+                }
             }
         }
-        (srgb,"Display transform: sRGB preview; no display profile".into())
+        return (
+            srgb,
+            "Display transform: sRGB preview; no display profile".into(),
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(path) = selected_profile {
+            match apply_display_profile(&srgb, path) {
+                Ok(raster) => {
+                    return (
+                        raster,
+                        format!("Display transform: active ({})", path.display()),
+                    );
+                }
+                Err(e) => {
+                    return (
+                        srgb,
+                        format!("Display transform: ICC failed ({e}); viewing sRGB preview"),
+                    );
+                }
+            }
+        }
+        (
+            srgb,
+            "Display transform: sRGB preview; no display profile".into(),
+        )
     }
 }
 
 /// Capped disposable float raster; sampling happens before color conversion.
 /// Full-resolution pipeline buffers remain borrowed and never get copied here.
 /// Create a disposable viewer raster bounded by the caller's preview size.
-fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<DisplayRaster,String> {
-    if image.width==0 || image.height==0 { return Err("Cannot view an empty image".into()); }
-    let max_edge=max_edge.max(1);
-    let w=image.width as usize; let h=image.height as usize; let factor=(max_edge as f64/w.max(h) as f64).min(1.0);
-    let size=[((w as f64*factor).round() as usize).max(1),((h as f64*factor).round() as usize).max(1)];
-    let mut rgb=Vec::with_capacity(size[0]*size[1]);
-    for y in 0..size[1] { let sy=((y as f64+0.5)*h as f64/size[1] as f64-0.5).clamp(0.0,(h-1) as f64);let y0=sy.floor() as usize;let y1=(y0+1).min(h-1);let fy=sy-y0 as f64;
-        for x in 0..size[0] { let sx=((x as f64+0.5)*w as f64/size[0] as f64-0.5).clamp(0.0,(w-1) as f64);let x0=sx.floor() as usize;let x1=(x0+1).min(w-1);let fx=sx-x0 as f64;
-            rgb.push(std::array::from_fn(|c| { let a=image.data[(y0*w+x0)*3+c] as f64;let b=image.data[(y0*w+x1)*3+c] as f64;let d=image.data[(y1*w+x0)*3+c] as f64;let e=image.data[(y1*w+x1)*3+c] as f64; ((a*(1.0-fx)+b*fx)*(1.0-fy)+(d*(1.0-fx)+e*fx)*fy) as f32 }));
+fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<DisplayRaster, String> {
+    if image.width == 0 || image.height == 0 {
+        return Err("Cannot view an empty image".into());
+    }
+    let max_edge = max_edge.max(1);
+    let w = image.width as usize;
+    let h = image.height as usize;
+    let factor = (max_edge as f64 / w.max(h) as f64).min(1.0);
+    let size = [
+        ((w as f64 * factor).round() as usize).max(1),
+        ((h as f64 * factor).round() as usize).max(1),
+    ];
+    let mut rgb = Vec::with_capacity(size[0] * size[1]);
+    for y in 0..size[1] {
+        let sy = ((y as f64 + 0.5) * h as f64 / size[1] as f64 - 0.5).clamp(0.0, (h - 1) as f64);
+        let y0 = sy.floor() as usize;
+        let y1 = (y0 + 1).min(h - 1);
+        let fy = sy - y0 as f64;
+        for x in 0..size[0] {
+            let sx =
+                ((x as f64 + 0.5) * w as f64 / size[0] as f64 - 0.5).clamp(0.0, (w - 1) as f64);
+            let x0 = sx.floor() as usize;
+            let x1 = (x0 + 1).min(w - 1);
+            let fx = sx - x0 as f64;
+            rgb.push(std::array::from_fn(|c| {
+                let a = image.data[(y0 * w + x0) * 3 + c] as f64;
+                let b = image.data[(y0 * w + x1) * 3 + c] as f64;
+                let d = image.data[(y1 * w + x0) * 3 + c] as f64;
+                let e = image.data[(y1 * w + x1) * 3 + c] as f64;
+                ((a * (1.0 - fx) + b * fx) * (1.0 - fy) + (d * (1.0 - fx) + e * fx) * fy) as f32
+            }));
         }
     }
-    DisplayRaster::new(size,rgb)
+    DisplayRaster::new(size, rgb)
 }
-pub fn input_display_raster(image: &ImageBuf, space: &str, decode: bool, max_edge: usize) -> Result<DisplayRaster,String> {
-    use spektrafilm_math::colorspace::{resolve,display_matrix,display_rgb};
-    let space=resolve(space)?;let matrix=display_matrix(space);let raw=capped_raster(image,max_edge)?;
-    DisplayRaster::new(raw.size,raw.rgb.iter().map(|p| display_rgb(p.map(|v| v as f64),space,decode,&matrix).map(|v| v.clamp(0.0,1.0) as f32)).collect())
+pub fn input_display_raster(
+    image: &ImageBuf,
+    space: &str,
+    decode: bool,
+    max_edge: usize,
+) -> Result<DisplayRaster, String> {
+    use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+    let space = resolve(space)?;
+    let matrix = display_matrix(space);
+    let raw = capped_raster(image, max_edge)?;
+    DisplayRaster::new(
+        raw.size,
+        raw.rgb
+            .iter()
+            .map(|p| {
+                display_rgb(p.map(|v| v as f64), space, decode, &matrix)
+                    .map(|v| v.clamp(0.0, 1.0) as f32)
+            })
+            .collect(),
+    )
 }
-pub fn output_display_raster(image: &ImageBuf, space: &str, encoded: bool, enabled: bool, profile: Option<&std::path::Path>, max_edge: usize) -> Result<(DisplayRaster,String),String> {
-    let raw=capped_raster(image,max_edge)?;
-    let srgb=enabled.then(|| input_display_raster(image,space,encoded,max_edge)).transpose()?;
-    Ok(prepare_display_raster(raw,srgb,enabled,profile))
+pub fn output_display_raster(
+    image: &ImageBuf,
+    space: &str,
+    encoded: bool,
+    enabled: bool,
+    profile: Option<&std::path::Path>,
+    max_edge: usize,
+) -> Result<(DisplayRaster, String), String> {
+    let raw = capped_raster(image, max_edge)?;
+    let srgb = enabled
+        .then(|| input_display_raster(image, space, encoded, max_edge))
+        .transpose()?;
+    Ok(prepare_display_raster(raw, srgb, enabled, profile))
 }
 
 #[cfg(test)]
@@ -532,12 +1188,7 @@ mod tests {
         let (actual, status) =
             output_display_raster(&image, "Display P3", true, true, None, 1).unwrap();
         let space = resolve("Display P3").unwrap();
-        let expected = display_rgb(
-            [0.75, 0.20, 0.10],
-            space,
-            true,
-            &display_matrix(space),
-        );
+        let expected = display_rgb([0.75, 0.20, 0.10], space, true, &display_matrix(space));
 
         for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
             assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
@@ -555,12 +1206,7 @@ mod tests {
         let (actual, _) =
             output_display_raster(&image, "ITU-R BT.2020", true, true, None, 1).unwrap();
         let space = resolve("ITU-R BT.2020").unwrap();
-        let expected = display_rgb(
-            [0.18, 0.18, 0.18],
-            space,
-            true,
-            &display_matrix(space),
-        );
+        let expected = display_rgb([0.18, 0.18, 0.18], space, true, &display_matrix(space));
 
         for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
             assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
@@ -578,12 +1224,7 @@ mod tests {
         let (preview, _) =
             output_display_raster(&image, "Display P3", false, true, None, 1).unwrap();
         let space = resolve("Display P3").unwrap();
-        let expected = display_rgb(
-            [1.3, -0.2, 0.4],
-            space,
-            false,
-            &display_matrix(space),
-        );
+        let expected = display_rgb([1.3, -0.2, 0.4], space, false, &display_matrix(space));
 
         assert_eq!(raw.rgb[0], [1.3, -0.2, 0.4]);
         for (actual, expected) in preview.rgb[0].into_iter().zip(expected) {

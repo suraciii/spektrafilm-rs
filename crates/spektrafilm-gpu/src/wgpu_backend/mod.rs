@@ -129,9 +129,9 @@ impl WgpuBackend {
         let t_start = std::time::Instant::now();
         let binding_types: Vec<wgpu::BufferBindingType> =
             bindings.iter().map(|b| b.binding_type).collect();
-        let cached = self
-            .pipeline_cache
-            .get_or_compile(&self.device, shader_source, &binding_types);
+        let cached =
+            self.pipeline_cache
+                .get_or_compile(&self.device, shader_source, &binding_types);
         let pipeline = &cached.pipeline;
         let bind_group_layout = &cached.layout;
         let t_compile = t_start.elapsed();
@@ -1284,7 +1284,15 @@ impl WgpuBackend {
         // Encode the destination space before Grain V2 preparation; all
         // resolution and grain passes stay in this resident command buffer.
         let grain_v2_state = p.grain_v2.as_ref().map(|gp| {
-            build_grain_v2_state(&self.device, gp, image.width, image.height, &buf_b, Some(p.scan_output_space), self)
+            build_grain_v2_state(
+                &self.device,
+                gp,
+                image.width,
+                image.height,
+                &buf_b,
+                Some(p.scan_output_space),
+                self,
+            )
         });
 
         // ── Output gamut compression state ───────────────────────────────
@@ -1435,7 +1443,6 @@ impl WgpuBackend {
         if let Some(us) = unsharp_state.as_ref() {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
             us.encode_passes(&mut encoder, n_pixels, wg_xy, &buf_b, img_bytes as u64);
-
         }
         // 6e. Encode native destination RGB, then apply Grain V2. The readback
         // is encoded; the caller decodes only when linear output is requested.
@@ -1536,11 +1543,7 @@ impl ComputeBackend for WgpuBackend {
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
         cpu_backend::CpuBackend.cctf_decode_srgb(img)
     }
-    fn grain_v2(
-        &self,
-        img: &ImageBuf,
-        params: &crate::GrainV2GpuParams,
-    ) -> Option<ImageBuf> {
+    fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
         Some(self.grain_v2_gpu(img, params))
     }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
@@ -1931,7 +1934,6 @@ use glare::*;
 #[cfg(feature = "wgpu-backend")]
 use grain::*;
 #[cfg(feature = "wgpu-backend")]
-
 use halation::*;
 #[cfg(feature = "wgpu-backend")]
 use highlight::*;

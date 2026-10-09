@@ -8,16 +8,14 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use spektrafilm_core::image_io::{
-    self, BitDepth, Compression, JpegSubsampling, SaveOptions,
-};
-use spektrafilm_core::neutral_filters::NeutralFilters;
+use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
 use spektrafilm_core::params::{RuntimeParams, Tap};
-use spektrafilm_core::params_builder::{digest_params, resize_for_preview};
-use spektrafilm_core::pipeline::Pipeline;
+use spektrafilm_core::params_builder::resize_for_preview;
 use spektrafilm_core::profile;
+use spektrafilm_core::runtime::{
+    DigestMode, Runtime, RuntimePhotoParams, digest_params_with_neutral,
+};
 use spektrafilm_math::image::ImageBuf;
-
 
 use std::time::Instant;
 #[derive(Parser)]
@@ -300,7 +298,13 @@ fn main() -> Result<()> {
             output,
             data_dir,
         } => {
-            lut::export_lut(&film, paper.as_deref(), size, &output, &resolve_data_dir(data_dir))?;
+            lut::export_lut(
+                &film,
+                paper.as_deref(),
+                size,
+                &output,
+                &resolve_data_dir(data_dir),
+            )?;
         }
         Commands::Describe { format } => {
             if format != "json" {
@@ -325,10 +329,9 @@ fn main() -> Result<()> {
             report,
             data_dir,
         } => cmd_parity(&corpus, &report, &data_dir)?,
-
     }
     Ok(())
-    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn cmd_process(
@@ -371,9 +374,7 @@ fn cmd_process(
         OutputFormat::Tiff | OutputFormat::Exr => 16,
     };
     let depth = BitDepth::try_from(bit_depth.unwrap_or(default_depth))?;
-    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png)
-        && depth != BitDepth::Eight
-    {
+    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && depth != BitDepth::Eight {
         bail!("{} output requires 8-bit depth", output_format.name());
     }
     if matches!(output_format, OutputFormat::Exr) && depth == BitDepth::Eight {
@@ -394,9 +395,13 @@ fn cmd_process(
     if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && compression.is_some() {
         bail!("--compression is only valid for TIFF or EXR output");
     }
-    let jpeg_quality = matches!(output_format, OutputFormat::Jpeg).then(|| jpeg_quality.unwrap_or(95));
-    let jpeg_subsampling = matches!(output_format, OutputFormat::Jpeg)
-        .then(|| jpeg_subsampling.unwrap_or(JpegSubsamplingArg::Yuv444).core());
+    let jpeg_quality =
+        matches!(output_format, OutputFormat::Jpeg).then(|| jpeg_quality.unwrap_or(95));
+    let jpeg_subsampling = matches!(output_format, OutputFormat::Jpeg).then(|| {
+        jpeg_subsampling
+            .unwrap_or(JpegSubsamplingArg::Yuv444)
+            .core()
+    });
     let compression = matches!(output_format, OutputFormat::Tiff | OutputFormat::Exr)
         .then(|| compression.unwrap_or(CompressionArg::Zip).core());
     let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
@@ -455,7 +460,14 @@ fn cmd_process(
     params
         .validate()
         .map_err(anyhow::Error::msg)
-        .with_context(|| format!("invalid params{}", params_file.map(|p| format!(" file {}", p.display())).unwrap_or_default()))?;
+        .with_context(|| {
+            format!(
+                "invalid params{}",
+                params_file
+                    .map(|p| format!(" file {}", p.display()))
+                    .unwrap_or_default()
+            )
+        })?;
 
     // RAW supplies linear ACES; prepared images retain their samples.
     let input_is_raw = image_io::is_raw(input);
@@ -465,10 +477,7 @@ fn cmd_process(
     }
     params.validate_color().map_err(anyhow::Error::msg)?;
 
-    // Digest to the static runtime form (0.3.4 order: database neutral
-    // filters, preview deactivation, stock-specific overrides, debug
-    // switches). `new_with_spectral` re-applies the idempotent parts.
-    let neutral_db = NeutralFilters::load(data_dir).map_err(anyhow::Error::msg)?;
+    // Build the calibrated runtime through the shared digest boundary.
     let inject = params
         .taps
         .inject
@@ -485,7 +494,18 @@ fn cmd_process(
         .transpose()
         .map_err(anyhow::Error::msg)
         .with_context(|| "params taps.collect")?;
-    let params = digest_params(params, &film, &print, Some(&neutral_db), true);
+    // GUI export supplies undigested edits through a private child-only protocol.
+    // Batch processing retains the stock-specific default policy.
+    let digest_mode = if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        DigestMode::PreserveUserEdits
+    } else {
+        DigestMode::ApplyStockSpecifics
+    };
+    let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(data_dir)
+        .map_err(anyhow::Error::msg)?;
+    let params = digest_params_with_neutral(params, &film, &print, &neutral, digest_mode);
 
     let t = Instant::now();
     let (image, metadata) = if input_is_raw {
@@ -496,13 +516,19 @@ fn cmd_process(
                 "custom" => spektrafilm_raw::WhiteBalance::Custom,
                 _ => spektrafilm_raw::WhiteBalance::AsShot,
             },
-            temperature: workflow.raw_temperature, tint: workflow.raw_tint,
+            temperature: workflow.raw_temperature,
+            tint: workflow.raw_tint,
             lens_correction: workflow.lens_correction,
         };
-        (spektrafilm_raw::load(input, &options).map_err(anyhow::Error::msg)?.image, image_io::read_metadata(input))
+        (
+            spektrafilm_raw::load(input, &options)
+                .map_err(anyhow::Error::msg)?
+                .image,
+            image_io::read_metadata(input),
+        )
     } else {
-        let loaded = image_io::load(input)
-            .with_context(|| format!("loading image: {}", input.display()))?;
+        let loaded =
+            image_io::load(input).with_context(|| format!("loading image: {}", input.display()))?;
         (loaded.image, loaded.metadata)
     };
     // Preview mode: bound the long edge before processing (upstream
@@ -529,25 +555,25 @@ fn cmd_process(
         t.elapsed().as_millis()
     );
 
-    // Run pipeline — full Hanatos2025 spectral upsampling, no simplified
-    // fallback: the identity front end is not a calibrated substitute, so
-    // a missing LUT is a hard error.
+    // Run the calibrated runtime — a missing spectral LUT is a hard error.
     let t = Instant::now();
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir).map_err(|e| {
+    let runtime = Runtime::new(film, print, params, data_dir).map_err(|e| {
         anyhow::anyhow!(
             "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
              removed; check that the profiles/data directory contains the spectral LUTs \
              (looked under {})",
-             data_dir.display()
+            data_dir.display()
         )
     })?;
     let run_once = |image: ImageBuf| -> Result<ImageBuf> {
         let out = if inject.is_none() && collect.is_none() {
-            pipeline.process(image, backend.as_ref()).map_err(anyhow::Error::msg)?
+            runtime
+                .process(image, backend.as_ref())
+                .map_err(anyhow::Error::msg)?
         } else {
-            pipeline
+            runtime
                 .process_with_taps(image, backend.as_ref(), inject, collect)
                 .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
         };
@@ -578,12 +604,23 @@ fn cmd_process(
 
     // Save output
     let t = Instant::now();
-    let saving_space = workflow.saving_color_space.as_deref().unwrap_or(
-        if output_format == OutputFormat::Exr { "ACES2065-1" } else { &output_color_space }
-    );
-    let saving_encoded = workflow.saving_cctf_encoding.unwrap_or(output_format != OutputFormat::Exr && output_cctf_encoding);
+    let saving_space =
+        workflow
+            .saving_color_space
+            .as_deref()
+            .unwrap_or(if output_format == OutputFormat::Exr {
+                "ACES2065-1"
+            } else {
+                &output_color_space
+            });
+    let saving_encoded = workflow
+        .saving_cctf_encoding
+        .unwrap_or(output_format != OutputFormat::Exr && output_cctf_encoding);
     if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && !saving_encoded {
-        bail!("{} output requires encoded saving output", output_format.name());
+        bail!(
+            "{} output requires encoded saving output",
+            output_format.name()
+        );
     }
     if output_format == OutputFormat::Exr && saving_encoded {
         bail!("EXR output requires linear saving output");
@@ -684,8 +721,17 @@ fn render_recipe(
         .ok_or_else(|| anyhow::anyhow!("recipe does not select a print profile"))?;
     let print = profile::load_profile_by_name(data_dir, print_name)
         .with_context(|| format!("loading print profile {print_name}"))?;
-    let neutral_db = NeutralFilters::load(data_dir).map_err(anyhow::Error::msg)?;
-    let params = digest_params(params, &film, &print, Some(&neutral_db), true);
+    let photo = RuntimePhotoParams {
+        film,
+        print,
+        params,
+        data_dir: data_dir.to_owned(),
+    };
+    let runtime = photo
+        .into_runtime(DigestMode::ApplyStockSpecifics)
+        .map_err(anyhow::Error::msg)
+        .context("building spektrafilm-rs spectral runtime")?;
+    let params = runtime.params();
     let loaded = image_io::load(input)
         .with_context(|| format!("loading staged input {}", input.display()))?;
     contract::validate_input_dimensions(loaded.image.width, loaded.image.height)?;
@@ -696,40 +742,44 @@ fn render_recipe(
         loaded.image
     };
     let backend = spektrafilm_gpu::select_backend();
-    let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir)
-        .map_err(anyhow::Error::msg)
-        .context("building spektrafilm-rs spectral pipeline")?;
-    let result = pipeline
+    let result = runtime
         .process(image, backend.as_ref())
         .map_err(anyhow::Error::msg)
-        .context("running spektrafilm-rs pipeline")?;
+        .context("running spektrafilm-rs runtime")?;
     let parent = output
         .parent()
         .ok_or_else(|| anyhow::anyhow!("output has no parent directory"))?;
     fs::create_dir_all(parent)?;
-    let extension = output.extension().and_then(|value| value.to_str()).unwrap_or("tmp");
+    let extension = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("tmp");
     let temporary = parent.join(format!(
         ".spektrafilm-{}-{}.{}",
         std::process::id(),
-        format!("{:x}", Sha256::digest(output.as_os_str().as_encoded_bytes())),
+        format!(
+            "{:x}",
+            Sha256::digest(output.as_os_str().as_encoded_bytes())
+        ),
         extension
     ));
     if temporary.exists() {
         bail!("temporary output already exists: {}", temporary.display());
     }
-    if let Err(error) = image_io::save_jpeg_quality(
+    let jpeg_output = recipe.output.format == "jpeg";
+    if let Err(error) = image_io::save(
         &temporary,
         &result,
         SaveOptions {
             depth: BitDepth::Eight,
             color_space: "sRGB",
             cctf_encoding: true,
-            jpeg_quality: None,
-            jpeg_subsampling: Some(spektrafilm_core::image_io::JpegSubsampling::Yuv444),
+            jpeg_quality: jpeg_output.then_some(contract::FINISHED_JPEG_QUALITY),
+            jpeg_subsampling: jpeg_output
+                .then_some(spektrafilm_core::image_io::JpegSubsampling::Yuv444),
             compression: None,
         },
         loaded.metadata.as_ref(),
-        contract::FINISHED_JPEG_QUALITY,
     ) {
         let _ = fs::remove_file(&temporary);
         return Err(error).context("writing spektrafilm-rs output");
@@ -764,8 +814,8 @@ fn inspect(input: &Path) -> Result<Value> {
         bail!("input is not a regular file: {}", input.display());
     }
     let bytes = fs::read(input)?;
-    let loaded = image_io::load(input)
-        .with_context(|| format!("inspecting image {}", input.display()))?;
+    let loaded =
+        image_io::load(input).with_context(|| format!("inspecting image {}", input.display()))?;
     let format = image_io::ImageFormat::detect(input)?;
     let precision_bits = match format {
         image_io::ImageFormat::Png | image_io::ImageFormat::Jpeg => Some(8),
@@ -814,7 +864,10 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         corpus.parent().unwrap_or_else(|| Path::new("."))
     };
     let documents = if corpus.is_file() {
-        vec![(corpus.to_path_buf(), serde_json::from_slice::<Value>(&fs::read(corpus)?)?)]
+        vec![(
+            corpus.to_path_buf(),
+            serde_json::from_slice::<Value>(&fs::read(corpus)?)?,
+        )]
     } else if corpus.is_dir() {
         let mut paths = fs::read_dir(corpus)?
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -823,26 +876,28 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         paths.sort();
         paths
             .into_iter()
-            .map(|path| Ok((path.clone(), serde_json::from_slice::<Value>(&fs::read(&path)?)?)))
+            .map(|path| {
+                Ok((
+                    path.clone(),
+                    serde_json::from_slice::<Value>(&fs::read(&path)?)?,
+                ))
+            })
             .collect::<Result<Vec<_>>>()?
     } else {
-        bail!("corpus is neither a file nor a directory: {}", corpus.display());
+        bail!(
+            "corpus is neither a file nor a directory: {}",
+            corpus.display()
+        );
     };
     let mut cases = Vec::new();
     for (source, document) in documents {
-        let entries = document.as_array().cloned().unwrap_or_else(|| vec![document]);
+        let entries = document
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![document]);
         for (index, entry) in entries.into_iter().enumerate() {
-            let name = entry
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("case");
-            let result = run_parity_case(
-                base,
-                &entry,
-                data_dir,
-                report,
-                cases.len() + index,
-            );
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or("case");
+            let result = run_parity_case(base, &entry, data_dir, report, cases.len() + index);
             let case = match result {
                 Ok(case) => case,
                 Err(error) => json!({
@@ -857,7 +912,9 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         }
     }
     let passed = !cases.is_empty()
-        && cases.iter().all(|case| case["passed"].as_bool() == Some(true));
+        && cases
+            .iter()
+            .all(|case| case["passed"].as_bool() == Some(true));
     let document = json!({
         "implementation": contract::IMPLEMENTATION,
         "adapterVersion": contract::ADAPTER_VERSION,
@@ -868,7 +925,10 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         "cases": cases,
         "dataDir": data_dir,
     });
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(report)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(report)?;
     file.write_all(serde_json::to_string_pretty(&document)?.as_bytes())?;
     file.write_all(b"\n")?;
     Ok(())
@@ -929,10 +989,11 @@ fn run_parity_case(
             let passed = if let Some(diff) = &image_diff {
                 diff["dimensionsMatch"].as_bool() == Some(true)
                     && diff["maxAbs"].as_f64().is_some_and(|value| {
-                        value <= entry
-                            .get("pixelTolerance")
-                            .and_then(Value::as_f64)
-                            .unwrap_or(0.02)
+                        value
+                            <= entry
+                                .get("pixelTolerance")
+                                .and_then(Value::as_f64)
+                                .unwrap_or(0.02)
                     })
             } else {
                 reference_digest == facts["output"]["sha256"].as_str().map(ToOwned::to_owned)
@@ -967,7 +1028,11 @@ fn resolve_case_path(base: &Path, value: Option<&Value>) -> Result<PathBuf> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("parity case requires a string path"))?;
     let path = PathBuf::from(value);
-    Ok(if path.is_absolute() { path } else { base.join(path) })
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    })
 }
 
 fn compare_images(reference: &Path, output: &Path, tolerance: f64) -> Result<Value> {
@@ -1038,9 +1103,6 @@ fn cmd_list_profiles(data_dir: &Path) {
     }
 }
 
-
-
-
 pub(crate) fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
     let mut candidates = vec![explicit.clone()];
     if let Ok(exe) = std::env::current_exe() {
@@ -1054,12 +1116,20 @@ pub(crate) fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
     if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
         candidates.push(PathBuf::from(manifest).join("..").join("..").join("data"));
     }
-    candidates.into_iter().find(|path| path.is_dir()).unwrap_or(explicit)
+    candidates
+        .into_iter()
+        .find(|path| path.is_dir())
+        .unwrap_or(explicit)
 }
 
 fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {
-    if selection == "none" { return Ok(()); }
-    let order: Vec<usize> = selection.split(',').map(str::parse).collect::<std::result::Result<_, _>>()
+    if selection == "none" {
+        return Ok(());
+    }
+    let order: Vec<usize> = selection
+        .split(',')
+        .map(str::parse)
+        .collect::<std::result::Result<_, _>>()
         .with_context(|| "channel swap must contain three indices such as 2,1,0")?;
     if order.len() != 3 || order.iter().any(|&channel| channel > 2) {
         bail!("channel swap must contain three indices in 0..2");
@@ -1067,7 +1137,9 @@ fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result
     for row in &mut profile.data.channel_density {
         if row.len() >= 3 {
             let original = [row[0], row[1], row[2]];
-            for channel in 0..3 { row[channel] = original[order[channel]]; }
+            for channel in 0..3 {
+                row[channel] = original[order[channel]];
+            }
         }
     }
     Ok(())

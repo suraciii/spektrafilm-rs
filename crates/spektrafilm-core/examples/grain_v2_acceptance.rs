@@ -1,6 +1,9 @@
 use spektrafilm_core::{
     image_io::{self, BitDepth, SaveOptions},
-    params::{grain::{GrainEngine, GrainV2FilmType, GrainV2Mode}, RuntimeParams},
+    params::{
+        RuntimeParams,
+        grain::{GrainEngine, GrainV2FilmType, GrainV2Mode},
+    },
     pipeline::Pipeline,
     profile,
 };
