@@ -18,5 +18,6 @@ rand.workspace = true
 rand_distr.workspace = true
 rand_mt = "5"
 libm.workspace = true
+half = "2.7"
 thiserror.workspace = true
 tracing.workspace = true

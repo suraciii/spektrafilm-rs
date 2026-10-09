@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use eframe::egui;
-use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
+use spektrafilm_core::image_io::{self, BitDepth, Compression, ImageMetadata, JpegSubsampling, LoadedImage, SaveOptions};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
@@ -259,6 +259,10 @@ struct App {
     input_rotation: i32,
     source_metadata: Option<ImageMetadata>,
     save_depth: BitDepth,
+    export_format: ExportFormat,
+    jpeg_quality: u8,
+    jpeg_subsampling: JpegSubsampling,
+    export_compression: ExportCompression,
     export_backend: ExportBackend,
     /// Last rendered pipeline output (post sRGB encode + clip). Retained
     /// so the Save button can write it without re-running the pipeline.
@@ -357,6 +361,34 @@ impl ExportBackend {
         match self { Self::Cpu => "CPU (f64)", Self::Gpu => "GPU (WGPU f32)" }
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ExportFormat { Jpeg, #[default] Png, Tiff, Exr }
+impl ExportFormat {
+    fn from_state(v: &serde_json::Value) -> Self {
+        match v["rust"]["export_format"].as_str() {
+            Some("jpeg") => Self::Jpeg, Some("tiff") => Self::Tiff,
+            Some("exr") => Self::Exr, _ => Self::Png,
+        }
+    }
+    fn argument(self) -> &'static str { match self { Self::Jpeg=>"jpeg", Self::Png=>"png", Self::Tiff=>"tiff", Self::Exr=>"exr" } }
+    fn extension(self) -> &'static str { match self { Self::Jpeg=>"jpg", Self::Png=>"png", Self::Tiff=>"tiff", Self::Exr=>"exr" } }
+    fn label(self) -> &'static str { match self { Self::Jpeg=>"JPEG", Self::Png=>"PNG", Self::Tiff=>"TIFF", Self::Exr=>"EXR" } }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ExportCompression { #[default] Zip, None }
+impl ExportCompression {
+    fn from_state(v: &serde_json::Value) -> Self { if v["rust"]["export_compression"].as_str() == Some("none") { Self::None } else { Self::Zip } }
+    fn argument(self) -> &'static str { match self { Self::Zip=>"zip", Self::None=>"none" } }
+}
+
+/// One in-flight export. The worker thread owns the child
+/// process and polls `cancel` in its wait loop. On completion the
+/// worker sends the staged image with `Ok(elapsed_seconds, output_filename)`
+/// or `Err(msg)`. The UI publishes it only if cancellation was not requested.
+/// The join handle is held so we can `join()` after consuming the message and
+/// on `on_exit` to drain the worker before the process dies.
 
 /// One in-flight export. The worker thread owns the child
 /// process and polls `cancel` in its wait loop. On completion the

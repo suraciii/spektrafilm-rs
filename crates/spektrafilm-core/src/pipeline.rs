@@ -1023,8 +1023,8 @@ impl Pipeline {
     }
 
     /// Try the GPU-resident fast path. Builds all the per-stage data and
-    /// hands it to the backend's `try_run_film_chain`. The output is unclipped
-    /// linear destination RGB; `apply_post_scan` performs optional encoding.
+    /// hands it to the backend's `try_run_film_chain`. Grain V2 returns native
+    /// encoded RGB; other paths return linear RGB. `apply_post_scan` finalizes export.
     /// Pitch and metered EV come from the complete input before crop/rescale.
     fn try_gpu_resident(
         &self,
@@ -1394,6 +1394,8 @@ impl Pipeline {
             viewing_illuminant: &viewing_illu,
             scan_normalization: scan_norm,
             scan_xyz_to_rgb: &scan_xyz_to_rgb,
+            scan_output_space: spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
+                .expect("validated output colour space"),
             bw_xyz_remap: color_ref.xyz_remap(),
             scan_film: self.params.io.scan_film,
             halation,
@@ -1418,10 +1420,23 @@ impl Pipeline {
         backend.try_run_film_chain(&params)
     }
 
-    /// Apply the shared destination encoding without clipping floating output.
+    /// Finalize the export transfer without applying the same-space matrix twice.
     fn apply_post_scan(&self, mut rgb: ImageBuf) -> ImageBuf {
         use rayon::prelude::*;
         use spektrafilm_math::precision::from_f64;
+        let grain_v2_active = self.params.film_render.grain.active
+            && self.params.settings.rgb_to_raw_method != "mallett2019"
+            && matches!(self.params.film_render.grain.engine, crate::params::grain::GrainEngine::V2);
+        if grain_v2_active {
+            if !self.params.io.output_cctf_encoding {
+                let space = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
+                    .expect("validated output colour space");
+                rgb.data.par_iter_mut().for_each(|value| {
+                    *value = from_f64(spektrafilm_math::colorspace::cctf_decode(*value as f64, space.cctf));
+                });
+            }
+            return rgb;
+        }
         if self.params.io.output_cctf_encoding {
             let space = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
                 .expect("validated output colour space");
