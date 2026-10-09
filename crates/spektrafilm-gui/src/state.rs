@@ -269,6 +269,68 @@ pub fn reset_factory() -> Result<GuiState> { let path=default_path(); if path.ex
 mod tests {
     use super::*;
     #[test]
+    fn factory_matches_independently_generated_upstream_state() {
+        // Generated from pinned Python PROJECT_DEFAULT_GUI_STATE with real
+        // profile/preset loading; provenance lives beside this retained oracle.
+        let expected: Value = serde_json::from_str(include_str!(
+            "../../../scripts/parity/fixtures/gui_28bf883/factory_state.json"
+        )).unwrap();
+        fn compare(actual: &Value, expected: &Value, path: &str) -> usize {
+            match (actual, expected) {
+                (Value::Object(actual), Value::Object(expected)) => {
+                    assert_eq!(actual.len(), expected.len(), "section keys at {path}");
+                    expected.iter().map(|(key, value)| {
+                        compare(actual.get(key).unwrap_or_else(|| panic!("missing {path}.{key}")), value, &format!("{path}.{key}"))
+                    }).sum()
+                }
+                (Value::Array(actual), Value::Array(expected)) => {
+                    assert_eq!(actual.len(), expected.len(), "array size at {path}");
+                    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                        compare(actual, expected, &format!("{path}[{index}]"));
+                    }
+                    1
+                }
+                (Value::Number(actual), Value::Number(expected)) => {
+                    assert_eq!(actual.as_f64(), expected.as_f64(), "number at {path}");
+                    1
+                }
+                _ => {
+                    assert_eq!(actual, expected, "value at {path}");
+                    1
+                }
+            }
+        }
+        let factory = GuiState::factory();
+        assert_eq!(compare(&factory.sections, &expected, "factory"), 187);
+        let params = factory.runtime_params().unwrap();
+        assert_eq!(params.film_render.grain.rms_granularity, [5.0; 3]);
+        assert_eq!(params.io.upscale_factor, 1.0);
+    }
+
+    #[test]
+    fn saved_zero_rms_and_nondefault_upscale_survive_state_file_roundtrip() {
+        let loaded = GuiState::from_value(json!({
+            "grain": {"rms_granularity": [0.0, 0.0, 0.0]},
+            "input_image": {"upscale_factor": 2.5},
+            "rust": {"version": 1, "runtime": {
+                "film_render": {"grain": {"rms_granularity": [9.0, 9.0, 9.0]}},
+                "io": {"upscale_factor": 4.0}
+            }}
+        })).unwrap();
+        let params = loaded.runtime_params().unwrap();
+        assert_eq!(params.film_render.grain.rms_granularity, [0.0; 3]);
+        assert_eq!(params.io.upscale_factor, 2.5);
+        let saved = GuiState::from_runtime(&params, loaded.film(), loaded.paper(), &loaded.sections).unwrap();
+        let path = std::env::temp_dir().join(format!("spektrafilm-saved-zero-rms-{}.json", std::process::id()));
+        saved.save(&path).unwrap();
+        let restored = GuiState::load(&path);
+        std::fs::remove_file(&path).unwrap();
+        let restored = restored.unwrap().runtime_params().unwrap();
+        assert_eq!(restored.film_render.grain.rms_granularity, [0.0; 3]);
+        assert_eq!(restored.io.upscale_factor, 2.5);
+    }
+
+    #[test]
     fn partial_legacy_sections_use_factory_and_flat_gui_only_precedence() {
         let state=GuiState::from_value(json!({
             "input_image":{"apply_cctf_decoding":true,"crop":true,"crop_center":[0.2,0.7]},

@@ -570,28 +570,28 @@ impl App {
 
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            controls::extra_bool(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "Auto preview", true);
+            controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
             let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-            if ui.checkbox(&mut scan_for_print, "Scan for print").changed() { self.toggle_scan_for_print(); }
+            if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() { self.toggle_scan_for_print(); }
         });
         ui.horizontal(|ui| {
-            if controls::choice(ui, "Workflow", &mut self.params.workflow.route, &[
+            if controls::choice_tip(ui, "workflow", &mut self.params.workflow.route, &[
                 "input", "input > film > scan", "input > film > print > scan",
                 "input > convert-film > print > scan", "input > convert-film > scan-minus-base", "input > convert-film > scan",
-            ]) {
+            ], "Which path the image takes through the pipeline: input (passthrough: just colour-manage the input to the output space for viewing), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base).") {
                 self.params.io.scan_film = false;
                 self.dirty = true;
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
             }
         });
         ui.horizontal(|ui| {
-            if ui.button("PREVIEW").clicked() {
+            if ui.button("PREVIEW").on_hover_text("run the simulation on a small preview and deactivates grain, halation, blurs, unsharp mask (diffusion filters are active)").clicked() {
                 self.dirty = true; self.force_preview = true; self.full_scan_requested = false;
             }
-            if ui.button("SCAN").clicked() {
+            if ui.button("SCAN").on_hover_text("Run the full simulation on the full-resolution input").clicked() {
                 self.dirty = true; self.force_preview = true; self.full_scan_requested = true;
             }
-            if ui.add_enabled(self.output_image.is_some(), egui::Button::new("SAVE")).clicked() { self.save_dialog(); }
+            if ui.add_enabled(self.output_image.is_some(), egui::Button::new("SAVE")).on_hover_text("Save the current output layer to an image file").clicked() { self.save_dialog(); }
         });
     }
 
@@ -1285,22 +1285,42 @@ impl App {
         }
     }
 
-    fn import_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, raw: bool) {
+    fn import_section(&mut self, ui: &mut egui::Ui, raw: bool) {
         ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
-            if ui.button("Select file").clicked() {
+            if ui.button("select file").on_hover_text(if raw { "Load and process a raw file with the selected white balance and lens correction settings." } else { "Select an input image" }).clicked() {
                 if let Some(path) = self.file_dialog("load").add_filter("Image", IMAGE_FILE_EXTENSIONS).pick_file() {
                     self.remember_dialog("load", &path);
                     self.load_image_from_path(&path);
                 }
             }
-            let save_enabled = self.output_image.is_some();
-            if ui
-                .add_enabled(save_enabled, egui::Button::new("Save…"))
-                .on_disabled_hover_text("Render an image first")
-                .clicked()
-            {
-                self.save_dialog();
+            if let Some(p) = &self.image_path {
+                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small());
             }
+            if raw { self.parameter_section(ui, "Import Raw"); }
+        });
+    }
+
+    fn export_options(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        egui::CollapsingHeader::new("Export options").default_open(false).show(ui, |ui| {
+            ui.add_enabled_ui(self.export_job.is_none(), |ui| {
+                egui::ComboBox::from_label("Export backend")
+                    .selected_text(self.export_backend.label())
+                    .show_ui(ui, |ui| {
+                        for backend in [ExportBackend::Cpu, ExportBackend::Gpu] {
+                            ui.selectable_value(&mut self.export_backend, backend, backend.label());
+                        }
+                    });
+                if self.export_backend == ExportBackend::Gpu {
+                    ui.small("GPU uses f32; unsupported effects run on CPU. A GPU adapter is required.");
+                }
+                egui::ComboBox::from_label("Save bit depth")
+                    .selected_text(format!("{} bit", self.save_depth.bits()))
+                    .show_ui(ui, |ui| {
+                        for depth in [BitDepth::Eight, BitDepth::Sixteen, BitDepth::ThirtyTwo] {
+                            ui.selectable_value(&mut self.save_depth, depth, format!("{} bit", depth.bits()));
+                        }
+                    });
+            });
             let export_busy = self.export_job.is_some();
             if export_busy {
                 if ui
@@ -1324,36 +1344,6 @@ impl App {
                 }
             }
         });
-        ui.add_enabled_ui(self.export_job.is_none(), |ui| {
-            egui::ComboBox::from_label("Export backend")
-                .selected_text(self.export_backend.label())
-                .show_ui(ui, |ui| {
-                    for backend in [ExportBackend::Cpu, ExportBackend::Gpu] {
-                        ui.selectable_value(&mut self.export_backend, backend, backend.label());
-                    }
-                });
-            if self.export_backend == ExportBackend::Gpu {
-                ui.small("GPU uses f32; unsupported effects run on CPU. A GPU adapter is required.");
-            }
-        });
-        egui::ComboBox::from_label("Save bit depth")
-            .selected_text(format!("{} bit", self.save_depth.bits()))
-            .show_ui(ui, |ui| {
-                for depth in [BitDepth::Eight, BitDepth::Sixteen, BitDepth::ThirtyTwo] {
-                    ui.selectable_value(
-                        &mut self.save_depth,
-                        depth,
-                        format!("{} bit", depth.bits()),
-                    );
-                }
-            });
-        if let Some(p) = &self.image_path {
-            ui.label(
-                egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small(),
-            );
-        }
-        ui.add_space(4.0);
-
     }
     fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
         ui.collapsing("Chemistry", |ui| {
@@ -1362,7 +1352,7 @@ impl App {
             } else {
                 (&self.print_dev_times, &mut self.params.print_render.development_time)
             };
-            if dev_time_combo(ui, if film { "film-time" } else { "print-time" }, "Development time", times, selected) {
+            if dev_time_combo(ui, if film { "film-time" } else { "print-time" }, "development time", times, selected) {
                 self.dirty = true;
             }
             self.parameter_section(ui, if film { "Film chemistry" } else { "Print chemistry" });
@@ -1373,17 +1363,17 @@ impl App {
         let input_view_before = (self.params.io.input_color_space.clone(), self.params.io.input_cctf_decoding, self.params.settings.preview_max_size);
         match self.gui_tab {
             GuiTab::Main => {
-                self.import_section(ui, ctx, false);
-                self.import_section(ui, ctx, true);
+                self.import_section(ui, false);
+                self.import_section(ui, true);
                 for section in ["Crop and upscale", "Input", "Camera"] { self.parameter_section(ui, section); }
                 ui.collapsing("Profiles", |ui| {
-                    if profile_combo(ui, "film", "Film profile", &self.films, &mut self.film_name) {
+                    if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
                         self.params.film_render.development_time = None;
                         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
                         self.sync_profile_defaults();
                         self.dirty = true;
                     }
-                    if profile_combo(ui, "paper", "Print profile", &self.papers, &mut self.print_name) {
+                    if profile_combo(ui, "paper", "print profile", &self.papers, &mut self.print_name) {
                         self.params.print_render.development_time = None;
                         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
                         self.sync_profile_defaults();
@@ -1391,7 +1381,11 @@ impl App {
                     }
 
                 });
-                for section in ["Enlarger", "Scanner", "Output"] { self.parameter_section(ui, section); }
+                for section in ["Enlarger", "Scanner"] { self.parameter_section(ui, section); }
+                ui.collapsing("Output", |ui| {
+                    self.parameter_section(ui, "Output");
+                    self.export_options(ui, ctx);
+                });
             }
             GuiTab::Film => {
                 self.chemistry_section(ui, true);
@@ -1410,6 +1404,7 @@ impl App {
                     let display_transform_before = self.viewer.settings.use_display_transform;
                     self.viewer.controls(ui);
                     self.parameter_section(ui, "Display");
+                    self.viewer.interpolation_control(ui);
                     if display_transform_before != self.viewer.settings.use_display_transform { self.refresh_viewing_artifacts(); }
                 });
                 ui.collapsing("napari layers", |ui| { self.viewer.layer_controls(ui); });
@@ -1463,6 +1458,7 @@ impl eframe::App for App {
         }
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
+        self.poll_export_job(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(420.0)
@@ -1659,7 +1655,8 @@ fn dev_time_combo(
     // exactly the entry the pipeline will use.
     let current_idx = profile::development_time_index(times, *selection);
     let mut changed = false;
-    ui.label(label);
+    let tooltip = "Development time for a BW development-time family: selects the density curve and base+fog to render. '—' uses the representative middle development; ignored for single-curve and color stocks.";
+    ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(salt)
         .selected_text(format!("{} min", times[current_idx]))
         .width(ui.available_width().min(280.0))
@@ -1674,7 +1671,7 @@ fn dev_time_combo(
                     changed = true;
                 }
             }
-        });
+        }).response.on_hover_text(tooltip);
     changed
 }
 
@@ -1685,7 +1682,8 @@ fn profile_combo(
     entries: &[ProfileEntry],
     selected_stock: &mut String,
 ) -> bool {
-    ui.label(label);
+    let tooltip = if salt == "film" { "Film stock to simulate" } else { "Print stock to simulate" };
+    ui.label(label).on_hover_text(tooltip);
     let display = entries
         .iter()
         .find(|e| &e.stock == selected_stock)
@@ -1699,7 +1697,7 @@ fn profile_combo(
             for entry in entries {
                 ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
             }
-        });
+        }).response.on_hover_text(tooltip);
     prev != *selected_stock
 }
 

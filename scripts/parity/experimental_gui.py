@@ -18,6 +18,7 @@ import numpy as np
 import OpenImageIO as oiio
 
 from gui_acceptance import X11, require, wait_for, render_count
+from gui_control_acceptance import control_boundaries, export_controls, export_image, saved, profile_roundtrip, cancel_export
 
 
 def parameters_equal(actual, expected):
@@ -104,9 +105,15 @@ class ExperimentalDesktop(X11):
         self.xd('windowsize', '--sync', self.window, 1460, 980)
         self.xd('windowmove', '--sync', self.window, 0, 0)
         wait_for(lambda: self.locate('MAIN'), 'rendered experimental tabs', 120)
+        self.tab('MAIN')
+        if self.locate('exposure compensation ev'):
+            self.section('Camera')
+        if self.locate('print auto compensation'):
+            self.section('Enlarger')
 
     def locate(self, label, *, exact=False, bottom=False):
         image, _, lines = self.read()
+        lines = [[(word[0].replace('E&xport', 'Export'), *word[1:]) for word in line] for line in lines]
         matches = []
         for line in lines:
             if not line or line[0][1] < image.width - 420:
@@ -192,11 +199,13 @@ class ExperimentalDesktop(X11):
         for tab, expected in TOPOLOGY.items():
             self.tab(tab)
             image, _, lines = self.read()
+            self.snap('topology-observed-' + tab, image, lines)
             sidebar = [line for line in lines if line and line[0][1] >= image.width - 420]
             seen = []
             for label in expected:
                 matches = [line for line in sidebar
-                           if words(' '.join(w[0] for w in line)) == words(label)]
+                           if words(' '.join(w[0] for w in line)) in
+                           (words(label), ['v'] + words(label), ['y'] + words(label), ['vy'] + words(label))]
                 require(len(matches) == 1, f'{tab}: expected one section {label}, saw {len(matches)}')
                 seen.append(matches[0][0][2])
             require(seen == sorted(seen), f'{tab}: section order mismatch {seen}')
@@ -204,73 +213,49 @@ class ExperimentalDesktop(X11):
             for label in FORBIDDEN:
                 require(not any(words(' '.join(w[0] for w in line)) == words(label)
                                 for line in sidebar), f'{tab}: obsolete section {label}')
-            for label in ['Auto preview', 'Scan for print', 'Workflow', 'PREVIEW', 'SCAN', 'SAVE']:
+            for label in ['Auto preview', 'black and white correction', 'Workflow', 'PREVIEW', 'SCAN', 'SAVE']:
                 require(self.locate(label, bottom=True), f'{tab}: fixed action {label} missing')
             self.snap('topology-' + tab, image, lines)
             self.records.append({'topology': tab, 'sections': expected, 'observed_y': seen,
                                  'ocr': text})
 
     def fields(self):
-        sections = [
-            ('MAIN', 'Camera', ['Exposure compensation EV', 'Auto exposure',
-                                'Film format mm', 'Auto exposure method', 'Camera color filter']),
-            ('MAIN', 'Enlarger', ['Print exposure', 'Print auto compensation',
-                                  'Print Y filter shift', 'Print M filter shift']),
-            ('MAIN', 'Output', ['Output color space', 'Saving color space', 'Saving CCTF encoding']),
-            ('FILM', 'Chemistry', ['Development time', 'Active', 'Gamma factor',
-                                   'Gamma factor fast', 'Gamma factor slow', 'Gamma factor red',
-                                   'Gamma factor green', 'Gamma factor blue', 'Developer exhaustion']),
-            ('PRINT', 'Chemistry', ['Development time', 'Active', 'Gamma factor',
-                                    'Gamma factor fast', 'Gamma factor slow', 'Gamma factor red',
-                                    'Gamma factor green', 'Gamma factor blue', 'Developer exhaustion']),
-            ('FILM', 'Halation', ['Active', 'Scatter amount', 'Scatter spatial scale',
-                                  'Halation amount', 'Halation spatial scale',
-                                  'Highlight boost', 'Protected highlight range', 'Boost range',
-                                  'Scatter core', 'Scatter tail', 'Scatter tail weight',
-                                  'Halation strength', 'First bounce sigma', 'Halation n bounces',
-                                  'Halation bounce decay', 'Halation renormalize']),
-            ('FILM', 'Couplers', ['Active', 'Amount', 'Same-layer inhibition',
-                                  'Interlayer inhibition', 'Same-layer gamma', 'Gamma R',
-                                  'Gamma G', 'Gamma B', 'Langmuir donor K',
-                                  'Langmuir receiver K', 'Diffusion size', 'Diffusion tail',
-                                  'Diffusion tail weight']),
-            ('FILM', 'Grain', ['Active', 'RMS granularity', 'pixel statistics',
-                               'texture', 'micro substructure']),
-            ('FILM', 'Convert', ['Scan illuminant', 'Exposure compensation', 'Base percentile',
-                                 'Calibration', 'Detect base', 'Blind calibration',
-                                 'Neutralize print filters']),
-            ('PRINT', 'Preflash', ['Exposure', 'Y filter shift', 'M filter shift']),
-            ('ADVANCED', 'Experimental', ['Print illuminant', 'Film channel swap', 'Print channel swap']),
-            ('ADVANCED', 'Input gamut compress', ['Active', 'Algorithm', 'Knee', 'Hull detail']),
-        ]
-        for tab, section, labels in sections:
+        metadata = json.loads((Path(__file__).parent/'fixtures/gui_28bf883/control_metadata.json').read_text())
+        for group in metadata['groups']:
+            path = group['group_path']
+            if group['title'] in ('Camera', 'Scanner'):
+                tab = 'MAIN'
+            elif group['title'].endswith('gamut compress'):
+                tab = 'ADVANCED'
+            elif path == 'enlarger' or path.startswith(('print_render.', 'enlarger.')):
+                tab = 'PRINT'
+            else:
+                tab = 'FILM'
             self.tab(tab)
-            self.section(section)
+            self.section(group['title'])
+            nested = {name for sub in group['subsections'] for name in sub['field_names']}
+            labels = [field['label'] for field in group['fields']
+                      if field['leaf'] in group['panel_fields'] and field['leaf'] not in nested]
             observed = []
-            for bottom in (False, True):
-                self.scroll(bottom)
+            for position in range(4):
                 image, _, lines = self.read()
                 observed.extend(lines)
-                self.snap('fields-' + tab + '-' + '-'.join(words(section)) +
-                          ('-bottom' if bottom else '-top'), image, lines)
+                self.snap('fields-' + path + '-' + str(position), image, lines)
+                self.xd('mousemove', '--window', self.window, image.width - 20, 600)
+                self.xd('click', '--repeat', '5', '--delay', '50', '5')
             for label in labels:
-                require(has_field(observed, label, self.right_control_x),
-                        f'{tab}/{section}: missing {label}')
+                require(has_field(observed, label, self.right_control_x), f'{path}: missing {label}')
             self.scroll(False)
-            if section == 'Grain':
-                for subgroup, fields in [
-                    ('pixel statistics', ['Minimum density', 'Uniformity', 'Particle scale sublayers']),
-                    ('texture', ['Blur', 'Multiplicative USM amount', 'Multiplicative USM sigma']),
-                    ('micro substructure', ['Blur dye clouds', 'Micro structure']),
-                ]:
-                    self.section(subgroup)
-                    image, _, lines = self.read()
-                    for label in fields:
-                        require(has_field(lines, label, self.right_control_x),
-                                f'Grain/{subgroup}: missing {label}')
-                    self.snap('grain-' + '-'.join(words(subgroup)), image, lines)
-                    self.section(subgroup)
-            self.section(section)
+            for subgroup in group['subsections']:
+                self.section(subgroup['title'])
+                image, _, lines = self.read()
+                for field in group['fields']:
+                    if field['leaf'] in subgroup['field_names']:
+                        require(has_field(lines, field['label'], self.right_control_x),
+                                f'{path}/{subgroup["title"]}: missing {field["label"]}')
+                self.snap('fields-' + subgroup['title'], image, lines)
+                self.section(subgroup['title'])
+            self.section(group['title'])
 
 
 def fixture(path):
@@ -302,6 +287,10 @@ def main():
     parser.add_argument('--gui', required=True, type=Path)
     parser.add_argument('--upstream', required=True, type=Path)
     parser.add_argument('--evidence', required=True, type=Path)
+    parser.add_argument('--factory-reference', required=True, type=Path,
+                        help='Independently generated pinned upstream GUI state')
+    parser.add_argument('--exporter', required=True, type=Path)
+    parser.add_argument('--raw', required=True, type=Path)
     parser.add_argument('--development-smoke', action='store_true',
                         help='Allow dirty development run; never reports acceptance pass')
     args = parser.parse_args()
@@ -317,7 +306,15 @@ def main():
     config.mkdir()
     source = root/'input.tif'
     fixture(source)
-    factory = json.loads((repo/'crates/spektrafilm-gui/src/factory_state.json').read_text())
+    factory = json.loads(args.factory_reference.read_text())
+    oracle_dir = Path(__file__).parent/'fixtures/gui_28bf883'
+    provenance = json.loads((oracle_dir/'provenance.json').read_text())
+    require(sha(args.factory_reference) == provenance['artifact_sha256']['factory_state.json'],
+            'Factory reference is not the retained independent upstream oracle')
+    require(sha(oracle_dir/'control_metadata.json') == provenance['artifact_sha256']['control_metadata.json'],
+            'Control metadata reference hash differs')
+    rust_factory = json.loads((repo/'crates/spektrafilm-gui/src/factory_state.json').read_text())
+    require(parameters_equal(rust_factory, factory), 'Rust factory differs from independent upstream oracle')
     seed = json.loads(json.dumps(factory))
     seed['simulation']['auto_preview'] = False
     seed['grain']['active'] = False
@@ -327,7 +324,8 @@ def main():
     seed['simulation']['output_color_space'] = 'sRGB'
     seed['simulation']['saving_color_space'] = 'sRGB'
     seed['simulation']['saving_cctf_encoding'] = False
-    save_json(config/'gui_default_state.json', seed)
+    seed_path = root/'render-seed.json'
+    save_json(seed_path, seed)
     env = dict(os.environ, SPEKTRAFILM_CONFIG_DIR=str(config),
                SPEKTRAFILM_DATA_DIR=str(repo/'data'), SPEKTRAFILM_GUI_RENDERER='glow')
     data_hashes = {str(p.relative_to(repo/'data')): sha(p)
@@ -337,18 +335,39 @@ def main():
               'rust_worktree_dirty': bool(dirty), 'gui_sha256': sha(gui),
               'fixture_sha256': sha(source), 'factory_state_sha256':
               sha(repo/'crates/spektrafilm-gui/src/factory_state.json'),
-              'seed_state_sha256': sha(config/'gui_default_state.json'),
+              'upstream_factory_sha256': sha(args.factory_reference),
+              'seed_state_sha256': sha(seed_path),
+              'exporter_sha256': sha(args.exporter),
               'data_sha256': data_hashes, 'routes': [], 'status': 'running'}
     driver = ExperimentalDesktop(root)
     try:
         driver.start(gui, env)
+        fresh = saved(driver, root, 'fresh-startup')
+        for section, expected in factory.items():
+            require(parameters_equal(fresh.get(section), expected), f'Fresh startup differs: {section}')
+        driver.tab('MAIN')
+        # Saving state opened CONFIG; return to pristine collapsed topology.
         driver.topology()
         driver.fields()
+        control_boundaries(driver, root, factory)
+        profile_roundtrip(driver, root)
+        driver.state_action('Load from file', seed_path)
         driver.tab('MAIN')
         driver.section('Import RGB')
         driver.click('Select file')
         driver.dialog(source)
         driver.wait_text(r'Loaded|input\.tif', 'imported-rgb')
+        driver.section('Import RGB')
+        driver.state_action('Load from file', root/'invalid-upscale-preserved.json')
+        driver.click('PREVIEW', bottom=True)
+        def invalid_upscale_error():
+            image, _, lines = driver.read()
+            text = ' '.join(' '.join(w[0] for w in line) for line in lines)
+            if 'upscale' in text.lower() and re.search(r'positive|greater|>\s*0', text, re.I):
+                driver.snap('invalid-upscale-error', image, lines)
+                return text
+        report['invalid_upscale_error'] = wait_for(invalid_upscale_error, 'actionable upscale error', 30)
+        driver.state_action('Load from file', seed_path)
         driver.click('PREVIEW', bottom=True)
         driver.rendered('initial-preview')
         for index, route in enumerate(ROUTES):
@@ -386,6 +405,13 @@ def main():
         restarted = driver.state_action('Save current to file', restart_path, save=True)
         require(parameter_state(restarted) == parameter_state(saved_default),
                 'Startup default lost canonical parameters')
+        driver.state_action('Load from file', root/'saved-user-values.json')
+        driver.click('Save current as default')
+        driver.close()
+        driver.start(gui, env)
+        retained = saved(driver, root, 'saved-zero-restarted')
+        require(retained['grain']['rms_granularity'] == [0, 0, 0], 'Startup rewrote saved zero RMS')
+        require(retained['input_image']['upscale_factor'] == 1.5, 'Startup rewrote saved upscale')
         driver.click('Restore factory default')
         restored_path = root/'factory-restored.json'
         restored = driver.state_action('Save current to file', restored_path, save=True)
@@ -395,6 +421,37 @@ def main():
                         f'Factory restore changed {section}')
         report['restart_state_sha256'] = sha(restart_path)
         report['restored_factory_sha256'] = sha(restored_path)
+        driver.state_action('Load from file', seed_path)
+        require(sha(args.raw) == '37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc', 'Unexpected RAW fixture')
+        driver.tab('MAIN')
+        driver.section('Import Raw')
+        driver.click('Select file')
+        driver.dialog(args.raw.resolve())
+        driver.wait_text(r'Loaded', 'raw-import')
+        driver.section('Import Raw')
+        raw_state = saved(driver, root, 'raw-import-state')
+        require(raw_state['input_image']['input_color_space'] == 'ACES2065-1', 'RAW input space differs')
+        require(raw_state['input_image']['input_cctf_decoding'] is False, 'RAW decoding flag differs')
+        driver.state_action('Load from file', seed_path)
+        driver.tab('MAIN')
+        driver.section('Import RGB')
+        driver.click('Select file')
+        driver.dialog(source)
+        driver.wait_text(r'Loaded', 'export-input-reloaded')
+        driver.section('Import RGB')
+        export_controls(driver)
+        export_path = root/'cpu-export.tif'
+        export_image(driver, args.exporter.resolve(), export_path)
+        report['cpu_export'] = read_output(export_path)
+        driver.scroll(False)
+        driver.section('Output')
+        large = root/'large.tif'
+        pixels = np.tile(np.linspace(.05, .8, 4096, dtype=np.float32)[None, :, None], (3072, 1, 3))
+        writer = oiio.ImageOutput.create(str(large))
+        require(writer.open(str(large), oiio.ImageSpec(4096, 3072, 3, oiio.FLOAT)), 'Large fixture open failed')
+        require(writer.write_image(pixels), 'Large fixture write failed')
+        writer.close()
+        cancel_export(driver, args.exporter.resolve(), large, root/'cancelled.exr')
         if not args.development_smoke:
             require(git(repo, 'rev-parse', 'HEAD') == commit, 'Implementation changed during native run')
             require(not git(repo, 'status', '--porcelain', '--untracked-files=all'),
