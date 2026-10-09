@@ -1069,9 +1069,12 @@ fn wheel_adjust<T: egui::emath::Numeric>(
     if !response.hovered() {
         return false;
     }
-    let delta = ui.input(|input| input.smooth_scroll_delta.y);
+    let delta = ui.input(|input| input.raw_scroll_delta.y);
     if apply_wheel_delta(value, delta, min, max, step) {
-        ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+        ui.input_mut(|input| {
+            input.raw_scroll_delta.y = 0.0;
+            input.smooth_scroll_delta.y = 0.0;
+        });
         true
     } else {
         false
@@ -1087,6 +1090,7 @@ pub fn number<T: egui::emath::Numeric>(
     step: f64,
 ) -> bool {
     ui.horizontal(|ui| {
+        ui.label(label).on_hover_text(label);
         let response = ui
             .add(
                 DragValue::new(value)
