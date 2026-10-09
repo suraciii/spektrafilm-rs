@@ -178,6 +178,7 @@ Image output uses one writer for CLI, GUI Save and f64 Export. `process --format
 Concurrent metadata reads and writes initialize Exiv2's XMP toolkit once before use and provide its namespace-registration lock, preserving parallel pixel I/O and the existing metadata warning behavior.
 The native GUI keeps format, format-dependent depth, JPEG quality/subsampling, TIFF compression and compute backend in the single MAIN → Output → Export options section. EXR displays its fixed ZIP compression. Bottom SAVE suggests the selected format's extension; full Export and Cancel use the same selected format.
 Loading an upstream GUI state without a Rust extension uses PNG/8-bit export settings, so saving that state before opening Export options remains valid.
+Older Rust GUI states that store `save_bit_depth` without `export_format` migrate before validation: 16/32-bit selects TIFF and 8-bit selects PNG, preserving the saved recipe and bit depth. Explicit format/depth combinations are validated unchanged, so invalid new settings still report an error.
 
 Explicit JPEG quality uses OpenImageIO's `CompressionQuality` attribute; `jpeg:quality` is ignored by the encoder. The writer explicitly selects JPEG chroma subsampling (4:4:4 by default, with 4:2:0 available). Use 16/32-bit TIFF to compare grain detail without JPEG compression; increasing JPEG quality does not remove chroma subsampling.
 
