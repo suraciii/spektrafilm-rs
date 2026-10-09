@@ -245,19 +245,53 @@ def cancel_export(driver, exporter, source, destination):
     driver.click('Export', exact=True)
     driver.dialog(destination, save=True)
     driver.capture_export_child(exporter)
-    def cancel_visible():
+
+    def capture_cancel_target():
+        # Bind the rendered button and the live export child to this one frame.
+        # A second OCR/read before clicking can observe a completed export.
         image, _ = driver.image()
+        captured_at = time.time()
         interior = image.crop((int(left), int(top) - 1, int(left) + 43, int(top + height) + 1)).convert('L')
-        text = driver.ocr.image_to_string(ImageOps.invert(interior).resize((430, interior.height * 10)), config='--psm 7').strip()
-        if re.findall(r'[a-z]+', text.lower()) == ['cancel']:
-            image.save(driver.root/'cancel-button-visible.png')
-            driver.records.append({'cancel_button_text': text, 'screenshot': 'cancel-button-visible.png'})
-            return True
-    wait_for(cancel_visible, 'rendered Cancel button', 15)
-    driver.require_export_in_flight('Cancel')
+        text = driver.ocr.image_to_string(
+            ImageOps.invert(interior).resize((430, interior.height * 10)),
+            config='--psm 7',
+        ).strip()
+        if re.findall(r'[a-z]+', text.lower()) != ['cancel']:
+            return
+        try:
+            driver.require_export_in_flight('Cancel')
+        except RuntimeError:
+            return
+        screenshot = 'cancel-button-visible.png'
+        image.save(driver.root / screenshot)
+        driver.records.append({
+            'surface': 'cancel-button-visible',
+            'cancel_button_text': text,
+            'screenshot': screenshot,
+            'cancel_capture_time_unix': captured_at,
+            'cancel_frame_export_child_pid': driver.current_export_child[0],
+        })
+        return captured_at
+
+    captured_at = wait_for(capture_cancel_target, 'rendered Cancel button with live export', 15)
     driver.xd('mousemove', '--window', driver.window, int(left + 20), int(top + height / 2))
+    click_requested_at = time.time()
     driver.xd('click', 1)
+    click_completed_at = time.time()
+    driver.records.append({
+        'surface': 'cancel-click',
+        'cancel_capture_time_unix': captured_at,
+        'cancel_click_requested_time_unix': click_requested_at,
+        'cancel_click_completed_time_unix': click_completed_at,
+        'cancel_capture_to_click_seconds': click_requested_at - captured_at,
+    })
     driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=30)
+    confirmed_at = time.time()
+    driver.records.append({
+        'surface': 'cancel-confirmed',
+        'cancel_confirmation_time_unix': confirmed_at,
+        'cancel_click_to_confirmation_seconds': confirmed_at - click_requested_at,
+    })
     driver.no_children()
     require(not destination.exists(), 'Cancelled export published output')
     driver.records.append({'cancel_output_absent': True})
