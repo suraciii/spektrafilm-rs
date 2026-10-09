@@ -471,7 +471,10 @@ class X11:
                 shot = screen.grab(screen.monitors[0])
             surface = self.Image.frombytes('RGB', shot.size, shot.rgb)
             buttons = self.ocr.image_to_data(surface, config='--psm 11', output_type=self.ocr.Output.DICT)
-            clicked = False
+            # A chooser may close while OCR runs. Never let a stale click or
+            # Return reach the main window and reopen its focused Save button.
+            if find() != dialog:
+                return
             for i, word in enumerate(buttons['text']):
                 if (word.strip() in ('OK', 'Open', 'Select', 'Save')
                         and 100 <= buttons['left'][i] <= 1000
@@ -479,11 +482,9 @@ class X11:
                     self.xd('mousemove', buttons['left'][i] + buttons['width'][i] // 2,
                             buttons['top'][i] + buttons['height'][i] // 2)
                     self.xd('click', 1)
-                    clicked = True
                     break
-            if not clicked:
-                self.xd('key', 'Return')
             time.sleep(.25)
+        surface.save(self.root / 'native-chooser-timeout.png')
         raise RuntimeError(f'Native chooser did not accept {path}')
 
     def file_action(self, control, path, save=False):

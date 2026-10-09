@@ -216,6 +216,7 @@ jobs:
         shell: bash
         env:
           SPEKTRAFILM_PY_REPO: ${{ runner.temp }}/spektrafilm-python-experimental
+          SPEKTRAFILM_PY_HISTORICAL_REPO: ${{ runner.temp }}/spektrafilm-python
           PYTHONPATH: ${{ runner.temp }}/spektrafilm-python-experimental/src
           SPEKTRAFILM_PY: ${{ steps.reference-python.outputs.python-path }}
           SPEKTRAFILM_RS_BIN: ${{ github.workspace }}/target/release/spektrafilm-f64
@@ -290,6 +291,9 @@ jobs:
         run: |
           brew install libraw lensfun exiv2 glib openimageio pkg-config
           pkg-config --atleast-version=0.22.0 libraw
+
+      - name: Diagnose Metal grain arithmetic
+        run: cargo test -p spektrafilm-model --features precision-f64 metal_arithmetic_trace -- --ignored --nocapture
 
 
       - name: Package app bundle
