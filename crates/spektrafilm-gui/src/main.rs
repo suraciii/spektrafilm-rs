@@ -313,8 +313,6 @@ struct App {
     gui_tab: GuiTab,
     output_color_space: String,
     output_cctf_encoding: bool,
-    pipeline_cache_key: Option<String>,
-    pipeline_cache: Option<Runtime>,
     last_render_ms: f32,
     last_pipeline_build_ms: f32,
     last_input_clone_ms: f32,
@@ -403,6 +401,61 @@ struct RenderResult {
     render_ms: f32,
     preview_ms: f32,
     worker_total_ms: f32,
+}
+#[derive(Clone)]
+struct RenderSnapshot {
+    params: RuntimeParams,
+    film_name: String,
+    print_name: String,
+    data_dir: PathBuf,
+    special: serde_json::Value,
+    look_neutral_filters_pinned: bool,
+}
+
+fn build_runtime(snapshot: &RenderSnapshot, preview: bool) -> Result<Runtime, String> {
+    let mut params = snapshot.params.clone();
+    params.settings.preview_mode = preview;
+    if snapshot.look_neutral_filters_pinned {
+        params.settings.neutral_print_filters_from_database = false;
+    }
+    let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
+        .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+    let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
+        .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
+    let photo = RuntimePhotoParams {
+        film,
+        print,
+        params,
+        data_dir: snapshot.data_dir.clone(),
+    };
+    let params = photo
+        .digested_params(DigestMode::PreserveUserEdits)
+        .map_err(|e| format!("parameter digest: {e}"))?;
+    let mut film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
+        .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+    let effective_print_name = if params.io.scan_film {
+        snapshot.film_name.as_str()
+    } else {
+        snapshot.print_name.as_str()
+    };
+    let mut print = profile::load_profile_by_name(&snapshot.data_dir, effective_print_name)
+        .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
+    for (profile, key) in [
+        (&mut film, "film_channel_swap"),
+        (&mut print, "print_channel_swap"),
+    ] {
+        if let Some(order) = snapshot.special[key].as_array() {
+            for row in &mut profile.data.channel_density {
+                if row.len() >= 3 {
+                    let original = [row[0], row[1], row[2]];
+                    for ch in 0..3 {
+                        row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
+                    }
+                }
+            }
+        }
+    }
+    Runtime::new(film, print, params, &snapshot.data_dir).map_err(|e| format!("runtime build: {e}"))
 }
 
 /// One in-flight export owning an immutable input, pipeline and option snapshot.
@@ -505,8 +558,6 @@ impl App {
             gui_tab: GuiTab::default(),
             output_color_space: "sRGB".into(),
             output_cctf_encoding: true,
-            pipeline_cache_key: None,
-            pipeline_cache: None,
             last_render_ms: 0.0,
             last_pipeline_build_ms: 0.0,
             last_input_clone_ms: 0.0,
@@ -573,8 +624,6 @@ impl App {
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
         self.raw_lens_info = None;
-        self.pipeline_cache_key = None;
-        self.pipeline_cache = None;
         self.dirty = true;
         self.force_preview = true;
         if let Some(path) = self.image_path.clone() {
@@ -696,8 +745,6 @@ impl App {
             self.params.scanner.black_correction = true;
             self.params.print_render.glare.active = false;
         }
-        self.pipeline_cache_key = None;
-        self.pipeline_cache = None;
         self.dirty = true;
         self.force_preview = true;
     }
@@ -795,29 +842,8 @@ impl App {
         }
     }
 
-    fn digested_params(&self, preview: bool) -> Result<RuntimeParams> {
-        let mut params = self.current_state()?.runtime_params()?;
-        if self.look_neutral_filters_pinned {
-            params.settings.neutral_print_filters_from_database = false;
-        }
-        params.settings.preview_mode = preview;
-        let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
-        let print = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
-        let photo = RuntimePhotoParams {
-            film,
-            print,
-            params,
-            data_dir: self.data_dir.clone(),
-        };
-        photo
-            .digested_params(DigestMode::PreserveUserEdits)
-            .map_err(anyhow::Error::msg)
-    }
-
     fn invalidate_look_render(&mut self) {
         self.scan_for_print_snapshot = None;
-        self.pipeline_cache_key = None;
-        self.pipeline_cache = None;
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.dirty = true;
@@ -1027,58 +1053,6 @@ impl App {
         self.rotate_input_image(false);
     }
 
-    fn preview_pipeline(
-        &mut self,
-        film_name: &str,
-        print_name: &str,
-        params: &RuntimeParams,
-    ) -> Result<(Runtime, f32), String> {
-        let t = Instant::now();
-        let key = format!(
-            "{}|{}",
-            preview_pipeline_cache_key(film_name, print_name, params),
-            self.gui_state.sections["special"]
-        );
-        if self.pipeline_cache_key.as_deref() == Some(key.as_str())
-            && let Some(runtime) = self.pipeline_cache.as_ref()
-        {
-            return Ok((
-                runtime.clone().with_params(params.clone())?,
-                t.elapsed().as_secs_f32() * 1000.0,
-            ));
-        }
-
-        let mut film = profile::load_profile_by_name(&self.data_dir, film_name)
-            .map_err(|e| format!("film profile '{film_name}': {e}"))?;
-        let effective_print_name = if params.io.scan_film {
-            film_name
-        } else {
-            print_name
-        };
-        let mut print = profile::load_profile_by_name(&self.data_dir, effective_print_name)
-            .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
-        for (profile, key) in [
-            (&mut film, "film_channel_swap"),
-            (&mut print, "print_channel_swap"),
-        ] {
-            if let Some(order) = self.gui_state.sections["special"][key].as_array() {
-                for row in &mut profile.data.channel_density {
-                    if row.len() >= 3 {
-                        let original = [row[0], row[1], row[2]];
-                        for ch in 0..3 {
-                            row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
-                        }
-                    }
-                }
-            }
-        }
-        let runtime = Runtime::new(film, print, params.clone(), &self.data_dir)
-            .map_err(|e| format!("runtime build: {e}"))?;
-        self.pipeline_cache_key = Some(key);
-        self.pipeline_cache = Some(runtime.clone());
-        Ok((runtime, t.elapsed().as_secs_f32() * 1000.0))
-    }
-
     /// Spawn a render on a worker thread. The UI stays interactive
     /// during the 250–500 ms pipeline run (previously this blocked
     /// the main thread, dropping mid-drag slider events). If a job
@@ -1094,8 +1068,6 @@ impl App {
             return;
         };
         let input_clone_ms = t_clone.elapsed().as_secs_f32() * 1000.0;
-        let film_name = self.film_name.clone();
-        let print_name = self.print_name.clone();
         let kind = if self.full_scan_requested {
             RenderKind::Scan
         } else {
@@ -1104,22 +1076,24 @@ impl App {
         let input_epoch = self.input_epoch;
         let parameter_revision = self.parameter_revision;
         let backend_name = self.backend.name().to_owned();
-        let params = match self.digested_params(kind == RenderKind::Preview) {
+        let params = match self
+            .current_state()
+            .and_then(|state| state.runtime_params())
+        {
             Ok(params) => params,
-            Err(e) => {
-                self.status = format!("{} state error: {e:#}", kind.label());
+            Err(error) => {
+                self.status = format!("{} state error: {error:#}", kind.label());
                 return;
             }
         };
-        let (pipeline_template, pipeline_build_ms) =
-            match self.preview_pipeline(&film_name, &print_name, &params) {
-                Ok(p) => p,
-                Err(msg) => {
-                    eprintln!("[spektrafilm] render error: {msg}");
-                    self.status = format!("Render error: {msg}");
-                    return;
-                }
-            };
+        let snapshot = RenderSnapshot {
+            params,
+            film_name: self.film_name.clone(),
+            print_name: self.print_name.clone(),
+            data_dir: self.data_dir.clone(),
+            special: self.gui_state.sections["special"].clone(),
+            look_neutral_filters_pinned: self.look_neutral_filters_pinned,
+        };
         let backend = self.backend.clone();
         let source_metadata = self.source_metadata.clone();
         let (tx, rx) = mpsc::channel();
@@ -1131,16 +1105,17 @@ impl App {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-render".into())
             .spawn(move || {
-                // A panic inside the pipeline must still produce a channel
-                // message — otherwise the receiver only sees a disconnect
-                // and the user gets a uselessly vague status line.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let t_total = Instant::now();
+                    let t_pipeline = Instant::now();
+                    let pipeline_template = build_runtime(&snapshot, kind == RenderKind::Preview)?;
+                    let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
+                    let runtime_params = pipeline_template.params();
                     let t_scale = Instant::now();
-                    let working_image = if params.settings.preview_mode {
+                    let working_image = if runtime_params.settings.preview_mode {
                         spektrafilm_core::params_builder::resize_for_preview(
                             &image,
-                            params.settings.preview_max_size,
+                            runtime_params.settings.preview_max_size,
                         )
                     } else {
                         (*image).clone()
@@ -1149,7 +1124,6 @@ impl App {
                     let t = Instant::now();
                     let output = pipeline_template.process(working_image, backend.as_ref())?;
                     let render_ms = t.elapsed().as_secs_f32() * 1000.0;
-                    let runtime_params = pipeline_template.params();
                     let t_preview = Instant::now();
                     let (preview, display_status) = display::output_display_raster(
                         &output,
@@ -1427,21 +1401,23 @@ impl App {
             );
             return;
         }
-        let params = match self.digested_params(false) {
+        let params = match self
+            .current_state()
+            .and_then(|state| state.runtime_params())
+        {
             Ok(params) => params,
-            Err(e) => {
-                self.status = format!("Export state error: {e:#}");
+            Err(error) => {
+                self.status = format!("Export state error: {error:#}");
                 return;
             }
         };
-        let film = self.film_name.clone();
-        let paper = self.print_name.clone();
-        let pipeline = match self.preview_pipeline(&film, &paper, &params) {
-            Ok((pipeline, _)) => pipeline,
-            Err(e) => {
-                self.status = format!("Export pipeline error: {e}");
-                return;
-            }
+        let snapshot = RenderSnapshot {
+            params,
+            film_name: self.film_name.clone(),
+            print_name: self.print_name.clone(),
+            data_dir: self.data_dir.clone(),
+            special: self.gui_state.sections["special"].clone(),
+            look_neutral_filters_pinned: self.look_neutral_filters_pinned,
         };
         self.remember_dialog("export", &out_path);
         self.export_options = options.clone();
@@ -1458,6 +1434,11 @@ impl App {
             .spawn(move || {
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
                     || -> Result<ExportResult> {
+                        if cancel_for_worker.load(Ordering::SeqCst) {
+                            anyhow::bail!("cancelled");
+                        }
+                        let pipeline =
+                            build_runtime(&snapshot, false).map_err(anyhow::Error::msg)?;
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
@@ -2275,57 +2256,6 @@ fn profile_combo(
             }
         });
     prev != *selected_stock
-}
-
-fn preview_pipeline_cache_key(film_name: &str, print_name: &str, params: &RuntimeParams) -> String {
-    serde_json::json!({
-        "film": film_name,
-        "print": print_name,
-        "film_base": params.film_render.base,
-        "print_base": params.print_render.base,
-        "film_chemistry": params.film_render.chemistry,
-        "film_dev": params.film_render.development_time,
-        "print_dev": params.print_render.development_time,
-        "scan_film": params.io.scan_film,
-        "input_color_space": params.io.input_color_space,
-        "input_cctf_decoding": params.io.input_cctf_decoding,
-        "input_gamut": params.io.input_gamut_compress,
-        "output_color_space": params.io.output_color_space,
-        "output_gamut": params.io.output_gamut_compress,
-        "settings": {
-            "rgb_to_raw_method": params.settings.rgb_to_raw_method,
-            "apply_hanatos2025_adaptation_window": params.settings.apply_hanatos2025_adaptation_window,
-            "apply_hanatos2025_adaptation_surface": params.settings.apply_hanatos2025_adaptation_surface,
-            "spectral_gaussian_blur": params.settings.spectral_gaussian_blur,
-            "lut_resolution": params.settings.lut_resolution,
-            "neutral_print_filters_from_database": params.settings.neutral_print_filters_from_database,
-            "use_cat16": params.settings.use_cat16,
-        },
-        "camera": {
-            "color_filter": params.camera.color_filter,
-            "filter_uv": params.camera.filter_uv,
-            "filter_ir": params.camera.filter_ir,
-        },
-        "enlarger": {
-            "illuminant": params.enlarger.illuminant,
-            "c_filter_neutral": params.enlarger.c_filter_neutral,
-            "m_filter_neutral": params.enlarger.m_filter_neutral,
-            "y_filter_neutral": params.enlarger.y_filter_neutral,
-            "m_filter_shift": params.enlarger.m_filter_shift,
-            "y_filter_shift": params.enlarger.y_filter_shift,
-            "preflash_exposure": params.enlarger.preflash_exposure,
-            "preflash_m_filter_shift": params.enlarger.preflash_m_filter_shift,
-            "preflash_y_filter_shift": params.enlarger.preflash_y_filter_shift,
-            "normalize_print_exposure": params.enlarger.normalize_print_exposure,
-            "print_exposure_compensation": params.enlarger.print_exposure_compensation,
-        },
-        "exposure_compensation_ev": if params.enlarger.print_exposure_compensation {
-            params.camera.exposure_compensation_ev
-        } else {
-            0.0
-        },
-    })
-    .to_string()
 }
 
 struct TempPath(PathBuf, Option<PathBuf>);
