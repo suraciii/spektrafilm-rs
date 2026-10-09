@@ -108,6 +108,12 @@ explicitly navigate to the parent directory, then submit the file path while
 keeping the active chooser selected; this prevents a stale selection or a
 second Return from reaching the main window.
 
+The upscale hover scenario asserts the complete tooltip text over both the
+label and numeric editor. It uses a continuous X11 pointer trajectory before
+waiting: egui 0.31 derives movement time from sampled velocity, so isolated
+cursor warps can leave movement time unset and trigger post-click tooltip
+suppression. A screenshot without the expected text fails the gate.
+
 `--development-smoke` permits an uncommitted iteration and always reports
 `development-smoke`, never acceptance `pass`. Missing controls, clipped labels,
 failed file dialogs, incorrect state, nonfinite pixels, and changed provenance

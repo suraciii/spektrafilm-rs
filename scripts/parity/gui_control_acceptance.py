@@ -4,6 +4,7 @@ Uses the existing X11/OCR driver and real saved GUI state as observations.
 """
 import json
 import re
+import subprocess
 import time
 
 from gui_acceptance import require, wait_for
@@ -36,6 +37,45 @@ def enter_number(driver, label, value):
     driver.xd('key', 'Return')
     time.sleep(.3)
     driver.snap('entered-' + label.replace(' ', '-') + '-' + str(value))
+
+def require_tooltip_text(text, expected):
+    require(' '.join(expected.casefold().split()) in ' '.join(text.casefold().split()),
+            f'Native tooltip missing: {expected}')
+
+
+def upscale_tooltips(driver):
+    expected = 'Scale image size up to increase resolution'
+    for target in ('label', 'editor'):
+        driver.xd('mousemove', '--window', driver.window, 100, 100)
+        time.sleep(.6)
+        _, bbox, lines = driver.read()
+        matches = driver.match(lines, 'upscale factor', True)
+        require(matches, 'Upscale label not visible')
+        x, y = matches[0]
+        if target == 'editor':
+            candidates = [w for line in lines for w in line
+                          if w[1] > x + 25 and abs(w[2] + w[4] / 2 - y) < 10
+                          and re.fullmatch(r'[-+]?\d+(?:[.,]\d+)?', w[0].strip('[]()|'))]
+            require(candidates, 'Upscale editor not visible')
+            w = min(candidates, key=lambda w: w[1])
+            x, y = w[1] + w[3] / 2, w[2] + w[4] / 2
+        x, y = int(bbox['left'] + x), int(bbox['top'] + y)
+        # egui 0.31 records movement time from nonzero sampled velocity.
+        # Sparse cursor warps leave it unset and suppress post-click tooltips.
+        # Bypass xd's 100 ms movement pause to deliver a continuous trajectory.
+        for offset in range(20, -1, -1):
+            subprocess.run(['xdotool', 'mousemove', str(x - offset), str(y)],
+                           check=True, timeout=15)
+            time.sleep(.015)
+        time.sleep(1.2)
+        text = driver.snap('upscale-tooltip-' + target)
+        require_tooltip_text(text, expected)
+        driver.records.append({'tooltip_target': target, 'tooltip_text': expected,
+                               'text_observed': True,
+                               'pointer': driver.xd('getmouselocation')})
+    driver.xd('mousemove', '--window', driver.window, 100, 100)
+    time.sleep(.6)
+
 
 
 def control_boundaries(driver, root, factory):
@@ -81,10 +121,7 @@ def control_boundaries(driver, root, factory):
     driver.tab('MAIN')
     driver.section('Crop and upscale')
     enter_number(driver, 'Upscale factor', 0)
-    anchor = driver.locate('Upscale factor')
-    driver.xd('mousemove', '--window', driver.window, int(anchor[0]), int(anchor[1]))
-    time.sleep(1.2)
-    driver.snap('upscale-tooltip')
+    upscale_tooltips(driver)
     driver.section('Crop and upscale')
     actual = saved(driver, root, 'invalid-upscale-preserved')
     require(actual['input_image']['upscale_factor'] == 0, 'Invalid upscale silently substituted')
