@@ -239,6 +239,7 @@ class X11:
             'main': {'main', 'mb', 'iain', 'jain', 'nn', 'n'},
             'open': {'open', 'pen', 'per', 'pe'},
             'save': {'save', 'ave', 'saye'},
+            'config': {'config', 'confic'},
         }
         matches = []
         for line in lines:
@@ -443,7 +444,7 @@ class X11:
         self.xd('key', 'ctrl+l')
         time.sleep(.2)
         self.xd('key', 'ctrl+a')
-        text = str(path)
+        text = str(path if save else path.parent) + ('' if save else '/')
         # GTK completion consumes synthetic per-character input; paste the
         # complete path atomically through the real desktop clipboard.
         subprocess.run(['xclip', '-selection', 'clipboard'], input=text,
@@ -451,7 +452,17 @@ class X11:
         self.xd('key', 'ctrl+v')
         time.sleep(.3)
         self.xd('key', 'Return')
-        # Save choosers may first navigate the entered full path, then require Save.
+        if not save:
+            time.sleep(.6)
+            self.xd('key', 'ctrl+l')
+            self.xd('key', 'ctrl+a')
+            subprocess.run(['xclip', '-selection', 'clipboard'], input=str(path), text=True, check=True)
+            self.xd('key', 'ctrl+v')
+            time.sleep(.3)
+            self.xd('key', 'Return')
+        # Save choosers may first navigate the entered full path, then require
+        # a final action button. Open dialogs likewise expose Select/Open on
+        # portal backends instead of silently accepting Return.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if not find():
@@ -460,13 +471,20 @@ class X11:
                 shot = screen.grab(screen.monitors[0])
             surface = self.Image.frombytes('RGB', shot.size, shot.rgb)
             buttons = self.ocr.image_to_data(surface, config='--psm 11', output_type=self.ocr.Output.DICT)
+            # A chooser may close while OCR runs. Never let a stale click or
+            # Return reach the main window and reopen its focused Save button.
+            if find() != dialog:
+                return
             for i, word in enumerate(buttons['text']):
-                if word.strip() == 'OK':
+                if (word.strip() in ('OK', 'Open', 'Select', 'Save')
+                        and 100 <= buttons['left'][i] <= 1000
+                        and 100 <= buttons['top'][i] <= 750):
                     self.xd('mousemove', buttons['left'][i] + buttons['width'][i] // 2,
                             buttons['top'][i] + buttons['height'][i] // 2)
                     self.xd('click', 1)
                     break
             time.sleep(.25)
+        surface.save(self.root / 'native-chooser-timeout.png')
         raise RuntimeError(f'Native chooser did not accept {path}')
 
     def file_action(self, control, path, save=False):
