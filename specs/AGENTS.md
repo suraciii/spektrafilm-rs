@@ -1,5 +1,6 @@
 # Specification Instructions
 
+- Follow the repository's [documentation language rules](../eng/documentation-language.md).
 - `spec.md` defines target product behavior and is the source of truth.
 - `design.md` defines target system design, boundaries, and invariants.
 - Write durable target state only. Do not record plans, research, gaps, progress, logs, or test output.
