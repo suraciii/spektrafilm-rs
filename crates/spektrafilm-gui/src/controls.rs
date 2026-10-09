@@ -1069,8 +1069,15 @@ fn wheel_adjust<T: egui::emath::Numeric>(
     if !response.hovered() {
         return false;
     }
-    let delta = ui.input(|input| input.raw_scroll_delta.y);
-    if apply_wheel_delta(value, delta, min, max, step) {
+    let (raw_delta, smooth_delta) =
+        ui.input(|input| (input.raw_scroll_delta.y, input.smooth_scroll_delta.y));
+    if raw_delta == 0.0 {
+        if smooth_delta != 0.0 {
+            ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+        }
+        return false;
+    }
+    if apply_wheel_delta(value, raw_delta, min, max, step) {
         ui.input_mut(|input| {
             input.raw_scroll_delta.y = 0.0;
             input.smooth_scroll_delta.y = 0.0;
