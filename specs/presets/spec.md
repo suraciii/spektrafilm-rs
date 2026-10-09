@@ -43,7 +43,7 @@ A look preset owns film and print selection plus explicit film, print, enlarger,
 - `core` owns the typed look model, strict schema validation, profile compatibility, profile-driven workflow defaulting, capture, and candidate resolution.
 - `gui` owns browser presentation, immutable built-in selection, transient state, and user-editable workflow controls.
 - `GuiState` remains complete GUI-state persistence and is not a look payload.
-- The resolver parses strictly, resolves and validates both profiles, builds the stock baseline, overlays explicit look values, pins explicit neutral filters, derives the workflow default, and validates `RuntimeParams` before returning a candidate.
+- `core` owns strict parsing, profile resolution, stock-baseline construction, explicit look-value overlay, workflow-default derivation, and `RuntimeParams` validation. The `gui` pins explicit neutral filter values for the subsequent digest without changing the persisted calibration setting.
 - Existing `--params`, `RenderRecipe`, CLI behavior, LUT behavior, CPU f64 semantics, WGPU f32 semantics, Grain V2 algorithm, Python parity, and raw profile assets remain unchanged.
 
 The portable canonical snake-case schema contains:
