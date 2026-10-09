@@ -444,8 +444,6 @@ class X11:
                              'requested_path': str(path), 'save': save})
 
         def paste_location(value):
-            nonlocal dialog
-            dialog = wait_for(find, 'active native file chooser', 15)
             self.xd('windowactivate', '--sync', dialog)
             time.sleep(.3)
             self.xd('key', 'ctrl+l')
@@ -456,6 +454,11 @@ class X11:
             self.xd('key', 'ctrl+v')
             time.sleep(.5)
             self.xd('key', 'Return')
+
+        def visible():
+            return any(dialog in self.xd('search', '--onlyvisible', '--class', dialog_class,
+                                         check=False).splitlines()
+                       for dialog_class in dialog_classes)
 
         if save:
             paste_location(str(path))
@@ -468,11 +471,11 @@ class X11:
             paste_location(str(path))
 
         # Save/open choosers may leave the selected path visible while waiting
-        # for the final action button.  Click only the active chooser's button.
+        # for the final action button.  Keep operating on the chooser opened
+        # for this action; another portal window may still be behind it.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            dialog = find()
-            if not dialog:
+            if not visible():
                 return
             with self.mss.mss() as screen:
                 shot = screen.grab(screen.monitors[0])
@@ -488,6 +491,7 @@ class X11:
                     clicked = True
                     break
             if not clicked:
+                self.xd('windowactivate', '--sync', dialog)
                 self.xd('key', 'Return')
             time.sleep(.25)
         raise RuntimeError(f'Native chooser did not accept {path}')
