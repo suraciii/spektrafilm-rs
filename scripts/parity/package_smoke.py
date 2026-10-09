@@ -14,7 +14,8 @@ import exiv2
 import numpy as np
 import OpenImageIO as oiio
 
-REFERENCE_COMMIT = '3bb2c2d2801ff68b92019cf1dbcbb133d60832bc'
+REFERENCE_COMMIT = '28bf883e1672e884307edc75852549376e13644e'
+SPECTRAL_REFERENCE = Path(__file__).resolve().parent / 'fixtures/package_28bf883/spectral.json'
 
 
 def _sha256(path):
@@ -144,7 +145,7 @@ def main():
     corrupt.write_bytes(b'not an image')
     process(corrupt, evidence / 'corrupt-output.tif', 32, False)
     process(source, evidence / 'invalid-depth.exr', 8, False)
-    # Pinned 0.3.4 bare-chain midgray reference; exercise actual spectral assets.
+    # Pinned experimental Python bare-chain midgray reference; exercise spectral assets.
     spectral_source = evidence / 'spectral-source.tif'
     writer = oiio.ImageOutput.create(str(spectral_source))
     assert writer and writer.open(str(spectral_source), oiio.ImageSpec(1, 1, 3, oiio.FLOAT))
@@ -171,11 +172,14 @@ def main():
     assert reader
     spectral_pixels = np.array(reader.read_image(oiio.FLOAT))
     reader.close()
-    reference = np.array([[[0.17518024973220059, 0.17883059767931708,
-                            0.18934288118407094]]])
+    spectral_reference = json.loads(SPECTRAL_REFERENCE.read_text())
+    assert spectral_reference['upstream_commit'] == REFERENCE_COMMIT
+    assert spectral_reference['params'] == json.loads(spectral_params.read_text())
+    reference = np.array(spectral_reference['output_rgb'], dtype=np.float64)
     np.testing.assert_allclose(spectral_pixels, reference, atol=1e-6, rtol=0)
     observations.append({'spectral_exporter': str(exporter),
-                         'reference_commit': '3bb2c2d2801ff68b92019cf1dbcbb133d60832bc',
+                         'reference_commit': REFERENCE_COMMIT,
+                         'reference_fixture_sha256': _sha256(SPECTRAL_REFERENCE),
                          'spectral_max_abs': float(np.max(np.abs(spectral_pixels - reference))),
                          'spectral_budget': 1e-6})
     raw = evidence / 'kodak.KDC'

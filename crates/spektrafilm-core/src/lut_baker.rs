@@ -473,6 +473,39 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "precision-f64")]
+    fn flog_bake_matches_independent_d65_compression_reference() {
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        assert_eq!(film.info.reference_illuminant, "D55");
+        let mut s = spec("Fujifilm F-Log", "sRGB");
+        s.resolution = 4;
+        assert!(s.input_gamut_compress.active);
+        let bundle = BundleBuilder::new(s).build(
+            &data, &spektrafilm_gpu::cpu_backend::CpuBackend).unwrap();
+        // Independent 28bf883 Python BundleBuilder, NumPy 2.5.3, float32
+        // transport input; resolution 4, gain 1, default runtime gamut knees.
+        // Saturated channels distinguish fixed-D65 compression from D55;
+        // the previous D55 center missed these references by up to 0.09195.
+        let reference = [
+            (1, [0.25242497446445367, 0.0847493750709554, 0.19343996049115467]),
+            (4, [0.0005628630644368622, 0.19641493988104003, 0.09760761143023325]),
+            (16, [0.014825877622419844, 0.078115288171892, 0.25334905318699014]),
+            (3, [0.8918221634211371, 0.4459024486440791, 0.7615401300303294]),
+            (12, [0.789960662997608, 0.8118796315037752, 0.18577316534685803]),
+            (48, [0.011540816177352134, 0.7547688090577326, 0.8396251588911985]),
+        ];
+        for (index, expected) in reference {
+            // Python table axes are [blue, green, red]; Rust is red-major.
+            let rust_index = (index % 4) * 16 + ((index / 4) % 4) * 4 + index / 16;
+            for (actual, expected) in bundle.luts[0].1.table[rust_index].into_iter().zip(expected) {
+                assert!((actual - expected).abs() <= 2e-6,
+                    "F-Log sample {index}: {actual} != {expected}");
+            }
+        }
+    }
+
+    #[test]
     fn stops_above_midgray_accepts_auto_native_and_explicit_values() {
         let mut auto = spec("srgb", "srgb");
         auto.normalize().unwrap();
