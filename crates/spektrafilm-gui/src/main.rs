@@ -446,6 +446,7 @@ impl App {
         let save_depth = match gui_state.sections["rust"]["save_bit_depth"].as_u64() {
             Some(8) => BitDepth::Eight,
             Some(32) => BitDepth::ThirtyTwo,
+            _ if matches!(export_format, ExportFormat::Jpeg | ExportFormat::Png) => BitDepth::Eight,
             _ => BitDepth::Sixteen,
         };
 
@@ -532,8 +533,13 @@ impl App {
         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
         self.params = params;
-        self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
         self.export_format = ExportFormat::from_state(&state.sections);
+        self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() {
+            Some(8) => BitDepth::Eight,
+            Some(32) => BitDepth::ThirtyTwo,
+            _ if matches!(self.export_format, ExportFormat::Jpeg | ExportFormat::Png) => BitDepth::Eight,
+            _ => BitDepth::Sixteen,
+        };
         self.jpeg_quality = state.sections["rust"]["jpeg_quality"].as_u64().unwrap_or(95).clamp(1, 100) as u8;
         self.jpeg_subsampling = if state.sections["rust"]["jpeg_subsampling"].as_str() == Some("420") { JpegSubsampling::Yuv420 } else { JpegSubsampling::Yuv444 };
         self.export_compression = ExportCompression::from_state(&state.sections);

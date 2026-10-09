@@ -28,6 +28,11 @@ fn snoise(timer:f32,v:vec4<f32>)->vec4<f32> {
 // Independent Taylor trig and mathematical 2/pi reduction, shared with v2.rs.
 // Split constants avoid depending on device-specific FMA fusion below 8192.
 // The integer fallback covers all finite binary32 magnitudes.
+// The sine hash amplifies a one-ULP trig change into a different permutation.
+// Keep the CPU's binary32 product boundaries through Metal contraction.
+fn trig_product(a:f32,b:f32)->f32 {
+ let split=frexp(a*b);return ldexp(split.fract,split.exp);
+}
 fn trig_word(words:vec3<u32>,bit:u32)->u32 {
  let i=bit/32u;let offset=bit%32u;
  let low=select(select(words.x,words.y,i==1u),words.z,i==2u);
@@ -81,23 +86,23 @@ fn trig_reduce(value:f32)->vec2<f32> {
  let quadrant=((trig_word(words,phase)&3u)+round_up)&3u;
  let hi=f32(trig_word(words,phase-24u)&0x00ffffffu)*5.960464477539063e-8-f32(round_up);
  let lo=f32(trig_word(words,phase-48u)&0x00ffffffu)*3.552713678800501e-15;
- let r=hi*1.570796251296997;
+ let r=trig_product(hi,1.570796251296997);
  let tail=fma(hi,1.570796251296997,-r);
  let tail2=fma(hi,7.549789415861596e-8,tail);
  return vec2(fma(lo,1.5707963267948966,tail2)+r,f32(quadrant));
 }
 fn trig_polynomial(r:f32,cosine:bool)->f32 {
- let z=r*r;
+ let z=trig_product(r,r);
  if(cosine){
-  let p0=z*(1./479001600.)-1./3628800.;
-  let p1=p0*z+1./40320.;let p2=p1*z-1./720.;
-  let p3=p2*z+1./24.;let p4=p3*z-0.5;
-  return z*p4+1.;
+  let p0=trig_product(z,1./479001600.)-1./3628800.;
+  let p1=trig_product(p0,z)+1./40320.;let p2=trig_product(p1,z)-1./720.;
+  let p3=trig_product(p2,z)+1./24.;let p4=trig_product(p3,z)-0.5;
+  return trig_product(z,p4)+1.;
  }
- let p0=z*(1./6227020800.)-1./39916800.;
- let p1=p0*z+1./362880.;let p2=p1*z-1./5040.;
- let p3=p2*z+1./120.;let p4=p3*z-1./6.;
- return (r*z)*p4+r;
+ let p0=trig_product(z,1./6227020800.)-1./39916800.;
+ let p1=trig_product(p0,z)+1./362880.;let p2=trig_product(p1,z)-1./5040.;
+ let p3=trig_product(p2,z)+1./120.;let p4=trig_product(p3,z)-1./6.;
+ return trig_product(trig_product(r,z),p4)+r;
 }
 fn grain_sin(value:f32)->f32 {
  let reduced=trig_reduce(value);let q=u32(reduced.y);
