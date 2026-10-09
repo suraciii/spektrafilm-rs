@@ -1,17 +1,7 @@
 //! Shared prepared-image I/O. Loading and writing retain sample interpretation;
 //! saving-space conversion is an explicit operation separate from simulation.
-use spektrafilm_backend::telemetry::{
-    IssueBoundary, IssueCategory, ObservationContext, ObservationKind, Purpose,
-};
-use spektrafilm_math::{
-    image::ImageBuf,
-    precision::{from_f64, to_f64},
-};
-use std::{
-    ffi::{CStr, CString, c_char, c_void},
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{ffi::{CString, CStr, c_char, c_void}, path::Path, sync::Arc};
+use spektrafilm_math::{image::ImageBuf, precision::{from_f64, to_f64}};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ImageIoError {
@@ -22,10 +12,7 @@ pub enum ImageIoError {
     #[error("EXR requires 16-bit half or 32-bit float, received {0} bits")]
     ExrDepth(u8),
     #[error("Invalid {format} export settings: {reason}")]
-    InvalidExport {
-        format: &'static str,
-        reason: &'static str,
-    },
+    InvalidExport { format: &'static str, reason: &'static str },
     #[error("Image path contains a null byte")]
     InvalidPath,
     #[error("Invalid RGB buffer dimensions or sample count")]
@@ -33,195 +20,46 @@ pub enum ImageIoError {
     #[error("{0}")]
     InvalidColorSpace(String),
     #[error("Image {operation} failed for {path}: {message}")]
-    Native {
-        operation: &'static str,
-        path: String,
-        message: String,
-    },
-}
-
-/// A complete unpublished image. Dropping it removes only its owned temporary file.
-pub struct PreparedImageOutput {
-    temporary: tempfile::TempPath,
-    destination: PathBuf,
-    report: SaveReport,
-}
-
-impl PreparedImageOutput {
-    pub fn report(&self) -> &SaveReport {
-        &self.report
-    }
-
-    /// Atomically publish, optionally replacing an existing destination.
-    pub fn publish(self, replace: bool) -> Result<SaveReport, ImageIoError> {
-        let Self {
-            temporary,
-            destination,
-            report,
-        } = self;
-        let result = if replace {
-            temporary.persist(&destination)
-        } else {
-            temporary.persist_noclobber(&destination)
-        };
-        result.map_err(|error| ImageIoError::Native {
-            operation: "publication",
-            path: destination.display().to_string(),
-            message: error.error.to_string(),
-        })?;
-        Ok(report)
-    }
+    Native { operation: &'static str, path: String, message: String },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BitDepth {
-    Eight,
-    Sixteen,
-    ThirtyTwo,
-}
-impl BitDepth {
-    pub fn bits(self) -> u8 {
-        match self {
-            Self::Eight => 8,
-            Self::Sixteen => 16,
-            Self::ThirtyTwo => 32,
-        }
-    }
-}
+pub enum BitDepth { Eight, Sixteen, ThirtyTwo }
+impl BitDepth { pub fn bits(self) -> u8 { match self { Self::Eight => 8, Self::Sixteen => 16, Self::ThirtyTwo => 32 } } }
 impl TryFrom<u8> for BitDepth {
     type Error = ImageIoError;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            8 => Ok(Self::Eight),
-            16 => Ok(Self::Sixteen),
-            32 => Ok(Self::ThirtyTwo),
-            _ => Err(ImageIoError::UnsupportedDepth(value)),
-        }
+        match value { 8 => Ok(Self::Eight), 16 => Ok(Self::Sixteen), 32 => Ok(Self::ThirtyTwo), _ => Err(ImageIoError::UnsupportedDepth(value)) }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JpegSubsampling {
-    Yuv444,
-    Yuv420,
-}
+pub enum JpegSubsampling { Yuv444, Yuv420 }
 impl JpegSubsampling {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Yuv444 => "4:4:4",
-            Self::Yuv420 => "4:2:0",
-        }
-    }
+    pub fn as_str(self) -> &'static str { match self { Self::Yuv444 => "4:4:4", Self::Yuv420 => "4:2:0" } }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Compression {
-    Zip,
-    None,
-}
+pub enum Compression { Zip, None }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-pub enum ImageFormat {
-    Jpeg = 0,
-    Png = 1,
-    Tiff = 2,
-    Exr = 3,
-}
-
-/// Canonical lowercase container tag shared by every CLI report, GUI label
-/// and state document. The single spelling for each container lives here so a
-/// caller cannot invent a second one.
-impl ImageFormat {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Jpeg => "jpeg",
-            Self::Png => "png",
-            Self::Tiff => "tiff",
-            Self::Exr => "exr",
-        }
-    }
-
-    /// Every extension this container owns, in loader order.
-    pub fn extensions(self) -> &'static [&'static str] {
-        match self {
-            Self::Jpeg => &["jpg", "jpeg"],
-            Self::Png => &["png"],
-            Self::Tiff => &["tif", "tiff"],
-            Self::Exr => &["exr"],
-        }
-    }
-
-    /// The extension a writer appends when the destination carries none.
-    pub fn extension(self) -> &'static str {
-        self.extensions()[0]
-    }
-}
-
-/// Container extensions the loader resolves, paired with their format. The
-/// file dialog and `detect` read this one table, so a new container cannot be
-/// offered by the dialog without being loadable, or the reverse.
-const CONTAINER_FORMATS: &[(&str, ImageFormat)] = &[
-    ("jpg", ImageFormat::Jpeg),
-    ("jpeg", ImageFormat::Jpeg),
-    ("png", ImageFormat::Png),
-    ("tif", ImageFormat::Tiff),
-    ("tiff", ImageFormat::Tiff),
-    ("exr", ImageFormat::Exr),
-];
-
-/// RAW extensions LibRaw decodes.
-const RAW_EXTENSIONS: &[&str] = &[
-    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw",
-    "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef", "kdc", "ari", "bay", "dcr", "drf", "erf",
-    "fff", "k25", "mos", "ptx",
-];
-
-/// Every extension a container format owns, for a writer's file-dialog filter.
-pub fn container_extensions() -> Vec<&'static str> {
-    CONTAINER_FORMATS.iter().map(|(name, _)| *name).collect()
-}
-
-/// Every extension the input path accepts, containers first: the file-dialog
-/// filter list.
-pub fn accepted_extensions() -> Vec<&'static str> {
-    container_extensions()
-        .into_iter()
-        .chain(RAW_EXTENSIONS.iter().copied())
-        .collect()
-}
-
+pub enum ImageFormat { Jpeg = 0, Png = 1, Tiff = 2, Exr = 3 }
 impl ImageFormat {
     pub fn detect(path: &Path) -> Result<Self, ImageIoError> {
         let ext = extension(path);
-        CONTAINER_FORMATS
-            .iter()
-            .find(|(name, _)| *name == ext)
-            .map(|(_, format)| *format)
-            .ok_or(ImageIoError::UnsupportedFormat(ext))
+        match ext.as_str() { "jpg" | "jpeg" => Ok(Self::Jpeg), "png" => Ok(Self::Png), "tif" | "tiff" => Ok(Self::Tiff), "exr" => Ok(Self::Exr), _ => Err(ImageIoError::UnsupportedFormat(ext)) }
     }
 }
-fn extension(path: &Path) -> String {
-    path.extension()
-        .and_then(|x| x.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
-}
+fn extension(path: &Path) -> String { path.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase() }
 pub fn is_raw(path: &Path) -> bool {
-    RAW_EXTENSIONS.contains(&extension(path).as_str())
+    matches!(extension(path).as_str(), "dng"|"cr2"|"cr3"|"nef"|"nrw"|"arw"|"srf"|"sr2"|"raf"|"orf"|"rw2"|"pef"|"srw"|"x3f"|"iiq"|"3fr"|"crw"|"rwl"|"mrw"|"mef"|"kdc"|"ari"|"bay"|"dcr"|"drf"|"erf"|"fff"|"k25"|"mos"|"ptx")
 }
 #[derive(Debug)]
 struct NativeMetadata(*mut c_void);
 // Exiv2 metadata is immutable after read, shared by save calls as const data.
 unsafe impl Send for NativeMetadata {}
 unsafe impl Sync for NativeMetadata {}
-impl Drop for NativeMetadata {
-    fn drop(&mut self) {
-        unsafe { sf_metadata_free(self.0) }
-    }
-}
+impl Drop for NativeMetadata { fn drop(&mut self) { unsafe { sf_metadata_free(self.0) } } }
 #[derive(Debug, Clone)]
 pub struct ImageMetadata(Arc<NativeMetadata>);
-pub struct LoadedImage {
-    pub image: ImageBuf,
-    pub metadata: Option<ImageMetadata>,
-}
+pub struct LoadedImage { pub image: ImageBuf, pub metadata: Option<ImageMetadata> }
 #[derive(Debug, Clone, Copy)]
 pub struct SaveOptions<'a> {
     pub depth: BitDepth,
@@ -231,198 +69,21 @@ pub struct SaveOptions<'a> {
     pub jpeg_subsampling: Option<JpegSubsampling>,
     pub compression: Option<Compression>,
 }
-
-/// One way a container/option pair breaks the writer contract. The rules live
-/// here once; callers that reject map each variant to their own wording, and
-/// the GUI export dialog maps them to the coerced selection instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SaveOptionViolation {
-    /// JPEG/PNG require 8-bit, EXR requires 16- or 32-bit.
-    Depth,
-    /// JPEG and PNG must write encoded samples.
-    RequiresEncoded,
-    /// EXR must write linear samples.
-    RequiresLinear,
-    /// EXR only carries sRGB or ACES2065-1.
-    ExrColorSpace,
-    /// JPEG quality is set for a container that does not carry it.
-    JpegQualityNotApplicable,
-    /// JPEG subsampling is set for a container that does not carry it.
-    JpegSubsamplingNotApplicable,
-    /// JPEG quality is outside 1..=100.
-    JpegQualityRange,
-    /// Compression is set for JPEG or PNG.
-    CompressionNotConfigurable,
-    /// EXR compression is always zip.
-    ExrCompression,
-}
-
-/// Every writer-contract violation of one [`SaveOptions`] value, in the order
-/// the writer used to check them so the first error stays stable. `rendered_output`
-/// selects the GUI save path, which preserves the selected transfer encoding for
-/// every format instead of requiring linear EXR and encoded JPEG/PNG.
-pub fn save_option_violations(
-    format: ImageFormat,
-    options: &SaveOptions<'_>,
-    rendered_output: bool,
-) -> Vec<SaveOptionViolation> {
-    let mut violations = Vec::new();
-    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && options.depth != BitDepth::Eight {
-        violations.push(SaveOptionViolation::Depth);
-    }
-    if format == ImageFormat::Exr && options.depth == BitDepth::Eight {
-        violations.push(SaveOptionViolation::Depth);
-    }
-    if !rendered_output
-        && matches!(format, ImageFormat::Jpeg | ImageFormat::Png)
-        && !options.cctf_encoding
-    {
-        violations.push(SaveOptionViolation::RequiresEncoded);
-    }
-    if !rendered_output && format == ImageFormat::Exr && options.cctf_encoding {
-        violations.push(SaveOptionViolation::RequiresLinear);
-    }
-    if !rendered_output
-        && format == ImageFormat::Exr
-        && !matches!(options.color_space, "sRGB" | "ACES2065-1")
-    {
-        violations.push(SaveOptionViolation::ExrColorSpace);
-    }
-    if format != ImageFormat::Jpeg && options.jpeg_quality.is_some() {
-        violations.push(SaveOptionViolation::JpegQualityNotApplicable);
-    }
-    if format != ImageFormat::Jpeg && options.jpeg_subsampling.is_some() {
-        violations.push(SaveOptionViolation::JpegSubsamplingNotApplicable);
-    }
-    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && options.compression.is_some() {
-        violations.push(SaveOptionViolation::CompressionNotConfigurable);
-    }
-    if format == ImageFormat::Exr && matches!(options.compression, Some(Compression::None)) {
-        violations.push(SaveOptionViolation::ExrCompression);
-    }
-    if let Some(quality) = options.jpeg_quality
-        && !(1..=100).contains(&quality)
-    {
-        violations.push(SaveOptionViolation::JpegQualityRange);
-    }
-    violations
-}
-
-/// The writer rules a container imposes on one [`SaveOptions`] value,
-/// independent of the destination path. Callers that resolve a container from
-/// a path (the CLI's `--output`) pass `ImageFormat::detect(path)`; callers that
-/// already hold the container pass it directly. `rendered_output` selects the
-/// GUI save path, which preserves the selected transfer encoding for every
-/// format instead of requiring linear EXR and encoded JPEG/PNG.
-pub fn validate_save_options(
-    format: ImageFormat,
-    options: &SaveOptions<'_>,
-    rendered_output: bool,
-) -> Result<(), ImageIoError> {
-    let name = format.name();
-    match save_option_violations(format, options, rendered_output).first() {
-        None => Ok(()),
-        Some(SaveOptionViolation::Depth) if format == ImageFormat::Exr => {
-            Err(ImageIoError::ExrDepth(8))
-        }
-        Some(SaveOptionViolation::Depth) => Err(ImageIoError::InvalidExport {
-            format: name,
-            reason: "only 8-bit output is supported",
-        }),
-        Some(SaveOptionViolation::RequiresEncoded) => Err(ImageIoError::InvalidExport {
-            format: name,
-            reason: "JPEG and PNG require encoded output",
-        }),
-        Some(SaveOptionViolation::RequiresLinear) => Err(ImageIoError::InvalidExport {
-            format: "EXR",
-            reason: "EXR output must be linear",
-        }),
-        Some(SaveOptionViolation::ExrColorSpace) => Err(ImageIoError::InvalidExport {
-            format: "EXR",
-            reason: "EXR color space must be sRGB or ACES2065-1",
-        }),
-        Some(SaveOptionViolation::JpegQualityNotApplicable) => Err(ImageIoError::InvalidExport {
-            format: name,
-            reason: "JPEG quality is only valid for JPEG",
-        }),
-        Some(SaveOptionViolation::JpegSubsamplingNotApplicable) => {
-            Err(ImageIoError::InvalidExport {
-                format: name,
-                reason: "JPEG subsampling is only valid for JPEG",
-            })
-        }
-        Some(SaveOptionViolation::CompressionNotConfigurable) => Err(ImageIoError::InvalidExport {
-            format: name,
-            reason: "compression is not configurable for JPEG or PNG",
-        }),
-        Some(SaveOptionViolation::ExrCompression) => Err(ImageIoError::InvalidExport {
-            format: "EXR",
-            reason: "EXR compression is always zip",
-        }),
-        Some(SaveOptionViolation::JpegQualityRange) => Err(ImageIoError::InvalidExport {
-            format: "JPEG",
-            reason: "quality must be between 1 and 100",
-        }),
-    }
-}
 #[derive(Debug, Default)]
-pub struct SaveReport {
-    pub metadata_warning: Option<String>,
-}
+pub struct SaveReport { pub metadata_warning: Option<String> }
 unsafe extern "C" {
     fn sf_io_free(pointer: *mut c_void);
     fn sf_metadata_free(pointer: *mut c_void);
     fn sf_metadata_read(path: *const c_char) -> *mut c_void;
-    fn sf_image_load(
-        path: *const c_char,
-        width: *mut u32,
-        height: *mut u32,
-        samples: *mut *mut f64,
-        error: *mut *mut c_char,
-    ) -> i32;
-    fn sf_image_save(
-        path: *const c_char,
-        width: u32,
-        height: u32,
-        samples: *const f64,
-        depth: i32,
-        format: i32,
-        jpeg_quality: i32,
-        jpeg_subsampling: i32,
-        compression: i32,
-        color_space: *const c_char,
-        export_metadata: bool,
-        icc: *const u8,
-        icc_len: usize,
-        error: *mut *mut c_char,
-    ) -> i32;
-    fn sf_image_validate(path: *const c_char, error: *mut *mut c_char) -> i32;
-    fn sf_metadata_write(
-        path: *const c_char,
-        source: *const c_void,
-        width: u32,
-        height: u32,
-        space: *const c_char,
-        encoded: bool,
-        error: *mut *mut c_char,
-    ) -> i32;
+    fn sf_image_load(path: *const c_char, width: *mut u32, height: *mut u32, samples: *mut *mut f64, error: *mut *mut c_char) -> i32;
+    fn sf_image_save(path: *const c_char, width: u32, height: u32, samples: *const f64, depth: i32, format: i32, jpeg_quality: i32, jpeg_subsampling: i32, compression: i32, color_space: *const c_char, icc: *const u8, icc_len: usize, error: *mut *mut c_char) -> i32;
+    fn sf_metadata_write(path: *const c_char, source: *const c_void, width: u32, height: u32, space: *const c_char, encoded: bool, error: *mut *mut c_char) -> i32;
 }
-fn cpath(path: &Path) -> Result<CString, ImageIoError> {
-    CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| ImageIoError::InvalidPath)
-}
+fn cpath(path: &Path) -> Result<CString, ImageIoError> { CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| ImageIoError::InvalidPath) }
 fn take_error(pointer: *mut c_char) -> String {
-    if pointer.is_null() {
-        return "Native codec did not provide an error".into();
-    }
-    let result = unsafe { CStr::from_ptr(pointer) }
-        .to_string_lossy()
-        .into_owned();
-    unsafe { sf_io_free(pointer.cast()) };
-    if result.is_empty() {
-        "Native codec did not provide an error".into()
-    } else {
-        result
-    }
+    if pointer.is_null() { return "Native codec did not provide an error".into(); }
+    let result = unsafe { CStr::from_ptr(pointer) }.to_string_lossy().into_owned();
+    unsafe { sf_io_free(pointer.cast()) }; result
 }
 /// Metadata read failures are nonfatal, matching upstream read_image_metadata.
 pub fn read_metadata(path: &Path) -> Option<ImageMetadata> {
@@ -433,93 +94,20 @@ pub fn read_metadata(path: &Path) -> Option<ImageMetadata> {
 pub fn load(path: &Path) -> Result<LoadedImage, ImageIoError> {
     ImageFormat::detect(path)?;
     let name = cpath(path)?;
-    let (mut width, mut height, mut samples, mut error) =
-        (0, 0, std::ptr::null_mut(), std::ptr::null_mut());
-    if unsafe {
-        sf_image_load(
-            name.as_ptr(),
-            &mut width,
-            &mut height,
-            &mut samples,
-            &mut error,
-        )
-    } == 0
-    {
-        return Err(ImageIoError::Native {
-            operation: "load",
-            path: path.display().to_string(),
-            message: take_error(error),
-        });
+    let (mut width, mut height, mut samples, mut error) = (0, 0, std::ptr::null_mut(), std::ptr::null_mut());
+    if unsafe { sf_image_load(name.as_ptr(), &mut width, &mut height, &mut samples, &mut error) } == 0 {
+        return Err(ImageIoError::Native { operation: "load", path: path.display().to_string(), message: take_error(error) });
     }
     let count = width as usize * height as usize * 3;
-    let data = unsafe { std::slice::from_raw_parts(samples, count) }
-        .iter()
-        .copied()
-        .map(from_f64)
-        .collect();
+    let data = unsafe { std::slice::from_raw_parts(samples, count) }.iter().copied().map(from_f64).collect();
     unsafe { sf_io_free(samples.cast()) };
-    Ok(LoadedImage {
-        image: ImageBuf::from_data(width, height, data),
-        metadata: read_metadata(path),
-    })
+    Ok(LoadedImage { image: ImageBuf::from_data(width, height, data), metadata: read_metadata(path) })
 }
 /// Integer outputs clip to [0,1] and truncate after scaling, matching numpy
 /// astype. PNG/JPEG always use uint8; float TIFF/EXR preserve unbounded samples.
 /// Pixel failures are errors; metadata failures report a warning after writing.
-pub fn save(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, false, None)
-}
-
-/// Write pixels with metadata observations attributed to the caller's file-write phase.
-pub fn save_observed(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-    context: &ObservationContext,
-) -> Result<SaveReport, ImageIoError> {
-    save_inner(
-        path,
-        image,
-        options,
-        metadata,
-        false,
-        context.enabled().then_some(context),
-    )
-}
-
-/// Save an existing GUI output with the upstream extension and color semantics.
-/// Unlike the export contract, this preserves the selected transfer encoding for
-/// every format and leaves unspecified JPEG settings and EXR metadata to OIIO.
-pub fn save_rendered_output(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, true, None)
-}
-
-pub fn save_rendered_output_observed(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-    context: &ObservationContext,
-) -> Result<SaveReport, ImageIoError> {
-    save_inner(
-        path,
-        image,
-        options,
-        metadata,
-        true,
-        context.enabled().then_some(context),
-    )
+pub fn save(path: &Path, image: &ImageBuf, options: SaveOptions<'_>, metadata: Option<&ImageMetadata>) -> Result<SaveReport, ImageIoError> {
+    save_inner(path, image, options, metadata)
 }
 
 /// Compatibility helper for callers that need an explicit JPEG quality.
@@ -531,25 +119,7 @@ pub fn save_jpeg_quality(
     quality: u8,
 ) -> Result<SaveReport, ImageIoError> {
     options.jpeg_quality = Some(quality);
-    save_inner(path, image, options, metadata, false, None)
-}
-
-/// Prepare a complete export without publishing it, for cancellation or no-replace adapters.
-pub fn prepare_save_observed(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-    context: &ObservationContext,
-) -> Result<PreparedImageOutput, ImageIoError> {
-    prepare_inner(
-        path,
-        image,
-        options,
-        metadata,
-        false,
-        context.enabled().then_some(context),
-    )
+    save_inner(path, image, options, metadata)
 }
 
 fn save_inner(
@@ -557,50 +127,43 @@ fn save_inner(
     image: &ImageBuf,
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
-    rendered_output: bool,
-    observation: Option<&ObservationContext>,
 ) -> Result<SaveReport, ImageIoError> {
-    prepare_inner(path, image, options, metadata, rendered_output, observation)?.publish(true)
-}
-
-fn prepare_inner(
-    path: &Path,
-    image: &ImageBuf,
-    options: SaveOptions<'_>,
-    metadata: Option<&ImageMetadata>,
-    rendered_output: bool,
-    observation: Option<&ObservationContext>,
-) -> Result<PreparedImageOutput, ImageIoError> {
     let format = ImageFormat::detect(path)?;
-    validate_save_options(format, &options, rendered_output)?;
-    if image.width == 0
-        || image.height == 0
-        || image.data.len() != image.width as usize * image.height as usize * 3
-    {
-        return Err(ImageIoError::InvalidImage);
+    let format_name = match format { ImageFormat::Jpeg => "JPEG", ImageFormat::Png => "PNG", ImageFormat::Tiff => "TIFF", ImageFormat::Exr => "EXR" };
+    match format {
+        ImageFormat::Jpeg | ImageFormat::Png if options.depth != BitDepth::Eight =>
+            return Err(ImageIoError::InvalidExport { format: format_name, reason: "only 8-bit output is supported" }),
+        ImageFormat::Exr if options.depth == BitDepth::Eight => return Err(ImageIoError::ExrDepth(8)),
+        _ => {}
     }
-    cpath(path)?;
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let suffix = format!(
-        ".{}",
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("tmp")
-    );
-    let temporary = tempfile::Builder::new()
-        .prefix(".spektrafilm-")
-        .suffix(&suffix)
-        .tempfile_in(parent)
-        .map_err(|error| ImageIoError::Native {
-            operation: "staging",
-            path: path.display().to_string(),
-            message: error.to_string(),
-        })?
-        .into_temp_path();
-    let name = cpath(&temporary)?;
+    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && !options.cctf_encoding {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "JPEG and PNG require encoded output" });
+    }
+    if format == ImageFormat::Exr && options.cctf_encoding {
+        return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR output must be linear" });
+    }
+    if format == ImageFormat::Exr && !matches!(options.color_space, "sRGB" | "ACES2065-1") {
+        return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR color space must be sRGB or ACES2065-1" });
+    }
+    if format != ImageFormat::Jpeg && options.jpeg_quality.is_some() {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "JPEG quality is only valid for JPEG" });
+    }
+    if format != ImageFormat::Jpeg && options.jpeg_subsampling.is_some() {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "JPEG subsampling is only valid for JPEG" });
+    }
+    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && options.compression.is_some() {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "compression is not configurable for JPEG or PNG" });
+    }
+    if format == ImageFormat::Exr && matches!(options.compression, Some(Compression::None)) {
+        return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR compression is always zip" });
+    }
+    if let Some(quality) = options.jpeg_quality {
+        if !(1..=100).contains(&quality) {
+            return Err(ImageIoError::InvalidExport { format: "JPEG", reason: "quality must be between 1 and 100" });
+        }
+    }
+    if image.width == 0 || image.height == 0 || image.data.len() != image.width as usize * image.height as usize * 3 { return Err(ImageIoError::InvalidImage); }
+    let name = cpath(path)?;
     let space = CString::new(options.color_space).map_err(|_| ImageIoError::InvalidPath)?;
     let icc = icc_profile(options.color_space, options.cctf_encoding).unwrap_or(&[]);
     #[cfg(feature = "precision-f64")]
@@ -608,92 +171,25 @@ fn prepare_inner(
     #[cfg(not(feature = "precision-f64"))]
     let data: Vec<f64> = image.data.iter().copied().map(to_f64).collect();
     let mut error = std::ptr::null_mut();
-    let jpeg_subsampling = match options.jpeg_subsampling {
-        Some(JpegSubsampling::Yuv444) => 444,
-        Some(JpegSubsampling::Yuv420) => 420,
-        None if rendered_output => 0,
-        None => 444,
-    };
-    let compression = match options.compression.unwrap_or(Compression::Zip) {
-        Compression::Zip => 1,
-        Compression::None => 0,
-    };
-    if unsafe {
-        sf_image_save(
-            name.as_ptr(),
-            image.width,
-            image.height,
-            data.as_ptr(),
-            options.depth.bits().into(),
-            format as i32,
-            options.jpeg_quality.map_or(0, i32::from),
-            jpeg_subsampling,
-            compression,
-            space.as_ptr(),
-            !rendered_output,
-            icc.as_ptr(),
-            icc.len(),
-            &mut error,
-        )
-    } == 0
-    {
-        return Err(ImageIoError::Native {
-            operation: "save",
-            path: path.display().to_string(),
-            message: take_error(error),
-        });
+    let jpeg_subsampling = match options.jpeg_subsampling.unwrap_or(JpegSubsampling::Yuv444) { JpegSubsampling::Yuv444 => 444, JpegSubsampling::Yuv420 => 420 };
+    let compression = match options.compression.unwrap_or(Compression::Zip) { Compression::Zip => 1, Compression::None => 0 };
+    if unsafe { sf_image_save(name.as_ptr(), image.width, image.height, data.as_ptr(), options.depth.bits().into(), format as i32, options.jpeg_quality.map_or(0, i32::from), jpeg_subsampling, compression, space.as_ptr(), icc.as_ptr(), icc.len(), &mut error) } == 0 {
+        return Err(ImageIoError::Native { operation: "save", path: path.display().to_string(), message: take_error(error) });
     }
     let mut report = SaveReport::default();
     if format != ImageFormat::Exr {
-        let metadata_scope = observation
-            .map(|context| context.scope("metadata", ObservationKind::Phase, Purpose::Image));
         let source = metadata.map_or(std::ptr::null(), |m| m.0.0.cast_const());
-        if unsafe {
-            sf_metadata_write(
-                name.as_ptr(),
-                source,
-                image.width,
-                image.height,
-                space.as_ptr(),
-                options.cctf_encoding,
-                &mut error,
-            )
-        } == 0
-        {
-            report.metadata_warning = Some(take_error(error));
-            error = std::ptr::null_mut();
-            if unsafe { sf_image_validate(name.as_ptr(), &mut error) } == 0 {
-                return Err(ImageIoError::Native {
-                    operation: "metadata finalization",
-                    path: path.display().to_string(),
-                    message: take_error(error),
-                });
-            }
-            if let Some(context) = observation {
-                context.issue(IssueCategory::MetadataWarning, IssueBoundary::Metadata);
-            }
-        }
-        drop(metadata_scope);
+        if unsafe { sf_metadata_write(name.as_ptr(), source, image.width, image.height, space.as_ptr(), options.cctf_encoding, &mut error) } == 0 { report.metadata_warning = Some(take_error(error)); }
     }
-    Ok(PreparedImageOutput {
-        temporary,
-        destination: path.to_owned(),
-        report,
-    })
+    Ok(report)
 }
 
 /// Convert retained simulation output into an independently selected saving
 /// space. No clipping or gamut mapping occurs here; the output boundary owns
 /// integer clipping. Decode once, adapt white with CAT02, then encode once.
-pub fn convert_image(
-    image: &ImageBuf,
-    source: &str,
-    source_encoded: bool,
-    destination: &str,
-    destination_encoded: bool,
-) -> Result<ImageBuf, ImageIoError> {
+pub fn convert_image(image: &ImageBuf, source: &str, source_encoded: bool, destination: &str, destination_encoded: bool) -> Result<ImageBuf, ImageIoError> {
+    use spektrafilm_math::colorspace::{resolve, conversion_matrix, convert_rgb};
     use rayon::prelude::*;
-    use spektrafilm_math::colorspace::{conversion_matrix, convert_rgb, resolve};
     let source = resolve(source).map_err(ImageIoError::InvalidColorSpace)?;
     let destination = resolve(destination).map_err(ImageIoError::InvalidColorSpace)?;
     // Pinned Python skips the transform entirely when the saving space and
@@ -706,27 +202,14 @@ pub fn convert_image(
     let mut output = image.clone();
     output.data.par_chunks_exact_mut(3).for_each(|pixel| {
         let rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
-        let converted = convert_rgb(
-            rgb,
-            source,
-            source_encoded,
-            destination,
-            destination_encoded,
-            &matrix,
-        );
-        for channel in 0..3 {
-            pixel[channel] = from_f64(converted[channel]);
-        }
+        let converted = convert_rgb(rgb, source, source_encoded, destination, destination_encoded, &matrix);
+        for channel in 0..3 { pixel[channel] = from_f64(converted[channel]); }
     });
     Ok(output)
 }
 /// The pinned upstream mapping intentionally has no linear P3 profile.
 pub fn icc_profile(space: &str, encoded: bool) -> Option<&'static [u8]> {
-    macro_rules! profile {
-        ($path:literal) => {
-            Some(include_bytes!(concat!("../../../data/icc/", $path)).as_slice())
-        };
-    }
+    macro_rules! profile { ($path:literal) => { Some(include_bytes!(concat!("../../../data/icc/", $path)).as_slice()) }; }
     match (space, encoded) {
         ("sRGB", true) => profile!("ellelstone/sRGB-elle-V2-srgbtrc.icc"),
         ("sRGB", false) => profile!("ellelstone/sRGB-elle-V2-g10.icc"),

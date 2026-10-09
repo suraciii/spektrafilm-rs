@@ -13,7 +13,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Spectral pipeline.** Hanatos2025 RGB→raw spectral upsampling with its full sensitivity adaptation (camera UV/IR band-pass filters with reference-illuminant normalization, erf4 band-pass window, poly4 log-exposure surface, spectral Gaussian blur), full 81-wavelength film/print/scanner spectral integration, density-curve interpolation, halation, DIR couplers, grain (bit-exact numpy `MT19937` port), glare, output CCTF encoding.
 - **Interactive preview** through wgpu (Metal on macOS), with CPU stages for exact optical diffusion and V1 grain sampling; V2 uses a compute shader. Frame rate depends on image size, controls and hardware.
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
-- **Decoupled preview + export.** GUI uses f32 GPU for iteration, then shells out to the f64 CPU binary for the final write. The export runs in a worker thread with a cancel button and proper child-process lifecycle.
+- **Selectable CPU/GPU export.** Choose `CPU (f64)` (default) or `GPU (WGPU f32)` in the GUI's **Export backend** menu. Both re-render at export resolution through `spektrafilm-f64`, independently of preview, with cancellation and atomic output publication. The choice is saved with GUI state. GPU uses f32 shaders and retains CPU stages for unsupported effects; it is not f64 reference output. An unavailable WGPU adapter is an error for explicit GPU export.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
 - **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
@@ -116,7 +116,7 @@ executable.
 - **Input image / Profiles** — choose input/output color workflow, film stock and print paper. Picking a film auto-selects its paired paper (`target_print` in the profile).
 - **Sliders** — exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger and output. Changes follow the selected sidebar tab and update the GPU preview according to Auto preview.
 - **Viewer controls** — `ccw rotate` and `cw rotate` physically rotate the in-memory input used by Preview, Save and f64 Export; `100%`, `200%` and `400%` map source pixels to exact device-pixel percentages; reset view returns to fit.
-- **Export…** — re-runs the pipeline at f64 precision on the CPU and writes a PNG/TIFF/JPEG. Status bar shows elapsed time; **Cancel** kills the child cleanly. Closing the GUI mid-export also kills the child (no orphans).
+- **Export…** — re-runs the pipeline at the selected CPU f64 or GPU f32 backend and writes PNG/JPEG/TIFF/OpenEXR. JPEG exposes quality (1–100) and 4:4:4/4:2:0 chroma sampling; TIFF/EXR expose ZIP/none compression where supported; format-specific bit-depth rules are validated before rendering. Status bar shows elapsed time; **Cancel** kills the child cleanly. Closing the GUI mid-export also kills the child (no orphans).
 - **Save…** — convert retained floating output into the independently selected saving color space and transfer encoding, then save at the selected bit depth. Viewer borders, watermark and display ICC transforms stay out of saved pixels.
 - **Save state… / Load state…** — exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values; legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections or Rust extension versions appear in the status bar.
 - **Save startup default / Restore factory default** — persist the current controls, or remove that default and restore Kodak Gold 200 + Kodak Supra Endura. Startup files live in the platform configuration directory (`SPEKTRAFILM_CONFIG_DIR` overrides it); Rust-only runtime/viewer settings use the explicit `rust.version = 1` extension. File-dialog directories persist separately.
@@ -130,15 +130,19 @@ executable.
 ### CLI
 
 ```bash
-# f32 GPU (fast)
-./target/release/spektrafilm process input.ORF -o out.png \
-    --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
+# GPU export: WGPU f32 shaders, CPU stages where required
+./target/release/spektrafilm-f64 process input.ORF -o out.png \
+    --backend gpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
+# CPU f64 reference export
+./target/release/spektrafilm-f64 process input.ORF -o out.png \
+    --backend cpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
-# f64 CPU (reference)
-SPEKTRAFILM_BACKEND=cpu \
-    ./target/release/spektrafilm-f64 process input.ORF -o out.png \
-    --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
+# Explicit JPEG quality and chroma sampling
+./target/release/spektrafilm-f64 process input.tif -o out.jpg \
+    --format jpeg --bit-depth 8 --jpeg-quality 95 --jpeg-subsampling 444 \
+    --backend cpu --film kodak_gold_200 --scan-film --data-dir data
+
 
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json
@@ -146,6 +150,8 @@ SPEKTRAFILM_BACKEND=cpu \
 # List available film + paper profiles
 ./target/release/spektrafilm list-profiles --data-dir data
 ```
+
+`process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. `--format` must match the output extension when supplied; otherwise the extension selects JPEG/PNG/TIFF/EXR. Bit depth defaults to 8 for JPEG/PNG and 16 for TIFF/EXR; JPEG/PNG require 8-bit, EXR requires 16- or 32-bit. JPEG defaults to quality 95 and 4:4:4; `--compression zip|none` applies to TIFF/EXR, while JPEG/PNG reject compression options. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
 Working geometry follows Python 0.3.4 (`3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`). In JSON, set `io.crop`, `io.crop_center: [x, y]`, `io.crop_size: [width, height]`, and `io.upscale_factor`. Center coordinates are normalized to the source axes; both size components are fractions of the source's long edge. Bounds and rounding follow the upstream NumPy slice convention, including negative-index slicing when a crop exceeds the short edge. Empty crops and nonpositive/nonfinite resize factors return errors before output is written.
 
@@ -166,7 +172,7 @@ spaces and algorithms fail before rendering. The GUI converts native output to
 sRGB for display while preserving native values for saving. Resident GPU kernels
 that clip or lack the selected colour transform route through the shared stage
 implementation until equivalent GPU transforms are available.
-Image output uses one writer for CLI, GUI Save and f64 Export. `process --bit-depth 8|16|32` (default 16) selects uint8/uint16/float32 TIFF or half/float32 EXR; 8-bit EXR is rejected. JPEG and PNG always write uint8, matching Python 0.3.4. Integer output clips to [0,1], scales and truncates; float TIFF/EXR preserves negative and super-white samples. The pipeline output space/CCTF controls both saved samples and ICC/color tags; saving applies no extra transfer function. Matching profiles are compiled from `data/icc`, including encoded/linear variants; linear P3 has no bundled upstream profile. Source EXIF/IPTC/XMP is copied for non-EXR output, with orientation, dimensions, software, date and color tags refreshed. Metadata read failures yield no source metadata; post-write metadata failures are reported as warnings while pixel-write failures are errors.
+Image output uses one writer for CLI, GUI Save and f64 Export. `process --format jpeg|png|tiff|exr` selects the container; `--bit-depth 8|16|32` selects uint8/uint16/float32 TIFF or half/float32 EXR, with JPEG/PNG restricted to uint8 and EXR rejecting 8-bit. JPEG quality is 1–100 and chroma sampling is 4:4:4 or 4:2:0; TIFF compression accepts ZIP/none and EXR uses ZIP. Integer output clips to [0,1], scales and truncates; float TIFF/EXR preserves negative and super-white samples. The pipeline output space/CCTF controls both saved samples and ICC/color tags; saving applies no extra transfer function. Matching profiles are compiled from `data/icc`, including encoded/linear variants; linear P3 has no bundled upstream profile. Source EXIF/IPTC/XMP is copied for non-EXR output, with orientation, dimensions, software, date and color tags refreshed. Metadata read failures yield no source metadat…
 
 Explicit JPEG quality uses OpenImageIO's `CompressionQuality` attribute; `jpeg:quality` is ignored by the encoder. JPEG still uses the encoder's default chroma subsampling (4:2:0 with the tested OpenImageIO 2.5.19.1), which can soften colored grain even at quality 100. Use 16/32-bit TIFF to compare grain detail without JPEG compression; increasing JPEG quality does not remove chroma subsampling.
 
@@ -289,11 +295,11 @@ Budgets apply to different measurements: reference f64 arithmetic uses max absol
 
 Grain V2 is selected with `film_render.grain.engine: "v2"`. `v2_profile` defaults to `"35mm250"`; presets are `8mm50`, `8mm250`, `8mm500`, `16mm50`, `16mm250`, `16mm500`, `35mm50`, `35mm250`, `35mm500`, `65mm50`, `65mm250` and `65mm500`. Presets supply the grain configuration; Amount remains adjustable through `v2_amount` (0–100). Select `"custom"` to edit `v2_film_type` (`"negative"` or `"positive"`), `v2_mode` (`"analogue"` or `"noise"`), `v2_size` (1–48), `v2_shadows`, `v2_midtones`, `v2_highlights`, `v2_chroma`, and `v2_resolution_factor` (all 0–100). Custom values omitted or null inherit `35mm250`; switching to Custom in the GUI copies the current preset and Amount. Selecting a preset restores its Amount. All numeric controls must be finite and within their stated ranges. Film Resolution 100 preserves detail; lower values increase resolution blur. Film Type selects the reference host's resolution branch. The extra `v2_resolution_type` and `v2_timer` controls have been removed; the recipe's `random_seed` supplies the static grain phase.
 
-V2 accepts and returns linear scanner destination RGB, but its Film Resolution, luma bells, brightness-conditioned grain and Overlay composition run through a fixed Rec.709 display transfer internally (linear toe / 0.45 power), before decoding back to linear. The final destination transfer still runs exactly once. This is a fixed working-transfer choice on destination RGB channels, not a conversion of destination primaries to Rec.709 and not a claim that every Dehancer photo `by_pass` input uses that transfer. V1's density-domain sampling and defaults remain unchanged.
+V2 consumes and returns native display-encoded RGB without an internal transfer curve or primaries conversion, matching Dehancer's photo `by_pass` contract. The scanner encodes its generated RGB using the selected output color space before Grain; encoded exports keep that result, while linear exports decode only the selected transfer afterward. Grain receives the same encoded image for both export choices. V1's density-domain sampling and defaults remain unchanged.
 
-V2 retains an independent integer gradient hash and a fractional box FIR approximation of FastBlur; it does not reproduce Dehancer bit-for-bit. Cluster orientation is hashed per virtual texel instead of smoothly rotating the entire coordinate field, which produced coherent ridges in synthetic flat skies. Noise phase depends on RGB, not pixel position; its continuous content hash intentionally differs from Dehancer's RGBA float-bit hash and sine permutation texture. Amount and tone controls use the reference effective-control polynomial, including its nonzero intercept at zero; disable Grain with `active: false` for an exact bypass. No overscan/damage-mask input or device-specific virtual-texture cap is implemented; neither is required for the current unmasked photo path. See [grain research notes](docs/dehancer-grain-reverse-engineering.md) for evidence and remaining differences.
+V2 restores the recovered RGBA content hash, sine permutation, gradient noise, texture sampling and half-storage boundaries. Positive Film Type uses folded Gaussian FastBlur; Negative uses the OpticalResolution kernel. CPU/WGSL share portable trigonometry, so random realizations can differ from vendor device arithmetic. Amount and tone controls use the reference effective-control polynomial, including its nonzero intercept at zero; disable Grain with `active: false` for an exact bypass. No overscan/damage-mask input or device-specific virtual-texture cap is implemented for the unmasked photo path. See [grain research notes](docs/dehancer-grain-reverse-engineering.md) for measured evidence and coverage limits.
 
-Noise uses a resolution-scaled sampling denominator `(1 + (Size - 1) / 47) * 2.4 * max(width / 1920, height / 1080)` and half the effective Amount before the shared composition. Both modes apply Film Resolution before grain. These Noise host mappings were confirmed from the reference binary; the underlying noise field and blur kernel remain compatibility implementations.
+Noise uses a resolution-scaled sampling denominator `(1 + (Size - 1) / 47) * 2.4 * max(width / 1920, height / 1080)` and half the effective Amount before composition. Noise derives its content phase from the Film Resolution result. Analogue samples the original encoded source for its virtual grain texture and composites over the Film Resolution result. A recipe seed maps through MT19937 to a repeatable phase; Dehancer's global random stream is not a recipe seed contract.
 
 V1 grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (default, matching 0.3.4) runs the layered model — the composite density is split through `density_curves_layers` into per-sublayer densities, each sublayer samples its own Poisson-binomial particle field with per-layer density maxima/fractions, particle scaling, dye-cloud blur and lognormal micro-structure — while `sublayers_active: false` keeps the single composite-density sampler. `settings.use_fast_stats` switches the layered sampler to the `fast_stats` kernels like upstream; the micro-structure clumping field always uses them (upstream does too) and is pinned to a documented deterministic seed because Python draws it from numba's unseeded thread-global RNG.
 
