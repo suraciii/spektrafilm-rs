@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use eframe::egui;
-use spektrafilm_core::image_io::{self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions};
+use spektrafilm_core::image_io::{
+    self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions,
+};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
@@ -352,13 +354,18 @@ struct App {
     calibration_epoch: u64,
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RenderKind { Preview, Scan }
+enum RenderKind {
+    Preview,
+    Scan,
+}
 
 impl RenderKind {
     fn label(self) -> &'static str {
-        match self { Self::Preview => "Preview", Self::Scan => "Scan" }
+        match self {
+            Self::Preview => "Preview",
+            Self::Scan => "Scan",
+        }
     }
 }
 
@@ -390,8 +397,6 @@ struct RenderResult {
     preview_ms: f32,
     worker_total_ms: f32,
 }
-
-
 
 /// One in-flight export owning an immutable input, pipeline and option snapshot.
 /// Cancellation discards its staged file once the current operation completes.
@@ -570,10 +575,18 @@ impl App {
 
     fn refresh_viewing_artifacts(&mut self) {
         if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
+            match display::input_display_raster(
+                image,
+                &self.params.io.input_color_space,
+                self.params.io.input_cctf_decoding,
+                self.params.settings.preview_max_size as usize,
+            ) {
                 Ok(raster) => {
                     self.viewer.replace_input_display(raster);
-                    self.viewer.set_input_display_source(&self.params.io.input_color_space, self.params.io.input_cctf_decoding);
+                    self.viewer.set_input_display_source(
+                        &self.params.io.input_color_space,
+                        self.params.io.input_cctf_decoding,
+                    );
                 }
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
@@ -595,9 +608,14 @@ impl App {
                 }
                 Err(e) => self.status = format!("Viewer display error: {e}"),
             }
-            self.viewer.set_output_display_source(&self.output_color_space, self.output_cctf_encoding,
+            self.viewer.set_output_display_source(
+                &self.output_color_space,
+                self.output_cctf_encoding,
                 self.viewer.settings.use_display_transform,
-                self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new));
+                self.gui_state.sections["rust"]["display_profile"]
+                    .as_str()
+                    .map(Path::new),
+            );
         }
     }
 
@@ -674,23 +692,16 @@ impl App {
 
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            controls::extra_bool(
-                ui,
-                &mut self.gui_state.sections,
-                "simulation",
-                "auto_preview",
-                "Auto preview",
-                true,
-            );
+            controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
             let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-            if ui.checkbox(&mut scan_for_print, "Scan for print").changed() {
+            if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
                 self.toggle_scan_for_print();
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice(
+            if controls::choice_tip(
                 ui,
-                "Workflow",
+                "workflow",
                 &mut self.params.workflow.route,
                 &[
                     "input",
@@ -700,6 +711,7 @@ impl App {
                     "input > convert-film > scan-minus-base",
                     "input > convert-film > scan",
                 ],
+                "Which path the image takes through the pipeline: input (passthrough: just colour-manage the input to the output space for viewing), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base).",
             ) {
                 self.params.io.scan_film = false;
                 self.dirty = true;
@@ -707,15 +719,34 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            let busy = self.render_job.is_some() || self.export_job.is_some() || self.calibration_job.is_some();
+            let busy = self.render_job.is_some()
+                || self.export_job.is_some()
+                || self.calibration_job.is_some();
             let ready = self.image.is_some() && !busy;
-            if ui.add_enabled(ready, egui::Button::new("PREVIEW")).clicked() {
-                self.dirty = true; self.force_preview = true; self.full_scan_requested = false;
+            if ui
+                .add_enabled(ready, egui::Button::new("PREVIEW"))
+                .on_hover_text("run the simulation on a small preview and deactivates grain, halation, blurs, unsharp mask (diffusion filters are active)")
+                .clicked()
+            {
+                self.dirty = true;
+                self.force_preview = true;
+                self.full_scan_requested = false;
             }
-            if ui.add_enabled(ready, egui::Button::new("SCAN")).clicked() {
-                self.dirty = true; self.force_preview = true; self.full_scan_requested = true;
+            if ui.add_enabled(ready, egui::Button::new("SCAN")).on_hover_text("Run the full simulation on the full-resolution input").clicked() {
+                self.dirty = true;
+                self.force_preview = true;
+                self.full_scan_requested = true;
             }
-            if ui.add_enabled(self.output_image.is_some() && !busy, egui::Button::new("SAVE")).clicked() { self.save_dialog(); }
+            if ui
+                .add_enabled(
+                    self.output_image.is_some() && !busy,
+                    egui::Button::new("SAVE"),
+                )
+                .on_hover_text("Save the current output layer to an image file")
+                .clicked()
+            {
+                self.save_dialog();
+            }
         });
     }
 
@@ -850,10 +881,24 @@ impl App {
                 self.input_epoch = self.input_epoch.wrapping_add(1);
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
-                match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
+                match display::input_display_raster(
+                    self.image.as_ref().unwrap(),
+                    &self.params.io.input_color_space,
+                    self.params.io.input_cctf_decoding,
+                    self.params.settings.preview_max_size as usize,
+                ) {
                     Ok(raster) => {
-                        self.viewer.set_input(raster,[self.image.as_ref().unwrap().width as usize,self.image.as_ref().unwrap().height as usize]);
-                        self.viewer.set_input_display_source(&self.params.io.input_color_space, self.params.io.input_cctf_decoding);
+                        self.viewer.set_input(
+                            raster,
+                            [
+                                self.image.as_ref().unwrap().width as usize,
+                                self.image.as_ref().unwrap().height as usize,
+                            ],
+                        );
+                        self.viewer.set_input_display_source(
+                            &self.params.io.input_color_space,
+                            self.params.io.input_cctf_decoding,
+                        );
                     }
                     Err(e) => self.status = format!("Viewer input error: {e}"),
                 }
@@ -883,10 +928,19 @@ impl App {
         self.output_image = None;
         self.output_metadata = None;
         if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(image, &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
+            match display::input_display_raster(
+                image,
+                &self.params.io.input_color_space,
+                self.params.io.input_cctf_decoding,
+                self.params.settings.preview_max_size as usize,
+            ) {
                 Ok(raster) => {
-                    self.viewer.set_input(raster, [image.width as usize, image.height as usize]);
-                    self.viewer.set_input_display_source(&self.params.io.input_color_space, self.params.io.input_cctf_decoding);
+                    self.viewer
+                        .set_input(raster, [image.width as usize, image.height as usize]);
+                    self.viewer.set_input_display_source(
+                        &self.params.io.input_color_space,
+                        self.params.io.input_cctf_decoding,
+                    );
                 }
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
@@ -973,12 +1027,19 @@ impl App {
         let input_clone_ms = t_clone.elapsed().as_secs_f32() * 1000.0;
         let film_name = self.film_name.clone();
         let print_name = self.print_name.clone();
-        let kind = if self.full_scan_requested { RenderKind::Scan } else { RenderKind::Preview };
+        let kind = if self.full_scan_requested {
+            RenderKind::Scan
+        } else {
+            RenderKind::Preview
+        };
         let input_epoch = self.input_epoch;
         let backend_name = self.backend.name().to_owned();
         let params = match self.digested_params(kind == RenderKind::Preview) {
             Ok(params) => params,
-            Err(e) => { self.status = format!("{} state error: {e:#}", kind.label()); return; }
+            Err(e) => {
+                self.status = format!("{} state error: {e:#}", kind.label());
+                return;
+            }
         };
         let (pipeline_template, pipeline_build_ms) =
             match self.preview_pipeline(&film_name, &print_name, &params) {
@@ -1093,15 +1154,29 @@ impl App {
         }
         match result {
             Ok(mut r) => {
-                let display_profile = self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new);
+                let display_profile = self.gui_state.sections["rust"]["display_profile"]
+                    .as_str()
+                    .map(Path::new);
                 if r.display_enabled != self.viewer.settings.use_display_transform
                     || r.display_profile.as_deref() != display_profile
-                    || r.display_max_size != self.params.settings.preview_max_size {
-                    match display::output_display_raster(&r.output, &r.output_color_space,
-                        r.output_cctf_encoding, self.viewer.settings.use_display_transform,
-                        display_profile, self.params.settings.preview_max_size as usize) {
-                        Ok((preview, status)) => { r.preview = preview; r.display_status = status; }
-                        Err(error) => { self.status = format!("Viewer display error: {error}"); return; }
+                    || r.display_max_size != self.params.settings.preview_max_size
+                {
+                    match display::output_display_raster(
+                        &r.output,
+                        &r.output_color_space,
+                        r.output_cctf_encoding,
+                        self.viewer.settings.use_display_transform,
+                        display_profile,
+                        self.params.settings.preview_max_size as usize,
+                    ) {
+                        Ok((preview, status)) => {
+                            r.preview = preview;
+                            r.display_status = status;
+                        }
+                        Err(error) => {
+                            self.status = format!("Viewer display error: {error}");
+                            return;
+                        }
                     }
                 }
                 self.last_input_clone_ms = r.input_clone_ms;
@@ -1114,10 +1189,19 @@ impl App {
                 self.output_cctf_encoding = r.output_cctf_encoding;
                 self.output_metadata = r.source_metadata;
                 self.viewer.transform_status = r.display_status;
-                self.viewer.set_output(r.preview,[r.output.width as usize,r.output.height as usize],ctx.input(|i|i.time));
-                self.viewer.set_output_display_source(&self.output_color_space, self.output_cctf_encoding,
+                self.viewer.set_output(
+                    r.preview,
+                    [r.output.width as usize, r.output.height as usize],
+                    ctx.input(|i| i.time),
+                );
+                self.viewer.set_output_display_source(
+                    &self.output_color_space,
+                    self.output_cctf_encoding,
                     self.viewer.settings.use_display_transform,
-                    self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new));
+                    self.gui_state.sections["rust"]["display_profile"]
+                        .as_str()
+                        .map(Path::new),
+                );
                 self.status = format!(
                     "{} · {} · {} × {} ({:.1} MP)",
                     kind.label(),
@@ -1172,11 +1256,24 @@ impl App {
                 return;
             }
         };
-        let out = self.output_image.as_ref().expect("output checked before dialog");
+        let out = self
+            .output_image
+            .as_ref()
+            .expect("output checked before dialog");
         let t = Instant::now();
-        let destination = self.gui_state.sections["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB");
-        let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true);
-        let converted = match image_io::convert_image(out, &self.output_color_space, self.output_cctf_encoding, destination, encoded) {
+        let destination = self.gui_state.sections["simulation"]["saving_color_space"]
+            .as_str()
+            .unwrap_or("sRGB");
+        let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"]
+            .as_bool()
+            .unwrap_or(true);
+        let converted = match image_io::convert_image(
+            out,
+            &self.output_color_space,
+            self.output_cctf_encoding,
+            destination,
+            encoded,
+        ) {
             Ok(image) => image,
             Err(error) => {
                 self.status = format!("Save error: {error}");
@@ -1220,7 +1317,8 @@ impl App {
 
     /// Render an immutable snapshot of the loaded full input independently of Save.
     fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
-        if self.render_job.is_some() || self.export_job.is_some() || self.calibration_job.is_some() {
+        if self.render_job.is_some() || self.export_job.is_some() || self.calibration_job.is_some()
+        {
             self.status = "Wait for the current operation before exporting.".into();
             return;
         }
@@ -1229,14 +1327,32 @@ impl App {
             return;
         };
         options.normalize();
-        let stem = self.image_path.as_ref().and_then(|p| p.file_stem()).and_then(|s| s.to_str()).unwrap_or("spektrafilm");
-        let default_name = format!("{stem}_{}_spektra_{}.{}", self.film_name, options.backend.argument(), options.format.extension());
-        let Some(chosen_path) = self.file_dialog("export")
+        let stem = self
+            .image_path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or("spektrafilm");
+        let default_name = format!(
+            "{stem}_{}_spektra_{}.{}",
+            self.film_name,
+            options.backend.argument(),
+            options.format.extension()
+        );
+        let Some(chosen_path) = self
+            .file_dialog("export")
             .add_filter(options.format.label(), options.format.extensions())
-            .set_file_name(&default_name).save_file() else { return; };
+            .set_file_name(&default_name)
+            .save_file()
+        else {
+            return;
+        };
         let out_path = options.format.output_path(&chosen_path);
         if out_path != chosen_path && out_path.exists() {
-            self.status = format!("Export destination already exists: {}. Choose that exact filename to confirm replacement.", out_path.display());
+            self.status = format!(
+                "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
+                out_path.display()
+            );
             return;
         }
         let params = match self.digested_params(false) {
@@ -1250,7 +1366,10 @@ impl App {
         let paper = self.print_name.clone();
         let pipeline = match self.preview_pipeline(&film, &paper, &params) {
             Ok((pipeline, _)) => pipeline,
-            Err(e) => { self.status = format!("Export pipeline error: {e}"); return; }
+            Err(e) => {
+                self.status = format!("Export pipeline error: {e}");
+                return;
+            }
         };
         self.remember_dialog("export", &out_path);
         self.export_options = options.clone();
@@ -1262,49 +1381,105 @@ impl App {
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_worker = Arc::clone(&cancel);
         let started_at = Instant::now();
-        let handle = std::thread::Builder::new().name("spektrafilm-export".into())
+        let handle = std::thread::Builder::new()
+            .name("spektrafilm-export".into())
             .spawn(move || {
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<ExportResult> {
-                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
-                    let backend: Arc<dyn ComputeBackend> = match export_backend {
-                        ExportBackend::Cpu => Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
-                        ExportBackend::Gpu if selected_backend.is_gpu() => selected_backend,
-                        ExportBackend::Gpu => Arc::new(spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-                            .context("GPU export requested but no WGPU adapter is available")?),
-                    };
-                    let output = pipeline.process((*image).clone(), backend.as_ref()).map_err(anyhow::Error::msg)?;
-                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
-                    let converted = image_io::convert_image(&output, &pipeline.params().io.output_color_space,
-                        pipeline.params().io.output_cctf_encoding, &options.saving_color_space,
-                        options.saving_cctf_encoding)?;
-                    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
-                    let staged = TempPath(out_path.with_file_name(format!("spektrafilm-export-{}-{nanos}.{}",
-                        std::process::id(), options.format.extension())), Some(out_path.clone()));
-                    let report = image_io::save(&staged.0, &converted, SaveOptions {
-                        depth: options.depth,
-                        color_space: &options.saving_color_space,
-                        cctf_encoding: options.saving_cctf_encoding,
-                        jpeg_quality: (options.format == ExportFormat::Jpeg).then_some(options.jpeg_quality),
-                        jpeg_subsampling: (options.format == ExportFormat::Jpeg).then_some(options.jpeg_subsampling),
-                        compression: matches!(options.format, ExportFormat::Tiff | ExportFormat::Exr)
-                            .then_some(if options.compression == ExportCompression::Zip { Compression::Zip } else { Compression::None }),
-                    }, metadata.as_ref())?;
-                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
-                    Ok(ExportResult {
-                        elapsed: started_at.elapsed().as_secs_f32(),
-                        filename: out_path.file_name().and_then(|s| s.to_str()).unwrap_or("(file)").to_owned(),
-                        backend_name: backend.name().to_owned(),
-                        size: [output.width, output.height],
-                        metadata_warning: report.metadata_warning,
-                        staged,
-                    })
-                })).unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                    || -> Result<ExportResult> {
+                        if cancel_for_worker.load(Ordering::SeqCst) {
+                            anyhow::bail!("cancelled");
+                        }
+                        let backend: Arc<dyn ComputeBackend> = match export_backend {
+                            ExportBackend::Cpu => {
+                                Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend)
+                            }
+                            ExportBackend::Gpu if selected_backend.is_gpu() => selected_backend,
+                            ExportBackend::Gpu => Arc::new(
+                                spektrafilm_gpu::wgpu_backend::WgpuBackend::new().context(
+                                    "GPU export requested but no WGPU adapter is available",
+                                )?,
+                            ),
+                        };
+                        let output = pipeline
+                            .process((*image).clone(), backend.as_ref())
+                            .map_err(anyhow::Error::msg)?;
+                        if cancel_for_worker.load(Ordering::SeqCst) {
+                            anyhow::bail!("cancelled");
+                        }
+                        let converted = image_io::convert_image(
+                            &output,
+                            &pipeline.params().io.output_color_space,
+                            pipeline.params().io.output_cctf_encoding,
+                            &options.saving_color_space,
+                            options.saving_cctf_encoding,
+                        )?;
+                        let nanos = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_nanos();
+                        let staged = TempPath(
+                            out_path.with_file_name(format!(
+                                "spektrafilm-export-{}-{nanos}.{}",
+                                std::process::id(),
+                                options.format.extension()
+                            )),
+                            Some(out_path.clone()),
+                        );
+                        let report = image_io::save(
+                            &staged.0,
+                            &converted,
+                            SaveOptions {
+                                depth: options.depth,
+                                color_space: &options.saving_color_space,
+                                cctf_encoding: options.saving_cctf_encoding,
+                                jpeg_quality: (options.format == ExportFormat::Jpeg)
+                                    .then_some(options.jpeg_quality),
+                                jpeg_subsampling: (options.format == ExportFormat::Jpeg)
+                                    .then_some(options.jpeg_subsampling),
+                                compression: matches!(
+                                    options.format,
+                                    ExportFormat::Tiff | ExportFormat::Exr
+                                )
+                                .then_some(
+                                    if options.compression == ExportCompression::Zip {
+                                        Compression::Zip
+                                    } else {
+                                        Compression::None
+                                    },
+                                ),
+                            },
+                            metadata.as_ref(),
+                        )?;
+                        if cancel_for_worker.load(Ordering::SeqCst) {
+                            anyhow::bail!("cancelled");
+                        }
+                        Ok(ExportResult {
+                            elapsed: started_at.elapsed().as_secs_f32(),
+                            filename: out_path
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("(file)")
+                                .to_owned(),
+                            backend_name: backend.name().to_owned(),
+                            size: [output.width, output.height],
+                            metadata_warning: report.metadata_warning,
+                            staged,
+                        })
+                    },
+                ))
+                .unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
                 let msg = res.map_err(|e| format!("{e:#}"));
                 let _ = tx.send(msg);
                 ctx_for_worker.request_repaint();
-            }).expect("OS thread spawn");
+            })
+            .expect("OS thread spawn");
         self.status = format!("Exporting with {}…", export_backend.label());
-        self.export_job = Some(ExportJob { rx, handle: Some(handle), cancel, started_at, backend: export_backend });
+        self.export_job = Some(ExportJob {
+            rx,
+            handle: Some(handle),
+            cancel,
+            started_at,
+            backend: export_backend,
+        });
     }
 
     /// Cancellation discards the staged file after the current pipeline operation.
@@ -1353,9 +1528,17 @@ impl App {
             Ok(_) if cancelled => "Export cancelled.".into(),
             Ok(result) => match result.staged.publish() {
                 Ok(()) => {
-                    let mut status = format!("Exported ({}) {} · {} × {} in {:.1} s",
-                        result.backend_name, result.filename, result.size[0], result.size[1], result.elapsed);
-                    if let Some(warning) = result.metadata_warning { status.push_str(&format!(" — Metadata warning: {warning}")); }
+                    let mut status = format!(
+                        "Exported ({}) {} · {} × {} in {:.1} s",
+                        result.backend_name,
+                        result.filename,
+                        result.size[0],
+                        result.size[1],
+                        result.elapsed
+                    );
+                    if let Some(warning) = result.metadata_warning {
+                        status.push_str(&format!(" — Metadata warning: {warning}"));
+                    }
                     status
                 }
                 Err(e) => format!("Export error: {e:#}"),
@@ -1366,7 +1549,8 @@ impl App {
     }
 
     fn start_calibration(&mut self, action: controls::CalibrationAction) {
-        if self.calibration_job.is_some() || self.render_job.is_some() || self.export_job.is_some() {
+        if self.calibration_job.is_some() || self.render_job.is_some() || self.export_job.is_some()
+        {
             self.status = "Wait for the current operation before running a Convert action.".into();
             return;
         }
@@ -1538,52 +1722,52 @@ impl App {
         }
     }
 
-    fn import_section(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, raw: bool) {
+    fn import_section(&mut self, ui: &mut egui::Ui, raw: bool) {
         ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
-            if ui.button("Select file").clicked() {
+            if ui.button("select file").on_hover_text(if raw {
+                "Load and process a raw file with the selected white balance and lens correction settings."
+            } else {
+                "Select an input image"
+            }).clicked() {
                 if let Some(path) = self.file_dialog("load").add_filter("Image", IMAGE_FILE_EXTENSIONS).pick_file() {
                     self.remember_dialog("load", &path);
                     self.load_image_from_path(&path);
                 }
             }
-            let save_enabled = self.output_image.is_some() && self.render_job.is_none() && self.export_job.is_none() && self.calibration_job.is_none();
-            if ui
-                .add_enabled(save_enabled, egui::Button::new("Save…"))
-                .on_disabled_hover_text("Render an image first")
-                .clicked()
-            {
-                self.save_dialog();
+            if raw {
+                self.parameter_section(ui, "Import Raw");
             }
-            let export_busy = self.export_job.is_some();
-            if export_busy {
-                if ui
-                    .button("Cancel")
-                    .on_hover_text("Cancel export; the current operation finishes before its output is discarded.")
-                    .clicked()
-                {
-                    self.cancel_export();
-                }
-            } else {
-                let export_enabled = self.image.is_some() && self.render_job.is_none() && self.calibration_job.is_none() && !self.export_dialog.is_open();
-                if ui
-                    .add_enabled(export_enabled, egui::Button::new("Export…"))
-                    .on_hover_text(
-                        "Re-render the full image using the selected export backend and write PNG/TIFF/JPEG/EXR.",
-                    )
-                    .on_disabled_hover_text("Load an image first")
-                    .clicked()
-                {
-                    self.export_dialog.open(&self.export_options);
-                }
+            if let Some(p) = &self.image_path {
+                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small());
             }
+            ui.add_space(4.0);
         });
+    }
 
-        if let Some(p) = &self.image_path {
-            ui.label(
-                egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small(),
-            );
-        }
-        ui.add_space(4.0);
+    fn export_actions(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Export options")
+            .default_open(false)
+            .show(ui, |ui| {
+                if self.export_job.is_some() {
+                    if ui.button("Cancel")
+                        .on_hover_text("Cancel export; the current operation finishes before its output is discarded.")
+                        .clicked()
+                    {
+                        self.cancel_export();
+                    }
+                } else {
+                    let enabled = self.image.is_some()
+                        && self.render_job.is_none()
+                        && self.calibration_job.is_none()
+                        && !self.export_dialog.is_open();
+                    if ui.add_enabled(enabled, egui::Button::new("Export…"))
+                        .on_hover_text("Choose settings and render the full image independently of Save.")
+                        .clicked()
+                    {
+                        self.export_dialog.open(&self.export_options);
+                    }
+                }
+            });
     }
     fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
         ui.collapsing("Chemistry", |ui| {
@@ -1601,7 +1785,7 @@ impl App {
             if dev_time_combo(
                 ui,
                 if film { "film-time" } else { "print-time" },
-                "Development time",
+                "development time",
                 times,
                 selected,
             ) {
@@ -1626,13 +1810,13 @@ impl App {
         );
         match self.gui_tab {
             GuiTab::Main => {
-                self.import_section(ui, ctx, false);
-                self.import_section(ui, ctx, true);
+                self.import_section(ui, false);
+                self.import_section(ui, true);
                 for section in ["Crop and upscale", "Input", "Camera"] {
                     self.parameter_section(ui, section);
                 }
                 ui.collapsing("Profiles", |ui| {
-                    if profile_combo(ui, "film", "Film profile", &self.films, &mut self.film_name) {
+                    if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
                         self.params.film_render.development_time = None;
                         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
                         self.sync_profile_defaults();
@@ -1641,7 +1825,7 @@ impl App {
                     if profile_combo(
                         ui,
                         "paper",
-                        "Print profile",
+                        "print profile",
                         &self.papers,
                         &mut self.print_name,
                     ) {
@@ -1651,9 +1835,15 @@ impl App {
                         self.dirty = true;
                     }
                 });
-                for section in ["Enlarger", "Scanner", "Output"] {
+                for section in ["Enlarger", "Scanner"] {
                     self.parameter_section(ui, section);
                 }
+                egui::CollapsingHeader::new("Output")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        self.parameter_section(ui, "Output");
+                        self.export_actions(ui);
+                    });
             }
             GuiTab::Film => {
                 self.chemistry_section(ui, true);
@@ -1692,6 +1882,7 @@ impl App {
                     let display_transform_before = self.viewer.settings.use_display_transform;
                     self.viewer.controls(ui);
                     self.parameter_section(ui, "Display");
+                    self.viewer.interpolation_control(ui);
                     if display_transform_before != self.viewer.settings.use_display_transform {
                         self.refresh_viewing_artifacts();
                     }
@@ -1733,7 +1924,13 @@ impl eframe::App for App {
         }
         let _ = frame;
 
-        if self.dirty && self.image.is_some() && self.export_job.is_none() && self.calibration_job.is_none() && !self.export_dialog.is_open() && (self.gui_state.auto_preview() || self.force_preview) {
+        if self.dirty
+            && self.image.is_some()
+            && self.export_job.is_none()
+            && self.calibration_job.is_none()
+            && !self.export_dialog.is_open()
+            && (self.gui_state.auto_preview() || self.force_preview)
+        {
             let now = Instant::now();
             let dirty_since = *self.dirty_since.get_or_insert(now);
             if self.render_job.is_some() {
@@ -1956,7 +2153,8 @@ fn dev_time_combo(
     // exactly the entry the pipeline will use.
     let current_idx = profile::development_time_index(times, *selection);
     let mut changed = false;
-    ui.label(label);
+    let tooltip = "Development time for a BW development-time family: selects the density curve and base+fog to render. '—' uses the representative middle development; ignored for single-curve and color stocks.";
+    ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(salt)
         .selected_text(format!("{} min", times[current_idx]))
         .width(ui.available_width().min(280.0))
@@ -1971,7 +2169,9 @@ fn dev_time_combo(
                     changed = true;
                 }
             }
-        });
+        })
+        .response
+        .on_hover_text(tooltip);
     changed
 }
 
@@ -1982,7 +2182,12 @@ fn profile_combo(
     entries: &[ProfileEntry],
     selected_stock: &mut String,
 ) -> bool {
-    ui.label(label);
+    let tooltip = if salt == "film" {
+        "Film stock to simulate"
+    } else {
+        "Print stock to simulate"
+    };
+    ui.label(label).on_hover_text(tooltip);
     let display = entries
         .iter()
         .find(|e| &e.stock == selected_stock)
@@ -1996,7 +2201,9 @@ fn profile_combo(
             for entry in entries {
                 ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
             }
-        });
+        })
+        .response
+        .on_hover_text(tooltip);
     prev != *selected_stock
 }
 
@@ -2051,8 +2258,6 @@ fn preview_pipeline_cache_key(film_name: &str, print_name: &str, params: &Runtim
     .to_string()
 }
 
-
-
 struct TempPath(PathBuf, Option<PathBuf>);
 
 impl TempPath {
@@ -2068,8 +2273,6 @@ impl Drop for TempPath {
         let _ = std::fs::remove_file(&self.0);
     }
 }
-
-
 
 /// macOS only: walk from the eframe `RawWindowHandle` down to the
 /// `CAMetalLayer` and tag its colorspace as sRGB. Without this the

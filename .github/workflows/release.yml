@@ -130,6 +130,11 @@ jobs:
           git -C "$reference" remote add origin https://github.com/andreavolpato/spektrafilm.git
           git -C "$reference" fetch --depth 1 origin 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc
           git -C "$reference" checkout --detach FETCH_HEAD
+          experimental="$RUNNER_TEMP/spektrafilm-python-experimental"
+          git init "$experimental"
+          git -C "$experimental" remote add origin https://github.com/andreavolpato/spektrafilm.git
+          git -C "$experimental" fetch --depth 1 origin 28bf883e1672e884307edc75852549376e13644e
+          git -C "$experimental" checkout --detach FETCH_HEAD
 
       - name: Install pinned reference runtime and LUT dependencies
         id: reference-runtime
@@ -210,7 +215,9 @@ jobs:
         if: ${{ !cancelled() && steps.build-release.outcome == 'success' && steps.reference-runtime.outcome == 'success' }}
         shell: bash
         env:
-          SPEKTRAFILM_PY_REPO: ${{ runner.temp }}/spektrafilm-python
+          SPEKTRAFILM_PY_REPO: ${{ runner.temp }}/spektrafilm-python-experimental
+          SPEKTRAFILM_PY_HISTORICAL_REPO: ${{ runner.temp }}/spektrafilm-python
+          PYTHONPATH: ${{ runner.temp }}/spektrafilm-python-experimental/src
           SPEKTRAFILM_PY: ${{ steps.reference-python.outputs.python-path }}
           SPEKTRAFILM_RS_BIN: ${{ github.workspace }}/target/release/spektrafilm-f64
         run: |
@@ -284,7 +291,6 @@ jobs:
         run: |
           brew install libraw lensfun exiv2 glib openimageio pkg-config
           pkg-config --atleast-version=0.22.0 libraw
-
 
       - name: Package app bundle
         shell: bash

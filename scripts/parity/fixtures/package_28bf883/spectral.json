@@ -1,0 +1,58 @@
+{
+  "film": "kodak_portra_400",
+  "input_dtype": "float32",
+  "input_rgb": [
+    [
+      [
+        0.18400000035762787,
+        0.18400000035762787,
+        0.18400000035762787
+      ]
+    ]
+  ],
+  "output_dtype": "float64",
+  "output_rgb": [
+    [
+      [
+        0.1816843491638561,
+        0.1816510953697629,
+        0.18153344982972047
+      ]
+    ]
+  ],
+  "paper": "kodak_portra_endura",
+  "params": {
+    "camera": {
+      "auto_exposure": false
+    },
+    "film_render": {
+      "dir_couplers": {
+        "active": false
+      },
+      "grain": {
+        "active": false
+      },
+      "halation": {
+        "active": false
+      }
+    },
+    "io": {
+      "input_cctf_decoding": false,
+      "input_color_space": "sRGB",
+      "output_cctf_encoding": false,
+      "output_color_space": "sRGB"
+    },
+    "print_render": {
+      "glare": {
+        "active": false
+      }
+    },
+    "scanner": {
+      "unsharp_mask": [
+        0.0,
+        0.0
+      ]
+    }
+  },
+  "upstream_commit": "28bf883e1672e884307edc75852549376e13644e"
+}

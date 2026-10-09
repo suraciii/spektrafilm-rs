@@ -1,0 +1,28 @@
+{
+  "artifact_sha256": {
+    "control_metadata.json": "b682a905d16ad78435d0a3e14cb491dee7640c5b57a73f67be20c43fd2eb1904",
+    "factory_state.json": "5bb849de5ea242489f8d7a7d5d8dfef57fbb1db984d9eb71c2d6d114e0f3ec55"
+  },
+  "factory_source": "PROJECT_DEFAULT_GUI_STATE (init_params and digest_params with real profiles/presets)",
+  "generation_command": "/tmp/spektrafilm-034-venv/bin/python scripts/parity/gui_factory_reference.py generate --repo /data/buzz-workspaces/slipstream/.scratch/upstream-spektrafilm-20261008 --out-dir scripts/parity/fixtures/gui_28bf883",
+  "leaves_arrays_count_as_one": 187,
+  "profile_and_preset_data": {
+    "files": 238,
+    "root": "src/spektrafilm/data",
+    "tree_sha256": "0aa947801de503940d29b7bbe829c967812226276d11f8543e548e63d78de678"
+  },
+  "python_version": "3.13.12 (main, Feb  3 2026, 22:52:12) [Clang 21.1.4 ]",
+  "sections": 21,
+  "serialization": "Actual gui_state_to_dict AST executed without importing Qt persistence module",
+  "source_sha256": {
+    "src/spektrafilm_gui/options.py": "f2f66da41a553e402720257982938bbde310d556f8c25bccdbdb5075f52bcaa6",
+    "src/spektrafilm_gui/params_manifest.py": "bc6e473e509ad4fdcdc6c47e95a666cf050d49464cd1ce5f1e139790986ebcb4",
+    "src/spektrafilm_gui/persistence.py": "4754384ebb3936d45b07cc41f399e876555442d5982283e1976e544c059c73b9",
+    "src/spektrafilm_gui/state.py": "00691c1eea6d0cfadf879cd12df22a16e6ee19c347818011f7ae226c808d5665",
+    "src/spektrafilm_gui/widget_editors.py": "0563eaffb04449eadbefd8f196dd272ac231575dc9da20c4167d0eb33b748b9a",
+    "src/spektrafilm_gui/widget_primitives.py": "5d68f1ce043be90ed04a92c1d6bf8490fa6ddb925d19cb30434f3c370bdd301c",
+    "src/spektrafilm_gui/widget_sections.py": "a167f03bba1f324099bf78372e7c1eb420d2cf37fb15b40f4942a99a342e42ee"
+  },
+  "upstream_commit": "28bf883e1672e884307edc75852549376e13644e",
+  "upstream_url": "https://github.com/andreavolpato/spektrafilm"
+}

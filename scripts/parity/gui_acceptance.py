@@ -554,7 +554,9 @@ class X11:
             self.xd('key', 'ctrl+v')
             time.sleep(.3)
             self.xd('key', 'Return')
-        # Save choosers may first navigate the entered full path, then require Save.
+        # Save choosers may first navigate the entered full path, then require
+        # a final action button. Open dialogs likewise expose Select/Open on
+        # portal backends instead of silently accepting Return.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if not find():
@@ -563,13 +565,20 @@ class X11:
                 shot = screen.grab(screen.monitors[0])
             surface = self.Image.frombytes('RGB', shot.size, shot.rgb)
             buttons = self.ocr.image_to_data(surface, config='--psm 11', output_type=self.ocr.Output.DICT)
+            # A chooser may close while OCR runs. Never let a stale click or
+            # Return reach the main window and reopen its focused Save button.
+            if find() != dialog:
+                return
             for i, word in enumerate(buttons['text']):
-                if word.strip() == 'OK':
+                if (word.strip() in ('OK', 'Open', 'Select', 'Save')
+                        and 100 <= buttons['left'][i] <= 1000
+                        and 100 <= buttons['top'][i] <= 750):
                     self.xd('mousemove', buttons['left'][i] + buttons['width'][i] // 2,
                             buttons['top'][i] + buttons['height'][i] // 2)
                     self.xd('click', 1)
                     break
             time.sleep(.25)
+        surface.save(self.root / 'native-chooser-timeout.png')
         raise RuntimeError(f'Native chooser did not accept {path}')
 
     def file_action(self, control, path, save=False):
@@ -597,13 +606,44 @@ class X11:
         return wait_for(ready, label, 120)
 
     def export_options(self, path):
-        self.wait_text(r'Export\s+options', 'export-options', 20)
+        def modal_read():
+            from scipy.ndimage import label, find_objects
+            from PIL import ImageOps
+            image, bbox = self.image()
+            pixels = np.asarray(image)[:, :int(image.width * .65), :3].astype(np.int16)
+            components, _ = label((pixels.max(axis=2) < 60) &
+                                  (pixels.max(axis=2) - pixels.min(axis=2) < 5))
+            for region in find_objects(components):
+                if region is None:
+                    continue
+                ys, xs = region
+                if not (250 < xs.stop - xs.start < 650 and 100 < ys.stop - ys.start < 650):
+                    continue
+                left, top = xs.start, max(0, ys.start - 36)
+                crop = image.crop((left, top, xs.stop, ys.stop))
+                prepared = ImageOps.autocontrast(ImageOps.invert(ImageOps.grayscale(crop)))
+                data = self.ocr.image_to_data(prepared.resize((crop.width * 3, crop.height * 3)),
+                                              config='--psm 6', output_type=self.ocr.Output.DICT)
+                grouped = {}
+                for i, text in enumerate(data['text']):
+                    if text.strip():
+                        if text.casefold() == 'bitdepth':
+                            text = 'Bit depth'
+                        key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                        grouped.setdefault(key, []).append((text, left + data['left'][i] / 3,
+                            top + data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
+                lines = list(grouped.values())
+                if self.match(lines, 'Format') and self.match(lines, 'Cancel'):
+                    return image, bbox, lines
+            return None
+        wait_for(modal_read, 'visible export modal controls', 20)
         formats = {'.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG',
                    '.tif': 'TIFF', '.tiff': 'TIFF', '.exr': 'EXR'}
         requested = formats.get(Path(path).suffix.lower())
         require(requested, f'Unsupported acceptance export extension: {path}')
         def select(label, option):
-            image, _, lines = self.read()
+            image, _, lines = wait_for(modal_read, 'visible export modal controls', 20)
+            self.snap('modal-before-' + label.replace(' ', '-'), image, lines)
             matches = self.match(lines, label)
             matches = [(x, y) for x, y in matches if x < self.right_control_x]
             require(matches, f'Export options control is not visible: {label}')
@@ -615,11 +655,16 @@ class X11:
             left = [word for line in lines for word in line
                     if abs(word[2] + word[4] / 2 - y) < 10 and word[1] + word[3] < label_left]
             require(left, f'Export options selected value is not visible: {label}')
-            value = max(left, key=lambda word: word[1])
+            if self.match([left], option):
+                return
+            value = left[0]
             self.xd('mousemove', '--window', self.window, int(value[1] + value[3] / 2), int(y))
             self.xd('click', 1)
             def choose():
-                frame, _, menu_lines = self.read()
+                result = modal_read()
+                if result is None:
+                    return None
+                frame, _, menu_lines = result
                 candidates = [(mx, my) for mx, my in self.match(menu_lines, option)
                               if mx < x and my > y + 5]
                 if candidates:
@@ -633,7 +678,10 @@ class X11:
         if requested in ('TIFF', 'EXR'):
             select('Bit depth', '16 bit')
         def submit():
-            image, _, lines = self.read()
+            result = modal_read()
+            if result is None:
+                return None
+            image, _, lines = result
             cancels = [(x, y) for x, y in self.match(lines, 'Cancel')
                        if x < self.right_control_x]
             candidates = [(x, y) for x, y in self.match(lines, 'Export')
