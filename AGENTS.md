@@ -12,7 +12,7 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 
 - Follow KISS and YAGNI. Reuse existing boundaries and dependencies.
 - Keep each rule in one authoritative implementation.
-- Preserve observable behavior, CPU f64 reference/export, WGPU f32 preview, and supported CPU fallback.
+- Preserve observable behavior and public contracts.
 - Require measured evidence for numerical changes.
 
 ## Context
@@ -29,4 +29,4 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 - Use the commands in `Justfile` and the dependencies documented in [README.md](README.md#build).
 - Before handing off code, run `cargo fmt --check`, the relevant checks, and the relevant tests.
 - Exercise changed CLI, image, and GUI behavior through the real entry point.
-- Report failures and limits. Distinguish CPU, software WGPU, and hardware GPU evidence.
+- Report failures, environment limits, and evidence scope.
