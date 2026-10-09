@@ -178,15 +178,11 @@ def _hover_float(driver, pixels, records):
     return record
 
 
-def _export(driver, root, exporter, name):
+def _export(driver, root, name):
     path = root / name
     path.unlink(missing_ok=True)
     driver.file_action("Export", path, True)
-    driver.capture_export_child(exporter)
-    driver.scroll(True)
-    driver.wait_text(r"Exported.*f64", f"viewer-{name}-exported", timeout=240)
-    driver.no_children()
-    _wait_file(path, f"viewer export {name}")
+    driver.exported(path, f"viewer-{name}-exported")
     return path
 
 
@@ -194,7 +190,18 @@ def _save(driver, root, name):
     path = root / name
     path.unlink(missing_ok=True)
     driver.file_action("Save", path, True)
+    driver.scroll(True)
+    driver.wait_text(r"Saved\s+" + re.escape(path.name), f"viewer-{name}-saved", timeout=30)
     _wait_file(path, f"viewer save {name}")
+    import OpenImageIO as oiio
+    reader = oiio.ImageInput.open(str(path))
+    _require(reader, f"Viewer Save cannot be decoded: {path}")
+    depth = str(reader.spec().format)
+    reader.close()
+    expected = {'.exr': 'half', '.tif': 'uint16', '.tiff': 'uint16',
+                '.png': 'uint8', '.jpg': 'uint8', '.jpeg': 'uint8'}[path.suffix.lower()]
+    _require(depth == expected, f"Save extension default differs: {path.name} has {depth}, expected {expected}")
+    driver.records.append({'save_output': path.name, 'depth': depth})
     return path
 
 
@@ -202,7 +209,6 @@ def accept_viewer(driver, root, state, pixels, exporter):
     """Run required viewer scenarios and return assertion records."""
     root = Path(root)
     state = copy.deepcopy(state)
-    state.setdefault('rust', {})['save_bit_depth'] = 32
     source = root / "standard.tif"
     _require(source.is_file(), f"Viewer acceptance source is missing: {source}")
     records = []
@@ -225,7 +231,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     preview_delta = float(np.mean(np.abs(np.asarray(_viewer_crop(small_input), dtype=np.float32) -
                                          np.asarray(_viewer_crop(large_input), dtype=np.float32))))
     _require(preview_delta > 0.01, "Preview max size did not refresh Input raster")
-    full_export = _export(driver, root, exporter, "viewer-preview-resolution-export.exr")
+    full_export = _export(driver, root, "viewer-preview-resolution-export.exr")
     from gui_acceptance import read_image
     _require(read_image(full_export).shape[:2] == np.asarray(pixels).shape[:2],
              "Input preview raster size reduced full-resolution Export")
@@ -334,7 +340,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.click('Paper back', False)
     driver.click("Preview")
     reveal_frames = _transition_frames(driver, records, "viewer-reveal", count=32, interval=0.05)
-    driver.wait_text(r"Rendered\s+\d+", "viewer-reveal-rendered")
+    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-reveal-rendered")
     reveal_delta = float(max(np.max(np.abs(reveal_frames[0] - frame)) for frame in reveal_frames[1:]))
     records.append({"parity_action": "polaroid_animation",
                     "scenario": "reveal", "action": "preview with Paper back and Reveal",
@@ -365,7 +371,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.xd('mousemove', '--window', driver.window, 1073, int(matches[0][1]))
     driver.xd('click', 1)
     crossfade_frames = _transition_frames(driver, records, "viewer-crossfade", count=32, interval=0.05)
-    driver.wait_text(r"Rendered\s+\d+", "viewer-crossfade-rendered")
+    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-crossfade-rendered")
     crossfade_delta = float(max(np.max(np.abs(crossfade_frames[0] - frame)) for frame in crossfade_frames[1:]))
     records.append({"scenario": "crossfade", "action": "preview Output with Crossfade",
                     "assertion": "raw transition frames differ in the viewer region",
@@ -378,7 +384,18 @@ def accept_viewer(driver, root, state, pixels, exporter):
 
     _load_state(driver, baseline, "viewer-isolation-baseline")
     before_save = _save(driver, root, "viewer-isolation-before-save.exr")
-    before_export = _export(driver, root, exporter, "viewer-isolation-before-export.exr")
+    before_export = _export(driver, root, "viewer-isolation-before-export.exr")
+    after_export_save = _save(driver, root, "viewer-isolation-after-export-save.exr")
+    from gui_acceptance import read_image
+    saved_before_export = read_image(before_save)
+    saved_after_export = read_image(after_export_save)
+    _require(saved_before_export.shape == saved_after_export.shape and
+             np.array_equal(saved_before_export, saved_after_export),
+             "Independent Export replaced the latest output used by Save")
+    records.append({'scenario': 'export_output_snapshot',
+                    'assertion': 'Save pixels and dimensions remain identical before and after independent full-input Export',
+                    'save_before': before_save.name, 'save_after': after_export_save.name,
+                    'export': before_export.name})
     driver.tab("CONFIG")
     driver.click("Paper back", False)
     driver.click("spline36", False)
@@ -390,7 +407,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.click("Crossfade", False)
     driver.click("Crossfade", False)
     after_save = _save(driver, root, "viewer-isolation-after-save.exr")
-    after_export = _export(driver, root, exporter, "viewer-isolation-after-export.exr")
+    after_export = _export(driver, root, "viewer-isolation-after-export.exr")
     from gui_acceptance import read_image
     save_before = read_image(before_save)
     save_after = read_image(after_save)
@@ -402,7 +419,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     export_error = float(np.max(np.abs(export_before - export_after)))
     records.append({"parity_action": "save_output_layer",
                     "scenario": "display_output_isolation",
-                    "action": "change viewer-only controls then Save and f64 Export",
+                    "action": "change viewer-only controls then Save and Export",
                     "assertion": "decoded Save and Export pixels remain invariant",
                     "save_before": before_save.name, "save_after": after_save.name,
                     "export_before": before_export.name, "export_after": after_export.name,
@@ -429,7 +446,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _select_profile(driver, "Film stock", film_label)
     _select_profile(driver, "Print paper", paper_label)
     driver.click("Preview")
-    driver.rendered("viewer-profile-selected")
+    driver.rendered("viewer-profile-selected", action="Preview")
     selected_path = root / "viewer-profile-selected-state.json"
     selected_path.unlink(missing_ok=True)
     driver.file_action("Save state", selected_path, True)
