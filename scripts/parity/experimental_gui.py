@@ -314,7 +314,9 @@ def main():
     require(sha(oracle_dir/'control_metadata.json') == provenance['artifact_sha256']['control_metadata.json'],
             'Control metadata reference hash differs')
     rust_factory = json.loads((repo/'crates/spektrafilm-gui/src/factory_state.json').read_text())
-    require(parameters_equal(rust_factory, factory), 'Rust factory differs from independent upstream oracle')
+    require(parameters_equal({key: value for key, value in rust_factory.items() if key != 'rust'},
+                             {key: value for key, value in factory.items() if key != 'rust'}),
+            'Rust shared factory differs from independent upstream oracle')
     seed = json.loads(json.dumps(factory))
     seed['simulation']['auto_preview'] = False
     seed['grain']['active'] = False
@@ -324,6 +326,7 @@ def main():
     seed['simulation']['output_color_space'] = 'sRGB'
     seed['simulation']['saving_color_space'] = 'sRGB'
     seed['simulation']['saving_cctf_encoding'] = False
+    seed['rust'] = dict(rust_factory['rust'], export_format='tiff', save_bit_depth=32)
     seed_path = root/'render-seed.json'
     save_json(seed_path, seed)
     env = dict(os.environ, SPEKTRAFILM_CONFIG_DIR=str(config),
@@ -344,7 +347,11 @@ def main():
         driver.start(gui, env)
         fresh = saved(driver, root, 'fresh-startup')
         for section, expected in factory.items():
-            require(parameters_equal(fresh.get(section), expected), f'Fresh startup differs: {section}')
+            if section != 'rust':
+                require(parameters_equal(fresh.get(section), expected), f'Fresh startup differs: {section}')
+        require(parameters_equal({key: fresh['rust'].get(key) for key in rust_factory['rust']},
+                                 rust_factory['rust']),
+                'Fresh Rust export defaults differ from factory')
         driver.tab('MAIN')
         # Saving state opened CONFIG; return to pristine collapsed topology.
         driver.topology()
@@ -451,7 +458,7 @@ def main():
         require(writer.open(str(large), oiio.ImageSpec(4096, 3072, 3, oiio.FLOAT)), 'Large fixture open failed')
         require(writer.write_image(pixels), 'Large fixture write failed')
         writer.close()
-        cancel_export(driver, args.exporter.resolve(), large, root/'cancelled.exr')
+        cancel_export(driver, args.exporter.resolve(), large, root/'cancelled.tif')
         if not args.development_smoke:
             require(git(repo, 'rev-parse', 'HEAD') == commit, 'Implementation changed during native run')
             require(not git(repo, 'status', '--porcelain', '--untracked-files=all'),

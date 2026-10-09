@@ -19,7 +19,7 @@ use crate::params_builder::digest_params;
 use crate::pipeline::Pipeline;
 use crate::profile;
 
-pub const REFERENCE_COMMIT: &str = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc";
+pub const REFERENCE_COMMIT: &str = "28bf883e1672e884307edc75852549376e13644e";
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Topology {

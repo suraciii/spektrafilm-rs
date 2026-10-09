@@ -11,8 +11,8 @@ use spektrafilm_math::image::ImageBuf;
 #[derive(Debug, Clone, Copy)]
 pub struct GrainV2GpuParams {
     pub mode: u32,
-    /// Dehancer resolution type: 0 = OpticalResolution, 1 = FastBlur.
-    pub resolution_type: u32,
+    /// Recovered film type: 0 = Negative (optical), 1 = Positive (fast blur).
+    pub film_type: u32,
     pub amount: f32,
     pub shadows: f32,
     pub midtones: f32,
@@ -174,6 +174,9 @@ pub trait ComputeBackend: Send + Sync {
     }
 
     /// Return a rendered Grain V2 image when this backend supports the shader.
+    /// Input and output are native encoded RGB in the caller's color space;
+    /// Grain performs no transfer-function or primaries conversion. Input preparation
+    /// and final composition round to binary16 while sampling and noise use f32.
     /// The caller uses the independent CPU reference when this returns None.
     fn grain_v2(&self, _image: &ImageBuf, _params: &GrainV2GpuParams) -> Option<ImageBuf> {
         None
@@ -181,8 +184,9 @@ pub trait ComputeBackend: Send + Sync {
 
     /// Optional fused fast-path: runs filming + printing + scanning as a single
     /// GPU-resident command buffer (one upload at start, one readback at end).
-    /// Returns linear RGB, or `None` to fall back to per-stage trait methods.
-    /// The caller applies the destination transfer curve on the CPU without clipping.
+    /// Returns native encoded destination RGB when Grain V2 is active, and
+    /// linear destination RGB otherwise, or `None` for the per-stage path.
+    /// The caller decodes only the transfer when linear grain output is requested.
     fn try_run_film_chain(&self, _params: &FilmChainParams<'_>) -> Option<ImageBuf> {
         None
     }
@@ -251,9 +255,11 @@ pub struct FilmChainParams<'a> {
     /// before readback). Blur σ in pixels + amount scalar; both come
     /// from `scanner.unsharp_mask`.
     pub unsharp: Option<UnsharpGpuParams>,
-    /// Optional Grain V2 pass — applied after all scanner-domain effects and
-    /// before the destination transfer curve on the CPU.
+    /// Optional Grain V2 pass — applied after scanner effects, the destination
+    /// same-space matrix roundtrip, and transfer encoding. Returns encoded RGB.
     pub grain_v2: Option<GrainV2GpuParams>,
+    /// Destination space used to encode the resident Grain V2 input.
+    pub scan_output_space: &'a spektrafilm_math::colorspace::RgbColorSpace,
     /// Optional camera lens Gaussian blur on the raw film exposure buffer,
     /// before halation.
     pub camera_lens_blur_px: Option<f32>,

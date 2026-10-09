@@ -7,9 +7,12 @@ fn integer_boundary_truncates_and_float_formats_preserve_headroom() {
     std::fs::create_dir_all(&directory).unwrap();
     let samples = [-0.25, 0.5, 1.25, 0.1, 0.499, 0.0];
     let image = ImageBuf::from_data(2, 1, samples.iter().copied().map(from_f64).collect());
-    for (extension, depth, scale) in [("png", BitDepth::ThirtyTwo, Some(255.0)), ("tif", BitDepth::Eight, Some(255.0)), ("tif", BitDepth::Sixteen, Some(65535.0)), ("tif", BitDepth::ThirtyTwo, None), ("exr", BitDepth::ThirtyTwo, None), ("exr", BitDepth::Sixteen, None)] {
+    for (extension, depth, scale) in [("png", BitDepth::Eight, Some(255.0)), ("tif", BitDepth::Eight, Some(255.0)), ("tif", BitDepth::Sixteen, Some(65535.0)), ("tif", BitDepth::ThirtyTwo, None), ("exr", BitDepth::ThirtyTwo, None), ("exr", BitDepth::Sixteen, None)] {
         let path = directory.join(format!("{}.{extension}", depth.bits()));
-        image_io::save(&path, &image, SaveOptions { depth, color_space: "sRGB", cctf_encoding: true }, None).unwrap();
+        image_io::save(&path, &image, SaveOptions {
+            depth, color_space: "sRGB", cctf_encoding: extension != "exr",
+            jpeg_quality: None, jpeg_subsampling: None, compression: None,
+        }, None).unwrap();
         let decoded = image_io::load(&path).unwrap().image;
         assert_eq!((decoded.width, decoded.height), (2, 1));
         if let Some(scale) = scale {
@@ -23,7 +26,10 @@ fn integer_boundary_truncates_and_float_formats_preserve_headroom() {
         }
     }
     let unsupported = directory.join("unsupported.exr");
-    assert!(matches!(image_io::save(&unsupported, &image, SaveOptions { depth: BitDepth::Eight, color_space: "sRGB", cctf_encoding: false }, None), Err(image_io::ImageIoError::ExrDepth(8))));
+    assert!(matches!(image_io::save(&unsupported, &image, SaveOptions {
+        depth: BitDepth::Eight, color_space: "sRGB", cctf_encoding: false,
+        jpeg_quality: None, jpeg_subsampling: None, compression: None,
+    }, None), Err(image_io::ImageIoError::ExrDepth(8))));
     assert!(!unsupported.exists());
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -40,6 +46,29 @@ fn saving_into_the_output_space_and_encoding_is_a_bit_exact_no_op() {
         let converted = image_io::convert_image(&image, "sRGB", encoded, "sRGB", encoded).unwrap();
         assert_eq!(converted.data, image.data);
     }
+}
+
+#[test]
+fn jpeg_quality_controls_decoded_detail() {
+    let directory = std::env::temp_dir().join(format!("spektrafilm-jpeg-quality-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    // Monochrome texture isolates quantization from chroma subsampling.
+    let image = ImageBuf::from_data(64, 64, (0..64 * 64)
+        .flat_map(|i| [from_f64(((i * 73 + i / 64 * 19) % 256) as f64 / 255.0); 3]).collect());
+    let mut errors = Vec::new();
+    for quality in [20, 100] {
+        let path = directory.join(format!("{quality}.jpg"));
+        image_io::save_jpeg_quality(&path, &image, SaveOptions {
+            depth: BitDepth::Eight, color_space: "sRGB", cctf_encoding: true,
+            jpeg_quality: None, jpeg_subsampling: None, compression: None,
+        }, None, quality).unwrap();
+        let decoded = image_io::load(&path).unwrap().image;
+        assert_eq!((decoded.width, decoded.height), (64, 64));
+        errors.push(decoded.data.iter().zip(&image.data)
+            .map(|(&a, &b)| (to_f64(a) - to_f64(b)).powi(2)).sum::<f64>() / image.data.len() as f64);
+    }
+    assert!(errors[1] < errors[0] * 0.1, "quality 100 must retain more texture: {errors:?}");
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(feature = "precision-f64")]
@@ -91,7 +120,10 @@ fn exr_half_rounds_directly_from_f64_and_float32_exports_keep_their_precision() 
     std::fs::create_dir_all(&directory).unwrap();
     for (extension, depth) in [("exr", BitDepth::Sixteen), ("exr", BitDepth::ThirtyTwo), ("tif", BitDepth::ThirtyTwo)] {
         let path = directory.join(format!("{}.{}", depth.bits(), extension));
-        image_io::save(&path, &image, SaveOptions { depth, color_space: "sRGB", cctf_encoding: false }, None).unwrap();
+        image_io::save(&path, &image, SaveOptions {
+            depth, color_space: "sRGB", cctf_encoding: false,
+            jpeg_quality: None, jpeg_subsampling: None, compression: None,
+        }, None).unwrap();
         let decoded = image_io::load(&path).unwrap().image;
         assert_eq!((decoded.width, decoded.height), (cases.len() as u32, 1));
         for (pixel, &(input, half_expected)) in decoded.data.chunks_exact(3).zip(&cases) {
@@ -109,3 +141,86 @@ fn exr_half_rounds_directly_from_f64_and_float32_exports_keep_their_precision() 
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+
+#[test]
+fn export_settings_reject_format_mismatches() {
+    let directory = std::env::temp_dir().join(format!("spektrafilm-export-settings-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let image = ImageBuf::from_data(1, 1, vec![from_f64(0.25); 3]);
+    let png = directory.join("invalid.png");
+    assert!(matches!(
+        image_io::save(&png, &image, SaveOptions {
+            depth: BitDepth::Sixteen, color_space: "sRGB", cctf_encoding: true,
+            jpeg_quality: None, jpeg_subsampling: None, compression: None,
+        }, None),
+        Err(image_io::ImageIoError::InvalidExport { .. })
+    ));
+    let png_quality = directory.join("invalid-quality.png");
+    assert!(matches!(
+        image_io::save(&png_quality, &image, SaveOptions {
+            depth: BitDepth::Eight, color_space: "sRGB", cctf_encoding: true,
+            jpeg_quality: Some(95), jpeg_subsampling: None, compression: None,
+        }, None),
+        Err(image_io::ImageIoError::InvalidExport { .. })
+    ));
+    let exr = directory.join("invalid.exr");
+    assert!(matches!(
+        image_io::save(&exr, &image, SaveOptions {
+            depth: BitDepth::Sixteen, color_space: "sRGB", cctf_encoding: true,
+            jpeg_quality: None, jpeg_subsampling: None, compression: Some(spektrafilm_core::image_io::Compression::Zip),
+        }, None),
+        Err(image_io::ImageIoError::InvalidExport { .. })
+    ));
+    assert!(!png.exists());
+    assert!(!png_quality.exists());
+    assert!(!exr.exists());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn concurrent_metadata_round_trips_initialize_xmp_once() {
+    const CHILD: &str = "SPEKTRAFILM_TEST_COLD_XMP";
+    // Other tests may have already initialized Exiv2 in this process. A fresh
+    // process makes all workers enter their first metadata operation together.
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "concurrent_metadata_round_trips_initialize_xmp_once", "--test-threads=1"])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "cold concurrent metadata process failed: {status}");
+        return;
+    }
+
+    let directory = std::env::temp_dir().join(format!("spektrafilm-concurrent-metadata-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        for worker in 0..8 {
+            let directory = &directory;
+            let barrier = &barrier;
+            scope.spawn(move || {
+                let extension = ["png", "tif", "jpg"][worker % 3];
+                let path = directory.join(format!("{worker}.{extension}"));
+                let copy = directory.join(format!("{worker}-copy.{extension}"));
+                let image = ImageBuf::from_data(2, 1, vec![from_f64(0.5); 6]);
+                let options = SaveOptions {
+                    depth: BitDepth::Eight, color_space: "sRGB", cctf_encoding: true,
+                    jpeg_quality: None, jpeg_subsampling: None, compression: None,
+                };
+                barrier.wait();
+                let report = image_io::save(&path, &image, options, None).unwrap();
+                assert!(report.metadata_warning.is_none(), "{extension}: {:?}", report.metadata_warning);
+                let loaded = image_io::load(&path).unwrap();
+                assert_eq!((loaded.image.width, loaded.image.height), (2, 1));
+                let metadata = loaded.metadata.as_ref().expect("saved metadata must be readable");
+                let report = image_io::save(&copy, &loaded.image, options, Some(metadata)).unwrap();
+                assert!(report.metadata_warning.is_none(), "{extension}: {:?}", report.metadata_warning);
+                let copied = image_io::load(&copy).unwrap();
+                assert!(copied.metadata.is_some(), "copied metadata must be readable");
+                assert_eq!((copied.image.width, copied.image.height), (2, 1));
+            });
+        }
+    });
+    std::fs::remove_dir_all(directory).unwrap();
+}

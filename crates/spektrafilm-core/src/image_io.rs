@@ -11,6 +11,8 @@ pub enum ImageIoError {
     UnsupportedDepth(u8),
     #[error("EXR requires 16-bit half or 32-bit float, received {0} bits")]
     ExrDepth(u8),
+    #[error("Invalid {format} export settings: {reason}")]
+    InvalidExport { format: &'static str, reason: &'static str },
     #[error("Image path contains a null byte")]
     InvalidPath,
     #[error("Invalid RGB buffer dimensions or sample count")]
@@ -29,6 +31,13 @@ impl TryFrom<u8> for BitDepth {
         match value { 8 => Ok(Self::Eight), 16 => Ok(Self::Sixteen), 32 => Ok(Self::ThirtyTwo), _ => Err(ImageIoError::UnsupportedDepth(value)) }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JpegSubsampling { Yuv444, Yuv420 }
+impl JpegSubsampling {
+    pub fn as_str(self) -> &'static str { match self { Self::Yuv444 => "4:4:4", Self::Yuv420 => "4:2:0" } }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compression { Zip, None }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum ImageFormat { Jpeg = 0, Png = 1, Tiff = 2, Exr = 3 }
@@ -52,7 +61,14 @@ impl Drop for NativeMetadata { fn drop(&mut self) { unsafe { sf_metadata_free(se
 pub struct ImageMetadata(Arc<NativeMetadata>);
 pub struct LoadedImage { pub image: ImageBuf, pub metadata: Option<ImageMetadata> }
 #[derive(Debug, Clone, Copy)]
-pub struct SaveOptions<'a> { pub depth: BitDepth, pub color_space: &'a str, pub cctf_encoding: bool }
+pub struct SaveOptions<'a> {
+    pub depth: BitDepth,
+    pub color_space: &'a str,
+    pub cctf_encoding: bool,
+    pub jpeg_quality: Option<u8>,
+    pub jpeg_subsampling: Option<JpegSubsampling>,
+    pub compression: Option<Compression>,
+}
 #[derive(Debug, Default)]
 pub struct SaveReport { pub metadata_warning: Option<String> }
 unsafe extern "C" {
@@ -60,7 +76,7 @@ unsafe extern "C" {
     fn sf_metadata_free(pointer: *mut c_void);
     fn sf_metadata_read(path: *const c_char) -> *mut c_void;
     fn sf_image_load(path: *const c_char, width: *mut u32, height: *mut u32, samples: *mut *mut f64, error: *mut *mut c_char) -> i32;
-    fn sf_image_save(path: *const c_char, width: u32, height: u32, samples: *const f64, depth: i32, format: i32, jpeg_quality: i32, icc: *const u8, icc_len: usize, error: *mut *mut c_char) -> i32;
+    fn sf_image_save(path: *const c_char, width: u32, height: u32, samples: *const f64, depth: i32, format: i32, jpeg_quality: i32, jpeg_subsampling: i32, compression: i32, color_space: *const c_char, icc: *const u8, icc_len: usize, error: *mut *mut c_char) -> i32;
     fn sf_metadata_write(path: *const c_char, source: *const c_void, width: u32, height: u32, space: *const c_char, encoded: bool, error: *mut *mut c_char) -> i32;
 }
 fn cpath(path: &Path) -> Result<CString, ImageIoError> { CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| ImageIoError::InvalidPath) }
@@ -91,18 +107,19 @@ pub fn load(path: &Path) -> Result<LoadedImage, ImageIoError> {
 /// astype. PNG/JPEG always use uint8; float TIFF/EXR preserve unbounded samples.
 /// Pixel failures are errors; metadata failures report a warning after writing.
 pub fn save(path: &Path, image: &ImageBuf, options: SaveOptions<'_>, metadata: Option<&ImageMetadata>) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, None)
+    save_inner(path, image, options, metadata)
 }
 
-/// Save a JPEG with an explicit quality value. Other formats ignore the value.
+/// Compatibility helper for callers that need an explicit JPEG quality.
 pub fn save_jpeg_quality(
     path: &Path,
     image: &ImageBuf,
-    options: SaveOptions<'_>,
+    mut options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
     quality: u8,
 ) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, Some(quality))
+    options.jpeg_quality = Some(quality);
+    save_inner(path, image, options, metadata)
 }
 
 fn save_inner(
@@ -110,10 +127,41 @@ fn save_inner(
     image: &ImageBuf,
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
-    jpeg_quality: Option<u8>,
 ) -> Result<SaveReport, ImageIoError> {
     let format = ImageFormat::detect(path)?;
-    if format == ImageFormat::Exr && options.depth == BitDepth::Eight { return Err(ImageIoError::ExrDepth(8)); }
+    let format_name = match format { ImageFormat::Jpeg => "JPEG", ImageFormat::Png => "PNG", ImageFormat::Tiff => "TIFF", ImageFormat::Exr => "EXR" };
+    match format {
+        ImageFormat::Jpeg | ImageFormat::Png if options.depth != BitDepth::Eight =>
+            return Err(ImageIoError::InvalidExport { format: format_name, reason: "only 8-bit output is supported" }),
+        ImageFormat::Exr if options.depth == BitDepth::Eight => return Err(ImageIoError::ExrDepth(8)),
+        _ => {}
+    }
+    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && !options.cctf_encoding {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "JPEG and PNG require encoded output" });
+    }
+    if format == ImageFormat::Exr && options.cctf_encoding {
+        return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR output must be linear" });
+    }
+    if format == ImageFormat::Exr && !matches!(options.color_space, "sRGB" | "ACES2065-1") {
+        return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR color space must be sRGB or ACES2065-1" });
+    }
+    if format != ImageFormat::Jpeg && options.jpeg_quality.is_some() {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "JPEG quality is only valid for JPEG" });
+    }
+    if format != ImageFormat::Jpeg && options.jpeg_subsampling.is_some() {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "JPEG subsampling is only valid for JPEG" });
+    }
+    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && options.compression.is_some() {
+        return Err(ImageIoError::InvalidExport { format: format_name, reason: "compression is not configurable for JPEG or PNG" });
+    }
+    if format == ImageFormat::Exr && matches!(options.compression, Some(Compression::None)) {
+        return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR compression is always zip" });
+    }
+    if let Some(quality) = options.jpeg_quality {
+        if !(1..=100).contains(&quality) {
+            return Err(ImageIoError::InvalidExport { format: "JPEG", reason: "quality must be between 1 and 100" });
+        }
+    }
     if image.width == 0 || image.height == 0 || image.data.len() != image.width as usize * image.height as usize * 3 { return Err(ImageIoError::InvalidImage); }
     let name = cpath(path)?;
     let space = CString::new(options.color_space).map_err(|_| ImageIoError::InvalidPath)?;
@@ -123,7 +171,9 @@ fn save_inner(
     #[cfg(not(feature = "precision-f64"))]
     let data: Vec<f64> = image.data.iter().copied().map(to_f64).collect();
     let mut error = std::ptr::null_mut();
-    if unsafe { sf_image_save(name.as_ptr(), image.width, image.height, data.as_ptr(), options.depth.bits().into(), format as i32, jpeg_quality.map_or(0, i32::from), icc.as_ptr(), icc.len(), &mut error) } == 0 {
+    let jpeg_subsampling = match options.jpeg_subsampling.unwrap_or(JpegSubsampling::Yuv444) { JpegSubsampling::Yuv444 => 444, JpegSubsampling::Yuv420 => 420 };
+    let compression = match options.compression.unwrap_or(Compression::Zip) { Compression::Zip => 1, Compression::None => 0 };
+    if unsafe { sf_image_save(name.as_ptr(), image.width, image.height, data.as_ptr(), options.depth.bits().into(), format as i32, options.jpeg_quality.map_or(0, i32::from), jpeg_subsampling, compression, space.as_ptr(), icc.as_ptr(), icc.len(), &mut error) } == 0 {
         return Err(ImageIoError::Native { operation: "save", path: path.display().to_string(), message: take_error(error) });
     }
     let mut report = SaveReport::default();

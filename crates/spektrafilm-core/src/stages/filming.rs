@@ -548,13 +548,19 @@ pub fn develop(
                  density_curves_layers)",
                 film.info.stock.as_deref().unwrap_or("<unnamed>"),
             );
+            // Python multiplies the per-channel particle area by
+            // `particle_scale` before applying the sublayer scale.
             density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density_layers(
                 &density_cmy_layers,
                 &density_max_layers,
                 density_cmy.width,
                 density_cmy.height,
                 pixel_size_um,
-                [particle_area_um2; 3],
+                [
+                    particle_area_um2 * grain.particle_scale[0],
+                    particle_area_um2 * grain.particle_scale[1],
+                    particle_area_um2 * grain.particle_scale[2],
+                ],
                 grain.particle_scale_sublayers,
                 grain.density_min,
                 grain.uniformity,
@@ -748,6 +754,16 @@ mod tests {
             img.pixels().map(|px| to_f64(px[ch])).sum::<f64>() / img.pixel_count() as f64
         }
 
+        fn ch_variance(img: &ImageBuf, ch: usize, mean: f64) -> f64 {
+            img.pixels()
+                .map(|px| {
+                    let delta = to_f64(px[ch]) - mean;
+                    delta * delta
+                })
+                .sum::<f64>()
+                / img.pixel_count() as f64
+        }
+
         /// Grain off: develop must return the plain density interpolation
         /// (deterministic LUT-mode bypass — Python's `lut_mode` forces
         /// `grain.active = False`, and the non-spatial film behavior is
@@ -792,6 +808,37 @@ mod tests {
             let composite_again = develop(&log_raw, &film, &params, &backend, 12.0);
             assert_eq!(composite.data, composite_again.data);
             assert_ne!(layered.data, composite.data);
+        }
+
+        /// Layered grain must honor the per-channel particle scale. Larger
+        /// particles reduce the particle count and increase that channel's
+        /// density variance, matching Python's channel-wise area scaling.
+        #[test]
+        fn layered_grain_particle_scale_changes_channel_variance() {
+            let Some(film) = portra() else { return };
+            let backend = CpuBackend;
+            let log_raw = log_raw();
+            let mut params = base_params();
+            params.film_render.grain.blur = 0.0;
+            params.film_render.grain.blur_dye_clouds_um = 0.0;
+            params.film_render.grain.mult_usm_amount = 0.0;
+            params.film_render.grain.particle_scale = [1.0, 1.0, 1.0];
+            let small_particles = develop(&log_raw, &film, &params, &backend, 12.0);
+            params.film_render.grain.particle_scale[0] = 8.0;
+            let large_red_particles = develop(&log_raw, &film, &params, &backend, 12.0);
+
+            let small_mean = ch_mean(&small_particles, 0);
+            let large_mean = ch_mean(&large_red_particles, 0);
+            let small_variance = ch_variance(&small_particles, 0, small_mean);
+            let large_variance = ch_variance(&large_red_particles, 0, large_mean);
+            assert!(
+                large_variance > small_variance,
+                "larger particles should increase red grain variance: {large_variance} <= {small_variance}"
+            );
+            assert!(
+                (large_mean - small_mean).abs() < 0.15,
+                "particle scale must preserve expected density: {large_mean} vs {small_mean}"
+            );
         }
 
         /// `n_sub_layers` is a composite-path control (upstream consumes it

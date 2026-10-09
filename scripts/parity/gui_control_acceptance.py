@@ -164,8 +164,9 @@ def export_controls(driver):
     driver.section('Export options')
     driver.scroll(True)
     driver.snap('opened-output-export-options')
-    require(driver.locate('Export backend') and driver.locate('Save bit depth'),
-            'Export extension lacks backend/depth')
+    require(all(driver.locate(label) for label in
+                ('Export backend', 'Export format', 'Save bit depth', 'Compression')),
+            'TIFF export extension lacks backend, format, depth or compression')
     driver.snap('output-export-options')
 
 

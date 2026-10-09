@@ -23,6 +23,7 @@ pub struct SoftUpdate {
     pub print_density_curves: Option<Vec<Vec<f64>>>,
 }
 
+
 /// Rust representation of upstream `RuntimePhotoParams`.
 ///
 /// Profiles remain explicit because the Rust runtime does not use Python's
@@ -73,6 +74,7 @@ impl Runtime {
     pub fn from_photo_params(photo: RuntimePhotoParams) -> Result<Self, String> {
         Self::new(photo.film, photo.print, photo.params, &photo.data_dir)
     }
+
 
     fn record_elapsed(&self, started: Instant, mut stage_timings: Option<Timings>) {
         let elapsed = started.elapsed().as_secs_f64();

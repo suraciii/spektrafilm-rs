@@ -207,6 +207,10 @@ impl GrainParams {
                 GrainV2Mode::Analogue => v2::GrainV2Mode::Analogue,
                 GrainV2Mode::Noise => v2::GrainV2Mode::Noise,
             };
+            params.film_type = match self.v2_film_type {
+                GrainV2FilmType::Negative => 0,
+                GrainV2FilmType::Positive => 1,
+            };
             params.size = self.v2_size.unwrap_or(params.size);
             params.shadows = self.v2_shadows.map_or(params.shadows, |v| v / 100.0);
             params.midtones = self.v2_midtones.map_or(params.midtones, |v| v / 100.0);
@@ -231,7 +235,7 @@ impl GrainParams {
         grain.seed = random_seed as u32;
         spektrafilm_gpu::GrainV2GpuParams {
             mode: grain.mode as u32,
-            resolution_type: grain.resolution_type,
+            film_type: grain.film_type,
             amount: grain.amount,
             shadows: grain.shadows,
             midtones: grain.midtones,
@@ -254,6 +258,11 @@ impl GrainParams {
         self.v2_mode = match params.mode {
             spektrafilm_model::grain::v2::GrainV2Mode::Analogue => GrainV2Mode::Analogue,
             spektrafilm_model::grain::v2::GrainV2Mode::Noise => GrainV2Mode::Noise,
+        };
+        self.v2_film_type = if params.film_type == 1 {
+            GrainV2FilmType::Positive
+        } else {
+            GrainV2FilmType::Negative
         };
         self.v2_size = Some(params.size);
         self.v2_amount = Some(params.amount * 100.0);

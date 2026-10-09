@@ -7,6 +7,8 @@
 >
 > 本文档只记录算法行为、参数语义与公式（以自有伪代码/公式表述），不含 Dehancer 源码原文。
 
+> 第 1–13 节保留早期调查记录，其中 Noise 滤波、零 Amount、Film Type 路由与固定 Rec.709 包装等结论已由第 14–15 节的宿主证据取代；当前集成以末尾的实现与验证记录为准。
+
 ## 0. 逆向方法与证据来源
 
 | 证据 | 位置 | 说明 |
@@ -283,7 +285,114 @@ Analogue 仍对九个重采样 tap 共用目标像素亮度；原生成器在每
 - 对外保留 Grain Profiles / Custom、Film Type、Processing Mode、Size、Amount、Shadows、Midtones、Highlights、Film Resolution、Chroma、Enabled。移除独立 Resolution filter、V2 timer 和额外 reset 行为。静态相位复用 recipe `random_seed`。
 - Amount、三个亮度分区和 Chroma 的 GUI/JSON 范围均为 0–100，运行时除以 100；Size 为 1–48，Film Resolution 为 0–100。
 - 预设下 Amount 仍可调：构造函数 `0x57cb9a–0x57cba3` 将 grainAmount 存入 context+`0x28`，没有加入隐藏控件列表；`update_state` 在 `0x57e250–0x57e264` 复制预设后，`0x57e280–0x57e292` 再读取并覆盖 Amount。其他控件只在 Custom 下生效。GUI 切换 Custom 复制当前有效参数，选择新预设恢复其 Amount。
-- `Film Type` 不再选择滤波路径；`resolution_type` 单独控制 FastBlur/OpticalResolution。内置 profile 的 `resolution_type=1`，Custom 继承该值。
-- 本次验证：`cargo test -p spektrafilm-model --no-default-features --lib` 通过 40 项；`cargo test -p spektrafilm-core` 通过 138 项；`grain_v2_acceptance` 完成 10 个 TIFF render/export 往返，覆盖 V2 Analogue/Noise、Negative/Positive UI 状态及 film/paper scan。
-- FastBlur 边界单测锁定半径 0.5 的 Gaussian folded weight/offset；Noise 的 `resolution_factor` 不改变输出；Amount=0 为 identity；CPU/WGPU 对照覆盖 12 profiles、FastBlur、Analogue/Noise。
-- 这些结果证明当前 Rust 路由、参数边界和导出链可运行，不证明与 Dehancer 输出逐像素一致；OpticalResolution 的 GPU 路由仍明确回退 CPU。
+- Film Type 的执行分支已确认：`FilmGrainKernel::process` 在 `0x5ed417` 比较复制后的 state+`0x9ac`；Negative=0 跳到 `0x5ed4f8` 并调用 OpticalResolution（`0x5ed611`），Positive=1 调用 FastBlur（`0x5ed471`）。内置预设的 resolution type 均为 1，因此保持 Positive 分支。SpektraFilm 使用既有 Gaussian / fractional box FIR 兼容实现，未宣称还原参考 PSF。
+- 本次验收：f32/f64 各 9 项 grain 测试通过，包含 Film Type 边缘响应、零 Amount 非旁路和 CPU/WGPU 对照；shader device check、预设/Custom 参数继承及 4 项 GUI state 测试通过。f32/f64 各完成 10 个 TIFF render/export 往返（V1 对照及 V2 两种 Film Type × 两种模式，均覆盖 film/paper 输出）。
+- 独立 release f64 CLI 的 768×512 合成天空导出：Negative/Positive 最大像素差为 Analogue `0.0000915825`、Noise `0.0012207031`；Amount 与三个分区全零相对显式禁用的 RMS 为 `0.0021044274`。这些数值证明当前实现的分支与零端点有效，不证明与 Dehancer 像素一致。
+- 原生 GUI 实际完成 Positive/Noise WGPU 扫描；选 `8mm500` 后只显示 Amount，修改至 25 再切 Custom，继承 Positive/Analogue、Size 48、Shadows 30、Midtones 45、Highlights 65、Film Resolution 75、Chroma 90、Amount 25。当前隔离显示环境的 Save state 未出现文件对话框，因此未计入本次原生保存验收；状态持久化由上述 roundtrip 测试覆盖。
+- 历史天空数值保留于上一节；本次结果仍受独立 hash、Noise RGB-only 相位及 Gaussian/fractional-box PSF 兼容实现的限制。硬件 render node 权限不足，WGPU 证据不代表独显性能。
+
+## 13. 原始内核对照进行中（2026-10-09）
+
+- 原始 OpenCL 内核在本机 PoCL 上运行；37×19 合成输入、8mm50 参数、固定诊断相位 `42/65536`、Film Resolution=100、6036×3100 RGBA half 颗粒纹理下，当前 CPU 相对原始输出最大误差为 `0.066584587`、RMS 为 `0.007993329`。固定相位用于隔离算法，并非已证实的宿主 seed 映射。此结果未达到完整对齐。
+- WGPU 24 / Mesa 26.0.8 llvmpipe 创建完整颗粒管线曾报告 device lost；在相同完整 shader 中将大角度归约循环内的常量数组索引改为标量选择后，实际渲染成功。独立最小常量数组索引能编译，因此该现象只定位到此归约上下文，不能泛化为所有动态数组索引故障。归约提取窗口已用 7,590 组输入对照精确整数乘积，覆盖全部大角度有限 f32 指数。
+- 编译修复后的首次 CPU/WGPU 渲染最大误差为 `0.1404953`。继续拆分小角度归约常量、统一普通乘加，并在 shader 的 sine-hash 中用精确 `frexp/ldexp` 固定乘法舍入边界后，同一 Analogue 对照降至 `0.000033676624`；64 组诊断输入的 13 个噪声中间量逐位一致。跨 1,139 个角度的三角函数诊断仍有 30 行出现最多 `5.9604645e-8` 的后端差异。
+- 更新后的 Analogue 相对原始 half 纹理输出：CPU 最大误差 `0.050306439`、RMS `0.007752230`；WGPU 最大误差 `0.050290763`、RMS `0.007752125`。同一输入的 Noise CPU/WGPU 最大误差仍为 `0.1786393`。原始参考差异与完整后端矩阵均未通过；不得沿用上一节的内部一致性验收作为当前实现的完成证据。
+
+## 14. 独立工作树的参考闭环（2026-10-09）
+
+本节替代第 11–13 节对当前代码的描述；旧数值仅记录调查过程。实现位于 `/data/worktrees/spektrafilm-grain-v2-reference-integration`，分支 `work/grain-v2-reference-integration`。没有修改主工作区，也没有引入原版二进制或专有 kernel 运行时依赖。
+
+验收标准已由用户明确：要求算法、处理逻辑和视觉效果对齐，不要求每一个像素一致。因此厂商 sin/cos 的浮点差异本身不是阻塞项；仍需排除工作色域、参数映射、采样和滤波顺序差异，以及颗粒强度、尺度、频谱或色彩相关性的系统性偏差。以下原版逐像素误差仅作诊断记录，不单独作为效果不一致的证据。
+
+
+### 已恢复的执行语义
+
+- 静态 seed 经 MT19937 和两次取数的 `generate_canonical<double>` 运算转为 float 相位，替代未经证实的 `seed/65536`。seed 5489 的相位位模式为 `0x3e0aba7c`。原版宿主的全局随机流不等于 SpektraFilm 的可重复 recipe seed；后者是现有产品契约。
+- 工作 RGB、生成颗粒和合成输出按 half 存储边界舍入。WGSL 使用显式 IEEE round-to-nearest-even，避免驱动将 pack/unpack 往返消除。Optical 的 H/V 之间保持 float；FastBlur 的每一遍均写 half。
+- Negative 使用 Optical 平顶核；Positive 使用折叠 Gaussian FastBlur，保留原 line kernel 的越界回到中心和采样偏移。Analogue 生成器读取未做 Film Resolution 的原始工作图，合成读取滤波结果；Noise 的相位、噪声与合成都读取滤波结果。
+- Noise 使用 RGBA 内容相位（alpha=1），Analogue 逐个虚拟 texel 读取源图。两种模式恢复 sine permutation 和三维梯度插值；共享的独立三角函数、乘法舍入边界使 CPU/WGSL 可重复。
+- 虚拟纹理尺寸为 `floor(image_size * max(5200/W,3100/H))`，原宿主没有旧报告所称的 `−0.2` 微调。按需生成不分配该纹理，因此不模拟设备的纹理尺寸上限。
+
+### 三类对照分别计量
+
+固定输入为 37×19 RGB，行优先通道值 `(index % 17)/17`；profile=8mm50，seed=5489，Film Resolution=100。原版内核从外部研究目录运行时读取，未复制进产品。
+
+| 对照 | Analogue 最大绝对差 | Noise 最大绝对差 | 含义 |
+|---|---:|---:|---|
+| 产品 CPU/WGSL | 2.38e-7 | 2.98e-7 | 本机 llvmpipe 的内部一致性 |
+| 产品 CPU / 未修改原版 OpenCL（PoCL） | 0.05559057 | 0.16422206 | **没有达到原版逐像素一致** |
+| 产品 CPU / 数值归一化的原版执行 | 5.96e-8 | 5.96e-8 | 隔离算法拓扑与数值执行差异；不是原版原样执行 |
+
+数值归一化仅用于外部诊断：替换 `rnm` / `coord_rot` 的 sin/cos 为独立的共享实现，显式标量相位归约，并关闭 OpenCL contraction。宿主参数按逐步 binary32 计算；Python 双精度后一次 cast 会改变 Noise scale，曾导致 12 个通道样本出现最多 0.00077087 残差。修正诊断脚本后该残差消失。
+
+首个分歧的独立证据：8,436 次 rnm 调用的正弦输入逐位一致，独立 sin 与 PoCL 的 736 个结果不同，最大仅 5.96e-8；乘 43758.5453 并取 fract 后，差异可达约 1.99。换成系统 libm 也有 1,737 个不同结果。原版相位 dot 另有 41/703 个像素最多 5.96e-8 的差异。归一化后，703 像素的 RGB、snoise、相位、旋转坐标和三通道 pnoise 全部逐位一致。
+
+完整的 2,109 通道 half 输出分别保存在 `crates/spektrafilm-model/src/grain/fixtures/{analogue,noise}_normalized_half.txt`。`matches_normalized_external_kernel_outputs` 在 f32/f64 均通过，比较所有输出，不以统计分布替代逐样本检查。fixture 是归一化外部执行的结果数据，不含专有源码，不得标为原版逐字节 fixture。
+
+Film Resolution 另用 17×11 half 渐变加边缘输入，覆盖两类滤波 × 半径 0.1/0.5/1/2/4 × H/V 共 20 个阶段。实际 Rust 函数和实际 WGSL 分别执行：最终 half 输出在 10 个案例中均与原版一致；Optical float H 中间结果最大差为 Rust 1.19e-7、WGSL 1.79e-7。诊断脚本 `/tmp/grain_actual_filter_comparison.py`，结果 `/tmp/grain-actual-filter-comparison.json`。
+
+### 原生 GUI 与导出
+
+独立 Xvfb + `dbus-run-session` 下真实启动 GUI，完成 WGPU Analogue/Noise Scan；保存并加载 V2 Custom/Negative/Noise、Amount=35 的 JSON 状态。此前不弹保存框是显示与会话总线环境问题；本次实际 portal 对话框成功写出文件。
+
+GUI 的 Save、CPU f64 Export（Analogue）、加载 Noise 状态后的 Export 均产出可由 ffmpeg 解码的 768×512 RGB 16-bit TIFF。两种模式导出差 RMS=0.02763659，只证明模式切换和输出链路有效。文件为 `/tmp/grain-integration-native-save.tif`、`/tmp/grain-integration-native-export.tif`、`/tmp/grain-integration-native-noise-export.tif`。已有 f32/f64 render/export 矩阵包含 V1 和 V2 两种 Film Type、两种模式、film/paper 输出；V1 默认与公开参数未改变。
+
+### 尚不能宣称的结果
+
+没有实际 Dehancer vendor-device 阶段 dump；PoCL 是原始 OpenCL 源码的一个执行实现，不代表所有厂商 GPU 的数值 ABI。未经归一化的原版输出差异仍然存在，不能以内部一致性或归一化对照宣布“完整像素对齐”。也尚未验证宿主 FastBlur 超限半径的 downscale Options 链、极端宽高比纹理 cap、照片版 PE 宿主与 OFX 的差异。本机硬件 render node 无权限，性能证据仅来自 llvmpipe。
+
+对于结构化 CLI render 的 `maxEdge=9568`、Size≤48、Amount≤100，FastBlur 半径上界为 `2×9568/5200×1.87=6.8816`，低于原宿主触发 downscale 的 `17√2≈24.0416`；这条受限入口不会走未恢复的超限路径。该结论不外推到无此尺寸限制的直接模型调用或额外 upscale。
+
+
+### 参考数据溯源与退出验证
+
+- 外部原始 kernel SHA-256：`0ed87bcc78a78bfc5d46a74c20cd290d9dbfe27e88f0ce0f50daa4a6d7472ae5`。
+- 归一化 runner `/tmp/grain_normalized_f32_reference.py` SHA-256：`1d0b5a54828e183a0587cd34de39e7daf74c5d77160b25ee10763d509f199c0d`；独立三角函数 `/tmp/grain_compat_trig.cl`：`a0474e0ceb1956a152b0fda8dfe2f4d618e965927352274541bfd8fe461541fc`。
+- Analogue fixture SHA-256：`2ca2e3802ccfdecb065480a5c3cb897a7cce3e7ff84c4224d34895f06240d840`；Noise fixture：`88dfa5ee26cc16eefe8e5a83607b3b932f0e80bf9ab4cb6d047a624d69194888`。
+- 验收结束时 `xdotool windowclose` 销毁 X11 窗口，winit 0.30.13 随后的 `TranslateCoordinates` 请求触发 BadWindow panic，GUI 返回 101。重新启动加载保存的 Noise 状态，经窗口管理器 Alt+F4 关闭，GUI 返回 0；xdotool 的后续按键释放因窗口已退出报告 BadWindow。此处区分自动化命令结果与应用退出结果；导出文件在关闭前已独立解码验证。
+
+
+### 按算法与效果验收补查
+
+Negative 分支的 OpticalResolution 边界实参已确认：OFX `FilmGrainKernel::process` 在 `0x5ed60c` 执行 `xor ecx,ecx`，随后 `0x5ed611` 调用 `OpticalResolution(void*, float, ChannelsDesc::Transform const&, DHCR_EdgeMode, bool, string const&)`。SysV ABI 的枚举实参在 ECX，值为 0；外部 kernel 的 `DHCR_EdgeMode` 顺序为 CLAMP=0、BORDER=1、WRAP=2。当前 CLAMP 实现符合宿主调用。
+
+工作域疑点已由后续宿主报告 §6.1–6.5 解除，当前实现与验证见第 15 节。此前固定 BT.709 包装已删除。
+
+Noise 的输入绑定已直接核实：`ScanGrainKernel::process` 在 `0x5eeb67` / `0x5eed04` 将源图滤波到 destination；执行回调 `0x5ef280` 在 `0x5ef29f`、`0x5ef2b6` 两次通过 vtable+0x70 取 destination，分别绑定 kernel arg0 和 arg1（`0x5ef2ad`、`0x5ef2c7`）。因此原版 Noise 从 Film Resolution 结果计算颜色相位，当前 CPU/WGSL 一致；不能把 Analogue 生成器的原图输入约定套用到 Noise。原版 `blend_normal` 在外部源码 `1446–1461` 明确 clamp 到 [0,1]，当前最终合成 clamp 也符合该逻辑。
+
+
+### 较大样本的效果对照
+
+实际运行 `/tmp/grain_effect_acceptance.py`：384×256 分区明暗、彩色渐变及棋盘细节，8mm50、seed=5489、Film Resolution=100（滤波半径为零），两种模式。外部原版 OpenCL 使用编码后 half RGB 输入，输出解码回线性后与产品比较；产品输入为原始线性 RGB。残差基线为输入经过相同 encode/half/decode 的结果。此前直接混比编码域与线性域的统计无效，以下为修正后结果。
+
+| 模式 | 原版残差均值 | CPU 残差均值 | 原版残差标准差 | CPU 残差标准差 |
+|---|---:|---:|---:|---:|
+| Analogue | -0.03418593 | -0.03421378 | 0.04269066 | 0.04271103 |
+| Noise | -0.01951116 | -0.01949283 | 0.03927353 | 0.03929670 |
+
+标准差相对差分别约 0.048% 和 0.059%；各明暗区域标准差相对差低于 0.4%。相邻像素相关系数最大绝对差约 0.00534；去均值、正确折返 FFT 频率轴后的频带幅值，最大相对差约 3.56%（Noise 低频段）。已查看包含输入、两种模式的原版/CPU/WGPU 的七列对照图。这组样本支持颗粒强度与空间分布接近，不把随机实现之间的逐像素 RMS 当作效果失败。
+
+较大样本也修正内部一致性的范围：CPU/WGPU 最大差 Analogue=0.00095546、Noise=0.121766，RMS 分别约 7.969e-6、0.00060345；Noise 有 50/294912 个通道差超过 0.01。较小样本上 `<3e-7` 的结果不能泛化为所有输入的逐像素保证。这些稀疏差异尚未逐阶段归因；当前验收允许浮点导致的随机纹理差异，但仍应保留该证据。
+
+历史产物：`/tmp/grain-effect-acceptance.json`、`/tmp/grain-effect-input.bin`、`/tmp/grain-effect-input-encoded.bin`。该次统计仅覆盖一个图像、profile 和 seed、零滤波半径，当时工作域边界尚待确认；后续证据、实现修正和重新执行结果见第 15 节。`/tmp/grain-effect-panel.png` 已由新接口对照更新。
+
+## 15. 原生显示编码工作域闭环（2026-10-09）
+
+新增外部证据：`dehancer-re` 提交 `cbec289`（转换链与域结论）、`e0dcc88`（DVRWGRec709 为保灰非线性 gamut 重映射，非矩阵）、`fe7622b`（22 档灰阶表）。宿主报告 §6.1–6.5 证明照片 by_pass 链不在 Grain 内施加传递函数或 primaries 转换。Grain 约定显示编码 RGB，曲线来自调用者；不把视频 ocio LUT 加到照片颗粒链。
+
+CPU `apply_cpu`、WGPU `grain_v2_gpu` 已统一为原生编码 RGB 输入/输出，保留 half 存储边界，删除固定 BT.709 编解码。SpektraFilm 扫描产生新的 RGB 图像，故调用层使用所选扫描输出空间（不是原照片输入空间）的编码；encoded 输出直接保留 Grain 结果，linear 输出只解码所选曲线。已有 same-space 矩阵往返仅执行一次。V1 的路径与默认值保持原行为。
+
+本轮实跑 `scripts/parity/grain_v2_acceptance.py` 全部通过：f32/f64 各 9 个模型测试（含原外部完整 half fixture、12 profiles 的 CPU/WGPU 分派）、WGSL 编译、参数继承；新增扫描域回归在两种精度下覆盖 sRGB、Display P3、ProPhoto RGB、ITU-R BT.2020 × 胶片/纸基扫描 × Analogue/Noise，验证 Grain 消费已编码扫描结果和 linear/encoded 导出的一致性。真实 pipeline render/save/load 完成 f32/f64 各 10 组 32-bit TIFF 输出，包含 V1 与 V2 两种模式和 Film Type。没有将历史 GUI 实测冒充本轮重新运行。
+
+外部 22 档灰阶表按原 3/64 间距复核，sRGB/Rec709/gamma2.2 三列最大误差均小于 5e-7，符合 CSV 六位小数舍入。独立 OpenCL 对照在 384×256、8mm50、seed5489、Film Resolution=100 的同一已编码 half 输入上重新执行；CPU/WGPU 编码域两种模式最大差均为 0.00048828125。用于统计的解码线性域 RMS 分别为 5.469e-6、5.438e-6，没有通道差超过 0.01；此前 Noise 大离群值在该样本上消失。原版/CPU 残差标准差分别为 Analogue 0.04269066/0.04271103，Noise 0.03927353/0.03929687。产物 `/tmp/grain-native-domain-acceptance.json`。
+
+验收以算法、处理逻辑和效果为准，不要求厂商设备逐像素相同。效果统计限于上述样本；现有独立滤波证据及控制矩阵覆盖其余实现路径，不声称测遍任意照片。本节记录独立 integration 工作树完成域修正时的验证；后续主干集成另见下节。
+
+## 16. 主干驻留链集成（2026-10-09）
+
+集成远端 `5b538ed` 的模块拆分、统一 GPU 参数与 pipeline cache。独立 WGPU 调用和驻留链共用输入 half 舍入、可选水平/垂直 Film Resolution、颗粒合成三段调度；驻留链在 GPU 上先执行扫描输出空间的 same-space 矩阵和 CCTF。V2 输出保持编码 RGB，线性导出只解码一次。恢复 Film Type 选择滤波分支、seeded phase 和参考半精度边界。
+
+合并后 `scripts/parity/grain_v2_acceptance.py` 通过：f32/f64 各 9 个模型测试、WGSL 编译、profile 参数继承、两种精度下扫描编码回归，以及每种精度 10 组真实 TIFF render/save/load。`cargo check --workspace --all-targets --all-features` 与 GUI 的 2 个 Grain V2 状态测试通过；已有 unused/dead-code 等编译警告仍存在。
+
+临时实际 pipeline smoke 使用 32×24 非均匀 RGB，覆盖 8 个注册输出空间 × 胶片/纸基扫描 × Analogue/Noise × Negative/Positive，共 64 组；分别在默认分辨率参数和 Size=48、Film Resolution=0 下运行。驻留路径明确禁止 fallback，输出与同一无颗粒驻留基底上的独立 GPU Grain 完全一致，线性导出相对所选 CCTF 解码最大误差为 `5.876e-8`。这是本机可用 WGPU adapter 的执行证据，不是独立显卡性能证明；本轮未重跑原生 GUI 交互。临时 smoke 源已删除。
+

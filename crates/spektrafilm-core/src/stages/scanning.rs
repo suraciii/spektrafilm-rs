@@ -291,17 +291,26 @@ pub fn scan_with_options(
         rgb = spektrafilm_model::optics::apply_unsharp_mask(&rgb, usm_sigma, usm_amount, backend);
     }
 
-    // Grain V2 is a display-domain effect. Apply it after optical scan
-    // effects and before destination transfer encoding. V1 remains in the
-    // filming density stage above and is never touched by this branch.
-    if params.film_render.grain.active
+    // Grain consumes native display-encoded RGB, with no internal transfer
+    // or primaries conversion. The scanned image supplies its output space.
+    let grain_v2_active = params.film_render.grain.active
         && params.settings.rgb_to_raw_method != "mallett2019"
-        && matches!(
-            params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::V2
-        )
-    {
-        let grain = params.film_render.grain.resolved_grain_v2();
+        && matches!(params.film_render.grain.engine, crate::params::grain::GrainEngine::V2);
+    if params.io.output_cctf_encoding || grain_v2_active {
+        rgb.data.par_chunks_exact_mut(3).for_each(|px| {
+            let encoded = colorspace::encode_rgb(
+                [px[0] as f64, px[1] as f64, px[2] as f64], output_space);
+            px[0] = from_f64(encoded[0]);
+            px[1] = from_f64(encoded[1]);
+            px[2] = from_f64(encoded[2]);
+        });
+    }
+    if grain_v2_active {
+        let mut grain = params.film_render.grain.resolved_grain_v2();
+        if params.debug.deactivate_spatial_effects {
+            grain.resolution_factor = 100.0;
+        }
+        grain.seed = params.random_seed as u32;
         let gpu_params = params
             .film_render
             .grain
@@ -311,16 +320,11 @@ pub fn scan_with_options(
             .unwrap_or_else(|| spektrafilm_model::grain::v2::apply_cpu(&rgb, grain));
     }
 
-    // Match colour.RGB_to_RGB(cs, cs): apply the stored same-space matrix
-    // roundtrip and destination CCTF. Preserve values outside [0, 1] for
-    // formats and later consumers that support extended range.
-    if params.io.output_cctf_encoding {
-        rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-            let encoded =
-                colorspace::encode_rgb([px[0] as f64, px[1] as f64, px[2] as f64], output_space);
-            px[0] = from_f64(encoded[0]);
-            px[1] = from_f64(encoded[1]);
-            px[2] = from_f64(encoded[2]);
+    // Linear exports retain the same grain realization as encoded exports.
+    // Decode only the transfer; the stored same-space matrix ran above once.
+    if grain_v2_active && !params.io.output_cctf_encoding {
+        rgb.data.par_iter_mut().for_each(|value| {
+            *value = from_f64(colorspace::cctf_decode(*value as f64, output_space.cctf));
         });
     }
 
