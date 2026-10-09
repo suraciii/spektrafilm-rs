@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use eframe::egui;
-use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
+use spektrafilm_core::image_io::{self, BitDepth, Compression, ImageMetadata, JpegSubsampling, LoadedImage, SaveOptions};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
@@ -259,6 +259,10 @@ struct App {
     input_rotation: i32,
     source_metadata: Option<ImageMetadata>,
     save_depth: BitDepth,
+    export_format: ExportFormat,
+    jpeg_quality: u8,
+    jpeg_subsampling: JpegSubsampling,
+    export_compression: ExportCompression,
     export_backend: ExportBackend,
     /// Last rendered pipeline output (post sRGB encode + clip). Retained
     /// so the Save button can write it without re-running the pipeline.
@@ -358,6 +362,27 @@ impl ExportBackend {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ExportFormat { Jpeg, #[default] Png, Tiff, Exr }
+impl ExportFormat {
+    fn from_state(v: &serde_json::Value) -> Self {
+        match v["rust"]["export_format"].as_str() {
+            Some("jpeg") => Self::Jpeg, Some("tiff") => Self::Tiff,
+            Some("exr") => Self::Exr, _ => Self::Png,
+        }
+    }
+    fn argument(self) -> &'static str { match self { Self::Jpeg=>"jpeg", Self::Png=>"png", Self::Tiff=>"tiff", Self::Exr=>"exr" } }
+    fn extension(self) -> &'static str { match self { Self::Jpeg=>"jpg", Self::Png=>"png", Self::Tiff=>"tiff", Self::Exr=>"exr" } }
+    fn label(self) -> &'static str { match self { Self::Jpeg=>"JPEG", Self::Png=>"PNG", Self::Tiff=>"TIFF", Self::Exr=>"EXR" } }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ExportCompression { #[default] Zip, None }
+impl ExportCompression {
+    fn from_state(v: &serde_json::Value) -> Self { if v["rust"]["export_compression"].as_str() == Some("none") { Self::None } else { Self::Zip } }
+    fn argument(self) -> &'static str { match self { Self::Zip=>"zip", Self::None=>"none" } }
+}
+
 /// One in-flight export. The worker thread owns the child
 /// process and polls `cancel` in its wait loop. On completion the
 /// worker sends the staged image with `Ok(elapsed_seconds, output_filename)`
@@ -413,8 +438,16 @@ impl App {
             .map(|f| f.data.development_time.clone())
             .unwrap_or_default();
         let print_dev_times = profile_dev_times(&data_dir, &print_name);
-        let save_depth = match gui_state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
+        let export_format = ExportFormat::from_state(&gui_state.sections);
+        let jpeg_quality = gui_state.sections["rust"]["jpeg_quality"].as_u64().unwrap_or(95).clamp(1, 100) as u8;
+        let jpeg_subsampling = if gui_state.sections["rust"]["jpeg_subsampling"].as_str() == Some("420") { JpegSubsampling::Yuv420 } else { JpegSubsampling::Yuv444 };
+        let export_compression = ExportCompression::from_state(&gui_state.sections);
         let export_backend = ExportBackend::from_state(&gui_state.sections);
+        let save_depth = match gui_state.sections["rust"]["save_bit_depth"].as_u64() {
+            Some(8) => BitDepth::Eight,
+            Some(32) => BitDepth::ThirtyTwo,
+            _ => BitDepth::Sixteen,
+        };
 
         let mut app = Self {
             backend,
@@ -436,6 +469,10 @@ impl App {
             raw_lens_info: None,
             source_metadata: None,
             save_depth,
+            export_format,
+            jpeg_quality,
+            jpeg_subsampling,
+            export_compression,
             export_backend,
             output_image: None,
             viewer: display::Viewer::new(),
@@ -476,6 +513,10 @@ impl App {
         if !extras["rust"].is_object() { extras["rust"] = serde_json::json!({"version":1}); }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
         extras["rust"]["save_bit_depth"] = serde_json::json!(self.save_depth.bits());
+        extras["rust"]["export_format"] = serde_json::json!(self.export_format.argument());
+        extras["rust"]["jpeg_quality"] = serde_json::json!(self.jpeg_quality);
+        extras["rust"]["jpeg_subsampling"] = serde_json::json!(match self.jpeg_subsampling { JpegSubsampling::Yuv444=>"444", JpegSubsampling::Yuv420=>"420" });
+        extras["rust"]["export_compression"] = serde_json::json!(self.export_compression.argument());
         extras["rust"]["export_backend"] = serde_json::json!(self.export_backend.argument());
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
     }
@@ -492,6 +533,10 @@ impl App {
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
         self.params = params;
         self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
+        self.export_format = ExportFormat::from_state(&state.sections);
+        self.jpeg_quality = state.sections["rust"]["jpeg_quality"].as_u64().unwrap_or(95).clamp(1, 100) as u8;
+        self.jpeg_subsampling = if state.sections["rust"]["jpeg_subsampling"].as_str() == Some("420") { JpegSubsampling::Yuv420 } else { JpegSubsampling::Yuv444 };
+        self.export_compression = ExportCompression::from_state(&state.sections);
         self.export_backend = ExportBackend::from_state(&state.sections);
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
@@ -936,10 +981,32 @@ impl App {
             return;
         };
         self.remember_dialog("save_output", &path);
+        let expected_format = match self.export_format {
+            ExportFormat::Jpeg => image_io::ImageFormat::Jpeg,
+            ExportFormat::Png => image_io::ImageFormat::Png,
+            ExportFormat::Tiff => image_io::ImageFormat::Tiff,
+            ExportFormat::Exr => image_io::ImageFormat::Exr,
+        };
+        let actual_format = match image_io::ImageFormat::detect(&path) {
+            Ok(format) => format,
+            Err(error) => { self.status = format!("Save error: {error}"); return; }
+        };
+        if actual_format != expected_format {
+            self.status = format!("Save error: filename extension does not match {}", self.export_format.label());
+            return;
+        }
         let out = self.output_image.as_ref().expect("output checked before dialog");
         let t = Instant::now();
-        let destination = self.gui_state.sections["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB");
-        let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true);
+        let destination = if self.export_format == ExportFormat::Exr {
+            "ACES2065-1"
+        } else {
+            self.gui_state.sections["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB")
+        };
+        let encoded = if self.export_format == ExportFormat::Exr {
+            false
+        } else {
+            self.gui_state.sections["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true)
+        };
         let converted = match image_io::convert_image(out, &self.output_color_space, self.output_cctf_encoding, destination, encoded) {
             Ok(image) => image,
             Err(error) => { self.status = format!("Save error: {error}"); return; }
@@ -948,9 +1015,17 @@ impl App {
             &path,
             &converted,
             SaveOptions {
-                depth: self.save_depth,
+                depth: match self.export_format {
+                    ExportFormat::Jpeg | ExportFormat::Png => BitDepth::Eight,
+                    ExportFormat::Tiff => self.save_depth,
+                    ExportFormat::Exr => match self.save_depth { BitDepth::Eight => BitDepth::Sixteen, depth => depth },
+                },
                 color_space: destination,
-                cctf_encoding: encoded,
+                cctf_encoding: if self.export_format == ExportFormat::Exr { false } else { encoded },
+                jpeg_quality: (self.export_format == ExportFormat::Jpeg).then_some(self.jpeg_quality),
+                jpeg_subsampling: (self.export_format == ExportFormat::Jpeg).then_some(self.jpeg_subsampling),
+                compression: matches!(self.export_format, ExportFormat::Tiff | ExportFormat::Exr)
+                    .then_some(if self.export_format == ExportFormat::Exr { Compression::Zip } else if self.export_compression == ExportCompression::None { Compression::None } else { Compression::Zip }),
             },
             self.source_metadata.as_ref(),
         ) {
@@ -991,7 +1066,8 @@ impl App {
             .and_then(|s| s.to_str())
             .unwrap_or("spektrafilm");
         let export_backend = self.export_backend;
-        let default_name = format!("{stem}_{}_spektra_{}.png", self.film_name, export_backend.argument());
+        let export_format = self.export_format;
+        let default_name = format!("{stem}_{}_spektra_{}.{}", self.film_name, export_backend.argument(), export_format.extension());
         let Some(out_path) = self.file_dialog("export")
             .add_filter("Image", &["jpg", "jpeg", "png", "tif", "tiff", "exr"])
             .set_file_name(&default_name)
@@ -1013,6 +1089,9 @@ impl App {
         };
         let data_dir = self.data_dir.clone();
         let save_depth = self.save_depth;
+        let jpeg_quality = self.jpeg_quality;
+        let jpeg_subsampling = self.jpeg_subsampling;
+        let export_compression = self.export_compression;
         let export_state = self.gui_state.sections.clone();
         let rotated_input = (self.input_rotation != 0).then(|| (
             Arc::clone(self.image.as_ref().expect("export requires loaded image")),
@@ -1038,6 +1117,9 @@ impl App {
                             depth: BitDepth::ThirtyTwo,
                             color_space: &params.io.input_color_space,
                             cctf_encoding: params.io.input_cctf_decoding,
+                            jpeg_quality: None,
+                            jpeg_subsampling: None,
+                            compression: None,
                         }, metadata.as_ref())?;
                         Some(guard)
                     } else { None };
@@ -1052,9 +1134,13 @@ impl App {
                     &paper,
                     &params,
                     &data_dir,
-                    save_depth,
-                    &export_state,
                     export_backend,
+                    save_depth,
+                    export_format,
+                    jpeg_quality,
+                    jpeg_subsampling,
+                    export_compression,
+                    &export_state,
                     &cancel_for_worker,
                 )
                 })();
@@ -1336,15 +1422,47 @@ impl App {
                 ui.small("GPU uses f32; unsupported effects run on CPU. A GPU adapter is required.");
             }
         });
+        ui.add_enabled_ui(self.export_job.is_none(), |ui| {
+            egui::ComboBox::from_label("Export format")
+                .selected_text(self.export_format.label())
+                .show_ui(ui, |ui| {
+                    for format in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Exr] {
+                        ui.selectable_value(&mut self.export_format, format, format.label());
+                    }
+                });
+            if self.export_format == ExportFormat::Jpeg {
+                ui.add(egui::Slider::new(&mut self.jpeg_quality, 1..=100).text("JPEG quality"));
+                egui::ComboBox::from_label("JPEG subsampling")
+                    .selected_text(match self.jpeg_subsampling { JpegSubsampling::Yuv444=>"4:4:4", JpegSubsampling::Yuv420=>"4:2:0" })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.jpeg_subsampling, JpegSubsampling::Yuv444, "4:4:4");
+                        ui.selectable_value(&mut self.jpeg_subsampling, JpegSubsampling::Yuv420, "4:2:0");
+                    });
+            }
+            if matches!(self.export_format, ExportFormat::Tiff | ExportFormat::Exr) {
+                egui::ComboBox::from_label("Compression")
+                    .selected_text(self.export_compression.argument())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.export_compression, ExportCompression::Zip, "ZIP");
+                        ui.selectable_value(&mut self.export_compression, ExportCompression::None, "None");
+                    });
+            }
+        });
+        if matches!(self.export_format, ExportFormat::Jpeg | ExportFormat::Png) {
+            self.save_depth = BitDepth::Eight;
+        } else if self.export_format == ExportFormat::Exr && self.save_depth == BitDepth::Eight {
+            self.save_depth = BitDepth::Sixteen;
+        }
         egui::ComboBox::from_label("Save bit depth")
             .selected_text(format!("{} bit", self.save_depth.bits()))
             .show_ui(ui, |ui| {
-                for depth in [BitDepth::Eight, BitDepth::Sixteen, BitDepth::ThirtyTwo] {
-                    ui.selectable_value(
-                        &mut self.save_depth,
-                        depth,
-                        format!("{} bit", depth.bits()),
-                    );
+                let depths: &[BitDepth] = match self.export_format {
+                    ExportFormat::Jpeg | ExportFormat::Png => &[BitDepth::Eight],
+                    ExportFormat::Tiff => &[BitDepth::Eight, BitDepth::Sixteen, BitDepth::ThirtyTwo],
+                    ExportFormat::Exr => &[BitDepth::Sixteen, BitDepth::ThirtyTwo],
+                };
+                for &depth in depths {
+                    ui.selectable_value(&mut self.save_depth, depth, format!("{} bit", depth.bits()));
                 }
             });
         if let Some(p) = &self.image_path {
@@ -1865,9 +1983,13 @@ fn run_export(
     paper: &str,
     params: &spektrafilm_core::params::RuntimeParams,
     data_dir: &Path,
-    save_depth: BitDepth,
-    gui_state: &serde_json::Value,
     backend: ExportBackend,
+    save_depth: BitDepth,
+    format: ExportFormat,
+    jpeg_quality: u8,
+    jpeg_subsampling: JpegSubsampling,
+    compression: ExportCompression,
+    gui_state: &serde_json::Value,
     cancel: &AtomicBool,
 ) -> Result<TempPath> {
     let nanos = std::time::SystemTime::now()
@@ -1903,6 +2025,8 @@ fn run_export(
         .arg(input)
         .arg("-o")
         .arg(&staged.0)
+        .arg("--format")
+        .arg(format.argument())
         .arg("--bit-depth")
         .arg(save_depth.bits().to_string())
         .arg("--film")
@@ -1919,7 +2043,14 @@ fn run_export(
         cmd.arg("--scan-film");
     }
     cmd.arg("--saving-color-space").arg(gui_state["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB"))
-        .arg("--saving-cctf-encoding").arg(if gui_state["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true) {"true"} else {"false"});
+        .arg("--saving-cctf-encoding").arg(if format == ExportFormat::Exr { "false" } else if gui_state["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true) {"true"} else {"false"});
+    if format == ExportFormat::Jpeg {
+        cmd.arg("--jpeg-quality").arg(jpeg_quality.to_string())
+            .arg("--jpeg-subsampling").arg(match jpeg_subsampling { JpegSubsampling::Yuv444=>"444", JpegSubsampling::Yuv420=>"420" });
+    }
+    if matches!(format, ExportFormat::Tiff | ExportFormat::Exr) {
+        cmd.arg("--compression").arg(if format == ExportFormat::Exr { "zip" } else { compression.argument() });
+    }
     for (key,flag) in [("film_channel_swap","--film-channel-swap"),("print_channel_swap","--print-channel-swap")] {
         if let Some(order) = gui_state["special"][key].as_array() {
             cmd.arg(flag).arg(order.iter().map(|v|v.as_u64().unwrap_or(0).to_string()).collect::<Vec<_>>().join(","));
