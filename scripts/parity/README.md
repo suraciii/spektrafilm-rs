@@ -100,6 +100,9 @@ Rendered status are not an execution counter.
 
 Profile selection records the open menu and scrolls one wheel increment between
 observations so intermediate stock rows cannot be skipped.
+Cancellation reads the button interior at the observed Export action position:
+full-sidebar OCR can omit its short bordered label. The gate requires rendered
+`Cancel` text and a live export child immediately before clicking.
 
 `--development-smoke` permits an uncommitted iteration and always reports
 `development-smoke`, never acceptance `pass`. Missing controls, clipped labels,

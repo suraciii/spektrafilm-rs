@@ -197,12 +197,29 @@ def cancel_export(driver, exporter, source, destination):
     if not driver.locate('Export backend'):
         driver.section('Export options')
         driver.scroll(True)
+    from PIL import ImageOps
+    image, _, lines = driver.read()
+    action = driver.locate('Export', exact=True)
+    require(action, 'Export action missing before cancellation')
+    button_word = min((word for line in lines for word in line),
+                      key=lambda word: abs(word[1] + word[3] / 2 - action[0]) + abs(word[2] + word[4] / 2 - action[1]))
+    left, top, _, height = button_word[1:]
     driver.watch_export()
     driver.click('Export', exact=True)
     driver.dialog(destination, save=True)
     driver.capture_export_child(exporter)
+    def cancel_visible():
+        image, _ = driver.image()
+        interior = image.crop((int(left), int(top) - 1, int(left) + 43, int(top + height) + 1)).convert('L')
+        text = driver.ocr.image_to_string(ImageOps.invert(interior).resize((430, interior.height * 10)), config='--psm 7').strip()
+        if re.findall(r'[a-z]+', text.lower()) == ['cancel']:
+            image.save(driver.root/'cancel-button-visible.png')
+            driver.records.append({'cancel_button_text': text, 'screenshot': 'cancel-button-visible.png'})
+            return True
+    wait_for(cancel_visible, 'rendered Cancel button', 15)
     driver.require_export_in_flight('Cancel')
-    driver.click('Cancel')
+    driver.xd('mousemove', '--window', driver.window, int(left + 20), int(top + height / 2))
+    driver.xd('click', 1)
     driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=30)
     driver.no_children()
     require(not destination.exists(), 'Cancelled export published output')
