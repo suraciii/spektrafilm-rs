@@ -145,7 +145,8 @@ reads tab labels in the dedicated header region. Before selecting a footer
 action it moves the pointer away so hover highlighting does not hide the text.
 Export modal controls are read from their visible panel with independent
 contrast normalization; the loaded image cannot determine modal OCR contrast.
-Selected values are checked before opening a combo menu.
+Selected values are checked before opening a combo menu; open menu options use
+the same panel contrast normalization before matching the requested value.
 
 Profile selection records the open menu and scrolls one wheel increment between
 observations so intermediate stock rows cannot be skipped.

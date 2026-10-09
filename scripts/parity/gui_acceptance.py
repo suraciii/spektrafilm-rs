@@ -661,7 +661,10 @@ class X11:
             self.xd('mousemove', '--window', self.window, int(value[1] + value[3] / 2), int(y))
             self.xd('click', 1)
             def choose():
-                frame, _, menu_lines = self.read()
+                result = modal_read()
+                if result is None:
+                    return None
+                frame, _, menu_lines = result
                 candidates = [(mx, my) for mx, my in self.match(menu_lines, option)
                               if mx < x and my > y + 5]
                 if candidates:
