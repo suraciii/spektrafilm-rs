@@ -1,16 +1,18 @@
 /// wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 #[cfg(feature = "wgpu-backend")]
-use parking_lot::Mutex;
-#[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
-use std::borrow::Cow;
 
 use crate::gpu_helpers::{
     f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
 };
 #[cfg(feature = "wgpu-backend")]
 use crate::{ComputeBackend, Lut3D, cpu_backend};
+
+#[cfg(feature = "wgpu-backend")]
+mod cache;
+#[cfg(feature = "wgpu-backend")]
+use cache::{CachedPipelineRef, PipelineCache};
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
@@ -45,15 +47,7 @@ fn fir_blur_radius(sigma: f32) -> u32 {
 pub struct WgpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// Cache compiled compute pipelines keyed by shader source pointer.
-    /// `&'static str` is fine because all our shader sources come from `include_str!`.
-    pipeline_cache: Mutex<std::collections::HashMap<usize, CachedPipeline>>,
-}
-
-#[cfg(feature = "wgpu-backend")]
-struct CachedPipeline {
-    bind_group_layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::ComputePipeline,
+    pipeline_cache: PipelineCache,
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -115,72 +109,14 @@ impl WgpuBackend {
         Some(Self {
             device,
             queue,
-            pipeline_cache: Mutex::new(std::collections::HashMap::new()),
+            pipeline_cache: PipelineCache::default(),
         })
-    }
-
-    /// Get or compile + cache a pipeline keyed by shader source pointer.
-    /// All shader sources come from `include_str!` so the pointer is stable.
-    fn get_or_compile_pipeline<F>(
-        &self,
-        shader_source: &'static str,
-        layout_entries_fn: F,
-    ) -> CachedPipelineRef
-    where
-        F: FnOnce() -> Vec<wgpu::BindGroupLayoutEntry>,
-    {
-        let key = shader_source.as_ptr() as usize;
-        let mut cache = self.pipeline_cache.lock();
-        if !cache.contains_key(&key) {
-            let shader = self
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("compute_shader"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_source)),
-                });
-            let entries = layout_entries_fn();
-            let bind_group_layout =
-                self.device
-                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("compute_layout"),
-                        entries: &entries,
-                    });
-            let pipeline_layout =
-                self.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("compute_pipeline_layout"),
-                        bind_group_layouts: &[&bind_group_layout],
-                        push_constant_ranges: &[],
-                    });
-            let pipeline = self
-                .device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("compute_pipeline"),
-                    layout: Some(&pipeline_layout),
-                    module: &shader,
-                    entry_point: Some("main"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
-            cache.insert(
-                key,
-                CachedPipeline {
-                    bind_group_layout,
-                    pipeline,
-                },
-            );
-        }
-        let cached = cache.get(&key).unwrap();
-        CachedPipelineRef {
-            pipeline: cached.pipeline.clone(),
-            layout: cached.bind_group_layout.clone(),
-        }
     }
 
     /// Generic GPU compute dispatch helper.
     ///
-    /// `shader_source` must be a `'static str` (typically from `include_str!`) so
-    /// the cache can key by pointer identity.
+    /// The cache key includes both shader identity and binding layout so a
+    /// shader reused by two passes cannot receive the wrong bind-group layout.
     fn dispatch_compute(
         &self,
         shader_source: &'static str,
@@ -189,22 +125,11 @@ impl WgpuBackend {
         output_idx: usize,
     ) -> Vec<f32> {
         let t_start = std::time::Instant::now();
-        let layout_entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
-            .iter()
-            .enumerate()
-            .map(|(i, b)| wgpu::BindGroupLayoutEntry {
-                binding: i as u32,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: b.binding_type,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            })
-            .collect();
-        let entries_for_compile = layout_entries.clone();
-        let cached = self.get_or_compile_pipeline(shader_source, || entries_for_compile);
+        let binding_types: Vec<wgpu::BufferBindingType> =
+            bindings.iter().map(|b| b.binding_type).collect();
+        let cached = self
+            .pipeline_cache
+            .get_or_compile(&self.device, shader_source, &binding_types);
         let pipeline = &cached.pipeline;
         let bind_group_layout = &cached.layout;
         let t_compile = t_start.elapsed();
@@ -1555,36 +1480,15 @@ impl WgpuBackend {
         out
     }
 
-    /// Get-or-compile a pipeline by shader source + binding layout. Cached by
-    /// shader source pointer.
+    /// Get or compile a pipeline using the shared shader-and-layout cache.
     fn cached_pipeline(
         &self,
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
     ) -> CachedPipelineRef {
-        let entries: Vec<wgpu::BindGroupLayoutEntry> = binding_types
-            .iter()
-            .enumerate()
-            .map(|(i, &ty)| wgpu::BindGroupLayoutEntry {
-                binding: i as u32,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            })
-            .collect();
-        self.get_or_compile_pipeline(shader_source, || entries)
+        self.pipeline_cache
+            .get_or_compile(&self.device, shader_source, binding_types)
     }
-}
-
-#[cfg(feature = "wgpu-backend")]
-#[derive(Clone)]
-struct CachedPipelineRef {
-    pipeline: wgpu::ComputePipeline,
-    layout: wgpu::BindGroupLayout,
 }
 
 #[cfg(feature = "wgpu-backend")]
