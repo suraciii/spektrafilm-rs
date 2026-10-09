@@ -476,9 +476,9 @@ def main():
         driver.scroll(False)
         driver.section('Output')
         large = root/'large.tif'
-        pixels = np.tile(np.linspace(.05, .8, 4096, dtype=np.float32)[None, :, None], (3072, 1, 3))
+        pixels = np.tile(np.linspace(.05, .8, 6144, dtype=np.float32)[None, :, None], (4608, 1, 3))
         writer = oiio.ImageOutput.create(str(large))
-        require(writer.open(str(large), oiio.ImageSpec(4096, 3072, 3, oiio.FLOAT)), 'Large fixture open failed')
+        require(writer.open(str(large), oiio.ImageSpec(6144, 4608, 3, oiio.FLOAT)), 'Large fixture open failed')
         require(writer.write_image(pixels), 'Large fixture write failed')
         writer.close()
         cancel_export(driver, large, root/'cancelled.tif')

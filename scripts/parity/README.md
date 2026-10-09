@@ -153,7 +153,9 @@ observations so intermediate stock rows cannot be skipped.
 Cancellation reads the button interior at the observed Export action position:
 full-sidebar OCR can omit its short bordered label. The gate requires rendered
 `Cancel` text and an in-flight worker status immediately before clicking, then
-requires cancellation completion and absence of the destination file.
+requires visible cancellation acknowledgement, completion and no destination.
+The aggregate uses a 6144×4608 input so OCR and pointer actions can finish while
+the worker is still running.
 File choosers paste paths through the native location entry. Open dialogs
 explicitly navigate to the parent directory, then submit the file path while
 keeping the active chooser selected; this prevents a stale selection or a
