@@ -23,6 +23,56 @@ mod integration_tests {
     }
 
     #[test]
+    fn grain_v2_uses_scan_encoding_and_preserves_linear_export() {
+        use crate::params::grain::{GrainEngine, GrainV2Mode};
+        use spektrafilm_math::colorspace;
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let paper = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(8, 6, (0..8 * 6 * 3)
+            .map(|i| from_f64(0.12 + (i % 29) as f64 / 40.0)).collect());
+        for space_name in ["sRGB", "Display P3", "ProPhoto RGB", "ITU-R BT.2020"] {
+            let space = colorspace::resolve(space_name).unwrap();
+            for scan_film in [false, true] {
+                let mut params = RuntimeParams::default();
+                params.camera.auto_exposure = false;
+                params.film_render.halation.active = false;
+                params.film_render.dir_couplers.active = false;
+                params.print_render.glare.active = false;
+                params.film_render.grain.active = false;
+                params.io.scan_film = scan_film;
+                params.io.output_color_space = space_name.into();
+                params.random_seed = 5489;
+                let render = |p: RuntimeParams| Pipeline::new(film.clone(), paper.clone(), p)
+                    .process(image.clone(), &backend).unwrap();
+                let encoded_base = render(params.clone());
+                params.film_render.grain.active = true;
+                params.film_render.grain.engine = GrainEngine::V2;
+                params.film_render.grain.select_custom_grain_v2();
+                for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
+                    params.film_render.grain.v2_mode = mode;
+                    let mut grain = params.film_render.grain.resolved_grain_v2();
+                    grain.seed = 5489;
+                    let expected = spektrafilm_model::grain::v2::apply_cpu(&encoded_base, grain);
+                    params.io.output_cctf_encoding = true;
+                    let encoded = render(params.clone());
+                    params.io.output_cctf_encoding = false;
+                    let linear = render(params.clone());
+                    for ((&actual, &reference), &linear_value) in encoded.data.iter()
+                        .zip(&expected.data).zip(&linear.data) {
+                        assert!((actual as f64 - reference as f64).abs() < 1e-6,
+                            "{space_name} {scan_film} {mode:?}: grain must consume native encoded scan RGB");
+                        let decoded = colorspace::cctf_decode(actual as f64, space.cctf);
+                        assert!((linear_value as f64 - decoded).abs() < 1e-6,
+                            "{space_name} {scan_film} {mode:?}: linear export changes grain realization");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_full_pipeline_portra_400_to_endura() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();

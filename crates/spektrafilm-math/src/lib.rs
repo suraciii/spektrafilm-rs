@@ -1,3 +1,4 @@
+pub mod grain;
 pub mod colorspace;
 pub mod fft_conv;
 pub mod gaussian;

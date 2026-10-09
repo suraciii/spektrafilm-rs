@@ -168,6 +168,9 @@ pub trait ComputeBackend: Send + Sync {
     }
 
     /// Return a rendered Grain V2 image when this backend supports the shader.
+    /// Input and output are native encoded RGB in the caller's color space;
+    /// Grain performs no transfer-function or primaries conversion. Input preparation
+    /// and final composition round to binary16 while sampling and noise use f32.
     /// The caller uses the independent CPU reference when this returns None.
     fn grain_v2(&self, _image: &ImageBuf, _params: &GrainV2GpuParams) -> Option<ImageBuf> {
         None

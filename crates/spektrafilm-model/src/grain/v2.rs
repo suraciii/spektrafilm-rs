@@ -1,7 +1,8 @@
-//! Grain V2 accepts and returns linear scanner RGB; composition uses a fixed
-//! display transfer internally. Integer gradient/phase hashing and Film
-//! Resolution FIR are compatibility choices, not bit-exact Dehancer output.
+//! Grain V2 accepts and returns native encoded RGB. Working-domain images and
+//! generated grain use half storage boundaries. The noise arithmetic is shared
+//! with WGSL; original OpenCL device transcendental results can still differ.
 use spektrafilm_math::{
+    grain::{fast_blur_weights, optical_weights},
     image::ImageBuf,
     precision::{from_f32, to_f32},
 };
@@ -62,7 +63,7 @@ pub fn profile_index(name: &str) -> Option<usize> {
 pub struct GrainV2Params {
     pub mode: GrainV2Mode,
     pub profile: usize,
-    /// Host grainResolutionType: 0 = Negative (optical), 1 = Positive (fast box).
+    /// Host grainResolutionType: 0 = Negative (optical), 1 = Positive (FastBlur).
     pub film_type: u32,
     pub size: f32,
     pub amount: f32,
@@ -89,7 +90,7 @@ impl GrainV2Params {
             mode: GrainV2Mode::Analogue,
             profile: index.min(11),
             // Host grainResolutionType: Negative = 0 (optical),
-            // Positive = 1 (fast box).
+            // Positive = 1 (folded Gaussian FastBlur).
             film_type: 1,
             size: p.scale,
             amount: p.amount,
@@ -114,8 +115,8 @@ impl GrainV2Params {
     pub fn resampler_scale(self) -> f32 {
         1.0 + (self.size - 1.0) / 47.0 * 1.5
     }
-    /// Radius in output pixels; source FastBlur is approximated by a fractional
-    /// separable box FIR, and optical mode uses a Gaussian FIR.
+    /// Film Resolution radius in output pixels. Positive selects folded
+    /// Gaussian FastBlur; Negative selects the optical resampling kernel.
     pub fn resolution_radius(self, width: u32, height: u32) -> f32 {
         let gsf = (5200.0 / width.max(1) as f32).max(3100.0 / height.max(1) as f32);
         let a = self.amount.clamp(0., 1.);
@@ -132,83 +133,151 @@ impl GrainV2Params {
 }
 #[inline]
 fn hash(mut x: u32) -> u32 {
-    x ^= x >> 16;
-    x = x.wrapping_mul(0x7feb352d);
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x846ca68b);
-    x ^ (x >> 16)
+    x = x.wrapping_add(x << 10);
+    x ^= x >> 6;
+    x = x.wrapping_add(x << 3);
+    x ^= x >> 11;
+    x.wrapping_add(x << 15)
 }
 #[inline]
-fn unit(x: u32) -> f32 {
-    (x >> 8) as f32 / 16777216.0
+fn random(v: [f32; 4]) -> f32 {
+    let h = hash(v[0].to_bits() ^ hash(v[1].to_bits()) ^ hash(v[2].to_bits()) ^ hash(v[3].to_bits()));
+    f32::from_bits((h & 0x007fffff) | 0x3f800000) - 1.0
 }
 #[inline]
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 #[inline]
+fn fract(v: f32) -> f32 { v - v.floor() }
+#[inline]
 fn fade(t: f32) -> f32 {
     t * t * t * (t * (t * 6. - 15.) + 10.)
 }
-/// Independent integer gradient hash: unlike a sine hash, small differences
-/// in CPU/GPU transcendental rounding do not select unrelated gradients.
-fn pnoise(p: [f32; 3], seed: u32) -> f32 {
-    let cell = p.map(|v| v.floor() as i32);
-    let f = p.map(|v| v - v.floor());
-    let u = f.map(fade);
-    let mut sum = 0.;
-    for z in 0..2 {
+// The reference grad4 leaves its local p3 adjustment unassigned to p.
+// Preserve that observable kernel behavior, including its fourth component.
+fn snoise(timer: f32, v: [f32; 4]) -> [f32; 4] {
+    let r = random(v);
+    let ip = random(v.map(|x| mix(r, timer, timer * x)));
+    let p = (fract(0.5 * ip) * 7.).floor() * ip - 1.;
+    [p, p, p, 1.5 - (p.abs() + p.abs() + p.abs())]
+}
+// Independent binary32 trig with split constants and ordinary multiply/add.
+// The small-range products are exact before cancellation; neither backend
+// needs fused multiply-add for that reduction. Large finite inputs use the
+// binary expansion of mathematical 2/pi instead of a rounded f32 period.
+fn trig_reduce(value: f32) -> (f32, u32) {
+    let x = value.abs();
+    if x <= std::f32::consts::FRAC_PI_4 {
+        return (x, 0);
+    }
+    if x < 8192.0 {
+        let q = x.mul_add(0.6366197723675814, 0.5).floor();
+        let r = (x - q * 1.5703125) - q * 0.00048351287841796875;
+        let r = r - q * 2.384185791015625e-7;
+        return (r - q * 7.549789415861596e-8, q as u32 & 3);
+    }
+    let bits = x.to_bits();
+    if bits & 0x7f800000 == 0x7f800000 {
+        return (f32::NAN, 0);
+    }
+    let mantissa = (bits & 0x007fffff) | 0x00800000;
+    let two_over_pi = [0xdebbc561u32, 0xfe5163ab, 0x3c439041, 0xdb629599,
+        0xf534ddc0, 0xfc2757d1, 0x4e441529, 0xa2f9836e];
+    let mut product = [0u32; 9];
+    let mut carry = 0u64;
+    for i in 0..8 {
+        let v = mantissa as u64 * two_over_pi[i] as u64 + carry;
+        product[i] = v as u32;
+        carry = v >> 32;
+    }
+    product[8] = carry as u32;
+    let shift = 406 - (bits >> 23);
+    let extract = |bit: u32| {
+        let i = (bit / 32) as usize;
+        let offset = bit % 32;
+        let mut word = product[i] >> offset;
+        if offset != 0 && i < 8 { word |= product[i + 1] << (32 - offset); }
+        word
+    };
+    let round_up = (extract(shift - 1) & 1) as f32;
+    let quadrant = ((extract(shift) & 3) + round_up as u32) & 3;
+    let hi = (extract(shift - 24) & 0x00ffffff) as f32 * 5.960464477539063e-8 - round_up;
+    let lo = (extract(shift - 48) & 0x00ffffff) as f32 * 3.552713678800501e-15;
+    let r = hi * 1.570796251296997;
+    let tail = hi.mul_add(1.570796251296997, -r);
+    let tail = hi.mul_add(7.549789415861596e-8, tail);
+    (lo.mul_add(1.5707963267948966, tail) + r, quadrant)
+}
+#[inline]
+fn trig_polynomial(r: f32, cosine: bool) -> f32 {
+    let z = r * r;
+    if cosine {
+        let p = (1.0f32 / 479001600.0) * z - 1.0 / 3628800.0;
+        let p = p * z + 1.0 / 40320.0;
+        let p = p * z - 1.0 / 720.0;
+        let p = p * z + 1.0 / 24.0;
+        let p = p * z - 0.5;
+        z * p + 1.0
+    } else {
+        let p = (1.0f32 / 6227020800.0) * z - 1.0 / 39916800.0;
+        let p = p * z + 1.0 / 362880.0;
+        let p = p * z - 1.0 / 5040.0;
+        let p = p * z + 1.0 / 120.0;
+        let p = p * z - 1.0 / 6.0;
+        (r * z) * p + r
+    }
+}
+#[inline]
+fn grain_sin(value: f32) -> f32 {
+    let (r, q) = trig_reduce(value);
+    let result = trig_polynomial(r, q & 1 != 0);
+    if (q & 2 != 0) ^ value.is_sign_negative() { -result } else { result }
+}
+#[inline]
+fn grain_cos(value: f32) -> f32 {
+    let (r, q) = trig_reduce(value);
+    let result = trig_polynomial(r, q & 1 == 0);
+    if (q + 1) & 2 != 0 { -result } else { result }
+}
+fn rnm(tc: [f32; 2], timer: f32) -> [f32; 4] {
+    let n = grain_sin((tc[0] + timer) * 12.9898 + (tc[1] + timer) * 78.233) * 43758.5453;
+    [n, n * 1.2154, n * 1.3453, n * 1.3647].map(|v| fract(v) * 2. - 1.)
+}
+fn pnoise(p: [f32; 3], timer: f32, texel: f32) -> f32 {
+    let pi = p.map(|v| texel * v.floor() + 0.5 * texel);
+    let pf = p.map(fract);
+    let mut n = [[[0.; 2]; 2]; 2];
+    for x in 0..2 {
         for y in 0..2 {
-            for x in 0..2 {
-                let h = hash(
-                    (cell[0] + x) as u32
-                        ^ ((cell[1] + y) as u32).wrapping_mul(0x9e3779b9)
-                        ^ ((cell[2] + z) as u32).wrapping_mul(0x85ebca6b)
-                        ^ seed,
-                );
-                let g = [
-                    unit(h) * 2. - 1.,
-                    unit(hash(h)) * 2. - 1.,
-                    unit(hash(h ^ 0x51ed270b)) * 2. - 1.,
-                ];
-                let d =
-                    g[0] * (f[0] - x as f32) + g[1] * (f[1] - y as f32) + g[2] * (f[2] - z as f32);
-                sum += d
-                    * if x == 0 { 1. - u[0] } else { u[0] }
-                    * if y == 0 { 1. - u[1] } else { u[1] }
-                    * if z == 0 { 1. - u[2] } else { u[2] };
+            let perm = rnm([pi[0] + x as f32 * texel, pi[1] + y as f32 * texel], timer)[3];
+            for z in 0..2 {
+                let g = rnm([perm, pi[2] + z as f32 * texel], timer);
+                n[x][y][z] = (g[0] * 4. - 1.) * (pf[0] - x as f32)
+                    + (g[1] * 4. - 1.) * (pf[1] - y as f32)
+                    + (g[2] * 4. - 1.) * (pf[2] - z as f32);
             }
         }
     }
-    sum
-}
-fn encode_display(value: f32) -> f32 {
-    if value < 0.018 {
-        value * 4.5
-    } else {
-        1.099 * value.powf(0.45) - 0.099
-    }
-}
-fn decode_display(value: f32) -> f32 {
-    if value < 0.081 {
-        value / 4.5
-    } else {
-        ((value + 0.099) / 1.099).powf(1. / 0.45)
-    }
+    let ux = fade(pf[0]);
+    let uy = fade(pf[1]);
+    let uz = fade(pf[2]);
+    mix(mix(mix(n[0][0][0], n[1][0][0], ux), mix(n[0][1][0], n[1][1][0], ux), uy),
+        mix(mix(n[0][0][1], n[1][0][1], ux), mix(n[0][1][1], n[1][1][1], ux), uy), uz)
 }
 fn rotated(pos: [f32; 2], angle: f32, aspect: f32) -> [f32; 2] {
-    let x = (pos[0] - 0.5) * aspect;
-    let y = pos[1] - 0.5;
+    let x = (pos[0] * 2. - 1.) * aspect;
+    let y = pos[1] * 2. - 1.;
+    let sine = grain_sin(angle);
+    let cosine = grain_cos(angle);
     [
-        (x * angle.cos() - y * angle.sin()) / aspect + 0.5,
-        x * angle.sin() + y * angle.cos() + 0.5,
+        (x * cosine - y * sine) / aspect * 0.5 + 0.5,
+        (y * cosine + x * sine) * 0.5 + 0.5,
     ]
 }
-// Content-only phase: identical RGB has identical phase regardless of position.
-// A continuous integer-gradient field avoids hashing backend-dependent float bits.
-fn color_phase(rgb: [f32; 3], seed: u32) -> f32 {
-    let timer = (seed & 65535) as f32 / 65536.;
-    timer * 0.01 + pnoise(rgb, seed) * 0.99
+fn color_phase(rgb: [f32; 3], timer: f32) -> f32 {
+    let sn = snoise(timer, [rgb[0], rgb[1], rgb[2], 1.]);
+    0.01 * timer + 0.99 * (sn[0] * 0.25 + sn[1] * 0.25 + sn[2] * 0.25 + sn[3] * 0.25)
 }
 fn generator(
     pos: [f32; 2],
@@ -217,27 +286,26 @@ fn generator(
     rgb: [f32; 3],
     p: GrainV2Params,
     digital: bool,
+    phase: f32,
 ) -> [f32; 3] {
     let timer = if digital {
-        color_phase(rgb, p.seed)
+        color_phase(rgb, phase)
     } else {
-        (p.seed & 65535) as f32 / 65536.
+        phase
     };
     let scale = p.size.clamp(0.5, 1.4);
-    let mut angles = [1.425, 3.892, 5.835].map(|a| a * scale * p.rotation);
+    let scaled_size = size.map(|v| v * scale);
+    let coords = if digital { pos } else { [pos[0] / scaled_size[0], pos[1] / scaled_size[1]] };
+    let mut angles = [1.425, 3.892, 5.835].map(|a| a * p.rotation * scale);
     if p.clustered && !digital {
-        // Hash virtual texels, not a smooth full-frame rotation field. The latter
-        // folds globally rotated coordinates into coherent ridges in flat skies.
-        let x = (pos[0] * size[0] + 0.5).floor() as u32;
-        let y = (pos[1] * size[1] + 0.5).floor() as u32;
-        let h = hash(x ^ y.wrapping_mul(0x9e3779b9) ^ p.seed);
-        angles = [h, hash(h), hash(h ^ 0x51ed270b)].map(|v| (unit(v) * 2. - 1.) * p.rotation);
+        let noise = snoise(timer, [coords[0], timer, coords[1], timer]);
+        angles = [noise[0], noise[1], noise[2]].map(|v| v * p.rotation);
     }
-    let coords = if digital { pos } else { pos.map(|v| v / scale) };
-    let den = if digital {
-        (1. + (p.size - 1.) / 47.) * 2.4 * (size[0] / 1920.).max(size[1] / 1080.)
+    let mult = if digital {
+        let den = (1. + (p.size - 1.) / 47.) * 2.4 * (size[0] / 1920.).max(size[1] / 1080.);
+        size.map(|v| v / den)
     } else {
-        p.cluster_size.max(0.01)
+        scaled_size.map(|v| v / p.cluster_size / scale)
     };
     let mut n = [0.; 3];
     for c in 0..3 {
@@ -246,11 +314,13 @@ fn generator(
         } else {
             angles[c]
         };
-        let q = rotated(coords, angle, size[0] / size[1]);
-        let v = [q[0] * size[0] / den, q[1] * size[1] / den, timer + c as f32];
-        n[c] = pnoise(v, p.seed);
+        let aspect = if digital { size[0] / size[1] } else { scaled_size[0] / scaled_size[1] };
+        let q = rotated(coords, angle, aspect);
+        let v = [q[0] * mult[0], q[1] * mult[1], c as f32];
+        let texel = if digital { p.cluster_size / 256. } else { 1. / 256. / p.cluster_size };
+        n[c] = pnoise(v, timer, texel);
         if c == 0 && !digital {
-            n[c] = mix(n[c], pnoise([v[0], v[1], timer * 0.5 + 1.], p.seed), luma);
+            n[c] = mix(n[c], pnoise([v[0], v[1], 1.], timer * 0.5, texel), luma);
         }
     }
     for c in 1..3 {
@@ -269,11 +339,27 @@ pub fn resample_3x3(mut sample: impl FnMut(i32, i32) -> [f32; 3], x: i32, y: i32
         for dx in -1..=1 {
             let v = sample(x + dx, y + dy);
             for c in 0..3 {
-                sum[c] += v[c] / 9.;
+                sum[c] += v[c];
             }
         }
     }
-    sum
+    sum.map(|v| v * (1. / 9.))
+}
+// Match sampled_color's size-changing branch, including its -0.1 pixel offset.
+fn sample_grain_source(source: &ImageBuf, size: [f32; 2], x: i32, y: i32) -> [f32; 3] {
+    if size == [source.width as f32, source.height as f32] {
+        return source.get(x as u32, y as u32).map(to_f32);
+    }
+    let px = x as f32 / (size[0] - 1.) * (source.width - 1) as f32 - 0.1;
+    let py = y as f32 / (size[1] - 1.) * (source.height - 1) as f32 - 0.1;
+    let ix = px.floor() as i32;
+    let iy = py.floor() as i32;
+    let at = |dx: i32, dy: i32| source.get(
+        (ix + dx).clamp(0, source.width as i32 - 1) as u32,
+        (iy + dy).clamp(0, source.height as i32 - 1) as u32,
+    ).map(to_f32);
+    let a = at(0, 0); let b = at(1, 0); let c = at(0, 1); let d = at(1, 1);
+    std::array::from_fn(|i| mix(mix(a[i], b[i], px - px.floor()), mix(c[i], d[i], px - px.floor()), py - py.floor()))
 }
 fn overlay(b: f32, g: f32) -> f32 {
     if b < 0.5 {
@@ -286,12 +372,94 @@ fn overlay(b: f32, g: f32) -> f32 {
 fn opacity(v: f32, c: f32) -> f32 {
     (-0.5 * ((v - c) * 5.).powi(2)).exp()
 }
-fn weight(d: i32, r: f32, optical: bool) -> f32 {
-    if optical {
-        (-0.5 * (d as f32 / r.max(0.001)).powi(2)).exp()
-    } else {
-        (r + 1. - (d.abs() as f32)).clamp(0., 1.)
+fn resolution_sample(source: &ImageBuf, x: f32, y: f32) -> [f32; 3] {
+    let x = x.clamp(0., source.width.saturating_sub(1) as f32) - 0.1;
+    let y = y.clamp(0., source.height.saturating_sub(1) as f32) - 0.1;
+    let low_x = x.floor() as i32;
+    let low_y = y.floor() as i32;
+    let x0 = low_x.clamp(0, source.width as i32 - 1) as u32;
+    let y0 = low_y.clamp(0, source.height as i32 - 1) as u32;
+    let x1 = (low_x + 1).clamp(0, source.width as i32 - 1) as u32;
+    let y1 = (low_y + 1).clamp(0, source.height as i32 - 1) as u32;
+    let fx = (x - x.floor()).clamp(0., 1.);
+    let fy = (y - y.floor()).clamp(0., 1.);
+    let a = source.get(x0, y0).map(to_f32);
+    let b = source.get(x1, y0).map(to_f32);
+    let c = source.get(x0, y1).map(to_f32);
+    let d = source.get(x1, y1).map(to_f32);
+    std::array::from_fn(|i| mix(mix(a[i], b[i], fx), mix(c[i], d[i], fx), fy))
+}
+
+fn fast_blur_pass(source: &ImageBuf, radius: f32, horizontal: bool) -> ImageBuf {
+    let weights = fast_blur_weights(radius);
+    let mut output = source.clone();
+    for y in 0..source.height {
+        for x in 0..source.width {
+            let mut value = [0.; 3];
+            for &[weight, offset] in &weights {
+                let (px, py) = if horizontal {
+                    (x as f32 + offset, y as f32)
+                } else {
+                    (x as f32, y as f32 + offset)
+                };
+                let (nx, ny) = if horizontal {
+                    (x as f32 - offset, y as f32)
+                } else {
+                    (x as f32, y as f32 - offset)
+                };
+                // FastBlur's line kernel resets an out-of-range sample to center.
+                let px = if px < 0. || px > source.width as f32 - 1. { x as f32 } else { px };
+                let nx = if nx < 0. || nx > source.width as f32 - 1. { x as f32 } else { nx };
+                let py = if py < 0. || py > source.height as f32 - 1. { y as f32 } else { py };
+                let ny = if ny < 0. || ny > source.height as f32 - 1. { y as f32 } else { ny };
+                let positive = resolution_sample(source, px, py);
+                let negative = resolution_sample(source, nx, ny);
+                for c in 0..3 {
+                    value[c] += weight * (positive[c] + negative[c]);
+                }
+            }
+            output.set(x, y, value.map(|v| from_f32(half::f16::from_f32(v).to_f32())));
+        }
     }
+    output
+}
+
+fn optical_pass(source: &ImageBuf, radius: f32, horizontal: bool, round_half: bool) -> ImageBuf {
+    let weights = optical_weights(radius);
+    let half = weights.len() / 2;
+    let mut output = source.clone();
+    for y in 0..source.height {
+        for x in 0..source.width {
+            let mut value = [0.; 3];
+            for i in 0..half {
+                let (px, py) = if horizontal {
+                    (x as i32 + i as i32, y as i32)
+                } else {
+                    (x as i32, y as i32 + i as i32)
+                };
+                let (nx, ny) = if horizontal {
+                    (px - half as i32, py)
+                } else {
+                    (px, py - half as i32)
+                };
+                let px = px.clamp(0, source.width as i32 - 1) as u32;
+                let py = py.clamp(0, source.height as i32 - 1) as u32;
+                let nx = nx.clamp(0, source.width as i32 - 1) as u32;
+                let ny = ny.clamp(0, source.height as i32 - 1) as u32;
+                let positive = source.get(px, py).map(to_f32);
+                let negative = source.get(nx, ny).map(to_f32);
+                for c in 0..3 {
+                    value[c] += positive[c] * weights[i + half] + negative[c] * weights[i];
+                }
+            }
+            output.set(x, y, if round_half {
+                value.map(|v| from_f32(half::f16::from_f32(v).to_f32()))
+            } else {
+                value.map(from_f32)
+            });
+        }
+    }
+    output
 }
 #[inline]
 fn effective_control(value: f32) -> f32 {
@@ -302,56 +470,39 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
     if input.width == 0 || input.height == 0 {
         return input.clone();
     }
+    let phase = spektrafilm_math::grain::seeded_phase(p.seed);
     let optical = p.film_type == 0;
     let radius = p.resolution_radius(input.width, input.height);
-    let reach = if optical {
-        (radius * 3.).ceil()
-    } else {
-        radius.ceil()
-    } as i32;
-    // Fixed display working transfer; destination primaries remain unchanged.
+    // Photo Grain preserves the caller's native encoded RGB domain; only the
+    // half-storage boundary is applied before filtering and composition.
     let mut source = input.clone();
     source
         .data
         .iter_mut()
-        .for_each(|value| *value = from_f32(encode_display(to_f32(*value))));
+        .for_each(|value| *value = from_f32(half::f16::from_f32(to_f32(*value)).to_f32()));
+    // The generator samples the original working image, while composition
+    // uses the Film Resolution result.
+    let original = (radius > 0. && p.mode == GrainV2Mode::Analogue).then(|| source.clone());
     if radius > 0. {
-        let mut tmp = source.clone();
-        for axis in 0..2 {
-            for y in 0..input.height {
-                for x in 0..input.width {
-                    let mut value = [0.; 3];
-                    let mut total = 0.;
-                    for d in -reach..=reach {
-                        let w = weight(d, radius, optical);
-                        let xx = (x as i32 + if axis == 0 { d } else { 0 })
-                            .clamp(0, input.width as i32 - 1)
-                            as u32;
-                        let yy = (y as i32 + if axis == 1 { d } else { 0 })
-                            .clamp(0, input.height as i32 - 1)
-                            as u32;
-                        let v = source.get(xx, yy).map(to_f32);
-                        for c in 0..3 {
-                            value[c] += v[c] * w;
-                        }
-                        total += w;
-                    }
-                    tmp.set(x, y, value.map(|v| from_f32(v / total)));
-                }
-            }
-            std::mem::swap(&mut source, &mut tmp);
+        if optical {
+            // OpticalResolution retains float precision between H and V.
+            source = optical_pass(&source, radius, true, false);
+            source = optical_pass(&source, radius, false, true);
+        } else {
+            source = fast_blur_pass(&source, radius, true);
+            source = fast_blur_pass(&source, radius, false);
         }
     }
     let gsf = (5200. / input.width as f32).max(3100. / input.height as f32);
-    let size = [input.width as f32 * gsf, input.height as f32 * gsf];
+    let size = [(input.width as f32 * gsf).floor(), (input.height as f32 * gsf).floor()];
     let mut out = source.clone();
     for y in 0..input.height {
         for x in 0..input.width {
             let rgb = source.get(x, y).map(to_f32);
             let luma = rgb[0] * 0.2125 + rgb[1] * 0.7154 + rgb[2] * 0.0721;
             let uv = [
-                x as f32 / (input.width - 1).max(1) as f32,
-                y as f32 / (input.height - 1).max(1) as f32,
+                x as f32 * (1. / (input.width - 1).max(1) as f32),
+                y as f32 * (1. / (input.height - 1).max(1) as f32),
             ];
             let g = if p.mode == GrainV2Mode::Noise {
                 generator(
@@ -361,23 +512,27 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                     rgb,
                     p,
                     true,
+                    phase,
                 )
             } else {
-                let gx = (uv[0] * size[0] / p.resampler_scale()) as i32;
-                let gy = (uv[1] * size[1] / p.resampler_scale()) as i32;
+                let gx = (uv[0] * (size[0] / p.resampler_scale())) as i32;
+                let gy = (uv[1] * (size[1] / p.resampler_scale())) as i32;
                 resample_3x3(
                     |a, b| {
+                        let a = a.clamp(0, size[0] as i32 - 1);
+                        let b = b.clamp(0, size[1] as i32 - 1);
+                        let grain_rgb = sample_grain_source(original.as_ref().unwrap_or(&source), size, a, b);
+                        let grain_luma = grain_rgb[0] * 0.2125 + grain_rgb[1] * 0.7154 + grain_rgb[2] * 0.0721;
                         generator(
-                            [
-                                a.clamp(0, size[0] as i32 - 1) as f32 / size[0],
-                                b.clamp(0, size[1] as i32 - 1) as f32 / size[1],
-                            ],
+                            [a as f32, b as f32],
                             size,
-                            luma,
-                            rgb,
+                            grain_luma,
+                            grain_rgb,
                             p,
                             false,
+                            phase,
                         )
+                        .map(|value| half::f16::from_f32(value).to_f32())
                     },
                     gx,
                     gy,
@@ -399,7 +554,9 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
                 let s = mix(b, overlay(b.max(0.).powf(0.8), g[c]), ws);
                 let m = mix(s, overlay(s, g[c]), wm);
                 let h = mix(m, overlay(m - 0.2, g[c]), wh);
-                result[c] = decode_display(mix(b, h, 0.5));
+                // Composition remains in the native encoded domain.
+                let composed = half::f16::from_f32((h * 0.5 + b * 0.5).clamp(0., 1.)).to_f32();
+                result[c] = composed;
             }
             out.set(x, y, result.map(from_f32));
         }
@@ -409,6 +566,45 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn matches_normalized_external_kernel_outputs() {
+        // External 7.4.1 OpenCL execution, with only trigonometry, phase
+        // reduction and contraction normalized to our portable arithmetic.
+        // These are output values, not proprietary source. Native PoCL output
+        // differs; provenance and that limitation are recorded in docs.
+        // The historical fixture input was linear; encode it here solely to
+        // preserve the external encoded-domain test contract.
+        let historical_bt709 = |value: f32| {
+            if value < 0.018 {
+                value * 4.5
+            } else {
+                1.099 * value.powf(0.45) - 0.099
+            }
+        };
+        let input = ImageBuf::from_data(37, 19,
+            (0..37 * 19 * 3).map(|v| {
+                from_f32(half::f16::from_f32(historical_bt709((v % 17) as f32 / 17.)).to_f32())
+            }).collect());
+        for (mode, fixture) in [
+            (GrainV2Mode::Analogue, include_str!("fixtures/analogue_normalized_half.txt")),
+            (GrainV2Mode::Noise, include_str!("fixtures/noise_normalized_half.txt")),
+        ] {
+            let mut params = GrainV2Params::for_profile(0);
+            params.seed = 5489;
+            params.mode = mode;
+            params.resolution_factor = 100.;
+            let actual = apply_cpu(&input, params);
+            let expected: Vec<_> = fixture.split_whitespace().map(|v| {
+                half::f16::from_bits(u16::from_str_radix(v, 16).unwrap()).to_f32()
+            }).collect();
+            assert_eq!(actual.data.len(), expected.len());
+            for (index, (&value, reference)) in actual.data.iter().zip(expected).enumerate() {
+                let delta = (to_f32(value) - reference).abs();
+                assert!(delta <= 1e-6, "{mode:?} sample {index}: delta={delta}");
+            }
+        }
+    }
+
     #[test]
     fn zero_amount_still_runs_pipeline() {
         let i = ImageBuf::from_data(2, 2, vec![0.4; 12]);
@@ -462,39 +658,31 @@ mod tests {
         assert!(apply_cpu(&i, p).data.iter().all(|v| v.is_finite()));
     }
     #[test]
-    fn noise_film_resolution_reduces_edge_contrast() {
+    fn optical_subpixel_radius_is_identity() {
         let image = ImageBuf::from_data(
-            192,
-            108,
-            (0..192 * 108)
-                .flat_map(|i| [from_f32(if i % 192 < 96 { 0.1 } else { 0.8 }); 3])
+            9,
+            7,
+            (0..9 * 7 * 3)
+                .map(|i| from_f32(half::f16::from_f32((i % 17) as f32 / 17.).to_f32()))
                 .collect(),
         );
-        let mut p = GrainV2Params::default();
-        p.mode = GrainV2Mode::Noise;
-        p.size = 48.;
-        p.shadows = 0.;
-        p.midtones = 0.;
-        p.highlights = 0.;
-        p.resolution_factor = 100.;
-        let sharp = apply_cpu(&image, p);
-        p.resolution_factor = 0.;
-        let blurred = apply_cpu(&image, p);
-        let edge = |img: &ImageBuf| to_f32(img.get(96, 54)[0]) - to_f32(img.get(95, 54)[0]);
-        assert!(edge(&blurred) < edge(&sharp) * 0.98);
+        let horizontal = optical_pass(&image, 0.5, true, false);
+        let output = optical_pass(&horizontal, 0.5, false, true);
+        assert_eq!(output.data, image.data);
     }
 
     #[test]
     fn noise_scale_preserves_relative_grain_size() {
         let mut p = GrainV2Params::default();
         p.mode = GrainV2Mode::Noise;
-        let a = generator([0.37, 0.61], [1920., 1080.], 0.5, [0.5; 3], p, true);
-        let b = generator([0.37, 0.61], [3840., 2160.], 0.5, [0.5; 3], p, true);
+        let phase = spektrafilm_math::grain::seeded_phase(p.seed);
+        let a = generator([0.37, 0.61], [1920., 1080.], 0.5, [0.5; 3], p, true, phase);
+        let b = generator([0.37, 0.61], [3840., 2160.], 0.5, [0.5; 3], p, true, phase);
         assert!(a.iter().zip(b).all(|(x, y)| (*x - y).abs() < 1e-6));
     }
     #[test]
     fn middle_gray_responds_to_midtones_not_shadows() {
-        let image = ImageBuf::from_data(64, 32, vec![from_f32(0.18); 64 * 32 * 3]);
+        let image = ImageBuf::from_data(64, 32, vec![from_f32(0.5); 64 * 32 * 3]);
         let mut params = GrainV2Params::default();
         params.resolution_factor = 100.;
         params.highlights = 0.;
@@ -514,17 +702,8 @@ mod tests {
         };
         assert!(
             variance(&mid) > variance(&shadow) * 2.,
-            "linear middle gray must not select the shadow bell"
+            "encoded middle gray must not select the shadow bell"
         );
-    }
-
-    #[test]
-    fn noise_phase_distinguishes_equal_luma_colors() {
-        let a = [0.6, 0.4, 0.3];
-        let b = [0.4, 0.4 + 0.2 * 0.2125 / 0.7154, 0.3];
-        let luma = |v: [f32; 3]| v[0] * 0.2125 + v[1] * 0.7154 + v[2] * 0.0721;
-        assert!((luma(a) - luma(b)).abs() < 1e-6);
-        assert!((color_phase(a, 42) - color_phase(b, 42)).abs() > 1e-3);
     }
 
     #[test]

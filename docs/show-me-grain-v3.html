@@ -41,7 +41,7 @@
 <div class="tablewrap"><table><thead><tr><th>对象</th><th>图像与颗粒的关系</th><th>已核实的边界</th></tr></thead><tbody>
 <tr><td><strong>SpektraFilm V1</strong></td><td>总密度反查 3 × 3 子层；按每像素粒子数抽样随机密度，经染料云模糊、子层求和，再进入印相 / 扫描。</td><td>有 µm 尺度与密度域耦合；没有固定晶体位置 / 形状 / 深度。候选粒子统计随目标密度改变，按输出栅格重新抽样。</td></tr>
 <tr><td><strong>Dehancer 已分析 OFX</strong></td><td>程序纹理受局部亮度影响，九点纹理重采样；用亮度分区 Overlay 混合。Film Resolution 先降低图像分辨能力。</td><td>厂商“图像由颗粒组成”的视觉目标不等于逐晶体曝光模拟。已分析 kernel 明确读取现有 RGB 并混合生成纹理；不把一个版本的证据推广到所有产品。</td></tr>
-<tr><td><strong>当前 Grain V2</strong></td><td>扫描后 RGB 进入内部固定显示 transfer；程序颗粒、分区混合与分辨率处理后回到 linear RGB。</td><td>属于 Dehancer 语义的兼容实现；整数梯度、相位、FIR 等不是厂商数值复刻。不同曝光的颗粒外观受控制，但不代表感光乳剂成像。</td></tr>
+<tr><td><strong>当前 Grain V2</strong></td><td>扫描 RGB 按所选输出空间编码后进入 Grain；内核不转换曲线或 primaries。程序颗粒、分区混合与分辨率处理后，仅在线性导出时解码。</td><td>恢复内容相位、sine permutation、half 存储和宿主滤波语义；独立三角函数允许与厂商设备产生不同的随机纹理。不代表感光乳剂成像。</td></tr>
 </tbody></table></div>
 <p class="sources">代码依据：<a href="../crates/spektrafilm-model/src/grain.rs">grain.rs · layer_particle_model / apply_grain_to_density_layers</a>；<a href="../crates/spektrafilm-core/src/stages/filming.rs">filming.rs · 子层密度插值</a>；<a href="../crates/spektrafilm-core/src/stages/scanning.rs">scanning.rs · V2 接入</a>；<a href="dehancer-grain-reverse-engineering.md">Dehancer 逆向笔记 §§5–6、11</a>。</p>
 <details class="panel"><summary>展开：V1 为什么已经有亮度相关的随机性，却仍不是固定乳剂？</summary>

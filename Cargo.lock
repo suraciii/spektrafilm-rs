@@ -3512,6 +3512,7 @@ dependencies = [
 name = "spektrafilm-model"
 version = "0.1.2"
 dependencies = [
+ "half",
  "libm",
  "rand",
  "rand_distr",
