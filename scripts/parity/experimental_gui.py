@@ -111,6 +111,8 @@ class ExperimentalDesktop(X11):
             self.section('Camera')
         if self.locate('print auto compensation'):
             self.section('Enlarger')
+        if self.locate('saving color space'):
+            self.section('Output')
 
     def locate(self, label, *, exact=False, bottom=False):
         image, _, lines = self.read()
@@ -141,6 +143,8 @@ class ExperimentalDesktop(X11):
         return matches[0] if matches else None
 
     def click(self, label, right=True, *, exact=False, bottom=False):
+        if bottom:
+            self.xd('mousemove', '--window', self.window, 100, 100)
         x, y = wait_for(lambda: self.locate(label, exact=exact, bottom=bottom),
                         f'visible control {label}', 25)
         self.snap('click-' + '-'.join(words(label)))
@@ -149,7 +153,20 @@ class ExperimentalDesktop(X11):
         time.sleep(.35)
 
     def tab(self, name):
-        self.click(name)
+        def target():
+            image, _ = self.image()
+            left = image.width - 420
+            crop = image.crop((left, 25, image.width, 55))
+            crop = crop.convert('L').point(lambda value: 0 if value > 125 else 255)
+            data = self.ocr.image_to_data(crop.resize((crop.width * 4, crop.height * 4)),
+                                          config='--psm 7', output_type=self.ocr.Output.DICT)
+            for i, text in enumerate(data['text']):
+                if re.sub(r'[^A-Z]', '', text.upper()) == name:
+                    return left + (data['left'][i] + data['width'][i] / 2) / 4, 25 + (data['top'][i] + data['height'][i] / 2) / 4
+        x, y = wait_for(target, 'native tab ' + name, 25)
+        self.xd('mousemove', '--window', self.window, int(x), int(y))
+        self.xd('click', 1)
+        time.sleep(.35)
         self.current_tab = name
         self.scroll(False)
 

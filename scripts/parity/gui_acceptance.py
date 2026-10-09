@@ -606,13 +606,44 @@ class X11:
         return wait_for(ready, label, 120)
 
     def export_options(self, path):
-        self.wait_text(r'Export\s+options', 'export-options', 20)
+        def modal_read():
+            from scipy.ndimage import label, find_objects
+            from PIL import ImageOps
+            image, bbox = self.image()
+            pixels = np.asarray(image)[:, :int(image.width * .65), :3].astype(np.int16)
+            components, _ = label((pixels.max(axis=2) < 60) &
+                                  (pixels.max(axis=2) - pixels.min(axis=2) < 5))
+            for region in find_objects(components):
+                if region is None:
+                    continue
+                ys, xs = region
+                if not (250 < xs.stop - xs.start < 650 and 100 < ys.stop - ys.start < 650):
+                    continue
+                left, top = xs.start, max(0, ys.start - 36)
+                crop = image.crop((left, top, xs.stop, ys.stop))
+                prepared = ImageOps.autocontrast(ImageOps.invert(ImageOps.grayscale(crop)))
+                data = self.ocr.image_to_data(prepared.resize((crop.width * 3, crop.height * 3)),
+                                              config='--psm 6', output_type=self.ocr.Output.DICT)
+                grouped = {}
+                for i, text in enumerate(data['text']):
+                    if text.strip():
+                        if text.casefold() == 'bitdepth':
+                            text = 'Bit depth'
+                        key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                        grouped.setdefault(key, []).append((text, left + data['left'][i] / 3,
+                            top + data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
+                lines = list(grouped.values())
+                if self.match(lines, 'Format') and self.match(lines, 'Cancel'):
+                    return image, bbox, lines
+            return None
+        wait_for(modal_read, 'visible export modal controls', 20)
         formats = {'.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG',
                    '.tif': 'TIFF', '.tiff': 'TIFF', '.exr': 'EXR'}
         requested = formats.get(Path(path).suffix.lower())
         require(requested, f'Unsupported acceptance export extension: {path}')
         def select(label, option):
-            image, _, lines = self.read()
+            image, _, lines = wait_for(modal_read, 'visible export modal controls', 20)
+            self.snap('modal-before-' + label.replace(' ', '-'), image, lines)
             matches = self.match(lines, label)
             matches = [(x, y) for x, y in matches if x < self.right_control_x]
             require(matches, f'Export options control is not visible: {label}')
@@ -624,7 +655,9 @@ class X11:
             left = [word for line in lines for word in line
                     if abs(word[2] + word[4] / 2 - y) < 10 and word[1] + word[3] < label_left]
             require(left, f'Export options selected value is not visible: {label}')
-            value = max(left, key=lambda word: word[1])
+            if self.match([left], option):
+                return
+            value = left[0]
             self.xd('mousemove', '--window', self.window, int(value[1] + value[3] / 2), int(y))
             self.xd('click', 1)
             def choose():
@@ -642,7 +675,10 @@ class X11:
         if requested in ('TIFF', 'EXR'):
             select('Bit depth', '16 bit')
         def submit():
-            image, _, lines = self.read()
+            result = modal_read()
+            if result is None:
+                return None
+            image, _, lines = result
             cancels = [(x, y) for x, y in self.match(lines, 'Cancel')
                        if x < self.right_control_x]
             candidates = [(x, y) for x, y in self.match(lines, 'Export')

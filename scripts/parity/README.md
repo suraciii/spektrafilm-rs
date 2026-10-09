@@ -140,6 +140,12 @@ the requested Preview or Scan completion after resetting the prior status.
 RAW import requires the pinned fixture's loaded/full dimensions or corresponding
 preview dimensions, plus saved ACES2065-1 state with decoding disabled; transient
 Loaded text can be replaced by a completed preview.
+The driver normalizes initially expanded sections before topology checks and
+reads tab labels in the dedicated header region. Before selecting a footer
+action it moves the pointer away so hover highlighting does not hide the text.
+Export modal controls are read from their visible panel with independent
+contrast normalization; the loaded image cannot determine modal OCR contrast.
+Selected values are checked before opening a combo menu.
 
 Profile selection records the open menu and scrolls one wheel increment between
 observations so intermediate stock rows cannot be skipped.
