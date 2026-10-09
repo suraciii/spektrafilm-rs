@@ -72,19 +72,21 @@ fn dgemm_blas(
     #[cfg(target_os = "windows")]
     {
         let _ = ldb;
-        c.par_chunks_exact_mut(n).enumerate().for_each(|(row, crow)| {
-            for col in 0..n {
-                let mut sum = 0.0f64;
-                for kk in 0..k {
-                    let bv = match trans_b {
-                        Transpose::None => b[kk * n + col],
-                        Transpose::Ordinary => b[col * k + kk],
-                    };
-                    sum += a[row * k + kk] * bv;
+        c.par_chunks_exact_mut(n)
+            .enumerate()
+            .for_each(|(row, crow)| {
+                for col in 0..n {
+                    let mut sum = 0.0f64;
+                    for kk in 0..k {
+                        let bv = match trans_b {
+                            Transpose::None => b[kk * n + col],
+                            Transpose::Ordinary => b[col * k + kk],
+                        };
+                        sum += a[row * k + kk] * bv;
+                    }
+                    crow[col] = sum;
                 }
-                crow[col] = sum;
-            }
-        });
+            });
     }
 }
 
@@ -282,9 +284,22 @@ pub fn scan_log_xyz_cpu(
     normalization: f64,
 ) -> Vec<f64> {
     let cmfs: Vec<[f64; 3]> = (0..spectral::N_WAVELENGTHS)
-        .map(|i| [spectral::CMF_X_F64[i], spectral::CMF_Y_F64[i], spectral::CMF_Z_F64[i]])
+        .map(|i| {
+            [
+                spectral::CMF_X_F64[i],
+                spectral::CMF_Y_F64[i],
+                spectral::CMF_Z_F64[i],
+            ]
+        })
         .collect();
-    scan_log_xyz_cpu_with_cmfs(density_cmy, channel_density, base_density, illuminant, &cmfs, normalization)
+    scan_log_xyz_cpu_with_cmfs(
+        density_cmy,
+        channel_density,
+        base_density,
+        illuminant,
+        &cmfs,
+        normalization,
+    )
 }
 
 /// Runtime-grid variant of [`scan_log_xyz_cpu`]. No wavelength limit is applied
@@ -351,11 +366,23 @@ pub fn scan_spectral_cpu(
     xyz_to_rgb: &[[f64; 3]; 3],
 ) -> ImageBuf {
     let cmfs: Vec<[f64; 3]> = (0..spectral::N_WAVELENGTHS)
-        .map(|i| [spectral::CMF_X_F64[i], spectral::CMF_Y_F64[i], spectral::CMF_Z_F64[i]])
+        .map(|i| {
+            [
+                spectral::CMF_X_F64[i],
+                spectral::CMF_Y_F64[i],
+                spectral::CMF_Z_F64[i],
+            ]
+        })
         .collect();
     scan_spectral_cpu_with_cmfs(
-        density_cmy, channel_density, base_density, illuminant, &cmfs,
-        normalization, cat, xyz_to_rgb,
+        density_cmy,
+        channel_density,
+        base_density,
+        illuminant,
+        &cmfs,
+        normalization,
+        cat,
+        xyz_to_rgb,
     )
 }
 

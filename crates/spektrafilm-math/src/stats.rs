@@ -39,8 +39,7 @@ impl FastStatsRng {
     /// `tag` so a poisson pass and a binomial pass over the same element do
     /// not replay each other's uniforms.
     pub fn stream(base_seed: u64, tag: u64, index: u64) -> Self {
-        let mut z = base_seed
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        let mut z = base_seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ tag.wrapping_mul(0xBF58_476D_1CE4_E5B9)
             ^ index.wrapping_mul(0x94D0_49BB_1331_11EB);
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -101,11 +100,7 @@ pub fn fast_poisson(rng: &mut FastStatsRng, lam: f64) -> i64 {
     } else {
         let sample = lam + lam.sqrt() * rng.randn();
         let sample_int = sample.round() as i64;
-        if sample_int < 0 {
-            0
-        } else {
-            sample_int
-        }
+        if sample_int < 0 { 0 } else { sample_int }
     }
 }
 

@@ -80,7 +80,6 @@ impl ImageBuf {
         rotated
     }
 
-
     pub fn pixels(&self) -> impl Iterator<Item = &[Scalar]> {
         self.data.chunks_exact(3)
     }
@@ -217,7 +216,13 @@ mod tests {
         assert_eq!(ccw.get(0, 0), image.get(1, 0));
         assert_eq!(ccw.get(2, 0), image.get(1, 2));
         assert_eq!(ccw.get(0, 1), image.get(0, 0));
-        assert_eq!(image.rotated_quarter_turns(-1).rotated_quarter_turns(1).data, image.data);
+        assert_eq!(
+            image
+                .rotated_quarter_turns(-1)
+                .rotated_quarter_turns(1)
+                .data,
+            image.data
+        );
         assert_eq!(image.rotated_quarter_turns(4).data, image.data);
     }
 }

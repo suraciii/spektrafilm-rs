@@ -343,7 +343,7 @@ GPU preview uses f32 WGPU compute shaders. Effect-specific shaders live beside t
 crates/
   spektrafilm-math/    f64 reference math (spectral, interp, PCHIP, RNG, vForce bindings)
   spektrafilm-model/   stochastic + physical models (grain, halation, DIR couplers, glare)
-  spektrafilm-core/    pipeline orchestration, profiles, stage definitions
+  spektrafilm-core/    runtime facade, pipeline orchestration, profiles, stage definitions
   spektrafilm-gpu/     ComputeBackend trait + CPU (rayon + BLAS) and wgpu backends
   spektrafilm-shaders/ spectral WGSL shaders and standalone Metal sources
   spektrafilm-cli/     `spektrafilm` / `spektrafilm-f64` (process, list-profiles, lut, export-lut) + `decode_raw_gui`
@@ -357,6 +357,10 @@ data/
   license/             canonical spectral-data license
 scripts/parity/        Python 0.3.4 ↔ Rust differential harness (scenarios.py, py_reference.py, run_parity.py, gen_matrix.py)
 ```
+
+Production image execution enters through `spektrafilm_core::runtime`: `RuntimePhotoParams` owns the profile/data boundary and applies `DigestMode::PreserveUserEdits` for GUI edits or `DigestMode::ApplyStockSpecifics` for CLI/LUT construction. `Runtime` owns the calibrated pipeline and exposes processing/taps/timings. GUI export passes the preserve-edits policy privately to its CLI child, so profile defaults do not overwrite edited controls. CPU f64 reference/export, WGPU f32 preview, and explicit per-stage CPU fallback remain backend-specific below this boundary.
+
+Shared film/print curve and spectral preparation lives in `chain_prep`; stages and the resident builder consume the same derivations. Backend-specific arithmetic, resource ownership and dispatch remain separate. See [the current P1+P2 record](GPU_UNIFY_PLAN.md#p1p2-当前实现2026-10-09) for the execution contract and verification limits.
 
 Feature ownership stays inside the existing crates:
 

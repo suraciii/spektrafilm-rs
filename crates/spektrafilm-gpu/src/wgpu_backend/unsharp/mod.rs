@@ -1,5 +1,5 @@
-use super::*;
 use super::blur::{BlurJob, DispatchJob};
+use super::*;
 
 /// Pre-built unsharp mask pass — owns the blur and the combine dispatch.
 ///
@@ -52,14 +52,10 @@ pub(super) fn build_unsharp_state(
         wgpu::BufferBindingType::Storage { read_only: true },
         wgpu::BufferBindingType::Storage { read_only: false },
     ];
-    let blur_pipe_h = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_h.wgsl"),
-        blur_layout,
-    );
-    let blur_pipe_v = backend.cached_pipeline(
-        include_str!("../blur/gaussian_blur_v.wgsl"),
-        blur_layout,
-    );
+    let blur_pipe_h =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
+    let blur_pipe_v =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
 
     let sigma = up.sigma_px.max(0.01);
     let radius = fir_blur_radius(sigma);

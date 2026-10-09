@@ -1,13 +1,13 @@
 //! Stable runtime facade hiding the calibrated pipeline internals.
+use crate::params::{RuntimeParams, Tap};
+use crate::pipeline::Pipeline;
+use crate::profile;
+use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_math::image::ImageBuf;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use spektrafilm_gpu::ComputeBackend;
-use spektrafilm_math::image::ImageBuf;
-use crate::params::{RuntimeParams, Tap};
-use crate::pipeline::Pipeline;
-use crate::profile;
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
@@ -22,7 +22,21 @@ pub struct SoftUpdate {
     pub film_density_curves: Option<Vec<Vec<f64>>>,
     pub print_density_curves: Option<Vec<Vec<f64>>>,
 }
+/// Selects whether profile-specific defaults are applied when building a runtime.
+///
+/// GUI edits use `PreserveUserEdits`; batch and LUT construction use
+/// `ApplyStockSpecifics`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DigestMode {
+    PreserveUserEdits,
+    ApplyStockSpecifics,
+}
 
+impl DigestMode {
+    fn apply_stock_specifics(self) -> bool {
+        matches!(self, Self::ApplyStockSpecifics)
+    }
+}
 
 /// Rust representation of upstream `RuntimePhotoParams`.
 ///
@@ -35,6 +49,48 @@ pub struct RuntimePhotoParams {
     pub params: RuntimeParams,
     pub data_dir: std::path::PathBuf,
 }
+/// Apply the shared upstream-compatible parameter digest in one place.
+pub fn digest_params_with_neutral(
+    params: RuntimeParams,
+    film: &profile::Profile,
+    print: &profile::Profile,
+    neutral: &crate::neutral_filters::NeutralFilters,
+    mode: DigestMode,
+) -> RuntimeParams {
+    crate::params_builder::digest_params(
+        params,
+        film,
+        print,
+        Some(neutral),
+        mode.apply_stock_specifics(),
+    )
+}
+
+impl RuntimePhotoParams {
+    /// Resolve user-facing parameters with the supplied neutral-filter data.
+    pub fn digested_params_with_neutral(
+        &self,
+        mode: DigestMode,
+        neutral: &crate::neutral_filters::NeutralFilters,
+    ) -> RuntimeParams {
+        digest_params_with_neutral(self.params.clone(), &self.film, &self.print, neutral, mode)
+    }
+
+    /// Resolve user-facing parameters using the shared digest precedence.
+    pub fn digested_params(&self, mode: DigestMode) -> Result<RuntimeParams, String> {
+        let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
+        Ok(self.digested_params_with_neutral(mode, &neutral))
+    }
+
+    /// Build a calibrated runtime after applying the selected digest policy.
+    pub fn into_runtime(self, mode: DigestMode) -> Result<Runtime, String> {
+        let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
+        let params =
+            digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
+        Runtime::new(self.film, self.print, params, &self.data_dir)
+    }
+}
+
 #[derive(Clone)]
 pub struct Runtime {
     pipeline: Pipeline,
@@ -75,14 +131,10 @@ impl Runtime {
         Self::new(photo.film, photo.print, photo.params, &photo.data_dir)
     }
 
-
-    fn record_elapsed(&self, started: Instant, mut stage_timings: Option<Timings>) {
+    fn record_elapsed(&self, started: Instant, stage_timings: Option<Timings>) {
         let elapsed = started.elapsed().as_secs_f64();
         if let Ok(mut timings) = self.timings.lock() {
-            timings.clear();
-            if let Some(stage_timings) = stage_timings.as_mut() {
-                timings.extend(stage_timings.iter().map(|(name, elapsed)| (name.clone(), *elapsed)));
-            }
+            *timings = stage_timings.unwrap_or_default();
             timings.insert("total".into(), elapsed);
         }
         if let Ok(mut last) = self.last_elapsed_seconds.lock() {
@@ -95,11 +147,7 @@ impl Runtime {
         image: ImageBuf,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
-        let started = Instant::now();
-        let mut stage_timings = BTreeMap::new();
-        let result = self.pipeline.process_with_timings(image, backend, &mut stage_timings);
-        self.record_elapsed(started, Some(stage_timings));
-        result
+        self.process_with_taps(image, backend, None, None)
     }
 
     pub fn process_with_taps(
@@ -152,6 +200,11 @@ impl Runtime {
         )?;
         Ok(())
     }
+    /// Return a runtime with updated parameters while retaining the facade state.
+    pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
+        self.pipeline = self.pipeline.with_params(params)?;
+        Ok(self)
+    }
 
     pub fn soft_update(&mut self, params: RuntimeParams) -> Result<(), String> {
         self.update(params)
@@ -200,11 +253,17 @@ impl Runtime {
     }
 
     pub fn get_timings(&self) -> Timings {
-        self.timings.lock().map(|timings| timings.clone()).unwrap_or_default()
+        self.timings
+            .lock()
+            .map(|timings| timings.clone())
+            .unwrap_or_default()
     }
 
     pub fn get_total_elapsed_time(&self) -> Option<f64> {
-        self.last_elapsed_seconds.lock().ok().and_then(|elapsed| *elapsed)
+        self.last_elapsed_seconds
+            .lock()
+            .ok()
+            .and_then(|elapsed| *elapsed)
     }
 
     pub fn format_timings(&self) -> String {
@@ -214,7 +273,11 @@ impl Runtime {
                 output.push_str(&format!("  Total  {:.3} ms  100.0%\n", total * 1000.0));
                 for (label, elapsed) in self.get_timings() {
                     if label != "total" {
-                        let percentage = if total > 0.0 { elapsed / total * 100.0 } else { 0.0 };
+                        let percentage = if total > 0.0 {
+                            elapsed / total * 100.0
+                        } else {
+                            0.0
+                        };
                         output.push_str(&format!(
                             "  {label:<24} {:.3} ms  {percentage:.1}%\n",
                             elapsed * 1000.0
@@ -243,7 +306,12 @@ pub fn init_params(
         .map_err(|e| format!("loading film profile {film_profile:?}: {e}"))?;
     let print = profile::load_profile_by_name(data_dir, print_profile)
         .map_err(|e| format!("loading print profile {print_profile:?}: {e}"))?;
-    Ok(photo_params(film, print, RuntimeParams::default(), data_dir))
+    Ok(photo_params(
+        film,
+        print,
+        RuntimeParams::default(),
+        data_dir,
+    ))
 }
 
 /// Build the explicit Rust equivalent of upstream `photo_params`.
@@ -270,14 +338,7 @@ pub fn simulate(
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
     let params = if digest_params_first {
-        let neutral = crate::neutral_filters::NeutralFilters::load(&photo.data_dir)?;
-        crate::params_builder::digest_params(
-            photo.params.clone(),
-            &photo.film,
-            &photo.print,
-            Some(&neutral),
-            true,
-        )
+        photo.digested_params(DigestMode::ApplyStockSpecifics)?
     } else {
         photo.params.clone()
     };
@@ -302,17 +363,9 @@ pub fn simulate_preview(
     digest_params_first: bool,
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
-    let preview = crate::params_builder::resize_for_preview(
-        &image,
-        photo.params.settings.preview_max_size,
-    );
-    simulate(
-        preview,
-        photo,
-        backend,
-        digest_params_first,
-        print_timings,
-    )
+    let preview =
+        crate::params_builder::resize_for_preview(&image, photo.params.settings.preview_max_size);
+    simulate(preview, photo, backend, digest_params_first, print_timings)
 }
 
 /// Legacy ART compatibility name.
@@ -342,20 +395,13 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.camera.auto_exposure = false;
         params.settings.preview_max_size = 1;
-        let runtime = Runtime::from_stocks(
-            "kodak_portra_400",
-            "kodak_portra_endura",
-            params,
-            &dir,
-        )
-        .unwrap();
+        let runtime =
+            Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &dir).unwrap();
         let backend = CpuBackend;
         let image = ImageBuf::from_data(
             2,
             2,
-            (0..12)
-                .map(|i| from_f64(0.1 + i as f64 * 0.01))
-                .collect(),
+            (0..12).map(|i| from_f64(0.1 + i as f64 * 0.01)).collect(),
         );
         let output = runtime.process_configured_preview(image, &backend).unwrap();
         assert_eq!((output.width, output.height), (1, 1));

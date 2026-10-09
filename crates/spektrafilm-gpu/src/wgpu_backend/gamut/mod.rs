@@ -1,5 +1,5 @@
-use super::*;
 use super::blur::DispatchJob;
+use super::*;
 
 /// Pre-built output gamut compression pass — a single per-pixel dispatch
 /// in place on `buf_b` (the scan output), between glare and unsharp,
@@ -100,11 +100,7 @@ pub(super) fn build_gamut_state(
 
 #[cfg(feature = "wgpu-backend")]
 impl GamutState {
-    pub(super) fn encode_passes(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        n_pixels: u32,
-    ) {
+    pub(super) fn encode_passes(&self, encoder: &mut wgpu::CommandEncoder, n_pixels: u32) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("gamut_compress"),
             timestamp_writes: None,

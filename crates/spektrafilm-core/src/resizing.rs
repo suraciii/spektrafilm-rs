@@ -92,7 +92,11 @@ fn crop_rect(
     size: [f64; 2],
 ) -> Result<(usize, usize, usize, usize), String> {
     let dims = [h as i64, w as i64];
-    if center.iter().chain(size.iter()).any(|v| !v.is_finite() || v.abs() > i32::MAX as f64) {
+    if center
+        .iter()
+        .chain(size.iter())
+        .any(|v| !v.is_finite() || v.abs() > i32::MAX as f64)
+    {
         return Err("io.crop_center and io.crop_size must contain finite normalized coordinates within image index limits".into());
     }
     let max_dim = h.max(w) as f64;
@@ -134,12 +138,7 @@ fn crop_rect(
             "io.crop_size {:?} rounds to {}x{} px on a {}x{} image \
              (each component is a fraction of the {} px long edge) — the crop \
              would be empty; increase io.crop_size",
-            size,
-            cw,
-            ch,
-            w,
-            h,
-            max_dim
+            size, cw, ch, w, h, max_dim
         ));
     }
     Ok((c0 as usize, r0 as usize, cw as usize, ch as usize))
@@ -235,7 +234,10 @@ mod tests {
         let img = coded_img(200, 100);
         let out = crop_image(&img, [0.5, 0.5], [0.1, 0.1]).unwrap();
         assert_eq!((out.width, out.height), (20, 20));
-        assert_eq!(corners(&out), [(90.0, 40.0), (109.0, 40.0), (90.0, 59.0), (109.0, 59.0)]);
+        assert_eq!(
+            corners(&out),
+            [(90.0, 40.0), (109.0, 40.0), (90.0, 59.0), (109.0, 59.0)]
+        );
     }
 
     #[test]
@@ -244,7 +246,10 @@ mod tests {
         let img = coded_img(200, 100);
         let out = crop_image(&img, [0.9, 0.1], [0.1, 0.1]).unwrap();
         assert_eq!((out.width, out.height), (20, 20));
-        assert_eq!(corners(&out), [(170.0, 0.0), (189.0, 0.0), (170.0, 19.0), (189.0, 19.0)]);
+        assert_eq!(
+            corners(&out),
+            [(170.0, 0.0), (189.0, 0.0), (170.0, 19.0), (189.0, 19.0)]
+        );
     }
 
     #[test]
@@ -253,10 +258,16 @@ mod tests {
         let img = coded_img(200, 100);
         let out = crop_image(&img, [1.0, 0.5], [0.1, 0.1]).unwrap();
         assert_eq!((out.width, out.height), (20, 20));
-        assert_eq!(corners(&out), [(180.0, 40.0), (199.0, 40.0), (180.0, 59.0), (199.0, 59.0)]);
+        assert_eq!(
+            corners(&out),
+            [(180.0, 40.0), (199.0, 40.0), (180.0, 59.0), (199.0, 59.0)]
+        );
 
         let out = crop_image(&img, [0.0, 0.0], [0.1, 0.1]).unwrap();
-        assert_eq!(corners(&out), [(0.0, 0.0), (19.0, 0.0), (0.0, 19.0), (19.0, 19.0)]);
+        assert_eq!(
+            corners(&out),
+            [(0.0, 0.0), (19.0, 0.0), (0.0, 19.0), (19.0, 19.0)]
+        );
     }
 
     #[test]
@@ -266,7 +277,10 @@ mod tests {
         let img = coded_img(100, 60);
         let out = crop_image(&img, [0.5, 0.5], [0.5, 0.25]).unwrap();
         assert_eq!((out.width, out.height), (50, 25));
-        assert_eq!(corners(&out), [(25.0, 18.0), (74.0, 18.0), (25.0, 42.0), (74.0, 42.0)]);
+        assert_eq!(
+            corners(&out),
+            [(25.0, 18.0), (74.0, 18.0), (25.0, 42.0), (74.0, 42.0)]
+        );
     }
 
     #[test]
@@ -276,7 +290,10 @@ mod tests {
         let img = coded_img(200, 100);
         let out = crop_image(&img, [0.5, 0.5], [1.0, 1.0]).unwrap();
         assert_eq!((out.width, out.height), (200, 100));
-        assert_eq!(corners(&out), [(0.0, 0.0), (199.0, 0.0), (0.0, 99.0), (199.0, 99.0)]);
+        assert_eq!(
+            corners(&out),
+            [(0.0, 0.0), (199.0, 0.0), (0.0, 99.0), (199.0, 99.0)]
+        );
     }
 
     #[test]
@@ -286,7 +303,10 @@ mod tests {
         let img = coded_img(200, 100);
         let out = crop_image(&img, [0.5, 0.5], [0.75, 0.75]).unwrap();
         assert_eq!((out.width, out.height), (150, 50));
-        assert_eq!(corners(&out), [(25.0, 50.0), (174.0, 50.0), (25.0, 99.0), (174.0, 99.0)]);
+        assert_eq!(
+            corners(&out),
+            [(25.0, 50.0), (174.0, 50.0), (25.0, 99.0), (174.0, 99.0)]
+        );
     }
 
     #[test]
@@ -295,7 +315,10 @@ mod tests {
         let img = coded_img(101, 101);
         let out = crop_image(&img, [0.5, 0.5], [0.2, 0.2]).unwrap();
         assert_eq!((out.width, out.height), (20, 20));
-        assert_eq!(corners(&out), [(40.0, 40.0), (59.0, 40.0), (40.0, 59.0), (59.0, 59.0)]);
+        assert_eq!(
+            corners(&out),
+            [(40.0, 40.0), (59.0, 40.0), (40.0, 59.0), (59.0, 59.0)]
+        );
     }
 
     #[test]
@@ -305,7 +328,10 @@ mod tests {
         let img = coded_img(103, 101);
         let out = crop_image(&img, [0.33, 0.67], [0.11, 0.37]).unwrap();
         assert_eq!((out.width, out.height), (11, 38));
-        assert_eq!(corners(&out), [(28.0, 49.0), (38.0, 49.0), (28.0, 86.0), (38.0, 86.0)]);
+        assert_eq!(
+            corners(&out),
+            [(28.0, 49.0), (38.0, 49.0), (28.0, 86.0), (38.0, 86.0)]
+        );
     }
 
     #[test]
