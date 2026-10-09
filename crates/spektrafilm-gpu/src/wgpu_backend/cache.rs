@@ -56,11 +56,10 @@ impl PipelineCache {
         device: &wgpu::Device,
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
-    ) -> (CachedPipelineRef, bool) {
+    ) -> CachedPipelineRef {
         let key = PipelineKey::new(shader_source, binding_types);
         let mut cache = self.pipelines.lock();
-        let hit = cache.contains_key(&key);
-        if !hit {
+        if !cache.contains_key(&key) {
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("compute_shader"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_source)),
@@ -106,13 +105,10 @@ impl PipelineCache {
             );
         }
         let cached = cache.get(&key).expect("pipeline was inserted or cached");
-        (
-            CachedPipelineRef {
-                pipeline: cached.pipeline.clone(),
-                layout: cached.bind_group_layout.clone(),
-            },
-            hit,
-        )
+        CachedPipelineRef {
+            pipeline: cached.pipeline.clone(),
+            layout: cached.bind_group_layout.clone(),
+        }
     }
 }
 
