@@ -15,8 +15,7 @@ use spektrafilm_math::precision::{from_f64, to_f64};
 use crate::lut_transport::{self, ColorSpaceEntry};
 use crate::neutral_filters::NeutralFilters;
 use crate::params::{InputGamutCompressParams, OutputGamutCompressParams, RuntimeParams, Tap};
-use crate::params_builder::digest_params;
-use crate::pipeline::Pipeline;
+use crate::runtime::{digest_params_with_neutral, DigestMode, Runtime};
 use crate::profile;
 
 pub const REFERENCE_COMMIT: &str = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc";
@@ -294,7 +293,7 @@ impl BundleBuilder {
             let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&snapshot).map_err(|e| e.to_string())?));
             snapshots.insert(print.clone(), snapshot);
             digests.insert(print.clone(), digest);
-            baked_params.insert(print.clone(), pipeline.params.clone());
+            baked_params.insert(print.clone(), pipeline.params().clone());
             for recipe in recipes.iter().filter(|r| !r.shared) {
                 let (path,lut,meta) = bake_recipe(recipe, Some(print), pipeline, &spec, &wires, input, output, backend)?;
                 luts.push((path,lut)); metas.push(meta);
@@ -318,11 +317,11 @@ impl BundleBuilder {
     }
 }
 
-fn make_pipeline(spec: &BundleSpec, print_stock: &str, input: &ColorSpaceEntry, output: &ColorSpaceEntry, data_dir: &Path, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>) -> Result<Pipeline,String> {
+fn make_pipeline(spec: &BundleSpec, print_stock: &str, input: &ColorSpaceEntry, output: &ColorSpaceEntry, data_dir: &Path, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>) -> Result<Runtime,String> {
     let film = profile::load_profile_by_name(data_dir,&spec.film_profile).map_err(|e| e.to_string())?;
     let print = profile::load_profile_by_name(data_dir,print_stock).map_err(|e| e.to_string())?;
     let params = bake_params(spec, input, output, &film, &print, neutral, base_params, true)?;
-    Pipeline::new_with_spectral(film,print,params,data_dir)
+    Runtime::new(film,print,params,data_dir)
 }
 
 pub(crate) fn bake_params(spec: &BundleSpec, input: &ColorSpaceEntry, output: &ColorSpaceEntry, film: &profile::Profile, print: &profile::Profile, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>, lut_mode: bool) -> Result<RuntimeParams, String> {
@@ -345,15 +344,21 @@ pub(crate) fn bake_params(spec: &BundleSpec, input: &ColorSpaceEntry, output: &C
         params.io.input_gamut_compress.active = false;
     }
     params.validate()?;
-    Ok(digest_params(params, film, print, Some(neutral), true))
+    Ok(digest_params_with_neutral(
+        params,
+        film,
+        print,
+        neutral,
+        DigestMode::ApplyStockSpecifics,
+    ))
 }
 
-fn bake_snapshot(spec: &BundleSpec, print_stock: &str, pipeline: &Pipeline, input: &ColorSpaceEntry, output: &ColorSpaceEntry, data_dir: &Path, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>) -> Result<serde_json::Value, String> {
+fn bake_snapshot(spec: &BundleSpec, print_stock: &str, pipeline: &Runtime, input: &ColorSpaceEntry, output: &ColorSpaceEntry, data_dir: &Path, neutral: &NeutralFilters, base_params: Option<&RuntimeParams>) -> Result<serde_json::Value, String> {
     let film = profile::load_profile_by_name(data_dir, &spec.film_profile).map_err(|e| e.to_string())?;
     let print = profile::load_profile_by_name(data_dir, print_stock).map_err(|e| e.to_string())?;
     let reference = bake_params(spec, input, output, &film, &print, neutral, base_params, false)?;
     let before = serde_json::to_value(reference).map_err(|e| e.to_string())?;
-    let mut snapshot = serde_json::to_value(&pipeline.params).map_err(|e| e.to_string())?;
+    let mut snapshot = serde_json::to_value(pipeline.params()).map_err(|e| e.to_string())?;
     let mut changes = BTreeMap::new();
     collect_digest_changes("", &before, &snapshot, &mut changes);
     snapshot["film"] = serde_json::json!({"stock":film.info.stock,"version":film.metadata.version});
@@ -391,7 +396,7 @@ fn lattice_image(n: usize, inject: Tap, spec: &BundleSpec, wires: &BoundaryWires
     } } }
     Ok(ImageBuf::from_data((n*n) as u32,n as u32,data))
 }
-fn measure_wires(pipeline: &Pipeline,spec: &BundleSpec,input: &ColorSpaceEntry,backend: &dyn ComputeBackend) -> Result<BoundaryWires,String> {
+fn measure_wires(pipeline: &Runtime,spec: &BundleSpec,input: &ColorSpaceEntry,backend: &dyn ComputeBackend) -> Result<BoundaryWires,String> {
     let mut wires = BoundaryWires::default();
     for &tap in spec.topology.taps().iter().skip(1).filter(|&&t|t != Tap::RgbOut) {
         let image = lattice_image(9,Tap::RgbIn,spec,&wires,input)?;
@@ -435,7 +440,7 @@ fn recipes(topology:Topology,combinations:bool)->Vec<Recipe> {
     result
 }
 #[allow(clippy::too_many_arguments)]
-fn bake_recipe(recipe:&Recipe,print:Option<&str>,pipeline:&Pipeline,spec:&BundleSpec,wires:&BoundaryWires,input:&ColorSpaceEntry,output:&ColorSpaceEntry,backend:&dyn ComputeBackend)->Result<(String,Lut,LutFileMeta),String> {
+fn bake_recipe(recipe:&Recipe,print:Option<&str>,pipeline:&Runtime,spec:&BundleSpec,wires:&BoundaryWires,input:&ColorSpaceEntry,output:&ColorSpaceEntry,backend:&dyn ComputeBackend)->Result<(String,Lut,LutFileMeta),String> {
     let image = lattice_image(spec.resolution,recipe.inject,spec,wires,input)?;
     let raw = pipeline.process_with_taps(image,backend,Some(recipe.inject),Some(recipe.collect))?;
     let mut table = Vec::with_capacity(spec.resolution.pow(3));

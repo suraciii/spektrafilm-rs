@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use nalgebra::Matrix3;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::{image::ImageBuf, precision::{from_f64,to_f64}, colorspace::chromatic_adaptation_matrix_cat16_f64};
-use crate::{lut_baker::{Bundle,Lut,Topology,REFERENCE_COMMIT}, lut_transport::{self,ColorSpaceEntry}, pipeline::Pipeline, params::Tap, neutral_filters::NeutralFilters, profile, gamut_compression::OutputGamutCompress};
+use crate::{lut_baker::{Bundle,Lut,Topology,REFERENCE_COMMIT}, lut_transport::{self,ColorSpaceEntry}, runtime::Runtime, params::Tap, neutral_filters::NeutralFilters, profile, gamut_compression::OutputGamutCompress};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QaResult {
@@ -142,7 +142,7 @@ fn tetra(lut:&Lut,p:[f64;3])->[f64;3]{
     let mut order=[0,1,2];order.sort_by(|&a,&b|f[b].total_cmp(&f[a]));let mut vertex=lo;let mut out=lut.at(vertex[0],vertex[1],vertex[2]);
     for &axis in &order{let prev=lut.at(vertex[0],vertex[1],vertex[2]);vertex[axis]+=1;let next=lut.at(vertex[0],vertex[1],vertex[2]);for c in 0..3{out[c]+=f[axis]*(next[c]-prev[c]);}}out
 }
-fn make_pipeline(bundle:&Bundle,print:&str,input:&ColorSpaceEntry,output:&ColorSpaceEntry,data:&Path,unbounded:bool)->Result<Pipeline,String>{
+fn make_pipeline(bundle:&Bundle,print:&str,input:&ColorSpaceEntry,output:&ColorSpaceEntry,data:&Path,unbounded:bool)->Result<Runtime,String>{
     let film=profile::load_profile_by_name(data,&bundle.spec.film_profile).map_err(|e|e.to_string())?;let paper=profile::load_profile_by_name(data,print).map_err(|e|e.to_string())?;
     let mut params = if let Some(params) = bundle.baked_params.get(print) {
         params.clone()
@@ -156,13 +156,13 @@ fn make_pipeline(bundle:&Bundle,print:&str,input:&ColorSpaceEntry,output:&ColorS
     };
     if unbounded { params.io.output_gamut_compress.algorithm="off".into(); }
     params.validate()?;
-    Pipeline::new_with_spectral(film,paper,params,data)
+    Runtime::new(film,paper,params,data)
 }
-fn process_linear(pipe:&Pipeline,samples:&[[f64;3]],backend:&dyn ComputeBackend)->Result<Vec<[f64;3]>,String>{
+fn process_linear(pipe:&Runtime,samples:&[[f64;3]],backend:&dyn ComputeBackend)->Result<Vec<[f64;3]>,String>{
     let data=samples.iter().flatten().map(|&v|from_f64(v as f32 as f64)).collect();let out=pipe.process_with_taps(ImageBuf::from_data(samples.len() as u32,1,data),backend,Some(Tap::RgbIn),Some(Tap::RgbOut))?;
     let rows:Vec<_>=out.data.chunks_exact(3).map(|p|[to_f64(p[0]),to_f64(p[1]),to_f64(p[2])]).collect();if rows.iter().flatten().any(|x|!x.is_finite()){return Err("QA scientific reference produced nonfinite output".into());}Ok(rows)
 }
-fn reference(pipe:&Pipeline,samples:&[[f64;3]],input:&ColorSpaceEntry,output:&ColorSpaceEntry,gain:f64,backend:&dyn ComputeBackend)->Result<Vec<[f64;3]>,String>{let linear:Vec<_>=samples.iter().map(|&p|input.decode_rgb(p).map(|v|v*gain)).collect();Ok(process_linear(pipe,&linear,backend)?.into_iter().map(|p|output.encode_rgb(p.map(|v|v*output.output_gain())).map(|v|v.clamp(0.,1.))).collect())}
+fn reference(pipe:&Runtime,samples:&[[f64;3]],input:&ColorSpaceEntry,output:&ColorSpaceEntry,gain:f64,backend:&dyn ComputeBackend)->Result<Vec<[f64;3]>,String>{let linear:Vec<_>=samples.iter().map(|&p|input.decode_rgb(p).map(|v|v*gain)).collect();Ok(process_linear(pipe,&linear,backend)?.into_iter().map(|p|output.encode_rgb(p.map(|v|v*output.output_gain())).map(|v|v.clamp(0.,1.))).collect())}
 
 #[derive(Clone,Copy)]
 struct Color{m:[[f64;3];3],inv:[[f64;3];3],white:[f64;2],pri:[[f64;2];3]}
@@ -248,7 +248,7 @@ const FI_DOUBLE: [f64; 256] = [1.00000000000000000000e+00,9.77101701267671596263
 
 fn bundle_input_gain(bundle:&Bundle,input:&ColorSpaceEntry)->Result<f64,String>{let stops=bundle.spec.stops_above_midgray.ok_or("QA spec stops_above_midgray was not normalized")?;Ok(if bundle.spec.uses_native_input_gain(){input.native_input_gain()}else{input.input_gain_for_stops(stops)})}
 #[allow(clippy::too_many_arguments)]
-fn run_print(bundle:&Bundle,lut:&Lut,input:&ColorSpaceEntry,output:&ColorSpaceEntry,pipeline:&Pipeline,unbounded:&Pipeline,backend:&dyn ComputeBackend,data:&Path,root:&Path)->Result<Vec<QaResult>,String>{
+fn run_print(bundle:&Bundle,lut:&Lut,input:&ColorSpaceEntry,output:&ColorSpaceEntry,pipeline:&Runtime,unbounded:&Runtime,backend:&dyn ComputeBackend,data:&Path,root:&Path)->Result<Vec<QaResult>,String>{
     let n=lut.resolution;let gain=bundle_input_gain(bundle,input)?;let inputs=grid(n);let mut results=Vec::new();
     let mut rng=Pcg::seeded(20260515);let samples:Vec<_>=(0..50_000).map(|_|std::array::from_fn(|_|rng.uniform() as f32 as f64)).collect();
     match reference(pipeline,&samples,input,output,gain,backend) {
@@ -300,7 +300,7 @@ fn input_compression(bundle:&Bundle,inputs:&[[f64;3]],input:&ColorSpaceEntry,dat
 }
 fn gamut_chroma(cs:&ColorSpaceEntry,l:f64,h:f64)->f64{let ok=|c:f64|{let rgb=mul(color(cs).inv,okxyz([l,c*h.cos(),c*h.sin()]));rgb.iter().all(|v|(0.0..=1.).contains(v))};let mut lo=0.;let mut hi=0.45;for _ in 0..3{if ok(hi){hi*=1.5;}else{break;}}for _ in 0..18{let c=(lo+hi)/2.;if ok(c){lo=c;}else{hi=c;}}lo}
 #[allow(clippy::too_many_arguments)]
-fn picture(bundle:&Bundle,lut:&Lut,input:&ColorSpaceEntry,output:&ColorSpaceEntry,pipeline:&Pipeline,backend:&dyn ComputeBackend,root:&Path)->Result<Vec<QaResult>,String>{
+fn picture(bundle:&Bundle,lut:&Lut,input:&ColorSpaceEntry,output:&ColorSpaceEntry,pipeline:&Runtime,backend:&dyn ComputeBackend,root:&Path)->Result<Vec<QaResult>,String>{
     let gain=bundle_input_gain(bundle,input)?;let l=0.5646225971435698;let mut samples=Vec::new();for (c,h) in std::iter::once((0.,0.)).chain([0.07,0.14,0.21].into_iter().flat_map(|c|(0..16).map(move|i|(c,std::f64::consts::TAU*i as f64/16.)))){let rgb=mul(color(input).inv,okxyz([l,c*h.cos(),c*h.sin()]));if rgb.iter().all(|v|(0.0..=1.).contains(v)){let enc=input.encode_rgb(rgb.map(|v|v/gain));if enc.iter().all(|v|*v>0.006&&*v<0.994){samples.push(enc);}}}
     let sensitivity=(|| -> Result<QaResult,String> {
     if samples.is_empty(){return Err("required noise-sensitivity stimulus has no in-gamut samples".into());}let mut sigma=Vec::new();let mut anisotropy=Vec::new();let mut worst_hue=0.;let mut rotation=0.;for &p in &samples{let mut j=[[0.;3];3];for a in 0..3{let mut plus=p;let mut minus=p;plus[a]+=0.005;minus[a]-=0.005;let d=diff(oklab(xyz(output,lut.sample(plus))),oklab(xyz(output,lut.sample(minus))));for c in 0..3{j[c][a]=d[c]/0.01;}}let s=singular(j);sigma.push(s[0]);anisotropy.push(s[0]/s[2].max(1e-9));let a=oklab(xyz(input,p));let b=oklab(xyz(output,lut.sample(p)));if a[1].hypot(a[2])>1e-3{let d=hue_delta(a,b);if d>rotation{rotation=d;worst_hue=a[2].atan2(a[1]).to_degrees();}}}

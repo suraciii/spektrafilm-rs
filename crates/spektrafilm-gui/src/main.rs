@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use eframe::egui;
 use spektrafilm_core::image_io::{self, BitDepth, Compression, ImageMetadata, JpegSubsampling, LoadedImage, SaveOptions};
 use spektrafilm_core::params::RuntimeParams;
-use spektrafilm_core::pipeline::Pipeline;
+use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
 use spektrafilm_core::profile;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
@@ -272,7 +272,7 @@ struct App {
     output_color_space: String,
     output_cctf_encoding: bool,
     pipeline_cache_key: Option<String>,
-    pipeline_cache: Option<Pipeline>,
+    pipeline_cache: Option<Runtime>,
     last_render_ms: f32,
     last_pipeline_build_ms: f32,
     last_input_clone_ms: f32,
@@ -315,9 +315,9 @@ struct App {
 }
 
 
-/// One in-flight preview render. The worker owns a Pipeline + the
-/// ImageBuf clone and, when it finishes, sends back the output buffer
-/// plus the two timings the status bar shows.
+/// One in-flight preview render. The worker owns a Runtime + the
+ /// ImageBuf clone and, when it finishes, sends back the output buffer
+ /// plus the two timings the status bar shows.
 struct RenderJob {
     rx: mpsc::Receiver<Result<RenderResult, String>>,
     handle: Option<JoinHandle<()>>,
@@ -660,21 +660,34 @@ impl App {
         let mut params = self.current_state()?.runtime_params()?;
         params.settings.preview_mode = preview;
         let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
-        let paper = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
-        let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
-            .map_err(anyhow::Error::msg)?;
-        Ok(spektrafilm_core::params_builder::digest_params(params, &film, &paper, Some(&database), false))
+        let print = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
+        let photo = RuntimePhotoParams {
+            film,
+            print,
+            params,
+            data_dir: self.data_dir.clone(),
+        };
+        photo
+            .digested_params(DigestMode::PreserveUserEdits)
+            .map_err(anyhow::Error::msg)
     }
 
     fn sync_profile_defaults(&mut self) {
         let result = (|| -> Result<()> {
             let params = self.current_state()?.runtime_params()?;
-            let film = profile::load_profile_by_name(&self.data_dir,&self.film_name)?;
-            let paper = profile::load_profile_by_name(&self.data_dir,&self.print_name)?;
-            let database = spektrafilm_core::neutral_filters::NeutralFilters::load(&self.data_dir)
+            let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
+            let scan_film = film.is_positive();
+            let print = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
+            let photo = RuntimePhotoParams {
+                film,
+                print,
+                params,
+                data_dir: self.data_dir.clone(),
+            };
+            self.params = photo
+                .digested_params(DigestMode::ApplyStockSpecifics)
                 .map_err(anyhow::Error::msg)?;
-            self.params = spektrafilm_core::params_builder::digest_params(params,&film,&paper,Some(&database),true);
-            self.params.io.scan_film = film.is_positive();
+            self.params.io.scan_film = scan_film;
             self.scan_for_print_snapshot = None;
             self.pipeline_cache_key = None;
             self.pipeline_cache = None;
@@ -780,39 +793,37 @@ impl App {
         film_name: &str,
         print_name: &str,
         params: &RuntimeParams,
-    ) -> Result<(Pipeline, f32), String> {
+    ) -> Result<(Runtime, f32), String> {
         let t = Instant::now();
         let key = format!("{}|{}", preview_pipeline_cache_key(film_name, print_name, params), self.gui_state.sections["special"]);
         if self.pipeline_cache_key.as_deref() == Some(key.as_str())
-            && let Some(pipeline) = self.pipeline_cache.as_ref()
+            && let Some(runtime) = self.pipeline_cache.as_ref()
         {
-            return Ok((pipeline.clone().with_params(params.clone())?, t.elapsed().as_secs_f32() * 1000.0));
+            return Ok((runtime.clone().with_params(params.clone())?, t.elapsed().as_secs_f32() * 1000.0));
         }
 
         let mut film = profile::load_profile_by_name(&self.data_dir, film_name)
             .map_err(|e| format!("film profile '{film_name}': {e}"))?;
-        let effective_print_name = if params.io.scan_film {
-            film_name
-        } else {
-            print_name
-        };
+        let effective_print_name = if params.io.scan_film { film_name } else { print_name };
         let mut print = profile::load_profile_by_name(&self.data_dir, effective_print_name)
             .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
-        for (profile, key) in [(&mut film,"film_channel_swap"),(&mut print,"print_channel_swap")] {
+        for (profile, key) in [(&mut film, "film_channel_swap"), (&mut print, "print_channel_swap")] {
             if let Some(order) = self.gui_state.sections["special"][key].as_array() {
                 for row in &mut profile.data.channel_density {
                     if row.len() >= 3 {
-                        let original = [row[0],row[1],row[2]];
-                        for ch in 0..3 { row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize]; }
+                        let original = [row[0], row[1], row[2]];
+                        for ch in 0..3 {
+                            row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
+                        }
                     }
                 }
             }
         }
-        let pipeline = Pipeline::new_with_spectral(film, print, params.clone(), &self.data_dir)
-            .map_err(|e| format!("pipeline build: {e}"))?;
+        let runtime = Runtime::new(film, print, params.clone(), &self.data_dir)
+            .map_err(|e| format!("runtime build: {e}"))?;
         self.pipeline_cache_key = Some(key);
-        self.pipeline_cache = Some(pipeline.clone());
-        Ok((pipeline, t.elapsed().as_secs_f32() * 1000.0))
+        self.pipeline_cache = Some(runtime.clone());
+        Ok((runtime, t.elapsed().as_secs_f32() * 1000.0))
     }
 
     /// Spawn a render on a worker thread. The UI stays interactive
@@ -863,17 +874,17 @@ impl App {
                         spektrafilm_core::params_builder::resize_for_preview(&image, params.settings.preview_max_size)
                     } else { (*image).clone() };
                     let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
-                    let pipeline = pipeline_template.with_params(params)?;
                     let t = Instant::now();
-                    let output = pipeline.process(working_image, backend.as_ref())?;
+                    let output = pipeline_template.process(working_image, backend.as_ref())?;
                     let render_ms = t.elapsed().as_secs_f32() * 1000.0;
+                    let runtime_params = pipeline_template.params();
                     let t_preview = Instant::now();
-                    let (preview, display_status) = display::output_display_raster(&output,&pipeline.params.io.output_color_space,pipeline.params.io.output_cctf_encoding,display_enabled,display_profile.as_deref(),pipeline.params.settings.preview_max_size as usize)?;
+                    let (preview, display_status) = display::output_display_raster(&output,&runtime_params.io.output_color_space,runtime_params.io.output_cctf_encoding,display_enabled,display_profile.as_deref(),runtime_params.settings.preview_max_size as usize)?;
                     let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                     let worker_total_ms = t_total.elapsed().as_secs_f32() * 1000.0;
                     Ok(RenderResult {
-                        output_color_space: pipeline.params.io.output_color_space.clone(),
-                        output_cctf_encoding: pipeline.params.io.output_cctf_encoding,
+                        output_color_space: runtime_params.io.output_color_space.clone(),
+                        output_cctf_encoding: runtime_params.io.output_cctf_encoding,
                         output,
                         preview,
                         display_status,
@@ -1083,10 +1094,13 @@ impl App {
         // instead of letting it orphan after the GUI window closes.
         let film = self.film_name.clone();
         let paper = self.print_name.clone();
-        let params = match self.digested_params(false) {
+        // Export digestion belongs to the child runtime, after RAW/profile mapping.
+        let params = match self.current_state().and_then(|state| state.runtime_params()) {
             Ok(params) => params,
             Err(e) => { self.status = format!("Export state error: {e:#}"); return; }
         };
+        let mut params = params;
+        params.settings.preview_mode = false;
         let data_dir = self.data_dir.clone();
         let save_depth = self.save_depth;
         let jpeg_quality = self.jpeg_quality;
@@ -1411,7 +1425,7 @@ impl App {
             }
         });
         ui.add_enabled_ui(self.export_job.is_none(), |ui| {
-            egui::ComboBox::from_label("Export backend")
+            egui::ComboBox::new(("export_backend", raw), "Export backend")
                 .selected_text(self.export_backend.label())
                 .show_ui(ui, |ui| {
                     for backend in [ExportBackend::Cpu, ExportBackend::Gpu] {
@@ -1453,7 +1467,7 @@ impl App {
         } else if self.export_format == ExportFormat::Exr && self.save_depth == BitDepth::Eight {
             self.save_depth = BitDepth::Sixteen;
         }
-        egui::ComboBox::from_label("Save bit depth")
+        egui::ComboBox::new(("save_bit_depth", raw), "Save bit depth")
             .selected_text(format!("{} bit", self.save_depth.bits()))
             .show_ui(ui, |ui| {
                 let depths: &[BitDepth] = match self.export_format {
@@ -1581,6 +1595,7 @@ impl eframe::App for App {
         }
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
+        self.poll_export_job(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(420.0)
@@ -2039,6 +2054,9 @@ fn run_export(
         .arg(data_dir)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::from(stderr_file));
+    // Private GUI→CLI protocol: preserve edited stock controls and digest once.
+    // This environment value is scoped to the export child.
+    cmd.env("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS", "1");
     if params.io.scan_film {
         cmd.arg("--scan-film");
     }

@@ -265,6 +265,7 @@ enum ResidentFallbackReason {
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     MissingResidentFrontPass,
+    MallettExecutionParity,
 }
 
 #[derive(Debug)]
@@ -980,6 +981,11 @@ impl Pipeline {
 
     fn resident_decision(&self) -> ResidentDecision {
         let mut reasons = Vec::new();
+        // The Mallett shader has no numerically equivalent route through
+        // CPU display-domain grain and optics; retain the per-stage path.
+        if self.params.settings.rgb_to_raw_method == "mallett2019" {
+            reasons.push(ResidentFallbackReason::MallettExecutionParity);
+        }
         if !matches!(self.params.workflow.route.as_str(), "input > film > scan" | "input > film > print > scan") {
             reasons.push(ResidentFallbackReason::WorkflowRoute);
         }
@@ -1034,12 +1040,6 @@ impl Pipeline {
         pixel_size_um: f64,
         ae_ev: f64,
     ) -> Option<ImageBuf> {
-        // The Mallett resident shader and the CPU display-domain grain/optics
-        // path do not share a numerically equivalent execution route. Keep
-        // this method on the per-stage path until that parity contract exists.
-        if self.params.settings.rgb_to_raw_method == "mallett2019" {
-            return None;
-        }
         match self.resident_decision() {
             ResidentDecision::UseResident => {}
             ResidentDecision::PerStage { reasons } => {
@@ -1103,78 +1103,17 @@ impl Pipeline {
             spektrafilm_gpu::FrontPass::Mallett2019 { matrix }
         };
 
-        // Film density curves: normalized (filming.develop subtracts nanmin).
-        let film_log_exp = self.film.log_exposure_f64();
-        let film_curves = self.film.density_curves_f64();
-        let film_curves_norm =
-            spektrafilm_model::density_curves::normalize_density_curves_f64(&film_curves);
-        let film_channel_density: Vec<[f64; 3]> = self
-            .film
-            .data
-            .channel_density
-            .iter()
-            .map(|r| {
-                [
-                    r.first().copied().unwrap_or(0.0),
-                    r.get(1).copied().unwrap_or(0.0),
-                    r.get(2).copied().unwrap_or(0.0),
-                ]
-            })
-            .collect();
-        let film_base_density = self.film.data.base_density.clone();
+        let film_curves = crate::chain_prep::FilmCurves::prepare(&self.film);
+        let film_log_exp = film_curves.log_exposure;
+        let film_curves_norm = &film_curves.normalized;
+        let film_channel_density = crate::chain_prep::channel_density(&self.film);
+        let film_base_density = &self.film.data.base_density;
 
-        // Print sensitivity (10**log_sensitivity, NaN→0).
-        let print_sens: Vec<[f64; 3]> = self
-            .print
-            .log_sensitivity_f64()
-            .iter()
-            .map(|row| {
-                let mut o = [0.0; 3];
-                for c in 0..3 {
-                    let v = 10f64.powf(row[c]);
-                    o[c] = if v.is_nan() { 0.0 } else { v };
-                }
-                o
-            })
-            .collect();
-        let print_log_exp = self.print.log_exposure_f64();
-        // Print density curves: model-evaluated at gamma 1 whenever the
-        // profile carries a fitted `density_curves_model` (identity when the
-        // morph is inactive, morphed when active — matching the CPU
-        // `develop_print_morph` path); stored RAW curves at the configured
-        // gamma only for model-less profiles. Computed once on CPU here so
-        // the resident print density pass needs no shader change.
-        let morph = &self.params.print_render.density_curves_morph;
-        let (print_curves, print_gamma_eff) = match self.print.data.density_curves_model.as_ref() {
-            Some(model) => (
-                crate::print_morph::morph_density_curves(
-                    &print_log_exp,
-                    model,
-                    morph,
-                    self.print.is_positive(),
-                )
-                .expect("print density-curve model was validated at pipeline construction"),
-                1.0,
-            ),
-            None => (
-                self.print.density_curves_f64(),
-                self.params.print_render.density_curve_gamma as f64,
-            ),
-        };
-        let print_channel_density: Vec<[f64; 3]> = self
-            .print
-            .data
-            .channel_density
-            .iter()
-            .map(|r| {
-                [
-                    r.first().copied().unwrap_or(0.0),
-                    r.get(1).copied().unwrap_or(0.0),
-                    r.get(2).copied().unwrap_or(0.0),
-                ]
-            })
-            .collect();
-        let print_base_density = self.print.data.base_density.clone();
+        let print_sens = crate::chain_prep::print_sensitivity(&self.print);
+        let print_curves = crate::chain_prep::PrintCurves::prepare(&self.print, &self.params)
+            .expect("print density-curve model was validated at pipeline construction");
+        let print_channel_density = crate::chain_prep::channel_density(&self.print);
+        let print_base_density = &self.print.data.base_density;
 
         // Scanning: viewing illuminant + normalization + combined XYZ→RGB
         // matrix. For scan_film we scan the developed film directly, so the
@@ -1250,17 +1189,10 @@ impl Pipeline {
         // backend call.
         let dir_inputs = if self.params.film_render.dir_couplers.active {
             let dir = &self.params.film_render.dir_couplers;
-            let matrix = spektrafilm_model::couplers::compute_dir_couplers_matrix(
-                dir.gamma_samelayer_rgb,
-                dir.gamma_interlayer_r_to_gb,
-                dir.gamma_interlayer_g_to_rb,
-                dir.gamma_interlayer_b_to_rg,
-                dir.inhibition_samelayer,
-                dir.inhibition_interlayer,
-            );
+            let matrix = crate::chain_prep::dir_matrix(dir);
             let prepared = spektrafilm_model::couplers::prepare_dir(
-                &self.film.density_curves_f64(),
-                &self.film.log_exposure_f64(),
+                &film_curves.raw,
+                film_log_exp,
                 &matrix,
                 dir.amount,
                 self.film.is_positive(),
@@ -1361,7 +1293,6 @@ impl Pipeline {
             None
         };
         let grain_v2 = if self.params.film_render.grain.active
-            && self.params.settings.rgb_to_raw_method != "mallett2019"
             && matches!(
                 self.params.film_render.grain.engine,
                 crate::params::grain::GrainEngine::V2
@@ -1377,19 +1308,19 @@ impl Pipeline {
         let params = spektrafilm_gpu::FilmChainParams {
             image,
             front,
-            film_log_exposure: &film_log_exp,
-            film_density_curves_normalized: &film_curves_norm,
+            film_log_exposure: film_log_exp,
+            film_density_curves_normalized: film_curves_norm,
             film_gamma: self.params.film_render.density_curve_gamma as f64,
             film_channel_density: &film_channel_density,
-            film_base_density: &film_base_density,
+            film_base_density,
             print_illuminant: &self.print_illuminant,
             print_sensitivity: &print_sens,
             print_normalization_factor: print_norm_factor,
-            print_log_exposure: &print_log_exp,
-            print_density_curves: &print_curves,
-            print_gamma: print_gamma_eff,
+            print_log_exposure: print_curves.log_exposure,
+            print_density_curves: &print_curves.density,
+            print_gamma: print_curves.gamma,
             print_channel_density: &print_channel_density,
-            print_base_density: &print_base_density,
+            print_base_density,
             preflash: self.preflash_raw,
             viewing_illuminant: &viewing_illu,
             scan_normalization: scan_norm,
@@ -1529,6 +1460,14 @@ mod spectral_invalidation_tests {
             pipeline.resident_decision(),
             ResidentDecision::UseResident
         ));
+        pipeline.params.settings.rgb_to_raw_method = "mallett2019".into();
+        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
+            panic!("Mallett must remain on the per-stage path");
+        };
+        assert!(reasons.iter().any(|reason| {
+            matches!(reason, ResidentFallbackReason::MallettExecutionParity)
+        }));
+        pipeline.params.settings.rgb_to_raw_method = "hanatos2025".into();
 
         pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::V1;
         let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {

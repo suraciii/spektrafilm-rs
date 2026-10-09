@@ -11,11 +11,10 @@ use sha2::{Digest, Sha256};
 use spektrafilm_core::image_io::{
     self, BitDepth, Compression, JpegSubsampling, SaveOptions,
 };
-use spektrafilm_core::neutral_filters::NeutralFilters;
 use spektrafilm_core::params::{RuntimeParams, Tap};
-use spektrafilm_core::params_builder::{digest_params, resize_for_preview};
-use spektrafilm_core::pipeline::Pipeline;
+use spektrafilm_core::params_builder::resize_for_preview;
 use spektrafilm_core::profile;
+use spektrafilm_core::runtime::{digest_params_with_neutral, DigestMode, Runtime, RuntimePhotoParams};
 use spektrafilm_math::image::ImageBuf;
 
 
@@ -465,10 +464,7 @@ fn cmd_process(
     }
     params.validate_color().map_err(anyhow::Error::msg)?;
 
-    // Digest to the static runtime form (0.3.4 order: database neutral
-    // filters, preview deactivation, stock-specific overrides, debug
-    // switches). `new_with_spectral` re-applies the idempotent parts.
-    let neutral_db = NeutralFilters::load(data_dir).map_err(anyhow::Error::msg)?;
+    // Build the calibrated runtime through the shared digest boundary.
     let inject = params
         .taps
         .inject
@@ -485,7 +481,18 @@ fn cmd_process(
         .transpose()
         .map_err(anyhow::Error::msg)
         .with_context(|| "params taps.collect")?;
-    let params = digest_params(params, &film, &print, Some(&neutral_db), true);
+    // GUI export supplies undigested edits through a private child-only protocol.
+    // Batch processing retains the stock-specific default policy.
+    let digest_mode = if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        DigestMode::PreserveUserEdits
+    } else {
+        DigestMode::ApplyStockSpecifics
+    };
+    let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(data_dir)
+        .map_err(anyhow::Error::msg)?;
+    let params = digest_params_with_neutral(params, &film, &print, &neutral, digest_mode);
 
     let t = Instant::now();
     let (image, metadata) = if input_is_raw {
@@ -529,13 +536,11 @@ fn cmd_process(
         t.elapsed().as_millis()
     );
 
-    // Run pipeline — full Hanatos2025 spectral upsampling, no simplified
-    // fallback: the identity front end is not a calibrated substitute, so
-    // a missing LUT is a hard error.
+    // Run the calibrated runtime — a missing spectral LUT is a hard error.
     let t = Instant::now();
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir).map_err(|e| {
+    let runtime = Runtime::new(film, print, params, data_dir).map_err(|e| {
         anyhow::anyhow!(
             "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
              removed; check that the profiles/data directory contains the spectral LUTs \
@@ -545,9 +550,9 @@ fn cmd_process(
     })?;
     let run_once = |image: ImageBuf| -> Result<ImageBuf> {
         let out = if inject.is_none() && collect.is_none() {
-            pipeline.process(image, backend.as_ref()).map_err(anyhow::Error::msg)?
+            runtime.process(image, backend.as_ref()).map_err(anyhow::Error::msg)?
         } else {
-            pipeline
+            runtime
                 .process_with_taps(image, backend.as_ref(), inject, collect)
                 .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
         };
@@ -684,8 +689,17 @@ fn render_recipe(
         .ok_or_else(|| anyhow::anyhow!("recipe does not select a print profile"))?;
     let print = profile::load_profile_by_name(data_dir, print_name)
         .with_context(|| format!("loading print profile {print_name}"))?;
-    let neutral_db = NeutralFilters::load(data_dir).map_err(anyhow::Error::msg)?;
-    let params = digest_params(params, &film, &print, Some(&neutral_db), true);
+    let photo = RuntimePhotoParams {
+        film,
+        print,
+        params,
+        data_dir: data_dir.to_owned(),
+    };
+    let runtime = photo
+        .into_runtime(DigestMode::ApplyStockSpecifics)
+        .map_err(anyhow::Error::msg)
+        .context("building spektrafilm-rs spectral runtime")?;
+    let params = runtime.params();
     let loaded = image_io::load(input)
         .with_context(|| format!("loading staged input {}", input.display()))?;
     contract::validate_input_dimensions(loaded.image.width, loaded.image.height)?;
@@ -696,13 +710,10 @@ fn render_recipe(
         loaded.image
     };
     let backend = spektrafilm_gpu::select_backend();
-    let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir)
-        .map_err(anyhow::Error::msg)
-        .context("building spektrafilm-rs spectral pipeline")?;
-    let result = pipeline
+    let result = runtime
         .process(image, backend.as_ref())
         .map_err(anyhow::Error::msg)
-        .context("running spektrafilm-rs pipeline")?;
+        .context("running spektrafilm-rs runtime")?;
     let parent = output
         .parent()
         .ok_or_else(|| anyhow::anyhow!("output has no parent directory"))?;

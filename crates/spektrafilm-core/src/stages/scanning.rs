@@ -164,23 +164,11 @@ pub fn scan_with_options(
     scan_illuminant: Option<&str>,
     include_base: bool,
 ) -> ImageBuf {
-    // Python parity — channel_density / base_density are f64 in the JSON profile.
-    let channel_density: Vec<[f64; 3]> = profile
-        .data
-        .channel_density
-        .iter()
-        .map(|row| {
-            [
-                row.get(0).copied().unwrap_or(0.0),
-                row.get(1).copied().unwrap_or(0.0),
-                row.get(2).copied().unwrap_or(0.0),
-            ]
-        })
-        .collect();
-    let base_density: Vec<f64> = if include_base {
-        profile.data.base_density.clone()
+    let channel_density = crate::chain_prep::channel_density(profile);
+    let base_density = if include_base {
+        std::borrow::Cow::Borrowed(profile.data.base_density.as_slice())
     } else {
-        vec![0.0; profile.data.base_density.len()]
+        std::borrow::Cow::Owned(vec![0.0; profile.data.base_density.len()])
     };
 
     let output_space = colorspace::resolve(&params.io.output_color_space)

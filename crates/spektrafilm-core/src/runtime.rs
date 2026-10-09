@@ -22,6 +22,22 @@ pub struct SoftUpdate {
     pub film_density_curves: Option<Vec<Vec<f64>>>,
     pub print_density_curves: Option<Vec<Vec<f64>>>,
 }
+/// Selects whether profile-specific defaults are applied when building a runtime.
+///
+/// GUI edits use `PreserveUserEdits`; batch and LUT construction use
+/// `ApplyStockSpecifics`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DigestMode {
+    PreserveUserEdits,
+    ApplyStockSpecifics,
+}
+
+impl DigestMode {
+    fn apply_stock_specifics(self) -> bool {
+        matches!(self, Self::ApplyStockSpecifics)
+    }
+}
+
 
 
 /// Rust representation of upstream `RuntimePhotoParams`.
@@ -35,6 +51,47 @@ pub struct RuntimePhotoParams {
     pub params: RuntimeParams,
     pub data_dir: std::path::PathBuf,
 }
+/// Apply the shared upstream-compatible parameter digest in one place.
+pub fn digest_params_with_neutral(
+    params: RuntimeParams,
+    film: &profile::Profile,
+    print: &profile::Profile,
+    neutral: &crate::neutral_filters::NeutralFilters,
+    mode: DigestMode,
+) -> RuntimeParams {
+    crate::params_builder::digest_params(
+        params,
+        film,
+        print,
+        Some(neutral),
+        mode.apply_stock_specifics(),
+    )
+}
+
+impl RuntimePhotoParams {
+    /// Resolve user-facing parameters with the supplied neutral-filter data.
+    pub fn digested_params_with_neutral(
+        &self,
+        mode: DigestMode,
+        neutral: &crate::neutral_filters::NeutralFilters,
+    ) -> RuntimeParams {
+        digest_params_with_neutral(self.params.clone(), &self.film, &self.print, neutral, mode)
+    }
+
+    /// Resolve user-facing parameters using the shared digest precedence.
+    pub fn digested_params(&self, mode: DigestMode) -> Result<RuntimeParams, String> {
+        let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
+        Ok(self.digested_params_with_neutral(mode, &neutral))
+    }
+
+    /// Build a calibrated runtime after applying the selected digest policy.
+    pub fn into_runtime(self, mode: DigestMode) -> Result<Runtime, String> {
+        let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
+        let params = digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
+        Runtime::new(self.film, self.print, params, &self.data_dir)
+    }
+}
+
 #[derive(Clone)]
 pub struct Runtime {
     pipeline: Pipeline,
@@ -75,14 +132,10 @@ impl Runtime {
         Self::new(photo.film, photo.print, photo.params, &photo.data_dir)
     }
 
-
-    fn record_elapsed(&self, started: Instant, mut stage_timings: Option<Timings>) {
+    fn record_elapsed(&self, started: Instant, stage_timings: Option<Timings>) {
         let elapsed = started.elapsed().as_secs_f64();
         if let Ok(mut timings) = self.timings.lock() {
-            timings.clear();
-            if let Some(stage_timings) = stage_timings.as_mut() {
-                timings.extend(stage_timings.iter().map(|(name, elapsed)| (name.clone(), *elapsed)));
-            }
+            *timings = stage_timings.unwrap_or_default();
             timings.insert("total".into(), elapsed);
         }
         if let Ok(mut last) = self.last_elapsed_seconds.lock() {
@@ -95,11 +148,7 @@ impl Runtime {
         image: ImageBuf,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
-        let started = Instant::now();
-        let mut stage_timings = BTreeMap::new();
-        let result = self.pipeline.process_with_timings(image, backend, &mut stage_timings);
-        self.record_elapsed(started, Some(stage_timings));
-        result
+        self.process_with_taps(image, backend, None, None)
     }
 
     pub fn process_with_taps(
@@ -152,6 +201,12 @@ impl Runtime {
         )?;
         Ok(())
     }
+    /// Return a runtime with updated parameters while retaining the facade state.
+    pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
+        self.pipeline = self.pipeline.with_params(params)?;
+        Ok(self)
+    }
+
 
     pub fn soft_update(&mut self, params: RuntimeParams) -> Result<(), String> {
         self.update(params)
@@ -270,14 +325,7 @@ pub fn simulate(
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
     let params = if digest_params_first {
-        let neutral = crate::neutral_filters::NeutralFilters::load(&photo.data_dir)?;
-        crate::params_builder::digest_params(
-            photo.params.clone(),
-            &photo.film,
-            &photo.print,
-            Some(&neutral),
-            true,
-        )
+        photo.digested_params(DigestMode::ApplyStockSpecifics)?
     } else {
         photo.params.clone()
     };
