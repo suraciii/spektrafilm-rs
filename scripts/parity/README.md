@@ -103,9 +103,10 @@ observations so intermediate stock rows cannot be skipped.
 Cancellation reads the button interior at the observed Export action position:
 full-sidebar OCR can omit its short bordered label. The gate requires rendered
 `Cancel` text and a live export child immediately before clicking.
-File choosers receive the full path in one paste and one Enter. Submitting a
-directory first can accept a previously selected file and send the subsequent
-Enter to the main window, reopening the chooser.
+File choosers paste paths through the native location entry. Open dialogs
+explicitly navigate to the parent directory, then submit the file path while
+keeping the active chooser selected; this prevents a stale selection or a
+second Return from reaching the main window.
 
 `--development-smoke` permits an uncommitted iteration and always reports
 `development-smoke`, never acceptance `pass`. Missing controls, clipped labels,
