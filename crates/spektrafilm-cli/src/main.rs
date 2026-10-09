@@ -8,7 +8,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use spektrafilm_core::image_io::{self, BitDepth, SaveOptions};
+use spektrafilm_core::image_io::{
+    self, BitDepth, Compression, JpegSubsampling, SaveOptions,
+};
 use spektrafilm_core::neutral_filters::NeutralFilters;
 use spektrafilm_core::params::{RuntimeParams, Tap};
 use spektrafilm_core::params_builder::{digest_params, resize_for_preview};
@@ -40,9 +42,21 @@ enum Commands {
         /// Output image path (TIFF, EXR, PNG, or JPEG).
         #[arg(short, long)]
         output: PathBuf,
-        /// Output bit depth: 8, 16, or 32 (PNG/JPEG use 8; EXR uses 16 or 32).
-        #[arg(long, default_value = "16")]
-        bit_depth: u8,
+        /// Output format. If omitted, inferred from the output extension.
+        #[arg(long, value_enum)]
+        format: Option<OutputFormat>,
+        /// Output bit depth: 8, 16, or 32.
+        #[arg(long)]
+        bit_depth: Option<u8>,
+        /// JPEG quality (1..=100).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100))]
+        jpeg_quality: Option<u8>,
+        /// JPEG chroma subsampling (444 or 420).
+        #[arg(long, value_enum)]
+        jpeg_subsampling: Option<JpegSubsamplingArg>,
+        /// TIFF/EXR compression.
+        #[arg(long, value_enum)]
+        compression: Option<CompressionArg>,
         #[command(flatten)]
         workflow: WorkflowOptions,
         /// Film stock name (e.g. kodak_portra_400).
@@ -141,6 +155,65 @@ enum Backend {
     Cpu,
     Gpu,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Jpeg,
+    Png,
+    Tiff,
+    Exr,
+}
+
+impl OutputFormat {
+    fn image_format(self) -> image_io::ImageFormat {
+        match self {
+            Self::Jpeg => image_io::ImageFormat::Jpeg,
+            Self::Png => image_io::ImageFormat::Png,
+            Self::Tiff => image_io::ImageFormat::Tiff,
+            Self::Exr => image_io::ImageFormat::Exr,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpeg",
+            Self::Png => "png",
+            Self::Tiff => "tiff",
+            Self::Exr => "exr",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum JpegSubsamplingArg {
+    #[value(name = "444")]
+    Yuv444,
+    #[value(name = "420")]
+    Yuv420,
+}
+
+impl JpegSubsamplingArg {
+    fn core(self) -> JpegSubsampling {
+        match self {
+            Self::Yuv444 => JpegSubsampling::Yuv444,
+            Self::Yuv420 => JpegSubsampling::Yuv420,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CompressionArg {
+    Zip,
+    None,
+}
+
+impl CompressionArg {
+    fn core(self) -> Compression {
+        match self {
+            Self::Zip => Compression::Zip,
+            Self::None => Compression::None,
+        }
+    }
+}
 
 #[derive(clap::Args)]
 struct WorkflowOptions {
@@ -178,7 +251,11 @@ fn main() -> Result<()> {
         Commands::Process {
             input,
             output,
+            format,
             bit_depth,
+            jpeg_quality,
+            jpeg_subsampling,
+            compression,
             workflow,
             film,
             paper,
@@ -194,7 +271,11 @@ fn main() -> Result<()> {
             cmd_process(
                 &input,
                 &output,
+                format,
                 bit_depth,
+                jpeg_quality,
+                jpeg_subsampling,
+                compression,
                 &workflow,
                 &film,
                 paper.as_deref(),
@@ -253,7 +334,11 @@ fn main() -> Result<()> {
 fn cmd_process(
     input: &Path,
     output: &Path,
-    bit_depth: u8,
+    format: Option<OutputFormat>,
+    bit_depth: Option<u8>,
+    jpeg_quality: Option<u8>,
+    jpeg_subsampling: Option<JpegSubsamplingArg>,
+    compression: Option<CompressionArg>,
     workflow: &WorkflowOptions,
     film_name: &str,
     paper_name: Option<&str>,
@@ -266,7 +351,54 @@ fn cmd_process(
     backend_choice: Option<Backend>,
 ) -> Result<()> {
     let total_start = Instant::now();
-    let depth = BitDepth::try_from(bit_depth)?;
+    let extension_format = image_io::ImageFormat::detect(output)
+        .with_context(|| format!("detecting output format: {}", output.display()))?;
+    let output_format = format.unwrap_or_else(|| match extension_format {
+        image_io::ImageFormat::Jpeg => OutputFormat::Jpeg,
+        image_io::ImageFormat::Png => OutputFormat::Png,
+        image_io::ImageFormat::Tiff => OutputFormat::Tiff,
+        image_io::ImageFormat::Exr => OutputFormat::Exr,
+    });
+    if output_format.image_format() != extension_format {
+        bail!(
+            "--format {} disagrees with output extension ({})",
+            output_format.name(),
+            format_name(extension_format)
+        );
+    }
+    let default_depth = match output_format {
+        OutputFormat::Jpeg | OutputFormat::Png => 8,
+        OutputFormat::Tiff | OutputFormat::Exr => 16,
+    };
+    let depth = BitDepth::try_from(bit_depth.unwrap_or(default_depth))?;
+    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png)
+        && depth != BitDepth::Eight
+    {
+        bail!("{} output requires 8-bit depth", output_format.name());
+    }
+    if matches!(output_format, OutputFormat::Exr) && depth == BitDepth::Eight {
+        bail!("EXR output requires 16-bit or 32-bit depth");
+    }
+    if matches!(output_format, OutputFormat::Jpeg) {
+        if let Some(quality) = jpeg_quality {
+            if !(1..=100).contains(&quality) {
+                bail!("JPEG quality must be in 1..=100");
+            }
+        }
+    } else if jpeg_quality.is_some() {
+        bail!("--jpeg-quality is only valid for JPEG output");
+    }
+    if !matches!(output_format, OutputFormat::Jpeg) && jpeg_subsampling.is_some() {
+        bail!("--jpeg-subsampling is only valid for JPEG output");
+    }
+    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && compression.is_some() {
+        bail!("--compression is only valid for TIFF or EXR output");
+    }
+    let jpeg_quality = matches!(output_format, OutputFormat::Jpeg).then(|| jpeg_quality.unwrap_or(95));
+    let jpeg_subsampling = matches!(output_format, OutputFormat::Jpeg)
+        .then(|| jpeg_subsampling.unwrap_or(JpegSubsamplingArg::Yuv444).core());
+    let compression = matches!(output_format, OutputFormat::Tiff | OutputFormat::Exr)
+        .then(|| compression.unwrap_or(CompressionArg::Zip).core());
     let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
         Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
         Some(Backend::Gpu) => Box::new(
@@ -455,9 +587,23 @@ fn cmd_process(
 
     // Save output
     let t = Instant::now();
-    let saving_space = workflow.saving_color_space.as_deref().unwrap_or(&output_color_space);
-    let saving_encoded = workflow.saving_cctf_encoding.unwrap_or(output_cctf_encoding);
-    let saving_image = image_io::convert_image(&result, &output_color_space, output_cctf_encoding, saving_space, saving_encoded)?;
+    let saving_space = workflow.saving_color_space.as_deref().unwrap_or(
+        if output_format == OutputFormat::Exr { "ACES2065-1" } else { &output_color_space }
+    );
+    let saving_encoded = workflow.saving_cctf_encoding.unwrap_or(output_format != OutputFormat::Exr && output_cctf_encoding);
+    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && !saving_encoded {
+        bail!("{} output requires encoded saving output", output_format.name());
+    }
+    if output_format == OutputFormat::Exr && saving_encoded {
+        bail!("EXR output requires linear saving output");
+    }
+    let saving_image = image_io::convert_image(
+        &result,
+        &output_color_space,
+        output_cctf_encoding,
+        saving_space,
+        saving_encoded,
+    )?;
     let report = image_io::save(
         output,
         &saving_image,
@@ -465,6 +611,9 @@ fn cmd_process(
             depth,
             color_space: saving_space,
             cctf_encoding: saving_encoded,
+            jpeg_quality,
+            jpeg_subsampling,
+            compression,
         },
         metadata.as_ref(),
     )
@@ -584,6 +733,9 @@ fn render_recipe(
             depth: BitDepth::Eight,
             color_space: "sRGB",
             cctf_encoding: true,
+            jpeg_quality: None,
+            jpeg_subsampling: Some(spektrafilm_core::image_io::JpegSubsampling::Yuv444),
+            compression: None,
         },
         loaded.metadata.as_ref(),
         contract::FINISHED_JPEG_QUALITY,

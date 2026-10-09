@@ -300,5 +300,14 @@
     "white_padding": 0.03,
     "preview_max_size": 640,
     "output_interpolation": "spline36"
+  },
+  "rust": {
+    "version": 1,
+    "save_bit_depth": 8,
+    "export_format": "png",
+    "jpeg_quality": 95,
+    "jpeg_subsampling": "444",
+    "export_compression": "zip",
+    "export_backend": "cpu"
   }
 }

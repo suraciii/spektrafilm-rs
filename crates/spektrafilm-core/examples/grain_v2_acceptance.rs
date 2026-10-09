@@ -48,6 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         depth: BitDepth::ThirtyTwo,
                         color_space: "sRGB",
                         cctf_encoding: true,
+                        jpeg_quality: None,
+                        jpeg_subsampling: None,
+                        compression: None,
                     },
                     None,
                 )?;

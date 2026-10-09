@@ -64,7 +64,11 @@ impl GuiState {
         merge(&mut state.sections, &normalized);
         if let Some(extension) = value.get("rust") {
             if extension["version"] != 1 { bail!("Unsupported Rust GUI state extension version"); }
-            state.sections["rust"] = extension.clone();
+            if let Some(fields) = extension.as_object() {
+                for (key, value) in fields {
+                    state.sections["rust"][key] = value.clone();
+                }
+            }
         }
         state.runtime_params()?;
         Ok(state)
@@ -120,11 +124,22 @@ impl GuiState {
         if let Some(depth) = s["rust"].get("save_bit_depth") {
             if !matches!(depth.as_u64(),Some(8|16|32)) { bail!("Saving bit depth must be 8, 16 or 32"); }
         }
+        let export_format = s["rust"]["export_format"].as_str().context("Export format must be a string")?;
+        if !matches!(export_format, "jpeg"|"png"|"tiff"|"exr") { bail!("Unknown export format"); }
+        let quality = s["rust"]["jpeg_quality"].as_u64().context("JPEG quality must be an integer")?;
+        if !(1..=100).contains(&quality) { bail!("JPEG quality must be 1..=100"); }
+        if !matches!(s["rust"]["jpeg_subsampling"].as_str(), Some("444"|"420")) { bail!("JPEG subsampling must be 444 or 420"); }
+        if !matches!(s["rust"]["export_compression"].as_str(), Some("zip"|"none")) { bail!("Unknown export compression"); }
+        let depth = s["rust"]["save_bit_depth"].as_u64().unwrap_or(16);
+        if matches!(export_format, "jpeg"|"png") && depth != 8 { bail!("{export_format} exports require 8-bit depth"); }
+        if export_format == "exr" && !matches!(depth, 16|32) { bail!("EXR exports require 16- or 32-bit depth"); }
         if s["display"]["output_interpolation"].as_str().is_none() { bail!("Output interpolation must be a string"); }
         Ok(params)
     }
     pub fn from_runtime(params: &RuntimeParams, film: &str, paper: &str, extras: &Value) -> Result<Self> {
-        let mut state = Self::from_value(extras.clone())?;
+        let mut base = Self::factory().sections;
+        merge(&mut base, &extras);
+        let mut state = Self::from_value(base)?;
         let runtime = serde_json::to_value(params)?;
         let s = &mut state.sections;
         for group in ["camera","scanner"] { merge(&mut s[group],&runtime[group]); }
@@ -141,7 +156,13 @@ impl GuiState {
         copy_fields(&mut s["simulation"],&runtime["io"], &["output_color_space","scan_film"]);
         s["special"]["film_gamma_factor"] = runtime["film_render"]["density_curve_gamma"].clone();
         s["display"]["preview_max_size"] = runtime["settings"]["preview_max_size"].clone();
-        s["rust"] = extras["rust"].as_object().map(|v| Value::Object(v.clone())).unwrap_or_else(||json!({}));
+        if let Some(extra) = extras["rust"].as_object() {
+            for (key, value) in extra {
+                if key != "runtime" {
+                    s["rust"][key] = value.clone();
+                }
+            }
+        }
         s["rust"]["version"] = json!(1);
         s["rust"]["runtime"] = runtime;
         Ok(state)
@@ -203,6 +224,18 @@ mod tests {
         assert_eq!(params.enlarger.print_exposure,1.75);
         assert_eq!(params.enlarger.preflash_exposure,0.2);
     }
+    #[test]
+    fn legacy_rust_extension_gets_new_export_defaults() {
+        let mut value=GuiState::factory().sections;
+        value["rust"]=json!({"version":1,"viewer":{"zoom":3.0}});
+        let state=GuiState::from_value(value).unwrap();
+        assert_eq!(state.sections["rust"]["viewer"]["zoom"],3.0);
+        assert_eq!(state.sections["rust"]["export_format"],"png");
+        assert_eq!(state.sections["rust"]["jpeg_quality"],95);
+        assert_eq!(state.sections["rust"]["jpeg_subsampling"],"444");
+        assert_eq!(state.sections["rust"]["export_compression"],"zip");
+    }
+
     #[test]
     fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
         let factory=GuiState::factory();

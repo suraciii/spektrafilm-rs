@@ -116,7 +116,7 @@ executable.
 - **Input image / Profiles** — choose input/output color workflow, film stock and print paper. Picking a film auto-selects its paired paper (`target_print` in the profile).
 - **Sliders** — exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger and output. Changes follow the selected sidebar tab and update the GPU preview according to Auto preview.
 - **Viewer controls** — `ccw rotate` and `cw rotate` physically rotate the in-memory input used by Preview, Save and f64 Export; `100%`, `200%` and `400%` map source pixels to exact device-pixel percentages; reset view returns to fit.
-- **Export…** — re-runs the pipeline at f64 precision on the CPU and writes a PNG/TIFF/JPEG. Status bar shows elapsed time; **Cancel** kills the child cleanly. Closing the GUI mid-export also kills the child (no orphans).
+- **Export…** — re-runs the pipeline at the selected CPU f64 or GPU f32 backend and writes PNG/JPEG/TIFF/OpenEXR. JPEG exposes quality (1–100) and 4:4:4/4:2:0 chroma sampling; TIFF/EXR expose ZIP/none compression where supported; format-specific bit-depth rules are validated before rendering. Status bar shows elapsed time; **Cancel** kills the child cleanly. Closing the GUI mid-export also kills the child (no orphans).
 - **Save…** — convert retained floating output into the independently selected saving color space and transfer encoding, then save at the selected bit depth. Viewer borders, watermark and display ICC transforms stay out of saved pixels.
 - **Save state… / Load state…** — exchange the pinned Python 0.3.4 GUI JSON sections. Partial files merge into factory values; legacy input aliases and nested sections normalize to the flat upstream format. Invalid JSON, field types, selections or Rust extension versions appear in the status bar.
 - **Save startup default / Restore factory default** — persist the current controls, or remove that default and restore Kodak Gold 200 + Kodak Supra Endura. Startup files live in the platform configuration directory (`SPEKTRAFILM_CONFIG_DIR` overrides it); Rust-only runtime/viewer settings use the explicit `rust.version = 1` extension. File-dialog directories persist separately.
@@ -138,6 +138,12 @@ executable.
 ./target/release/spektrafilm-f64 process input.ORF -o out.png \
     --backend cpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
+# Explicit JPEG quality and chroma sampling
+./target/release/spektrafilm-f64 process input.tif -o out.jpg \
+    --format jpeg --bit-depth 8 --jpeg-quality 95 --jpeg-subsampling 444 \
+    --backend cpu --film kodak_gold_200 --scan-film --data-dir data
+
+
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json
 
@@ -145,7 +151,7 @@ executable.
 ./target/release/spektrafilm list-profiles --data-dir data
 ```
 
-`process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth (`--bit-depth`) is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
+`process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. `--format` must match the output extension when supplied; otherwise the extension selects JPEG/PNG/TIFF/EXR. Bit depth defaults to 8 for JPEG/PNG and 16 for TIFF/EXR; JPEG/PNG require 8-bit, EXR requires 16- or 32-bit. JPEG defaults to quality 95 and 4:4:4; `--compression zip|none` applies to TIFF/EXR, while JPEG/PNG reject compression options. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
 Working geometry follows Python 0.3.4 (`3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`). In JSON, set `io.crop`, `io.crop_center: [x, y]`, `io.crop_size: [width, height]`, and `io.upscale_factor`. Center coordinates are normalized to the source axes; both size components are fractions of the source's long edge. Bounds and rounding follow the upstream NumPy slice convention, including negative-index slicing when a crop exceeds the short edge. Empty crops and nonpositive/nonfinite resize factors return errors before output is written.
 
@@ -166,7 +172,7 @@ spaces and algorithms fail before rendering. The GUI converts native output to
 sRGB for display while preserving native values for saving. Resident GPU kernels
 that clip or lack the selected colour transform route through the shared stage
 implementation until equivalent GPU transforms are available.
-Image output uses one writer for CLI, GUI Save and f64 Export. `process --bit-depth 8|16|32` (default 16) selects uint8/uint16/float32 TIFF or half/float32 EXR; 8-bit EXR is rejected. JPEG and PNG always write uint8, matching Python 0.3.4. Integer output clips to [0,1], scales and truncates; float TIFF/EXR preserves negative and super-white samples. The pipeline output space/CCTF controls both saved samples and ICC/color tags; saving applies no extra transfer function. Matching profiles are compiled from `data/icc`, including encoded/linear variants; linear P3 has no bundled upstream profile. Source EXIF/IPTC/XMP is copied for non-EXR output, with orientation, dimensions, software, date and color tags refreshed. Metadata read failures yield no source metadata; post-write metadata failures are reported as warnings while pixel-write failures are errors.
+Image output uses one writer for CLI, GUI Save and f64 Export. `process --format jpeg|png|tiff|exr` selects the container; `--bit-depth 8|16|32` selects uint8/uint16/float32 TIFF or half/float32 EXR, with JPEG/PNG restricted to uint8 and EXR rejecting 8-bit. JPEG quality is 1–100 and chroma sampling is 4:4:4 or 4:2:0; TIFF compression accepts ZIP/none and EXR uses ZIP. Integer output clips to [0,1], scales and truncates; float TIFF/EXR preserves negative and super-white samples. The pipeline output space/CCTF controls both saved samples and ICC/color tags; saving applies no extra transfer function. Matching profiles are compiled from `data/icc`, including encoded/linear variants; linear P3 has no bundled upstream profile. Source EXIF/IPTC/XMP is copied for non-EXR output, with orientation, dimensions, software, date and color tags refreshed. Metadata read failures yield no source metadat…
 
 `image_io::convert_image` explicitly converts retained output into a different saving space/CCTF: source decoding, CAT02 white adaptation, destination encoding. It reuses the shared seven-space color math and preserves floating headroom. Apply this operation before `save` when saving settings differ from simulation settings; writer options describe the resulting pixels and never change the simulation gamut mapping.
 The calibrated LUT creator uses the Python 0.3.4 spectral runtime in deterministic
