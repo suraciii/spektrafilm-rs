@@ -114,7 +114,6 @@ Run the native gate separately:
 xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- \
   /tmp/spektrafilm-034-venv/bin/python scripts/parity/experimental_gui.py \
   --gui target/debug/spektrafilm-gui \
-  --exporter target/debug/spektrafilm-f64 \
   --factory-reference scripts/parity/fixtures/gui_28bf883/factory_state.json \
   --raw /path/to/RAW_KODAK_DC50_é.KDC \
   --upstream /tmp/spektrafilm-upstream-28bf \
@@ -126,22 +125,28 @@ five tab section order, manifest-derived labels, boundary edits, saved zero RMS,
 fresh startup and factory restore against the independent Python reference,
 profile reselection, and each of the six Workflow selections. Every route is
 saved to canonical state, rendered with PREVIEW and SCAN, saved as TIFF, and
-loaded/saved again. The unique Output/Export options extension exercises CPU
-export and in-flight cancellation. The report records executable, input, state,
-profile/preset, observation, and screenshot hashes. Numerical upstream parity
-remains a separate runtime gate; native rendering alone does not establish it.
+loaded/saved again. The unique Output/Export options entry opens the independent
+settings modal and exercises the CPU Runtime worker and in-flight cancellation.
+Save writes retained output according to the chosen filename extension. The
+report records executable, input, state, profile/preset, observation, and screenshot
+hashes. Numerical upstream parity remains a separate runtime gate; native rendering
+alone does not establish it.
 
 Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver performs
 an initial preview before saving state to establish the output viewing layer.
-It distinguishes the SCAN action from the Scan for print checkbox and observes
-a saved-state status before each new SCAN completion; image dimensions in the
-Rendered status are not an execution counter.
+It selects the requested uppercase footer action independently of neighboring
+button OCR, distinguishes SCAN from the Scan for print checkbox, and observes
+the requested Preview or Scan completion after resetting the prior status.
+RAW import requires the pinned fixture's loaded/full dimensions or corresponding
+preview dimensions, plus saved ACES2065-1 state with decoding disabled; transient
+Loaded text can be replaced by a completed preview.
 
 Profile selection records the open menu and scrolls one wheel increment between
 observations so intermediate stock rows cannot be skipped.
 Cancellation reads the button interior at the observed Export action position:
 full-sidebar OCR can omit its short bordered label. The gate requires rendered
-`Cancel` text and a live export child immediately before clicking.
+`Cancel` text and an in-flight worker status immediately before clicking, then
+requires cancellation completion and absence of the destination file.
 File choosers paste paths through the native location entry. Open dialogs
 explicitly navigate to the parent directory, then submit the file path while
 keeping the active chooser selected; this prevents a stale selection or a

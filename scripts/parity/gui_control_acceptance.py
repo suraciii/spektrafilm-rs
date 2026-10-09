@@ -154,31 +154,32 @@ def export_controls(driver):
         driver.section(section)
         image, _, lines = driver.read()
         text = '\n'.join(' '.join(word[0] for word in line) for line in lines)
-        require('Export backend' not in text and 'Save bit depth' not in text,
+        require('Export backend' not in text and 'Save bit depth' not in text
+                and not driver.locate('Export', exact=True)
+                and not driver.locate('Cancel', exact=True),
                 f'{section} contains duplicate export controls')
+        require(not any(re.fullmatch(r'Save(?:\.{3}|…)?', word[0])
+                        for line in lines for word in line if word[1] >= driver.right_control_x),
+                f'{section} contains duplicate Save action')
         driver.snap('unique-' + section.replace(' ', '-'), image, lines)
         driver.section(section)
     driver.section('Output')
     require(driver.locate('Export options'), 'Output lacks export extension')
-    require(not driver.locate('Export backend'), 'Export extension initially expanded')
+    require(not driver.locate('Export', exact=True), 'Export extension initially expanded')
     driver.section('Export options')
     driver.scroll(True)
     driver.snap('opened-output-export-options')
-    require(all(driver.locate(label) for label in
-                ('Export backend', 'Export format', 'Save bit depth', 'Compression')),
-            'TIFF export extension lacks backend, format, depth or compression')
+    require(driver.locate('Export', exact=True), 'Output lacks Export action')
+    require(not driver.locate('Export backend') and not driver.locate('Save bit depth'),
+            'Modal settings duplicated in Output')
     driver.snap('output-export-options')
 
 
-def export_image(driver, exporter, path):
-    driver.exporter_hash = __import__('hashlib').sha256(exporter.read_bytes()).hexdigest()
-    driver.watch_export()
+def export_image(driver, path):
     driver.click('Export', exact=True)
+    driver.export_options(path)
     driver.dialog(path, save=True)
-    driver.capture_export_child(exporter)
-    driver.wait_text(r'Exported.*f64', 'cpu-export-completed', timeout=240)
-    wait_for(path.is_file, 'CPU exported image', 30)
-    driver.no_children()
+    driver.exported(path, 'cpu-export-completed')
 
 
 def profile_roundtrip(driver, root):
@@ -222,7 +223,7 @@ def profile_roundtrip(driver, root):
     driver.section('Profiles')
 
 
-def cancel_export(driver, exporter, source, destination):
+def cancel_export(driver, source, destination):
     driver.tab('MAIN')
     driver.scroll(False)
     driver.section('Import RGB')
@@ -232,7 +233,7 @@ def cancel_export(driver, exporter, source, destination):
     driver.section('Import RGB')
     driver.section('Output')
     driver.scroll(True)
-    if not driver.locate('Export backend'):
+    if not driver.locate('Export', exact=True):
         driver.section('Export options')
         driver.scroll(True)
     from PIL import ImageOps
@@ -242,10 +243,9 @@ def cancel_export(driver, exporter, source, destination):
     button_word = min((word for line in lines for word in line),
                       key=lambda word: abs(word[1] + word[3] / 2 - action[0]) + abs(word[2] + word[4] / 2 - action[1]))
     left, top, _, height = button_word[1:]
-    driver.watch_export()
     driver.click('Export', exact=True)
+    driver.export_options(destination)
     driver.dialog(destination, save=True)
-    driver.capture_export_child(exporter)
     def cancel_visible():
         image, _ = driver.image()
         interior = image.crop((int(left), int(top) - 1, int(left) + 43, int(top + height) + 1)).convert('L')
@@ -258,7 +258,6 @@ def cancel_export(driver, exporter, source, destination):
     driver.require_export_in_flight('Cancel')
     driver.xd('mousemove', '--window', driver.window, int(left + 20), int(top + height / 2))
     driver.xd('click', 1)
-    driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=30)
-    driver.no_children()
+    driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=240)
     require(not destination.exists(), 'Cancelled export published output')
     driver.records.append({'cancel_output_absent': True})

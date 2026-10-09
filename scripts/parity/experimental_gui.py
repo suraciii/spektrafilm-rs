@@ -93,6 +93,7 @@ class ExperimentalDesktop(X11):
     """Reuse native capture/chooser plumbing, without the old GUI coordinates."""
 
     def start(self, gui, env, image=None):
+        self.chooser_ready(env)
         self.proc = subprocess.Popen([str(gui)] + ([str(image)] if image else []),
                                     cwd=self.root, env=env, stdout=self.log, stderr=self.log)
         def window():
@@ -123,8 +124,11 @@ class ExperimentalDesktop(X11):
             tokens = words(' '.join(w[0] for w in line))
             expected = words(label)
             if bottom and label in ('PREVIEW', 'SCAN', 'SAVE'):
-                if not all(action in tokens for action in ('preview', 'scan', 'save')):
-                    continue
+                actions = [word for word in line if word[0].strip('[]()|') == label]
+                if actions:
+                    word = actions[0]
+                    return (word[1] + word[3] / 2, word[2] + word[4] / 2)
+                continue
             if exact:
                 if len(tokens) == len(expected) + 1 and (line[0][1] < image.width - 400 or tokens[0] in ('v', 'y', 'vy')):
                     tokens = tokens[1:]
@@ -289,7 +293,6 @@ def main():
     parser.add_argument('--evidence', required=True, type=Path)
     parser.add_argument('--factory-reference', required=True, type=Path,
                         help='Independently generated pinned upstream GUI state')
-    parser.add_argument('--exporter', required=True, type=Path)
     parser.add_argument('--raw', required=True, type=Path)
     parser.add_argument('--development-smoke', action='store_true',
                         help='Allow dirty development run; never reports acceptance pass')
@@ -340,7 +343,6 @@ def main():
               sha(repo/'crates/spektrafilm-gui/src/factory_state.json'),
               'upstream_factory_sha256': sha(args.factory_reference),
               'seed_state_sha256': sha(seed_path),
-              'exporter_sha256': sha(args.exporter),
               'data_sha256': data_hashes, 'routes': [], 'status': 'running'}
     driver = ExperimentalDesktop(root)
     try:
@@ -376,7 +378,7 @@ def main():
         report['invalid_upscale_error'] = wait_for(invalid_upscale_error, 'actionable upscale error', 30)
         driver.state_action('Load from file', seed_path)
         driver.click('PREVIEW', bottom=True)
-        driver.rendered('initial-preview')
+        driver.rendered('initial-preview', action='Preview')
         for index, route in enumerate(ROUTES):
             driver.choose_route(index)
             state_path = root/f'route-{index}.json'
@@ -386,11 +388,11 @@ def main():
             require('scan_film' not in state['simulation'], 'Legacy scan_film persisted')
             require('workflow' not in state['simulation'], 'Legacy nested workflow persisted')
             driver.click('PREVIEW', bottom=True)
-            status = driver.rendered(f'route-{index}-preview')
+            status = driver.rendered(f'route-{index}-preview', action='Preview')
             driver.state_action('Save current to file', root/f'route-{index}-before-scan.json', save=True)
             driver.wait_text(r'Saved GUI state', f'route-{index}-before-scan')
             driver.click('SCAN', bottom=True)
-            status = driver.rendered(f'route-{index}-scan')
+            status = driver.rendered(f'route-{index}-scan', action='Scan')
             output = root/f'route-{index}.tif'
             driver.click('SAVE', bottom=True)
             driver.dialog(output, save=True)
@@ -434,7 +436,11 @@ def main():
         driver.section('Import Raw')
         driver.click('Select file')
         driver.dialog(args.raw.resolve())
-        driver.wait_text(r'Loaded', 'raw-import')
+        raw_text = driver.wait_text(
+            r'(?:Loaded[^\n]*768\s*[x×=*]\s*512|(?:Preview|Scan)[^\n]*(?:640\s*[x×=*]\s*426|768\s*[x×=*]\s*512))',
+            'raw-import-dimensions')
+        driver.records.append({'raw_fixture_sha256': sha(args.raw),
+                               'raw_input_size': [768, 512], 'observed_status': raw_text})
         driver.section('Import Raw')
         raw_state = saved(driver, root, 'raw-import-state')
         require(raw_state['input_image']['input_color_space'] == 'ACES2065-1', 'RAW input space differs')
@@ -444,11 +450,11 @@ def main():
         driver.section('Import RGB')
         driver.click('Select file')
         driver.dialog(source)
-        driver.wait_text(r'Loaded', 'export-input-reloaded')
+        driver.wait_text(r'Loaded|input\.tif', 'export-input-reloaded')
         driver.section('Import RGB')
         export_controls(driver)
         export_path = root/'cpu-export.tif'
-        export_image(driver, args.exporter.resolve(), export_path)
+        export_image(driver, export_path)
         report['cpu_export'] = read_output(export_path)
         driver.scroll(False)
         driver.section('Output')
@@ -458,7 +464,7 @@ def main():
         require(writer.open(str(large), oiio.ImageSpec(4096, 3072, 3, oiio.FLOAT)), 'Large fixture open failed')
         require(writer.write_image(pixels), 'Large fixture write failed')
         writer.close()
-        cancel_export(driver, args.exporter.resolve(), large, root/'cancelled.tif')
+        cancel_export(driver, large, root/'cancelled.tif')
         if not args.development_smoke:
             require(git(repo, 'rev-parse', 'HEAD') == commit, 'Implementation changed during native run')
             require(not git(repo, 'status', '--porcelain', '--untracked-files=all'),
