@@ -21,7 +21,7 @@ Files:
 | `grain_v2_acceptance.py` | Grain V2 presets, Film Types and endpoints, CPU/GPU dispatch parity, Custom parameter inheritance and f32/f64 float TIFF render/export roundtrips |
 
 Grain V2 acceptance: run `python3 scripts/parity/grain_v2_acceptance.py`.
-The GPU comparison dispatches the actual shader across multiple workgroups for all twelve profiles in Analogue and Noise modes, with a maximum absolute error budget of 0.005 against the independent CPU implementation. A missing WGPU adapter is reported as a skip; it is not GPU evidence. Film Resolution/FastBlur and procedural gradient hashing are compatibility implementations, not a claim of bit-exact Dehancer output.
+The GPU comparison dispatches the actual shader across multiple workgroups for all twelve profiles in Analogue and Noise modes, with a maximum absolute error budget of 0.005 against the independent CPU implementation. A missing WGPU adapter is reported as a skip; it is not GPU evidence. Both kernels consume native encoded RGB without a hardcoded transfer. Scanner regressions cover four output spaces, film/paper scans, both modes and linear/encoded output in f32/f64; actual renders are saved and reloaded as float TIFF. Recovered Gaussian FastBlur, OpticalResolution, half storage and noise semantics are tested; vendor-device bit-exact randomness is not required.
 
 Local verification on 2026-10-08: workspace tests passed (240 tests); native f32 WGPU and f64 GUI previews rendered, the V2 mode control was exercised, and native Save/f64 Export wrote readable TIFF files. CLI V2 processing and six f32/f64 render/export roundtrips passed. The local native dependency prefix was `/data/deps/libraw-0.22.2` (real LibRaw 0.22.2). Hardware render-node access was denied, so this establishes WGPU execution with the available adapter, not discrete-GPU performance. Strict all-features clippy stopped in unchanged math sources on existing diagnostics.
 
@@ -97,6 +97,15 @@ an initial preview before saving state to establish the output viewing layer.
 It distinguishes the SCAN action from the Scan for print checkbox and observes
 a saved-state status before each new SCAN completion; image dimensions in the
 Rendered status are not an execution counter.
+
+Profile selection records the open menu and scrolls one wheel increment between
+observations so intermediate stock rows cannot be skipped.
+Cancellation reads the button interior at the observed Export action position:
+full-sidebar OCR can omit its short bordered label. The gate requires rendered
+`Cancel` text and a live export child immediately before clicking.
+File choosers receive the full path in one paste and one Enter. Submitting a
+directory first can accept a previously selected file and send the subsequent
+Enter to the main window, reopening the chooser.
 
 `--development-smoke` permits an uncommitted iteration and always reports
 `development-smoke`, never acceptance `pass`. Missing controls, clipped labels,
