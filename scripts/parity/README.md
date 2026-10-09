@@ -98,6 +98,9 @@ It distinguishes the SCAN action from the Scan for print checkbox and observes
 a saved-state status before each new SCAN completion; image dimensions in the
 Rendered status are not an execution counter.
 
+Profile selection records the open menu and scrolls one wheel increment between
+observations so intermediate stock rows cannot be skipped.
+
 `--development-smoke` permits an uncommitted iteration and always reports
 `development-smoke`, never acceptance `pass`. Missing controls, clipped labels,
 failed file dialogs, incorrect state, nonfinite pixels, and changed provenance

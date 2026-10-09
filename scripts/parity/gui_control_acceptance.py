@@ -153,6 +153,8 @@ def profile_roundtrip(driver, root):
         x, y = matches[0]
         driver.xd('mousemove', '--window', driver.window, int(x + 50), int(y + 22))
         driver.xd('click', 1)
+        time.sleep(.4)
+        driver.snap('profile-popup-' + label.replace(' ', '-'))
         for direction in ('4', '5'):
             for attempt in range(14):
                 image, _, lines = driver.read()
@@ -165,7 +167,9 @@ def profile_roundtrip(driver, root):
                     time.sleep(.4)
                     return
                 driver.xd('mousemove', '--window', driver.window, image.width - 150, 400)
-                driver.xd('click', '--repeat', '5', '--delay', '50', direction)
+                driver.xd('click', direction)
+                time.sleep(.2)
+        driver.snap('profile-search-failed-' + label.replace(' ', '-'))
         raise RuntimeError(f'Profile option not visible: {label}')
     choose('Kodak Portra 400')
     changed = saved(driver, root, 'profile-other')
