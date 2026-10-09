@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use eframe::egui;
-use spektrafilm_core::image_io::{self, BitDepth, Compression, ImageMetadata, JpegSubsampling, LoadedImage, SaveOptions};
+use spektrafilm_core::image_io::{self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
@@ -23,6 +23,8 @@ mod panels;
 mod state;
 mod controls;
 mod display;
+mod export;
+use export::{ExportBackend, ExportCompression, ExportDialog, ExportFormat, ExportOptions};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
 const IN_FLIGHT_REPAINT: Duration = Duration::from_millis(16);
@@ -58,8 +60,7 @@ fn main() -> eframe::Result<()> {
             _ => { initial_image = Some(PathBuf::from(arg)); }
         }
     }
-    let backend = spektrafilm_gpu::select_backend();
-    let backend: Arc<dyn ComputeBackend> = Arc::from(backend);
+    let backend = gui_backend();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1460.0, 980.0]),
@@ -196,6 +197,17 @@ fn gui_renderer() -> eframe::Renderer {
     }
 }
 
+/// GUI Preview and Scan prefer WGPU even in a reference-precision build.
+/// An explicit CPU override and unavailable adapters use the native CPU backend.
+fn gui_backend() -> Arc<dyn ComputeBackend> {
+    match std::env::var("SPEKTRAFILM_BACKEND").ok().as_deref() {
+        None => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+            .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
+            .unwrap_or_else(|| Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend)),
+        Some(_) => Arc::from(spektrafilm_gpu::select_backend()),
+    }
+}
+
 /// One entry in the film / paper combo box. `stock` is the filename
 /// stem (the unique key the profile loader expects); `display` is the
 /// human-readable label from the profile's `info.name`, falling back
@@ -254,19 +266,16 @@ struct App {
     image_path: Option<PathBuf>,
     image: Option<Arc<ImageBuf>>,
     raw_lens_info: Option<String>,
-    /// Number of quarter turns applied to the in-memory input relative to the
-    /// file on disk. Export uses the rotated buffer when this is non-zero.
+    /// Quarter turns applied to the loaded source, used for the rotation status.
     input_rotation: i32,
     source_metadata: Option<ImageMetadata>,
-    save_depth: BitDepth,
-    export_format: ExportFormat,
-    jpeg_quality: u8,
-    jpeg_subsampling: JpegSubsampling,
-    export_compression: ExportCompression,
-    export_backend: ExportBackend,
+    export_options: ExportOptions,
+    export_dialog: ExportDialog,
+    input_epoch: u64,
     /// Last rendered pipeline output (post sRGB encode + clip). Retained
     /// so the Save button can write it without re-running the pipeline.
     output_image: Option<ImageBuf>,
+    output_metadata: Option<ImageMetadata>,
     viewer: display::Viewer,
     gui_tab: GuiTab,
     output_color_space: String,
@@ -303,8 +312,8 @@ struct App {
     /// render from the UI thread is what keeps sliders responsive —
     /// the 250–500 ms pipeline used to block input handling.
     render_job: Option<RenderJob>,
-    /// In-flight export job. `Some` while the subprocess is
-    /// running; the `update()` loop polls the receiver each frame and
+    /// In-flight export job. `Some` while the immutable snapshot is rendering;
+    /// the `update()` loop polls the receiver each frame and
     /// surfaces success/failure in `status` when the worker thread
     /// completes. Joined eagerly to release the thread.
     export_job: Option<ExportJob>,
@@ -315,10 +324,22 @@ struct App {
 }
 
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderKind { Preview, Scan }
+
+impl RenderKind {
+    fn label(self) -> &'static str {
+        match self { Self::Preview => "Preview", Self::Scan => "Scan" }
+    }
+}
+
 /// One in-flight preview render. The worker owns a Pipeline + the
 /// ImageBuf clone and, when it finishes, sends back the output buffer
 /// plus the two timings the status bar shows.
 struct RenderJob {
+    input_epoch: u64,
+    kind: RenderKind,
+    backend_name: String,
     rx: mpsc::Receiver<Result<RenderResult, String>>,
     handle: Option<JoinHandle<()>>,
 }
@@ -327,8 +348,12 @@ struct RenderResult {
     output: ImageBuf,
     preview: display::DisplayRaster,
     display_status: String,
+    display_enabled: bool,
+    display_profile: Option<PathBuf>,
+    display_max_size: u32,
     output_color_space: String,
     output_cctf_encoding: bool,
+    source_metadata: Option<ImageMetadata>,
     input_clone_ms: f32,
     scale_ms: f32,
     pipeline_build_ms: f32,
@@ -338,63 +363,25 @@ struct RenderResult {
 }
 
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum ExportBackend {
-    #[default]
-    Cpu,
-    Gpu,
-}
 
-impl ExportBackend {
-    fn from_state(state: &serde_json::Value) -> Self {
-        match state["rust"]["export_backend"].as_str() {
-            Some("gpu") => Self::Gpu,
-            _ => Self::Cpu,
-        }
-    }
-
-    fn argument(self) -> &'static str {
-        match self { Self::Cpu => "cpu", Self::Gpu => "gpu" }
-    }
-
-    fn label(self) -> &'static str {
-        match self { Self::Cpu => "CPU (f64)", Self::Gpu => "GPU (WGPU f32)" }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ExportFormat { Jpeg, #[default] Png, Tiff, Exr }
-impl ExportFormat {
-    fn from_state(v: &serde_json::Value) -> Self {
-        match v["rust"]["export_format"].as_str() {
-            Some("jpeg") => Self::Jpeg, Some("tiff") => Self::Tiff,
-            Some("exr") => Self::Exr, _ => Self::Png,
-        }
-    }
-    fn argument(self) -> &'static str { match self { Self::Jpeg=>"jpeg", Self::Png=>"png", Self::Tiff=>"tiff", Self::Exr=>"exr" } }
-    fn extension(self) -> &'static str { match self { Self::Jpeg=>"jpg", Self::Png=>"png", Self::Tiff=>"tiff", Self::Exr=>"exr" } }
-    fn label(self) -> &'static str { match self { Self::Jpeg=>"JPEG", Self::Png=>"PNG", Self::Tiff=>"TIFF", Self::Exr=>"EXR" } }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ExportCompression { #[default] Zip, None }
-impl ExportCompression {
-    fn from_state(v: &serde_json::Value) -> Self { if v["rust"]["export_compression"].as_str() == Some("none") { Self::None } else { Self::Zip } }
-    fn argument(self) -> &'static str { match self { Self::Zip=>"zip", Self::None=>"none" } }
-}
-
-/// One in-flight export. The worker thread owns the child
-/// process and polls `cancel` in its wait loop. On completion the
-/// worker sends the staged image with `Ok(elapsed_seconds, output_filename)`
-/// or `Err(msg)`. The UI publishes it only if cancellation was not requested.
-/// The join handle is held so we can `join()` after consuming the
-/// message and on `on_exit` to drain the worker before the process dies.
+/// One in-flight export owning an immutable input, pipeline and option snapshot.
+/// Cancellation discards its staged file once the current operation completes.
+/// The UI alone publishes successful, uncancelled work.
 struct ExportJob {
-    rx: mpsc::Receiver<Result<(f32, String, TempPath), String>>,
+    rx: mpsc::Receiver<Result<ExportResult, String>>,
     handle: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
     started_at: Instant,
     backend: ExportBackend,
+}
+
+struct ExportResult {
+    elapsed: f32,
+    filename: String,
+    backend_name: String,
+    size: [u32; 2],
+    metadata_warning: Option<String>,
+    staged: TempPath,
 }
 
 enum CalibrationResult {
@@ -438,16 +425,7 @@ impl App {
             .map(|f| f.data.development_time.clone())
             .unwrap_or_default();
         let print_dev_times = profile_dev_times(&data_dir, &print_name);
-        let export_format = ExportFormat::from_state(&gui_state.sections);
-        let jpeg_quality = gui_state.sections["rust"]["jpeg_quality"].as_u64().unwrap_or(95).clamp(1, 100) as u8;
-        let jpeg_subsampling = if gui_state.sections["rust"]["jpeg_subsampling"].as_str() == Some("420") { JpegSubsampling::Yuv420 } else { JpegSubsampling::Yuv444 };
-        let export_compression = ExportCompression::from_state(&gui_state.sections);
-        let export_backend = ExportBackend::from_state(&gui_state.sections);
-        let save_depth = match gui_state.sections["rust"]["save_bit_depth"].as_u64() {
-            Some(8) => BitDepth::Eight,
-            Some(32) => BitDepth::ThirtyTwo,
-            _ => BitDepth::Sixteen,
-        };
+        let export_options = ExportOptions::from_state(&gui_state.sections);
 
         let mut app = Self {
             backend,
@@ -468,13 +446,11 @@ impl App {
             image: None,
             raw_lens_info: None,
             source_metadata: None,
-            save_depth,
-            export_format,
-            jpeg_quality,
-            jpeg_subsampling,
-            export_compression,
-            export_backend,
+            export_options,
+            export_dialog: ExportDialog::default(),
+            input_epoch: 0,
             output_image: None,
+            output_metadata: None,
             viewer: display::Viewer::new(),
             gui_tab: GuiTab::default(),
             output_color_space: "sRGB".into(),
@@ -512,12 +488,7 @@ impl App {
         for key in ["use_display_transform","gray_18_canvas","white_padding","output_interpolation"] { extras["display"][key] = display[key].clone(); }
         if !extras["rust"].is_object() { extras["rust"] = serde_json::json!({"version":1}); }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
-        extras["rust"]["save_bit_depth"] = serde_json::json!(self.save_depth.bits());
-        extras["rust"]["export_format"] = serde_json::json!(self.export_format.argument());
-        extras["rust"]["jpeg_quality"] = serde_json::json!(self.jpeg_quality);
-        extras["rust"]["jpeg_subsampling"] = serde_json::json!(match self.jpeg_subsampling { JpegSubsampling::Yuv444=>"444", JpegSubsampling::Yuv420=>"420" });
-        extras["rust"]["export_compression"] = serde_json::json!(self.export_compression.argument());
-        extras["rust"]["export_backend"] = serde_json::json!(self.export_backend.argument());
+        self.export_options.write_state(&mut extras);
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
     }
 
@@ -532,12 +503,8 @@ impl App {
         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
         self.params = params;
-        self.save_depth = match state.sections["rust"]["save_bit_depth"].as_u64() { Some(8)=>BitDepth::Eight,Some(32)=>BitDepth::ThirtyTwo,_=>BitDepth::Sixteen };
-        self.export_format = ExportFormat::from_state(&state.sections);
-        self.jpeg_quality = state.sections["rust"]["jpeg_quality"].as_u64().unwrap_or(95).clamp(1, 100) as u8;
-        self.jpeg_subsampling = if state.sections["rust"]["jpeg_subsampling"].as_str() == Some("420") { JpegSubsampling::Yuv420 } else { JpegSubsampling::Yuv444 };
-        self.export_compression = ExportCompression::from_state(&state.sections);
-        self.export_backend = ExportBackend::from_state(&state.sections);
+        self.export_options = ExportOptions::from_state(&state.sections);
+        self.export_dialog = ExportDialog::default();
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
         self.raw_lens_info = None;
@@ -553,7 +520,10 @@ impl App {
     fn refresh_viewing_artifacts(&mut self) {
         if let Some(image) = self.image.as_ref() {
             match display::input_display_raster(image,&self.params.io.input_color_space,self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
-                Ok(raster) => self.viewer.replace_input_display(raster),
+                Ok(raster) => {
+                    self.viewer.replace_input_display(raster);
+                    self.viewer.set_input_display_source(&self.params.io.input_color_space, self.params.io.input_cctf_decoding);
+                }
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
         }
@@ -562,6 +532,9 @@ impl App {
                 Ok((raster,status)) => { self.viewer.replace_output_display(raster); self.viewer.transform_status=status; }
                 Err(e) => self.status = format!("Viewer display error: {e}"),
             }
+            self.viewer.set_output_display_source(&self.output_color_space, self.output_cctf_encoding,
+                self.viewer.settings.use_display_transform,
+                self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new));
         }
     }
 
@@ -630,13 +603,15 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if ui.button("PREVIEW").clicked() {
+            let busy = self.render_job.is_some() || self.export_job.is_some() || self.calibration_job.is_some();
+            let ready = self.image.is_some() && !busy;
+            if ui.add_enabled(ready, egui::Button::new("PREVIEW")).clicked() {
                 self.dirty = true; self.force_preview = true; self.full_scan_requested = false;
             }
-            if ui.button("SCAN").clicked() {
+            if ui.add_enabled(ready, egui::Button::new("SCAN")).clicked() {
                 self.dirty = true; self.force_preview = true; self.full_scan_requested = true;
             }
-            if ui.add_enabled(self.output_image.is_some(), egui::Button::new("SAVE")).clicked() { self.save_dialog(); }
+            if ui.add_enabled(self.output_image.is_some() && !busy, egui::Button::new("SAVE")).clicked() { self.save_dialog(); }
         });
     }
 
@@ -728,13 +703,19 @@ impl App {
                     }
                 }
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+                self.input_epoch = self.input_epoch.wrapping_add(1);
+                self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
                 match display::input_display_raster(self.image.as_ref().unwrap(), &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
-                    Ok(raster) => self.viewer.set_input(raster,[self.image.as_ref().unwrap().width as usize,self.image.as_ref().unwrap().height as usize]),
+                    Ok(raster) => {
+                        self.viewer.set_input(raster,[self.image.as_ref().unwrap().width as usize,self.image.as_ref().unwrap().height as usize]);
+                        self.viewer.set_input_display_source(&self.params.io.input_color_space, self.params.io.input_cctf_decoding);
+                    }
                     Err(e) => self.status = format!("Viewer input error: {e}"),
                 }
                 self.image_path = Some(path.to_path_buf());
                 self.output_image = None;
+                self.output_metadata = None;
                 self.dirty = true;
             }
             Err(e) => {
@@ -752,10 +733,17 @@ impl App {
         let rotated = image.rotated_quarter_turns(quarter_turns);
         self.image = Some(Arc::new(rotated));
         self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
+        self.input_epoch = self.input_epoch.wrapping_add(1);
+        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+        self.full_scan_requested = false;
         self.output_image = None;
+        self.output_metadata = None;
         if let Some(image) = self.image.as_ref() {
             match display::input_display_raster(image, &self.params.io.input_color_space, self.params.io.input_cctf_decoding,self.params.settings.preview_max_size as usize) {
-                Ok(raster) => self.viewer.set_input(raster, [image.width as usize, image.height as usize]),
+                Ok(raster) => {
+                    self.viewer.set_input(raster, [image.width as usize, image.height as usize]);
+                    self.viewer.set_input_display_source(&self.params.io.input_color_space, self.params.io.input_cctf_decoding);
+                }
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
         }
@@ -832,9 +820,12 @@ impl App {
         let input_clone_ms = t_clone.elapsed().as_secs_f32() * 1000.0;
         let film_name = self.film_name.clone();
         let print_name = self.print_name.clone();
-        let params = match self.digested_params(!self.full_scan_requested) {
+        let kind = if self.full_scan_requested { RenderKind::Scan } else { RenderKind::Preview };
+        let input_epoch = self.input_epoch;
+        let backend_name = self.backend.name().to_owned();
+        let params = match self.digested_params(kind == RenderKind::Preview) {
             Ok(params) => params,
-            Err(e) => { self.status = format!("Preview state error: {e:#}"); return; }
+            Err(e) => { self.status = format!("{} state error: {e:#}", kind.label()); return; }
         };
         let (pipeline_template, pipeline_build_ms) =
             match self.preview_pipeline(&film_name, &print_name, &params) {
@@ -846,6 +837,7 @@ impl App {
                 }
             };
         let backend = self.backend.clone();
+        let source_metadata = self.source_metadata.clone();
         let (tx, rx) = mpsc::channel();
         let ctx_for_worker = ctx.clone();
         let display_enabled = self.viewer.settings.use_display_transform;
@@ -872,11 +864,15 @@ impl App {
                     let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                     let worker_total_ms = t_total.elapsed().as_secs_f32() * 1000.0;
                     Ok(RenderResult {
+                        source_metadata,
                         output_color_space: pipeline.params.io.output_color_space.clone(),
                         output_cctf_encoding: pipeline.params.io.output_cctf_encoding,
                         output,
                         preview,
                         display_status,
+                        display_enabled,
+                        display_profile,
+                        display_max_size: pipeline.params.settings.preview_max_size,
                         input_clone_ms,
                         scale_ms,
                         pipeline_build_ms,
@@ -891,6 +887,9 @@ impl App {
             })
             .expect("OS thread spawn");
         self.render_job = Some(RenderJob {
+            input_epoch,
+            kind,
+            backend_name,
             rx,
             handle: Some(handle),
         });
@@ -917,14 +916,28 @@ impl App {
         if let Some(h) = job.handle.take() {
             let _ = h.join();
         }
+        let current_input = job.input_epoch == self.input_epoch;
+        let kind = job.kind;
+        let backend_name = job.backend_name.clone();
         self.render_job = None;
-        if self.pending_dirty || self.dirty {
+        if !current_input {
             self.pending_dirty = false;
             self.dirty = true;
             return;
         }
         match result {
-            Ok(r) => {
+            Ok(mut r) => {
+                let display_profile = self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new);
+                if r.display_enabled != self.viewer.settings.use_display_transform
+                    || r.display_profile.as_deref() != display_profile
+                    || r.display_max_size != self.params.settings.preview_max_size {
+                    match display::output_display_raster(&r.output, &r.output_color_space,
+                        r.output_cctf_encoding, self.viewer.settings.use_display_transform,
+                        display_profile, self.params.settings.preview_max_size as usize) {
+                        Ok((preview, status)) => { r.preview = preview; r.display_status = status; }
+                        Err(error) => { self.status = format!("Viewer display error: {error}"); return; }
+                    }
+                }
                 self.last_input_clone_ms = r.input_clone_ms;
                 self.last_scale_ms = r.scale_ms;
                 self.last_pipeline_build_ms = r.pipeline_build_ms;
@@ -933,10 +946,16 @@ impl App {
                 self.last_worker_total_ms = r.worker_total_ms;
                 self.output_color_space = r.output_color_space;
                 self.output_cctf_encoding = r.output_cctf_encoding;
+                self.output_metadata = r.source_metadata;
                 self.viewer.transform_status = r.display_status;
                 self.viewer.set_output(r.preview,[r.output.width as usize,r.output.height as usize],ctx.input(|i|i.time));
+                self.viewer.set_output_display_source(&self.output_color_space, self.output_cctf_encoding,
+                    self.viewer.settings.use_display_transform,
+                    self.gui_state.sections["rust"]["display_profile"].as_str().map(Path::new));
                 self.status = format!(
-                    "Rendered {} × {} ({:.1} MP)",
+                    "{} · {} · {} × {} ({:.1} MP)",
+                    kind.label(),
+                    backend_name,
                     r.output.width,
                     r.output.height,
                     r.output.pixel_count() as f64 / 1e6
@@ -954,10 +973,8 @@ impl App {
         }
     }
 
-    /// Open a save dialog and write the most recent rendered output to
-    /// disk. Suggested filename is the input stem + the chosen film
-    /// stock + the chosen extension; default extension is PNG (8-bit
-    /// sRGB-encoded, matching what's on screen).
+    /// Save the latest accepted float output using current saving color settings.
+    /// The typed extension selects the format; this never rerenders.
     fn save_dialog(&mut self) {
         if self.output_image.is_none() {
             self.status = "Nothing to save yet — load an image first.".into();
@@ -969,9 +986,9 @@ impl App {
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("spektrafilm");
-                format!("{stem}_{}_spektra.png", self.film_name)
+                format!("{stem}.jpg")
             }
-            None => "spektrafilm.png".into(),
+            None => "output.jpg".into(),
         };
         let Some(path) = self.file_dialog("save_output")
             .add_filter("Image", &["jpg", "jpeg", "png", "tif", "tiff", "exr"])
@@ -981,53 +998,33 @@ impl App {
             return;
         };
         self.remember_dialog("save_output", &path);
-        let expected_format = match self.export_format {
-            ExportFormat::Jpeg => image_io::ImageFormat::Jpeg,
-            ExportFormat::Png => image_io::ImageFormat::Png,
-            ExportFormat::Tiff => image_io::ImageFormat::Tiff,
-            ExportFormat::Exr => image_io::ImageFormat::Exr,
-        };
         let actual_format = match image_io::ImageFormat::detect(&path) {
             Ok(format) => format,
             Err(error) => { self.status = format!("Save error: {error}"); return; }
         };
-        if actual_format != expected_format {
-            self.status = format!("Save error: filename extension does not match {}", self.export_format.label());
-            return;
-        }
         let out = self.output_image.as_ref().expect("output checked before dialog");
         let t = Instant::now();
-        let destination = if self.export_format == ExportFormat::Exr {
-            "ACES2065-1"
-        } else {
-            self.gui_state.sections["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB")
-        };
-        let encoded = if self.export_format == ExportFormat::Exr {
-            false
-        } else {
-            self.gui_state.sections["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true)
-        };
+        let destination = self.gui_state.sections["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB");
+        let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true);
         let converted = match image_io::convert_image(out, &self.output_color_space, self.output_cctf_encoding, destination, encoded) {
             Ok(image) => image,
             Err(error) => { self.status = format!("Save error: {error}"); return; }
         };
-        match image_io::save(
+        match image_io::save_rendered_output(
             &path,
             &converted,
             SaveOptions {
-                depth: match self.export_format {
-                    ExportFormat::Jpeg | ExportFormat::Png => BitDepth::Eight,
-                    ExportFormat::Tiff => self.save_depth,
-                    ExportFormat::Exr => match self.save_depth { BitDepth::Eight => BitDepth::Sixteen, depth => depth },
+                depth: match actual_format {
+                    image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
+                    image_io::ImageFormat::Tiff | image_io::ImageFormat::Exr => BitDepth::Sixteen,
                 },
                 color_space: destination,
-                cctf_encoding: if self.export_format == ExportFormat::Exr { false } else { encoded },
-                jpeg_quality: (self.export_format == ExportFormat::Jpeg).then_some(self.jpeg_quality),
-                jpeg_subsampling: (self.export_format == ExportFormat::Jpeg).then_some(self.jpeg_subsampling),
-                compression: matches!(self.export_format, ExportFormat::Tiff | ExportFormat::Exr)
-                    .then_some(if self.export_format == ExportFormat::Exr { Compression::Zip } else if self.export_compression == ExportCompression::None { Compression::None } else { Compression::Zip }),
+                cctf_encoding: encoded,
+                jpeg_quality: None,
+                jpeg_subsampling: None,
+                compression: None,
             },
-            self.source_metadata.as_ref(),
+            self.output_metadata.as_ref(),
         ) {
             Ok(report) => {
                 self.status = format!(
@@ -1047,130 +1044,93 @@ impl App {
         }
     }
 
-    /// Re-render at full export resolution using the selected compute backend.
-    /// The f64 executable preserves reference CPU arithmetic; WGPU shaders use f32.
-    fn export_dialog(&mut self, ctx: &egui::Context) {
-        let Some(input_path) = self.image_path.clone() else {
+    /// Render an immutable snapshot of the loaded full input independently of Save.
+    fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
+        if self.render_job.is_some() || self.export_job.is_some() || self.calibration_job.is_some() {
+            self.status = "Wait for the current operation before exporting.".into();
+            return;
+        }
+        let Some(image) = self.image.as_ref().cloned() else {
             self.status = "Load an image before exporting.".into();
             return;
         };
-        let cli_path = match locate_f64_cli() {
-            Ok(p) => p,
-            Err(e) => {
-                self.status = format!("Export: {e}");
-                return;
-            }
-        };
-        let stem = input_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("spektrafilm");
-        let export_backend = self.export_backend;
-        let export_format = self.export_format;
-        let default_name = format!("{stem}_{}_spektra_{}.{}", self.film_name, export_backend.argument(), export_format.extension());
-        let Some(out_path) = self.file_dialog("export")
-            .add_filter("Image", &["jpg", "jpeg", "png", "tif", "tiff", "exr"])
-            .set_file_name(&default_name)
-            .save_file()
-        else {
+        options.normalize();
+        let stem = self.image_path.as_ref().and_then(|p| p.file_stem()).and_then(|s| s.to_str()).unwrap_or("spektrafilm");
+        let default_name = format!("{stem}_{}_spektra_{}.{}", self.film_name, options.backend.argument(), options.format.extension());
+        let Some(chosen_path) = self.file_dialog("export")
+            .add_filter(options.format.label(), options.format.extensions())
+            .set_file_name(&default_name).save_file() else { return; };
+        let out_path = options.format.output_path(&chosen_path);
+        if out_path != chosen_path && out_path.exists() {
+            self.status = format!("Export destination already exists: {}. Choose that exact filename to confirm replacement.", out_path.display());
             return;
-        };
-        self.remember_dialog("export", &out_path);
-
-        // Spawn the export on a worker thread so the egui event loop
-        // keeps drawing. The cancel flag is shared with the worker so
-        // the Cancel button (and `on_exit`) can kill the child cleanly
-        // instead of letting it orphan after the GUI window closes.
-        let film = self.film_name.clone();
-        let paper = self.print_name.clone();
+        }
         let params = match self.digested_params(false) {
             Ok(params) => params,
             Err(e) => { self.status = format!("Export state error: {e:#}"); return; }
         };
-        let data_dir = self.data_dir.clone();
-        let save_depth = self.save_depth;
-        let jpeg_quality = self.jpeg_quality;
-        let jpeg_subsampling = self.jpeg_subsampling;
-        let export_compression = self.export_compression;
-        let export_state = self.gui_state.sections.clone();
-        let rotated_input = (self.input_rotation != 0).then(|| (
-            Arc::clone(self.image.as_ref().expect("export requires loaded image")),
-            self.source_metadata.clone(),
-        ));
+        let film = self.film_name.clone();
+        let paper = self.print_name.clone();
+        let pipeline = match self.preview_pipeline(&film, &paper, &params) {
+            Ok((pipeline, _)) => pipeline,
+            Err(e) => { self.status = format!("Export pipeline error: {e}"); return; }
+        };
+        self.remember_dialog("export", &out_path);
+        self.export_options = options.clone();
+        let metadata = self.source_metadata.clone();
+        let export_backend = options.backend;
+        let selected_backend = self.backend.clone();
         let (tx, rx) = mpsc::channel();
         let ctx_for_worker = ctx.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_worker = Arc::clone(&cancel);
         let started_at = Instant::now();
-        let handle = std::thread::Builder::new()
-            .name("spektrafilm-export".into())
+        let handle = std::thread::Builder::new().name("spektrafilm-export".into())
             .spawn(move || {
-                let res = (|| -> Result<_> {
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<ExportResult> {
                     if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
-                    let rotated_input_guard = if let Some((image, metadata)) = rotated_input {
-                        let nanos = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)?.as_nanos();
-                        let guard = TempPath(std::env::temp_dir().join(format!(
-                            "spektrafilm-export-input-{}-{nanos}.tif", std::process::id()
-                        )), None);
-                        image_io::save(&guard.0, &image, SaveOptions {
-                            depth: BitDepth::ThirtyTwo,
-                            color_space: &params.io.input_color_space,
-                            cctf_encoding: params.io.input_cctf_decoding,
-                            jpeg_quality: None,
-                            jpeg_subsampling: None,
-                            compression: None,
-                        }, metadata.as_ref())?;
-                        Some(guard)
-                    } else { None };
+                    let backend: Arc<dyn ComputeBackend> = match export_backend {
+                        ExportBackend::Cpu => Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+                        ExportBackend::Gpu if selected_backend.is_gpu() => selected_backend,
+                        ExportBackend::Gpu => Arc::new(spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+                            .context("GPU export requested but no WGPU adapter is available")?),
+                    };
+                    let output = pipeline.process((*image).clone(), backend.as_ref()).map_err(anyhow::Error::msg)?;
                     if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
-                    let input_for_export = rotated_input_guard.as_ref()
-                        .map(|guard| guard.0.as_path()).unwrap_or(&input_path);
-                    run_export(
-                    &cli_path,
-                    input_for_export,
-                    &out_path,
-                    &film,
-                    &paper,
-                    &params,
-                    &data_dir,
-                    export_backend,
-                    save_depth,
-                    export_format,
-                    jpeg_quality,
-                    jpeg_subsampling,
-                    export_compression,
-                    &export_state,
-                    &cancel_for_worker,
-                )
-                })();
-                let name = out_path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("(file)")
-                    .to_string();
-                let msg = match res {
-                    Ok(staged) => Ok((started_at.elapsed().as_secs_f32(), name, staged)),
-                    Err(e) => Err(format!("{e:#}")),
-                };
+                    let converted = image_io::convert_image(&output, &pipeline.params.io.output_color_space,
+                        pipeline.params.io.output_cctf_encoding, &options.saving_color_space,
+                        options.saving_cctf_encoding)?;
+                    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+                    let staged = TempPath(out_path.with_file_name(format!("spektrafilm-export-{}-{nanos}.{}",
+                        std::process::id(), options.format.extension())), Some(out_path.clone()));
+                    let report = image_io::save(&staged.0, &converted, SaveOptions {
+                        depth: options.depth,
+                        color_space: &options.saving_color_space,
+                        cctf_encoding: options.saving_cctf_encoding,
+                        jpeg_quality: (options.format == ExportFormat::Jpeg).then_some(options.jpeg_quality),
+                        jpeg_subsampling: (options.format == ExportFormat::Jpeg).then_some(options.jpeg_subsampling),
+                        compression: matches!(options.format, ExportFormat::Tiff | ExportFormat::Exr)
+                            .then_some(if options.compression == ExportCompression::Zip { Compression::Zip } else { Compression::None }),
+                    }, metadata.as_ref())?;
+                    if cancel_for_worker.load(Ordering::SeqCst) { anyhow::bail!("cancelled"); }
+                    Ok(ExportResult {
+                        elapsed: started_at.elapsed().as_secs_f32(),
+                        filename: out_path.file_name().and_then(|s| s.to_str()).unwrap_or("(file)").to_owned(),
+                        backend_name: backend.name().to_owned(),
+                        size: [output.width, output.height],
+                        metadata_warning: report.metadata_warning,
+                        staged,
+                    })
+                })).unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
+                let msg = res.map_err(|e| format!("{e:#}"));
                 let _ = tx.send(msg);
                 ctx_for_worker.request_repaint();
-            })
-            .expect("OS thread spawn");
+            }).expect("OS thread spawn");
         self.status = format!("Exporting with {}…", export_backend.label());
-        self.export_job = Some(ExportJob {
-            rx,
-            handle: Some(handle),
-            cancel,
-            started_at,
-            backend: export_backend,
-        });
+        self.export_job = Some(ExportJob { rx, handle: Some(handle), cancel, started_at, backend: export_backend });
     }
 
-    /// Request cancellation of the in-flight export. The worker thread
-    /// observes the flag in its `try_wait` poll loop and SIGKILLs the
-    /// child; `poll_export_job` then drains the resulting error message
-    /// on the next `update()` tick.
+    /// Cancellation discards the staged file after the current pipeline operation.
     fn cancel_export(&mut self) {
         let Some(job) = self.export_job.as_ref() else {
             return;
@@ -1211,12 +1171,16 @@ impl App {
             let _ = h.join();
         }
         let cancelled = job.cancel.load(Ordering::SeqCst);
-        let backend = job.backend;
         self.export_job = None;
         self.status = match msg {
-            Ok((_, _, _)) if cancelled => "Export cancelled.".into(),
-            Ok((secs, name, staged)) => match staged.publish() {
-                Ok(()) => format!("Exported ({}) {name} in {secs:.1} s", backend.label()),
+            Ok(_) if cancelled => "Export cancelled.".into(),
+            Ok(result) => match result.staged.publish() {
+                Ok(()) => {
+                    let mut status = format!("Exported ({}) {} · {} × {} in {:.1} s",
+                        result.backend_name, result.filename, result.size[0], result.size[1], result.elapsed);
+                    if let Some(warning) = result.metadata_warning { status.push_str(&format!(" — Metadata warning: {warning}")); }
+                    status
+                }
                 Err(e) => format!("Export error: {e:#}"),
             },
             Err(e) if e.contains("cancelled") => "Export cancelled.".into(),
@@ -1225,8 +1189,8 @@ impl App {
     }
 
     fn start_calibration(&mut self, action: controls::CalibrationAction) {
-        if self.calibration_job.is_some() {
-            self.status = "A Convert calibration action is already running.".into();
+        if self.calibration_job.is_some() || self.render_job.is_some() || self.export_job.is_some() {
+            self.status = "Wait for the current operation before running a Convert action.".into();
             return;
         }
         let Some(image) = self.image.as_ref().map(|image| (**image).clone()) else {
@@ -1371,7 +1335,7 @@ impl App {
         }
     }
 
-    fn import_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, raw: bool) {
+    fn import_section(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, raw: bool) {
         ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
             if ui.button("Select file").clicked() {
                 if let Some(path) = self.file_dialog("load").add_filter("Image", IMAGE_FILE_EXTENSIONS).pick_file() {
@@ -1379,7 +1343,7 @@ impl App {
                     self.load_image_from_path(&path);
                 }
             }
-            let save_enabled = self.output_image.is_some();
+            let save_enabled = self.output_image.is_some() && self.render_job.is_none() && self.export_job.is_none() && self.calibration_job.is_none();
             if ui
                 .add_enabled(save_enabled, egui::Button::new("Save…"))
                 .on_disabled_hover_text("Render an image first")
@@ -1391,13 +1355,13 @@ impl App {
             if export_busy {
                 if ui
                     .button("Cancel")
-                    .on_hover_text("Stop the in-flight export and kill the child process.")
+                    .on_hover_text("Cancel export; the current operation finishes before its output is discarded.")
                     .clicked()
                 {
                     self.cancel_export();
                 }
             } else {
-                let export_enabled = self.image_path.is_some();
+                let export_enabled = self.image.is_some() && self.render_job.is_none() && self.calibration_job.is_none() && !self.export_dialog.is_open();
                 if ui
                     .add_enabled(export_enabled, egui::Button::new("Export…"))
                     .on_hover_text(
@@ -1406,65 +1370,10 @@ impl App {
                     .on_disabled_hover_text("Load an image first")
                     .clicked()
                 {
-                    self.export_dialog(ctx);
+                    self.export_dialog.open(&self.export_options);
                 }
             }
         });
-        ui.add_enabled_ui(self.export_job.is_none(), |ui| {
-            egui::ComboBox::from_label("Export backend")
-                .selected_text(self.export_backend.label())
-                .show_ui(ui, |ui| {
-                    for backend in [ExportBackend::Cpu, ExportBackend::Gpu] {
-                        ui.selectable_value(&mut self.export_backend, backend, backend.label());
-                    }
-                });
-            if self.export_backend == ExportBackend::Gpu {
-                ui.small("GPU uses f32; unsupported effects run on CPU. A GPU adapter is required.");
-            }
-        });
-        ui.add_enabled_ui(self.export_job.is_none(), |ui| {
-            egui::ComboBox::from_label("Export format")
-                .selected_text(self.export_format.label())
-                .show_ui(ui, |ui| {
-                    for format in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Exr] {
-                        ui.selectable_value(&mut self.export_format, format, format.label());
-                    }
-                });
-            if self.export_format == ExportFormat::Jpeg {
-                ui.add(egui::Slider::new(&mut self.jpeg_quality, 1..=100).text("JPEG quality"));
-                egui::ComboBox::from_label("JPEG subsampling")
-                    .selected_text(match self.jpeg_subsampling { JpegSubsampling::Yuv444=>"4:4:4", JpegSubsampling::Yuv420=>"4:2:0" })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.jpeg_subsampling, JpegSubsampling::Yuv444, "4:4:4");
-                        ui.selectable_value(&mut self.jpeg_subsampling, JpegSubsampling::Yuv420, "4:2:0");
-                    });
-            }
-            if matches!(self.export_format, ExportFormat::Tiff | ExportFormat::Exr) {
-                egui::ComboBox::from_label("Compression")
-                    .selected_text(self.export_compression.argument())
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.export_compression, ExportCompression::Zip, "ZIP");
-                        ui.selectable_value(&mut self.export_compression, ExportCompression::None, "None");
-                    });
-            }
-        });
-        if matches!(self.export_format, ExportFormat::Jpeg | ExportFormat::Png) {
-            self.save_depth = BitDepth::Eight;
-        } else if self.export_format == ExportFormat::Exr && self.save_depth == BitDepth::Eight {
-            self.save_depth = BitDepth::Sixteen;
-        }
-        egui::ComboBox::from_label("Save bit depth")
-            .selected_text(format!("{} bit", self.save_depth.bits()))
-            .show_ui(ui, |ui| {
-                let depths: &[BitDepth] = match self.export_format {
-                    ExportFormat::Jpeg | ExportFormat::Png => &[BitDepth::Eight],
-                    ExportFormat::Tiff => &[BitDepth::Eight, BitDepth::Sixteen, BitDepth::ThirtyTwo],
-                    ExportFormat::Exr => &[BitDepth::Sixteen, BitDepth::ThirtyTwo],
-                };
-                for &depth in depths {
-                    ui.selectable_value(&mut self.save_depth, depth, format!("{} bit", depth.bits()));
-                }
-            });
         if let Some(p) = &self.image_path {
             ui.label(
                 egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small(),
@@ -1557,7 +1466,7 @@ impl eframe::App for App {
         }
         let _ = frame;
 
-        if self.dirty && self.image.is_some() && (self.gui_state.auto_preview() || self.force_preview) {
+        if self.dirty && self.image.is_some() && self.export_job.is_none() && self.calibration_job.is_none() && !self.export_dialog.is_open() && (self.gui_state.auto_preview() || self.force_preview) {
             let now = Instant::now();
             let dirty_since = *self.dirty_since.get_or_insert(now);
             if self.render_job.is_some() {
@@ -1581,6 +1490,10 @@ impl eframe::App for App {
         }
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
+        self.poll_export_job(ctx);
+        if let Some(options) = self.export_dialog.show(ctx) {
+            self.start_export(ctx, options);
+        }
         egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(420.0)
@@ -1648,9 +1561,7 @@ impl eframe::App for App {
         }
     }
 
-    /// Called once when the window is closing. If an export is still
-    /// in-flight, set the cancel flag and join the worker thread so
-    /// the child process is stopped before the GUI exits.
+    /// Cancel pending export publication and drain its worker before exiting.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         let Some(job) = self.export_job.take() else {
             return;
@@ -1879,83 +1790,6 @@ fn preview_pipeline_cache_key(
 
 
 
-/// Locate the f64-built `spektrafilm` CLI binary. Search order:
-///   1. `$SPEKTRAFILM_F64_CLI` — explicit override, full path.
-///   2. `spektrafilm-f64` next to the running GUI executable (release
-///      builds: both binaries live in `target/release/`).
-///   3. `spektrafilm-f64` on `$PATH`.
-///   4. `target/release/spektrafilm-f64` relative to `CARGO_MANIFEST_DIR`
-///      (handy when running via `cargo run`).
-///
-/// Returns a path that exists and is executable, or an explanatory
-/// error pointing to the build command.
-fn locate_f64_cli() -> Result<PathBuf, String> {
-    if let Ok(p) = std::env::var("SPEKTRAFILM_F64_CLI") {
-        let path = PathBuf::from(&p);
-        if path.is_file() {
-            return Ok(path);
-        }
-        return Err(format!(
-            "SPEKTRAFILM_F64_CLI points at {p} but no such file"
-        ));
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        for name in f64_cli_names() {
-            let p = dir.join(name);
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-    for name in f64_cli_names() {
-        if let Some(p) = which_on_path(name) {
-            return Ok(p);
-        }
-    }
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        for name in f64_cli_names() {
-            let p = PathBuf::from(&manifest)
-                .join("..")
-                .join("..")
-                .join("target")
-                .join("release")
-                .join(name);
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-    Err("no export CLI found. Build it with \
-         `cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64`, \
-         and either put it on PATH or set $SPEKTRAFILM_F64_CLI."
-        .into())
-}
-
-
-
-
-
-
-fn f64_cli_names() -> &'static [&'static str] {
-    if cfg!(windows) {
-        &["spektrafilm-f64.exe", "spektrafilm-f64"]
-    } else {
-        &["spektrafilm-f64"]
-    }
-}
-
-fn which_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
 
 struct TempPath(PathBuf, Option<PathBuf>);
 
@@ -1973,147 +1807,6 @@ impl Drop for TempPath {
     }
 }
 
-/// Run the exporter with an explicit backend and a temporary parameter snapshot.
-/// Cancellation kills and reaps the child; only a successful export is published.
-fn run_export(
-    cli_path: &Path,
-    input: &Path,
-    output: &Path,
-    film: &str,
-    paper: &str,
-    params: &spektrafilm_core::params::RuntimeParams,
-    data_dir: &Path,
-    backend: ExportBackend,
-    save_depth: BitDepth,
-    format: ExportFormat,
-    jpeg_quality: u8,
-    jpeg_subsampling: JpegSubsampling,
-    compression: ExportCompression,
-    gui_state: &serde_json::Value,
-    cancel: &AtomicBool,
-) -> Result<TempPath> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let temp = TempPath(std::env::temp_dir().join(format!(
-        "spektrafilm-export-{}-{nanos}.json",
-        std::process::id()
-    )), None);
-    // Preserve the extension for CLI format selection and keep staging on
-    // the destination filesystem so publication is one atomic rename.
-    let staged_name = format!(
-        "spektrafilm-export-{}-{nanos}.{}",
-        std::process::id(),
-        output.extension().and_then(|s| s.to_str()).unwrap_or("png")
-    );
-    let staged = TempPath(output.with_file_name(staged_name), Some(output.to_path_buf()));
-    {
-        let f = std::fs::File::create(&temp.0)
-            .with_context(|| format!("creating params tempfile {}", temp.0.display()))?;
-        serde_json::to_writer(std::io::BufWriter::new(f), params)
-            .context("serializing params to JSON")?;
-    }
-
-    let stderr_path = TempPath(temp.0.with_extension("stderr"), None);
-    let stderr_file = std::fs::File::create(&stderr_path.0)
-        .context("creating export error log")?;
-    let mut cmd = std::process::Command::new(cli_path);
-    cmd.arg("process")
-        .arg("--backend")
-        .arg(backend.argument())
-        .arg(input)
-        .arg("-o")
-        .arg(&staged.0)
-        .arg("--format")
-        .arg(format.argument())
-        .arg("--bit-depth")
-        .arg(save_depth.bits().to_string())
-        .arg("--film")
-        .arg(film)
-        .arg("--paper")
-        .arg(paper)
-        .arg("--params")
-        .arg(&temp.0)
-        .arg("--data-dir")
-        .arg(data_dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::from(stderr_file));
-    if params.io.scan_film {
-        cmd.arg("--scan-film");
-    }
-    cmd.arg("--saving-color-space").arg(gui_state["simulation"]["saving_color_space"].as_str().unwrap_or("sRGB"))
-        .arg("--saving-cctf-encoding").arg(if format == ExportFormat::Exr { "false" } else if gui_state["simulation"]["saving_cctf_encoding"].as_bool().unwrap_or(true) {"true"} else {"false"});
-    if format == ExportFormat::Jpeg {
-        cmd.arg("--jpeg-quality").arg(jpeg_quality.to_string())
-            .arg("--jpeg-subsampling").arg(match jpeg_subsampling { JpegSubsampling::Yuv444=>"444", JpegSubsampling::Yuv420=>"420" });
-    }
-    if matches!(format, ExportFormat::Tiff | ExportFormat::Exr) {
-        cmd.arg("--compression").arg(if format == ExportFormat::Exr { "zip" } else { compression.argument() });
-    }
-    for (key,flag) in [("film_channel_swap","--film-channel-swap"),("print_channel_swap","--print-channel-swap")] {
-        if let Some(order) = gui_state["special"][key].as_array() {
-            cmd.arg(flag).arg(order.iter().map(|v|v.as_u64().unwrap_or(0).to_string()).collect::<Vec<_>>().join(","));
-        }
-    }
-    let raw = &gui_state["load_raw"];
-    cmd.arg("--raw-white-balance").arg(raw["white_balance"].as_str().unwrap_or("as_shot").replace('_', "-"))
-        .arg("--raw-temperature").arg(raw["temperature"].as_f64().unwrap_or(5500.0).to_string())
-        .arg("--raw-tint").arg(raw["tint"].as_f64().unwrap_or(1.0).to_string());
-    if raw["lens_correction"].as_bool().unwrap_or(false) { cmd.arg("--lens-correction"); }
-    #[cfg(windows)]
-    if let Some(parent) = cli_path.parent() {
-        let mut directories = vec![parent.to_path_buf()];
-        if let Some(path) = std::env::var_os("PATH") { directories.extend(std::env::split_paths(&path)); }
-        if let Ok(path) = std::env::join_paths(directories) { cmd.env("PATH",path); }
-    }
-
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawning {}", cli_path.display()))?;
-
-    // Poll cancellation without blocking the UI; logs go to a file so verbose
-    // GPU driver output cannot fill an unread pipe and stall the child.
-    let status = loop {
-        let completed = match child.try_wait() {
-            Ok(status) => status,
-            Err(e) => {
-                let _ = child.kill();
-                child.wait().context("reaping f64 CLI after wait failure")?;
-                return Err(e).context("waiting for f64 CLI");
-            }
-        };
-        if cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            child.wait().context("reaping cancelled f64 CLI")?;
-            anyhow::bail!("cancelled");
-        }
-        if let Some(status) = completed {
-            break status;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-
-    let stderr_buf = std::fs::read_to_string(&stderr_path.0)
-        .context("reading export error log")?;
-
-    if !status.success() {
-        let trimmed = stderr_buf.trim();
-        let code = status
-            .code()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "(signal)".into());
-        anyhow::bail!(
-            "f64 CLI exited {code} — {}",
-            if trimmed.is_empty() {
-                "(no stderr)"
-            } else {
-                trimmed
-            }
-        );
-    }
-    Ok(staged)
-}
 
 /// macOS only: walk from the eframe `RawWindowHandle` down to the
 /// `CAMetalLayer` and tag its colorspace as sRGB. Without this the

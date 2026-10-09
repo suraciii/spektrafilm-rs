@@ -76,7 +76,7 @@ unsafe extern "C" {
     fn sf_metadata_free(pointer: *mut c_void);
     fn sf_metadata_read(path: *const c_char) -> *mut c_void;
     fn sf_image_load(path: *const c_char, width: *mut u32, height: *mut u32, samples: *mut *mut f64, error: *mut *mut c_char) -> i32;
-    fn sf_image_save(path: *const c_char, width: u32, height: u32, samples: *const f64, depth: i32, format: i32, jpeg_quality: i32, jpeg_subsampling: i32, compression: i32, color_space: *const c_char, icc: *const u8, icc_len: usize, error: *mut *mut c_char) -> i32;
+    fn sf_image_save(path: *const c_char, width: u32, height: u32, samples: *const f64, depth: i32, format: i32, jpeg_quality: i32, jpeg_subsampling: i32, compression: i32, color_space: *const c_char, export_metadata: bool, icc: *const u8, icc_len: usize, error: *mut *mut c_char) -> i32;
     fn sf_metadata_write(path: *const c_char, source: *const c_void, width: u32, height: u32, space: *const c_char, encoded: bool, error: *mut *mut c_char) -> i32;
 }
 fn cpath(path: &Path) -> Result<CString, ImageIoError> { CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| ImageIoError::InvalidPath) }
@@ -107,7 +107,14 @@ pub fn load(path: &Path) -> Result<LoadedImage, ImageIoError> {
 /// astype. PNG/JPEG always use uint8; float TIFF/EXR preserve unbounded samples.
 /// Pixel failures are errors; metadata failures report a warning after writing.
 pub fn save(path: &Path, image: &ImageBuf, options: SaveOptions<'_>, metadata: Option<&ImageMetadata>) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata)
+    save_inner(path, image, options, metadata, false)
+}
+
+/// Save an existing GUI output with the upstream extension and color semantics.
+/// Unlike the export contract, this preserves the selected transfer encoding for
+/// every format and leaves unspecified JPEG settings and EXR metadata to OIIO.
+pub fn save_rendered_output(path: &Path, image: &ImageBuf, options: SaveOptions<'_>, metadata: Option<&ImageMetadata>) -> Result<SaveReport, ImageIoError> {
+    save_inner(path, image, options, metadata, true)
 }
 
 /// Compatibility helper for callers that need an explicit JPEG quality.
@@ -119,7 +126,7 @@ pub fn save_jpeg_quality(
     quality: u8,
 ) -> Result<SaveReport, ImageIoError> {
     options.jpeg_quality = Some(quality);
-    save_inner(path, image, options, metadata)
+    save_inner(path, image, options, metadata, false)
 }
 
 fn save_inner(
@@ -127,6 +134,7 @@ fn save_inner(
     image: &ImageBuf,
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
+    rendered_output: bool,
 ) -> Result<SaveReport, ImageIoError> {
     let format = ImageFormat::detect(path)?;
     let format_name = match format { ImageFormat::Jpeg => "JPEG", ImageFormat::Png => "PNG", ImageFormat::Tiff => "TIFF", ImageFormat::Exr => "EXR" };
@@ -136,13 +144,13 @@ fn save_inner(
         ImageFormat::Exr if options.depth == BitDepth::Eight => return Err(ImageIoError::ExrDepth(8)),
         _ => {}
     }
-    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && !options.cctf_encoding {
+    if !rendered_output && matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && !options.cctf_encoding {
         return Err(ImageIoError::InvalidExport { format: format_name, reason: "JPEG and PNG require encoded output" });
     }
-    if format == ImageFormat::Exr && options.cctf_encoding {
+    if !rendered_output && format == ImageFormat::Exr && options.cctf_encoding {
         return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR output must be linear" });
     }
-    if format == ImageFormat::Exr && !matches!(options.color_space, "sRGB" | "ACES2065-1") {
+    if !rendered_output && format == ImageFormat::Exr && !matches!(options.color_space, "sRGB" | "ACES2065-1") {
         return Err(ImageIoError::InvalidExport { format: "EXR", reason: "EXR color space must be sRGB or ACES2065-1" });
     }
     if format != ImageFormat::Jpeg && options.jpeg_quality.is_some() {
@@ -171,9 +179,14 @@ fn save_inner(
     #[cfg(not(feature = "precision-f64"))]
     let data: Vec<f64> = image.data.iter().copied().map(to_f64).collect();
     let mut error = std::ptr::null_mut();
-    let jpeg_subsampling = match options.jpeg_subsampling.unwrap_or(JpegSubsampling::Yuv444) { JpegSubsampling::Yuv444 => 444, JpegSubsampling::Yuv420 => 420 };
+    let jpeg_subsampling = match options.jpeg_subsampling {
+        Some(JpegSubsampling::Yuv444) => 444,
+        Some(JpegSubsampling::Yuv420) => 420,
+        None if rendered_output => 0,
+        None => 444,
+    };
     let compression = match options.compression.unwrap_or(Compression::Zip) { Compression::Zip => 1, Compression::None => 0 };
-    if unsafe { sf_image_save(name.as_ptr(), image.width, image.height, data.as_ptr(), options.depth.bits().into(), format as i32, options.jpeg_quality.map_or(0, i32::from), jpeg_subsampling, compression, space.as_ptr(), icc.as_ptr(), icc.len(), &mut error) } == 0 {
+    if unsafe { sf_image_save(name.as_ptr(), image.width, image.height, data.as_ptr(), options.depth.bits().into(), format as i32, options.jpeg_quality.map_or(0, i32::from), jpeg_subsampling, compression, space.as_ptr(), !rendered_output, icc.as_ptr(), icc.len(), &mut error) } == 0 {
         return Err(ImageIoError::Native { operation: "save", path: path.display().to_string(), message: take_error(error) });
     }
     let mut report = SaveReport::default();

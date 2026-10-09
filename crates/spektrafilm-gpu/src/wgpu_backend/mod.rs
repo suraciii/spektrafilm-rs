@@ -48,6 +48,7 @@ pub struct WgpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline_cache: PipelineCache,
+    name: String,
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -107,6 +108,7 @@ impl WgpuBackend {
         );
 
         Some(Self {
+            name: format!("WGPU f32 · {} ({:?}, {:?})", adapter_info.name, adapter_info.device_type, adapter_info.backend),
             device,
             queue,
             pipeline_cache: PipelineCache::default(),
@@ -1898,7 +1900,7 @@ impl ComputeBackend for WgpuBackend {
     }
 
     fn name(&self) -> &str {
-        "wgpu (f32 preview)"
+        &self.name
     }
 }
 

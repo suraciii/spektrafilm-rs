@@ -202,6 +202,23 @@ impl GuiState {
             if let Some(depth) = rust.get("save_bit_depth") {
                 if !matches!(depth.as_u64(),Some(8|16|32)) { bail!("Saving bit depth must be 8, 16 or 32"); }
             }
+            if let Some(space) = rust.get("export_saving_color_space") {
+                let space = space.as_str().context("Export saving color space must be a string")?;
+                spektrafilm_math::colorspace::resolve(space).map_err(anyhow::Error::msg)?;
+                if rust.get("export_format").and_then(Value::as_str) == Some("exr")
+                    && !matches!(space, "sRGB" | "ACES2065-1") {
+                    bail!("EXR saving color space must be sRGB or ACES2065-1");
+                }
+            }
+            if let Some(encoded) = rust.get("export_saving_cctf_encoding") {
+                let encoded = encoded.as_bool().context("Export saving CCTF encoding must be a boolean")?;
+                if rust.get("export_format").and_then(Value::as_str) == Some("exr") && encoded {
+                    bail!("EXR exports must use linear color");
+                }
+                if matches!(rust.get("export_format").and_then(Value::as_str), Some("jpeg" | "png")) && !encoded {
+                    bail!("JPEG and PNG exports require encoded color");
+                }
+            }
             if let Some(export_format) = rust.get("export_format") {
                 let export_format = export_format.as_str().context("Export format must be a string")?;
                 if !matches!(export_format, "jpeg"|"png"|"tiff"|"exr") { bail!("Unknown export format"); }
