@@ -1258,8 +1258,7 @@ impl App {
 
     /// Open a save dialog and write the most recent rendered output to
     /// disk. Suggested filename is the input stem + the chosen film
-    /// stock + the chosen extension; default extension is PNG (8-bit
-    /// sRGB-encoded, matching what's on screen).
+    /// stock + the chosen export format's extension.
     fn save_dialog(&mut self) {
         if self.output_image.is_none() {
             self.status = "Nothing to save yet — load an image first.".into();
@@ -1271,9 +1270,13 @@ impl App {
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("spektrafilm");
-                format!("{stem}_{}_spektra.png", self.film_name)
+                format!(
+                    "{stem}_{}_spektra.{}",
+                    self.film_name,
+                    self.export_format.extension()
+                )
             }
-            None => "spektrafilm.png".into(),
+            None => format!("spektrafilm.{}", self.export_format.extension()),
         };
         let Some(path) = self
             .file_dialog("save_output")
@@ -1949,7 +1952,7 @@ impl App {
             if dev_time_combo(
                 ui,
                 if film { "film-time" } else { "print-time" },
-                "Development time",
+                "development time",
                 times,
                 selected,
             ) {
@@ -2044,6 +2047,7 @@ impl App {
                     let display_transform_before = self.viewer.settings.use_display_transform;
                     self.viewer.controls(ui);
                     self.parameter_section(ui, "Display");
+                    self.viewer.interpolation_control(ui);
                     if display_transform_before != self.viewer.settings.use_display_transform {
                         self.refresh_viewing_artifacts();
                     }
@@ -2339,7 +2343,12 @@ fn profile_combo(
     entries: &[ProfileEntry],
     selected_stock: &mut String,
 ) -> bool {
-    ui.label(label);
+    let tooltip = if salt == "film" {
+        "Film stock to simulate"
+    } else {
+        "Print stock to simulate"
+    };
+    ui.label(label).on_hover_text(tooltip);
     let display = entries
         .iter()
         .find(|e| &e.stock == selected_stock)
@@ -2353,7 +2362,9 @@ fn profile_combo(
             for entry in entries {
                 ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
             }
-        });
+        })
+        .response
+        .on_hover_text(tooltip);
     prev != *selected_stock
 }
 
