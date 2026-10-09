@@ -421,10 +421,19 @@ class X11:
             for dialog_class in dialog_classes:
                 found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
                 ids.extend(found.splitlines())
-            if not ids:
-                return None
             active = self.xd('getactivewindow', check=False)
-            return active if active in ids else ids[-1]
+            if active in ids:
+                return active
+            if ids:
+                return ids[-1]
+            if active == self.window:
+                return None
+            geometry = self.xd('getwindowgeometry', '--shell', active, check=False)
+            width = re.search(r'WIDTH=(\d+)', geometry)
+            height = re.search(r'HEIGHT=(\d+)', geometry)
+            if width and height and int(width.group(1)) >= 300 and int(height.group(1)) >= 200:
+                return active
+            return None
         dialog = wait_for(find, 'native file chooser (zenity/yad/portal)', 25)
         for child in self.psutil.Process(self.proc.pid).children(recursive=True):
             try:
@@ -444,6 +453,8 @@ class X11:
                              'requested_path': str(path), 'save': save})
 
         def paste_location(value):
+            nonlocal dialog
+            dialog = wait_for(find, 'active native file chooser', 15)
             self.xd('windowactivate', '--sync', dialog)
             time.sleep(.3)
             self.xd('key', 'ctrl+l')
@@ -456,9 +467,7 @@ class X11:
             self.xd('key', 'Return')
 
         def visible():
-            return any(dialog in self.xd('search', '--onlyvisible', '--class', dialog_class,
-                                         check=False).splitlines()
-                       for dialog_class in dialog_classes)
+            return find() is not None
 
         if save:
             paste_location(str(path))
@@ -475,7 +484,8 @@ class X11:
         # for this action; another portal window may still be behind it.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if not visible():
+            dialog = find()
+            if not dialog:
                 return
             with self.mss.mss() as screen:
                 shot = screen.grab(screen.monitors[0])
