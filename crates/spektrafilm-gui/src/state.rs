@@ -132,6 +132,17 @@ impl GuiState {
                 normalized.as_object_mut().expect("state object").remove(section);
             }
         }
+        // Older Rust states stored bit depth before export format existed.
+        // Infer only an absent format; explicit combinations still face validation.
+        if let Some(rust) = normalized.get_mut("rust").and_then(Value::as_object_mut) {
+            if !rust.contains_key("export_format") {
+                let format = match rust.get("save_bit_depth").and_then(Value::as_u64) {
+                    Some(16 | 32) => "tiff",
+                    _ => "png",
+                };
+                rust.insert("export_format".into(), json!(format));
+            }
+        }
         merge(&mut state.sections, &normalized);
         canonicalize_grain_state(&mut state.sections["grain"]);
         if let Some(extension) = normalized.get("rust") {
@@ -389,15 +400,54 @@ mod tests {
         assert_eq!(params.enlarger.preflash_exposure,0.2);
     }
     #[test]
-    fn legacy_rust_extension_gets_new_export_defaults() {
-        let mut value=GuiState::factory().sections;
-        value["rust"]=json!({"version":1,"viewer":{"zoom":3.0}});
-        let state=GuiState::from_value(value).unwrap();
-        assert_eq!(state.sections["rust"]["viewer"]["zoom"],3.0);
-        assert_eq!(state.sections["rust"]["export_format"],"png");
-        assert_eq!(state.sections["rust"]["jpeg_quality"],95);
-        assert_eq!(state.sections["rust"]["jpeg_subsampling"],"444");
-        assert_eq!(state.sections["rust"]["export_compression"],"zip");
+    fn legacy_export_depth_and_recipe_survive_save_reload() {
+        for (depth, format) in [(8, "png"), (16, "tiff"), (32, "tiff")] {
+            let state = GuiState::from_value(json!({
+                "grain": {"rms_granularity": [0.0, 0.0, 0.0]},
+                "input_image": {"upscale_factor": 1.5},
+                "simulation": {"film_stock": "kodak_portra_400"},
+                "rust": {"version": 1, "save_bit_depth": depth, "viewer": {"zoom": 3.0}}
+            })).unwrap();
+            assert_eq!(state.sections["rust"]["export_format"], format);
+            assert_eq!(state.sections["rust"]["save_bit_depth"], depth);
+            assert_eq!(state.sections["rust"]["viewer"]["zoom"], 3.0);
+            assert_eq!(state.film(), "kodak_portra_400");
+            let params = state.runtime_params().unwrap();
+            assert_eq!(params.film_render.grain.rms_granularity, [0.0; 3]);
+            assert_eq!(params.io.upscale_factor, 1.5);
+            let saved = GuiState::from_runtime(&params, state.film(), state.paper(), &state.sections).unwrap();
+            let path = std::env::temp_dir().join(format!("spektrafilm-legacy-export-{}-{depth}.json", std::process::id()));
+            saved.save(&path).unwrap();
+            let restored = GuiState::load(&path);
+            std::fs::remove_file(&path).unwrap();
+            let restored = restored.unwrap();
+            assert_eq!(restored.film(), "kodak_portra_400");
+            assert_eq!(restored.sections["rust"]["viewer"]["zoom"], 3.0);
+            assert_eq!(restored.sections["rust"]["export_format"], format);
+            assert_eq!(restored.sections["rust"]["save_bit_depth"], depth);
+            let params = restored.runtime_params().unwrap();
+            assert_eq!(params.film_render.grain.rms_granularity, [0.0; 3]);
+            assert_eq!(params.io.upscale_factor, 1.5);
+        }
+    }
+
+    #[test]
+    fn export_migration_does_not_repair_explicit_invalid_settings() {
+        for (format, depth, error) in [
+            (json!("png"), 16, "png exports require 8-bit depth"),
+            (json!("jpeg"), 32, "jpeg exports require 8-bit depth"),
+            (json!("exr"), 8, "EXR exports require 16- or 32-bit depth"),
+            (json!("unknown"), 16, "Unknown export format"),
+            (Value::Null, 16, "Export format must be a string"),
+            (json!("tiff"), 12, "Saving bit depth must be 8, 16 or 32"),
+        ] {
+            let result = GuiState::from_value(json!({
+                "rust": {"version": 1, "export_format": format, "save_bit_depth": depth}
+            }));
+            assert_eq!(result.unwrap_err().to_string(), error);
+        }
+        let result = GuiState::from_value(json!({"rust": {"version": 1, "save_bit_depth": 12}}));
+        assert_eq!(result.unwrap_err().to_string(), "Saving bit depth must be 8, 16 or 32");
     }
 
     #[test]
