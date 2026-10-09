@@ -444,7 +444,7 @@ class X11:
         self.xd('key', 'ctrl+l')
         time.sleep(.2)
         self.xd('key', 'ctrl+a')
-        text = str(path if save else path.parent) + ('' if save else '/')
+        text = str(path)
         # GTK completion consumes synthetic per-character input; paste the
         # complete path atomically through the real desktop clipboard.
         subprocess.run(['xclip', '-selection', 'clipboard'], input=text,
@@ -452,14 +452,6 @@ class X11:
         self.xd('key', 'ctrl+v')
         time.sleep(.3)
         self.xd('key', 'Return')
-        if not save:
-            time.sleep(.6)
-            self.xd('key', 'ctrl+l')
-            self.xd('key', 'ctrl+a')
-            subprocess.run(['xclip', '-selection', 'clipboard'], input=str(path), text=True, check=True)
-            self.xd('key', 'ctrl+v')
-            time.sleep(.3)
-            self.xd('key', 'Return')
         # Save choosers may first navigate the entered full path, then require Save.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
