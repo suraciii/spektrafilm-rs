@@ -21,7 +21,11 @@ impl<'a> FilmCurves<'a> {
     pub fn prepare(film: &'a Profile) -> Self {
         let raw = film.density_curves_f64();
         let normalized = spektrafilm_model::density_curves::normalize_density_curves_f64(&raw);
-        Self { log_exposure: &film.data.log_exposure, raw, normalized }
+        Self {
+            log_exposure: &film.data.log_exposure,
+            raw,
+            normalized,
+        }
     }
 }
 
@@ -42,32 +46,52 @@ impl<'a> PrintCurves<'a> {
                     model,
                     &params.print_render.density_curves_morph,
                     print.is_positive(),
-                ).map_err(|error| format!("invalid print density-curve model: {error}"))?,
+                )
+                .map_err(|error| format!("invalid print density-curve model: {error}"))?,
                 1.0,
             ),
-            None => (print.density_curves_f64(), params.print_render.density_curve_gamma as f64),
+            None => (
+                print.density_curves_f64(),
+                params.print_render.density_curve_gamma as f64,
+            ),
         };
-        Ok(Self { log_exposure, density, gamma })
+        Ok(Self {
+            log_exposure,
+            density,
+            gamma,
+        })
     }
 }
 
 pub(crate) fn channel_density(profile: &Profile) -> Vec<[f64; 3]> {
-    profile.data.channel_density.iter().map(|row| [
-        row.first().copied().unwrap_or(0.0),
-        row.get(1).copied().unwrap_or(0.0),
-        row.get(2).copied().unwrap_or(0.0),
-    ]).collect()
+    profile
+        .data
+        .channel_density
+        .iter()
+        .map(|row| {
+            [
+                row.first().copied().unwrap_or(0.0),
+                row.get(1).copied().unwrap_or(0.0),
+                row.get(2).copied().unwrap_or(0.0),
+            ]
+        })
+        .collect()
 }
 
 pub(crate) fn print_sensitivity(print: &Profile) -> Vec<[f64; 3]> {
-    print.data.log_sensitivity.iter().map(|row| {
-        let mut sensitivity = [0.0; 3];
-        for c in 0..3 {
-            let value = 10.0f64.powf(row.get(c).copied().unwrap_or(0.0));
-            sensitivity[c] = if value.is_nan() { 0.0 } else { value };
-        }
-        sensitivity
-    }).collect()
+    print
+        .data
+        .log_sensitivity
+        .iter()
+        .map(|row| {
+            let mut sensitivity = [0.0; 3];
+            for c in 0..3 {
+                let value = 10.0f64.powf(row.get(c).copied().unwrap_or(0.0));
+                sensitivity[c] = if value.is_nan() { 0.0 } else { value };
+            }
+            sensitivity
+        })
+        .collect()
 }
 
 pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[f64; 3]; 3] {

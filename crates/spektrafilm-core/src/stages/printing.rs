@@ -7,38 +7,9 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{PreparedPchip3d, pchip_interp, prepare_pchip_3d};
 use spektrafilm_math::precision::from_f64;
 
+use super::build_lut_grid;
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
-
-/// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy
-/// grid. Layout mirrors Python's `_create_lut_3d`:
-///
-/// ```text
-///   reshape(meshgrid(x_r, x_g, x_b, indexing='ij'), (steps², steps, 3))
-/// ```
-///
-/// → pixel at (col=k, row=i*steps+j) carries cmy = (x_r[i], x_g[j], x_b[k]).
-/// Running the spectral function on this 2-D image then reshapes back to
-/// a `steps × steps × steps × 3` LUT indexed by `((i, j, k), c)`.
-fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> ImageBuf {
-    let mut grid = ImageBuf::new(steps as u32, (steps * steps) as u32);
-    let step_inv = (steps - 1) as f64;
-    for i in 0..steps {
-        let x_r = data_min[0] + (data_max[0] - data_min[0]) * (i as f64) / step_inv;
-        for j in 0..steps {
-            let x_g = data_min[1] + (data_max[1] - data_min[1]) * (j as f64) / step_inv;
-            for k in 0..steps {
-                let x_b = data_min[2] + (data_max[2] - data_min[2]) * (k as f64) / step_inv;
-                let row = i * steps + j;
-                let base = (row * steps + k) * 3;
-                grid.data[base] = from_f64(x_r);
-                grid.data[base + 1] = from_f64(x_g);
-                grid.data[base + 2] = from_f64(x_b);
-            }
-        }
-    }
-    grid
-}
 
 /// Run `print_spectral` on a `steps³` grid of CMY inputs spanning
 /// `[data_min, data_max]` per channel, then PCHIP-interpolate the

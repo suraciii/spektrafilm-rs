@@ -13,7 +13,7 @@
 use std::sync::{Arc, LazyLock};
 
 use rayon::prelude::*;
-use rustfft::{num_complex::Complex, FftPlanner};
+use rustfft::{FftPlanner, num_complex::Complex};
 use spektrafilm_math::spectral::{self, CMF_X_F64, CMF_Y_F64, CMF_Z_F64, TcLut};
 
 use crate::gamut_compression::{oklab_to_xyz, reinhard_knee, xyz_to_oklab};
@@ -79,8 +79,7 @@ fn inscribed_locus_hull(white: [f64; 2], detail: f64, locus: &[[f64; 2]]) -> Vec
     let mut planner = FftPlanner::<f64>::new();
     let forward = planner.plan_fft_forward(N);
     let inverse = planner.plan_fft_inverse(N);
-    let mut spectrum: Vec<Complex<f64>> =
-        reach.iter().map(|&v| Complex::new(v, 0.0)).collect();
+    let mut spectrum: Vec<Complex<f64>> = reach.iter().map(|&v| Complex::new(v, 0.0)).collect();
     forward.process(&mut spectrum);
     for (k, value) in spectrum.iter_mut().enumerate() {
         let mode = k.min(N - k) as f64;
@@ -101,7 +100,10 @@ fn inscribed_locus_hull(white: [f64; 2], detail: f64, locus: &[[f64; 2]]) -> Vec
     for (i, &r) in smooth.iter().enumerate() {
         let theta = 2.0 * std::f64::consts::PI * i as f64 / N as f64;
         let radius = r * scale;
-        hull.push([white[0] + radius * theta.cos(), white[1] + radius * theta.sin()]);
+        hull.push([
+            white[0] + radius * theta.cos(),
+            white[1] + radius * theta.sin(),
+        ]);
     }
     hull.push(hull[0]);
     hull
@@ -304,7 +306,11 @@ impl InputGamutCompress {
             "xy" => Algorithm::Xy,
             "oklch" => Algorithm::Oklch,
             "off" if !params.active => Algorithm::Xy,
-            other => return Err(format!("input gamut compression algorithm must be 'xy', 'oklch', or inactive 'off', got {other:?}")),
+            other => {
+                return Err(format!(
+                    "input gamut compression algorithm must be 'xy', 'oklch', or inactive 'off', got {other:?}"
+                ));
+            }
         };
         let boundary = match params.boundary.as_str() {
             "locus" => Boundary::Locus,
@@ -312,17 +318,26 @@ impl InputGamutCompress {
             other => return Err(format!("unknown input gamut boundary {other:?}")),
         };
         if !params.hull_detail.is_finite() || params.hull_detail <= 0.0 {
-            return Err(format!("input gamut hull detail must be finite and > 0, got {}", params.hull_detail));
+            return Err(format!(
+                "input gamut hull detail must be finite and > 0, got {}",
+                params.hull_detail
+            ));
         }
         let [t, l, p] = params.knee;
         if !t.is_finite() || !(0.0..1.0).contains(&t) {
-            return Err(format!("input gamut compression knee threshold must be in [0, 1), got {t}"));
+            return Err(format!(
+                "input gamut compression knee threshold must be in [0, 1), got {t}"
+            ));
         }
         if !l.is_finite() || l <= 0.0 {
-            return Err(format!("input gamut compression knee limit must be > 0, got {l}"));
+            return Err(format!(
+                "input gamut compression knee limit must be > 0, got {l}"
+            ));
         }
         if !p.is_finite() || p <= 0.0 {
-            return Err(format!("input gamut compression knee power must be > 0, got {p}"));
+            return Err(format!(
+                "input gamut compression knee power must be > 0, got {p}"
+            ));
         }
         let locus = spectral_locus_xy();
         let active = params.active && !inactive;
@@ -357,7 +372,9 @@ impl InputGamutCompress {
                     Boundary::Locus => &self.locus,
                     Boundary::InscribedHull => {
                         return compress_xy_radial(
-                            xy, white_xy, self.knee,
+                            xy,
+                            white_xy,
+                            self.knee,
                             &inscribed_locus_hull(white_xy, self.hull_detail, &self.locus),
                         );
                     }
@@ -399,10 +416,15 @@ impl InputGamutCompress {
                     Algorithm::Oklch => compress_oklch_chroma([x, y], self.knee, &self.c_max),
                 };
                 let (tx, ty) = spectral::xy_to_tc(cxy[0], cxy[1]);
-                let sample = bilinear_sample(lut, tx * (size as f64 - 1.0), ty * (size as f64 - 1.0));
+                let sample =
+                    bilinear_sample(lut, tx * (size as f64 - 1.0), ty * (size as f64 - 1.0));
                 out[..ch].copy_from_slice(&sample[..ch]);
             });
-        TcLut { size, channels: ch, data }
+        TcLut {
+            size,
+            channels: ch,
+            data,
+        }
     }
 }
 
@@ -524,22 +546,53 @@ mod tests {
         let spec = InputGamutCompress::build(&params("oklch", true)).unwrap();
         let out = spec.remap(&synthetic_lut(64), [0.3127, 0.329]);
         let cells = [
-            (0usize, 0usize, [0.30973501908479395, 0.38189996753840216, 0.4540649159920104]),
-            (10usize, 20usize, [0.390231319454233, 0.4623962679078412, 0.5345612163614495]),
-            (32usize, 32usize, [0.546394870475601, 0.6185598189292094, 0.6907152119946107]),
-            (50usize, 5usize, [0.1387877654727771, 0.21095271392638537, 0.2831176623799936]),
-            (63usize, 63usize, [0.4193442458939582, 0.49150919434756646, 0.5636741428011747]),
-            (5usize, 60usize, [0.35586974920999714, 0.42803469766360536, 0.5001996461172137]),
+            (
+                0usize,
+                0usize,
+                [0.30973501908479395, 0.38189996753840216, 0.4540649159920104],
+            ),
+            (
+                10usize,
+                20usize,
+                [0.390231319454233, 0.4623962679078412, 0.5345612163614495],
+            ),
+            (
+                32usize,
+                32usize,
+                [0.546394870475601, 0.6185598189292094, 0.6907152119946107],
+            ),
+            (
+                50usize,
+                5usize,
+                [0.1387877654727771, 0.21095271392638537, 0.2831176623799936],
+            ),
+            (
+                63usize,
+                63usize,
+                [0.4193442458939582, 0.49150919434756646, 0.5636741428011747],
+            ),
+            (
+                5usize,
+                60usize,
+                [0.35586974920999714, 0.42803469766360536, 0.5001996461172137],
+            ),
         ];
         for (i, j, want) in cells {
             let base = (i * 64 + j) * 3;
             for c in 0..3 {
-                assert!((out.data[base + c] - want[c]).abs() < 1e-6,
-                    "cell ({i}, {j}) channel {c}: {} expected {}", out.data[base + c], want[c]);
+                assert!(
+                    (out.data[base + c] - want[c]).abs() < 1e-6,
+                    "cell ({i}, {j}) channel {c}: {} expected {}",
+                    out.data[base + c],
+                    want[c]
+                );
             }
         }
         let checksum: f64 = out.data.iter().sum();
-        assert!((checksum - 6060.726600945642).abs() < 1e-6, "checksum {checksum}");
+        assert!(
+            (checksum - 6060.726600945642).abs() < 1e-6,
+            "checksum {checksum}"
+        );
     }
 
     /// An inactive compressor (`active = false`) returns the LUT unchanged —

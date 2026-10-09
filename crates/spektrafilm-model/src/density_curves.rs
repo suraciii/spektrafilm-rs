@@ -9,7 +9,7 @@
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::interp;
-use spektrafilm_math::precision::{Scalar, ONE, ZERO, from_f64};
+use spektrafilm_math::precision::{ONE, Scalar, ZERO, from_f64};
 
 const SEPT_K: f64 = 5.8013;
 /// Evaluate upstream's six-parameter parametric H-D density model.
@@ -49,7 +49,6 @@ pub fn parametric_density_curves_model(
         .collect()
 }
 
-
 #[inline]
 fn septic_smoothstep(v: f64) -> f64 {
     let v2 = v * v;
@@ -83,7 +82,9 @@ pub fn layer_cdf(z: f64, model_type: &str, alpha: f64) -> Result<f64, String> {
         }
         "sept_norm_cdfs" => {
             if !alpha.is_finite() || alpha.abs() >= 1.0 {
-                return Err(format!("septic density-curve alpha must satisfy |alpha| < 1 (got {alpha})"));
+                return Err(format!(
+                    "septic density-curve alpha must satisfy |alpha| < 1 (got {alpha})"
+                ));
             }
             Ok(septic_smoothstep(septic_warp(z, alpha).0))
         }
@@ -111,15 +112,26 @@ pub fn evaluate_density_curves(
     let mut out = vec![vec![0.0; centers.len()]; log_exposure.len()];
     for (ch, ((cs, amps), ss)) in centers.iter().zip(amplitudes).zip(sigmas).enumerate() {
         if cs.len() != amps.len() || cs.len() != ss.len() {
-            return Err(format!("density-curve model channel {ch} has inconsistent layer counts"));
+            return Err(format!(
+                "density-curve model channel {ch} has inconsistent layer counts"
+            ));
         }
         for (layer, ((&center, &amp), &sigma)) in cs.iter().zip(amps).zip(ss).enumerate() {
             if !sigma.is_finite() || sigma <= 0.0 {
-                return Err(format!("density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"));
+                return Err(format!(
+                    "density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"
+                ));
             }
-            let alpha = alphas.and_then(|a| a.get(ch).and_then(|r| r.get(layer))).copied().unwrap_or(0.0);
+            let alpha = alphas
+                .and_then(|a| a.get(ch).and_then(|r| r.get(layer)))
+                .copied()
+                .unwrap_or(0.0);
             for (row, &x) in out.iter_mut().zip(log_exposure) {
-                let z = if positive { -(x - center) / sigma } else { (x - center) / sigma };
+                let z = if positive {
+                    -(x - center) / sigma
+                } else {
+                    (x - center) / sigma
+                };
                 row[ch] += amp * layer_cdf(z, model_type, alpha)?;
             }
         }
@@ -147,16 +159,27 @@ pub fn evaluate_density_curves_layers(
         if amplitudes.get(ch).map_or(true, |r| r.len() != n_layers)
             || sigmas.get(ch).map_or(true, |r| r.len() != n_layers)
         {
-            return Err(format!("density-curve model channel {ch} has inconsistent layer counts"));
+            return Err(format!(
+                "density-curve model channel {ch} has inconsistent layer counts"
+            ));
         }
         for layer in 0..n_layers {
-            let alpha = alphas.and_then(|a| a.get(ch).and_then(|r| r.get(layer))).copied().unwrap_or(0.0);
+            let alpha = alphas
+                .and_then(|a| a.get(ch).and_then(|r| r.get(layer)))
+                .copied()
+                .unwrap_or(0.0);
             for (k, &x) in log_exposure.iter().enumerate() {
                 let sigma = sigmas[ch][layer];
                 if !sigma.is_finite() || sigma <= 0.0 {
-                    return Err(format!("density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"));
+                    return Err(format!(
+                        "density-curve model sigma must be finite and positive (channel {ch}, layer {layer})"
+                    ));
                 }
-                let z = if positive { -(x - centers[ch][layer]) / sigma } else { (x - centers[ch][layer]) / sigma };
+                let z = if positive {
+                    -(x - centers[ch][layer]) / sigma
+                } else {
+                    (x - centers[ch][layer]) / sigma
+                };
                 out[k][layer][ch] = amplitudes[ch][layer] * layer_cdf(z, model_type, alpha)?;
             }
         }
@@ -164,13 +187,25 @@ pub fn evaluate_density_curves_layers(
     Ok(out)
 }
 
-fn validate_alphas(model_type: &str, centers: &[Vec<f64>], alphas: Option<&[Vec<f64>]>) -> Result<(), String> {
+fn validate_alphas(
+    model_type: &str,
+    centers: &[Vec<f64>],
+    alphas: Option<&[Vec<f64>]>,
+) -> Result<(), String> {
     if model_type == "sept_norm_cdfs" {
         if let Some(alphas) = alphas {
-            if alphas.len() != centers.len() || alphas.iter().zip(centers).any(|(a, c)| a.len() != c.len()) {
-                return Err("septic density-curve alphas must match the channel and layer counts".into());
+            if alphas.len() != centers.len()
+                || alphas.iter().zip(centers).any(|(a, c)| a.len() != c.len())
+            {
+                return Err(
+                    "septic density-curve alphas must match the channel and layer counts".into(),
+                );
             }
-            if alphas.iter().flatten().any(|a| !a.is_finite() || a.abs() >= 1.0) {
+            if alphas
+                .iter()
+                .flatten()
+                .any(|a| !a.is_finite() || a.abs() >= 1.0)
+            {
                 return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
             }
         }
@@ -356,7 +391,10 @@ pub fn interp_density_cmy_layers(
     density_curves_layers: &[[[f64; 3]; 3]],
     positive_film: bool,
 ) -> [[Vec<Scalar>; 3]; 3] {
-    assert!(!density_curves.is_empty(), "density_curves must be non-empty");
+    assert!(
+        !density_curves.is_empty(),
+        "density_curves must be non-empty"
+    );
     assert_eq!(
         density_curves_layers.len(),
         density_curves.len(),
@@ -377,11 +415,7 @@ pub fn interp_density_cmy_layers(
         let inv_dx: Vec<Scalar> = (0..k - 1)
             .map(|i| {
                 let dx = xa[i + 1] - xa[i];
-                if dx != ZERO {
-                    1.0 / dx
-                } else {
-                    ZERO
-                }
+                if dx != ZERO { 1.0 / dx } else { ZERO }
             })
             .collect();
 
@@ -427,8 +461,6 @@ pub fn interp_density_cmy_layers(
 fn extract_col(data: &[[f32; 3]], c: usize) -> Vec<f32> {
     data.iter().map(|row| row[c]).collect()
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -491,7 +523,11 @@ mod tests {
         for y in 0..4u32 {
             for x in 0..6u32 {
                 let t = (x + y * 6) as f64 / 24.0;
-                img.set(x, y, [from_f64(t * 2.0), from_f64(t * 1.6), from_f64(t * 2.2)]);
+                img.set(
+                    x,
+                    y,
+                    [from_f64(t * 2.0), from_f64(t * 1.6), from_f64(t * 2.2)],
+                );
             }
         }
 
@@ -533,7 +569,11 @@ mod tests {
         for y in 0..2u32 {
             for x in 0..4u32 {
                 let t = (x + y * 4) as f64 / 8.0;
-                img.set(x, y, [from_f64(0.1 + t), from_f64(0.3 + t), from_f64(0.0 + t)]);
+                img.set(
+                    x,
+                    y,
+                    [from_f64(0.1 + t), from_f64(0.3 + t), from_f64(0.0 + t)],
+                );
             }
         }
 
@@ -603,16 +643,58 @@ mod tests {
         let alphas = vec![vec![0.7, -0.4]];
         let axis = [-4.0, 0.0, 4.0];
         for positive in [false, true] {
-            let total = evaluate_density_curves(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&alphas), positive).unwrap();
-            let layers = evaluate_density_curves_layers(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&alphas), positive).unwrap();
+            let total = evaluate_density_curves(
+                &axis,
+                "sept_norm_cdfs",
+                &centers,
+                &amplitudes,
+                &sigmas,
+                Some(&alphas),
+                positive,
+            )
+            .unwrap();
+            let layers = evaluate_density_curves_layers(
+                &axis,
+                "sept_norm_cdfs",
+                &centers,
+                &amplitudes,
+                &sigmas,
+                Some(&alphas),
+                positive,
+            )
+            .unwrap();
             assert_eq!(total[1][0], 1.0);
             assert_eq!(total[0][0], if positive { 2.0 } else { 0.0 });
             assert_eq!(total[2][0], if positive { 0.0 } else { 2.0 });
-            for i in 0..axis.len() { assert_eq!(layers[i][0][0] + layers[i][1][0], total[i][0]); }
+            for i in 0..axis.len() {
+                assert_eq!(layers[i][0][0] + layers[i][1][0], total[i][0]);
+            }
         }
         let incomplete = vec![vec![0.7]];
-        assert!(evaluate_density_curves(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&incomplete), false).is_err());
-        assert!(evaluate_density_curves_layers(&axis, "sept_norm_cdfs", &centers, &amplitudes, &sigmas, Some(&incomplete), false).is_err());
+        assert!(
+            evaluate_density_curves(
+                &axis,
+                "sept_norm_cdfs",
+                &centers,
+                &amplitudes,
+                &sigmas,
+                Some(&incomplete),
+                false
+            )
+            .is_err()
+        );
+        assert!(
+            evaluate_density_curves_layers(
+                &axis,
+                "sept_norm_cdfs",
+                &centers,
+                &amplitudes,
+                &sigmas,
+                Some(&incomplete),
+                false
+            )
+            .is_err()
+        );
     }
     #[test]
     fn parametric_density_model_matches_reference_formula() {

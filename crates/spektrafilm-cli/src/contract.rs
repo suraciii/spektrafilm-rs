@@ -49,7 +49,12 @@ pub fn default_output(format: &str) -> OutputContract {
         precision_bits: 8,
         color_space: "sRGB".to_owned(),
         transfer_function: "srgb".to_owned(),
-        geometry: if preview { "bounded" } else { "input-preserving" }.to_owned(),
+        geometry: if preview {
+            "bounded"
+        } else {
+            "input-preserving"
+        }
+        .to_owned(),
         encoding: if preview {
             "bounded-preview".to_owned()
         } else {
@@ -67,7 +72,8 @@ pub fn validate_seed(seed: u64) -> Result<()> {
 }
 
 pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
-    let file = fs::File::open(path).with_context(|| format!("opening recipe {}", path.display()))?;
+    let file =
+        fs::File::open(path).with_context(|| format!("opening recipe {}", path.display()))?;
     let recipe: RenderRecipe = serde_json::from_reader(file)
         .with_context(|| format!("parsing recipe {}", path.display()))?;
     if let Some(seed) = recipe.seed {
@@ -111,8 +117,8 @@ pub fn validate_input_path(path: &Path) -> Result<()> {
     if ImageFormat::detect(path)? != ImageFormat::Tiff {
         bail!("render input must be a TIFF");
     }
-    let file = fs::File::open(path)
-        .with_context(|| format!("opening render input {}", path.display()))?;
+    let file =
+        fs::File::open(path).with_context(|| format!("opening render input {}", path.display()))?;
     let mut decoder = tiff::decoder::Decoder::new(file)
         .with_context(|| format!("reading TIFF header {}", path.display()))?;
     let (width, height) = decoder.dimensions()?;
@@ -146,14 +152,21 @@ pub fn validate_input_dimensions(width: u32, height: u32) -> Result<()> {
 }
 
 pub fn validate_output_path(path: &Path, output: &OutputContract) -> Result<()> {
-    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let matches = match output.format.as_str() {
         "jpeg" => extension == "jpg" || extension == "jpeg",
         "png" => extension == "png",
         _ => false,
     };
     if !matches {
-        bail!("output path extension does not match declared {} format", output.format);
+        bail!(
+            "output path extension does not match declared {} format",
+            output.format
+        );
     }
     Ok(())
 }
@@ -162,7 +175,10 @@ pub fn validate_output(output: &OutputContract) -> Result<()> {
     let preview = output.format == "png";
     let expected = default_output(&output.format);
     if output.format != "jpeg" && !preview {
-        bail!("unsupported output format {}; use jpeg or png", output.format);
+        bail!(
+            "unsupported output format {}; use jpeg or png",
+            output.format
+        );
     }
     if output.precision_bits != expected.precision_bits
         || output.color_space != expected.color_space
@@ -190,9 +206,18 @@ pub fn parameter_digest(parameters: &Value) -> String {
 }
 
 pub fn describe() -> Value {
-    let defaults = serde_json::to_value(RuntimeParams::default()).expect("runtime defaults serialize");
+    let defaults =
+        serde_json::to_value(RuntimeParams::default()).expect("runtime defaults serialize");
     let controls = [
-        "camera", "enlarger", "scanner", "film_render", "print_render", "io", "settings", "debug", "taps",
+        "camera",
+        "enlarger",
+        "scanner",
+        "film_render",
+        "print_render",
+        "io",
+        "settings",
+        "debug",
+        "taps",
     ]
     .into_iter()
     .map(|id| {
@@ -257,10 +282,13 @@ mod tests {
         assert!(validate_output(&output).is_ok());
         assert!(validate_output_path(Path::new("result.png"), &output).is_ok());
         assert!(validate_output_path(Path::new("result.jpg"), &output).is_err());
-        assert!(validate_output(&OutputContract {
-            max_edge: Some(MAX_EDGE + 1),
-            ..output
-        }).is_err());
+        assert!(
+            validate_output(&OutputContract {
+                max_edge: Some(MAX_EDGE + 1),
+                ..output
+            })
+            .is_err()
+        );
     }
 
     #[test]

@@ -16,9 +16,15 @@ pub fn show(ui: &mut egui::Ui, g: &mut GlareParams, scan_film: bool) -> bool {
             }
             ui.add_enabled_ui(!scan_film, |ui| {
                 changed |= ui.checkbox(&mut g.active, "Active").changed();
-                changed |= ui.add(egui::Slider::new(&mut g.percent, 0.0..=0.2).text("Percent")).changed();
-                changed |= ui.add(egui::Slider::new(&mut g.roughness, 0.0..=2.0).text("Roughness")).changed();
-                changed |= ui.add(egui::Slider::new(&mut g.blur, 0.0..=5.0).text("Blur σ (px)")).changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut g.percent, 0.0..=0.2).text("Percent"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut g.roughness, 0.0..=2.0).text("Roughness"))
+                    .changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut g.blur, 0.0..=5.0).text("Blur σ (px)"))
+                    .changed();
             });
         });
     changed

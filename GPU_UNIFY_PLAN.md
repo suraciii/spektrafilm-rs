@@ -22,6 +22,26 @@
 - WGPU 实际使用 Vulkan `llvmpipe (LLVM 21.1.8, 256 bits)` 软件适配器完成 resident shader 链；前后 TIFF 图像 payload 一致。这仅证明软件适配器执行，不证明真实 GPU parity、性能或跨平台兼容性。
 - 本机 smoke 图像、数值比较及 GUI 截图保留在 `/data/tmp/spektrafilm-p1-p2-smoke/`；临时运行脚本与显示会话在验收后清理。
 
+## Fowler 小步重构（2026-10-09）
+
+基线为 `dab78c2`，开发继续使用上述独立工作树。
+
+- RenderRecipe 使用通用 `image_io::save`，仅 JPEG 设置 quality/subsampling；合法 bounded PNG 不再被 JPEG 专用参数拒绝，JPEG 仍保留原质量约定。
+- CLI `load_bundle_spec` 只合并 TOML/命令行并反序列化原始配置；target validation 使用副本，`BundleBuilder::build` 是应用 legacy EV 的生产入口。`stops=4, exposure_ev=1` 得到 stops=5、gain=5.76；此前为 stops=6、gain=11.52。不增加 normalized 标记，不改变 schema，也不承诺公开 `normalize` 方法幂等。
+- printing/scanning 共享 `stages::build_lut_grid`；保留蓝轴最快的布局、f64 坐标运算顺序和 Scalar 转换位置。光谱采样、log-exposure 与 log-XYZ 的输出处理仍由各阶段负责。
+- `Pipeline::resident_front_pass` 收纳曝光折叠及 Hanatos/Mallett 参数准备；resident eligibility、fallback 原因顺序、f64 乘法顺序、1e-9 阈值和 backend 调用保持不变。
+- 新增 CLI 子进程回归覆盖 PNG 尺寸/位深/结果摘要与 LUT 非零 EV；LUT 网格测试覆盖非对称负区间的端点和轴顺序。
+
+验证边界与未实施项：
+
+- 使用 `/data/deps/libraw-0.22.2`；系统 LibRaw 0.21.5 不满足构建要求。完整 workspace all-features 测试通过 270 项（17 suites）。
+- 精确基线独立 checkout 在相同依赖与命令下复现 PNG 错误与双重 EV；CPU print/scan、WGPU resident buffer 及 JPEG 解码像素前后相同。更早 `/data/tmp/spektrafilm-p1-p2-smoke` 的旧输出缺少完整可比运行条件，不用于本轮数值一致性声明。
+- 实际 CLI PNG smoke 将 128×96 输入保存为 64×48 RGB8；backend_parity 实际执行 resident 及 diffusion/decode/spectral LUT/wide blur/grain fallback。WGPU 使用 Vulkan llvmpipe 软件适配器；未验证硬件 GPU 性能与跨平台结果。
+- 初次 `cargo fmt --check` 因 78 个文件的既有格式差异失败；用户随后明确选择纳入全仓格式化。执行 `cargo fmt --all` 后 `cargo fmt --check` 通过；本轮补丁因此包含上述功能改动之外的纯格式重排。
+- CLI 默认 tracing 混入 stdout 的问题在 JSON 解析时暴露；本轮回归与 smoke 使用 `RUST_LOG=off`。没有改变日志协议。
+- 没有改写 WGPU `run_film_chain` 的资源/编码大方法，没有统一 GUI JSON cache key 与 core calibration key，也没有重构 profile/calibration 生命周期或 GUI export job。它们涉及资源存活、不同失效语义或 native profile 重建，需要各自的行为基线；当前提取不以新增通用 graph、服务定位器或包装层扩大范围。GUI 仅有用户授权的格式重排，本轮不重复 GUI 自动化验收。
+- 本轮运行产物保留在 `/data/tmp/spektrafilm-refactor-acceptance-20261009/`。
+
 ## 当前移除记录（2026-10-08）
 
 - 当前架构仅保留 CPU（f64 reference/export）与 WGPU（f32 interactive preview）；Grain V2 及 CPU grain 保留。

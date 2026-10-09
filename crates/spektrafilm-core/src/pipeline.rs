@@ -10,9 +10,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use rayon::prelude::*;
-use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
+use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_math::spectral::TcLut;
 
 /// Diagnostic helper: when env var `$var` is set, dump the image's f64
@@ -354,7 +354,6 @@ impl Pipeline {
     }
 }
 
-
 impl Pipeline {
     /// Create pipeline without spectral LUT — **test-only**.
     ///
@@ -383,7 +382,11 @@ impl Pipeline {
         apply_base_tuning(&mut film, &params.film_render.base, None);
         apply_film_chemistry(&mut film, &params.film_render.chemistry)
             .expect("validated film chemistry parameters");
-        apply_base_tuning(&mut print, &params.film_render.base, Some(&params.print_render.base));
+        apply_base_tuning(
+            &mut print,
+            &params.film_render.base,
+            Some(&params.print_render.base),
+        );
         let print_illuminant = enlarger::enlarger_filtered_illuminant_f64(
             &params.enlarger.illuminant,
             params.enlarger.c_filter_neutral as f64,
@@ -743,15 +746,24 @@ impl Pipeline {
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
         if self.params.workflow.route == "input" {
-            use spektrafilm_math::colorspace::{resolve, conversion_matrix, convert_rgb};
+            use spektrafilm_math::colorspace::{conversion_matrix, convert_rgb, resolve};
             let source = resolve(&self.params.io.input_color_space)?;
             let destination = resolve(&self.params.io.output_color_space)?;
             let matrix = conversion_matrix(source, destination);
             let mut output = image;
             output.data.par_chunks_exact_mut(3).for_each(|pixel| {
                 let rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
-                let rgb = convert_rgb(rgb, source, self.params.io.input_cctf_decoding, destination, self.params.io.output_cctf_encoding, &matrix);
-                for channel in 0..3 { pixel[channel] = from_f64(rgb[channel]); }
+                let rgb = convert_rgb(
+                    rgb,
+                    source,
+                    self.params.io.input_cctf_decoding,
+                    destination,
+                    self.params.io.output_cctf_encoding,
+                    &matrix,
+                );
+                for channel in 0..3 {
+                    pixel[channel] = from_f64(rgb[channel]);
+                }
             });
             return Ok(output);
         }
@@ -986,11 +998,18 @@ impl Pipeline {
         if self.params.settings.rgb_to_raw_method == "mallett2019" {
             reasons.push(ResidentFallbackReason::MallettExecutionParity);
         }
-        if !matches!(self.params.workflow.route.as_str(), "input > film > scan" | "input > film > print > scan") {
+        if !matches!(
+            self.params.workflow.route.as_str(),
+            "input > film > scan" | "input > film > print > scan"
+        ) {
             reasons.push(ResidentFallbackReason::WorkflowRoute);
         }
         let dir = &self.params.film_render.dir_couplers;
-        let coefficients = if self.film.is_positive() { &dir.langmuir_receiver_k_rgb } else { &dir.langmuir_donor_k_rgb };
+        let coefficients = if self.film.is_positive() {
+            &dir.langmuir_receiver_k_rgb
+        } else {
+            &dir.langmuir_donor_k_rgb
+        };
         if dir.active && coefficients.iter().any(|k| (k - 1.0).abs() > f64::EPSILON) {
             reasons.push(ResidentFallbackReason::LangmuirChemistry);
         }
@@ -1028,30 +1047,12 @@ impl Pipeline {
         ResidentDecision::reasons(reasons)
     }
 
-    /// Try the GPU-resident fast path. Builds all the per-stage data and
-    /// hands it to the backend's `try_run_film_chain`. Grain V2 returns native
-    /// encoded RGB; other paths return linear RGB. `apply_post_scan` finalizes export.
-    /// Pitch and metered EV come from the complete input before crop/rescale.
-    fn try_gpu_resident(
+    /// Prepare the resident front pass with exposure folded into its f64 matrix.
+    fn resident_front_pass(
         &self,
-        image: &ImageBuf,
-        backend: &dyn ComputeBackend,
         color_ref: &crate::color_reference::ColorReference,
-        pixel_size_um: f64,
         ae_ev: f64,
-    ) -> Option<ImageBuf> {
-        match self.resident_decision() {
-            ResidentDecision::UseResident => {}
-            ResidentDecision::PerStage { reasons } => {
-                tracing::info!(
-                    backend = backend.name(),
-                    execution = "per_stage_cpu",
-                    fallback_reasons = ?reasons,
-                    "using per-stage path because resident GPU execution is unavailable"
-                );
-                return None;
-            }
-        }
+    ) -> Option<spektrafilm_gpu::FrontPass<'_>> {
         // Bake the exposure scale (auto-exposure × manual EV compensation)
         // into the front-pass matrix. Both upsamplers (hanatos and mallett)
         // are homogeneous in the input RGB, so scaling the matrix is
@@ -1102,6 +1103,34 @@ impl Pipeline {
             fold_exposure(&mut matrix);
             spektrafilm_gpu::FrontPass::Mallett2019 { matrix }
         };
+        Some(front)
+    }
+
+    /// Try the GPU-resident fast path. Builds all the per-stage data and
+    /// hands it to the backend's `try_run_film_chain`. Grain V2 returns native
+    /// encoded RGB; other paths return linear RGB. `apply_post_scan` finalizes export.
+    /// Pitch and metered EV come from the complete input before crop/rescale.
+    fn try_gpu_resident(
+        &self,
+        image: &ImageBuf,
+        backend: &dyn ComputeBackend,
+        color_ref: &crate::color_reference::ColorReference,
+        pixel_size_um: f64,
+        ae_ev: f64,
+    ) -> Option<ImageBuf> {
+        match self.resident_decision() {
+            ResidentDecision::UseResident => {}
+            ResidentDecision::PerStage { reasons } => {
+                tracing::info!(
+                    backend = backend.name(),
+                    execution = "per_stage_cpu",
+                    fallback_reasons = ?reasons,
+                    "using per-stage path because resident GPU execution is unavailable"
+                );
+                return None;
+            }
+        }
+        let front = self.resident_front_pass(color_ref, ae_ev)?;
 
         let film_curves = crate::chain_prep::FilmCurves::prepare(&self.film);
         let film_log_exp = film_curves.log_exposure;
@@ -1325,8 +1354,10 @@ impl Pipeline {
             viewing_illuminant: &viewing_illu,
             scan_normalization: scan_norm,
             scan_xyz_to_rgb: &scan_xyz_to_rgb,
-            scan_output_space: spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
-                .expect("validated output colour space"),
+            scan_output_space: spektrafilm_math::colorspace::resolve(
+                &self.params.io.output_color_space,
+            )
+            .expect("validated output colour space"),
             bw_xyz_remap: color_ref.xyz_remap(),
             scan_film: self.params.io.scan_film,
             halation,
@@ -1357,13 +1388,20 @@ impl Pipeline {
         use spektrafilm_math::precision::from_f64;
         let grain_v2_active = self.params.film_render.grain.active
             && self.params.settings.rgb_to_raw_method != "mallett2019"
-            && matches!(self.params.film_render.grain.engine, crate::params::grain::GrainEngine::V2);
+            && matches!(
+                self.params.film_render.grain.engine,
+                crate::params::grain::GrainEngine::V2
+            );
         if grain_v2_active {
             if !self.params.io.output_cctf_encoding {
-                let space = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
-                    .expect("validated output colour space");
+                let space =
+                    spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
+                        .expect("validated output colour space");
                 rgb.data.par_iter_mut().for_each(|value| {
-                    *value = from_f64(spektrafilm_math::colorspace::cctf_decode(*value as f64, space.cctf));
+                    *value = from_f64(spektrafilm_math::colorspace::cctf_decode(
+                        *value as f64,
+                        space.cctf,
+                    ));
                 });
             }
             return rgb;
@@ -1400,36 +1438,79 @@ mod spectral_invalidation_tests {
 
     #[test]
     fn film_chemistry_rebuilds_total_and_grain_layers_from_the_fitted_model() {
-        let mut film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let mut film =
+            crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
         let fitted = film.data.density_curves.clone();
         let fitted_layers = film.data.density_curves_layers.clone();
         for active in [false, true] {
-            film.data.density_curves.iter_mut().flatten().for_each(|v| *v = 0.5);
-            film.data.density_curves_layers.iter_mut().flatten().flatten().for_each(|v| *v = 0.1);
-            apply_film_chemistry(&mut film, &crate::params::PrintCurvesMorphParams {
-                active, ..Default::default()
-            }).unwrap();
-            for (got, want) in film.data.density_curves.iter().flatten().zip(fitted.iter().flatten()) {
+            film.data
+                .density_curves
+                .iter_mut()
+                .flatten()
+                .for_each(|v| *v = 0.5);
+            film.data
+                .density_curves_layers
+                .iter_mut()
+                .flatten()
+                .flatten()
+                .for_each(|v| *v = 0.1);
+            apply_film_chemistry(
+                &mut film,
+                &crate::params::PrintCurvesMorphParams {
+                    active,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            for (got, want) in film
+                .data
+                .density_curves
+                .iter()
+                .flatten()
+                .zip(fitted.iter().flatten())
+            {
                 assert!((got - want).abs() < 1e-12);
             }
-            for (got, want) in film.data.density_curves_layers.iter().flatten().flatten()
-                .zip(fitted_layers.iter().flatten().flatten()) {
+            for (got, want) in film
+                .data
+                .density_curves_layers
+                .iter()
+                .flatten()
+                .flatten()
+                .zip(fitted_layers.iter().flatten().flatten())
+            {
                 assert!((got - want).abs() < 1e-12);
             }
         }
-        apply_film_chemistry(&mut film, &crate::params::PrintCurvesMorphParams {
-            gamma_factor: 1.1, gamma_factor_fast: 0.9, gamma_factor_slow: 1.2,
-            developer_exhaustion: 0.3, ..Default::default()
-        }).unwrap();
+        apply_film_chemistry(
+            &mut film,
+            &crate::params::PrintCurvesMorphParams {
+                gamma_factor: 1.1,
+                gamma_factor_fast: 0.9,
+                gamma_factor_slow: 1.2,
+                developer_exhaustion: 0.3,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         // Pinned 28bf883e apply_print_curves_morph_with_layers, Portra 400 sample 128.
         let expected = [
             [0.5911804126249434, 0.5581332496586162, 0.6521190325040326],
             [0.4509958575813556, 0.4580461526112701, 0.5776553146563388],
-            [0.017750303385221305, 0.026894456204068887, 0.034051265456119285],
+            [
+                0.017750303385221305,
+                0.026894456204068887,
+                0.034051265456119285,
+            ],
         ];
         for channel in 0..3 {
             for layer in 0..3 {
-                assert!((film.data.density_curves_layers[128][layer][channel] - expected[layer][channel]).abs() < 1e-9);
+                assert!(
+                    (film.data.density_curves_layers[128][layer][channel]
+                        - expected[layer][channel])
+                        .abs()
+                        < 1e-9
+                );
             }
             let sum: f64 = expected.iter().map(|layer| layer[channel]).sum();
             assert!((film.data.density_curves[128][channel] - sum).abs() < 1e-9);
@@ -1464,9 +1545,11 @@ mod spectral_invalidation_tests {
         let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
             panic!("Mallett must remain on the per-stage path");
         };
-        assert!(reasons.iter().any(|reason| {
-            matches!(reason, ResidentFallbackReason::MallettExecutionParity)
-        }));
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| { matches!(reason, ResidentFallbackReason::MallettExecutionParity) })
+        );
         pipeline.params.settings.rgb_to_raw_method = "hanatos2025".into();
 
         pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::V1;

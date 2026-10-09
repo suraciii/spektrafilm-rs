@@ -34,8 +34,8 @@ use spektrafilm_math::spectral::{self, CMF_Y_F64};
 
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
-use crate::stages::printing::compute_single_pixel_raw;
 use crate::spectral_service::select_illuminant_f64;
+use crate::stages::printing::compute_single_pixel_raw;
 
 /// Pre-computed scanner exposure correction for the active stocks/params.
 #[derive(Clone, Copy, Debug)]
@@ -240,8 +240,7 @@ impl ColorReference {
             );
             let mut out = [0.0f64; 3];
             for c in 0..3 {
-                out[c] = ((raw[c] * print_exposure_factor + preflash[c]).max(0.0) + 1e-10)
-                    .log10();
+                out[c] = ((raw[c] * print_exposure_factor + preflash[c]).max(0.0) + 1e-10).log10();
             }
             out
         };

@@ -8,7 +8,12 @@ use rayon::prelude::*;
 /// Young-van Vliet IIR for sigma >= 3, matching Python's dispatch.
 /// Each channel is processed independently with rayon.
 /// Single-channel form for callers with per-channel sigma values.
-pub fn gaussian_blur_channel(data: &[Scalar], w: u32, h: u32, sigma: impl Into<f64>) -> Vec<Scalar> {
+pub fn gaussian_blur_channel(
+    data: &[Scalar],
+    w: u32,
+    h: u32,
+    sigma: impl Into<f64>,
+) -> Vec<Scalar> {
     let wu = w as usize;
     let hu = h as usize;
     assert_eq!(data.len(), wu * hu);

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use super::{default_half, default_one};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

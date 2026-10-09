@@ -108,14 +108,8 @@ pub fn add_glare(
         return xyz.clone();
     }
 
-    let glare_amount = compute_random_glare_amount(
-        xyz.width,
-        xyz.height,
-        percent,
-        roughness,
-        blur,
-        0,
-    );
+    let glare_amount =
+        compute_random_glare_amount(xyz.width, xyz.height, percent, roughness, blur, 0);
     let illum = illuminant_xyz.map(from_f32);
     let mut result = xyz.clone();
     add_glare_with_amount(&mut result, &glare_amount, illum);

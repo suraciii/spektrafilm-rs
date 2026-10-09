@@ -68,7 +68,6 @@ impl SpectralShape {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,10 +361,16 @@ mod tests {
         // Windowing must preserve the reconstructed neutral in every channel.
         // The reference SPD has the same chromaticity but a different spectrum.
         let (tx, ty) = spectral::xy_to_tc(xy.0, xy.1);
-        let sample = |lut: &TcLut| spektrafilm_math::lut::bicubic_2d_f64(
-            &lut.data, lut.size, lut.size, lut.channels,
-            tx * (lut.size - 1) as f64, ty * (lut.size - 1) as f64,
-        );
+        let sample = |lut: &TcLut| {
+            spektrafilm_math::lut::bicubic_2d_f64(
+                &lut.data,
+                lut.size,
+                lut.size,
+                lut.channels,
+                tx * (lut.size - 1) as f64,
+                ty * (lut.size - 1) as f64,
+            )
+        };
         let neutral = sample(&windowless);
         let windowed_neutral = sample(&base);
         for channel in 0..3 {
