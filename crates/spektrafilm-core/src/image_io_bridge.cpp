@@ -86,7 +86,7 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         if (format == 3) type = depth == 16 ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
         OIIO::ImageSpec spec(width, height, 3, type);
         if (format == 0 && jpeg_quality > 0)
-            spec.attribute("jpeg:quality", jpeg_quality);
+            spec.attribute("CompressionQuality", jpeg_quality);
         if (format == 2) spec.attribute("Compression", "zip");
         if (icc && icc_len && format != 3)
             spec.attribute("ICCProfile", OIIO::TypeDesc(OIIO::TypeDesc::UINT8, int(icc_len)), icc);

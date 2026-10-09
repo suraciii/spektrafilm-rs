@@ -42,6 +42,28 @@ fn saving_into_the_output_space_and_encoding_is_a_bit_exact_no_op() {
     }
 }
 
+#[test]
+fn jpeg_quality_controls_decoded_detail() {
+    let directory = std::env::temp_dir().join(format!("spektrafilm-jpeg-quality-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    // Monochrome texture isolates quantization from chroma subsampling.
+    let image = ImageBuf::from_data(64, 64, (0..64 * 64)
+        .flat_map(|i| [from_f64(((i * 73 + i / 64 * 19) % 256) as f64 / 255.0); 3]).collect());
+    let mut errors = Vec::new();
+    for quality in [20, 100] {
+        let path = directory.join(format!("{quality}.jpg"));
+        image_io::save_jpeg_quality(&path, &image, SaveOptions {
+            depth: BitDepth::Eight, color_space: "sRGB", cctf_encoding: true,
+        }, None, quality).unwrap();
+        let decoded = image_io::load(&path).unwrap().image;
+        assert_eq!((decoded.width, decoded.height), (64, 64));
+        errors.push(decoded.data.iter().zip(&image.data)
+            .map(|(&a, &b)| (to_f64(a) - to_f64(b)).powi(2)).sum::<f64>() / image.data.len() as f64);
+    }
+    assert!(errors[1] < errors[0] * 0.1, "quality 100 must retain more texture: {errors:?}");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(feature = "precision-f64")]
 #[test]
 fn exr_half_rounds_directly_from_f64_and_float32_exports_keep_their_precision() {
