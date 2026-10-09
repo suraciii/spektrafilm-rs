@@ -22,16 +22,7 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 - Keep plans, research, probes, logs, build artifacts, and session state outside the repository, normally under `/data/workspaces/spektrafilm-project-context/`.
 - Put durable non-contract conclusions in the relevant Issue/PR. Never commit transient artifacts, even if ignored.
 
-## Documentation language
-
-- Write documentation in English.
-- Use short sentences, active voice, American spelling, and stable terms.
-- Use ASD-STE100 writing rules as a target; do not claim formal compliance.
-- Keep domain terms, identifiers, field names, commands, and code symbols in their exact spelling.
-- Use `must`, `may`, and `must not` for requirements, options, and prohibitions.
-- State one rule per sentence.
-- Write only statements that an implementation can be checked against. Delete generic motivation, repetition, and implementation tours.
-- Give each fact one authoritative home. Define a term once and link to it.
+- Documentation language rules live in [eng/documentation-language.md](eng/documentation-language.md).
 
 ## Verification
 
