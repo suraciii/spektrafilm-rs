@@ -417,22 +417,10 @@ class X11:
     def dialog(self, path, save=False):
         dialog_classes = ('zenity', 'yad', 'xdg-desktop-portal-gtk')
         def find():
-            ids = []
             for dialog_class in dialog_classes:
                 found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
-                ids.extend(found.splitlines())
-            active = self.xd('getactivewindow', check=False)
-            if active in ids:
-                return active
-            if ids:
-                return ids[-1]
-            if active == self.window:
-                return None
-            geometry = self.xd('getwindowgeometry', '--shell', active, check=False)
-            width = re.search(r'WIDTH=(\d+)', geometry)
-            height = re.search(r'HEIGHT=(\d+)', geometry)
-            if width and height and int(width.group(1)) >= 300 and int(height.group(1)) >= 200:
-                return active
+                if found:
+                    return found.splitlines()[-1]
             return None
         dialog = wait_for(find, 'native file chooser (zenity/yad/portal)', 25)
         for child in self.psutil.Process(self.proc.pid).children(recursive=True):
@@ -451,41 +439,33 @@ class X11:
         chooser.save(chooser_path)
         self.records.append({'surface': 'native-file-chooser', 'screenshot': chooser_path.name,
                              'requested_path': str(path), 'save': save})
-
-        def paste_location(value):
-            nonlocal dialog
-            dialog = wait_for(find, 'active native file chooser', 15)
-            self.xd('windowactivate', '--sync', dialog)
-            time.sleep(.8)
+        self.xd('windowactivate', '--sync', dialog)
+        time.sleep(.6)
+        self.xd('key', 'ctrl+l')
+        time.sleep(.2)
+        self.xd('key', 'ctrl+a')
+        text = str(path if save else path.parent) + ('' if save else '/')
+        # GTK completion consumes synthetic per-character input; paste the
+        # complete path atomically through the real desktop clipboard.
+        subprocess.run(['xclip', '-selection', 'clipboard'], input=text,
+                       text=True, check=True, timeout=10)
+        self.xd('key', 'ctrl+v')
+        time.sleep(.3)
+        self.xd('key', 'Return')
+        if not save:
+            time.sleep(.6)
             self.xd('key', 'ctrl+l')
-            time.sleep(.5)
             self.xd('key', 'ctrl+a')
-            subprocess.run(['xclip', '-selection', 'clipboard'], input=value,
-                           text=True, check=True, timeout=10)
+            subprocess.run(['xclip', '-selection', 'clipboard'], input=str(path), text=True, check=True)
             self.xd('key', 'ctrl+v')
-            time.sleep(.5)
+            time.sleep(.3)
             self.xd('key', 'Return')
-
-        def visible():
-            return find() is not None
-
-        if save:
-            paste_location(str(path))
-        else:
-            # GTK portal choosers navigate to a directory before accepting a
-            # file path.  Make that transition explicit so Return cannot act
-            # on the previous selection or fall through to the main window.
-            paste_location(str(path.parent) + '/')
-            time.sleep(.8)
-            paste_location(str(path))
-
-        # Save/open choosers may leave the selected path visible while waiting
-        # for the final action button.  Keep operating on the chooser opened
-        # for this action; another portal window may still be behind it.
+        # Save choosers may first navigate the entered full path, then require
+        # a final action button. Open dialogs likewise expose Select/Open on
+        # portal backends instead of silently accepting Return.
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            dialog = find()
-            if not dialog:
+            if not find():
                 return
             with self.mss.mss() as screen:
                 shot = screen.grab(screen.monitors[0])
@@ -494,14 +474,12 @@ class X11:
             clicked = False
             for i, word in enumerate(buttons['text']):
                 if word.strip() in ('OK', 'Open', 'Select', 'Save'):
-                    self.xd('windowactivate', '--sync', dialog)
                     self.xd('mousemove', buttons['left'][i] + buttons['width'][i] // 2,
                             buttons['top'][i] + buttons['height'][i] // 2)
                     self.xd('click', 1)
                     clicked = True
                     break
             if not clicked:
-                self.xd('windowactivate', '--sync', dialog)
                 self.xd('key', 'Return')
             time.sleep(.25)
         raise RuntimeError(f'Native chooser did not accept {path}')
