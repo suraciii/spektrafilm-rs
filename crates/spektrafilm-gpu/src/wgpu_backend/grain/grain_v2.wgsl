@@ -8,6 +8,8 @@ struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, fl
 @group(0) @binding(2) var<storage,read_write> output_rgb:array<f32>;
 
 @group(0) @binding(3) var<storage,read> working_rgb:array<f32>;
+// The local WGPU HAL uses this named function to select strict Metal math.
+fn spektrafilm_strict_float(v:f32)->f32{return v;}
 fn hash(x0:u32)->u32 {
  var x=x0; x+=x<<10u; x^=x>>6u; x+=x<<3u; x^=x>>11u; x+=x<<15u; return x;
 }
@@ -31,7 +33,7 @@ fn snoise(timer:f32,v:vec4<f32>)->vec4<f32> {
 // The sine hash amplifies a one-ULP trig change into a different permutation.
 // Keep the CPU's binary32 product boundaries through Metal contraction.
 fn trig_product(a:f32,b:f32)->f32 {
- let split=frexp(a*b);return ldexp(split.fract,split.exp);
+ let split=frexp(spektrafilm_strict_float(a*b));return ldexp(split.fract,split.exp);
 }
 fn trig_word(words:vec3<u32>,bit:u32)->u32 {
  let i=bit/32u;let offset=bit%32u;

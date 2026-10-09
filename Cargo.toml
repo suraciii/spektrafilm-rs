@@ -47,3 +47,8 @@ rustfft = "6"
 lto = "thin"
 codegen-units = 1
 opt-level = 3
+
+# WGPU 24 does not expose Metal floating-point compilation options. The local
+# HAL patch preserves CPU binary32 arithmetic only for the marked grain shader.
+[patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }
