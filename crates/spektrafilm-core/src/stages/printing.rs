@@ -162,33 +162,9 @@ pub fn expose_calibrated(
     bw_print_correction: f64,
     pixel_size_um: f64,
 ) -> ImageBuf {
-    // Python parity — `channel_density` and `base_density` are f64 in the profile JSON.
-    let channel_density: Vec<[f64; 3]> = film
-        .data
-        .channel_density
-        .iter()
-        .map(|row| {
-            [
-                row.get(0).copied().unwrap_or(0.0),
-                row.get(1).copied().unwrap_or(0.0),
-                row.get(2).copied().unwrap_or(0.0),
-            ]
-        })
-        .collect();
-    let base_density: Vec<f64> = film.data.base_density.clone();
-    // Python: `sensitivity = np.nan_to_num(10 ** log_sensitivity)` — f64 with NaN→0.
-    let print_sensitivity: Vec<[f64; 3]> = print
-        .log_sensitivity_f64()
-        .iter()
-        .map(|row| {
-            let mut out = [0.0f64; 3];
-            for c in 0..3 {
-                let v = 10.0f64.powf(row[c]);
-                out[c] = if v.is_nan() { 0.0 } else { v };
-            }
-            out
-        })
-        .collect();
+    let channel_density = crate::chain_prep::channel_density(film);
+    let base_density = &film.data.base_density;
+    let print_sensitivity = crate::chain_prep::print_sensitivity(print);
 
     // Stage 1: spectral integration → `log_raw_print` (Python parity).
     // print_spectral applies factor_midgray (exposure_factor) and the
@@ -299,37 +275,12 @@ pub fn develop(
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let log_exposure = print.log_exposure_f64();
-
-    // Mirrors Python `develop_print_morph`: model-backed profiles are always
-    // evaluated from the fitted model. Invalid custom models and morph
-    // parameters are returned to the caller rather than falling back to
-    // stored curves or panicking during rendering.
-    let morph = &params.print_render.density_curves_morph;
-    if let Some(model) = print.data.density_curves_model.as_ref() {
-        let curves = crate::print_morph::morph_density_curves(
-            &log_exposure,
-            model,
-            morph,
-            print.is_positive(),
-        )
-        .map_err(|error| format!("invalid print density-curve model: {error}"))?;
-        return Ok(backend.density_curve_interp(
-            log_raw_print,
-            &log_exposure,
-            &curves,
-            1.0,
-        ));
-    }
-
-    // Stored-curve path for profiles without a fitted model. Python parity
-    // note: print's `develop` uses `develop_simple` directly with RAW
-    // (un-normalized) density curves — no nanmin subtraction.
+    let curves = crate::chain_prep::PrintCurves::prepare(print, params)?;
     Ok(backend.density_curve_interp(
         log_raw_print,
-        &log_exposure,
-        &print.density_curves_f64(),
-        params.print_render.density_curve_gamma as f64,
+        curves.log_exposure,
+        &curves.density,
+        curves.gamma,
     ))
 }
 /// Full printing stage with pre-calibrated enlarger. `pixel_size_um`
@@ -379,32 +330,9 @@ pub fn process(
         (params.enlarger.m_filter_neutral + params.enlarger.m_filter_shift) as f64,
         (params.enlarger.y_filter_neutral + params.enlarger.y_filter_shift) as f64,
     );
-    // f64 throughout for Python parity.
-    let channel_density: Vec<[f64; 3]> = film
-        .data
-        .channel_density
-        .iter()
-        .map(|row| {
-            [
-                row.get(0).copied().unwrap_or(0.0),
-                row.get(1).copied().unwrap_or(0.0),
-                row.get(2).copied().unwrap_or(0.0),
-            ]
-        })
-        .collect();
-    let base_density: Vec<f64> = film.data.base_density.clone();
-    let print_sensitivity: Vec<[f64; 3]> = print
-        .log_sensitivity_f64()
-        .iter()
-        .map(|row| {
-            let mut out = [0.0f64; 3];
-            for c in 0..3 {
-                let v = 10.0f64.powf(row[c]);
-                out[c] = if v.is_nan() { 0.0 } else { v };
-            }
-            out
-        })
-        .collect();
+    let channel_density = crate::chain_prep::channel_density(film);
+    let base_density = &film.data.base_density;
+    let print_sensitivity = crate::chain_prep::print_sensitivity(print);
     let n_wl = illuminant
         .len()
         .min(channel_density.len())

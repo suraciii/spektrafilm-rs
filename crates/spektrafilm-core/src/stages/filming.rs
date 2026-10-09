@@ -453,14 +453,11 @@ pub fn develop(
 ) -> ImageBuf {
     let stage_timings = stage_timings_enabled();
     let pix_um = pixel_size_um as f32;
-    // f64 chain for Python parity — curves are f64 in the profile JSON.
-    let log_exposure_f64 = film.log_exposure_f64();
-    let density_curves_f64 = film.density_curves_f64();
+    let curves = crate::chain_prep::FilmCurves::prepare(film);
+    let log_exposure_f64 = curves.log_exposure;
+    let density_curves_f64 = &curves.raw;
+    let norm_curves_f64 = &curves.normalized;
     let gamma = params.film_render.density_curve_gamma;
-
-    // Filming.develop uses NORMALIZED curves (Python `develop` subtracts nanmin).
-    let norm_curves_f64 =
-        spektrafilm_model::density_curves::normalize_density_curves_f64(&density_curves_f64);
     let t = Instant::now();
     let mut density_cmy =
         backend.density_curve_interp(log_raw, &log_exposure_f64, &norm_curves_f64, gamma as f64);
@@ -470,14 +467,7 @@ pub fn develop(
     let dir = &params.film_render.dir_couplers;
     if dir.active {
         let t = Instant::now();
-        let matrix = spektrafilm_model::couplers::compute_dir_couplers_matrix(
-            dir.gamma_samelayer_rgb,
-            dir.gamma_interlayer_r_to_gb,
-            dir.gamma_interlayer_g_to_rb,
-            dir.gamma_interlayer_b_to_rg,
-            dir.inhibition_samelayer,
-            dir.inhibition_interlayer,
-        );
+        let matrix = crate::chain_prep::dir_matrix(dir);
         density_cmy = spektrafilm_model::couplers::apply_density_correction(
             &density_cmy,
             log_raw,
@@ -511,9 +501,6 @@ pub fn develop(
         // f32 storage in `GrainParams` would otherwise truncate to ~7
         // decimals and shift every Poisson lambda by ~5e-8, producing a
         // visibly different grain pattern.
-        let norm_curves_f64 = spektrafilm_model::density_curves::normalize_density_curves_f64(
-            &film.density_curves_f64(),
-        );
         // The upstream grain sampler uses `particle_area_um2` directly.
         // `rms_granularity` is a profile/UI control only; it does not feed
         // `apply_grain` in the Python runtime.
