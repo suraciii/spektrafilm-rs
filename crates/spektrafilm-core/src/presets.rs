@@ -1,155 +1,64 @@
-//! Portable look and section documents. Library operations are shared by both frontends.
-mod library;
-mod sections;
-use crate::params::sources::{ParameterEdits, parse_carrier};
+//! Portable look presets: strict look-owned schema and transactional resolution.
+use crate::neutral_filters::NeutralFilters;
 use crate::params::{
-    DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
-    PrintRenderingParams, RuntimeParams, ScannerParams, SettingsParams,
+    DiffusionFilterParams, EnlargerParams, FilmRenderingParams, PrintRenderingParams,
+    RuntimeParams, ScannerParams,
 };
-use crate::params_builder::apply_film_specifics;
+use crate::params_builder::digest_params;
 use crate::profile::{self, Profile};
-pub use library::*;
-pub use sections::*;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const PRESET_SCHEMA_VERSION: u32 = 4;
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub const LOOK_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
     pub stock: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub content_identity: Option<String>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Provenance {
+pub struct LookProvenance {
     pub implementation_version: String,
     pub model_version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scanner: Option<Value>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+
+/// Parameters owned by a look. Every group is explicit so later stock-default
+/// changes cannot silently rewrite a saved preset.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LookParameters {
-    /// Absent in legacy presets, which preserve the current virtual exposure.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_present_camera"
-    )]
-    pub camera: Option<LookCameraParams>,
     pub enlarger: EnlargerParams,
     pub scanner: ScannerParams,
     pub film_render: FilmRenderingParams,
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
-    pub output_mix: OutputMixParams,
-    /// Spectral-reconstruction switches that shape the rendered look. This is
-    /// deliberately a subset of `SettingsParams`: preview limits, performance
-    /// toggles, and the working wavelength grid are not look content.
-    #[serde(default)]
-    pub settings: LookSettingsParams,
 }
-/// Virtual film exposure and metering, separate from RAW and input correction.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LookCameraParams {
-    pub exposure_compensation_ev: f32,
-    pub auto_exposure: bool,
-    pub auto_exposure_method: String,
-}
-fn deserialize_present_camera<'de, D>(deserializer: D) -> Result<Option<LookCameraParams>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    LookCameraParams::deserialize(deserializer).map(Some)
-}
-impl LookCameraParams {
-    fn capture(params: &RuntimeParams) -> Self {
-        Self {
-            exposure_compensation_ev: params.camera.exposure_compensation_ev,
-            auto_exposure: params.camera.auto_exposure,
-            auto_exposure_method: params.camera.auto_exposure_method.clone(),
-        }
-    }
-    fn apply_to(&self, params: &mut RuntimeParams) {
-        params.camera.exposure_compensation_ev = self.exposure_compensation_ev;
-        params.camera.auto_exposure = self.auto_exposure;
-        params
-            .camera
-            .auto_exposure_method
-            .clone_from(&self.auto_exposure_method);
-    }
-    fn matches(&self, params: &RuntimeParams) -> bool {
-        self.exposure_compensation_ev == params.camera.exposure_compensation_ev
-            && self.auto_exposure == params.camera.auto_exposure
-            && self.auto_exposure_method == params.camera.auto_exposure_method
-    }
-}
-/// Look-owned processing settings (subset of `SettingsParams`, same defaults).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LookSettingsParams {
-    #[serde(default = "default_true")]
-    pub apply_hanatos2025_adaptation_window: bool,
-    #[serde(default)]
-    pub apply_hanatos2025_adaptation_surface: bool,
-    #[serde(default)]
-    pub spectral_gaussian_blur: f32,
-    #[serde(default = "default_true")]
-    pub use_cat16: bool,
-    #[serde(default)]
-    pub print_exposure_ev_tracking: crate::params::PrintExposureEvTracking,
-}
-impl Default for LookSettingsParams {
-    fn default() -> Self {
-        Self {
-            apply_hanatos2025_adaptation_window: true,
-            apply_hanatos2025_adaptation_surface: false,
-            spectral_gaussian_blur: 0.0,
-            use_cat16: true,
-            print_exposure_ev_tracking: crate::params::PrintExposureEvTracking::default(),
-        }
-    }
-}
-fn default_true() -> bool {
-    true
-}
-// The look variant owns the full look, and preset collections are small.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum PresetParameters {
-    Look(LookParameters),
-    Section(Value),
-}
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Preset {
+pub struct LookPreset {
     pub schema_version: u32,
+    pub id: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub author: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub film_profile: Option<ProfileRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub print_profile: Option<ProfileRef>,
-    pub parameters: PresetParameters,
-    pub provenance: Provenance,
+    pub film_profile: ProfileRef,
+    pub print_profile: ProfileRef,
+    pub parameters: LookParameters,
+    pub provenance: LookProvenance,
 }
-impl<'de> Deserialize<'de> for Preset {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::from_value(Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
+
 #[derive(Debug, Clone)]
-pub struct ResolvedPreset {
+pub struct ResolvedLookPreset {
     pub film_name: String,
     pub print_name: String,
     pub default_route: String,
@@ -157,492 +66,128 @@ pub struct ResolvedPreset {
     pub film: Profile,
     pub print: Profile,
 }
-impl LookParameters {
-    pub fn capture(params: &RuntimeParams) -> Self {
-        Self {
-            camera: Some(LookCameraParams::capture(params)),
-            enlarger: params.enlarger.clone(),
-            scanner: params.scanner.clone(),
-            film_render: params.film_render.clone(),
-            print_render: params.print_render.clone(),
-            camera_diffusion_filter: params.camera.diffusion_filter.clone(),
-            output_mix: params.output_mix.clone(),
-            settings: LookSettingsParams {
-                apply_hanatos2025_adaptation_window: params
-                    .settings
-                    .apply_hanatos2025_adaptation_window,
-                apply_hanatos2025_adaptation_surface: params
-                    .settings
-                    .apply_hanatos2025_adaptation_surface,
-                spectral_gaussian_blur: params.settings.spectral_gaussian_blur,
-                use_cat16: params.settings.use_cat16,
-                print_exposure_ev_tracking: params.settings.print_exposure_ev_tracking,
-            },
-        }
-    }
 
-    /// Replace every look-owned parameter of `params` with this look.
-    ///
-    /// The look owns virtual exposure when present, enlarger, scanner, film
-    /// and print rendering, camera diffusion, and look processing settings.
-    /// Every other parameter section keeps its value.
-    pub fn apply_to(&self, params: &mut RuntimeParams) {
-        if let Some(camera) = &self.camera {
-            camera.apply_to(params);
-        }
-        params.enlarger = self.enlarger.clone();
-        params.scanner = self.scanner.clone();
-        params.film_render = self.film_render.clone();
-        params.print_render = self.print_render.clone();
-        params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
-        params.output_mix = self.output_mix.clone();
-        self.settings.apply_to(&mut params.settings);
-    }
-    /// Compare only carried controls; legacy presets do not own exposure.
-    pub fn matches(&self, params: &RuntimeParams) -> bool {
-        self.camera
-            .as_ref()
-            .is_none_or(|camera| camera.matches(params))
-            && self.enlarger == params.enlarger
-            && self.scanner == params.scanner
-            && self.film_render == params.film_render
-            && self.print_render == params.print_render
-            && self.camera_diffusion_filter == params.camera.diffusion_filter
-            && self.output_mix == params.output_mix
-            && self.settings.apply_hanatos2025_adaptation_window
-                == params.settings.apply_hanatos2025_adaptation_window
-            && self.settings.apply_hanatos2025_adaptation_surface
-                == params.settings.apply_hanatos2025_adaptation_surface
-            && self.settings.spectral_gaussian_blur == params.settings.spectral_gaussian_blur
-            && self.settings.use_cat16 == params.settings.use_cat16
-    }
-}
-impl LookSettingsParams {
-    fn apply_to(&self, settings: &mut SettingsParams) {
-        settings.apply_hanatos2025_adaptation_window = self.apply_hanatos2025_adaptation_window;
-        settings.apply_hanatos2025_adaptation_surface = self.apply_hanatos2025_adaptation_surface;
-        settings.spectral_gaussian_blur = self.spectral_gaussian_blur;
-        settings.use_cat16 = self.use_cat16;
-        settings.print_exposure_ev_tracking = self.print_exposure_ev_tracking;
-    }
-}
-impl Preset {
-    pub fn look_parameters(&self) -> Option<&LookParameters> {
-        if let PresetParameters::Look(look) = &self.parameters {
-            Some(look)
-        } else {
-            None
-        }
-    }
-    pub fn look_parameters_mut(&mut self) -> Option<&mut LookParameters> {
-        if let PresetParameters::Look(look) = &mut self.parameters {
-            Some(look)
-        } else {
-            None
-        }
-    }
-    pub fn from_json_str(text: &str) -> Result<Self, String> {
-        Self::from_value(parse_carrier(text, false)?)
-    }
-    pub fn from_toml_str(text: &str) -> Result<Self, String> {
-        Self::from_value(parse_carrier(text, true)?)
-    }
-    fn from_value(mut value: Value) -> Result<Self, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            schema_version: u32,
-            name: String,
-            author: Option<String>,
-            description: Option<String>,
-            film_profile: Option<ProfileRef>,
-            print_profile: Option<ProfileRef>,
-            parameters: Value,
-            provenance: Provenance,
-        }
-        if matches!(value["schema_version"].as_u64(), Some(1..=3)) {
-            let version = value["schema_version"].as_u64().unwrap();
-            let object = value.as_object_mut().ok_or("preset must be an object")?;
-            if version == 1 {
-                object.remove("id");
-            }
-            if version <= 2 {
-                if object
-                    .get("parameters")
-                    .and_then(|p| p.get("output_mix"))
-                    .is_some()
-                {
-                    return Err(
-                        "legacy preset parameters.output_mix is unknown; use schema_version 4"
-                            .into(),
-                    );
-                }
-                if object
-                    .get("parameters")
-                    .and_then(|p| p.get("camera"))
-                    .is_some()
-                {
-                    return Err(
-                        "legacy preset parameters.camera is unknown; use schema_version 4".into(),
-                    );
-                }
-                if object.get("film_profile").is_some_and(|v| !v.is_null())
-                    || object.get("print_profile").is_some_and(|v| !v.is_null())
-                {
-                    let parameters = object
-                        .get_mut("parameters")
-                        .and_then(Value::as_object_mut)
-                        .ok_or("preset parameters must be an object")?;
-                    parameters.insert(
-                        "output_mix".into(),
-                        serde_json::to_value(OutputMixParams::default())
-                            .map_err(|e| e.to_string())?,
-                    );
-                }
-            }
-            // Version 3 to 4: rename the conversion-control paths. A look
-            // payload (multiple parameter groups) may carry the tracking
-            // setting for the legacy mixed states; a single-section payload
-            // may not and fails with an explicit error instead.
-            if version <= 3 {
-                let settings_allowed = object
-                    .get("parameters")
-                    .and_then(Value::as_object)
-                    .is_some_and(|parameters| parameters.len() > 1);
-                let parameters = object
-                    .get_mut("parameters")
-                    .ok_or("preset parameters must be an object")?;
-                crate::params::sources::normalize_legacy_conversion_paths(
-                    parameters,
-                    settings_allowed,
-                )?;
-            }
-            object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
-        }
-        let wire: Wire =
-            serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
-        let parameters = if wire.film_profile.is_some() || wire.print_profile.is_some() {
-            PresetParameters::Look(
-                serde_json::from_value(wire.parameters)
-                    .map_err(|e| format!("invalid look: {e}"))?,
-            )
-        } else {
-            PresetParameters::Section(wire.parameters)
-        };
-        let preset = Self {
-            schema_version: wire.schema_version,
-            name: wire.name,
-            author: wire.author,
-            description: wire.description,
-            film_profile: wire.film_profile,
-            print_profile: wire.print_profile,
-            parameters,
-            provenance: wire.provenance,
-        };
-        preset.validate()?;
+impl LookPreset {
+    pub fn from_json_str(json: &str) -> Result<Self, String> {
+        let preset: Self =
+            serde_json::from_str(json).map_err(|e| format!("invalid look preset JSON: {e}"))?;
+        validate_document(&preset)?;
         Ok(preset)
     }
-    pub fn kind(&self) -> Result<PresetKind, String> {
-        match &self.parameters {
-            PresetParameters::Look(_) if self.film_profile.is_some() && self.print_profile.is_some()=>Ok(PresetKind::Look),
-            PresetParameters::Section(payload) if self.film_profile.is_none() && self.print_profile.is_none()=>Ok(PresetKind::Section(section_from_payload(payload)?)),
-            _=>Err("a preset must carry a complete look with both profiles or exactly one section without profiles".into()),
-        }
-    }
-    pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != PRESET_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported preset schema version {}",
-                self.schema_version
-            ));
-        }
-        validate_name(&self.name)?;
-        if self.provenance.implementation_version.trim().is_empty()
-            || self.provenance.model_version.trim().is_empty()
-        {
-            return Err("preset provenance versions must not be empty".into());
-        }
-        self.kind()?;
-        for (kind, reference) in [("film", &self.film_profile), ("print", &self.print_profile)] {
-            if let Some(reference) = reference {
-                validate_stock_id(kind, &reference.stock)?;
-                validate_content_identity(kind, reference)?;
-            }
-        }
-        // Presets do not carry workflow routing. Validate scanner-owned values
-        // in their supported film-scan context; applying checks the actual route.
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        params.io.scan_film = true;
-        match &self.parameters {
-            PresetParameters::Look(look) => look.apply_to(&mut params),
-            PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
-        }
-        if let Some(scanner) = &self.provenance.scanner {
-            let expected = serde_json::to_value(
-                crate::scan_receiver::ScannerProvenance::from_params(&params),
-            )
-            .map_err(|e| e.to_string())?;
-            if scanner != &expected {
-                return Err(
-                    "scanner provenance does not match the typed scanner parameters".into(),
-                );
-            }
-        }
-        crate::params::sources::validate_finite(&params)?;
-        params.validate()
-    }
+
     pub fn to_json(&self) -> Result<String, String> {
-        self.validate()?;
-        serde_json::to_string_pretty(self).map_err(|e| e.to_string())
+        serde_json::to_string_pretty(self).map_err(|e| format!("serializing look preset: {e}"))
     }
-    pub fn to_toml(&self) -> Result<String, String> {
-        self.validate()?;
-        if let PresetParameters::Section(payload) = &self.parameters {
-            fn null_paths(prefix: &str, value: &Value, out: &mut Vec<String>) {
-                if let Some(map) = value.as_object() {
-                    for (key, value) in map {
-                        let path = if prefix.is_empty() {
-                            key.clone()
-                        } else {
-                            format!("{prefix}.{key}")
-                        };
-                        null_paths(&path, value, out);
-                    }
-                } else if value.is_null() {
-                    out.push(prefix.to_owned());
-                }
-            }
-            let mut paths = Vec::new();
-            null_paths("", payload, &mut paths);
-            if !paths.is_empty() {
-                return Err(format!(
-                    "TOML cannot represent explicit null at {}; use --format json or a .json extension",
-                    paths.join(", ")
-                ));
-            }
-        }
-        toml::to_string_pretty(self).map_err(|e| e.to_string())
-    }
+
+    /// Resolve without mutating the caller's active runtime context.
     pub fn resolve(
         &self,
         data_dir: &Path,
-        current: &RuntimeParams,
-    ) -> Result<ResolvedPreset, String> {
-        self.validate()?;
-        let (Some(film_ref), Some(print_ref), PresetParameters::Look(look)) =
-            (&self.film_profile, &self.print_profile, &self.parameters)
-        else {
-            return Err("section presets use apply_section, not look resolution".into());
-        };
-        let film_identity = profile_content_identity_if_requested(data_dir, film_ref)?;
-        let print_identity = profile_content_identity_if_requested(data_dir, print_ref)?;
-        let film =
-            profile::load_profile_by_name(data_dir, &film_ref.stock).map_err(|e| e.to_string())?;
-        let print =
-            profile::load_profile_by_name(data_dir, &print_ref.stock).map_err(|e| e.to_string())?;
-        validate_profile_ref("film", film_ref, &film, film_identity.as_deref())?;
-        validate_profile_ref("print", print_ref, &print, print_identity.as_deref())?;
-        let mut params = current.clone();
-        apply_film_specifics(&mut params, &film);
-        look.apply_to(&mut params);
-        // Neutral print filtration is material calibration, not a look value: an axis
-        // is protected only when the document carries an authored value for it, so the
-        // per-(paper, illuminant, film) database still supplies the baseline for every
-        // other look instead of one paper's pack being reused everywhere.
-        let defaults = crate::params::EnlargerParams::default();
-        params.neutral_print_filters_protected = Some([
-            look.enlarger.c_filter_neutral != defaults.c_filter_neutral,
-            look.enlarger.m_filter_neutral != defaults.m_filter_neutral,
-            look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
-        ]);
+        current_params: &RuntimeParams,
+    ) -> Result<ResolvedLookPreset, String> {
+        validate_document(self)?;
+        let film_identity = profile_content_identity_if_requested(data_dir, &self.film_profile)?;
+        let print_identity = profile_content_identity_if_requested(data_dir, &self.print_profile)?;
+        let film = profile::load_profile_by_name(data_dir, &self.film_profile.stock)
+            .map_err(|e| format!("loading film profile {:?}: {e}", self.film_profile.stock))?;
+        let print = profile::load_profile_by_name(data_dir, &self.print_profile.stock)
+            .map_err(|e| format!("loading print profile {:?}: {e}", self.print_profile.stock))?;
+        validate_profile_ref("film", &self.film_profile, &film, film_identity.as_deref())?;
+        validate_profile_ref(
+            "print",
+            &self.print_profile,
+            &print,
+            print_identity.as_deref(),
+        )?;
+        let neutral = NeutralFilters::load(data_dir)?;
+
+        // Stock-specific calibration creates the baseline. Explicit look values
+        // are overlaid after it, so profile changes cannot erase a saved look.
+        let mut params = digest_params(current_params.clone(), &film, &print, Some(&neutral), true);
+        // Digestion also contains runtime switches that are not owned by a
+        // look (for example LUT mode can rewrite crop and exposure). Restore
+        // the caller's context before applying the look-owned groups.
+        params.camera = current_params.camera.clone();
+        params.io = current_params.io.clone();
+        params.settings = current_params.settings.clone();
+        params.debug = current_params.debug.clone();
+        params.workflow = current_params.workflow.clone();
+        params.enlarger = self.parameters.enlarger.clone();
+        params.scanner = self.parameters.scanner.clone();
+        params.film_render = self.parameters.film_render.clone();
+        params.print_render = self.parameters.print_render.clone();
+        params.camera.diffusion_filter = self.parameters.camera_diffusion_filter.clone();
         let default_route = workflow_default(&film);
-        // A caller that already declared a film-scan route keeps it. The route and
-        // the scan mode it selects are a workflow choice; overriding the route here
-        // would silently discard the scan mode an authored document carries.
-        let caller_declared_film_scan = matches!(
-            current.workflow.route.as_str(),
-            "input > film > scan" | "input > convert-film > scan"
-        );
-        params.workflow.route = if caller_declared_film_scan {
-            current.workflow.route.clone()
-        } else {
-            default_route.clone()
-        };
-        params.io.scan_film = film.is_positive();
-        if params.scanner.negative_conversion_method
-            == crate::params::NegativeConversionMethod::DigitalReference
-            && (film.is_positive() || params.workflow.route != "input > film > scan")
-        {
-            params.scanner.negative_conversion_method =
-                crate::params::NegativeConversionMethod::default();
-            params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
-            params.scanner.reference_exposure_ev = 0.0;
-            params.scanner.reference_balance_ev = [0.0; 3];
-        }
-        if film.is_positive()
-            || !matches!(
-                params.workflow.route.as_str(),
-                "input > film > scan" | "input > convert-film > scan"
-            )
-        {
-            params.scanner.scan_output = "direct_scan".into();
-            params.scanner.negative_conversion_method =
-                crate::params::NegativeConversionMethod::default();
-            params.scanner.auto_setup = crate::params::ScannerAutoSetup::default();
-            params.scanner.finish = crate::params::ScannerFinish::default();
-            if params.scanner.receiver_profile == crate::params::ReceiverProfile::DigitalReference {
-                params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
-                params.scanner.reference_exposure_ev = 0.0;
-                params.scanner.reference_balance_ev = [0.0; 3];
-            }
-        }
-        if !matches!(
-            params.workflow.route.as_str(),
-            "input > film > scan" | "input > convert-film > scan"
-        ) {
-            params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
-        }
-        crate::pipeline_calibration::validate_scan_output_route(&params)?;
+        params.workflow.route = default_route.clone();
+        params.io.scan_film = default_route == "input > film > scan";
         params.validate()?;
-        Ok(ResolvedPreset {
-            film_name: film_ref.stock.clone(),
-            print_name: print_ref.stock.clone(),
+        Ok(ResolvedLookPreset {
+            film_name: self.film_profile.stock.clone(),
+            print_name: self.print_profile.stock.clone(),
             default_route,
             params,
             film,
             print,
         })
     }
+
     pub fn capture(
         name: impl Into<String>,
+        id: impl Into<String>,
         film: impl Into<String>,
         print: impl Into<String>,
         params: &RuntimeParams,
-        mut provenance: Provenance,
+        provenance: LookProvenance,
     ) -> Self {
-        provenance.scanner = Some(
-            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(params))
-                .expect("built-in provenance is serializable"),
-        );
         Self {
-            schema_version: PRESET_SCHEMA_VERSION,
+            schema_version: LOOK_SCHEMA_VERSION,
+            id: id.into(),
             name: name.into(),
             author: None,
             description: None,
-            film_profile: Some(ProfileRef {
+            film_profile: ProfileRef {
                 stock: film.into(),
                 version: None,
                 content_identity: None,
-            }),
-            print_profile: Some(ProfileRef {
+            },
+            print_profile: ProfileRef {
                 stock: print.into(),
                 version: None,
                 content_identity: None,
-            }),
-            parameters: PresetParameters::Look(LookParameters::capture(params)),
+            },
+            parameters: LookParameters {
+                enlarger: params.enlarger.clone(),
+                scanner: params.scanner.clone(),
+                film_render: params.film_render.clone(),
+                print_render: params.print_render.clone(),
+                camera_diffusion_filter: params.camera.diffusion_filter.clone(),
+            },
             provenance,
         }
-    }
-    pub fn capture_section(
-        name: impl Into<String>,
-        section: Section,
-        params: &RuntimeParams,
-        mut provenance: Provenance,
-    ) -> Result<Self, String> {
-        let payload = extract_section(section, params)?;
-        let mut captured = RuntimeParams::default();
-        parameter_edits(&payload)?.apply(&mut captured)?;
-        provenance.scanner = Some(
-            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(
-                &captured,
-            ))
-            .map_err(|e| e.to_string())?,
-        );
-        let preset = Self {
-            schema_version: PRESET_SCHEMA_VERSION,
-            name: name.into(),
-            author: None,
-            description: None,
-            film_profile: None,
-            print_profile: None,
-            parameters: PresetParameters::Section(payload),
-            provenance,
-        };
-        preset.validate()?;
-        Ok(preset)
-    }
-    /// Returns a candidate validated against the current film and scan configuration.
-    /// An unrelated edit may preserve an already-invalid scan configuration.
-    pub fn apply_section(
-        &self,
-        current: &RuntimeParams,
-        film: &Profile,
-    ) -> Result<RuntimeParams, String> {
-        let params = self.overlay_section(current)?;
-        params.validate()?;
-        let scan_changed = params.scanner.scan_output != current.scanner.scan_output
-            || params.scanner.white_correction != current.scanner.white_correction
-            || params.scanner.black_correction != current.scanner.black_correction
-            || params.film_render.grain.active != current.film_render.grain.active
-            || params.film_render.grain.engine != current.film_render.grain.engine;
-        if scan_changed || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()
-        {
-            crate::pipeline_calibration::validate_scan_output(&params, film)?;
-        }
-        Ok(params)
-    }
-
-    /// Compose independently validated leaves without validating intermediate controls.
-    /// The caller must validate the complete candidate before applying it.
-    pub(crate) fn overlay_section(&self, current: &RuntimeParams) -> Result<RuntimeParams, String> {
-        self.validate()?;
-        let PresetParameters::Section(payload) = &self.parameters else {
-            return Err("expected a section preset".into());
-        };
-        let edits = parameter_edits(payload)?;
-        let mut params = current.clone();
-        edits.apply(&mut params)?;
-        for path in edits.paths() {
-            params.explicit_section_paths.insert(path.to_owned());
-            for (axis, name) in ["c_filter_neutral", "m_filter_neutral", "y_filter_neutral"]
-                .iter()
-                .enumerate()
-            {
-                if path == format!("enlarger.{name}") {
-                    params
-                        .neutral_print_filters_protected
-                        .get_or_insert([false; 3])[axis] = true;
-                }
-            }
-        }
-        Ok(params)
     }
 }
-fn parameter_edits(payload: &Value) -> Result<ParameterEdits, String> {
-    let mut value = payload.clone();
-    if let Some(filter) = value
-        .as_object_mut()
-        .and_then(|m| m.remove("camera_diffusion_filter"))
+fn validate_document(preset: &LookPreset) -> Result<(), String> {
+    if preset.schema_version != LOOK_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported look preset schema version {}",
+            preset.schema_version
+        ));
+    }
+    if preset.id.trim().is_empty() || preset.name.trim().is_empty() {
+        return Err("look preset id and name must not be empty".into());
+    }
+    if preset.provenance.implementation_version.trim().is_empty()
+        || preset.provenance.model_version.trim().is_empty()
     {
-        value["camera"] = serde_json::json!({"diffusion_filter":filter});
+        return Err("look preset provenance versions must not be empty".into());
     }
-    ParameterEdits::from_value(value)
+    validate_stock_id("film", &preset.film_profile.stock)?;
+    validate_content_identity("film", &preset.film_profile)?;
+    validate_stock_id("print", &preset.print_profile.stock)?;
+    validate_content_identity("print", &preset.print_profile)?;
+    Ok(())
 }
-include!(concat!(env!("OUT_DIR"), "/preset_assets.rs"));
-pub fn builtin_presets() -> Vec<Preset> {
-    let mut presets = BUILTIN_ASSETS
-        .iter()
-        .map(|(_, text)| Preset::from_toml_str(text).expect("invalid compiled preset asset"))
-        .collect::<Vec<_>>();
-    presets.sort_by(|a, b| name_order(&a.name, &b.name));
-    presets
-}
-pub fn load_selector(selector: &str, _data_dir: &Path) -> Result<Preset, String> {
-    PresetLibrary::default()
-        .resolve_selector(selector)
-        .map(|selection| selection.preset)
-}
+
 fn validate_stock_id(kind: &str, stock: &str) -> Result<(), String> {
     if stock.is_empty()
         || !stock
@@ -716,21 +261,21 @@ fn validate_profile_ref(
             reference.stock
         ));
     }
-    if let Some(version) = &reference.version
-        && &profile.metadata.version != version
-    {
-        return Err(format!(
-            "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
-            reference.stock, profile.metadata.version
-        ));
+    if let Some(version) = &reference.version {
+        if &profile.metadata.version != version {
+            return Err(format!(
+                "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
+                reference.stock, profile.metadata.version
+            ));
+        }
     }
-    if let Some(expected) = content_identity
-        && Some(expected) != reference.content_identity.as_deref()
-    {
-        return Err(format!(
-            "{kind} profile {:?} content identity was not verified",
-            reference.stock
-        ));
+    if let Some(expected) = content_identity {
+        if Some(expected) != reference.content_identity.as_deref() {
+            return Err(format!(
+                "{kind} profile {:?} content identity was not verified",
+                reference.stock
+            ));
+        }
     }
     Ok(())
 }
@@ -743,30 +288,262 @@ pub fn workflow_default(film: &Profile) -> String {
     }
 }
 
-pub(crate) fn explicit_stock_values(params: &RuntimeParams) -> Option<ParameterEdits> {
-    if params.explicit_section_paths.is_empty() {
-        return None;
-    }
-    let root = serde_json::to_value(params).expect("runtime parameters serialize");
-    let mut payload = serde_json::json!({});
-    for path in &params.explicit_section_paths {
-        if let Some(value) = root.pointer(&format!("/{}", path.replace('.', "/"))) {
-            crate::params::sources::insert(&mut payload, path, value.clone());
+fn classic_parameters(film: &str) -> LookParameters {
+    let mut params = RuntimeParams::default();
+    let grain = &mut params.film_render.grain;
+    grain.rms_granularity = match film {
+        "kodak_gold_200" => [5.0; 3],
+        "kodak_portra_400" => [4.5; 3],
+        "kodak_ektar_100" => [4.0; 3],
+        _ => [8.0; 3],
+    };
+    grain.density_min = [0.03; 3];
+    grain.uniformity = if film == "kodak_portra_400" {
+        [0.97, 0.99, 0.97]
+    } else {
+        [0.97; 3]
+    };
+    grain.particle_scale_sublayers = [1.0, 0.4, 0.25];
+
+    let couplers = &mut params.film_render.dir_couplers;
+    match film {
+        "fujifilm_velvia_100" => {
+            couplers.gamma_samelayer_rgb = [0.108, 0.072, 0.054];
+            couplers.gamma_interlayer_r_to_gb = [0.0707, 0.2367];
+            couplers.gamma_interlayer_g_to_rb = [0.0119, 0.0380];
+            couplers.gamma_interlayer_b_to_rg = [0.0111, 0.1413];
+        }
+        "fujifilm_provia_100f" => {
+            couplers.gamma_samelayer_rgb = [0.2786, 0.1257, 0.3480];
+            couplers.gamma_interlayer_r_to_gb = [0.1448, 0.2003];
+            couplers.gamma_interlayer_g_to_rb = [0.0516, 0.1250];
+            couplers.gamma_interlayer_b_to_rg = [0.0518, 0.3089];
+        }
+        _ => {
+            couplers.gamma_samelayer_rgb = [0.5159, 0.5934, 0.2829];
+            couplers.gamma_interlayer_r_to_gb = [0.4032, 0.2488];
+            couplers.gamma_interlayer_g_to_rb = [0.2227, 0.4340];
+            couplers.gamma_interlayer_b_to_rg = [0.1829, 0.1799];
         }
     }
-    Some(ParameterEdits::from_value(payload).expect("validated explicit paths"))
-}
-pub(crate) fn restore_explicit_stock_values(
-    params: &mut RuntimeParams,
-    edits: Option<ParameterEdits>,
-) {
-    if let Some(edits) = edits {
-        edits
-            .apply(params)
-            .expect("retaining validated explicit controls");
+
+    let halation = &mut params.film_render.halation;
+    halation.halation_first_sigma_um = [65.0; 3];
+    halation.halation_strength = if film == "kodak_gold_200" {
+        [0.08, 0.02, 0.0]
+    } else {
+        [0.015, 0.005, 0.0]
+    };
+    params.enlarger.c_filter_neutral = 0.0;
+    (
+        params.enlarger.m_filter_neutral,
+        params.enlarger.y_filter_neutral,
+    ) = match film {
+        "kodak_gold_200" => (58.4153, 55.5983),
+        "kodak_portra_400" => (51.8405, 51.2543),
+        "kodak_ektar_100" => (73.6153, 59.8118),
+        _ => (50.0, 50.0),
+    };
+    LookParameters {
+        enlarger: params.enlarger,
+        scanner: params.scanner,
+        film_render: params.film_render,
+        print_render: params.print_render,
+        camera_diffusion_filter: params.camera.diffusion_filter,
     }
 }
+
+fn builtin(id: &str, name: &str, film: &str, print: &str) -> LookPreset {
+    LookPreset {
+        schema_version: LOOK_SCHEMA_VERSION,
+        id: id.into(),
+        name: name.into(),
+        author: Some("SpektraFilm".into()),
+        description: Some("SpektraFilm classic stock look".into()),
+        film_profile: ProfileRef {
+            stock: film.into(),
+            version: Some("0.3.4".into()),
+            content_identity: None,
+        },
+        print_profile: ProfileRef {
+            stock: print.into(),
+            version: Some("0.3.4".into()),
+            content_identity: None,
+        },
+        parameters: classic_parameters(film),
+        provenance: LookProvenance {
+            implementation_version: "0.3.4".into(),
+            model_version: "0.3.4".into(),
+        },
+    }
+}
+
+/// Immutable classic presets. Returned values are owned clones and cannot
+/// mutate the built-in definitions.
+pub fn builtin_look_presets() -> Vec<LookPreset> {
+    vec![
+        builtin(
+            "classic-kodak-gold-200",
+            "Kodak Gold 200",
+            "kodak_gold_200",
+            "kodak_portra_endura",
+        ),
+        builtin(
+            "classic-kodak-portra-400",
+            "Kodak Portra 400",
+            "kodak_portra_400",
+            "kodak_portra_endura",
+        ),
+        builtin(
+            "classic-kodak-ektar-100",
+            "Kodak Ektar 100",
+            "kodak_ektar_100",
+            "kodak_portra_endura",
+        ),
+        builtin(
+            "classic-fujifilm-velvia-100",
+            "Fujifilm Velvia 100",
+            "fujifilm_velvia_100",
+            "fujifilm_crystal_archive_typeii",
+        ),
+        builtin(
+            "classic-fujifilm-provia-100f",
+            "Fujifilm Provia 100F",
+            "fujifilm_provia_100f",
+            "fujifilm_crystal_archive_typeii",
+        ),
+    ]
+}
+
 #[cfg(test)]
-mod camera_tests;
-#[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+
+    fn provenance() -> LookProvenance {
+        LookProvenance {
+            implementation_version: "test".into(),
+            model_version: "test".into(),
+        }
+    }
+
+    #[test]
+    fn route_is_rejected_as_unknown() {
+        let json = r#"{"schema_version":1,"id":"x","name":"X","film_profile":{"stock":"f"},"print_profile":{"stock":"p"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"x","model_version":"x"},"route":"input"}"#;
+        assert!(LookPreset::from_json_str(json).is_err());
+    }
+
+    #[test]
+    fn content_identity_requires_canonical_sha256() {
+        let mut preset = builtin_look_presets()[0].clone();
+        preset.film_profile.content_identity = Some("sha256-not-a-hash".into());
+        let json = serde_json::to_string(&preset).unwrap();
+        let error = LookPreset::from_json_str(&json).unwrap_err();
+        assert!(error.contains("content identity"));
+    }
+
+    #[test]
+    fn capture_roundtrip_preserves_f64() {
+        let mut params = RuntimeParams::default();
+        params.film_render.chemistry.gamma_factor = 1.234567890123;
+        params.film_render.halation.halation_strength = [0.765432109876; 3];
+        let preset = LookPreset::capture(
+            "Test",
+            "test",
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            &params,
+            provenance(),
+        );
+        let restored = LookPreset::from_json_str(&preset.to_json().unwrap()).unwrap();
+        let film = restored.parameters.film_render;
+        assert_eq!(
+            film.chemistry.gamma_factor,
+            params.film_render.chemistry.gamma_factor
+        );
+        assert_eq!(
+            film.halation.halation_strength,
+            params.film_render.halation.halation_strength
+        );
+    }
+
+    #[test]
+    fn five_classics_have_stable_ids_explicit_pairs_and_look_values() {
+        let presets = builtin_look_presets();
+        assert_eq!(presets.len(), 5);
+        assert!(presets.iter().all(|p| {
+            !p.id.is_empty()
+                && p.film_profile.version.is_some()
+                && p.print_profile.version.is_some()
+                && p.parameters.film_render.grain.rms_granularity != [0.0; 3]
+        }));
+        assert_eq!(presets[0].film_profile.stock, "kodak_gold_200");
+        assert_eq!(
+            presets[3].print_profile.stock,
+            "fujifilm_crystal_archive_typeii"
+        );
+        assert_eq!(
+            presets[3]
+                .parameters
+                .film_render
+                .dir_couplers
+                .gamma_samelayer_rgb,
+            [0.108, 0.072, 0.054]
+        );
+    }
+
+    #[test]
+    fn portable_schema_has_no_route() {
+        let json = builtin_look_presets()[0].to_json().unwrap();
+        assert!(!json.contains("\"route\""));
+        assert!(!json.contains("\"workflow\""));
+    }
+    #[test]
+    fn builtins_resolve_against_shipped_profiles() {
+        let data_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let mut context = RuntimeParams::default();
+        context.io.crop = true;
+        context.random_seed = 1234;
+        context.debug.lut_mode = true;
+        context.settings.use_enlarger_lut = true;
+        for preset in builtin_look_presets() {
+            let resolved = preset.resolve(&data_dir, &context).unwrap();
+            assert_eq!(resolved.film_name, preset.film_profile.stock);
+            assert_eq!(resolved.print_name, preset.print_profile.stock);
+            assert_eq!(
+                resolved.params.workflow.route,
+                if resolved.film.is_positive() {
+                    "input > film > scan"
+                } else {
+                    "input > film > print > scan"
+                }
+            );
+            assert!(resolved.params.io.crop);
+            assert!(resolved.params.debug.lut_mode);
+            assert!(resolved.params.settings.use_enlarger_lut);
+            assert_eq!(resolved.params.random_seed, 1234);
+            assert!(resolved.params.settings.neutral_print_filters_from_database);
+        }
+    }
+    #[test]
+    fn failed_resolution_is_non_mutating_and_route_is_derived() {
+        let data_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let mut context = RuntimeParams::default();
+        context.workflow.route = "input".into();
+        let before = serde_json::to_value(&context).unwrap();
+        let negative = builtin_look_presets()[0]
+            .resolve(&data_dir, &context)
+            .unwrap();
+        assert_eq!(negative.default_route, "input > film > print > scan");
+        assert_eq!(negative.params.workflow.route, negative.default_route);
+        assert_eq!(
+            serde_json::to_value(&context).unwrap(),
+            before,
+            "resolution must not mutate the active context"
+        );
+
+        let mut invalid = builtin_look_presets()[0].clone();
+        invalid.film_profile.stock = "../outside".into();
+        assert!(invalid.resolve(&data_dir, &context).is_err());
+        assert_eq!(serde_json::to_value(&context).unwrap(), before);
+    }
+}
