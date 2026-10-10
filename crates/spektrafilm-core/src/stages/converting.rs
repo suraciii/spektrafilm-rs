@@ -380,7 +380,9 @@ fn linear_pixels(image: &ImageBuf, params: &RuntimeParams) -> Result<Vec<[f64; 3
     let space = colorspace::resolve(&params.io.input_color_space).map_err(|e| e.to_string())?;
     let pixels: Vec<_> = image
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| {
             let rgb = [to_f64(p[0]), to_f64(p[1]), to_f64(p[2])];
             if params.io.input_cctf_decoding {
@@ -554,7 +556,7 @@ pub fn neutralize_filters(
             backend,
         )?;
         let mut rgb = [0.; 3];
-        for pixel in output.data.chunks_exact(3) {
+        for pixel in output.data.as_chunks::<3>().0 {
             for i in 0..3 {
                 rgb[i] += to_f64(pixel[i]) / 4.0;
             }
