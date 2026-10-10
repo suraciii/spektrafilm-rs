@@ -43,8 +43,8 @@ A look preset owns film and print selection plus explicit film, print, enlarger,
 - `core` owns the typed look model, strict schema validation, profile compatibility, profile-driven workflow defaulting, capture, and candidate resolution.
 - `gui` owns browser presentation, immutable built-in selection, transient state, and user-editable workflow controls.
 - `GuiState` remains complete GUI-state persistence and is not a look payload.
-- `core` owns strict parsing, profile resolution, stock-baseline construction, explicit look-value overlay, workflow-default derivation, and `RuntimeParams` validation. The `gui` pins explicit neutral filter values for the subsequent digest without changing the persisted calibration setting.
-- Existing `--params`, `RenderRecipe`, CLI behavior, LUT behavior, CPU f64 semantics, WGPU f32 semantics, Grain V2 algorithm, Python parity, and raw profile assets remain unchanged.
+- `core` owns strict parsing, profile resolution, stock-baseline construction, explicit look-value overlay, workflow-default derivation, and `RuntimeParams` validation. Explicit preset neutral filters must survive subsequent runtime preparation without changing the user's database-calibration setting.
+- Existing `--params` invocations, `RenderRecipe`, LUT behavior, CPU f64 semantics, WGPU f32 semantics, Grain V2 algorithm, Python parity, and raw profile assets must remain unchanged. The [CLI parameter language](../cli-parameters/spec.md) owns new command syntax and composition rules.
 
 The portable canonical snake-case schema contains:
 
@@ -55,6 +55,26 @@ The portable canonical snake-case schema contains:
 - `provenance`, the SpektraFilm implementation and model versions.
 
 It must not contain `route`, `workflow`, image pixels/paths, RAW data, LUT pixels, viewer rasters, GUI paths, credentials, random seeds, or Dehancer-specific fields. Unknown fields are rejected. The resolved candidate is returned without mutating active GUI state; GUI commits only after successful resolution.
+
+### File formats
+
+TOML must be the default preset export format. Readers must accept `.toml` and `.json` files as carriers of the same typed schema. The file extension must select the parser. A reader must not try another parser after a parse failure. Both carriers must apply the same version, ownership, profile, type, and value validation.
+
+A preset must contain every look-owned group. An exporter must write every non-optional editable look control so a newly exported preset does not depend on implicit defaults. Schema version 1 readers must retain the existing omitted-field and JSON null decoding rules of the typed model. Readers must materialize omitted controls before resolution or re-export. TOML absence must represent an unset optional control; an exporter must omit unset optional controls in TOML. The format change must not introduce a separate schema version or field vocabulary. A future change to accepted omitted-field behavior must use an explicit schema migration rather than silently rejecting existing version 1 documents.
+
+Export and reload must preserve the represented finite f32 and f64 values. Export must not reduce numeric precision for shorter text. Readers must accept TOML comments. Re-export need not preserve comments or source formatting.
+
+Readers must reject non-finite numeric controls and numeric values that overflow their declared f32 or f64 type. TOML `nan`, `inf`, date/time values, and numbers that become non-finite during typed conversion must not reach the resolver. Readers must not convert unsupported carrier types to strings. This rule must apply before runtime validation so JSON and TOML cannot admit different numeric domains.
+
+Preset files must not support includes, inheritance, expressions, environment interpolation, or references to GUI state files.
+
+### GUI state compatibility
+
+GUI state must retain its JSON contract. Loading a GUI state must not interpret it as a look preset. Importing a preset must not interpret it as a complete GUI state.
+
+Saving state after applying or editing a preset must store the actual controls and the calibration policy needed to restore them. Restoring that state must preserve explicit neutral filters through runtime preparation. The saved state must not depend on the preset file or built-in definition remaining available or unchanged. Any new Rust-owned state metadata must use the existing versioned Rust extension and must preserve existing Python state normalization.
+
+Capturing a preset from the GUI must use the active look controls. Applying it must preserve the excluded context defined in [Look ownership](#look-ownership).
 
 ### Resolution flow
 
@@ -80,4 +100,4 @@ candidate only after resolution succeeds.
 
 Applying a preset validates and resolves first, commits film/print/look parameters together, selects the profile-derived workflow default, preserves excluded context, clears transient Scan-for-print, increments a parameter revision, invalidates caches, and marks the render dirty. Render workers carry the parameter revision and stale results cannot replace a newer preset result.
 
-The current CLI accepts `RuntimeParams` JSON and `RenderRecipe`; neither accepts a look preset document or ID. Future CLI support must call the same core resolver without changing existing contracts.
+CLI preset selection must use the same core resolver as GUI preset application. The [CLI parameter language](../cli-parameters/spec.md) defines selection, sparse parameter files, and command compatibility.
