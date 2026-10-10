@@ -35,6 +35,7 @@ mod export;
 mod numeric;
 mod panels;
 mod profiles;
+mod routes;
 mod state;
 use export::{ExportBackend, ExportCompression, ExportDialog, ExportFormat, ExportOptions};
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
@@ -1007,31 +1008,12 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice_tip_labeled(
+            if controls::choice_tip_entries(
                 ui,
                 "workflow",
                 &mut self.params.workflow.route,
-                &[
-                    ("input", "Finished RGB"),
-                    ("input > film > scan", "input > film > scan"),
-                    (
-                        "input > film > print > scan",
-                        "input > film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > print > scan",
-                        "input > convert-film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > scan-minus-base",
-                        "input > convert-film > scan-minus-base",
-                    ),
-                    (
-                        "input > convert-film > scan",
-                        "input > convert-film > scan",
-                    ),
-                ],
-                "Which path the image takes through the pipeline: Finished RGB (colour-manage an already rendered RGB image to the output space), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base). Magazine print can be enabled independently for every workflow.",
+                routes::entries(),
+                routes::tooltip(),
             ) {
                 let direct_film_scan = self.params.workflow.route == "input > film > scan";
                 self.params.io.scan_film = direct_film_scan;
@@ -1043,7 +1025,10 @@ impl App {
                 self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
             if ui
-                .checkbox(&mut self.params.magazine_print_color.active, "Magazine print")
+                .checkbox(
+                    &mut self.params.magazine_print_color.active,
+                    "Magazine print",
+                )
                 .on_hover_text("Apply a magazine print appearance after the selected workflow.")
                 .changed()
             {
