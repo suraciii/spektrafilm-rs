@@ -1,5 +1,6 @@
 //! Editors for the pinned experimental GUI sections.
-use egui::{DragValue, Ui};
+use crate::numeric::{numeric, numeric_field};
+use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::{
     RuntimeParams,
@@ -48,7 +49,7 @@ pub fn show(
     section: &str,
 ) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
-    ui.push_id("supplemental_controls", |ui| {
+    ui.push_id(("supplemental_controls", section), |ui| {
         if section == "Input" {
             egui::CollapsingHeader::new("Input").default_open(false).show(ui, |ui| {
                 flags.runtime_changed |= choice_tip(ui, "input color space", &mut params.io.input_color_space, COLOR_SPACES, "Color space of the input image, will be internally converted to sRGB and negative values clipped");
@@ -426,86 +427,6 @@ fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams) -> bool {
     changed
 }
 
-// The pinned Qt editors default to two decimals, a step of one, and bounds
-// of +/-1e6. Preserve saved values until an explicit edit, even out of range.
-fn apply_wheel_delta<T: egui::emath::Numeric>(
-    value: &mut T,
-    delta: f32,
-    min: f64,
-    max: f64,
-    step: f64,
-) -> bool {
-    if delta == 0.0 {
-        return false;
-    }
-    let direction = if delta.is_sign_positive() { 1.0 } else { -1.0 };
-    let current = value.to_f64();
-    let next = (current + direction * step).clamp(min, max);
-    if next == current {
-        return false;
-    }
-    *value = T::from_f64(next);
-    true
-}
-
-fn wheel_adjust<T: egui::emath::Numeric>(
-    ui: &Ui,
-    response: &egui::Response,
-    value: &mut T,
-    min: f64,
-    max: f64,
-    step: f64,
-) -> bool {
-    if !response.hovered() {
-        return false;
-    }
-    let (raw_delta, smooth_delta) =
-        ui.input(|input| (input.raw_scroll_delta.y, input.smooth_scroll_delta.y));
-    if raw_delta == 0.0 {
-        if smooth_delta != 0.0 {
-            ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
-        }
-        return false;
-    }
-    if apply_wheel_delta(value, raw_delta, min, max, step) {
-        ui.input_mut(|input| {
-            input.raw_scroll_delta.y = 0.0;
-            input.smooth_scroll_delta.y = 0.0;
-        });
-        true
-    } else {
-        false
-    }
-}
-
-fn numeric<T: egui::emath::Numeric>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut T,
-    min: f64,
-    max: f64,
-    step: f64,
-    decimals: usize,
-    tooltip: &str,
-) -> bool {
-    let decimals = if T::INTEGRAL { 0 } else { decimals };
-    ui.horizontal(|ui| {
-        ui.label(label).on_hover_text(tooltip);
-        let response = ui
-            .add(
-                DragValue::new(value)
-                    .range(min..=max)
-                    .clamp_existing_to_range(false)
-                    .speed(step)
-                    .fixed_decimals(decimals),
-            )
-            .on_hover_text(tooltip);
-        let wheel_changed = wheel_adjust(ui, &response, value, min, max, step);
-        response.changed() || wheel_changed
-    })
-    .inner
-}
-
 fn optional_numeric(
     ui: &mut Ui,
     label: &str,
@@ -537,23 +458,14 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
 ) -> bool {
     ui.push_id(label, |ui| {
         ui.label(label).on_hover_text(tooltip);
-        let decimals = if T::INTEGRAL { 0 } else { decimals };
         ui.horizontal(|ui| {
-            let mut changed = false;
-            for value in values {
-                let response = ui
-                    .add(
-                        DragValue::new(value)
-                            .range(min..=max)
-                            .clamp_existing_to_range(false)
-                            .speed(step)
-                            .fixed_decimals(decimals),
-                    )
-                    .on_hover_text(tooltip);
-                changed |= response.changed();
-                changed |= wheel_adjust(ui, &response, value, min, max, step);
-            }
-            changed
+            values
+                .iter_mut()
+                .enumerate()
+                .map(|(index, value)| {
+                    numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip)
+                })
+                .fold(false, |changed, field_changed| changed | field_changed)
         })
         .inner
     })
@@ -694,26 +606,4 @@ fn set_extra(extras: &mut Value, section: &str, key: &str, value: Value) {
         extras[section] = Value::Object(Map::new());
     }
     extras[section][key] = value;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::apply_wheel_delta;
-
-    #[test]
-    fn wheel_delta_changes_by_step() {
-        let mut value = 1.0_f64;
-        assert!(apply_wheel_delta(&mut value, 1.0, 0.0, 2.0, 0.25));
-        assert_eq!(value, 1.25);
-    }
-
-    #[test]
-    fn wheel_delta_preserves_bounds() {
-        let mut min = 0.0_f64;
-        assert!(!apply_wheel_delta(&mut min, -1.0, 0.0, 2.0, 0.25));
-        assert_eq!(min, 0.0);
-        let mut max = 2.0_f64;
-        assert!(!apply_wheel_delta(&mut max, 1.0, 0.0, 2.0, 0.25));
-        assert_eq!(max, 2.0);
-    }
 }
