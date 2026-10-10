@@ -66,6 +66,23 @@ mod tests {
     }
 
     #[test]
+    fn print_stocks_cover_papers_and_print_films() {
+        let Some(paper) = data_profile("kodak_portra_endura") else {
+            return;
+        };
+        let Some(print_film) = data_profile("kodak_2393") else {
+            return;
+        };
+        let Some(film) = data_profile("kodak_portra_400") else {
+            return;
+        };
+        // Papers and print films are both print stocks; a filming stock is not.
+        assert!(paper.is_paper() && paper.is_printing() && paper.is_print_stock());
+        assert!(print_film.is_film() && print_film.is_printing() && print_film.is_print_stock());
+        assert!(film.is_film() && film.is_filming() && !film.is_print_stock());
+    }
+
+    #[test]
     fn rejects_invalid_metadata_and_shape() {
         let Some(mut profile) = data_profile("kodak_portra_400") else {
             return;

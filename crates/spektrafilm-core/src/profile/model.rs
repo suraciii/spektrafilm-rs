@@ -385,4 +385,9 @@ impl Profile {
     pub fn is_printing(&self) -> bool {
         self.info.stage == "printing"
     }
+    /// A stock that can serve as the print stage: a paper or a print film
+    /// (`support` paper or film) recorded at the printing stage.
+    pub fn is_print_stock(&self) -> bool {
+        (self.is_paper() || self.is_film()) && self.is_printing()
+    }
 }

@@ -19,6 +19,7 @@ pub struct ProcessParamsRequest<'a> {
     pub sources: &'a [String],
     pub route: Option<&'a str>,
     pub scan_film: bool,
+    pub scan_output: Option<&'a str>,
     pub input_is_raw: bool,
     pub digest_mode: DigestMode,
 }
@@ -54,10 +55,16 @@ pub fn resolve(
             resolved.print_name,
         )
     } else {
+        choose_workflow(&mut params, request.route, request.scan_film);
+        let direct_scan = request.scan_film
+            || matches!(
+                params.workflow.route.as_str(),
+                "input > film > scan" | "input > film > scan > magazine"
+            );
         let name = request.film.ok_or("--film is required without --preset")?;
         let film = profile::load_profile_by_name(data_dir, name)
             .map_err(|e| format!("loading film profile {name:?}: {e}"))?;
-        let print_name = if request.scan_film {
+        let print_name = if direct_scan {
             name.to_owned()
         } else if let Some(paper) = request.paper {
             paper.to_owned()
@@ -74,9 +81,7 @@ pub fn resolve(
                     "--film {name:?}: incompatible support/stage; expected film/filming"
                 ));
             }
-            if !request.scan_film
-                && (!(print.is_paper() || print.is_film()) || !print.is_printing())
-            {
+            if !direct_scan && !print.is_print_stock() {
                 return Err(format!(
                     "print profile {print_name:?}: incompatible support/stage; expected paper/printing or film/printing"
                 ));
@@ -91,8 +96,16 @@ pub fn resolve(
     if !added_sources {
         // Keep the legacy decoder, route/scan relationship and digest ordering.
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = request.scan_film;
+        params.io.scan_film = request.scan_film
+            || matches!(
+                params.workflow.route.as_str(),
+                "input > film > scan" | "input > film > scan > magazine"
+            );
+        if let Some(mode) = request.scan_output {
+            params.scanner.scan_output = mode.to_owned();
+        }
         params.validate()?;
+        crate::pipeline_calibration::validate_scan_output(&params, &film)?;
         if request.input_is_raw {
             force_raw_input(&mut params);
         }
@@ -128,13 +141,20 @@ pub fn resolve(
             }
         }
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = params.workflow.route == "input > film > scan";
+        params.io.scan_film = matches!(
+            params.workflow.route.as_str(),
+            "input > film > scan" | "input > film > scan > magazine"
+        );
         if request.input_is_raw {
             force_raw_input(&mut params);
+        }
+        if let Some(mode) = request.scan_output {
+            params.scanner.scan_output = mode.to_owned();
         }
         // Cross-field checks precede destructive preview/debug constraints.
         validate_finite(&params)?;
         params.validate()?;
+        crate::pipeline_calibration::validate_scan_output(&params, &film)?;
         let neutral = NeutralFilters::load(data_dir)?;
         params = apply_database_neutral_print_filters_protected(
             params,
@@ -149,6 +169,7 @@ pub fn resolve(
         params.validate()?;
     }
     normalize_runtime_topology(&film, &mut params);
+    crate::pipeline_calibration::validate_scan_output(&params, &film)?;
     Ok(ResolvedProcessParams {
         film,
         print,
@@ -198,6 +219,7 @@ mod tests {
             sources,
             route: None,
             scan_film: false,
+            scan_output: None,
             input_is_raw: false,
             digest_mode: DigestMode::ApplyStockSpecifics,
         }
@@ -225,6 +247,7 @@ mod tests {
         let sources = [];
         for (route, scan_film) in [
             ("input > film > scan", false),
+            ("input > film > scan > magazine", false),
             ("input > film > print > scan", true),
         ] {
             let mut req = request(&sources);
@@ -235,7 +258,12 @@ mod tests {
             assert_eq!(resolved.params.workflow.route, route);
             assert_eq!(
                 resolved.print_name,
-                if scan_film {
+                if scan_film
+                    || matches!(
+                        route,
+                        "input > film > scan" | "input > film > scan > magazine"
+                    )
+                {
                     "kodak_portra_400"
                 } else {
                     "kodak_portra_endura"
