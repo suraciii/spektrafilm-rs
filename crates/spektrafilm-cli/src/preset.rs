@@ -1,161 +1,65 @@
-use anyhow::Result;
-use clap::{ArgMatches, Args, Subcommand, ValueEnum};
+use anyhow::{Result, bail};
+use clap::{Args, Subcommand};
 use serde_json::json;
-use spektrafilm_core::presets::{PresetGroup, PresetKind, PresetLibrary, PresetSelection};
+use spektrafilm_core::presets::{builtin_look_presets, load_selector};
 use std::path::PathBuf;
+
+use crate::resolve_data_dir;
 
 #[derive(Subcommand)]
 pub enum PresetCommand {
-    /// List presets (default: built-in). The library is CONFIG_DIR/presets, where
-    /// CONFIG_DIR is SPEKTRAFILM_CONFIG_DIR or the platform SpektraFilm config directory.
-    /// Bare names resolve My Presets first, then Built-in.
     List(PresetList),
-    /// Validate and export an exact preset name or a .toml/.json file.
-    /// Output carriers: TOML (default) or JSON.
     Show(PresetShow),
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum ListFormat {
-    Json,
-    Text,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum ShowFormat {
-    Toml,
-    Json,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum ListSource {
-    BuiltIn,
-    User,
-    All,
 }
 
 #[derive(Args)]
 pub struct PresetList {
-    /// Listing output format.
-    #[arg(long, default_value = "json", value_enum)]
-    pub format: ListFormat,
-    /// Select groups to list; no other directories are searched.
-    #[arg(long, default_value = "built-in", value_enum)]
-    pub source: ListSource,
-    /// Validate an explicit data directory; listing otherwise needs no data.
-    #[arg(long, default_value = "data")]
+    #[arg(long, default_value = "json")]
+    pub format: String,
+    #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
     pub data_dir: PathBuf,
 }
 
 #[derive(Args)]
 pub struct PresetShow {
-    /// Exact name (optionally user: or built-in:) or .toml/.json file path.
     pub selector: String,
-    /// Complete document carrier: TOML or JSON.
-    #[arg(long, default_value = "toml", value_enum)]
-    pub format: ShowFormat,
-    /// Data directory for look profile validation; otherwise environment or discovery.
-    #[arg(long, default_value = "data")]
+    #[arg(long, default_value = "toml")]
+    pub format: String,
+    #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
     pub data_dir: PathBuf,
 }
 
-pub fn select(library: &PresetLibrary, selector: &str) -> Result<PresetSelection> {
-    let selected = library
-        .resolve_selector(selector)
-        .map_err(anyhow::Error::msg)?;
-    if selected.shadowed_builtin {
-        eprintln!(
-            "preset {:?} resolved to My Presets; shadows Built-in preset {:?}",
-            selected.preset.name, selected.preset.name
-        );
-    }
-    Ok(selected)
-}
-
-pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
-    let (_, matches) = matches.subcommand().expect("required preset subcommand");
-    let library = PresetLibrary::default();
+pub fn run(command: PresetCommand) -> Result<()> {
     match command {
         PresetCommand::List(args) => {
-            if crate::explicit_data_selection(matches) {
-                crate::select_data_dir(args.data_dir, matches)?;
+            if args.format != "json" {
+                bail!("unsupported preset list format {}; use json", args.format);
             }
-            let mut records = Vec::new();
-            for entry in library.scan().map_err(anyhow::Error::msg)? {
-                if !matches!(args.source, ListSource::All)
-                    && !matches!(
-                        (args.source, entry.group),
-                        (ListSource::BuiltIn, PresetGroup::BuiltIn)
-                            | (ListSource::User, PresetGroup::User)
-                    )
-                {
-                    continue;
-                }
-                if let Some(fault) = &entry.fault {
-                    eprintln!(
-                        "{}: {fault}",
-                        entry
-                            .path
-                            .as_deref()
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_else(|| entry.name.clone())
-                    );
-                }
-                let (kind, section) = match entry.kind {
-                    Some(PresetKind::Look) => (Some("look"), None),
-                    Some(PresetKind::Section(section)) => (Some("section"), Some(section.name())),
-                    None => (None, None),
-                };
-                let mut record = json!({"name": entry.name, "kind": kind, "group": entry.group});
-                if let Some(section) = section {
-                    record["section"] = json!(section);
-                } else if kind == Some("look") {
-                    record["film_profile"] = json!(entry.film_profile);
-                    record["print_profile"] = json!(entry.print_profile);
-                }
-                if let Some(path) = entry.path {
-                    record["path"] = json!(path);
-                }
-                if let Some(fault) = entry.fault {
-                    record["fault"] = json!(fault);
-                }
-                records.push(record);
-            }
-            match args.format {
-                ListFormat::Json => println!("{}", serde_json::to_string_pretty(&records)?),
-                ListFormat::Text => {
-                    for record in records {
-                        let fields = record.as_object().expect("preset record object");
-                        println!(
-                            "{}",
-                            fields
-                                .iter()
-                                .map(|(key, value)| format!("{key}: {value}"))
-                                .collect::<Vec<_>>()
-                                .join("; ")
-                        );
-                    }
-                }
-            }
+            let _data_dir = resolve_data_dir(args.data_dir);
+            let entries = builtin_look_presets()
+                .into_iter()
+                .map(|p| {
+                    json!({"id": p.id, "name": p.name,
+                    "film_profile": p.film_profile, "print_profile": p.print_profile})
+                })
+                .collect::<Vec<_>>();
+            println!("{}", serde_json::to_string_pretty(&entries)?);
         }
         PresetCommand::Show(args) => {
-            let selected = select(&library, &args.selector)?;
-            let preset = selected.preset;
-            preset.validate().map_err(anyhow::Error::msg)?;
-            if preset.kind().map_err(anyhow::Error::msg)? == PresetKind::Look {
-                let data = crate::select_data_dir(args.data_dir, matches)?;
-                preset
-                    .resolve(
-                        &data.path,
-                        &spektrafilm_core::params::RuntimeParams::default(),
-                    )
-                    .map_err(anyhow::Error::msg)?;
-            } else if crate::explicit_data_selection(matches) {
-                crate::select_data_dir(args.data_dir, matches)?;
-            }
-            match args.format {
-                ShowFormat::Toml => println!("{}", preset.to_toml().map_err(anyhow::Error::msg)?),
-                ShowFormat::Json => println!("{}", preset.to_json().map_err(anyhow::Error::msg)?),
+            let data_dir = resolve_data_dir(args.data_dir);
+            let preset =
+                load_selector(&args.selector, &data_dir).map_err(|e| anyhow::anyhow!(e))?;
+            // Resolve validates profile references and complete controls before export.
+            preset
+                .resolve(
+                    &data_dir,
+                    &spektrafilm_core::params::RuntimeParams::default(),
+                )
+                .map_err(|e| anyhow::anyhow!(e))?;
+            match args.format.as_str() {
+                "toml" => println!("{}", preset.to_toml().map_err(|e| anyhow::anyhow!(e))?),
+                "json" => println!("{}", preset.to_json().map_err(|e| anyhow::anyhow!(e))?),
+                other => bail!("unsupported preset show format {other}; use toml or json"),
             }
         }
     }

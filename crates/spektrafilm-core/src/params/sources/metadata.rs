@@ -41,8 +41,8 @@ fn nullable_inner(path: &str) -> Option<&'static str> {
         | "film_render.grain.v2_highlights"
         | "film_render.grain.v2_chroma"
         | "film_render.grain.v2_resolution_factor" => "f32",
+        "io.output_gamut_compress.lightness_compression" => "[f32; 3]",
         "taps.inject" | "taps.collect" => "String",
-        "neutral_print_filters_protected" => "[bool; 3]",
         _ => return None,
     })
 }
@@ -304,33 +304,12 @@ pub(super) fn metadata(path: &str, default: &Value) -> Value {
         "unit": unit(path), "enum_values": super::super::validation::enum_values(path),
         "minimum": bounds.map(|b| b.0), "maximum": bounds.and_then(|b| b.1),
         "component_domains": super::super::validation::gamut_component_domains(path),
-        "conditions": conditions(path), "default_source": default_source(path),
-        "description": description(path)
+        "conditions": conditions(path), "default_source": default_source(path)
     })
 }
 
 fn unit(path: &str) -> Option<&'static str> {
-    if path == "enlarger.preflash_exposure" {
-        return Some("linear exposure multiplier");
-    }
-    if matches!(
-        path,
-        "enlarger.preflash_y_filter_shift" | "enlarger.preflash_m_filter_shift"
-    ) {
-        return Some("Kodak CC");
-    }
-    if path == "output_mix.amount" || path.ends_with(".developer_exhaustion") {
-        return Some("dimensionless");
-    }
-    if path.starts_with("film_render.grain.fotufilm.") && !path.ends_with(".material") {
-        Some(if path.ends_with(".clump_radius_um") {
-            "µm"
-        } else if path.ends_with(".rms_density") || path.ends_with(".fog_density") {
-            "optical density"
-        } else {
-            "dimensionless"
-        })
-    } else if path.ends_with("_ev") {
+    if path.ends_with("_ev") {
         Some("EV")
     } else if path.ends_with("_um2") {
         Some("µm²")
@@ -354,113 +333,77 @@ fn unit(path: &str) -> Option<&'static str> {
     }
 }
 fn conditions(path: &str) -> Vec<String> {
-    let mut out: Vec<String> = super::effects::conditions(path)
-        .into_iter()
-        .map(|condition| condition.description().into())
-        .collect();
-    if path == "camera.film_format_mm" {
-        out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
+    let mut out = Vec::new();
+    if matches!(
+        path,
+        "film_render.grain.rms_granularity" | "film_render.grain.micro_sublayers"
+    ) || path.starts_with("film_render.glare.")
+    {
+        out.push("preserved upstream no-op".into());
+        return out;
     }
-    if path == "scanner.receiver_profile" {
-        out.push("film scans only; legacy_colorimetric preserves CIE spectral-to-output acquisition; lab_scan_approx is an approximate uncalibrated Fotufilm narrow-band receiver (630/545/465 nm, sigma 8.5/14/9.5 nm), version fotufilm_lab_scan_approx_v1".into());
-    } else if path == "scanner.negative_conversion_method" {
-        out.push("density reads record densities and acquires no receiver capture, so its output is receiver-independent; separable and coupled interpret a receiver capture and apply to a real negative capture or the exact-cell scan path; density behaves as separable where the incoming image is a capture".into());
-        out.push("digital_reference pairs its modeled receiver on input > film > scan only; Reference Exposure requires auto_setup off, identity points and default reconstruction controls; fixed Kodak Endura receiver and Portra400 dye basis, equal-energy light and fixed 18% response".into());
-    } else if path == "scanner.scan_output" {
-        out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain Procedural are unsupported".into());
-    }
-    if path.starts_with("scanner.reference_") {
-        out.push("output-relative stops; neutral 0; exposure multiplies all channels by 2^EV and balance multiplies independent linear-sRGB channels by 2^EV after fixed reference tone, before output-space conversion".into());
-    }
-    if matches!(path, "scanner.black_point" | "scanner.white_point") {
-        out.push("each channel requires 0 <= black_point < white_point <= 1; points remap without clipping".into());
-    }
-    if path.starts_with("film_render.grain.fotufilm.") {
-        out.push("authored effective-appearance control; not measured stock calibration".into());
-        if super::super::validation::fotufilm_minimum_exclusive(path) {
-            out.push("finite and strictly positive (each array component)".into());
+    if path.starts_with("film_render.grain.") {
+        if !path.ends_with(".active") && !path.ends_with(".engine") {
+            out.push("film_render.grain.active = true; stochastic effects enabled".into());
         }
-        if path.ends_with(".sublayer_shares") {
-            out.push(
-                "four positive shares must sum to 1 within 1e-6; never automatically normalized"
-                    .into(),
-            );
+        if path.contains(".v2_") {
+            out.push("film_render.grain.engine = v2".into());
+            // resolved_grain_v2 applies v2_amount/v2_timer/v2_resolution_type
+            // for named profiles; all other v2 controls are custom-only.
+            if !["v2_profile", "v2_amount", "v2_timer", "v2_resolution_type"]
+                .iter()
+                .any(|s| path.ends_with(s))
+            {
+                out.push("film_render.grain.v2_profile = custom".into());
+            }
+            if path.ends_with("v2_timer") {
+                out.push(
+                    "0 selects seed-derived phase; otherwise phase is strictly below 1".into(),
+                );
+            }
+        } else if !path.ends_with(".active") && !path.ends_with(".engine") {
+            out.push("film_render.grain.engine = v1".into());
+            if path.ends_with(".n_sub_layers") {
+                out.push("film_render.grain.sublayers_active = false".into());
+            } else if [
+                "particle_scale_sublayers",
+                "blur_dye_clouds_um",
+                "micro_structure",
+                "mult_usm_sigma",
+                "mult_usm_amount",
+            ]
+            .iter()
+            .any(|field| path.ends_with(field))
+            {
+                out.push("film_render.grain.sublayers_active = true; film profile supplies sublayer density curves".into());
+            }
         }
+    } else if path.contains("diffusion_filter.") {
+        out.push(
+            "diffusion_filter.active; strength and spatial_scale positive; spatial effects enabled"
+                .into(),
+        );
+    } else if matches!(
+        path,
+        "film_render.halation.boost_ev"
+            | "film_render.halation.boost_range"
+            | "film_render.halation.protect_ev"
+    ) {
+        out.push("film_render.halation.boost_ev != 0; LUT mode disabled".into());
+    } else if path.contains(".halation.") {
+        out.push("film_render.halation.active; spatial effects enabled".into());
+    } else if path.starts_with("print_render.glare.") {
+        out.push("io.scan_film = false; print_render.glare.active; print_render.glare.percent > 0; stochastic effects enabled".into());
+    } else if path.contains(".dir_couplers.") {
+        out.push("film_render.dir_couplers.active".into());
+    } else if path == "camera.auto_exposure_method" {
+        out.push("camera.auto_exposure = true".into());
+    } else if path.starts_with("io.crop_") {
+        out.push("io.crop = true".into());
+    } else if path == "debug.print_timings" {
+        out.push("declared upstream no-op".into());
     }
     out
-}
-
-fn description(path: &str) -> Option<&'static str> {
-    match path {
-        "output_mix.amount" => Some(
-            "Overall effect amount: blends the prepared source with the complete result in linear output RGB; zero retains a negative capture as negative, one retains the full effect.",
-        ),
-        "enlarger.preflash_exposure" => Some(
-            "Independent uniform material-plane exposure on admitted print-development routes; zero disables flash and retains its filter settings. Photographic-paper highlights may change, with possible fog, loss of paper white and color shifts; no fixed white or midgray is promised.",
-        ),
-        "enlarger.preflash_y_filter_shift" | "enlarger.preflash_m_filter_shift" => Some(
-            "Independent preflash filtration in Kodak CC units around the calibrated neutral pack, separate from main M/Y shifts; zero shift is the neutral-pack setting.",
-        ),
-        path if path.ends_with(".developer_exhaustion") => Some(
-            "Model-specific material development control; requires enabled chemistry, actual development and a supported fitted density-curve model. Does not provide universal highlight compression.",
-        ),
-        "scanner.lens_blur" => Some(
-            "Optical softness in linear scanner readout before interpretation, corrections, gamut processing and digital sharpening.",
-        ),
-        "scanner.unsharp_mask" => {
-            Some("Digital scan sharpening after optical readout and output processing.")
-        }
-        path if path.starts_with("print_render.glare.") => Some(
-            "Print viewing/readout stray light after optical blur; does not expose the paper or form material density.",
-        ),
-        "film_render.grain.fotufilm.material" => Some(
-            "Effective material; auto selects dye_reversal for positive films, silver for negative monochrome, and dye_negative for negative color. Override for chromogenic monochrome.",
-        ),
-        "film_render.grain.fotufilm.amount"
-        | "film_render.grain.fotufilm.size"
-        | "film_render.grain.fotufilm.softness"
-        | "film_render.grain.fotufilm.color"
-        | "film_render.grain.fotufilm.layers" => Some(
-            "Fotufilm Film sampling-only appearance control; does not change the fitted population.",
-        ),
-        path if path.starts_with("film_render.grain.fotufilm.") => Some(
-            "Fotufilm Film effective-appearance population control; authored metadata, not a measured stock claim.",
-        ),
-        "io.input_color_space" => Some(
-            "Color primaries of source raster samples before simulation; not scanner output or saving conversion.",
-        ),
-        "io.input_cctf_decoding" => Some(
-            "Decode the source raster transfer function when true; false declares linear samples. This does not encode scanner or saving output.",
-        ),
-        "io.output_color_space" => Some(
-            "Scanner output color space; independent of source declaration and final saving color conversion.",
-        ),
-        "io.output_cctf_encoding" => Some(
-            "Encode scanner output samples; independent of source transfer decoding and final saving encoding.",
-        ),
-        "camera.exposure_compensation_ev" => {
-            Some("Camera exposure compensation in EV, distinct from enlarger print exposure.")
-        }
-        "enlarger.print_exposure" => {
-            Some("Print exposure multiplier, distinct from camera exposure compensation in EV.")
-        }
-        "camera.film_format_mm" => Some(
-            "Exposed full-source long-edge dimension in millimeters; not roll width or film-stock designation.",
-        ),
-        "io.crop_size" => Some(
-            "Both components are fractions of the uncropped source long edge, not independent width and height fractions.",
-        ),
-        "film_render.grain.v2_size" => {
-            Some("Grain Procedural Size; used only with engine procedural and profile custom.")
-        }
-        "film_render.grain.v2_amount" => Some(
-            "Grain Procedural Amount in percent; used with named and custom Procedural profiles, distinct from RMS granularity.",
-        ),
-        "film_render.grain.rms_granularity" => Some(
-            "RMS granularity is distinct from Procedural Amount; Dye uses it to scale per-channel event area; upstream Spektra preserves it as a no-op.",
-        ),
-        _ => None,
-    }
 }
 fn default_source(path: &str) -> &'static str {
     if matches!(

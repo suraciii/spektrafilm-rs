@@ -1,164 +1,8 @@
-mod discovery;
-mod effects;
 mod metadata;
-pub(crate) use effects::inactive_reason;
-
-use discovery::schema_value;
-pub use discovery::{
-    describe_field, describe_groups, describe_module, describe_root_groups, suggest_groups,
-    suggest_parameter_paths, supported_routes,
-};
 
 use super::RuntimeParams;
-use crate::suggest::error_suffix;
-use metadata::{nullable, rust_type};
+use metadata::{metadata, nullable, rust_type};
 use serde_json::{Map, Value};
-
-/// Runtime leaves intentionally outside the user-settable parameter surface.
-pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
-    &[(
-        "random_seed",
-        "per-render stochastic seed is set by the recipe runner",
-    )]
-}
-
-/// Normalize the runtime-parameter subtree of a versioned legacy complete document.
-/// Rejection leaves the supplied document unchanged. Current complete documents
-/// and sparse sources must use their strict boundary without normalization.
-pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String> {
-    // Reject the retired leaf before renaming anything so a rejected
-    // document stays byte-identical.
-    let has_retired = match value.pointer("/io/output_gamut_compress/lightness_compression") {
-        Some(retired) if !retired.is_null() => return Err(retired_lightness_error()),
-        Some(_) => true,
-        None => false,
-    };
-    normalize_legacy_conversion_paths(value, true)?;
-    if has_retired {
-        value
-            .pointer_mut("/io/output_gamut_compress")
-            .and_then(Value::as_object_mut)
-            .expect("retired field belongs to an object")
-            .remove("lightness_compression");
-    }
-    Ok(())
-}
-
-/// Map the pre-v4 conversion-control paths of a complete runtime document
-/// onto their canonical names: the five renamed `scanner` leaves and the
-/// legacy `enlarger` print-exposure pair onto `enlarger.print_exposure_mode`
-/// with `settings.print_exposure_ev_tracking` for the two mixed states.
-/// `settings_allowed` must be false for single-section payloads, which cannot
-/// carry a `settings` group. Only versioned legacy documents may run this
-/// mapping; current documents must fail unknown-field validation instead.
-/// The mapping is idempotent and preserves rendered pixels.
-pub fn normalize_legacy_conversion_paths(
-    value: &mut Value,
-    settings_allowed: bool,
-) -> Result<(), String> {
-    const SCANNER_RENAMES: &[(&str, &str)] = &[
-        ("positive_interpretation", "negative_conversion_method"),
-        ("positive_density_ev", "conversion_brightness_ev"),
-        ("positive_balance_ev", "conversion_balance_ev"),
-        ("positive_contrast", "conversion_contrast"),
-        ("positive_dmax", "conversion_dmax"),
-    ];
-    let Some(object) = value.as_object_mut() else {
-        return Ok(());
-    };
-    // Validate every conflict before mutating so a rejected document stays
-    // byte-identical.
-    if let Some(scanner) = object.get("scanner").and_then(Value::as_object) {
-        for (old, new) in SCANNER_RENAMES {
-            if scanner.contains_key(*old) && scanner.contains_key(*new) {
-                return Err(format!(
-                    "legacy complete params carry both scanner.{old} and scanner.{new}"
-                ));
-            }
-        }
-    }
-    let mut mixed_state = None;
-    if let Some(enlarger) = object.get("enlarger").and_then(Value::as_object) {
-        let has_legacy = enlarger.contains_key("normalize_print_exposure")
-            || enlarger.contains_key("print_exposure_compensation");
-        if has_legacy && enlarger.contains_key("print_exposure_mode") {
-            return Err(
-                "legacy complete params carry both the print exposure pair and \
-                 enlarger.print_exposure_mode; keep exactly one spelling"
-                    .into(),
-            );
-        }
-        if has_legacy {
-            let leaf = |value: Option<&Value>| -> Result<bool, String> {
-                match value {
-                    None => Ok(true),
-                    Some(Value::Bool(b)) => Ok(*b),
-                    Some(_) => Err("legacy enlarger print exposure leaves must be booleans".into()),
-                }
-            };
-            let normalize = leaf(enlarger.get("normalize_print_exposure"))?;
-            let compensation = leaf(enlarger.get("print_exposure_compensation"))?;
-            mixed_state = Some(match (normalize, compensation) {
-                (true, true) => ("auto", None),
-                (false, false) => ("manual", None),
-                (true, false) => ("auto", Some("never")),
-                (false, true) => ("manual", Some("always")),
-            });
-        }
-    }
-    if let Some((_, tracking)) = mixed_state
-        && tracking.is_some()
-        && !settings_allowed
-    {
-        return Err(
-            "the legacy enlarger print exposure pair mixes normalization and \
-             compensation; this document cannot carry \
-             settings.print_exposure_ev_tracking, so set \
-             enlarger.print_exposure_mode explicitly"
-                .into(),
-        );
-    }
-    // A mixed pair writes into `settings`; an existing non-object there
-    // cannot carry the leaf, and this must fail before any mutation.
-    if let Some((_, tracking)) = mixed_state
-        && tracking.is_some()
-        && matches!(object.get("settings"), Some(value) if !value.is_object())
-    {
-        return Err("the legacy enlarger print exposure pair needs the \
-             settings.print_exposure_ev_tracking leaf, but settings is not an \
-             object"
-            .into());
-    }
-    if let Some(scanner) = object.get_mut("scanner").and_then(Value::as_object_mut) {
-        for (old, new) in SCANNER_RENAMES {
-            if let Some(v) = scanner.remove(*old) {
-                scanner.insert((*new).into(), v);
-            }
-        }
-    }
-    if let Some((mode, tracking)) = mixed_state {
-        let enlarger = object
-            .get_mut("enlarger")
-            .and_then(Value::as_object_mut)
-            .expect("legacy pair belongs to the enlarger object");
-        enlarger.remove("normalize_print_exposure");
-        enlarger.remove("print_exposure_compensation");
-        enlarger.insert("print_exposure_mode".into(), mode.into());
-        if let Some(tracking) = tracking {
-            object
-                .entry("settings")
-                .or_insert_with(|| Value::Object(serde_json::Map::new()))
-                .as_object_mut()
-                .expect("settings group is an object")
-                .insert("print_exposure_ev_tracking".into(), tracking.into());
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn retired_lightness_error() -> String {
-    "io.output_gamut_compress.lightness_compression was retired; no automatic replacement exists; explicitly remove this field from the document".into()
-}
 
 /// Ordered sparse edits to runtime parameter leaves.
 #[derive(Debug, Clone, Default)]
@@ -171,10 +15,7 @@ impl ParameterEdits {
         if source.trim().is_empty() {
             return Err("parameter source is empty".into());
         }
-        let assignment = source
-            .split_once('=')
-            .is_some_and(|(path, _)| path.trim().split('.').all(valid_ident));
-        if !assignment && (source.ends_with(".toml") || source.ends_with(".json")) {
+        if source.ends_with(".toml") || source.ends_with(".json") {
             let text = std::fs::read_to_string(source).map_err(|e| format!("{source}: {e}"))?;
             return Self::from_value(parse_carrier(&text, source.ends_with(".toml"))?)
                 .map_err(|e| format!("{source}: {e}"));
@@ -185,16 +26,15 @@ impl ParameterEdits {
             if item.is_empty() {
                 return Err("empty parameter assignment".into());
             }
-            let eq = find_equals(item).ok_or_else(|| {
-                format!("expected PATH=VALUE or a .toml/.json file, got {item:?}; example: --set film_render.grain.engine=procedural")
-            })?;
+            let eq = find_equals(item).ok_or_else(|| format!("assignment missing '=': {item}"))?;
             let path = item[..eq].trim();
             let raw = item[eq + 1..].trim();
             validate_path(path)?;
             if raw.is_empty() {
                 return Err(format!("empty value for {path}"));
             }
-            let value = parse_inline_value(path, raw)?;
+            let value: Value = serde_json::from_str(raw)
+                .map_err(|e| format!("{path}: invalid JSON value: {e}"))?;
             out.push(path, value)?;
         }
         Ok(out)
@@ -210,7 +50,8 @@ impl ParameterEdits {
     }
 
     fn push(&mut self, path: &str, value: Value) -> Result<(), String> {
-        let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
+        let expected = lookup(schema_value(), path)
+            .ok_or_else(|| format!("unknown parameter path: {path}"))?;
         validate_leaf(path, &value, expected)?;
         self.edits.push((path.to_owned(), value));
         Ok(())
@@ -220,34 +61,13 @@ impl ParameterEdits {
         self.edits.iter().map(|(p, _)| p.as_str())
     }
 
-    pub(crate) fn values(&self) -> impl Iterator<Item = (&str, &Value)> {
-        self.edits
-            .iter()
-            .map(|(path, value)| (path.as_str(), value))
-    }
-
-    /// Validate a dedicated option with the canonical leaf validator.
-    pub(crate) fn single(path: &str, value: Value) -> Result<Self, String> {
-        let mut edits = Self::default();
-        edits.push(path, value)?;
-        Ok(edits)
-    }
-
-    pub(crate) fn file_path(source: &str) -> Option<&std::path::Path> {
-        let assignment = source
-            .split_once('=')
-            .is_some_and(|(path, _)| path.trim().split('.').all(valid_ident));
-        (!assignment && (source.ends_with(".toml") || source.ends_with(".json")))
-            .then(|| std::path::Path::new(source))
-    }
-
     pub fn apply(&self, params: &mut RuntimeParams) -> Result<(), String> {
         // serde_json turns non-finite floats into null; reject the typed
         // baseline before that conversion can erase an invalid Option value.
         validate_finite(params)?;
         let seed = params.random_seed;
         let particle_layers = params.film_render.grain.particle_scale_layers;
-        let explicit_section_paths = params.explicit_section_paths.clone();
+        let neutral_protected = params.neutral_print_filters_protected;
         let mut root =
             serde_json::to_value(&*params).map_err(|e| format!("serialize parameters: {e}"))?;
         for (path, value) in &self.edits {
@@ -257,7 +77,7 @@ impl ParameterEdits {
             serde_json::from_value(root).map_err(|e| format!("apply parameter edits: {e}"))?;
         params.random_seed = seed;
         params.film_render.grain.particle_scale_layers = particle_layers;
-        params.explicit_section_paths = explicit_section_paths;
+        params.neutral_print_filters_protected = neutral_protected;
         validate_finite(params)
     }
 
@@ -317,11 +137,11 @@ fn valid_ident(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
-pub(crate) fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
         .try_fold(root, |v, key| v.as_object()?.get(key))
 }
-pub(crate) fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
+fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
     let mut cur = root;
     let mut parts = path.split('.').peekable();
     while let Some(key) = parts.next() {
@@ -339,135 +159,6 @@ pub(crate) fn set_value(root: &mut Value, path: &str, value: Value) -> Result<()
     Err(format!("invalid parameter path: {path}"))
 }
 
-/// Insert `value` at `path`, creating intermediate objects as needed.
-/// Unlike `set_value`, which requires the path to already exist.
-pub(crate) fn insert(root: &mut Value, path: &str, value: Value) {
-    let mut parts = path.split('.').peekable();
-    let mut current = root;
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            current[part] = value;
-            return;
-        }
-        if current.get(part).is_none() {
-            current[part] = serde_json::json!({});
-        }
-        current = &mut current[part];
-    }
-}
-
-fn parse_inline_value(path: &str, raw: &str) -> Result<Value, String> {
-    let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
-    if expected.is_object() {
-        return Err(group_rejected(path));
-    }
-    let ty = rust_type(path);
-    let base_ty = ty
-        .strip_prefix("Option<")
-        .and_then(|s| s.strip_suffix('>'))
-        .unwrap_or(&ty);
-    let string_value = !matches!(
-        base_ty,
-        "bool" | "f32" | "f64" | "u32" | "u64" | "i32" | "i64"
-    ) && !base_ty.starts_with('[');
-    if string_value && !raw.starts_with('"') && !(raw == "null" && nullable(path)) {
-        return Ok(Value::String(raw.to_owned()));
-    }
-    if let Ok(value) = serde_json::from_str(raw) {
-        return Ok(value);
-    }
-    if matches!(base_ty, "f32" | "f64")
-        && let Ok(number) = raw.parse::<f64>()
-        && let Some(number) = serde_json::Number::from_f64(number)
-    {
-        return Ok(Value::Number(number));
-    }
-    let form = if string_value {
-        "text or a double-quoted string"
-    } else if base_ty == "bool" {
-        "true or false"
-    } else if base_ty.starts_with('[') {
-        "a numeric array, such as [1,2,3]"
-    } else {
-        "a finite number"
-    };
-    let unset = if nullable(path) {
-        "; use null to clear it"
-    } else {
-        ""
-    };
-    Err(format!("{path}: expected {form}{unset}, got {raw:?}"))
-}
-
-#[cfg(test)]
-mod inline_value_tests {
-    use super::*;
-
-    #[test]
-    fn plain_values_follow_parameter_types_and_preserve_quoted_forms() {
-        let source = "film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,io.output_color_space=ProPhoto RGB,camera.auto_exposure=false,camera.exposure_compensation_ev=+.5,camera.filter_uv=[1,2,3],film_render.grain.v2_amount=null";
-        let mut params = RuntimeParams::default();
-        ParameterEdits::parse(source)
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert_eq!(
-            params.film_render.grain.engine,
-            super::super::grain::GrainEngine::Procedural
-        );
-        assert_eq!(params.film_render.grain.v2_profile, "custom");
-        assert_eq!(params.io.output_color_space, "ProPhoto RGB");
-        assert!(!params.camera.auto_exposure);
-        assert_eq!(params.camera.exposure_compensation_ev, 0.5);
-        assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);
-        assert_eq!(params.film_render.grain.v2_amount, None);
-        ParameterEdits::parse(r#"io.output_color_space="sRGB",film_render.grain.engine="spektra""#)
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert_eq!(params.io.output_color_space, "sRGB");
-        assert_eq!(
-            params.film_render.grain.engine,
-            super::super::grain::GrainEngine::Spektra
-        );
-    }
-
-    #[test]
-    fn unquoted_text_keeps_equals_and_file_extensions() {
-        let mut params = RuntimeParams::default();
-        ParameterEdits::parse("film_render.convert.calibration=example=value.json")
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert_eq!(params.film_render.convert.calibration, "example=value.json");
-        ParameterEdits::parse(r#"film_render.convert.calibration="a,b=c""#)
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert_eq!(params.film_render.convert.calibration, "a,b=c");
-    }
-
-    #[test]
-    fn invalid_typed_values_do_not_become_text_or_disappear_under_overrides() {
-        for source in [
-            "camera.auto_exposure=yes,camera.auto_exposure=false",
-            "camera.exposure_compensation_ev=fast,camera.exposure_compensation_ev=0",
-            "camera.exposure_compensation_ev=inf",
-            "film_render.grain.engine=invalid,film_render.grain.engine=procedural",
-            "settings.preview_max_size=1.5",
-            "camera.filter_uv=1,2,3",
-            r#"camera.auto_exposure="false""#,
-            r#"camera.exposure_compensation_ev="0.5""#,
-        ] {
-            assert!(ParameterEdits::parse(source).is_err(), "accepted {source}");
-        }
-        let error = ParameterEdits::parse("camera.auto_exposure=yes").unwrap_err();
-        assert!(error.contains("true or false"));
-        let error = ParameterEdits::parse("film_render.grain.engine=unknown").unwrap_err();
-        assert!(error.contains("spektra") && error.contains("procedural"));
-    }
-}
-
 fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), String> {
     if value.is_null() {
         if nullable(path) {
@@ -480,10 +171,7 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
     if !finite_json(value) {
         return Err(format!("{path}: non-finite numbers are not allowed"));
     }
-    if expected.is_object() {
-        return Err(group_rejected(path));
-    }
-    if value.is_object() {
+    if expected.is_object() || value.is_object() {
         return Err(format!(
             "{path}: assignments must address scalar or array leaves"
         ));
@@ -494,18 +182,13 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
         .and_then(|s| s.strip_suffix('>'))
         .unwrap_or(&ty);
     let ok = if let Some(arr) = base_ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        let (inner, len) = arr
+        let len = arr
             .split_once(';')
-            .map(|(inner, n)| (inner.trim(), n.trim()))
-            .unwrap_or((arr, "0"));
-        let len = len.parse::<usize>().unwrap_or(0);
-        let element_ok = |v: &Value| match inner {
-            "bool" => v.is_boolean(),
-            _ => v.is_number(),
-        };
+            .and_then(|(_, n)| n.trim().parse::<usize>().ok())
+            .unwrap_or(0);
         value
             .as_array()
-            .is_some_and(|a| a.len() == len && a.iter().all(element_ok))
+            .is_some_and(|a| a.len() == len && a.iter().all(Value::is_number))
     } else if base_ty == "bool" {
         value.is_boolean()
     } else if matches!(base_ty, "f32" | "f64" | "u32" | "u64" | "i32" | "i64") {
@@ -524,15 +207,6 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
             .unwrap_or_else(|| fits(value))
         {
             return Err(format!("{path}: value exceeds finite f32 range"));
-        }
-    }
-    if path == "camera.film_format_mm" {
-        let wire = value.as_f64().unwrap();
-        super::validation::validate_film_format_mm(wire)?;
-        if (wire as f32) <= 0.0 {
-            return Err(format!(
-                "{path}: {wire} is below the smallest positive value the stored f32 field can hold"
-            ));
         }
     }
     enum_check(path, value)?;
@@ -589,9 +263,6 @@ fn range_check(path: &str, value: &Value) -> Result<(), String> {
         Value::Array(a) => a.iter().filter_map(Value::as_f64).collect(),
         _ => vec![],
     };
-    if path.starts_with("film_render.grain.fotufilm.") {
-        return super::validation::validate_fotufilm_values(path, &nums);
-    }
     let too_low = nums
         .iter()
         .any(|x| *x < min || (path == "io.input_gamut_compress.hull_detail" && *x <= 0.0));
@@ -696,38 +367,23 @@ pub(crate) fn parse_carrier(text: &str, toml: bool) -> Result<Value, String> {
     }
 }
 fn toml_to_json(v: toml::Value) -> Result<Value, String> {
-    fn convert(v: toml::Value, path: &str) -> Result<Value, String> {
-        match v {
-            toml::Value::String(s) => Ok(Value::String(s)),
-            toml::Value::Integer(i) => Ok(Value::Number(i.into())),
-            toml::Value::Float(f) => serde_json::Number::from_f64(f)
-                .map(Value::Number)
-                .ok_or_else(|| format!("{path}: TOML non-finite float is not allowed")),
-            toml::Value::Boolean(b) => Ok(Value::Bool(b)),
-            toml::Value::Datetime(_) => {
-                Err(format!("{path}: TOML datetime values are not allowed"))
-            }
-            toml::Value::Array(a) => Ok(Value::Array(
-                a.into_iter()
-                    .enumerate()
-                    .map(|(index, value)| convert(value, &format!("{path}[{index}]")))
-                    .collect::<Result<_, _>>()?,
-            )),
-            toml::Value::Table(t) => Ok(Value::Object(
-                t.into_iter()
-                    .map(|(key, value)| {
-                        let next = if path.is_empty() {
-                            key.clone()
-                        } else {
-                            format!("{path}.{key}")
-                        };
-                        Ok((key, convert(value, &next)?))
-                    })
-                    .collect::<Result<_, String>>()?,
-            )),
-        }
+    match v {
+        toml::Value::String(s) => Ok(Value::String(s)),
+        toml::Value::Integer(i) => Ok(Value::Number(i.into())),
+        toml::Value::Float(f) => serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .ok_or_else(|| "TOML non-finite float is not allowed".into()),
+        toml::Value::Boolean(b) => Ok(Value::Bool(b)),
+        toml::Value::Datetime(_) => Err("TOML datetime values are not allowed".into()),
+        toml::Value::Array(a) => Ok(Value::Array(
+            a.into_iter().map(toml_to_json).collect::<Result<_, _>>()?,
+        )),
+        toml::Value::Table(t) => Ok(Value::Object(
+            t.into_iter()
+                .map(|(k, v)| Ok((k, toml_to_json(v)?)))
+                .collect::<Result<_, String>>()?,
+        )),
     }
-    convert(v, "")
 }
 fn find_equals(s: &str) -> Option<usize> {
     let (mut depth, mut quote, mut esc) = (0, false, false);
@@ -785,29 +441,42 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
     out.push(&s[start..]);
     Ok(out)
 }
-fn unknown_path(path: &str) -> String {
-    if path == "io.output_gamut_compress.lightness_compression" {
-        return retired_lightness_error();
+pub fn describe_module(prefix: &str) -> Result<Value, String> {
+    let schema = schema_value();
+    let group =
+        lookup(schema, prefix).ok_or_else(|| format!("unknown parameter module: {prefix}"))?;
+    if !group.is_object() {
+        return Err(format!("parameter module is not a group: {prefix}"));
     }
-    if let Some((_, reason)) = non_settable_leaves().iter().find(|(leaf, _)| *leaf == path) {
-        return format!(
-            "{path} is a runtime field outside the settable parameter surface; {reason}"
-        );
-    }
-    format!(
-        "unknown parameter path: {path}; {}",
-        error_suffix(
-            &suggest_parameter_paths(path),
-            "use spektrafilm describe --module MODULE --format text to list fields, then --field PATH to describe one"
-        )
-    )
+    let mut fields = Vec::new();
+    collect_metadata(prefix, group, &mut fields);
+    Ok(serde_json::json!({"module": prefix, "fields": fields}))
 }
-
-/// One shared rejection for a value assigned to a parameter group.
-fn group_rejected(path: &str) -> String {
-    format!(
-        "{path}: assign a parameter within this group, not the whole group; spektrafilm describe --module {path} lists its fields"
-    )
+fn collect_metadata(prefix: &str, value: &Value, out: &mut Vec<Value>) {
+    if let Some(map) = value.as_object() {
+        for (key, default) in map {
+            let path = format!("{prefix}.{key}");
+            if default.is_object() {
+                collect_metadata(&path, default, out);
+            } else {
+                out.push(metadata(&path, default));
+            }
+        }
+    }
+}
+fn schema_value() -> &'static Value {
+    static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        let mut value =
+            serde_json::to_value(RuntimeParams::default()).expect("RuntimeParams serializes");
+        value.as_object_mut().unwrap().remove("workflow");
+        value["io"].as_object_mut().unwrap().remove("scan_film");
+        value["film_render"]["grain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("monochrome");
+        value
+    })
 }
 
 pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
@@ -870,312 +539,25 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
         }
     }
     if params
-        .film_render
-        .grain
-        .particle_scale_layers
-        .iter()
-        .any(|x| !x.is_finite())
+        .io
+        .output_gamut_compress
+        .lightness_compression
+        .is_some_and(|v| v.iter().any(|x| !x.is_finite()))
         || params
             .film_render
             .grain
-            .fotufilm
-            .layers
+            .particle_scale_layers
             .iter()
-            .chain(params.film_render.grain.fotufilm.layer_weights.iter())
-            .chain(params.film_render.grain.fotufilm.layer_size_ratio.iter())
-            .chain(params.film_render.grain.fotufilm.sublayer_shares.iter())
             .any(|x| !x.is_finite())
-        || [
-            params.film_render.grain.fotufilm.amount,
-            params.film_render.grain.fotufilm.size,
-            params.film_render.grain.fotufilm.softness,
-            params.film_render.grain.fotufilm.color,
-            params.film_render.grain.fotufilm.rms_density,
-            params.film_render.grain.fotufilm.clump_radius_um,
-            params.film_render.grain.fotufilm.radius_span,
-            params.film_render.grain.fotufilm.coating_density_scale,
-            params.film_render.grain.fotufilm.fog_density,
-        ]
-        .iter()
-        .any(|x| !x.is_finite())
     {
         return Err("parameter array values must be finite".into());
     }
-    params.film_render.grain.fotufilm.validate()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod fotufilm_tests {
-    use super::*;
-
-    #[test]
-    fn fotufilm_metadata_has_exact_types_bounds_units_materials() {
-        let fields = [
-            ("amount", "f64", 0.0, 4.0, "dimensionless"),
-            ("size", "f64", 0.5, 4.0, "dimensionless"),
-            ("softness", "f64", 0.5, 4.0, "dimensionless"),
-            ("color", "f64", 0.0, 1.0, "dimensionless"),
-            ("layers", "[f64; 3]", 0.0, 4.0, "dimensionless"),
-            ("rms_density", "f64", 0.0, 0.1, "optical density"),
-            ("clump_radius_um", "f64", 0.0, 32.0, "µm"),
-            ("layer_weights", "[f64; 3]", 0.0, 4.0, "dimensionless"),
-            ("layer_size_ratio", "[f64; 3]", 0.25, 4.0, "dimensionless"),
-            ("radius_span", "f64", 1.0, 20.0, "dimensionless"),
-            ("sublayer_shares", "[f64; 4]", 0.0, 1.0, "dimensionless"),
-            ("coating_density_scale", "f64", 0.25, 4.0, "dimensionless"),
-            ("fog_density", "f64", 0.0, 0.3, "optical density"),
-        ];
-        for (name, ty, min, max, unit) in fields {
-            let path = format!("film_render.grain.fotufilm.{name}");
-            let field = describe_field(&path).unwrap();
-            assert_eq!(field["type"], ty);
-            assert_eq!(field["minimum"], min);
-            assert_eq!(field["maximum"], max);
-            assert_eq!(field["unit"], unit);
-            assert!(
-                field["conditions"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|v| v == "film_render.grain.engine = fotufilm")
-            );
-        }
-        let material = describe_field("film_render.grain.fotufilm.material").unwrap();
-        assert_eq!(material["type"], "FotufilmMaterial");
-        assert_eq!(
-            material["enum_values"],
-            serde_json::json!(["auto", "silver", "dye_negative", "dye_reversal"])
-        );
-        assert_eq!(
-            describe_module("film_render.grain.fotufilm").unwrap()["fields"]
-                .as_array()
-                .unwrap()
-                .len(),
-            14
-        );
-    }
-
-    #[test]
-    fn fotufilm_sparse_domains_and_share_sum_reject_invalid_input() {
-        for (name, values) in [
-            ("amount", vec!["-1", "4.1"]),
-            ("size", vec!["0.49", "4.1"]),
-            ("softness", vec!["0.49", "4.1"]),
-            ("color", vec!["-0.1", "1.1"]),
-            ("layers", vec!["[1,-1,1]", "[1,4.1,1]"]),
-            ("rms_density", vec!["0", "0.11"]),
-            ("clump_radius_um", vec!["0", "33"]),
-            ("layer_weights", vec!["[1,0,1]", "[1,4.1,1]"]),
-            ("layer_size_ratio", vec!["[1,0.24,1]", "[1,4.1,1]"]),
-            ("radius_span", vec!["0.9", "21"]),
-            (
-                "sublayer_shares",
-                vec!["[0,0.5,0.25,0.25]", "[0.25,0.25,0.25,0.2]"],
-            ),
-            ("coating_density_scale", vec!["0.24", "4.1"]),
-            ("fog_density", vec!["-0.1", "0.31"]),
-            ("material", vec!["dye", "v4"]),
-        ] {
-            let path = format!("film_render.grain.fotufilm.{name}");
-            for value in values {
-                let error = ParameterEdits::parse(&format!("{path}={value}")).unwrap_err();
-                assert!(error.contains(&path), "{error}");
-            }
-        }
-        ParameterEdits::parse("film_render.grain.fotufilm.sublayer_shares=[0.1,0.2,0.3,0.4]")
-            .unwrap();
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::{NegativeConversionMethod, PrintExposureMode};
-
-    #[test]
-    fn scanner_point_sources_reject_bad_channels_and_validate_composed_pairs() {
-        for source in [
-            "scanner.black_point=[-0.1,0,0]",
-            "scanner.white_point=[1,1.1,1]",
-            "scanner.black_point=[0,0]",
-            "scanner.white_point=[1,null,1]",
-        ] {
-            assert!(ParameterEdits::parse(source).is_err(), "{source}");
-        }
-        let mut params = RuntimeParams::default();
-        ParameterEdits::parse("scanner.black_point=[0.1,0.2,0.3],scanner.white_point=[0.8,0.9,1]")
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        params.validate().unwrap();
-        ParameterEdits::parse("scanner.white_point=[0.8,0.2,1]")
-            .unwrap()
-            .apply(&mut params)
-            .unwrap();
-        assert!(params.validate().is_err());
-    }
-
-    #[test]
-    fn format_sources_reject_invalid_and_preserve_fractional_values() {
-        for text in [
-            "camera.film_format_mm=0",
-            "camera.film_format_mm=-1",
-            "camera.film_format_mm=nan",
-            "camera.film_format_mm=inf",
-            "camera.film_format_mm=1e-100",
-        ] {
-            assert!(ParameterEdits::parse(text).is_err(), "{text}");
-        }
-        let error = ParameterEdits::parse("camera.film_format_mm=1e-46").unwrap_err();
-        assert!(error.contains("smallest positive value"), "{error}");
-        for mm in [35.0, 35.5, 120.0, 150.25] {
-            let source = ParameterEdits::parse(&format!("camera.film_format_mm={mm}")).unwrap();
-            let mut params = RuntimeParams::default();
-            source.apply(&mut params).unwrap();
-            params.validate().unwrap();
-            assert_eq!(params.camera.film_format_mm, mm);
-        }
-        let record = describe_field("camera.film_format_mm").unwrap();
-        let conditions = record["conditions"].as_array().unwrap();
-        assert!(
-            conditions
-                .iter()
-                .any(|c| c.as_str().is_some_and(|t| t.contains("strictly positive"))),
-            "discovery must state the strict-positivity refinement: {record}"
-        );
-    }
-
-    #[test]
-    fn single_field_discovery_reuses_module_records() {
-        for group in describe_groups() {
-            for record in describe_module(&group).unwrap()["fields"]
-                .as_array()
-                .unwrap()
-            {
-                let path = record["path"].as_str().unwrap();
-                assert_eq!(describe_field(path).unwrap(), *record, "{path}");
-            }
-        }
-        assert!(
-            describe_field("film_render.grain")
-                .unwrap_err()
-                .contains("--module film_render.grain")
-        );
-        assert!(
-            describe_module("film_render.grain.engine")
-                .unwrap_err()
-                .contains("--field film_render.grain.engine")
-        );
-    }
-
-    #[test]
-    fn discoverable_groups_are_sorted_and_editable() {
-        let groups = describe_groups();
-        assert!(groups.windows(2).all(|pair| pair[0] < pair[1]));
-        assert!(groups.iter().any(|group| group == "film_render.grain"));
-        assert!(!groups.iter().any(|group| group == "workflow"));
-        for group in groups {
-            assert!(
-                !describe_module(&group).unwrap()["fields"]
-                    .as_array()
-                    .unwrap()
-                    .is_empty()
-            );
-        }
-    }
-
-    #[test]
-    fn root_groups_are_the_first_segment_of_editable_groups() {
-        let roots = describe_root_groups();
-        let mut expected: Vec<String> = describe_groups()
-            .into_iter()
-            .map(|group| group.split('.').next().unwrap().to_owned())
-            .collect();
-        expected.dedup();
-        assert_eq!(roots, expected);
-        assert!(roots.iter().any(|group| group == "film_render"));
-        assert!(!roots.iter().any(|group| group.contains('.')));
-        for root in &roots {
-            assert!(
-                !describe_module(root).unwrap()["fields"]
-                    .as_array()
-                    .unwrap()
-                    .is_empty()
-            );
-        }
-    }
-
-    #[test]
-    fn out_of_band_runtime_leaf_names_field_and_reason() {
-        let error = ParameterEdits::parse("random_seed=17").unwrap_err();
-        assert!(error.contains("random_seed"), "{error}");
-        assert!(
-            error.contains("runtime field outside the settable parameter surface"),
-            "{error}"
-        );
-        assert!(error.contains("recipe runner"), "{error}");
-    }
-
-    #[test]
-    fn group_values_share_one_rejection_across_sources() {
-        let inline = ParameterEdits::parse("film_render.convert=nope").unwrap_err();
-        let file =
-            ParameterEdits::from_value(serde_json::json!({"film_render": {"convert": "nope"}}))
-                .unwrap_err();
-        assert_eq!(inline, file);
-        assert!(inline.contains("describe --module film_render.convert"));
-    }
-
-    #[test]
-    fn unknown_leaves_suggest_canonical_paths_or_discovery() {
-        let typo = "film_render.grain.engin";
-        assert_eq!(suggest_parameter_paths(typo), ["film_render.grain.engine"]);
-        for error in [
-            describe_field(typo).unwrap_err(),
-            ParameterEdits::parse("film_render.grain.engin=v2").unwrap_err(),
-            ParameterEdits::from_value(
-                serde_json::json!({"film_render": {"grain": {"engin": "procedural"}}}),
-            )
-            .unwrap_err(),
-        ] {
-            assert!(
-                error.contains("did you mean film_render.grain.engine?"),
-                "{error}"
-            );
-        }
-        assert!(suggest_parameter_paths("completely_unrelated.field").is_empty());
-        let error = describe_field("completely_unrelated.field").unwrap_err();
-        assert!(error.contains("spektrafilm describe --module MODULE --format text"));
-        assert!(error.contains("--field"));
-        assert!(
-            ParameterEdits::parse("camera.unknown_leaf=1")
-                .unwrap_err()
-                .contains("--module MODULE")
-        );
-        assert!(
-            ParameterEdits::from_value(serde_json::json!({"camera": {"unknown_leaf": 1}}))
-                .unwrap_err()
-                .contains("--module MODULE")
-        );
-        assert!(suggest_parameter_paths("workflow.route").is_empty());
-    }
-
-    #[test]
-    fn unknown_groups_suggest_canonical_prefixes_or_discovery() {
-        assert_eq!(suggest_groups("film_render.grai"), ["film_render.grain"]);
-        assert!(
-            describe_module("film_render.grai")
-                .unwrap_err()
-                .contains("did you mean film_render.grain?")
-        );
-        assert!(suggest_groups("completely_unrelated").is_empty());
-        assert!(
-            describe_module("completely_unrelated")
-                .unwrap_err()
-                .contains("spektrafilm describe --format text")
-        );
-    }
 
     #[test]
     fn inline_apply_is_ordered_and_preserves_runtime_state() {
@@ -1184,30 +566,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(edits.paths().count(), 3);
-        let mut params = RuntimeParams {
-            random_seed: 7,
-            neutral_print_filters_protected: Some([true, false, true]),
-            ..Default::default()
-        };
+        let mut params = RuntimeParams::default();
+        params.random_seed = 7;
         params.film_render.grain.particle_scale_layers = [9., 8., 7.];
+        params.neutral_print_filters_protected = [true, false, true];
         edits.apply(&mut params).unwrap();
         assert!(params.camera.auto_exposure);
         assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);
         assert_eq!(params.random_seed, 7);
         assert_eq!(params.film_render.grain.particle_scale_layers, [9., 8., 7.]);
-        assert_eq!(
-            params.neutral_print_filters_protected,
-            Some([true, false, true])
-        );
-        // The persisted flags are themselves settable and round-trip through
-        // the serialize-apply-deserialize path like any other leaf.
-        let flags =
-            ParameterEdits::parse("neutral_print_filters_protected=[false,true,false]").unwrap();
-        flags.apply(&mut params).unwrap();
-        assert_eq!(
-            params.neutral_print_filters_protected,
-            Some([false, true, false])
-        );
+        assert_eq!(params.neutral_print_filters_protected, [true, false, true]);
     }
 
     #[test]
@@ -1285,7 +653,7 @@ mod tests {
             f["path"] == "film_render.grain.engine"
                 && f["enum_values"]
                     .as_array()
-                    .is_some_and(|v| v.iter().any(|e| e == "procedural"))
+                    .is_some_and(|v| v.iter().any(|e| e == "v2"))
         }));
         assert!(describe_module("workflow").is_err());
         assert!(describe_module("unknown").is_err());
@@ -1296,6 +664,7 @@ mod tests {
         for path in [
             "io.input_gamut_compress.knee",
             "io.output_gamut_compress.knee",
+            "io.output_gamut_compress.lightness_compression",
         ] {
             for invalid in [
                 "[-1,1,1]",
@@ -1328,33 +697,19 @@ mod tests {
                     .unwrap();
             }
         }
+        ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").unwrap();
     }
 
     #[test]
     fn apply_rejects_optional_overflow_in_legacy_baseline_before_serialization() {
-        let mut params = RuntimeParams::default();
-        params.film_render.grain.v2_amount = Some(f32::INFINITY);
+        let mut params: RuntimeParams =
+            serde_json::from_str(r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#).unwrap();
         assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
         let edits = ParameterEdits::parse("camera.auto_exposure=false").unwrap();
         let error = edits.apply(&mut params).unwrap_err();
         assert!(error.contains("film_render.grain.v2_amount"), "{error}");
         assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
         assert!(params.camera.auto_exposure);
-    }
-
-    #[test]
-    fn json_numeric_decoding_rejects_overflow_and_preserves_legacy_finite_range() {
-        // Preset File formats: reject numbers overflowing their declared f32/f64
-        // type. Correctly rounded JSON decoding rejects overflow before merging.
-        assert!(
-            serde_json::from_str::<RuntimeParams>(
-                r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#
-            )
-            .is_err()
-        );
-        let params: RuntimeParams = serde_json::from_str(r#"{"film_render":{"grain":{"v2_amount":42.5}},"camera":{"exposure_compensation_ev":0.5}}"#).unwrap();
-        assert_eq!(params.film_render.grain.v2_amount, Some(42.5));
-        assert_eq!(params.camera.exposure_compensation_ev, 0.5);
     }
 
     fn described_field(path: &str) -> Value {
@@ -1373,6 +728,7 @@ mod tests {
         for path in [
             "io.input_gamut_compress.knee",
             "io.output_gamut_compress.knee",
+            "io.output_gamut_compress.lightness_compression",
         ] {
             let field = described_field(path);
             assert!(field["minimum"].is_null());
@@ -1393,293 +749,100 @@ mod tests {
     }
 
     #[test]
-    fn legacy_conversion_paths_rename_and_preserve_the_four_states() {
-        let scanner_old = serde_json::json!({
-            "positive_interpretation": "coupled",
-            "positive_density_ev": 0.5,
-            "positive_balance_ev": [0.1, 0.0, -0.1],
-            "positive_contrast": 0.9,
-            "positive_dmax": 1.2,
-        });
-        for (pair, mode, tracking) in [
-            (
-                serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": true}),
-                "auto",
-                "follow_mode",
-            ),
-            (
-                serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": false}),
-                "manual",
-                "follow_mode",
-            ),
-            (
-                serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": false}),
-                "auto",
-                "never",
-            ),
-            (
-                serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": true}),
-                "manual",
-                "always",
-            ),
-            // Sparse legacy documents default each absent leaf to true.
-            (
-                serde_json::json!({"normalize_print_exposure": false}),
-                "manual",
-                "always",
-            ),
-            (
-                serde_json::json!({"print_exposure_compensation": false}),
-                "auto",
-                "never",
-            ),
+    fn discovery_matches_stock_initialization_and_consumer_conditions() {
+        for path in [
+            "film_render.grain.rms_granularity",
+            "film_render.grain.density_min",
+            "film_render.grain.uniformity",
+            "film_render.grain.particle_scale_sublayers",
+            "film_render.dir_couplers.gamma_samelayer_rgb",
+            "film_render.dir_couplers.gamma_interlayer_r_to_gb",
+            "film_render.dir_couplers.gamma_interlayer_g_to_rb",
+            "film_render.dir_couplers.gamma_interlayer_b_to_rg",
+            "film_render.halation.halation_first_sigma_um",
+            "film_render.halation.halation_strength",
         ] {
-            let mut value = serde_json::json!({
-                "scanner": scanner_old.clone(),
-                "enlarger": pair,
-            });
-            normalize_legacy_complete_params(&mut value).unwrap();
-            let params: RuntimeParams = serde_json::from_value(value).unwrap();
-            assert_eq!(
-                params.scanner.negative_conversion_method,
-                NegativeConversionMethod::Coupled
-            );
-            assert_eq!(params.scanner.conversion_brightness_ev, 0.5);
-            assert_eq!(params.scanner.conversion_balance_ev, [0.1, 0.0, -0.1]);
-            assert_eq!(params.scanner.conversion_contrast, 0.9);
-            assert_eq!(params.scanner.conversion_dmax, 1.2);
-            assert_eq!(params.enlarger.print_exposure_mode.as_str(), mode);
-            assert_eq!(
-                params.settings.print_exposure_ev_tracking.as_str(),
-                tracking
+            assert!(
+                described_field(path)["default_source"]
+                    .as_str()
+                    .unwrap()
+                    .contains("derived from stock profile"),
+                "{path}"
             );
         }
-        // Idempotent on already-canonical documents.
-        let mut canonical = serde_json::to_value(RuntimeParams::default()).unwrap();
-        normalize_legacy_complete_params(&mut canonical).unwrap();
-        let round: RuntimeParams = serde_json::from_value(canonical).unwrap();
-        assert_eq!(round.enlarger.print_exposure_mode, PrintExposureMode::Auto);
-        // Both spellings together are a hard error, not a silent overwrite.
-        let mut both = serde_json::json!({
-            "enlarger": {
-                "normalize_print_exposure": true,
-                "print_exposure_compensation": false,
-                "print_exposure_mode": "auto",
-            }
-        });
-        assert!(normalize_legacy_complete_params(&mut both).is_err());
-    }
-
-    #[test]
-    fn retired_lightness_migration_is_explicit_and_atomic() {
-        for algorithm in ["off", "aces_rgc", "oklch"] {
-            for retired in [serde_json::json!([0.95, 1.0, 1.6]), Value::Null] {
-                let mut value = serde_json::json!({"io":{"output_color_space":"ProPhoto RGB","output_gamut_compress":{"algorithm":algorithm,"lightness_compression":retired}}});
-                assert!(serde_json::from_value::<RuntimeParams>(value.clone()).is_err());
-                assert!(ParameterEdits::from_value(value.clone()).is_err());
-                let original = value.clone();
-                if retired.is_null() {
-                    normalize_legacy_complete_params(&mut value).unwrap();
-                    let params: RuntimeParams = serde_json::from_value(value).unwrap();
-                    assert_eq!(params.io.output_color_space, "ProPhoto RGB");
-                    assert_eq!(params.output_mix.amount, 1.0);
-                } else {
-                    let error = normalize_legacy_complete_params(&mut value).unwrap_err();
-                    assert!(error.contains("io.output_gamut_compress.lightness_compression"));
-                    assert!(error.contains("no automatic replacement"));
-                    assert!(error.contains("explicitly remove"));
-                    assert_eq!(value, original);
+        assert_eq!(
+            described_field("film_render.dir_couplers.diffusion_size_um")["default_source"],
+            "static"
+        );
+        for module in ["film_render.glare", "film_render.grain"] {
+            let fields = describe_module(module).unwrap();
+            for field in fields["fields"].as_array().unwrap() {
+                let path = field["path"].as_str().unwrap();
+                if module == "film_render.glare"
+                    || path.ends_with("rms_granularity")
+                    || path.ends_with("micro_sublayers")
+                {
+                    assert_eq!(
+                        field["conditions"],
+                        serde_json::json!(["preserved upstream no-op"])
+                    );
                 }
             }
         }
-        assert!(
-            ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").is_err()
-        );
-    }
-
-    #[test]
-    fn dye_only_controls_carry_the_dye_engine_condition() {
-        use super::effects::conditions;
-        for path in [
-            "film_render.grain.v3_dye_support_um",
-            "film_render.grain.v3_event_area_um2",
-            "film_render.grain.rms_granularity",
-            "film_render.grain.channel_correlation",
-        ] {
-            let found = conditions(path);
-            let described: Vec<_> = found.iter().map(|c| c.description()).collect();
-            assert!(
-                described
-                    .iter()
-                    .any(|d| d.starts_with("film_render.grain.engine = dye;")),
-                "missing the Dye engine condition for {path}: {described:?}"
-            );
-            assert!(
-                !described
-                    .iter()
-                    .any(|d| d.starts_with("film_render.grain.engine = spektra")),
-                "a Dye-only control must not claim the Spektra engine: {path}: {described:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn renamed_conversion_paths_keep_the_negative_to_positive_condition() {
-        use super::effects::conditions;
-        for path in [
-            "scanner.negative_conversion_method",
-            "scanner.conversion_brightness_ev",
-            "scanner.conversion_balance_ev",
-            "scanner.conversion_contrast",
-            "scanner.conversion_dmax",
-        ] {
-            let found = conditions(path);
-            assert!(
-                found
-                    .iter()
-                    .any(|c| c.description() == "scanner.scan_output = negative_to_positive"),
-                "missing NegativeToPositive condition for {path}: {:?}",
-                found.iter().map(|c| c.description()).collect::<Vec<_>>()
-            );
-        }
-        // The retired prefix carries no activation condition (hard cut).
-        assert!(conditions("scanner.positive_density_ev").is_empty());
-    }
-
-    #[test]
-    fn legacy_conversion_rejections_leave_documents_unchanged() {
-        // A mixed print-exposure pair needs the settings group; a non-object
-        // there must fail before any mutation instead of panicking.
-        let mut value = serde_json::json!({
-            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": false},
-            "settings": 42
-        });
-        let original = value.clone();
-        let error = normalize_legacy_conversion_paths(&mut value, true).unwrap_err();
-        assert!(error.contains("settings"), "{error}");
-        assert_eq!(value, original);
-
-        // Combining legacy conversion paths with a rejected retired lightness
-        // leaf must fail atomically, before any rename.
-        let mut both = serde_json::json!({
-            "scanner": {"positive_density_ev": 0.4},
-            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": true},
-            "io": {"output_gamut_compress": {"lightness_compression": [0.95, 1.0, 1.6]}}
-        });
-        let original = both.clone();
-        let error = normalize_legacy_complete_params(&mut both).unwrap_err();
-        assert!(error.contains("lightness_compression"), "{error}");
-        assert_eq!(both, original);
-    }
-
-    #[test]
-    fn mix_sources_share_f64_domain_and_reject_withdrawn_paths() {
-        for value in [0.0, 0.1234567890123456, 1.0] {
-            let mut inline = RuntimeParams::default();
-            ParameterEdits::parse(&format!("output_mix.amount={value}"))
-                .unwrap()
-                .apply(&mut inline)
-                .unwrap();
-            for toml in [false, true] {
-                let text = if toml {
-                    format!("[output_mix]\namount = {value}")
-                } else {
-                    serde_json::json!({"output_mix":{"amount":value}}).to_string()
-                };
-                let mut params = RuntimeParams::default();
-                ParameterEdits::from_value(parse_carrier(&text, toml).unwrap())
-                    .unwrap()
-                    .apply(&mut params)
-                    .unwrap();
-                assert_eq!(params.output_mix.amount, inline.output_mix.amount);
+        for field in describe_module("print_render.glare").unwrap()["fields"]
+            .as_array()
+            .unwrap()
+        {
+            let condition = field["conditions"][0].as_str().unwrap();
+            for required in [
+                "io.scan_film = false",
+                "print_render.glare.active",
+                "print_render.glare.percent > 0",
+                "stochastic effects enabled",
+            ] {
+                assert!(condition.contains(required), "{condition}");
             }
         }
-        for invalid in ["-0.01", "1.01", "null", "nan", "inf"] {
-            assert!(
-                ParameterEdits::parse(&format!("output_mix.amount={invalid},output_mix.amount=1"))
-                    .is_err()
+        for name in ["boost_ev", "boost_range", "protect_ev"] {
+            assert_eq!(
+                described_field(&format!("film_render.halation.{name}"))["conditions"],
+                serde_json::json!(["film_render.halation.boost_ev != 0; LUT mode disabled"])
             );
         }
-        for path in [
-            "film_render.response",
-            "print_render.response",
-            "enlarger.c_filter_shift",
-        ] {
-            assert!(ParameterEdits::parse(&format!("{path}=0")).is_err());
-        }
-        assert!(describe_field("io.output_gamut_compress.lightness_compression").is_err());
-        let field = describe_field("output_mix.amount").unwrap();
-        assert_eq!(field["type"], "f64");
-        assert_eq!(field["default"], 1.0);
-        assert_eq!(field["minimum"], 0.0);
-        assert_eq!(field["maximum"], 1.0);
-    }
-
-    #[test]
-    fn material_discovery_reports_actual_units_and_capabilities() {
-        let flash = describe_field("enlarger.preflash_exposure").unwrap();
-        assert_eq!(flash["default"], 0.0);
-        assert_eq!(flash["unit"], "linear exposure multiplier");
+        let composite = described_field("film_render.grain.n_sub_layers");
         assert!(
-            flash["conditions"]
-                .to_string()
-                .contains("print-development")
+            composite["conditions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "film_render.grain.sublayers_active = false")
         );
-        for path in [
-            "enlarger.preflash_m_filter_shift",
-            "enlarger.preflash_y_filter_shift",
+        for name in [
+            "particle_scale_sublayers",
+            "blur_dye_clouds_um",
+            "micro_structure",
+            "mult_usm_sigma",
+            "mult_usm_amount",
         ] {
-            let field = describe_field(path).unwrap();
-            assert_eq!(field["unit"], "Kodak CC");
-            assert_eq!(field["default"], 0.0);
+            let field = described_field(&format!("film_render.grain.{name}"));
             assert!(
                 field["conditions"]
-                    .to_string()
-                    .contains("preflash_exposure > 0")
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c.as_str().unwrap().contains("sublayers_active = true")),
+                "{name}"
             );
         }
-        for path in [
-            "film_render.chemistry.developer_exhaustion",
-            "print_render.density_curves_morph.developer_exhaustion",
+        for (path, unit) in [
+            ("settings.spectral_gaussian_blur", "nm"),
+            ("scanner.lens_blur", "px (sigma)"),
+            (
+                "scanner.unsharp_mask",
+                "[px (sigma), dimensionless (amount)]",
+            ),
         ] {
-            let field = describe_field(path).unwrap();
-            assert_eq!(field["unit"], "dimensionless");
-            assert_eq!(field["default"], 0.0);
-            assert_eq!(field["minimum"], 0.0);
-            assert_eq!(field["maximum"], 1.0);
-            let conditions = field["conditions"].to_string();
-            assert!(conditions.contains("development"));
-            assert!(conditions.contains("active = true"));
-            assert!(conditions.contains("fitted density_curves_model"));
+            assert_eq!(described_field(path)["unit"], unit);
         }
-    }
-
-    #[test]
-    fn typed_mix_validates_finite_endpoints_and_bounds() {
-        for amount in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01, 1.01] {
-            let mut params = RuntimeParams::default();
-            params.output_mix.amount = amount;
-            assert!(params.validate().unwrap_err().contains("output_mix.amount"));
-        }
-        for amount in [0.0, 1.0] {
-            let mut params = RuntimeParams::default();
-            params.output_mix.amount = amount;
-            params.validate().unwrap();
-        }
-        let params: RuntimeParams =
-            serde_json::from_value(serde_json::json!({"output_mix":{}})).unwrap();
-        assert_eq!(params.output_mix.amount, 1.0);
-        assert!(
-            serde_json::from_value::<RuntimeParams>(
-                serde_json::json!({"output_mix":{"amount":null}})
-            )
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<RuntimeParams>(
-                serde_json::json!({"output_mix":{"amount":1,"extra":0}})
-            )
-            .is_err()
-        );
     }
 }

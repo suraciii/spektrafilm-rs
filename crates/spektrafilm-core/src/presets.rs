@@ -1,10 +1,9 @@
 //! Portable look presets: strict look-owned schema and transactional resolution.
-use crate::neutral_filters::NeutralFilters;
 use crate::params::{
     DiffusionFilterParams, EnlargerParams, FilmRenderingParams, PrintRenderingParams,
     RuntimeParams, ScannerParams,
 };
-use crate::params_builder::digest_params;
+use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -69,14 +68,32 @@ pub struct ResolvedLookPreset {
 
 impl LookPreset {
     pub fn from_json_str(json: &str) -> Result<Self, String> {
-        let preset: Self =
-            serde_json::from_str(json).map_err(|e| format!("invalid look preset JSON: {e}"))?;
-        validate_document(&preset)?;
-        Ok(preset)
+        Self::from_carrier(json, false)
     }
 
     pub fn to_json(&self) -> Result<String, String> {
+        validate_document(self)?;
+        validate_look_values(&self.parameters)?;
         serde_json::to_string_pretty(self).map_err(|e| format!("serializing look preset: {e}"))
+    }
+
+    pub fn from_toml_str(toml: &str) -> Result<Self, String> {
+        Self::from_carrier(toml, true)
+    }
+
+    fn from_carrier(text: &str, is_toml: bool) -> Result<Self, String> {
+        let value = crate::params::sources::parse_carrier(text, is_toml)?;
+        let preset: Self =
+            serde_json::from_value(value).map_err(|e| format!("invalid look preset: {e}"))?;
+        validate_document(&preset)?;
+        validate_look_values(&preset.parameters)?;
+        Ok(preset)
+    }
+
+    pub fn to_toml(&self) -> Result<String, String> {
+        validate_document(self)?;
+        validate_look_values(&self.parameters)?;
+        toml::to_string_pretty(self).map_err(|e| format!("serializing look preset TOML: {e}"))
     }
 
     /// Resolve without mutating the caller's active runtime context.
@@ -86,6 +103,7 @@ impl LookPreset {
         current_params: &RuntimeParams,
     ) -> Result<ResolvedLookPreset, String> {
         validate_document(self)?;
+        validate_look_values(&self.parameters)?;
         let film_identity = profile_content_identity_if_requested(data_dir, &self.film_profile)?;
         let print_identity = profile_content_identity_if_requested(data_dir, &self.print_profile)?;
         let film = profile::load_profile_by_name(data_dir, &self.film_profile.stock)
@@ -99,20 +117,13 @@ impl LookPreset {
             &print,
             print_identity.as_deref(),
         )?;
-        let neutral = NeutralFilters::load(data_dir)?;
 
-        // Stock-specific calibration creates the baseline. Explicit look values
-        // are overlaid after it, so profile changes cannot erase a saved look.
-        let mut params = digest_params(current_params.clone(), &film, &print, Some(&neutral), true);
-        // Digestion also contains runtime switches that are not owned by a
-        // look (for example LUT mode can rewrite crop and exposure). Restore
-        // the caller's context before applying the look-owned groups.
-        params.camera = current_params.camera.clone();
-        params.io = current_params.io.clone();
-        params.settings = current_params.settings.clone();
-        params.debug = current_params.debug.clone();
-        params.workflow = current_params.workflow.clone();
+        // Stock initialization is independent of preview/debug constraints.
+        // The complete look replaces its owned controls, preserving all context.
+        let mut params = current_params.clone();
+        apply_film_specifics(&mut params, &film);
         params.enlarger = self.parameters.enlarger.clone();
+        params.neutral_print_filters_protected = [true; 3];
         params.scanner = self.parameters.scanner.clone();
         params.film_render = self.parameters.film_render.clone();
         params.print_render = self.parameters.print_render.clone();
@@ -165,6 +176,40 @@ impl LookPreset {
             provenance,
         }
     }
+}
+
+fn validate_look_values(look: &LookParameters) -> Result<(), String> {
+    let mut params = RuntimeParams::default();
+    params.enlarger = look.enlarger.clone();
+    params.scanner = look.scanner.clone();
+    params.film_render = look.film_render.clone();
+    params.print_render = look.print_render.clone();
+    params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
+    crate::params::sources::validate_finite(&params)?;
+    params.validate()
+}
+
+/// Extension-selected files or exact immutable built-in IDs, never GUI names.
+pub fn load_selector(selector: &str, _data_dir: &Path) -> Result<LookPreset, String> {
+    if selector.ends_with(".toml") || selector.ends_with(".json") {
+        let text = std::fs::read_to_string(selector)
+            .map_err(|e| format!("reading preset file {selector:?}: {e}"))?;
+        return if selector.ends_with(".toml") {
+            LookPreset::from_toml_str(&text)
+        } else {
+            LookPreset::from_json_str(&text)
+        }
+        .map_err(|e| format!("preset file {selector:?}: {e}"));
+    }
+    if selector.contains('/') || selector.contains('\\') {
+        return Err(format!(
+            "invalid preset ID {selector:?}: path separators require a .toml or .json file"
+        ));
+    }
+    builtin_look_presets()
+        .into_iter()
+        .find(|preset| preset.id == selector)
+        .ok_or_else(|| format!("unknown built-in preset ID {selector:?}"))
 }
 fn validate_document(preset: &LookPreset) -> Result<(), String> {
     if preset.schema_version != LOOK_SCHEMA_VERSION {
@@ -418,6 +463,73 @@ pub fn builtin_look_presets() -> Vec<LookPreset> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toml_roundtrip_preserves_optional_and_precise_controls() {
+        let mut preset = builtin_look_presets().remove(0);
+        preset.parameters.film_render.grain.v2_amount = None;
+        preset.parameters.film_render.chemistry.gamma_factor = 1.2345678901234567;
+        let text = preset.to_toml().unwrap();
+        assert!(!text.contains("v2_amount"));
+        let restored = LookPreset::from_toml_str(&text).unwrap();
+        assert_eq!(restored.parameters.film_render.grain.v2_amount, None);
+        assert_eq!(
+            restored.parameters.film_render.chemistry.gamma_factor,
+            preset.parameters.film_render.chemistry.gamma_factor
+        );
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(preset).unwrap()
+        );
+    }
+
+    #[test]
+    fn carriers_reject_duplicate_keys_and_f32_overflow() {
+        let preset = builtin_look_presets().remove(0);
+        let mut value = serde_json::to_value(&preset).unwrap();
+        value["parameters"]["enlarger"]["print_exposure"] = serde_json::json!(1e100);
+        assert!(LookPreset::from_json_str(&value.to_string()).is_err());
+        let duplicate = preset.to_json().unwrap().replacen(
+            "\"schema_version\": 1",
+            "\"schema_version\": 1, \"schema_version\": 1",
+            1,
+        );
+        assert!(LookPreset::from_json_str(&duplicate).is_err());
+        let text = preset
+            .to_toml()
+            .unwrap()
+            .replace("print_exposure = 1.0", "print_exposure = inf");
+        assert!(LookPreset::from_toml_str(&text).is_err());
+    }
+
+    #[test]
+    fn selectors_are_exact_and_missing_files_do_not_fall_back() {
+        assert!(load_selector("Kodak Gold 200", Path::new("data")).is_err());
+        assert!(load_selector("classic-kodak-gold-200.toml", Path::new("data")).is_err());
+        assert!(load_selector("folder/classic-kodak-gold-200", Path::new("data")).is_err());
+        assert_eq!(
+            load_selector("classic-kodak-gold-200", Path::new("data"))
+                .unwrap()
+                .id,
+            "classic-kodak-gold-200"
+        );
+    }
+
+    #[test]
+    fn version_one_materializes_omitted_look_controls() {
+        let json = r#"{"schema_version":1,"id":"x","name":"X","film_profile":{"stock":"f"},"print_profile":{"stock":"p"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"x","model_version":"x"}}"#;
+        let preset = LookPreset::from_json_str(json).unwrap();
+        assert_eq!(preset.parameters.enlarger.y_filter_neutral, 55.0);
+        let materialized = preset.to_toml().unwrap();
+        assert!(materialized.contains("y_filter_neutral"));
+        assert!(materialized.contains("gamma_factor"));
+        let null = json.replace(
+            "\"film_render\":{}",
+            "\"film_render\":{\"grain\":{\"v2_amount\":null}}",
+        );
+        let restored = LookPreset::from_json_str(&null).unwrap();
+        assert_eq!(restored.parameters.film_render.grain.v2_amount, None);
+    }
 
     fn provenance() -> LookProvenance {
         LookProvenance {

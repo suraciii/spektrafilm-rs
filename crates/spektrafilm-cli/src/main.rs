@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
-use spektrafilm_core::params::{RuntimeParams, Tap};
+use spektrafilm_core::params::Tap;
 use spektrafilm_core::params_builder::resize_for_preview;
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{
@@ -57,35 +57,36 @@ enum Commands {
         compression: Option<CompressionArg>,
         #[command(flatten)]
         workflow: WorkflowOptions,
-        /// Film stock name (e.g. kodak_portra_400).
-        #[arg(long)]
-        film: String,
+        /// Film stock name (e.g. kodak_portra_400). Required unless --preset is used.
+        #[arg(long, required_unless_present = "preset", conflicts_with = "preset")]
+        film: Option<String>,
         /// Paper stock name (e.g. fujifilm_crystal_archive_typeii).
         /// If omitted and --scan-film is not set, uses the film's target_print.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "preset")]
         paper: Option<String>,
+        /// A built-in preset ID or .toml/.json preset file.
+        #[arg(long, conflicts_with_all = ["film", "paper", "params"])]
+        preset: Option<String>,
         /// Scan film directly (skip printing stage).
         #[arg(long)]
         scan_film: bool,
         /// Print per-stage timing information.
         #[arg(long)]
         timings: bool,
-        /// Save one local JSON diagnostics report without replacing an existing file.
-        #[arg(long)]
-        diagnostics: Option<PathBuf>,
-        /// Collect GPU pass timings when available; unsupported devices retain summary.
-        #[arg(long, requires = "diagnostics")]
-        gpu_timings: bool,
         /// Path to JSON params file for overrides.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "preset")]
         params: Option<PathBuf>,
+        /// Sparse parameter source (a .toml/.json file or comma-separated assignments).
+        #[arg(long = "set", action = clap::ArgAction::Append)]
+        sources: Vec<String>,
+        /// Resolve and validate without decoding or rendering.
+        #[arg(long)]
+        dry_run: bool,
         /// Dump the raw f64 output buffer (HxWx3, row-major, channel-interleaved)
         /// before sRGB encoding/clipping. Used for bit-exact parity comparison.
         #[arg(long)]
         raw_out: Option<PathBuf>,
-        /// Run the pipeline N times in the same process. Each iteration is
-        /// timed individually so you can see cold-start vs warm-cache speed.
-        /// Default: 1 (no repetition).
+        /// Run the pipeline N times in the same process.
         #[arg(long, default_value = "1")]
         iters: usize,
         /// Path to the data directory.
@@ -125,6 +126,8 @@ enum Commands {
     Describe {
         #[arg(long, default_value = "json")]
         format: String,
+        #[arg(long)]
+        module: Option<String>,
     },
     /// Render one structured recipe under the fork runner contract.
     Render {
@@ -136,12 +139,6 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
         data_dir: PathBuf,
-        /// Save one local JSON diagnostics report without replacing an existing file.
-        #[arg(long)]
-        diagnostics: Option<PathBuf>,
-        /// Collect GPU pass timings when available; unsupported devices retain summary.
-        #[arg(long, requires = "diagnostics")]
-        gpu_timings: bool,
     },
     /// Inspect an output without processing or modifying it.
     Inspect {
@@ -149,6 +146,11 @@ enum Commands {
         input: PathBuf,
         #[arg(long, default_value = "json")]
         format: String,
+    },
+    /// Inspect immutable built-in look presets.
+    Preset {
+        #[command(subcommand)]
+        command: preset::PresetCommand,
     },
     /// Run the declared corpus and write a structured parity report.
     Parity {
@@ -270,48 +272,39 @@ fn main() -> Result<()> {
             workflow,
             film,
             paper,
+            preset,
             scan_film,
             timings,
             params: params_file,
+            sources,
+            dry_run,
             raw_out,
             iters,
             data_dir,
             backend,
-            diagnostics,
-            gpu_timings,
         } => {
             let data_dir = resolve_data_dir(data_dir);
-            let mut protected = vec![input.as_path(), output.as_path()];
-            protected.extend(params_file.as_deref());
-            protected.extend(raw_out.as_deref());
-            telemetry::run(
-                spektrafilm_core::telemetry::OperationKind::Process,
-                diagnostics.as_deref(),
-                gpu_timings,
-                &protected,
-                telemetry::requested_backend(backend),
-                |invocation| {
-                    cmd_process(
-                        &input,
-                        &output,
-                        format,
-                        bit_depth,
-                        jpeg_quality,
-                        jpeg_subsampling,
-                        compression,
-                        &workflow,
-                        &film,
-                        paper.as_deref(),
-                        scan_film,
-                        timings,
-                        params_file.as_deref(),
-                        raw_out.as_deref(),
-                        iters,
-                        &data_dir,
-                        backend,
-                        invocation,
-                    )
-                },
+            cmd_process(
+                &input,
+                &output,
+                format,
+                bit_depth,
+                jpeg_quality,
+                jpeg_subsampling,
+                compression,
+                &workflow,
+                film.as_deref(),
+                paper.as_deref(),
+                preset.as_deref(),
+                scan_film,
+                timings,
+                params_file.as_deref(),
+                &sources,
+                dry_run,
+                raw_out.as_deref(),
+                iters,
+                &data_dir,
+                backend,
             )?;
         }
         Commands::ListProfiles { data_dir } => {
@@ -334,11 +327,17 @@ fn main() -> Result<()> {
                 &resolve_data_dir(data_dir),
             )?;
         }
-        Commands::Describe { format } => {
+        Commands::Describe { format, module } => {
             if format != "json" {
                 bail!("unsupported describe format {format}; use json");
             }
-            println!("{}", serde_json::to_string_pretty(&contract::describe())?);
+            let value = if let Some(module) = module {
+                spektrafilm_core::params::sources::describe_module(&module)
+                    .map_err(anyhow::Error::msg)?
+            } else {
+                contract::describe()
+            };
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
         Commands::Render {
             input,
@@ -352,6 +351,7 @@ fn main() -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&inspect(&input)?)?);
         }
+        Commands::Preset { command } => preset::run(command)?,
         Commands::Parity {
             corpus,
             report,
@@ -371,23 +371,20 @@ fn cmd_process(
     jpeg_subsampling: Option<JpegSubsamplingArg>,
     compression: Option<CompressionArg>,
     workflow: &WorkflowOptions,
-    film_name: &str,
+    film_name: Option<&str>,
     paper_name: Option<&str>,
+    preset: Option<&str>,
     scan_film: bool,
     show_timings: bool,
     params_file: Option<&Path>,
+    sources: &[String],
+    dry_run: bool,
     raw_out: Option<&Path>,
     iters: usize,
     data_dir: &Path,
     backend_choice: Option<Backend>,
-    invocation: &mut telemetry::Invocation,
 ) -> Result<()> {
     let total_start = Instant::now();
-    use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
-    let context = invocation.operation.context();
-    if iters == 0 {
-        bail!("--iters must be at least 1");
-    }
     let extension_format = image_io::ImageFormat::detect(output)
         .with_context(|| format!("detecting output format: {}", output.display()))?;
     let output_format = format.unwrap_or_else(|| match extension_format {
@@ -438,91 +435,47 @@ fn cmd_process(
     });
     let compression = matches!(output_format, OutputFormat::Tiff | OutputFormat::Exr)
         .then(|| compression.unwrap_or(CompressionArg::Zip).core());
-    let backend = invocation.phase(
-        "backend_init",
-        IssueCategory::Backend,
-        IssueBoundary::BackendInit,
-        &context,
-        |backend_context| {
-            let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
-                Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
-                Some(Backend::Gpu) => Box::new(
-                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "GPU backend unavailable: no compatible WGPU adapter/device was found; \
-                     check your graphics drivers or use --backend cpu"
-                        )
-                    })?,
-                ),
-                None => spektrafilm_gpu::select_backend(),
-            };
-            telemetry::observe_backend(backend.as_ref(), backend_context);
-            Ok(backend)
+    if !input.is_file() {
+        bail!("input is not a regular file: {}", input.display());
+    }
+    std::fs::File::open(input)
+        .with_context(|| format!("input is not readable: {}", input.display()))?;
+    let input_is_raw = image_io::is_raw(input);
+    if !input_is_raw {
+        image_io::ImageFormat::detect(input)
+            .with_context(|| format!("unsupported input format: {}", input.display()))?;
+    }
+    if input_is_raw {
+        // Validate RAW option consistency without decoding pixels.
+        let raw_options = raw_options(&workflow);
+        validate_raw_options(&raw_options)?;
+    }
+    let resolved = spektrafilm_core::process_params::resolve(
+        spektrafilm_core::process_params::ProcessParamsRequest {
+            film: film_name,
+            paper: paper_name,
+            preset,
+            params_file,
+            sources,
+            route: workflow.route.as_deref(),
+            scan_film,
+            input_is_raw,
+            digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+            {
+                DigestMode::PreserveUserEdits
+            } else {
+                DigestMode::ApplyStockSpecifics
+            },
         },
-    )?;
-    eprintln!("Backend: {}", backend.name());
-
-    // Load profiles
-    invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
-    let t = Instant::now();
-    let mut film = profile::load_profile_by_name(data_dir, film_name)
-        .with_context(|| format!("loading film profile: {film_name}"))?;
-
-    let print_stock = if scan_film {
-        film_name.to_string()
-    } else if let Some(p) = paper_name {
-        p.to_string()
-    } else if let Some(ref target) = film.info.target_print {
-        target.clone()
-    } else {
-        bail!("no paper specified and film has no target_print — use --paper or --scan-film");
-    };
-
-    let mut print = profile::load_profile_by_name(data_dir, &print_stock)
-        .with_context(|| format!("loading print profile: {print_stock}"))?;
+        data_dir,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let mut film = resolved.film;
+    let mut print = resolved.print;
     apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
     apply_channel_swap(&mut print, &workflow.print_channel_swap)?;
-    eprintln!("Profiles loaded: {} ms", t.elapsed().as_millis());
-
-    // Load params (defaults + optional overrides). Strict: unknown fields,
-    // unsupported algorithms/color spaces/filter families and unknown taps
-    // fail here — before any artifact is produced.
-    let mut params = if let Some(pf) = params_file {
-        let f = std::fs::File::open(pf)
-            .with_context(|| format!("opening params file: {}", pf.display()))?;
-        serde_json::from_reader(std::io::BufReader::new(f))
-            .with_context(|| format!("parsing params file {}", pf.display()))?
-    } else {
-        RuntimeParams::default()
-    };
-    let route = workflow
-        .route
-        .clone()
-        .or_else(|| scan_film.then_some("input > film > scan".into()))
-        .unwrap_or_else(|| params.workflow.route.clone());
-    params.workflow.route = route;
-    params.io.scan_film = scan_film;
-    params
-        .validate()
-        .map_err(anyhow::Error::msg)
-        .with_context(|| {
-            format!(
-                "invalid params{}",
-                params_file
-                    .map(|p| format!(" file {}", p.display()))
-                    .unwrap_or_default()
-            )
-        })?;
-
-    // RAW supplies linear ACES; prepared images retain their samples.
-    let input_is_raw = image_io::is_raw(input);
-    if input_is_raw {
-        params.io.input_color_space = "ACES2065-1".into();
-        params.io.input_cctf_decoding = false;
-    }
-    params.validate_color().map_err(anyhow::Error::msg)?;
-
-    // Build the calibrated runtime through the shared digest boundary.
+    let params = resolved.params;
     let inject = params
         .taps
         .inject
@@ -539,186 +492,26 @@ fn cmd_process(
         .transpose()
         .map_err(anyhow::Error::msg)
         .with_context(|| "params taps.collect")?;
-    // GUI export supplies undigested edits through a private child-only protocol.
-    // Batch processing retains the stock-specific default policy.
-    let digest_mode = if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
-        == Some(std::ffi::OsStr::new("1"))
-    {
-        DigestMode::PreserveUserEdits
-    } else {
-        DigestMode::ApplyStockSpecifics
-    };
-    let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(data_dir)
-        .map_err(anyhow::Error::msg)?;
-    let params = digest_params_with_neutral(params, &film, &print, &neutral, digest_mode);
 
-    let t = Instant::now();
-    let (image, metadata) = invocation.phase(
-        "input_load",
-        IssueCategory::Input,
-        IssueBoundary::InputLoad,
-        &context,
-        |_| {
-            let (image, metadata) = if input_is_raw {
-                let options = spektrafilm_raw::RawOptions {
-                    white_balance: match workflow.raw_white_balance.as_str() {
-                        "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                        "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                        "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                        _ => spektrafilm_raw::WhiteBalance::AsShot,
-                    },
-                    temperature: workflow.raw_temperature,
-                    tint: workflow.raw_tint,
-                    lens_correction: workflow.lens_correction,
-                };
-                (
-                    spektrafilm_raw::load(input, &options)
-                        .map_err(anyhow::Error::msg)?
-                        .image,
-                    image_io::read_metadata(input),
-                )
-            } else {
-                let loaded = image_io::load(input)
-                    .with_context(|| format!("loading image: {}", input.display()))?;
-                (loaded.image, loaded.metadata)
-            };
-            Ok((image, metadata))
-        },
-    )?;
-    invocation
-        .operation
-        .set_input_dimensions(image.width as u32, image.height as u32);
-    // Preview mode: bound the long edge before processing (upstream
-    // `simulate_preview` + `resize_for_preview`).
-    let image = invocation.phase(
-        "input_prepare",
-        IssueCategory::Input,
-        IssueBoundary::InputPrepare,
-        &context,
-        |_| {
-            let image = if params.settings.preview_mode {
-                let resized = resize_for_preview(&image, params.settings.preview_max_size);
-                eprintln!(
-                    "Preview: {}x{} → {}x{} (max edge {})",
-                    image.width,
-                    image.height,
-                    resized.width,
-                    resized.height,
-                    params.settings.preview_max_size
-                );
-                resized
-            } else {
-                image
-            };
-            Ok(image)
-        },
-    )?;
-    eprintln!(
-        "Image loaded: {}x{} ({} MP), {} ms",
-        image.width,
-        image.height,
-        (image.pixel_count() as f64 / 1e6 * 10.0).round() / 10.0,
-        t.elapsed().as_millis()
-    );
-
-    // Run the calibrated runtime — a missing spectral LUT is a hard error.
-    let t = Instant::now();
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let runtime = invocation.phase(
-        "runtime_prepare",
-        IssueCategory::Configuration,
-        IssueBoundary::RuntimePrepare,
-        &context,
-        |prepare_context| {
-            Runtime::new_observed(film, print, params, data_dir, prepare_context).map_err(|e| {
-        anyhow::anyhow!(
-            "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
-             removed; check that the profiles/data directory contains the spectral LUTs \
-             (looked under {})",
-            data_dir.display()
-        )
-    })
-        },
-    )?;
-    if context.enabled() {
-        invocation
-            .operation
-            .set_render_configuration(runtime.telemetry_configuration());
-    }
-    let output_attempt = std::cell::Cell::new(0);
-    let run_once = |image: ImageBuf, index: u64| -> Result<ImageBuf> {
-        let attempt = invocation.operation.attempt(index);
-        let attempt_id = attempt.context().id();
-        let result = invocation.phase(
-            "simulation",
-            IssueCategory::Simulation,
-            IssueBoundary::Simulation,
-            attempt.context(),
-            |simulation_context| {
-                let out = if inject.is_none() && collect.is_none() {
-                    runtime
-                        .process_observed(image, backend.as_ref(), simulation_context)
-                        .map_err(anyhow::Error::msg)?
-                } else {
-                    runtime
-                        .process_with_taps_observed(
-                            image,
-                            backend.as_ref(),
-                            inject,
-                            collect,
-                            simulation_context,
-                        )
-                        .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
-                };
-                Ok(out)
-            },
-        );
-        attempt.finish(if result.is_ok() {
-            spektrafilm_gpu::telemetry::Outcome::Succeeded
+    let saving_space = workflow.saving_color_space.clone().unwrap_or_else(|| {
+        if output_format == OutputFormat::Exr {
+            "ACES2065-1".into()
         } else {
-            spektrafilm_gpu::telemetry::Outcome::Failed
-        });
-        if result.is_ok() {
-            output_attempt.set(attempt_id);
+            output_color_space.clone()
         }
-        result
-    };
-    let result = if iters > 1 {
-        // Warm-cache bench: process the image `iters` times in the same backend
-        // instance. The first iteration pays shader-compile cost; subsequent ones
-        // hit the cache and reflect "GUI live preview" performance.
-        let mut last = run_once(image.clone(), 1)?;
-        let iter1_ms = t.elapsed().as_millis();
-        eprintln!("Pipeline (iter 1): {} ms (cold)", iter1_ms);
-        for i in 2..=iters {
-            let ti = Instant::now();
-            last = run_once(image.clone(), i as u64)?;
-            eprintln!(
-                "Pipeline (iter {}): {} ms (warm)",
-                i,
-                ti.elapsed().as_millis()
-            );
-        }
-        last
-    } else {
-        let r = run_once(image, 1)?;
-        eprintln!("Pipeline: {} ms", t.elapsed().as_millis());
-        r
-    };
-
-    // Save output
-    let t = Instant::now();
-    invocation.boundary(IssueCategory::Configuration, IssueBoundary::SavingConvert);
-    let saving_space =
-        workflow
-            .saving_color_space
-            .as_deref()
-            .unwrap_or(if output_format == OutputFormat::Exr {
-                "ACES2065-1"
-            } else {
-                &output_color_space
-            });
+    });
+    let saving_space_resolved = spektrafilm_math::colorspace::resolve(&saving_space)
+        .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
+    let output_space_resolved = spektrafilm_math::colorspace::resolve(&output_color_space)
+        .map_err(|e| {
+            anyhow::anyhow!("unsupported output color space {output_color_space:?}: {e}")
+        })?;
+    let _conversion_matrix = spektrafilm_math::colorspace::conversion_matrix(
+        output_space_resolved,
+        saving_space_resolved,
+    );
     let saving_encoded = workflow
         .saving_cctf_encoding
         .unwrap_or(output_format != OutputFormat::Exr && output_cctf_encoding);
@@ -731,59 +524,160 @@ fn cmd_process(
     if output_format == OutputFormat::Exr && saving_encoded {
         bail!("EXR output requires linear saving output");
     }
-    invocation.operation.set_saved_attempt(output_attempt.get());
-    let options = SaveOptions {
-        depth,
-        color_space: saving_space,
-        cctf_encoding: saving_encoded,
-        jpeg_quality,
-        jpeg_subsampling,
-        compression,
-    };
-    invocation.operation.set_saving_configuration(
-        spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
-            output_format.image_format(),
-            &options,
+    if output_format == OutputFormat::Exr {
+        if !matches!(saving_space.as_str(), "sRGB" | "ACES2065-1") {
+            bail!("EXR color space must be sRGB or ACES2065-1");
+        }
+        if matches!(compression, Some(Compression::None)) {
+            bail!("EXR compression is always zip");
+        }
+    }
+    if dry_run {
+        let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "film_profile": resolved.film_name,
+                "print_profile": resolved.print_name,
+                "parameters": params,
+                "output": {
+                    "path": output,
+                    "format": output_format.name(),
+                    "bit_depth": depth.bits(),
+                    "color_space": saving_space,
+                    "cctf_encoding": saving_encoded,
+                    "compression": compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
+                    "jpeg_quality": jpeg_quality,
+                    "jpeg_subsampling": jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
+                },
+                "backend": {
+                    "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
+                    "policy": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }).unwrap_or("auto"),
+                    "environment": backend_env
+                }
+            }))?
+        );
+        return Ok(());
+    }
+    let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
+        Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+        Some(Backend::Gpu) => Box::new(
+            spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+                .ok_or_else(|| anyhow::anyhow!("GPU backend unavailable; use --backend cpu"))?,
         ),
+        None => spektrafilm_gpu::select_backend(),
+    };
+    eprintln!("Backend: {}", backend.name());
+
+    let t = Instant::now();
+    let (image, metadata) = if input_is_raw {
+        let options = raw_options(workflow);
+        (
+            spektrafilm_raw::load(input, &options)
+                .map_err(anyhow::Error::msg)?
+                .image,
+            image_io::read_metadata(input),
+        )
+    } else {
+        let loaded =
+            image_io::load(input).with_context(|| format!("loading image: {}", input.display()))?;
+        (loaded.image, loaded.metadata)
+    };
+    // Preview mode: bound the long edge before processing (upstream
+    // `simulate_preview` + `resize_for_preview`).
+    let image = if params.settings.preview_mode {
+        let resized = resize_for_preview(&image, params.settings.preview_max_size);
+        eprintln!(
+            "Preview: {}x{} → {}x{} (max edge {})",
+            image.width,
+            image.height,
+            resized.width,
+            resized.height,
+            params.settings.preview_max_size
+        );
+        resized
+    } else {
+        image
+    };
+    eprintln!(
+        "Image loaded: {}x{} ({} MP), {} ms",
+        image.width,
+        image.height,
+        (image.pixel_count() as f64 / 1e6 * 10.0).round() / 10.0,
+        t.elapsed().as_millis()
     );
-    let saving_image = invocation.phase(
-        "saving_convert",
-        IssueCategory::Writing,
-        IssueBoundary::SavingConvert,
-        &context,
-        |_| {
-            image_io::convert_image(
-                &result,
-                &output_color_space,
-                output_cctf_encoding,
-                saving_space,
-                saving_encoded,
-            )
-            .map_err(anyhow::Error::from)
-        },
+
+    // Run the calibrated runtime — a missing spectral LUT is a hard error.
+    let t = Instant::now();
+    let runtime = Runtime::new(film, print, params, data_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
+             removed; check that the profiles/data directory contains the spectral LUTs \
+             (looked under {})",
+            data_dir.display()
+        )
+    })?;
+    let run_once = |image: ImageBuf| -> Result<ImageBuf> {
+        let out = if inject.is_none() && collect.is_none() {
+            runtime
+                .process(image, backend.as_ref())
+                .map_err(anyhow::Error::msg)?
+        } else {
+            runtime
+                .process_with_taps(image, backend.as_ref(), inject, collect)
+                .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
+        };
+        Ok(out)
+    };
+    let result = if iters > 1 {
+        // Warm-cache bench: process the image `iters` times in the same backend
+        // instance. The first iteration pays shader-compile cost; subsequent ones
+        // hit the cache and reflect "GUI live preview" performance.
+        let mut last = run_once(image.clone())?;
+        let iter1_ms = t.elapsed().as_millis();
+        eprintln!("Pipeline (iter 1): {} ms (cold)", iter1_ms);
+        for i in 2..=iters {
+            let ti = Instant::now();
+            last = run_once(image.clone())?;
+            eprintln!(
+                "Pipeline (iter {}): {} ms (warm)",
+                i,
+                ti.elapsed().as_millis()
+            );
+        }
+        last
+    } else {
+        let r = run_once(image)?;
+        eprintln!("Pipeline: {} ms", t.elapsed().as_millis());
+        r
+    };
+
+    // Save output
+    let t = Instant::now();
+    let saving_image = image_io::convert_image(
+        &result,
+        &output_color_space,
+        output_cctf_encoding,
+        &saving_space,
+        saving_encoded,
     )?;
-    let report = invocation.phase(
-        "file_write",
-        IssueCategory::Writing,
-        IssueBoundary::FileWrite,
-        &context,
-        |write_context| {
-            image_io::save_observed(
-                output,
-                &saving_image,
-                options,
-                metadata.as_ref(),
-                write_context,
-            )
-            .with_context(|| format!("saving image: {}", output.display()))
+    let report = image_io::save(
+        output,
+        &saving_image,
+        SaveOptions {
+            depth,
+            color_space: &saving_space,
+            cctf_encoding: saving_encoded,
+            jpeg_quality,
+            jpeg_subsampling,
+            compression,
         },
-    )?;
+        metadata.as_ref(),
+    )
+    .with_context(|| format!("saving image: {}", output.display()))?;
     if let Some(warning) = report.metadata_warning {
         eprintln!("Warning: {warning}");
     }
-    invocation
-        .operation
-        .set_published_dimensions(result.width as u32, result.height as u32);
     eprintln!(
         "Saved: {} ({}x{}), {} ms",
         output.display(),
@@ -794,22 +688,13 @@ fn cmd_process(
 
     // Optional raw f64 dump for bit-exact parity comparison.
     if let Some(p) = raw_out {
-        invocation.phase(
-            "file_write",
-            IssueCategory::Writing,
-            IssueBoundary::FileWrite,
-            &context,
-            |_| {
-                use std::io::Write;
-                let buf: Vec<f64> = result.data.iter().map(|&v| v as f64).collect();
-                let bytes = bytemuck_cast_f64_to_bytes(&buf);
-                let mut f = std::fs::File::create(p)
-                    .with_context(|| format!("creating raw_out file: {}", p.display()))?;
-                f.write_all(bytes)?;
-                eprintln!("raw f64 buffer: {} ({} values)", p.display(), buf.len());
-                Ok(())
-            },
-        )?;
+        use std::io::Write;
+        let buf: Vec<f64> = result.data.iter().map(|&v| v as f64).collect();
+        let bytes = bytemuck_cast_f64_to_bytes(&buf);
+        let mut f = std::fs::File::create(p)
+            .with_context(|| format!("creating raw_out file: {}", p.display()))?;
+        f.write_all(bytes)?;
+        eprintln!("raw f64 buffer: {} ({} values)", p.display(), buf.len());
     }
 
     if show_timings {
@@ -1264,6 +1149,24 @@ pub(crate) fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
         .into_iter()
         .find(|path| path.is_dir())
         .unwrap_or(explicit)
+}
+
+fn raw_options(workflow: &WorkflowOptions) -> spektrafilm_raw::RawOptions {
+    spektrafilm_raw::RawOptions {
+        white_balance: match workflow.raw_white_balance.as_str() {
+            "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
+            "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
+            "custom" => spektrafilm_raw::WhiteBalance::Custom,
+            _ => spektrafilm_raw::WhiteBalance::AsShot,
+        },
+        temperature: workflow.raw_temperature,
+        tint: workflow.raw_tint,
+        lens_correction: workflow.lens_correction,
+    }
+}
+
+fn validate_raw_options(options: &spektrafilm_raw::RawOptions) -> Result<()> {
+    options.validate().map_err(anyhow::Error::from)
 }
 
 fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {
