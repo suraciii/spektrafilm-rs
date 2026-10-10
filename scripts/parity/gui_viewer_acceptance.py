@@ -135,9 +135,10 @@ def _select_profile(driver, label, option):
 
 
 def _hover_float(driver, pixels, records):
+    before_view = driver.viewer_fingerprint()
     driver.click("Input", False)
     driver.click("100%", False)
-    bounds = driver.measure_viewer("viewer-float-inspection")
+    bounds = driver.measure_viewer("viewer-float-inspection", before_view)
     x = bounds[0] + pixels.shape[1] // 2
     y = bounds[1] + pixels.shape[0] // 2
     driver.xd("mousemove", "--window", driver.window, x, y)
