@@ -20,6 +20,7 @@ pub(super) fn cmd_render(
     data_dir: &Path,
     diagnostics: Option<&Path>,
     gpu_timings: bool,
+    matches: &clap::ArgMatches,
 ) -> Result<()> {
     let facts = telemetry::run(
         OperationKind::Render,
@@ -36,8 +37,9 @@ pub(super) fn cmd_render(
                 bail!("input is not a regular file: {}", input.display());
             }
             invocation.boundary(IssueCategory::Configuration, IssueBoundary::Operation);
+            let data = crate::select_data_dir(data_dir.to_owned(), matches)?;
             let recipe = contract::read_recipe(recipe_path)?;
-            let facts = render_recipe(input, &recipe, output, data_dir, invocation)?;
+            let facts = render_recipe(input, &recipe, output, &data.path, invocation)?;
             invocation.phase(
                 "result_prepare",
                 IssueCategory::Publication,

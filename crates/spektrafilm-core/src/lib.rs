@@ -27,4 +27,5 @@ pub mod resizing;
 pub mod runtime;
 pub mod spectral_service;
 pub mod stages;
+mod suggest;
 pub mod telemetry;

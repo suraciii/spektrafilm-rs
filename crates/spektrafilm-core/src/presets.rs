@@ -5,6 +5,7 @@ use crate::params::{
 };
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
+use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -206,10 +207,29 @@ pub fn load_selector(selector: &str, _data_dir: &Path) -> Result<LookPreset, Str
             "invalid preset ID {selector:?}: path separators require a .toml or .json file"
         ));
     }
-    builtin_look_presets()
-        .into_iter()
-        .find(|preset| preset.id == selector)
-        .ok_or_else(|| format!("unknown built-in preset ID {selector:?}"))
+    let mut presets = builtin_look_presets();
+    if let Some(index) = presets.iter().position(|preset| preset.id == selector) {
+        return Ok(presets.remove(index));
+    }
+    Err(format!(
+        "unknown built-in preset ID {selector:?}; {}",
+        error_suffix(
+            &closest(
+                selector,
+                presets.into_iter().map(|preset| preset.id),
+                MAX_SUGGESTIONS
+            ),
+            "use spektrafilm preset list to list built-in IDs"
+        )
+    ))
+}
+
+pub fn suggest_preset_ids(input: &str) -> Vec<String> {
+    closest(
+        input,
+        builtin_look_presets().into_iter().map(|preset| preset.id),
+        MAX_SUGGESTIONS,
+    )
 }
 fn validate_document(preset: &LookPreset) -> Result<(), String> {
     if preset.schema_version != LOOK_SCHEMA_VERSION {
@@ -463,6 +483,22 @@ pub fn builtin_look_presets() -> Vec<LookPreset> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_preset_ids_suggest_builtin_ids_or_discovery() {
+        assert_eq!(
+            suggest_preset_ids("classic-kodak-gold-20"),
+            ["classic-kodak-gold-200"]
+        );
+        let error = load_selector("classic-kodak-gold-20", Path::new("data")).unwrap_err();
+        assert!(error.contains("did you mean classic-kodak-gold-200?"));
+        assert!(suggest_preset_ids("unrelated").is_empty());
+        assert!(
+            load_selector("unrelated", Path::new("data"))
+                .unwrap_err()
+                .contains("spektrafilm preset list")
+        );
+    }
 
     #[test]
     fn toml_roundtrip_preserves_optional_and_precise_controls() {

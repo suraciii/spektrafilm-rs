@@ -1,41 +1,58 @@
-use anyhow::{Result, bail};
-use clap::{Args, Subcommand};
+use anyhow::Result;
+use clap::{ArgMatches, Args, Subcommand, ValueEnum};
 use serde_json::json;
 use spektrafilm_core::presets::{builtin_look_presets, load_selector};
 use std::path::PathBuf;
 
-use crate::resolve_data_dir;
-
 #[derive(Subcommand)]
 pub enum PresetCommand {
+    /// List built-in presets only; does not search user libraries.
     List(PresetList),
+    /// Validate and export a built-in preset or .toml/.json preset file.
     Show(PresetShow),
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ListFormat {
+    Json,
+    Text,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ShowFormat {
+    Toml,
+    Json,
 }
 
 #[derive(Args)]
 pub struct PresetList {
-    #[arg(long, default_value = "json")]
-    pub format: String,
-    #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+    /// Listing output format.
+    #[arg(long, default_value = "json", value_enum)]
+    pub format: ListFormat,
+    /// Validate an explicit data directory; otherwise built-ins need no data.
+    #[arg(long, default_value = "data")]
     pub data_dir: PathBuf,
 }
 
 #[derive(Args)]
 pub struct PresetShow {
+    /// Built-in ID (preset list) or .toml/.json preset file path.
     pub selector: String,
-    #[arg(long, default_value = "toml")]
-    pub format: String,
-    #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+    /// Complete preset output format.
+    #[arg(long, default_value = "toml", value_enum)]
+    pub format: ShowFormat,
+    /// Data directory for profile validation; otherwise environment or discovery.
+    #[arg(long, default_value = "data")]
     pub data_dir: PathBuf,
 }
 
-pub fn run(command: PresetCommand) -> Result<()> {
+pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
+    let (_, matches) = matches.subcommand().expect("required preset subcommand");
     match command {
         PresetCommand::List(args) => {
-            if args.format != "json" {
-                bail!("unsupported preset list format {}; use json", args.format);
+            if crate::explicit_data_selection(matches) {
+                crate::select_data_dir(args.data_dir, matches)?;
             }
-            let _data_dir = resolve_data_dir(args.data_dir);
             let entries = builtin_look_presets()
                 .into_iter()
                 .map(|p| {
@@ -43,23 +60,28 @@ pub fn run(command: PresetCommand) -> Result<()> {
                     "film_profile": p.film_profile, "print_profile": p.print_profile})
                 })
                 .collect::<Vec<_>>();
-            println!("{}", serde_json::to_string_pretty(&entries)?);
+            match args.format {
+                ListFormat::Json => println!("{}", serde_json::to_string_pretty(&entries)?),
+                ListFormat::Text => {
+                    for entry in &entries {
+                        crate::print_metadata_record(entry);
+                    }
+                }
+            }
         }
         PresetCommand::Show(args) => {
-            let data_dir = resolve_data_dir(args.data_dir);
-            let preset =
-                load_selector(&args.selector, &data_dir).map_err(|e| anyhow::anyhow!(e))?;
+            let data = crate::select_data_dir(args.data_dir, matches)?;
+            let preset = load_selector(&args.selector, &data.path).map_err(anyhow::Error::msg)?;
             // Resolve validates profile references and complete controls before export.
             preset
                 .resolve(
-                    &data_dir,
+                    &data.path,
                     &spektrafilm_core::params::RuntimeParams::default(),
                 )
-                .map_err(|e| anyhow::anyhow!(e))?;
-            match args.format.as_str() {
-                "toml" => println!("{}", preset.to_toml().map_err(|e| anyhow::anyhow!(e))?),
-                "json" => println!("{}", preset.to_json().map_err(|e| anyhow::anyhow!(e))?),
-                other => bail!("unsupported preset show format {other}; use toml or json"),
+                .map_err(anyhow::Error::msg)?;
+            match args.format {
+                ShowFormat::Toml => println!("{}", preset.to_toml().map_err(anyhow::Error::msg)?),
+                ShowFormat::Json => println!("{}", preset.to_json().map_err(anyhow::Error::msg)?),
             }
         }
     }

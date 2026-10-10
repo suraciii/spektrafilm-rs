@@ -13,5 +13,6 @@ Capabilities:
 - [GUI workflow](gui-workflow/spec.md) — interactive control and state behavior.
 - [Look presets](presets/spec.md) — portable film and print looks and GUI state compatibility.
 - [CLI parameters](cli-parameters/spec.md) — preset selection, sparse parameter overrides, and parameter discovery.
+- [CLI workflow](cli-workflow/spec.md) — help, version identity, data selection, command status, and human feedback.
 
 Each capability owns its contract. Cross-capability rules are stated once in the owning document and linked elsewhere.

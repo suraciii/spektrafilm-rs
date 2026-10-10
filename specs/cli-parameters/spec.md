@@ -6,7 +6,7 @@ The `process` command must support [look presets](../presets/spec.md), sparse pa
 
 A **parameter override** is a sparse set of explicit edits to runtime controls for one invocation. It may contain look-owned and non-look controls. It must not change profile references or rewrite its source preset. A parameter override is not a complete preset, GUI state, or render recipe.
 
-This document owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md). Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications.
+This document owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md). Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications. Help, data-directory selection, command status, and human feedback belong to the [CLI workflow specification](../cli-workflow/spec.md).
 
 ## Process syntax
 
@@ -36,7 +36,7 @@ With a preset, both profile references must come from the preset. `--scan-film` 
 
 ## `--set` sources
 
-Each `--set SOURCE` occurrence must be exactly one source. A source ending in `.toml` or `.json` is a sparse parameter-file path. Any other source must be a comma-separated list of one or more `PATH=JSON_VALUE` assignments. A source must not mix a file path and assignments. `--set` may be repeated; sources apply in appearance order. A file path must be relative to the working directory or absolute. An assignment source must be passed as one shell argument.
+Each `--set SOURCE` occurrence must be exactly one source. A source beginning with a canonical `PATH=` must be an inline assignment source, even when its value ends in `.toml` or `.json`. Otherwise, a source ending in `.toml` or `.json` must be a sparse parameter-file path. An inline source must contain one or more comma-separated `PATH=VALUE` assignments. A source must not mix a file path and assignments. `--set` may be repeated; sources apply in appearance order. A file path must be relative to the working directory or absolute. An assignment source must be passed as one shell argument.
 
 For a file source, the extension must select the parser. Parse failure must not cause a fallback to another parser. Files must not support includes or environment interpolation. A missing or invalid `.toml`/`.json` source must fail as a file error; it must not fall back to a built-in preset ID or assignment parsing.
 
@@ -71,16 +71,18 @@ The following JSON document clears one optional parameter:
 
 ### Inline assignments
 
-An assignment must contain a canonical runtime path, the first `=`, and one JSON value. A path must consist of dot-separated field identifiers. Each identifier must match `[a-z][a-z0-9_]*`. Paths must be case-sensitive. The right-hand side must be a complete JSON literal. Additional `=` characters inside a JSON string must remain part of that value. Empty paths, empty values, and trailing tokens must fail.
+An assignment must contain a canonical runtime path, the first `=`, and a value interpreted by the target field type. A path must consist of dot-separated field identifiers. Each identifier must match `[a-z][a-z0-9_]*`. Paths must be case-sensitive. Additional `=` characters must remain part of the value. Empty paths and empty values must fail.
 
-Assignments in one source are separated by commas at the top level. Commas inside a JSON string or an array must remain part of that value. Whitespace around the separator and assignment is ignored. Empty items must fail. Object values, group replacement, array indexing, aliases, arithmetic, units, and implicit string quoting are not supported.
+Assignments in one source are separated by commas at the top level. Commas inside a double-quoted string or an array must remain part of that value. Whitespace around the separator and assignment is ignored. Empty items must fail. Object values, group replacement, array indexing, aliases, arithmetic, and units are not supported.
 
-An assignment must address an editable leaf. Booleans, numbers, strings, arrays, and nullable leaves must use their parameter type. Numeric values must be finite and representable by that type. JSON integers may supply floating-point fields. Fractional numbers must not supply integer fields. Strings must not be coerced into numbers or booleans.
+String and enum fields must accept plain text without JSON quotes. Shell quotes around an argument must be sufficient for spaces, such as `--set 'io.output_color_space=ProPhoto RGB'`. A value beginning with a double quote must remain a complete JSON string; malformed quoted strings must fail. JSON strings must remain available for literal commas, escapes, and empty strings. Bare text such as `true`, `123`, or `null` must remain text for non-optional string fields. For an optional field, unquoted `null` must clear the value.
+
+Boolean fields must accept `true` or `false`. Numeric fields must accept finite numbers representable by the declared type. Floating-point fields must also accept ordinary decimal forms such as `+0.5` and `.5`. Array fields must use JSON arrays, such as `[4.5,4.5,4.5]`. Integers may supply floating-point fields. Fractional numbers must not supply integer fields. Quoted strings must not be coerced into numbers or booleans. Type errors must identify the field and expected value form. Enum errors must identify the permitted values.
 
 The following source is valid:
 
 ```text
-camera.exposure_compensation_ev=0.5,io.input_cctf_decoding=true,film_render.grain.rms_granularity=[4.5,4.5,4.5]
+film_render.grain.engine=v2,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=25,camera.auto_exposure=false
 ```
 
 For a POSIX shell, quote a source containing brackets, spaces, or shell-significant characters:
@@ -88,10 +90,12 @@ For a POSIX shell, quote a source containing brackets, spaces, or shell-signific
 ```bash
 spektrafilm process input.png --output output.tif \
   --preset classic-kodak-portra-400 \
+  --set film_render.grain.engine=v2 \
+  --set 'io.output_color_space=ProPhoto RGB' \
   --set 'camera.exposure_compensation_ev=0.5,io.input_cctf_decoding=true'
 ```
 
-The assignment parser must split only at top-level commas, then parse each right-hand side as one JSON literal. It must not split commas in arrays or strings.
+The assignment parser must split only at top-level commas, then interpret each value using the shared field description. It must not split commas in double-quoted strings or arrays. The sparse-file carrier rules must remain unchanged.
 
 `--set` sources must be syntactically valid even if a later source replaces one of their leaves. The existing `--preset`, `--film`, `--paper`, `--params`, and `--route` selectors must each occur at most once.
 
@@ -149,11 +153,17 @@ A failed configuration must return a nonzero status before rendering or writing 
 
 ## Discovery and dry run
 
-`describe --format json` without new options must retain its existing machine contract. `describe --module PATH --format json` must report editable leaf paths under one runtime group prefix, including nested groups. Each field must report its type, nullability, static default, unit when applicable, available enum values or numeric bounds, and conditions under which it affects output. The result must distinguish static defaults from values derived from stock profiles. Unknown prefixes must fail.
+`describe --format json` without a field or module selector must retain its existing machine contract. `describe --module PATH --format json` must report editable leaf paths under one runtime group prefix, including nested groups. Each field must report its type, nullability, static default, unit when applicable, available enum values or numeric bounds, and conditions under which it affects output. The result must distinguish static defaults from values derived from stock profiles. Unknown prefixes must fail.
 
-`preset list --format json` must list built-in IDs, names, and film and print references. `preset show SELECTOR --format toml|json` must write a complete preset to stdout. `--format` must default to TOML for `preset show` and JSON for `preset list`. Both commands must accept the existing `--data-dir` default and `SPEKTRAFILM_DATA_DIR` behavior. `preset show` must validate the selected document and profile references using that data directory. These commands must not inspect a GUI state or render an image. Export must preserve the selected preset ID and must not modify its source file.
+`describe --field PATH --format json` must report one editable leaf as a metadata object with the same field keys used in module discovery. `--field` and `--module` must conflict. A group supplied to `--field` must fail with guidance to use `--module`. A leaf supplied to `--module` must fail with guidance to use `--field`. These selectors must use canonical paths without aliases or prefix expansion.
+
+`describe --format text` without a selector must list the discoverable top-level parameter groups. With `--module`, it must show one record per editable leaf, sorted by canonical path. With `--field`, it must show the selected leaf. A record must show path, type, nullability, default and its source, unit when applicable, enum values or bounds, distinct array-component domains, and effect conditions. Missing units, bounds, and finite enum inventories must not be presented as invented values. `describe` must retain JSON as its default format.
+
+`preset list --format json` must list built-in IDs, names, and film and print references. `preset list --format text` must show those same facts in one readable record per built-in preset. It must not search user libraries. `preset show SELECTOR --format toml|json` must write a complete preset to stdout. `--format` must default to TOML for `preset show` and JSON for `preset list`. Both commands must follow the [CLI data-directory selection policy](../cli-workflow/spec.md#data-directory-selection). `preset show` must validate the selected document and profile references using that data directory. These commands must not inspect a GUI state or render an image. Export must preserve the selected preset ID and must not modify its source file.
 
 `process --dry-run` must accept the same configuration and required input/output paths as a normal process invocation. It must resolve parameters, workflow, and writer options using the same decisions as normal processing. It must check input existence, readability, and supported file kind without decoding input pixels. It must not initialize a compute device, render, or create or truncate any output, including `--raw-out`. It must print one JSON object to stdout with `film_profile`, `print_profile`, `parameters`, `output`, and `backend`. `parameters` must contain the effective runtime controls after constraints. `output` must contain `path`, `format`, `bit_depth`, `color_space`, `cctf_encoding`, `compression`, `jpeg_quality`, and `jpeg_subsampling`; inapplicable options must be `null`. `backend` must report the requested `cpu` or `gpu` policy, or `auto` when normal selection remains deferred. It must not claim compute-adapter availability. Diagnostics must go to stderr. The result must be a resolution report rather than an implicit RenderRecipe or GUI state. It must not claim pixel-dependent values such as metered auto-exposure or successful image decoding. A configuration valid in dry run may still fail on input decoding, resource availability, or rendering.
+
+The dry-run report must also contain `data` and `input` objects. `data` must contain the absolute `path` selected for the invocation and its `source`, which must be `argument`, `environment`, or `automatic`. `input` must contain `kind` as `raw` or `raster` and `raw_loading`. For RAW input, `raw_loading` must contain the selected `white_balance`, `temperature`, `tint`, and `lens_correction`. White-balance values must use the dedicated flag's vocabulary. Absent custom temperature and tint must remain `null`. For raster input, `raw_loading` must be `null` because these controls do not apply. The report must retain all existing keys and meanings. It must not include loading controls in the runtime `parameters` object.
 
 The following command must inspect a composed configuration:
 
@@ -163,6 +173,18 @@ spektrafilm process input.png --output output.tif \
   --set adjustments.toml \
   --dry-run
 ```
+
+## Usability acceptance
+
+Both executables must discover a group and an individual field without loading profiles, decoding images, or creating a device. Text and JSON views must report the same field facts. Single-field JSON must preserve optional values, array-component domains, enum choices, and effect conditions. Invalid field/group selectors and their conflict must fail before image work. Existing selector-free JSON and module JSON output must preserve their shape and meaning.
+
+Text preset listing must contain the same IDs, names, and profile references as JSON listing. File selectors and preset export validation must retain their existing behavior.
+
+Dry run for custom RAW white balance with temperature `6500` and tint `-5` must expose those loading choices. It must differ from an as-shot report. Raster input must expose inactive RAW loading as `null`. Both must expose the selected data directory and source. None of these scenarios may decode input pixels, initialize a compute device, or write image or raw output. Existing runtime and writer fields must retain their meanings.
+
+## Implementation gap
+
+Discovery currently supports module JSON only, with no single-field selector or text format. Preset listing currently supports JSON only. Dry run omits data-selection source and RAW loading choices. The added syntax and report keys in this document are target behavior awaiting implementation.
 
 ## Compatibility
 
