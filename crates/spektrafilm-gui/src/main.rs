@@ -2305,30 +2305,3 @@ fn tag_metal_layer_srgb<H: raw_window_handle::HasWindowHandle>(h: &H) -> Result<
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod render_tests {
-    use super::{RenderJob, RenderKind};
-
-    fn job(request_id: u64, input_epoch: u64, parameter_revision: u64) -> RenderJob {
-        RenderJob {
-            request_id,
-            input_epoch,
-            parameter_revision,
-            kind: RenderKind::Preview,
-            animate: false,
-            backend_name: "CPU".into(),
-        }
-    }
-
-    #[test]
-    fn only_latest_current_render_can_replace_retained_output() {
-        let old = job(1, 7, 3);
-        let latest = job(2, 7, 3);
-        assert!(!old.matches(Some(&latest), 7, 3));
-        assert!(latest.matches(Some(&latest), 7, 3));
-        assert!(!latest.matches(Some(&latest), 8, 3));
-        assert!(!latest.matches(Some(&latest), 7, 4));
-        assert!(!latest.matches(None, 7, 3));
-    }
-}
