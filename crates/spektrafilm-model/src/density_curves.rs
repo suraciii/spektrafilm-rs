@@ -156,8 +156,8 @@ pub fn evaluate_density_curves_layers(
     validate_alphas(model_type, centers, alphas)?;
     let mut out = vec![vec![vec![0.0; centers.len()]; n_layers]; log_exposure.len()];
     for ch in 0..centers.len() {
-        if amplitudes.get(ch).map_or(true, |r| r.len() != n_layers)
-            || sigmas.get(ch).map_or(true, |r| r.len() != n_layers)
+        if amplitudes.get(ch).is_none_or(|r| r.len() != n_layers)
+            || sigmas.get(ch).is_none_or(|r| r.len() != n_layers)
         {
             return Err(format!(
                 "density-curve model channel {ch} has inconsistent layer counts"
@@ -192,22 +192,22 @@ fn validate_alphas(
     centers: &[Vec<f64>],
     alphas: Option<&[Vec<f64>]>,
 ) -> Result<(), String> {
-    if model_type == "sept_norm_cdfs" {
-        if let Some(alphas) = alphas {
-            if alphas.len() != centers.len()
-                || alphas.iter().zip(centers).any(|(a, c)| a.len() != c.len())
-            {
-                return Err(
-                    "septic density-curve alphas must match the channel and layer counts".into(),
-                );
-            }
-            if alphas
-                .iter()
-                .flatten()
-                .any(|a| !a.is_finite() || a.abs() >= 1.0)
-            {
-                return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
-            }
+    if model_type == "sept_norm_cdfs"
+        && let Some(alphas) = alphas
+    {
+        if alphas.len() != centers.len()
+            || alphas.iter().zip(centers).any(|(a, c)| a.len() != c.len())
+        {
+            return Err(
+                "septic density-curve alphas must match the channel and layer counts".into(),
+            );
+        }
+        if alphas
+            .iter()
+            .flatten()
+            .any(|a| !a.is_finite() || a.abs() >= 1.0)
+        {
+            return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
         }
     }
     Ok(())

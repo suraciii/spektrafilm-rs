@@ -194,6 +194,8 @@ fn lab_to_xyz(lab: [f64; 3]) -> [f64; 3] {
         }
     };
     let mut xyz = [inverse(fx), inverse(fy), inverse(fz)];
+    // The channel index aligns XYZ with the reference whitepoint.
+    #[allow(clippy::needless_range_loop)]
     for c in 0..3 {
         xyz[c] *= colorspace::D50_XYZ_F64[c];
     }

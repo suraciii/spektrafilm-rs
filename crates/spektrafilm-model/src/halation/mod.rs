@@ -135,8 +135,8 @@ pub fn apply_halation_um(
 
     // Pack channels back into a single interleaved ImageBuf.
     let mut out = ImageBuf::new(w, h);
-    for c in 0..3 {
-        out.write_channel(c, &channels[c]);
+    for (c, channel) in channels.iter().enumerate() {
+        out.write_channel(c, channel);
     }
     out
 }

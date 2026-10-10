@@ -185,12 +185,11 @@ fn parse_inline_value(path: &str, raw: &str) -> Result<Value, String> {
     if let Ok(value) = serde_json::from_str(raw) {
         return Ok(value);
     }
-    if matches!(base_ty, "f32" | "f64") {
-        if let Ok(number) = raw.parse::<f64>() {
-            if let Some(number) = serde_json::Number::from_f64(number) {
-                return Ok(Value::Number(number));
-            }
-        }
+    if matches!(base_ty, "f32" | "f64")
+        && let Ok(number) = raw.parse::<f64>()
+        && let Some(number) = serde_json::Number::from_f64(number)
+    {
+        return Ok(Value::Number(number));
     }
     let form = if string_value {
         "text or a double-quoted string"
@@ -854,10 +853,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(edits.paths().count(), 3);
-        let mut params = RuntimeParams::default();
-        params.random_seed = 7;
+        let mut params = RuntimeParams {
+            random_seed: 7,
+            neutral_print_filters_protected: [true, false, true],
+            ..Default::default()
+        };
         params.film_render.grain.particle_scale_layers = [9., 8., 7.];
-        params.neutral_print_filters_protected = [true, false, true];
         edits.apply(&mut params).unwrap();
         assert!(params.camera.auto_exposure);
         assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);

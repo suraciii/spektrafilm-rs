@@ -41,6 +41,8 @@ pub(crate) fn sanitize_spectral_inputs(
 ) -> (Vec<f32>, Vec<f32>) {
     let mut cd = Vec::with_capacity(n_wl * 3);
     let mut bd = Vec::with_capacity(n_wl);
+    // Wavelength indices align channel and base densities.
+    #[allow(clippy::needless_range_loop)]
     for wl in 0..n_wl {
         let [r, g, b] = channel_density[wl];
         let base = base_density.get(wl).copied().unwrap_or(f64::NAN);

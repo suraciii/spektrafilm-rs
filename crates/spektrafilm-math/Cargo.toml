@@ -19,3 +19,6 @@ serde_json.workspace = true
 libm.workspace = true
 rand_mt = "5"
 rustfft.workspace = true
+
+[lints]
+workspace = true

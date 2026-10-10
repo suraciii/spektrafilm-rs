@@ -124,10 +124,10 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<String>, ProfileError> {
     {
         let entry = entry.map_err(|e| ProfileError::Io(root.display().to_string(), e))?;
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "json") {
-            if let Some(stem) = path.file_stem().and_then(|name| name.to_str()) {
-                names.push(stem.to_owned());
-            }
+        if path.extension().is_some_and(|ext| ext == "json")
+            && let Some(stem) = path.file_stem().and_then(|name| name.to_str())
+        {
+            names.push(stem.to_owned());
         }
     }
     names.sort();

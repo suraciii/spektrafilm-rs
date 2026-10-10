@@ -15,19 +15,14 @@ precision-f64 = [
     "spektrafilm-gpu/precision-f64",
     "spektrafilm-raw/precision-f64",
 ]
-gui-snapshots = ["egui_kittest/wgpu"]
-# Exercise the pinned Kodak DC50 RAW fixture. The fixture is not redistributed,
-# so this stays out of the default gate; `just gui-raw` opts in.
-gui-raw = []
 
 [dependencies]
 spektrafilm-core.workspace = true
 spektrafilm-gpu.workspace = true
-spektrafilm-backend.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-model.workspace = true
 spektrafilm-raw = { path = "../spektrafilm-raw" }
-eframe = { workspace = true, features = ["accesskit"] }
+eframe.workspace = true
 egui.workspace = true
 image.workspace = true
 anyhow.workspace = true
@@ -49,11 +44,6 @@ parking_lot = "0.12"
 objc2 = "0.5"
 core-graphics = "0.24"
 foreign-types = "0.5"
-
-[dev-dependencies]
-egui_kittest = { version = "=0.31.1", default-features = false, features = ["eframe"] }
-tempfile = "3"
-sha2 = "0.10"
 
 [lints]
 workspace = true

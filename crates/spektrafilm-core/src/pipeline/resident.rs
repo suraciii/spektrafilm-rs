@@ -340,7 +340,7 @@ impl Pipeline {
                 diffusion_tail_px: (d.3 / d.1) as f32,
                 diffusion_tail_weight: d.4 as f32,
                 density_curves_0: &d.0.curves_0,
-                log_exposure: &film_log_exp,
+                log_exposure: film_log_exp,
                 gamma_factor: d.6,
             }
         });
@@ -351,14 +351,14 @@ impl Pipeline {
         // (`glare = None`; `film_render.glare` is never read upstream) —
         // only `print_render.glare` reaches the print scan.
         let glare = (!self.params.io.scan_film)
-            .then(|| &self.params.print_render.glare)
+            .then_some(&self.params.print_render.glare)
             .filter(|g| g.active && g.percent > 0.0)
             .map(|g| {
                 // LogNormal parameters shared with `compute_random_glare_amount`.
                 let (mu, sigma) =
                     spektrafilm_model::glare::lognormal_params(g.percent, g.roughness);
                 // glare_rgb_offset = (XYZ→RGB) · illuminant_xyz / 100.
-                let glare_rgb_offset = crate::chain_prep::glare_rgb_offset_f64(&scan_context);
+                let glare_rgb_offset = crate::chain_prep::glare_rgb_offset_f64(scan_context);
                 let offset_rgb = [
                     (glare_rgb_offset[0] / 100.0) as f32,
                     (glare_rgb_offset[1] / 100.0) as f32,
@@ -399,9 +399,9 @@ impl Pipeline {
         let hboost = &self.params.film_render.halation;
         let highlight_boost = if hboost.boost_ev != 0.0 {
             Some(spektrafilm_gpu::HighlightBoostGpuParams {
-                boost_ev: hboost.boost_ev as f32,
-                boost_range: hboost.boost_range as f32,
-                protect_ev: hboost.protect_ev as f32,
+                boost_ev: hboost.boost_ev,
+                boost_range: hboost.boost_range,
+                protect_ev: hboost.protect_ev,
             })
         } else {
             None
@@ -436,7 +436,7 @@ impl Pipeline {
             print_channel_density: &print_channel_density,
             print_base_density,
             preflash: self.preflash_raw,
-            viewing_illuminant: &viewing_illu,
+            viewing_illuminant: viewing_illu,
             scan_normalization: scan_norm,
             scan_xyz_to_rgb: &scan_xyz_to_rgb,
             scan_output_space: spektrafilm_math::colorspace::resolve(

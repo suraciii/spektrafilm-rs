@@ -60,6 +60,8 @@ fn solve3(mut a: [[f64; 3]; 3], mut b: [f64; 3]) -> [f64; 3] {
         }
         for row in (column + 1)..3 {
             let factor = a[row][column] / a[column][column];
+            // Elimination reads the pivot row while updating another row of a.
+            #[allow(clippy::needless_range_loop)]
             for k in column..3 {
                 a[row][k] -= factor * a[column][k];
             }
@@ -100,7 +102,7 @@ impl Converter {
             .iter()
             .map(|row| {
                 [
-                    row.get(0).copied().unwrap_or(0.0),
+                    row.first().copied().unwrap_or(0.0),
                     row.get(1).copied().unwrap_or(0.0),
                     row.get(2).copied().unwrap_or(0.0),
                 ]
@@ -137,6 +139,8 @@ impl Converter {
         let cat =
             colorspace::chromatic_adaptation_matrix_f64(scan_white, input_space.whitepoint_xyz());
         let mut xyz_to_rgb = [[0.0; 3]; 3];
+        // Matrix multiplication indexes both operands by row and column.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             for j in 0..3 {
                 for k in 0..3 {
@@ -145,6 +149,8 @@ impl Converter {
             }
         }
         let mut cmy_max = [1.0; 3];
+        // The channel index aligns output maxima with density-curve columns.
+        #[allow(clippy::needless_range_loop)]
         for channel in 0..3 {
             let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
             for row in &profile.data.density_curves {
@@ -196,6 +202,8 @@ impl Converter {
             }
             for k in 0..3 {
                 xyz[k] += light * self.cmfs[i][k];
+                // The channel index aligns derivative rows with dye channels.
+                #[allow(clippy::needless_range_loop)]
                 for channel in 0..3 {
                     dxyz[channel][k] -= LN10 * light * self.dye[i][channel] * self.cmfs[i][k];
                 }
@@ -203,8 +211,8 @@ impl Converter {
         }
         for k in 0..3 {
             xyz[k] /= self.normalization;
-            for channel in 0..3 {
-                dxyz[channel][k] /= self.normalization;
+            for channel in &mut dxyz {
+                channel[k] /= self.normalization;
             }
         }
         let mut rgb = [0.0; 3];
@@ -222,6 +230,8 @@ impl Converter {
 
     fn invert(&self, source: [f64; 3]) -> [f64; 3] {
         let mut target = [0.0; 3];
+        // The channel index aligns the target with calibration columns.
+        #[allow(clippy::needless_range_loop)]
         for j in 0..3 {
             target[j] = (source[0] * self.calibration[0][j]
                 + source[1] * self.calibration[1][j]
@@ -248,8 +258,8 @@ impl Converter {
                     jtr[col] += jac[row][col] * residual[row];
                 }
             }
-            for i in 0..3 {
-                jtj[i][i] += 1e-7;
+            for (i, row) in jtj.iter_mut().enumerate() {
+                row[i] += 1e-7;
             }
             let delta = solve3(jtj, jtr);
             for i in 0..3 {
@@ -331,6 +341,8 @@ fn fit<const N: usize>(
             }
             for i in k + 1..N {
                 let ratio = a[i][k] / a[k][k];
+                // Elimination reads the pivot row while updating another row of a.
+                #[allow(clippy::needless_range_loop)]
                 for j in k..N {
                     a[i][j] -= ratio * a[k][j];
                 }
@@ -555,7 +567,7 @@ pub fn neutralize_filters(
             p.enlarger.m_filter_shift as f64,
             p.enlarger.y_filter_shift as f64,
         ],
-        &residual,
+        residual,
     )?;
     if residual(&x)?.iter().any(|v| v.abs() > 0.01) {
         return Err("Print balance did not converge to neutral RGB".into());

@@ -66,6 +66,7 @@ fn layer_cdf(z: f64, positive: bool, gumbel_mix: f64, model_type: &str, alpha: f
 }
 
 /// Evaluate one channel's density at every `log_exposure` sample.
+#[allow(clippy::too_many_arguments)]
 fn evaluate_channel_density(
     log_exposure: &[f64],
     centers: &[f64],
@@ -329,13 +330,15 @@ pub fn morph_density_curves(
     morph_density_curves_impl(log_exposure, model, p, positive, None)
 }
 
+type MorphedDensityCurvesWithLayers = (Vec<[f64; 3]>, Vec<Vec<Vec<f64>>>);
+
 /// Evaluate film totals and grain sublayers from the same chemistry parameters.
 pub(crate) fn morph_density_curves_with_layers(
     log_exposure: &[f64],
     model: &DensityCurvesModel,
     p: &PrintCurvesMorphParams,
     positive: bool,
-) -> Result<(Vec<[f64; 3]>, Vec<Vec<Vec<f64>>>), String> {
+) -> Result<MorphedDensityCurvesWithLayers, String> {
     let mut layers = vec![vec![vec![0.0; 3]; model.n_layers()]; log_exposure.len()];
     let total = morph_density_curves_impl(log_exposure, model, p, positive, Some(&mut layers))?;
     Ok((total, layers))
@@ -357,21 +360,21 @@ fn morph_density_curves_impl(
             model.model_type
         ));
     }
-    if model.model_type == "sept_norm_cdfs" {
-        if let Some(alphas) = &model.alphas {
-            if alphas.len() != 3 || alphas.iter().any(|r| r.len() != model.n_layers()) {
-                return Err(format!(
-                    "density_curves_model.alphas must be 3×{}",
-                    model.n_layers()
-                ));
-            }
-            if alphas
-                .iter()
-                .flatten()
-                .any(|a| !a.is_finite() || a.abs() >= 1.0)
-            {
-                return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
-            }
+    if model.model_type == "sept_norm_cdfs"
+        && let Some(alphas) = &model.alphas
+    {
+        if alphas.len() != 3 || alphas.iter().any(|r| r.len() != model.n_layers()) {
+            return Err(format!(
+                "density_curves_model.alphas must be 3×{}",
+                model.n_layers()
+            ));
+        }
+        if alphas
+            .iter()
+            .flatten()
+            .any(|a| !a.is_finite() || a.abs() >= 1.0)
+        {
+            return Err("septic density-curve alpha must satisfy |alpha| < 1".into());
         }
     }
     if model.n_layers() == 0 {
@@ -566,13 +569,13 @@ mod parity_tests {
 
         // Direct evaluation of the unmorphed model.
         for (i, &x) in log_exposure.iter().enumerate() {
-            for c in 0..3 {
+            for (c, morphed_density) in morphed[i].iter().enumerate() {
                 let mut d = 0.0;
                 for l in 0..model.n_layers() {
                     let z = (x - model.centers[c][l]) / model.sigmas[c][l];
                     d += model.amplitudes[c][l] * norm_cdf(signed_z(z, positive));
                 }
-                assert!((morphed[i][c] - d).abs() < 1e-15, "row {i} ch {c}");
+                assert!((*morphed_density - d).abs() < 1e-15, "row {i} ch {c}");
             }
         }
     }

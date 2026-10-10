@@ -59,44 +59,15 @@ pub fn trilinear_3d(data: &[f32], size: usize, r: f32, g: f32, b: f32) -> [f32; 
 /// naming follows Python: `x` indexes the first LUT axis, `y` the
 /// second. The data buffer must be laid out so offset
 /// `(x_idx * second_dim + y_idx) * channels + c` retrieves
-/// Scalar conversion trait for generic bicubic interpolation.
-trait Scalar: Copy {
-    fn from_f64(v: f64) -> Self;
-    fn to_f64(self) -> f64;
-}
-
-impl Scalar for f32 {
-    fn from_f64(v: f64) -> Self {
-        v as f32
-    }
-    fn to_f64(self) -> f64 {
-        self as f64
-    }
-}
-
-impl Scalar for f64 {
-    fn from_f64(v: f64) -> Self {
-        v
-    }
-    fn to_f64(self) -> f64 {
-        self
-    }
-}
-
-/// Generic Mitchell-Netravali bicubic 2D interpolation.
-///
-/// Uses B=1/3, C=1/3 kernel matching Python's `fast_interp_lut._cubic_interp_lut_at_2d`.
-/// Reflected boundary handling. f64 accumulation for precision.
-fn bicubic_2d_impl<T: Scalar>(
-    data: &[T],
+/// `lut[x_idx, y_idx, c]` — that is what `compute_tc_lut` produces.
+pub fn bicubic_2d_f64(
+    data: &[f64],
     first_dim: usize,
     second_dim: usize,
     channels: usize,
-    x: T,
-    y: T,
-) -> Vec<T> {
-    let x = x.to_f64();
-    let y = y.to_f64();
+    x: f64,
+    y: f64,
+) -> Vec<f64> {
     let max_x = (first_dim - 1) as f64;
     let max_y = (second_dim - 1) as f64;
     let xf = x.clamp(0.0, max_x);
@@ -137,7 +108,7 @@ fn bicubic_2d_impl<T: Scalar>(
             weight_sum += weight;
             let base = (xi_idx * second_dim + yj_idx) * channels;
             for c in 0..channels {
-                result[c] += weight * data[base + c].to_f64();
+                result[c] += weight * data[base + c];
             }
         }
     }
@@ -146,10 +117,10 @@ fn bicubic_2d_impl<T: Scalar>(
             *value /= weight_sum;
         }
     }
-    result.into_iter().map(T::from_f64).collect()
+    result
 }
 
-/// Mitchell-Netravali bicubic 2D interpolation on a regular grid (f32 data).
+/// Mitchell-Netravali bicubic 2D interpolation on a regular grid.
 ///
 /// Uses B=1/3, C=1/3 kernel matching Python's `fast_interp_lut._cubic_interp_lut_at_2d`.
 /// Reflected boundary handling. f64 accumulation for precision.
@@ -161,22 +132,57 @@ pub fn bicubic_2d(
     x: f32,
     y: f32,
 ) -> Vec<f32> {
-    bicubic_2d_impl(data, width, height, channels, x, y)
-}
+    let max_x = (width - 1) as f64;
+    let max_y = (height - 1) as f64;
 
-/// Mitchell-Netravali bicubic 2D interpolation on a regular grid (f64 data).
-///
-/// Uses B=1/3, C=1/3 kernel matching Python's `fast_interp_lut._cubic_interp_lut_at_2d`.
-/// Reflected boundary handling. f64 accumulation for precision.
-pub fn bicubic_2d_f64(
-    data: &[f64],
-    first_dim: usize,
-    second_dim: usize,
-    channels: usize,
-    x: f64,
-    y: f64,
-) -> Vec<f64> {
-    bicubic_2d_impl(data, first_dim, second_dim, channels, x, y)
+    let xf = (x as f64).clamp(0.0, max_x);
+    let yf = (y as f64).clamp(0.0, max_y);
+
+    // Base cell (clamped to allow cubic stencil)
+    let xi = if xf >= max_x { width - 2 } else { xf as usize };
+    let yi = if yf >= max_y { height - 2 } else { yf as usize };
+
+    let fx = xf - xi as f64;
+    let fy = yf - yi as f64;
+
+    // Mitchell-Netravali weights
+    let wx = [
+        mitchell_weight(fx + 1.0),
+        mitchell_weight(fx),
+        mitchell_weight(fx - 1.0),
+        mitchell_weight(fx - 2.0),
+    ];
+    let wy = [
+        mitchell_weight(fy + 1.0),
+        mitchell_weight(fy),
+        mitchell_weight(fy - 1.0),
+        mitchell_weight(fy - 2.0),
+    ];
+
+    let mut result = vec![0.0f32; channels];
+
+    for c in 0..channels {
+        let mut sum = 0.0f64;
+        let mut weight_sum = 0.0f64;
+        // Indices supply reflected coordinates and address weight and data arrays.
+        #[allow(clippy::needless_range_loop)]
+        for dy in 0..4usize {
+            let sy = reflect_index(yi as isize + dy as isize - 1, height);
+            for dx in 0..4usize {
+                let sx = reflect_index(xi as isize + dx as isize - 1, width);
+                let w = wx[dx] * wy[dy];
+                weight_sum += w;
+                sum += w * data[(sy * width + sx) * channels + c] as f64;
+            }
+        }
+        result[c] = if weight_sum != 0.0 {
+            (sum / weight_sum) as f32
+        } else {
+            0.0
+        };
+    }
+
+    result
 }
 
 /// Mitchell-Netravali kernel weight (B=1/3, C=1/3).

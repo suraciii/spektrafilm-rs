@@ -180,12 +180,17 @@ impl LookPreset {
 }
 
 fn validate_look_values(look: &LookParameters) -> Result<(), String> {
-    let mut params = RuntimeParams::default();
-    params.enlarger = look.enlarger.clone();
-    params.scanner = look.scanner.clone();
-    params.film_render = look.film_render.clone();
-    params.print_render = look.print_render.clone();
-    params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
+    let params = RuntimeParams {
+        enlarger: look.enlarger.clone(),
+        scanner: look.scanner.clone(),
+        film_render: look.film_render.clone(),
+        print_render: look.print_render.clone(),
+        camera: crate::params::CameraParams {
+            diffusion_filter: look.camera_diffusion_filter.clone(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     crate::params::sources::validate_finite(&params)?;
     params.validate()
 }
@@ -326,21 +331,21 @@ fn validate_profile_ref(
             reference.stock
         ));
     }
-    if let Some(version) = &reference.version {
-        if &profile.metadata.version != version {
-            return Err(format!(
-                "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
-                reference.stock, profile.metadata.version
-            ));
-        }
+    if let Some(version) = &reference.version
+        && &profile.metadata.version != version
+    {
+        return Err(format!(
+            "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
+            reference.stock, profile.metadata.version
+        ));
     }
-    if let Some(expected) = content_identity {
-        if Some(expected) != reference.content_identity.as_deref() {
-            return Err(format!(
-                "{kind} profile {:?} content identity was not verified",
-                reference.stock
-            ));
-        }
+    if let Some(expected) = content_identity
+        && Some(expected) != reference.content_identity.as_deref()
+    {
+        return Err(format!(
+            "{kind} profile {:?} content identity was not verified",
+            reference.stock
+        ));
     }
     Ok(())
 }

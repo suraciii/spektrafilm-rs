@@ -134,10 +134,10 @@ pub fn write_bundle(bundle: &Bundle, path: &Path, options: &DeliveryOptions) -> 
     let (root, expected_archive) = bundle_paths(path, zip);
     let meta = write_bundle_files(bundle, &root, options)?;
     let written = finalize_bundle(&root, &meta, zip)?;
-    if let Some(expected) = expected_archive {
-        if expected != written {
-            fs::rename(written, expected)?;
-        }
+    if let Some(expected) = expected_archive
+        && expected != written
+    {
+        fs::rename(written, expected)?;
     }
     Ok(meta)
 }
@@ -435,11 +435,11 @@ pub fn finalize_bundle(root: &Path, meta: &BundleMeta, zip: bool) -> Result<Path
     fs::write(root.join("bundle.json"), metadata)?;
     let old_readme = fs::read_to_string(root.join("README.md")).ok();
     let mut readme = bundle_readme_text(meta);
-    if let Some(old) = old_readme {
-        if let Some(quality) = old.split_once("\n## Quality\n").map(|(_, section)| section) {
-            readme.push_str("\n## Quality\n");
-            readme.push_str(quality);
-        }
+    if let Some(old) = old_readme
+        && let Some(quality) = old.split_once("\n## Quality\n").map(|(_, section)| section)
+    {
+        readme.push_str("\n## Quality\n");
+        readme.push_str(quality);
     }
     fs::write(root.join("README.md"), readme)?;
     if !zip {
@@ -554,7 +554,7 @@ mod tests {
             } else {
                 LutFormat::HaldPng
             };
-            let read = crate::lut_formats::read_lut(format, &root.join(&file.path)).unwrap();
+            let read = crate::lut_formats::read_lut(format, root.join(&file.path)).unwrap();
             for (a, b) in read.table.iter().zip(&bundle.luts[0].1.table) {
                 for c in 0..3 {
                     assert!((a[c] - b[c]).abs() <= 0.5 / 255.0 + 1e-10);

@@ -451,6 +451,7 @@ impl Pipeline {
 
     /// One topology node: transform the image at tap `at` into its value at
     /// the next tap in [`Pipeline::tap_order`]. `RgbOut` is terminal.
+    #[allow(clippy::too_many_arguments)]
     fn fire_node(
         &self,
         at: Tap,
@@ -580,6 +581,7 @@ impl Pipeline {
     /// `collect` (both inclusive bounds in [`Pipeline::tap_order`]).
     /// Mirrors upstream `run_topology`: unreachable pairs error with the
     /// upstream message, `inject == collect` returns the input unchanged.
+    #[allow(clippy::too_many_arguments)]
     fn run_from(
         &self,
         image: ImageBuf,
@@ -734,17 +736,17 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
-        if let Some(context) = backend.observation_context() {
-            if inject != Tap::RgbIn || collect != Tap::RgbOut {
-                context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
-                );
-                context.set_path(if backend.is_gpu() {
-                    spektrafilm_gpu::telemetry::ExecutionPath::PerStage
-                } else {
-                    spektrafilm_gpu::telemetry::ExecutionPath::Cpu
-                });
-            }
+        if let Some(context) = backend.observation_context()
+            && (inject != Tap::RgbIn || collect != Tap::RgbOut)
+        {
+            context.decline_resident(
+                spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
+            );
+            context.set_path(if backend.is_gpu() {
+                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
+            } else {
+                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
+            });
         }
         if inject == Tap::RgbIn && collect == Tap::RgbOut {
             return self.process_full(image, backend, timings);
@@ -949,18 +951,17 @@ impl Pipeline {
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
         // path; backends without resident support return `None`.
-        if self.tc_lut.is_some() || self.mallett_core.is_some() {
-            if let Some(out) =
+        if (self.tc_lut.is_some() || self.mallett_core.is_some())
+            && let Some(out) =
                 self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)
-            {
-                tracing::info!("pipeline: gpu-resident fast path complete");
-                let _post = stages::StageObservation::cpu(
-                    backend,
-                    "post_scan",
-                    spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-                );
-                return Ok(self.apply_post_scan(out));
-            }
+        {
+            tracing::info!("pipeline: gpu-resident fast path complete");
+            let _post = stages::StageObservation::cpu(
+                backend,
+                "post_scan",
+                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            );
+            return Ok(self.apply_post_scan(out));
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
@@ -1227,10 +1228,10 @@ mod spectral_invalidation_tests {
             ],
         ];
         for channel in 0..3 {
-            for layer in 0..3 {
+            for (layer, expected_layer) in expected.iter().enumerate() {
                 assert!(
                     (film.data.density_curves_layers[128][layer][channel]
-                        - expected[layer][channel])
+                        - expected_layer[channel])
                         .abs()
                         < 1e-9
                 );

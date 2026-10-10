@@ -91,7 +91,7 @@ pub fn gaussian_blur_wavelength(cube: &SpectraCube, sigma: f64) -> SpectraCube {
         .enumerate()
         .for_each(|(cell, out)| {
             let row = &src[cell * n..cell * n + n];
-            for i in 0..n {
+            for (i, value) in out.iter_mut().enumerate() {
                 let mut acc = 0.0f64;
                 for k in -lw..=lw {
                     // scipy's symmetric ('reflect') extension — it keeps
@@ -101,7 +101,7 @@ pub fn gaussian_blur_wavelength(cube: &SpectraCube, sigma: f64) -> SpectraCube {
                     let j = if j >= n_i64 { 2 * n_i64 - 1 - j } else { j };
                     acc += kernel[(k + lw) as usize] * row[j as usize];
                 }
-                out[i] = acc;
+                *value = acc;
             }
         });
 
@@ -525,6 +525,8 @@ pub fn compute_band_pass_filter(filter_uv: [f64; 3], filter_ir: [f64; 3]) -> [f6
     let amp_uv = filter_uv[0].clamp(0.0, 1.0);
     let amp_ir = filter_ir[0].clamp(0.0, 1.0);
     let mut band_pass = [0.0f64; N_WAVELENGTHS];
+    // The index defines the wavelength used in the filter arithmetic.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..N_WAVELENGTHS {
         let wl = spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
         let edge_uv = 1.0 - amp_uv + amp_uv * sigmoid_erf(wl, filter_uv[1], filter_uv[2]);
@@ -653,6 +655,8 @@ fn eval_erf4_bandpass(params: &[f64]) -> Vec<[f64; 3]> {
     let sigma_ir = params[3];
 
     let mut window = vec![[0.0f64; 3]; N_WAVELENGTHS];
+    // The index defines the wavelength used in the window arithmetic.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..N_WAVELENGTHS {
         let wl = spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
         let edge_uv = 0.5 * (1.0 + erf((wl - c_uv) / (sigma_uv * sqrt2)));

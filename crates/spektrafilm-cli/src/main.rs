@@ -297,7 +297,7 @@ impl OutputPlan {
     ) -> Result<Self> {
         let extension_format = image_io::ImageFormat::detect(output)
             .with_context(|| format!("detecting output format: {}", output.display()))?;
-        let format = format.unwrap_or_else(|| match extension_format {
+        let format = format.unwrap_or(match extension_format {
             image_io::ImageFormat::Jpeg => OutputFormat::Jpeg,
             image_io::ImageFormat::Png => OutputFormat::Png,
             image_io::ImageFormat::Tiff => OutputFormat::Tiff,
@@ -322,10 +322,10 @@ impl OutputPlan {
             bail!("EXR output requires 16-bit or 32-bit depth");
         }
         if matches!(format, OutputFormat::Jpeg) {
-            if let Some(quality) = jpeg_quality {
-                if !(1..=100).contains(&quality) {
-                    bail!("JPEG quality must be in 1..=100");
-                }
+            if let Some(quality) = jpeg_quality
+                && !(1..=100).contains(&quality)
+            {
+                bail!("JPEG quality must be in 1..=100");
             }
         } else if jpeg_quality.is_some() {
             bail!("--jpeg-quality is only valid for JPEG output");
@@ -832,7 +832,7 @@ fn cmd_process(
     )?;
     invocation
         .operation
-        .set_input_dimensions(image.width as u32, image.height as u32);
+        .set_input_dimensions(image.width, image.height);
     // Preview mode: bound the long edge before processing (upstream
     // `simulate_preview` + `resize_for_preview`).
     let image = invocation.phase(

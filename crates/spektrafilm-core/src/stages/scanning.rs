@@ -140,6 +140,8 @@ fn scan_spectral_via_lut(
 /// on the LUT path, so it forces that path; `settings.use_scanner_lut` selects
 /// it otherwise. The bulk scan and the one-pixel reference samples share this
 /// switch, so a new path condition cannot desynchronize them.
+// Both scan paths share the complete spectral context.
+#[allow(clippy::too_many_arguments)]
 fn scan_spectral_rgb(
     density_cmy: &ImageBuf,
     profile: &Profile,
@@ -181,6 +183,8 @@ fn scan_spectral_rgb(
 
 /// One-pixel scan reference through [`scan_spectral_rgb`] — used for the
 /// positive-scan clear/dense endpoints.
+// Reference samples use the same context as the bulk scan.
+#[allow(clippy::too_many_arguments)]
 fn scan_reference_rgb(
     density_cmy: [f64; 3],
     profile: &Profile,
@@ -227,6 +231,8 @@ fn interpret_negative_capture(
     rgb
 }
 
+// Scan options preserve the existing stage interface.
+#[allow(clippy::too_many_arguments)]
 pub fn scan_with_options(
     density_cmy: &ImageBuf,
     profile: &Profile,
@@ -305,12 +311,12 @@ pub fn scan_with_options(
     // `film_render.glare` is never read anywhere upstream. Only the print
     // path consumes `print_render.glare` (scan_film=false).
     let glare = (!params.io.scan_film)
-        .then(|| &params.print_render.glare)
+        .then_some(&params.print_render.glare)
         .filter(|g| g.active && g.percent > 0.0);
     if let Some(glare) = glare {
         // Shared scan context keeps the CPU two-step CAT→RGB operation
         // order used by the reference path.
-        let glare_rgb_offset_f64 = crate::chain_prep::glare_rgb_offset_f64(&scan_context);
+        let glare_rgb_offset_f64 = crate::chain_prep::glare_rgb_offset_f64(scan_context);
         let glare_rgb_offset: [Scalar; 3] = glare_rgb_offset_f64.map(from_f64);
         let glare_amount = spektrafilm_model::glare::compute_random_glare_amount(
             rgb.width,

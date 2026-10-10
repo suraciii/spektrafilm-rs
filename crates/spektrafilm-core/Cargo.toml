@@ -41,3 +41,6 @@ blas-src = { version = "0.10", features = ["accelerate"] }
 [target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 cblas = "0.4"
 blas-src = { version = "0.10", features = ["openblas"] }
+
+[lints]
+workspace = true

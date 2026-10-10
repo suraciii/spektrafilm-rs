@@ -403,13 +403,13 @@ fn save_inner(
             reason: "EXR compression is always zip",
         });
     }
-    if let Some(quality) = options.jpeg_quality {
-        if !(1..=100).contains(&quality) {
-            return Err(ImageIoError::InvalidExport {
-                format: "JPEG",
-                reason: "quality must be between 1 and 100",
-            });
-        }
+    if let Some(quality) = options.jpeg_quality
+        && !(1..=100).contains(&quality)
+    {
+        return Err(ImageIoError::InvalidExport {
+            format: "JPEG",
+            reason: "quality must be between 1 and 100",
+        });
     }
     if image.width == 0
         || image.height == 0
