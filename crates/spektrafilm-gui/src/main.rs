@@ -17,6 +17,7 @@ use spektrafilm_core::image_io::{
     self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions,
 };
 use spektrafilm_core::params::RuntimeParams;
+use spektrafilm_core::presets::{LookPreset, builtin_look_presets, workflow_default};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
 use spektrafilm_gpu::ComputeBackend;
@@ -274,6 +275,7 @@ struct App {
     /// Profiles where `info.support == "paper"` (or other print-stage
     /// supports).
     papers: Vec<ProfileEntry>,
+    builtins: Vec<LookPreset>,
     film_name: String,
     print_name: String,
     /// Development-time family (minutes) of the selected film / paper —
@@ -343,6 +345,10 @@ struct App {
     /// by later parameter edits or a newer action.
     calibration_job: Option<CalibrationJob>,
     calibration_epoch: u64,
+    parameter_revision: u64,
+    /// Applied look presets own explicit neutral filter values without
+    /// changing the persisted calibration setting.
+    look_neutral_filters_pinned: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -365,6 +371,7 @@ impl RenderKind {
 /// plus the two timings the status bar shows.
 struct RenderJob {
     input_epoch: u64,
+    parameter_revision: u64,
     kind: RenderKind,
     backend_name: String,
     rx: mpsc::Receiver<Result<RenderResult, String>>,
@@ -516,6 +523,7 @@ impl App {
             data_dir,
             films,
             papers,
+            builtins: builtin_look_presets(),
             film_name,
             print_name,
             film_dev_times,
@@ -555,6 +563,8 @@ impl App {
             metal_colorspace_tagged: false,
             calibration_job: None,
             calibration_epoch: 0,
+            parameter_revision: 0,
+            look_neutral_filters_pinned: false,
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
@@ -592,6 +602,8 @@ impl App {
         self.film_name = state.film().to_owned();
         self.print_name = state.paper().to_owned();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+        self.parameter_revision = self.parameter_revision.wrapping_add(1);
+        self.look_neutral_filters_pinned = false;
         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
@@ -815,28 +827,76 @@ impl App {
         }
     }
 
-    fn sync_profile_defaults(&mut self) {
-        let result = (|| -> Result<()> {
-            let params = self.current_state()?.runtime_params()?;
-            let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
-            let scan_film = film.is_positive();
-            let print = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
-            let photo = RuntimePhotoParams {
-                film,
-                print,
-                params,
-                data_dir: self.data_dir.clone(),
-            };
-            self.params = photo
-                .digested_params(DigestMode::ApplyStockSpecifics)
-                .map_err(anyhow::Error::msg)?;
-            self.params.io.scan_film = scan_film;
-            self.scan_for_print_snapshot = None;
-            Ok(())
-        })();
-        if let Err(e) = result {
-            self.status = format!("Profile selection error: {e:#}");
+    fn invalidate_look_render(&mut self) {
+        self.scan_for_print_snapshot = None;
+        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+        self.parameter_revision = self.parameter_revision.wrapping_add(1);
+        self.dirty = true;
+        if self.render_job.is_some() {
+            self.pending_dirty = true;
         }
+    }
+
+    fn apply_builtin_preset(&mut self, index: usize) {
+        let Some(preset) = self.builtins.get(index) else {
+            return;
+        };
+        let preset_name = preset.name.clone();
+        let resolved = match preset.resolve(&self.data_dir, &self.params) {
+            Ok(value) => value,
+            Err(error) => {
+                self.status = format!("Preset error: {error}");
+                return;
+            }
+        };
+        self.film_name = resolved.film_name;
+        self.print_name = resolved.print_name;
+        self.params = resolved.params;
+        self.film_dev_times = resolved.film.data.development_time.clone();
+        self.print_dev_times = resolved.print.data.development_time.clone();
+        self.look_neutral_filters_pinned = true;
+        self.invalidate_look_render();
+        self.status = format!("Applied built-in preset '{preset_name}'");
+    }
+
+    fn select_film_profile(&mut self, selected: String) {
+        let film = match profile::load_profile_by_name(&self.data_dir, &selected) {
+            Ok(profile) if profile.is_film() && profile.is_filming() => profile,
+            Ok(_) => {
+                self.status =
+                    format!("Profile selection error: '{selected}' is not a film profile");
+                return;
+            }
+            Err(error) => {
+                self.status = format!("Profile selection error: {error:#}");
+                return;
+            }
+        };
+        self.film_name = selected;
+        self.look_neutral_filters_pinned = false;
+        self.film_dev_times = film.data.development_time.clone();
+        self.params.workflow.route = workflow_default(&film);
+        self.params.io.scan_film = film.is_positive();
+        self.invalidate_look_render();
+    }
+
+    fn select_print_profile(&mut self, selected: String) {
+        let print = match profile::load_profile_by_name(&self.data_dir, &selected) {
+            Ok(profile) if profile.is_paper() && profile.is_printing() => profile,
+            Ok(_) => {
+                self.status =
+                    format!("Profile selection error: '{selected}' is not a print profile");
+                return;
+            }
+            Err(error) => {
+                self.status = format!("Profile selection error: {error:#}");
+                return;
+            }
+        };
+        self.print_name = selected;
+        self.print_dev_times = print.data.development_time.clone();
+        self.look_neutral_filters_pinned = false;
+        self.invalidate_look_render();
     }
 
     fn load_image_from_path(&mut self, path: &Path) {
@@ -998,7 +1058,7 @@ impl App {
         };
         let input_epoch = self.input_epoch;
         let backend_name = self.backend.name().to_owned();
-        let params = match self
+        let mut params = match self
             .current_state()
             .and_then(|state| state.runtime_params())
         {
@@ -1008,6 +1068,10 @@ impl App {
                 return;
             }
         };
+        if self.look_neutral_filters_pinned {
+            params.settings.neutral_print_filters_from_database = false;
+        }
+        let parameter_revision = self.parameter_revision;
         let snapshot = RenderSnapshot {
             params,
             film_name: self.film_name.clone(),
@@ -1081,6 +1145,7 @@ impl App {
             .expect("OS thread spawn");
         self.render_job = Some(RenderJob {
             input_epoch,
+            parameter_revision,
             kind,
             backend_name,
             rx,
@@ -1109,10 +1174,11 @@ impl App {
             let _ = h.join();
         }
         let current_input = job.input_epoch == self.input_epoch;
+        let current_revision = job.parameter_revision == self.parameter_revision;
         let kind = job.kind;
         let backend_name = job.backend_name.clone();
         self.render_job = None;
-        if !current_input {
+        if !current_input || !current_revision {
             self.pending_dirty = false;
             self.dirty = true;
             return;
@@ -1788,10 +1854,9 @@ impl App {
                 }
                 ui.collapsing("Profiles", |ui| {
                     if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
+                        let selected = self.film_name.clone();
                         self.params.film_render.development_time = None;
-                        self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
-                        self.sync_profile_defaults();
-                        self.dirty = true;
+                        self.select_film_profile(selected);
                     }
                     if profile_combo(
                         ui,
@@ -1800,10 +1865,28 @@ impl App {
                         &self.papers,
                         &mut self.print_name,
                     ) {
+                        let selected = self.print_name.clone();
                         self.params.print_render.development_time = None;
-                        self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
-                        self.sync_profile_defaults();
-                        self.dirty = true;
+                        self.select_print_profile(selected);
+                    }
+                    ui.separator();
+                    ui.label("Built-in Presets");
+                    for index in 0..self.builtins.len() {
+                        let (name, film, print) = {
+                            let preset = &self.builtins[index];
+                            (
+                                preset.name.clone(),
+                                preset.film_profile.stock.clone(),
+                                preset.print_profile.stock.clone(),
+                            )
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(name);
+                            ui.small(format!("{film} / {print}"));
+                            if ui.button("Apply").clicked() {
+                                self.apply_builtin_preset(index);
+                            }
+                        });
                     }
                 });
                 for section in ["Enlarger", "Scanner"] {
