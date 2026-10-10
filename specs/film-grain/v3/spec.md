@@ -22,13 +22,15 @@ A feature narrower than the effective dye support must condition that field. It 
 
 The output pixel is a readout sample. It is not a grain-generation unit. At a viewing scale where grain is claimed to be resolved, irregular grain structure must span neighboring output samples. One-pixel impulses, square cells, repeated stamps, seams, and visible sampling grids must fail review.
 
-## Initial supported condition
+## Supported condition
 
-The first implementation must support `kodak_portra_800`, a 35 mm full-film long edge, the `input > film > scan` route, and `scanner.scan_output = positive_scan`. It must use the existing calibrated negative-to-positive interpretation. The delivered positive photograph is the comparison surface.
+V3 must support still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`) at a 35 mm full-film long edge, on the `input > film > scan` route, with `scanner.scan_output = positive_scan`. It must use the existing calibrated negative-to-positive interpretation. The delivered positive photograph is the comparison surface.
+
+Each stock must resolve its grain through its granularity preset, so that a coarser stock renders stronger grain than a finer one at the same density. The reference stock `kodak_portra_800` must keep the absolute event area validated for it; other stocks move relative to that anchor.
 
 The implementation must also support `direct_scan` on that route for diagnosis. A negative capture must not be compared with a positive reference without recording the interpretation.
 
-Active V3 on another film, format, print route, convert-film route, or passthrough route must fail with an actionable unsupported-condition error. These restrictions define the first implementation's support, not permanent exclusions. Expansion requires the same validation for the additional condition.
+Active V3 on another film chemistry or usage, format, print route, convert-film route, or passthrough route must fail with an actionable unsupported-condition error. These restrictions define this implementation's support, not permanent exclusions. Expansion requires the same validation for the additional condition.
 
 The acceptance record must identify exposure where known, development, scanner or scan source, processing, output dimensions, film area, and viewing size. Unknown conditions must remain explicit. Incomplete references may guide appearance but must not establish stock-specific physical calibration.
 

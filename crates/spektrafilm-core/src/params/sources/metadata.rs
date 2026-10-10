@@ -334,10 +334,11 @@ fn unit(path: &str) -> Option<&'static str> {
 }
 fn conditions(path: &str) -> Vec<String> {
     let mut out = Vec::new();
-    if matches!(
-        path,
-        "film_render.grain.rms_granularity" | "film_render.grain.micro_sublayers"
-    ) || path.starts_with("film_render.glare.")
+    if path == "film_render.grain.rms_granularity" {
+        out.push("upstream V1 no-op; grain V3 resolves the stock's event area from it".into());
+        return out;
+    }
+    if matches!(path, "film_render.grain.micro_sublayers") || path.starts_with("film_render.glare.")
     {
         out.push("preserved upstream no-op".into());
         return out;

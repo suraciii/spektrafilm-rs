@@ -54,7 +54,7 @@ Field cells are square, with internal pitch `h` and signed global indices `(i,j)
 
 ## Parameters
 
-Resolve `particle_area_um2`, channel `particle_scale`, `particle_scale_sublayers`, `density_min`, and `uniformity` through existing runtime and stock resolution. These are model parameters, not measured Portra crystal geometry. Record the resolved values in acceptance. `rms_granularity` must not feed the sampler.
+Resolve `particle_area_um2`, channel `particle_scale`, `particle_scale_sublayers`, `density_min`, and `uniformity` through existing runtime and stock resolution. These are model parameters, not measured Portra crystal geometry. Record the resolved values in acceptance. `rms_granularity` must not feed the sampler: the stock layer may resolve the event area through the stock's granularity preset, used only as a ratio to the reference stock whose absolute event area is certified for the first supported condition.
 
 `v3_dye_support_um` gives Gaussian sigma in micrometers, with candidate default `8.0`. It must be finite and strictly positive. This empirical starting value must pass photographic and numerical acceptance before it is described as a validated default. It must not be derived from event area, output dimensions, or V1 blur controls.
 

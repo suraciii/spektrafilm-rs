@@ -778,10 +778,14 @@ mod tests {
             let fields = describe_module(module).unwrap();
             for field in fields["fields"].as_array().unwrap() {
                 let path = field["path"].as_str().unwrap();
-                if module == "film_render.glare"
-                    || path.ends_with("rms_granularity")
-                    || path.ends_with("micro_sublayers")
-                {
+                if path.ends_with("rms_granularity") {
+                    assert_eq!(
+                        field["conditions"],
+                        serde_json::json!([
+                            "upstream V1 no-op; grain V3 resolves the stock's event area from it"
+                        ])
+                    );
+                } else if module == "film_render.glare" || path.ends_with("micro_sublayers") {
                     assert_eq!(
                         field["conditions"],
                         serde_json::json!(["preserved upstream no-op"])
