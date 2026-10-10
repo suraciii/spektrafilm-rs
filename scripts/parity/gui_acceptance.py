@@ -385,6 +385,7 @@ class X11:
         return self.match(lines, 'MAIN', True) and self.match(lines, 'Preview', True) and self.match(lines, 'Scan', True)
 
     def click(self, label, right=True):
+        self.drain_reports()
         if label.lower() in ('preview', 'scan', 'save'):
             # A hovered label may disappear into the highlight during OCR.
             # Park the pointer outside the action bar before locating it.
@@ -419,6 +420,17 @@ class X11:
             self.scroll(True)
             _, _, lines = self.read()
             actual = 'Select file' if label == 'Open' else label
+            if label == 'Export':
+                # The Export… button lives inside the collapsible Export options
+                # section, whose header carries the same word; the button
+                # renders below the header, so expand the section when only the
+                # header is visible.
+                header = self.match(lines, 'Export options')
+                if header and not [point for point in self.match(lines, 'Export')
+                                   if point[1] > header[0][1] + 10]:
+                    self.xd('mousemove', '--window', self.window, int(header[0][0]), int(header[0][1]))
+                    self.xd('click', 1)
+                    time.sleep(.5)
             if not self.match(lines, actual, right):
                 headings = self.match(lines, 'Import RGB', True) or self.match(lines, 'Import Raw', True)
                 require(headings, f'Import section is not visible for {label}')
@@ -430,6 +442,14 @@ class X11:
         def locate():
             image, _, lines = self.read()
             matches = self.match(lines, label, right)
+            if matches and label == 'Export':
+                # The Export options header matches the same word; keep only
+                # the button that renders below it.
+                header = self.match(lines, 'Export options')
+                if header:
+                    below = [point for point in matches if point[1] > header[0][1] + 10]
+                    if below:
+                        matches = below
             if not matches and label == 'Cancel':
                 return None
             if matches:
@@ -653,6 +673,22 @@ class X11:
             self.export_options(path)
         self.dialog(path, save)
 
+    def drain_reports(self):
+        """Advance past reports already published.
+
+        A view or state change can leave a preview report the scenarios never
+        consumed; draining before an action keeps the next wait from matching
+        that stale report instead of the operation the action started.
+        """
+        highest = self.last_report_id
+        for path in (self.root / 'diagnostics').glob('operation-*.json'):
+            try:
+                operation = json.loads(path.read_text())['operation']
+            except (OSError, ValueError, KeyError):
+                continue
+            highest = max(highest, operation['id'])
+        self.last_report_id = highest
+
     def wait_report(self, label, action=None):
         """Wait for the report the GUI publishes for a completed operation.
 
@@ -723,7 +759,8 @@ class X11:
                         grouped.setdefault(key, []).append((text, left + data['left'][i] / 3,
                             top + data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
                 lines = list(grouped.values())
-                if self.match(lines, 'Format') and self.match(lines, 'Cancel'):
+                if self.match(lines, 'Format') and (self.match(lines, 'Cancel')
+                                                    or self.match(lines, 'Export options')):
                     return image, bbox, lines
             return None
         wait_for(modal_read, 'visible export modal controls', 20)
@@ -779,6 +816,23 @@ class X11:
             if candidates:
                 self.snap('export-options-confirmed', image, lines)
                 return candidates[0]
+            if not cancels:
+                return None
+            # The block OCR can drop the primary button's label (its rounded
+            # border reads as parentheses), so read the button row on its own.
+            from PIL import ImageOps
+            cx, cy = cancels[0]
+            box = (max(0, int(cx) - 140), max(0, int(cy) - 16),
+                   min(image.width, int(cx) + 40), int(cy) + 16)
+            crop = image.crop(box)
+            prepared = ImageOps.autocontrast(ImageOps.invert(ImageOps.grayscale(crop)))
+            data = self.ocr.image_to_data(prepared.resize((crop.width * 3, crop.height * 3)),
+                                          config='--psm 7', output_type=self.ocr.Output.DICT)
+            for i, text in enumerate(data['text']):
+                if re.findall(r'[a-z0-9]+', text.lower()) == ['export']:
+                    self.snap('export-options-confirmed', image, lines)
+                    return (box[0] + data['left'][i] / 3 + data['width'][i] / 6,
+                            box[1] + data['top'][i] / 3 + data['height'][i] / 6)
         x, y = wait_for(submit, 'Export options submit', 20)
         self.xd('mousemove', '--window', self.window, int(x), int(y))
         self.xd('click', 1)
