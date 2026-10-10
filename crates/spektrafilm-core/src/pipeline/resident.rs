@@ -11,6 +11,9 @@ enum ResidentFallbackReason {
     RequestedSpectralLut,
     ActiveOpticalDiffusion,
     FaithfulGrainDistribution,
+    /// Active V3 resolves its film-coordinate field on the CPU; the
+    /// resident chain has no equivalent readout.
+    FilmGrainV3FieldCpu,
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     MissingResidentFrontPass,
@@ -85,6 +88,12 @@ impl Pipeline {
             )
         {
             reasons.push(ResidentFallbackReason::FaithfulGrainDistribution);
+        }
+        // An active V3 field is resolved on the CPU from the full developed
+        // film density; this decision is the capability authority for every
+        // resident entry point.
+        if crate::stages::grain_v3::active(&self.params) {
+            reasons.push(ResidentFallbackReason::FilmGrainV3FieldCpu);
         }
         if self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none() {
             reasons.push(ResidentFallbackReason::UnsupportedOutputGamut);
@@ -189,6 +198,7 @@ impl Pipeline {
                             ResidentFallbackReason::FaithfulGrainDistribution => {
                                 R::FaithfulGrainDistribution
                             }
+                            ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
                                 R::UnsupportedOutputGamut
                             }
@@ -573,6 +583,18 @@ mod tests {
             reasons.iter().any(|reason| {
                 matches!(reason, ResidentFallbackReason::FaithfulGrainDistribution)
             })
+        );
+
+        // V3 resolves its field on the CPU from the full developed density,
+        // so no resident entry point may run it.
+        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::V3;
+        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
+            panic!("V3 grain must remain on the per-stage path");
+        };
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainV3FieldCpu))
         );
     }
 }

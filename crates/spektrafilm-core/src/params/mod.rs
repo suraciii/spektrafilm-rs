@@ -953,4 +953,51 @@ mod tests {
         assert_eq!(params.film_render.grain.v2_timer, 0.0);
         assert_eq!(params.film_render.grain.resolved_grain_v2().timer, None);
     }
+    #[test]
+    fn v3_engine_and_dye_support_round_trip() {
+        let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
+        // V1 stays the default for existing recipes.
+        let default: super::RuntimeParams = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            default.film_render.grain.engine,
+            super::grain::GrainEngine::V1
+        );
+        assert_eq!(default.film_render.grain.v3_dye_support_um, 8.0);
+        value["film_render"]["grain"]["engine"] = serde_json::json!("v3");
+        value["film_render"]["grain"]["v3_dye_support_um"] = serde_json::json!(4.5);
+        let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            params.film_render.grain.engine,
+            super::grain::GrainEngine::V3
+        );
+        assert_eq!(params.film_render.grain.v3_dye_support_um, 4.5);
+        let reparsed: super::RuntimeParams =
+            serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
+        assert_eq!(
+            reparsed.film_render.grain.engine,
+            super::grain::GrainEngine::V3
+        );
+        assert_eq!(reparsed.film_render.grain.v3_dye_support_um, 4.5);
+        assert!(serde_json::from_str::<GrainParams>(r#"{"engine":"unknown"}"#).is_err());
+    }
+    #[test]
+    fn v3_dye_support_must_be_finite_and_positive() {
+        let mut params = super::RuntimeParams::default();
+        params.film_render.grain.engine = super::grain::GrainEngine::V3;
+        params.film_render.grain.v3_dye_support_um = 8.0;
+        params.validate().unwrap();
+        for value in [0.0, -0.5, f32::NAN, f32::INFINITY] {
+            params.film_render.grain.v3_dye_support_um = value;
+            let error = params.validate().unwrap_err();
+            assert!(
+                error.contains("film_render.grain.v3_dye_support_um"),
+                "unexpected error for {value}: {error}"
+            );
+        }
+        // V1 ignores the control, but a stored value stays validated so a
+        // later switch to V3 cannot render from an invalid recipe.
+        params.film_render.grain.engine = super::grain::GrainEngine::V1;
+        params.film_render.grain.v3_dye_support_um = -1.0;
+        assert!(params.validate().is_err());
+    }
 }

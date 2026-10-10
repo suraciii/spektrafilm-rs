@@ -147,3 +147,54 @@ fn positive_scan_cpu_override_preserves_stage_reports() {
         );
     }
 }
+
+#[test]
+fn active_v3_field_reports_its_cpu_stage_reason() {
+    // The supported V3 condition on a 2% crop: the readout region stays a few
+    // film millimetres, so the field allocation is small while the pipeline
+    // still resolves the engine, the plan and the report.
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.camera.film_format_mm = 36.0;
+    params.workflow.route = "input > film > scan".to_owned();
+    params.scanner.scan_output = "positive_scan".to_owned();
+    params.io.scan_film = true;
+    params.io.crop = true;
+    params.io.crop_size = [0.02, 0.02];
+    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
+    params.film_render.grain.v3_dye_support_um = 8.0;
+    let runtime =
+        Runtime::from_stocks("kodak_portra_800", "kodak_portra_endura", params, &data).unwrap();
+    let (width, height) = (768u32, 512u32);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..(width * height * 3) as usize)
+            .map(|index| from_f64(0.2 + (index % 97) as f64 * 0.004))
+            .collect(),
+    );
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(width, height);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let output = runtime
+        .process_observed(image, &CpuBackend, simulation.context())
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    assert!(output.width < 64 && output.height < 64, "crop geometry");
+    assert!(
+        report
+            .summary()
+            .cpu_stage_reasons
+            .contains(&("grain_v3_field".to_owned(), CpuReason::GrainV3FieldCpu)),
+        "V3 field stage missing from the report: {:?}",
+        report.summary().cpu_stage_reasons
+    );
+}
