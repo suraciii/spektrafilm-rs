@@ -8,11 +8,29 @@
 #include <cstring>
 #include <ctime>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
 struct Metadata { Exiv2::ExifData exif; Exiv2::IptcData iptc; Exiv2::XmpData xmp; };
+std::once_flag xmp_initialization;
+std::mutex xmp_namespace_mutex;
+void lock_xmp_namespace(void* pointer, bool lock) {
+    auto& mutex = *static_cast<std::mutex*>(pointer);
+    if (lock) mutex.lock();
+    else mutex.unlock();
+}
+void initialize_xmp() {
+    // Exiv2's lazy XMP initialization is not thread-safe. Initialize once
+    // before metadata reads/writes, and protect later namespace registration
+    // with the callback supported by Exiv2 rather than serializing image I/O.
+    std::call_once(xmp_initialization, [] {
+        if (!Exiv2::XmpParser::initialize(lock_xmp_namespace, &xmp_namespace_mutex))
+            throw std::runtime_error("Exiv2 XMP toolkit initialization failed");
+    });
+}
 // Imath's half constructor and OIIO's conversion both pass through float.
 // Round binary64 directly, like numpy astype(float16), using integer bits so
 // halfway cases use ties-to-even regardless of the floating-point environment.
@@ -50,6 +68,7 @@ void sf_io_free(void* pointer) { std::free(pointer); }
 void sf_metadata_free(void* pointer) { delete static_cast<Metadata*>(pointer); }
 void* sf_metadata_read(const char* path) {
     try {
+        initialize_xmp();
         auto image = Exiv2::ImageFactory::open(path);
         if (!image.get()) return nullptr;
         image->readMetadata();
@@ -132,6 +151,7 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
 int sf_metadata_write(const char* path, const void* source, unsigned width, unsigned height,
                       const char* space, bool encoded, char** err) {
     try {
+        initialize_xmp();
         auto image = Exiv2::ImageFactory::open(path);
         image->readMetadata();
         if (source) {
@@ -140,7 +160,13 @@ int sf_metadata_write(const char* path, const void* source, unsigned width, unsi
         }
         auto& exif = image->exifData();
         exif["Exif.Image.Orientation"] = uint16_t(1);
-        char timestamp[20]; auto now = std::time(nullptr); auto local = *std::localtime(&now);
+        char timestamp[20]; auto now = std::time(nullptr); std::tm local{};
+#ifdef _WIN32
+        const bool time_ok = localtime_s(&local, &now) == 0;
+#else
+        const bool time_ok = localtime_r(&now, &local) != nullptr;
+#endif
+        if (!time_ok) throw std::runtime_error("Cannot obtain metadata timestamp");
         std::strftime(timestamp, sizeof(timestamp), "%Y:%m:%d %H:%M:%S", &local);
         exif["Exif.Image.DateTime"] = timestamp;
         exif["Exif.Image.Software"] = "spektrafilm";

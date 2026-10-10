@@ -8,6 +8,8 @@ struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, fl
 @group(0) @binding(2) var<storage,read_write> output_rgb:array<f32>;
 
 @group(0) @binding(3) var<storage,read> working_rgb:array<f32>;
+// The local WGPU HAL uses this named function to select strict Metal math.
+fn spektrafilm_strict_float(v:f32)->f32{return v;}
 fn hash(x0:u32)->u32 {
  var x=x0; x+=x<<10u; x^=x>>6u; x+=x<<3u; x^=x>>11u; x+=x<<15u; return x;
 }
@@ -17,13 +19,22 @@ fn random4(v:vec4<f32>)->f32 {
  return bitcast<f32>((h&0x007fffffu)|0x3f800000u)-1.;
 }
 fn snoise(timer:f32,v:vec4<f32>)->vec4<f32> {
- let r=random4(v); let ip=random4(vec4(r)+(vec4(timer)-vec4(r))*(timer*v));
+ // The integer hash consumes float bits. Materialize both products so Metal
+ // cannot reassociate or fuse the CPU's separately rounded interpolation.
+ let r=random4(v);let t=frexp(timer*v);
+ let weighted=frexp((vec4(timer)-vec4(r))*ldexp(t.fract,t.exp));
+ let ip=random4(vec4(r)+ldexp(weighted.fract,weighted.exp));
  let q=floor(fract(0.5*ip)*7.)*ip-1.;
  return vec4(q,q,q,1.5-(abs(q)+abs(q)+abs(q)));
 }
 // Independent Taylor trig and mathematical 2/pi reduction, shared with v2.rs.
 // Split constants avoid depending on device-specific FMA fusion below 8192.
 // The integer fallback covers all finite binary32 magnitudes.
+// The sine hash amplifies a one-ULP trig change into a different permutation.
+// Keep the CPU's binary32 product boundaries through Metal contraction.
+fn trig_product(a:f32,b:f32)->f32 {
+ let split=frexp(spektrafilm_strict_float(a*b));return ldexp(split.fract,split.exp);
+}
 fn trig_word(words:vec3<u32>,bit:u32)->u32 {
  let i=bit/32u;let offset=bit%32u;
  let low=select(select(words.x,words.y,i==1u),words.z,i==2u);
@@ -77,23 +88,23 @@ fn trig_reduce(value:f32)->vec2<f32> {
  let quadrant=((trig_word(words,phase)&3u)+round_up)&3u;
  let hi=f32(trig_word(words,phase-24u)&0x00ffffffu)*5.960464477539063e-8-f32(round_up);
  let lo=f32(trig_word(words,phase-48u)&0x00ffffffu)*3.552713678800501e-15;
- let r=hi*1.570796251296997;
+ let r=trig_product(hi,1.570796251296997);
  let tail=fma(hi,1.570796251296997,-r);
  let tail2=fma(hi,7.549789415861596e-8,tail);
  return vec2(fma(lo,1.5707963267948966,tail2)+r,f32(quadrant));
 }
 fn trig_polynomial(r:f32,cosine:bool)->f32 {
- let z=r*r;
+ let z=trig_product(r,r);
  if(cosine){
-  let p0=z*(1./479001600.)-1./3628800.;
-  let p1=p0*z+1./40320.;let p2=p1*z-1./720.;
-  let p3=p2*z+1./24.;let p4=p3*z-0.5;
-  return z*p4+1.;
+  let p0=trig_product(z,1./479001600.)-1./3628800.;
+  let p1=trig_product(p0,z)+1./40320.;let p2=trig_product(p1,z)-1./720.;
+  let p3=trig_product(p2,z)+1./24.;let p4=trig_product(p3,z)-0.5;
+  return trig_product(z,p4)+1.;
  }
- let p0=z*(1./6227020800.)-1./39916800.;
- let p1=p0*z+1./362880.;let p2=p1*z-1./5040.;
- let p3=p2*z+1./120.;let p4=p3*z-1./6.;
- return (r*z)*p4+r;
+ let p0=trig_product(z,1./6227020800.)-1./39916800.;
+ let p1=trig_product(p0,z)+1./362880.;let p2=trig_product(p1,z)-1./5040.;
+ let p3=trig_product(p2,z)+1./120.;let p4=trig_product(p3,z)-1./6.;
+ return trig_product(trig_product(r,z),p4)+r;
 }
 fn grain_sin(value:f32)->f32 {
  let reduced=trig_reduce(value);let q=u32(reduced.y);
@@ -107,7 +118,11 @@ fn grain_cos(value:f32)->f32 {
 }
 fn noise_mix(a:f32,b:f32,t:f32)->f32{return a+(b-a)*t;}
 fn rnm(tc:vec2<f32>,timer:f32)->vec4<f32> {
- let n=grain_sin((tc.x+timer)*12.9898+(tc.y+timer)*78.233)*43758.5453;
+ // A contracted dot product changes the sine-hash permutation as well.
+ let phase_x=frexp((tc.x+timer)*12.9898);
+ let phase_y=frexp((tc.y+timer)*78.233);
+ let phase=ldexp(phase_x.fract,phase_x.exp)+ldexp(phase_y.fract,phase_y.exp);
+ let n=grain_sin(phase)*43758.5453;
  // Exact exponent decomposition materializes n before the next product;
  // reassociating both multipliers changes the sine-hash permutation.
  let split=frexp(n);let rounded=ldexp(split.fract,split.exp);

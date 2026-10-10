@@ -337,3 +337,79 @@ fn rendered_output_preserves_selected_encoding_and_float_samples() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn concurrent_metadata_round_trips_initialize_xmp_once() {
+    const CHILD: &str = "SPEKTRAFILM_TEST_COLD_XMP";
+    // Other tests may have already initialized Exiv2 in this process. A fresh
+    // process makes all workers enter their first metadata operation together.
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "concurrent_metadata_round_trips_initialize_xmp_once",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "cold concurrent metadata process failed: {status}"
+        );
+        return;
+    }
+
+    let directory = std::env::temp_dir().join(format!(
+        "spektrafilm-concurrent-metadata-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        for worker in 0..8 {
+            let directory = &directory;
+            let barrier = &barrier;
+            scope.spawn(move || {
+                let extension = ["png", "tif", "jpg"][worker % 3];
+                let path = directory.join(format!("{worker}.{extension}"));
+                let copy = directory.join(format!("{worker}-copy.{extension}"));
+                let image = ImageBuf::from_data(2, 1, vec![from_f64(0.5); 6]);
+                let options = SaveOptions {
+                    depth: BitDepth::Eight,
+                    color_space: "sRGB",
+                    cctf_encoding: true,
+                    jpeg_quality: None,
+                    jpeg_subsampling: None,
+                    compression: None,
+                };
+                barrier.wait();
+                let report = image_io::save(&path, &image, options, None).unwrap();
+                assert!(
+                    report.metadata_warning.is_none(),
+                    "{extension}: {:?}",
+                    report.metadata_warning
+                );
+                let loaded = image_io::load(&path).unwrap();
+                assert_eq!((loaded.image.width, loaded.image.height), (2, 1));
+                let metadata = loaded
+                    .metadata
+                    .as_ref()
+                    .expect("saved metadata must be readable");
+                let report = image_io::save(&copy, &loaded.image, options, Some(metadata)).unwrap();
+                assert!(
+                    report.metadata_warning.is_none(),
+                    "{extension}: {:?}",
+                    report.metadata_warning
+                );
+                let copied = image_io::load(&copy).unwrap();
+                assert!(
+                    copied.metadata.is_some(),
+                    "copied metadata must be readable"
+                );
+                assert_eq!((copied.image.width, copied.image.height), (2, 1));
+            });
+        }
+    });
+    std::fs::remove_dir_all(directory).unwrap();
+}

@@ -443,27 +443,18 @@ impl Viewer {
             self.zoom_percent,
             self.pan,
         );
-        ui.horizontal_wrapped(|ui| {
-            egui::ComboBox::from_label("Output interpolation")
-                .selected_text(self.settings.interpolation.name())
-                .show_ui(ui, |ui| {
-                    for name in INTERPOLATIONS {
-                        ui.selectable_value(
-                            &mut self.settings.interpolation,
-                            Interpolation::parse(name),
-                            name,
-                        );
-                    }
-                });
-            ui.checkbox(
-                &mut self.settings.use_display_transform,
-                "Use display transform",
+        ui.checkbox(&mut self.settings.use_display_transform, "use display transform")
+            .on_hover_text("Apply the display transform to the viewer output only; saved and exported pixels are unchanged.");
+        ui.checkbox(&mut self.settings.gray_18_canvas, "gray 18% canvas")
+            .on_hover_text(
+                "Use neutral 18% gray as backgroung to judge the exposure and neutral colors",
             );
-            ui.checkbox(&mut self.settings.gray_18_canvas, "Gray 18% canvas");
-            ui.add(
-                egui::Slider::new(&mut self.settings.white_padding, 0.0..=1.0)
-                    .text("White padding"),
-            );
+        ui.horizontal(|ui| {
+            let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge.";
+            ui.label("white padding").on_hover_text(tooltip);
+            ui.add(egui::DragValue::new(&mut self.settings.white_padding)
+                .range(0.0..=1.0).clamp_existing_to_range(false).speed(0.01).fixed_decimals(2))
+                .on_hover_text(tooltip);
         });
         before
             != (
@@ -472,6 +463,23 @@ impl Viewer {
                 self.zoom_percent,
                 self.pan,
             )
+    }
+    pub fn interpolation_control(&mut self, ui: &mut egui::Ui) {
+        egui::ComboBox::from_label("output interpolation")
+            .selected_text(self.settings.interpolation.name())
+            .show_ui(ui, |ui| {
+                for name in INTERPOLATIONS {
+                    ui.selectable_value(
+                        &mut self.settings.interpolation,
+                        Interpolation::parse(name),
+                        name,
+                    );
+                }
+            })
+            .response
+            .on_hover_text(
+                "Napari interpolation mode used to display the output layer in the viewer.",
+            );
     }
     /// Draws only visible pixels into a bounded texture. Large source images and
     /// offscreen pans therefore cannot exceed the GPU texture dimension limit.

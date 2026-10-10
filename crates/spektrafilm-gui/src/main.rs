@@ -17,7 +17,6 @@ use spektrafilm_core::image_io::{
     self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions,
 };
 use spektrafilm_core::params::RuntimeParams;
-use spektrafilm_core::presets::{LookPreset, builtin_look_presets, workflow_default};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
 use spektrafilm_gpu::ComputeBackend;
@@ -282,7 +281,6 @@ struct App {
     /// Profiles where `info.support == "paper"` (or other print-stage
     /// supports).
     papers: Vec<ProfileEntry>,
-    builtins: Vec<LookPreset>,
     film_name: String,
     print_name: String,
     /// Development-time family (minutes) of the selected film / paper —
@@ -352,10 +350,6 @@ struct App {
     /// by later parameter edits or a newer action.
     calibration_job: Option<CalibrationJob>,
     calibration_epoch: u64,
-    parameter_revision: u64,
-    /// Applied look presets own explicit neutral filter values without
-    /// changing the persisted calibration setting.
-    look_neutral_filters_pinned: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -378,7 +372,6 @@ impl RenderKind {
 /// plus the two timings the status bar shows.
 struct RenderJob {
     input_epoch: u64,
-    parameter_revision: u64,
     kind: RenderKind,
     backend_name: String,
     rx: mpsc::Receiver<Result<RenderResult, String>>,
@@ -409,15 +402,11 @@ struct RenderSnapshot {
     print_name: String,
     data_dir: PathBuf,
     special: serde_json::Value,
-    look_neutral_filters_pinned: bool,
 }
 
 fn build_runtime(snapshot: &RenderSnapshot, preview: bool) -> Result<Runtime, String> {
     let mut params = snapshot.params.clone();
     params.settings.preview_mode = preview;
-    if snapshot.look_neutral_filters_pinned {
-        params.settings.neutral_print_filters_from_database = false;
-    }
     let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
         .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
     let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
@@ -534,7 +523,6 @@ impl App {
             data_dir,
             films,
             papers,
-            builtins: builtin_look_presets(),
             film_name,
             print_name,
             film_dev_times,
@@ -574,8 +562,6 @@ impl App {
             metal_colorspace_tagged: false,
             calibration_job: None,
             calibration_epoch: 0,
-            parameter_revision: 0,
-            look_neutral_filters_pinned: false,
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
@@ -613,8 +599,6 @@ impl App {
         self.film_name = state.film().to_owned();
         self.print_name = state.paper().to_owned();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-        self.parameter_revision = self.parameter_revision.wrapping_add(1);
-        self.look_neutral_filters_pinned = false;
         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
@@ -751,23 +735,16 @@ impl App {
 
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            controls::extra_bool(
-                ui,
-                &mut self.gui_state.sections,
-                "simulation",
-                "auto_preview",
-                "Auto preview",
-                true,
-            );
+            controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
             let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-            if ui.checkbox(&mut scan_for_print, "Scan for print").changed() {
+            if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
                 self.toggle_scan_for_print();
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice(
+            if controls::choice_tip(
                 ui,
-                "Workflow",
+                "workflow",
                 &mut self.params.workflow.route,
                 &[
                     "input",
@@ -777,6 +754,7 @@ impl App {
                     "input > convert-film > scan-minus-base",
                     "input > convert-film > scan",
                 ],
+                "Which path the image takes through the pipeline: input (passthrough: just colour-manage the input to the output space for viewing), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base).",
             ) {
                 self.params.io.scan_film = false;
                 self.dirty = true;
@@ -790,13 +768,14 @@ impl App {
             let ready = self.image.is_some() && !busy;
             if ui
                 .add_enabled(ready, egui::Button::new("PREVIEW"))
+                .on_hover_text("run the simulation on a small preview and deactivates grain, halation, blurs, unsharp mask (diffusion filters are active)")
                 .clicked()
             {
                 self.dirty = true;
                 self.force_preview = true;
                 self.full_scan_requested = false;
             }
-            if ui.add_enabled(ready, egui::Button::new("SCAN")).clicked() {
+            if ui.add_enabled(ready, egui::Button::new("SCAN")).on_hover_text("Run the full simulation on the full-resolution input").clicked() {
                 self.dirty = true;
                 self.force_preview = true;
                 self.full_scan_requested = true;
@@ -806,6 +785,7 @@ impl App {
                     self.output_image.is_some() && !busy,
                     egui::Button::new("SAVE"),
                 )
+                .on_hover_text("Save the current output layer to an image file")
                 .clicked()
             {
                 self.save_dialog();
@@ -842,78 +822,28 @@ impl App {
         }
     }
 
-    fn invalidate_look_render(&mut self) {
-        self.scan_for_print_snapshot = None;
-        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-        self.parameter_revision = self.parameter_revision.wrapping_add(1);
-        self.dirty = true;
-        if self.render_job.is_some() {
-            self.pending_dirty = true;
+    fn sync_profile_defaults(&mut self) {
+        let result = (|| -> Result<()> {
+            let params = self.current_state()?.runtime_params()?;
+            let film = profile::load_profile_by_name(&self.data_dir, &self.film_name)?;
+            let scan_film = film.is_positive();
+            let print = profile::load_profile_by_name(&self.data_dir, &self.print_name)?;
+            let photo = RuntimePhotoParams {
+                film,
+                print,
+                params,
+                data_dir: self.data_dir.clone(),
+            };
+            self.params = photo
+                .digested_params(DigestMode::ApplyStockSpecifics)
+                .map_err(anyhow::Error::msg)?;
+            self.params.io.scan_film = scan_film;
+            self.scan_for_print_snapshot = None;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            self.status = format!("Profile selection error: {e:#}");
         }
-    }
-
-    fn apply_builtin_preset(&mut self, index: usize) {
-        let Some(preset) = self.builtins.get(index) else {
-            return;
-        };
-        let preset_name = preset.name.clone();
-        let resolved = match preset.resolve(&self.data_dir, &self.params) {
-            Ok(value) => value,
-            Err(error) => {
-                self.status = format!("Preset error: {error}");
-                return;
-            }
-        };
-        let default_route = resolved.default_route;
-        self.film_name = resolved.film_name;
-        self.print_name = resolved.print_name;
-        self.params = resolved.params;
-        self.params.workflow.route = default_route;
-        self.film_dev_times = resolved.film.data.development_time.clone();
-        self.print_dev_times = resolved.print.data.development_time.clone();
-        self.look_neutral_filters_pinned = true;
-        self.invalidate_look_render();
-        self.status = format!("Applied built-in preset '{}'", preset_name);
-    }
-
-    fn select_film_profile(&mut self, selected: String) {
-        let film = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_film() && profile.is_filming() => profile,
-            Ok(_) => {
-                self.status =
-                    format!("Profile selection error: '{selected}' is not a film profile");
-                return;
-            }
-            Err(error) => {
-                self.status = format!("Profile selection error: {error:#}");
-                return;
-            }
-        };
-        self.film_name = selected;
-        self.look_neutral_filters_pinned = false;
-        self.film_dev_times = film.data.development_time.clone();
-        self.params.workflow.route = workflow_default(&film);
-        self.params.io.scan_film = film.is_positive();
-        self.invalidate_look_render();
-    }
-
-    fn select_print_profile(&mut self, selected: String) {
-        let print = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_paper() && profile.is_printing() => profile,
-            Ok(_) => {
-                self.status =
-                    format!("Profile selection error: '{selected}' is not a print profile");
-                return;
-            }
-            Err(error) => {
-                self.status = format!("Profile selection error: {error:#}");
-                return;
-            }
-        };
-        self.print_name = selected;
-        self.print_dev_times = print.data.development_time.clone();
-        self.look_neutral_filters_pinned = false;
-        self.invalidate_look_render();
     }
 
     fn load_image_from_path(&mut self, path: &Path) {
@@ -1074,7 +1004,6 @@ impl App {
             RenderKind::Preview
         };
         let input_epoch = self.input_epoch;
-        let parameter_revision = self.parameter_revision;
         let backend_name = self.backend.name().to_owned();
         let params = match self
             .current_state()
@@ -1092,7 +1021,6 @@ impl App {
             print_name: self.print_name.clone(),
             data_dir: self.data_dir.clone(),
             special: self.gui_state.sections["special"].clone(),
-            look_neutral_filters_pinned: self.look_neutral_filters_pinned,
         };
         let backend = self.backend.clone();
         let source_metadata = self.source_metadata.clone();
@@ -1160,7 +1088,6 @@ impl App {
             .expect("OS thread spawn");
         self.render_job = Some(RenderJob {
             input_epoch,
-            parameter_revision,
             kind,
             backend_name,
             rx,
@@ -1189,11 +1116,10 @@ impl App {
             let _ = h.join();
         }
         let current_input = job.input_epoch == self.input_epoch;
-        let current_revision = job.parameter_revision == self.parameter_revision;
         let kind = job.kind;
         let backend_name = job.backend_name.clone();
         self.render_job = None;
-        if !current_input || !current_revision {
+        if !current_input {
             self.pending_dirty = false;
             self.dirty = true;
             return;
@@ -1417,7 +1343,6 @@ impl App {
             print_name: self.print_name.clone(),
             data_dir: self.data_dir.clone(),
             special: self.gui_state.sections["special"].clone(),
-            look_neutral_filters_pinned: self.look_neutral_filters_pinned,
         };
         self.remember_dialog("export", &out_path);
         self.export_options = options.clone();
@@ -1775,52 +1700,52 @@ impl App {
         }
     }
 
-    fn import_section(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, raw: bool) {
+    fn import_section(&mut self, ui: &mut egui::Ui, raw: bool) {
         ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
-            if ui.button("Select file").clicked() {
+            if ui.button("select file").on_hover_text(if raw {
+                "Load and process a raw file with the selected white balance and lens correction settings."
+            } else {
+                "Select an input image"
+            }).clicked() {
                 if let Some(path) = self.file_dialog("load").add_filter("Image", IMAGE_FILE_EXTENSIONS).pick_file() {
                     self.remember_dialog("load", &path);
                     self.load_image_from_path(&path);
                 }
             }
-            let save_enabled = self.output_image.is_some() && self.render_job.is_none() && self.export_job.is_none() && self.calibration_job.is_none();
-            if ui
-                .add_enabled(save_enabled, egui::Button::new("Save…"))
-                .on_disabled_hover_text("Render an image first")
-                .clicked()
-            {
-                self.save_dialog();
+            if raw {
+                self.parameter_section(ui, "Import Raw");
             }
-            let export_busy = self.export_job.is_some();
-            if export_busy {
-                if ui
-                    .button("Cancel")
-                    .on_hover_text("Cancel export; the current operation finishes before its output is discarded.")
-                    .clicked()
-                {
-                    self.cancel_export();
-                }
-            } else {
-                let export_enabled = self.image.is_some() && self.render_job.is_none() && self.calibration_job.is_none() && !self.export_dialog.is_open();
-                if ui
-                    .add_enabled(export_enabled, egui::Button::new("Export…"))
-                    .on_hover_text(
-                        "Re-render the full image using the selected export backend and write PNG/TIFF/JPEG/EXR.",
-                    )
-                    .on_disabled_hover_text("Load an image first")
-                    .clicked()
-                {
-                    self.export_dialog.open(&self.export_options);
-                }
+            if let Some(p) = &self.image_path {
+                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small());
             }
+            ui.add_space(4.0);
         });
+    }
 
-        if let Some(p) = &self.image_path {
-            ui.label(
-                egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small(),
-            );
-        }
-        ui.add_space(4.0);
+    fn export_actions(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Export options")
+            .default_open(false)
+            .show(ui, |ui| {
+                if self.export_job.is_some() {
+                    if ui.button("Cancel")
+                        .on_hover_text("Cancel export; the current operation finishes before its output is discarded.")
+                        .clicked()
+                    {
+                        self.cancel_export();
+                    }
+                } else {
+                    let enabled = self.image.is_some()
+                        && self.render_job.is_none()
+                        && self.calibration_job.is_none()
+                        && !self.export_dialog.is_open();
+                    if ui.add_enabled(enabled, egui::Button::new("Export…"))
+                        .on_hover_text("Choose settings and render the full image independently of Save.")
+                        .clicked()
+                    {
+                        self.export_dialog.open(&self.export_options);
+                    }
+                }
+            });
     }
     fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
         ui.collapsing("Chemistry", |ui| {
@@ -1838,7 +1763,7 @@ impl App {
             if dev_time_combo(
                 ui,
                 if film { "film-time" } else { "print-time" },
-                "Development time",
+                "development time",
                 times,
                 selected,
             ) {
@@ -1863,49 +1788,40 @@ impl App {
         );
         match self.gui_tab {
             GuiTab::Main => {
-                self.import_section(ui, ctx, false);
-                self.import_section(ui, ctx, true);
+                self.import_section(ui, false);
+                self.import_section(ui, true);
                 for section in ["Crop and upscale", "Input", "Camera"] {
                     self.parameter_section(ui, section);
                 }
                 ui.collapsing("Profiles", |ui| {
-                    if profile_combo(ui, "film", "Film profile", &self.films, &mut self.film_name) {
-                        let selected = self.film_name.clone();
-                        self.select_film_profile(selected);
+                    if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
+                        self.params.film_render.development_time = None;
+                        self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
+                        self.sync_profile_defaults();
+                        self.dirty = true;
                     }
                     if profile_combo(
                         ui,
                         "paper",
-                        "Print profile",
+                        "print profile",
                         &self.papers,
                         &mut self.print_name,
                     ) {
-                        let selected = self.print_name.clone();
-                        self.select_print_profile(selected);
-                    }
-                    ui.separator();
-                    ui.label("Built-in Presets");
-                    for index in 0..self.builtins.len() {
-                        let (name, film, print) = {
-                            let preset = &self.builtins[index];
-                            (
-                                preset.name.clone(),
-                                preset.film_profile.stock.clone(),
-                                preset.print_profile.stock.clone(),
-                            )
-                        };
-                        ui.horizontal(|ui| {
-                            ui.label(name);
-                            ui.small(format!("{film} / {print}"));
-                            if ui.button("Apply").clicked() {
-                                self.apply_builtin_preset(index);
-                            }
-                        });
+                        self.params.print_render.development_time = None;
+                        self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
+                        self.sync_profile_defaults();
+                        self.dirty = true;
                     }
                 });
-                for section in ["Enlarger", "Scanner", "Output"] {
+                for section in ["Enlarger", "Scanner"] {
                     self.parameter_section(ui, section);
                 }
+                egui::CollapsingHeader::new("Output")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        self.parameter_section(ui, "Output");
+                        self.export_actions(ui);
+                    });
             }
             GuiTab::Film => {
                 self.chemistry_section(ui, true);
@@ -1944,6 +1860,7 @@ impl App {
                     let display_transform_before = self.viewer.settings.use_display_transform;
                     self.viewer.controls(ui);
                     self.parameter_section(ui, "Display");
+                    self.viewer.interpolation_control(ui);
                     if display_transform_before != self.viewer.settings.use_display_transform {
                         self.refresh_viewing_artifacts();
                     }
@@ -2214,7 +2131,8 @@ fn dev_time_combo(
     // exactly the entry the pipeline will use.
     let current_idx = profile::development_time_index(times, *selection);
     let mut changed = false;
-    ui.label(label);
+    let tooltip = "Development time for a BW development-time family: selects the density curve and base+fog to render. '—' uses the representative middle development; ignored for single-curve and color stocks.";
+    ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(salt)
         .selected_text(format!("{} min", times[current_idx]))
         .width(ui.available_width().min(280.0))
@@ -2229,7 +2147,9 @@ fn dev_time_combo(
                     changed = true;
                 }
             }
-        });
+        })
+        .response
+        .on_hover_text(tooltip);
     changed
 }
 
@@ -2240,7 +2160,12 @@ fn profile_combo(
     entries: &[ProfileEntry],
     selected_stock: &mut String,
 ) -> bool {
-    ui.label(label);
+    let tooltip = if salt == "film" {
+        "Film stock to simulate"
+    } else {
+        "Print stock to simulate"
+    };
+    ui.label(label).on_hover_text(tooltip);
     let display = entries
         .iter()
         .find(|e| &e.stock == selected_stock)
@@ -2254,7 +2179,9 @@ fn profile_combo(
             for entry in entries {
                 ui.selectable_value(selected_stock, entry.stock.clone(), &entry.display);
             }
-        });
+        })
+        .response
+        .on_hover_text(tooltip);
     prev != *selected_stock
 }
 

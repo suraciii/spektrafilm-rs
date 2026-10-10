@@ -1,0 +1,17 @@
+Vendored wgpu-hal 24.0.4
+Source: https://crates.io/crates/wgpu-hal/24.0.4
+Upstream repository: https://github.com/gfx-rs/wgpu
+Published crate commit: 993fc39b07e8a4418a15043265298d7bc016d059
+License: MIT OR Apache-2.0 (full texts included)
+
+Local modification: src/metal/device.rs recognizes the Naga function
+spektrafilm_strict_float and compiles only modules containing that marker
+with Metal fast math disabled and floating-point contraction disabled.
+Grain V2 requires CPU binary32 intermediate rounding because its hashes
+amplify a one-ULP arithmetic difference into a different noise permutation.
+All other shader modules retain the upstream compilation options.
+
+The source, examples, build script, published Cargo manifest, and VCS
+provenance are copied from the published crate. Registry cache markers and
+the crate's independent Cargo.lock are omitted. Full license files are
+copied from the upstream commit rather than the published relative links.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict artifact acceptance against the editable, pinned Python 0.3.4 checkout.
+"""Strict artifact acceptance against the editable, pinned experimental checkout.
 
 Run with the reference Python interpreter (or set SPEKTRAFILM_PY). The CLI
 must have been built with precision-f64; its release/deps directory is used
@@ -22,7 +22,7 @@ import traceback
 from urllib.parse import unquote, urlsplit
 import zipfile
 
-PIN = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
+PIN = "28bf883e1672e884307edc75852549376e13644e"
 FILM = "kodak_portra_400"
 PRINTS = ("kodak_portra_endura", "kodak_2383")
 THRESHOLDS = {
@@ -302,10 +302,84 @@ def format_acceptance(cli, root, report):
     return results
 
 
+def reference_exposure(meta, input_name, report):
+    """Translate the retained Rust stops/gain contract into upstream EV units."""
+    import numpy as np
+    from spektrafilm_lut_creator.color_spaces import input_midgray_gain, decode_cctf, get
+    exposure = meta["input_exposure"]
+    require(exposure is not None, "retained Rust exposure metadata is missing")
+    gain = exposure["gain"]
+    entry = get(input_name)
+    # Historical stops use a scalar transfer white (HLG's RGB EOTF also
+    # includes luminance weighting and is not that scalar contract).
+    white = float(np.asarray(decode_cctf(np.array([1.0]), input_name)).flat[0])
+    expected_stops = (4.0 if entry.kind == "encoded_sdr" else
+                      6.0 if entry.scene_referred_input else
+                      math.log2(white / entry.midgray_linear))
+    require(math.isclose(exposure["stops_above_midgray"], expected_stops, abs_tol=1e-12),
+            "retained automatic input stops drift")
+    expected_gain = 0.18 * 2 ** expected_stops / white
+    require(math.isclose(gain, expected_gain, rel_tol=1e-12, abs_tol=1e-12),
+            "retained input exposure gain drift")
+    bridge = input_midgray_gain(input_name)
+    require(math.isfinite(gain) and gain > 0, "invalid delivered input gain")
+    ev = math.log2(gain / bridge)
+    report.setdefault("reference_exposure_translations", []).append({
+        "bundle": meta["name"], "input": input_name,
+        "rust_stops_above_midgray": exposure["stops_above_midgray"],
+        "rust_gain": gain, "upstream_midgray_gain": bridge,
+        "upstream_exposure_ev": ev,
+        "contract": "Rust stops/native gain retained; upstream EV reproduces that gain",
+    })
+    return ev
+
+
 def run(args, report):
     import numpy as np
     import spektrafilm
-    from spektrafilm_lut_creator.bundles import Bundle, BundleSpec
+    from spektrafilm_lut_creator.bundles import Bundle, BundleSpec as UpstreamBundleSpec
+    from spektrafilm.utils.gamut_compression import InputGamutCompressSpec, OutputGamutCompressSpec
+    from spektrafilm_lut_creator.color_spaces import get, register
+    # 28bf changed HLG middle gray to BT.2408's 26.238 nits. Retain the
+    # public Rust/historical 0.18 input AND output scale for this oracle.
+    register(dataclasses.replace(get("Rec.2100 HLG"), midgray_linear=0.18))
+    # Experimental upstream removed input OkLch. Load only its retained
+    # independent historical compressor; keep the new spectral pipeline.
+    import importlib.util
+    import spektrafilm.utils.gamut_compression as gamut
+    historical_repo = Path(os.environ["SPEKTRAFILM_PY_HISTORICAL_REPO"]).resolve()
+    historical_pin = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
+    require(subprocess.check_output(["git", "-C", str(historical_repo), "rev-parse", "HEAD"],
+                                    text=True).strip() == historical_pin,
+            "historical input OkLch reference commit drift")
+    require(not subprocess.check_output(["git", "-C", str(historical_repo), "diff", "HEAD", "--", "src"],
+                                        text=True).strip(), "historical compressor source is modified")
+    module_spec = importlib.util.spec_from_file_location(
+        "retained_input_gamut_reference",
+        historical_repo / "src/spektrafilm/utils/gamut_compression.py")
+    historical = importlib.util.module_from_spec(module_spec)
+    sys.modules[module_spec.name] = historical
+    module_spec.loader.exec_module(historical)
+    upstream_compress = gamut.compress_xy
+
+    def retained_compress(xy, white_xy, spec, *, locus=None):
+        if spec.algorithm == "oklch":
+            return historical.compress_xy(xy, white_xy, spec, locus=locus)
+        return upstream_compress(xy, white_xy, spec, locus=locus)
+
+    gamut.compress_xy = retained_compress
+    report["retained_input_oklch_reference_commit"] = historical_pin
+
+    def BundleSpec(**kwargs):
+        # Retain the Rust bake's explicit defaults; upstream creator defaults
+        # differ from its runtime and must not change the comparison transform.
+        kwargs.setdefault("input_gamut_compress", InputGamutCompressSpec(
+            knee=(0.815, 1.0, 1.2)))
+        kwargs.setdefault("output_gamut_compress", OutputGamutCompressSpec(
+            algorithm="oklch", knee=(0.95, 1.0, 1.6),
+            lightness_compression=(0.95, 1.0, 1.6)))
+        return UpstreamBundleSpec(**kwargs)
+
     from spektrafilm_lut_creator.builders import BundleBuilder
     from spektrafilm_lut_creator.formats import get_format
     from spektrafilm_lut_creator.metadata import LutFileMeta
@@ -342,7 +416,7 @@ def run(args, report):
                 "--qa-print-index without --qa unexpectedly ran QA")
         spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS[:1], input_color_space=input_name,
                           output_color_space=output_name, resolution=4, name=name,
-                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+                          exposure_ev=reference_exposure(meta, input_name, report))
         expected = BundleBuilder(spec).build()
         require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts], "transport LUT paths drift")
         lattices = [{"path": row["path"], **max_error(get_format("cube").read(folder / row["path"]).table,
@@ -371,12 +445,13 @@ def run(args, report):
         spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS, input_color_space="sRGB",
                           output_color_space="sRGB", topology=topology, resolution=17, name=name,
                           include_combinations=topology == "4lut",
-                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+                          exposure_ev=reference_exposure(meta, "sRGB", report))
         expected = BundleBuilder(spec).build()
         require(meta["topology"] == topology and meta["resolution"] == 17, "bundle topology/resolution drift")
         require(meta["stocks"] == {"film": FILM, "prints": list(PRINTS)}, "bundle stocks drift")
         require(meta["color_spaces"] == dataclasses.asdict(expected.meta)["color_spaces"], "bundle color spaces drift")
-        require(meta["provenance"]["reference_commit"] == PIN, "bundle reference provenance drift")
+        require(meta["provenance"]["reference_commit"] == PIN,
+                "spectral runtime provenance drift")
         fields = ("role", "path", "domain", "range", "print_profile")
         require([tuple(m[k] for k in fields) for m in meta["luts"]]
                 == [tuple(getattr(m, k) for k in fields) for m in expected.meta.luts], "LUT roles/paths/order drift")
@@ -396,7 +471,8 @@ def run(args, report):
             key: None if value is None else type(getattr(expected.meta.wires, key))(**value)
             for key, value in meta["wires"].items()})
         delivered = Bundle(luts=luts, meta=dataclasses.replace(expected.meta, wires=wires,
-                           luts=tuple(LutFileMeta(**{k: m[k] for k in fields}) for m in meta["luts"])))
+                           luts=tuple(LutFileMeta(**{k: m[k] for k in fields}) for m in meta["luts"])),
+                           baked_params=expected.baked_params)
         qa = json.loads((folder / "qa" / "report.json").read_text())
         indices = [1] if topology == "2lut" else [0, 1]
         case = {"name": name, "topology": topology, "lattices": comparisons}
@@ -417,7 +493,7 @@ def run(args, report):
                               input_color_space="Panasonic V-Log", output_color_space="sRGB",
                               topology=topology, resolution=17, name=ocio_name,
                               include_combinations=True,
-                              stops_above_midgray=(ocio_meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+                              exposure_ev=reference_exposure(ocio_meta, "Panasonic V-Log", report))
         ocio_python = BundleBuilder(ocio_spec).build()
         require([tuple(m[k] for k in fields) for m in ocio_meta["luts"]]
                 == [tuple(getattr(m, k) for k in fields) for m in ocio_python.meta.luts],
@@ -430,7 +506,7 @@ def run(args, report):
             for key, value in ocio_meta["wires"].items()})
         ocio_delivered = Bundle(luts=ocio_luts, meta=dataclasses.replace(ocio_python.meta,
                                 wires=ocio_wires, luts=tuple(LutFileMeta(**{k: m[k] for k in fields})
-                                for m in ocio_meta["luts"])))
+                                for m in ocio_meta["luts"])), baked_params=ocio_python.baked_params)
         case["ocio_artifacts"] = check_artifacts(ocio_root, ocio_meta)
         case["ocio_lattices"] = ocio_lattices
         case["ocio"] = compare_ocio(ocio_root, ocio_spec, ocio_delivered, root / "python-ocio" / f"{ocio_name}.ocio")
@@ -456,8 +532,13 @@ def run(args, report):
         spec = BundleSpec(film_profile=FILM, print_profiles=PRINTS[:1],
                           input_color_space="sRGB", output_color_space="sRGB",
                           topology="1lut", resolution=17, name=name,
-                          input_gamut_compress=InputGamutCompressSpec(active=active, algorithm=algorithm),
-                          stops_above_midgray=(meta["input_exposure"] or {}).get("stops_above_midgray", "auto"))
+                          input_gamut_compress=InputGamutCompressSpec(
+                              active=active, algorithm="xy", knee=(0.0, 1.0, 6.0)),
+                          exposure_ev=reference_exposure(meta, "sRGB", report))
+        if algorithm == "oklch":
+            # Current dataclass validation excludes the historical algorithm;
+            # preserve its other fields while dispatching the pinned oracle.
+            object.__setattr__(spec.input_gamut_compress, "algorithm", algorithm)
         expected = BundleBuilder(spec).build()
         luts = [(m["path"], get_format("cube").read(folder / m["path"])) for m in meta["luts"]]
         require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts],
@@ -468,7 +549,8 @@ def run(args, report):
             key: None if value is None else type(getattr(expected.meta.wires, key))(**value)
             for key, value in meta["wires"].items()})
         delivered = Bundle(luts=luts, meta=dataclasses.replace(expected.meta, wires=wires,
-                           luts=tuple(LutFileMeta(**{k: m[k] for k in fields}) for m in meta["luts"])))
+                           luts=tuple(LutFileMeta(**{k: m[k] for k in fields}) for m in meta["luts"])),
+                           baked_params=expected.baked_params)
         qa = json.loads((folder / "qa" / "report.json").read_text())
         comparisons = compare_qa(folder, spec, delivered, qa, [0], root / "python-qa" / name)
         diagnostics = [r for r in qa["prints"][0]["results"]
@@ -498,7 +580,8 @@ def run(args, report):
     meta = json.loads((folder / "bundle.json").read_text())
     expected = BundleBuilder(BundleSpec(film_profile=FILM, print_profiles=PRINTS[:1],
                             input_color_space="Panasonic V-Log", output_color_space="sRGB",
-                            resolution=4, target="lumix_realtime_vlog", name=name)).build()
+                            resolution=4, target="lumix_realtime_vlog", name=name,
+                            exposure_ev=reference_exposure(meta, "Panasonic V-Log", report))).build()
     require(meta["target"] == "lumix_realtime_vlog", "Lumix target drift")
     require([m["path"] for m in meta["luts"]] == [p for p, _ in expected.luts], "Lumix path drift")
     lattices = []
