@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 pub(super) struct Pcg {
     state: u128,
     inc: u128,
@@ -90,6 +92,35 @@ impl Pcg {
         }
     }
 }
+
+pub(super) fn hull_indices(pop: usize) -> Vec<usize> {
+    let size = pop.min(8000);
+    let mut rng = Pcg::seeded(0);
+    let mut ids;
+    if pop > 10000 && size > pop / 50 {
+        ids = (0..pop).collect::<Vec<_>>();
+        for i in (std::cmp::max(pop - size, 1)..pop).rev() {
+            let j = rng.bounded(i);
+            ids.swap(i, j);
+        }
+        ids = ids.split_off(pop - size);
+    } else {
+        ids = Vec::with_capacity(size);
+        let mut set = BTreeSet::new();
+        for j in pop - size..pop {
+            let val = rng.bounded(j);
+            let value = if set.contains(&val) { j } else { val };
+            set.insert(value);
+            ids.push(value);
+        }
+        for i in (1..size).rev() {
+            let j = rng.bounded(i);
+            ids.swap(i, j);
+        }
+    }
+    ids
+}
+
 const KI_DOUBLE: [u64; 256] = [
     0x000EF33D8025EF6A,
     0x0000000000000000,
@@ -878,7 +909,7 @@ mod tests {
         assert_eq!(noise.normal(), 0.1257302210933933);
         assert_eq!(noise.normal(), -0.1321048632913019);
         assert_eq!(
-            &super::super::hull_indices(35937)[..8],
+            &hull_indices(35937)[..8],
             &[5352, 29055, 31786, 10731, 26707, 25186, 22922, 19443]
         );
     }

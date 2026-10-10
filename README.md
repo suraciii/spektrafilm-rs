@@ -372,7 +372,7 @@ Feature ownership stays inside the existing crates:
 
 - `spektrafilm-model/src/`: `grain/{v1,v2}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests; `optics/` owns shared physical blur, unsharp masking, and highlight boost.
 - `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate; serialized JSON fields are unchanged.
-- `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. Shared blur infrastructure stays in `blur/`; `mod.rs` retains device setup and film-chain orchestration.
+- `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. Shared blur infrastructure stays in `blur/`; `film_chain.rs` owns resident orchestration and its resource lifetimes, while `mod.rs` retains device setup and shared dispatch.
 - `spektrafilm-gui/src/panels/`: effect panels edit typed parameters and return whether controls changed; the application retains preview scheduling and persistence.
 
 Canonical Rust paths include `spektrafilm_model::grain::v1`, `spektrafilm_model::grain::v2`, and `spektrafilm_core::params::grain::GrainParams`; the former flat module paths have been removed.
