@@ -175,6 +175,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             params.settings.rgb_to_raw_method
         ));
     }
+    let magazine = &params.magazine_print_color;
+    if !magazine.strength.is_finite() || !(0.0..=1.0).contains(&magazine.strength) {
+        return Err("magazine_print_color.strength: must be finite and in 0..=1".into());
+    }
     if let Some(t) = params.taps.inject.as_deref() {
         Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
     }
@@ -183,6 +187,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         "input"
             | "input > film > scan"
             | "input > film > print > scan"
+            | "input > film > scan > magazine"
             | "input > convert-film > print > scan"
             | "input > convert-film > scan-minus-base"
             | "input > convert-film > scan"

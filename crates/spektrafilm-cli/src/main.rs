@@ -60,7 +60,8 @@ enum Commands {
         #[arg(long)]
         film: String,
         /// Paper stock name (e.g. fujifilm_crystal_archive_typeii).
-        /// If omitted and --scan-film is not set, uses the film's target_print.
+        /// If omitted for --scan-film or a direct scan route, uses the film as
+        /// the scan profile; otherwise it uses the film's target_print.
         #[arg(long)]
         paper: Option<String>,
         /// Scan film directly (skip printing stage).
@@ -417,27 +418,6 @@ fn cmd_process(
     };
     eprintln!("Backend: {}", backend.name());
 
-    // Load profiles
-    let t = Instant::now();
-    let mut film = profile::load_profile_by_name(data_dir, film_name)
-        .with_context(|| format!("loading film profile: {film_name}"))?;
-
-    let print_stock = if scan_film {
-        film_name.to_string()
-    } else if let Some(p) = paper_name {
-        p.to_string()
-    } else if let Some(ref target) = film.info.target_print {
-        target.clone()
-    } else {
-        bail!("no paper specified and film has no target_print — use --paper or --scan-film");
-    };
-
-    let mut print = profile::load_profile_by_name(data_dir, &print_stock)
-        .with_context(|| format!("loading print profile: {print_stock}"))?;
-    apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
-    apply_channel_swap(&mut print, &workflow.print_channel_swap)?;
-    eprintln!("Profiles loaded: {} ms", t.elapsed().as_millis());
-
     // Load params (defaults + optional overrides). Strict: unknown fields,
     // unsupported algorithms/color spaces/filter families and unknown taps
     // fail here — before any artifact is produced.
@@ -454,8 +434,17 @@ fn cmd_process(
         .clone()
         .or_else(|| scan_film.then_some("input > film > scan".into()))
         .unwrap_or_else(|| params.workflow.route.clone());
-    params.workflow.route = route;
-    params.io.scan_film = scan_film;
+    let direct_scan_route = scan_film
+        || matches!(
+            route.as_str(),
+            "input > film > scan" | "input > film > scan > magazine"
+        );
+    params.workflow.route = route.clone();
+    params.io.scan_film = scan_film
+        || matches!(
+            route.as_str(),
+            "input > film > scan" | "input > film > scan > magazine"
+        );
     params
         .validate()
         .map_err(anyhow::Error::msg)
@@ -467,6 +456,26 @@ fn cmd_process(
                     .unwrap_or_default()
             )
         })?;
+    // Load profiles
+    let t = Instant::now();
+    let mut film = profile::load_profile_by_name(data_dir, film_name)
+        .with_context(|| format!("loading film profile: {film_name}"))?;
+
+    let print_stock = if direct_scan_route {
+        film_name.to_string()
+    } else if let Some(p) = paper_name {
+        p.to_string()
+    } else if let Some(target) = &film.info.target_print {
+        target.clone()
+    } else {
+        bail!("no paper specified and film has no target_print — use --paper or --scan-film");
+    };
+
+    let mut print = profile::load_profile_by_name(data_dir, &print_stock)
+        .with_context(|| format!("loading print profile: {print_stock}"))?;
+    apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
+    apply_channel_swap(&mut print, &workflow.print_channel_swap)?;
+    eprintln!("Profiles loaded: {} ms", t.elapsed().as_millis());
 
     // RAW supplies linear ACES; prepared images retain their samples.
     let input_is_raw = image_io::is_raw(input);
