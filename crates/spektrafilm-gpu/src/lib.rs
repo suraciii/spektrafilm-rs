@@ -74,6 +74,7 @@ pub trait ComputeBackend: Send + Sync {
     /// `colour.XYZ_to_RGB` step-by-step). Pre-combining loses ~1 ULP per
     /// output channel which compounds to ~5e-6 of drift in the bare
     /// chain. GPU may collapse for performance.
+    #[allow(clippy::too_many_arguments)]
     fn scan_spectral(
         &self,
         density_cmy: &ImageBuf,
@@ -110,6 +111,7 @@ pub trait ComputeBackend: Send + Sync {
     /// Runtime-grid scan. GPU implementations deliberately route this
     /// uncommon path through the faithful CPU integrator rather than silently
     /// truncating CMFs to the historical 81-sample grid.
+    #[allow(clippy::too_many_arguments)]
     fn scan_spectral_with_cmfs(
         &self,
         density_cmy: &ImageBuf,
@@ -147,6 +149,7 @@ pub trait ComputeBackend: Send + Sync {
 
     /// Spectral printing: film density CMY → print log-exposure via spectral integration.
     /// GPU backends override this with a compute shader.
+    #[allow(clippy::too_many_arguments)]
     fn print_spectral(
         &self,
         density_cmy: &ImageBuf,

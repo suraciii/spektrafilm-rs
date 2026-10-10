@@ -902,50 +902,47 @@ impl App {
             .as_ref()
             .map(|job| ("Export", job.operation.mode()));
         let save_report = self.diagnostics.show(ui, render, queued, export);
-        if save_report {
-            if let Some(path) = rfd::FileDialog::new()
+        if save_report
+            && let Some(path) = rfd::FileDialog::new()
                 .add_filter("JSON report", &["json"])
                 .set_file_name("spektrafilm-report.json")
                 .save_file()
-            {
-                self.status = match self.diagnostics.save_selected(&path) {
-                    Ok(()) => "Saved diagnostic report.".into(),
-                    Err(error) => format!("Diagnostic report save error: {error}"),
-                };
-            }
+        {
+            self.status = match self.diagnostics.save_selected(&path) {
+                Ok(()) => "Saved diagnostic report.".into(),
+                Err(error) => format!("Diagnostic report save error: {error}"),
+            };
         }
     }
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked() {
-                if let Some(path) = self
+            if ui.button("Save current to file").clicked()
+                && let Some(path) = self
                     .file_dialog("state")
                     .set_file_name("gui_state.json")
                     .add_filter("JSON", &["json"])
                     .save_file()
-                {
-                    self.remember_dialog("state", &path);
-                    let result = self.current_state().and_then(|s| s.save(&path));
-                    self.status = match result {
-                        Ok(()) => format!("Saved GUI state to {}", path.display()),
-                        Err(e) => format!("State save error: {e:#}"),
-                    };
-                }
+            {
+                self.remember_dialog("state", &path);
+                let result = self.current_state().and_then(|s| s.save(&path));
+                self.status = match result {
+                    Ok(()) => format!("Saved GUI state to {}", path.display()),
+                    Err(e) => format!("State save error: {e:#}"),
+                };
             }
-            if ui.button("Load from file").clicked() {
-                if let Some(path) = self
+            if ui.button("Load from file").clicked()
+                && let Some(path) = self
                     .file_dialog("state")
                     .add_filter("JSON", &["json"])
                     .pick_file()
-                {
-                    self.remember_dialog("state", &path);
-                    let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-                    self.status = match result {
-                        Ok(()) => format!("Loaded GUI state from {}", path.display()),
-                        Err(e) => format!("State load error: {e:#}"),
-                    };
-                }
+            {
+                self.remember_dialog("state", &path);
+                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
+                self.status = match result {
+                    Ok(()) => format!("Loaded GUI state from {}", path.display()),
+                    Err(e) => format!("State load error: {e:#}"),
+                };
             }
             if ui.button("Save current as default").clicked() {
                 let result = self
@@ -1237,7 +1234,7 @@ impl App {
         self.refresh_input_viewer();
         self.dirty = true;
         self.force_preview = true;
-        self.status = format!("Rotated input {}°", self.input_rotation as i32 * 90);
+        self.status = format!("Rotated input {}°", self.input_rotation * 90);
     }
 
     /// Hand the current input image to the viewer: capped input raster, its
@@ -2144,10 +2141,10 @@ impl App {
             self.dirty = true;
             self.force_preview = true;
         }
-        if changes.raw_reload {
-            if let Some(path) = self.image_path.clone() {
-                self.load_image_from_path(&path);
-            }
+        if changes.raw_reload
+            && let Some(path) = self.image_path.clone()
+        {
+            self.load_image_from_path(&path);
         }
     }
 
@@ -2157,12 +2154,11 @@ impl App {
                 "Load and process a raw file with the selected white balance and lens correction settings."
             } else {
                 "Select an input image"
-            }).clicked() {
-                if let Some(path) = self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()).pick_file() {
+            }).clicked()
+                && let Some(path) = self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()).pick_file() {
                     self.remember_dialog("load", &path);
                     self.load_image_from_path(&path);
                 }
-            }
             if raw {
                 self.parameter_section(ui, "Import Raw");
             }
@@ -2496,10 +2492,10 @@ impl eframe::App for App {
             operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
             self.diagnostics.finish(operation, Outcome::Cancelled);
         }
-        if let Some(mut job) = self.calibration_job.take() {
-            if let Some(handle) = job.handle.take() {
-                let _ = handle.join();
-            }
+        if let Some(mut job) = self.calibration_job.take()
+            && let Some(handle) = job.handle.take()
+        {
+            let _ = handle.join();
         }
         self.diagnostics.clear();
     }

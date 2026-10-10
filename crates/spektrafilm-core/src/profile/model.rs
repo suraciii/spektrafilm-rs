@@ -35,7 +35,7 @@ where
     }
 }
 
-fn ser_f64_vec<S>(values: &Vec<f64>, serializer: S) -> Result<S::Ok, S::Error>
+fn ser_f64_vec<S>(values: &[f64], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -46,7 +46,7 @@ where
         .serialize(serializer)
 }
 
-fn ser_f64_matrix<S>(values: &Vec<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
+fn ser_f64_matrix<S>(values: &[Vec<f64>], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -61,7 +61,7 @@ where
         .serialize(serializer)
 }
 
-fn ser_f64_tensor<S>(values: &Vec<Vec<Vec<f64>>>, serializer: S) -> Result<S::Ok, S::Error>
+fn ser_f64_tensor<S>(values: &[Vec<Vec<f64>>], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -81,7 +81,7 @@ where
         .serialize(serializer)
 }
 
-fn ser_base_density<S>(values: &Vec<Vec<f64>>, serializer: S) -> Result<S::Ok, S::Error>
+fn ser_base_density<S>(values: &[Vec<f64>], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {

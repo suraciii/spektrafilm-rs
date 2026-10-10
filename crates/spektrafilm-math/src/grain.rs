@@ -29,7 +29,7 @@ pub fn fast_blur_weights(radius: f32) -> Vec<[f32; 2]> {
         *value /= sum;
     }
 
-    let samples = (c + 1) / 2;
+    let samples = c.div_ceil(2);
     let mut folded = Vec::with_capacity(samples);
     for i in 0..samples {
         let a = if i == 0 {

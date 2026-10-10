@@ -135,10 +135,10 @@ impl GuiState {
             ("apply_cctf_decoding", "input_cctf_decoding"),
             ("spectral_upsampling_method", "rgb_to_raw_method"),
         ] {
-            if normalized["input_image"].get(new).is_none() {
-                if let Some(v) = value["input_image"].get(old) {
-                    normalized["input_image"][new] = v.clone();
-                }
+            if normalized["input_image"].get(new).is_none()
+                && let Some(v) = value["input_image"].get(old)
+            {
+                normalized["input_image"][new] = v.clone();
             }
         }
         normalized["simulation"] = flatten(&value["simulation"], &["selection", "io"]);
@@ -194,14 +194,14 @@ impl GuiState {
         }
         // Older Rust states stored bit depth before export format existed.
         // Infer only an absent format; explicit combinations still face validation.
-        if let Some(rust) = normalized.get_mut("rust").and_then(Value::as_object_mut) {
-            if !rust.contains_key("export_format") {
-                let format = match rust.get("save_bit_depth").and_then(Value::as_u64) {
-                    Some(16 | 32) => "tiff",
-                    _ => "png",
-                };
-                rust.insert("export_format".into(), json!(format));
-            }
+        if let Some(rust) = normalized.get_mut("rust").and_then(Value::as_object_mut)
+            && !rust.contains_key("export_format")
+        {
+            let format = match rust.get("save_bit_depth").and_then(Value::as_u64) {
+                Some(16 | 32) => "tiff",
+                _ => "png",
+            };
+            rust.insert("export_format".into(), json!(format));
         }
         merge(&mut state.sections, &normalized);
         canonicalize_grain_state(&mut state.sections["grain"]);
@@ -361,10 +361,10 @@ impl GuiState {
             .context("Saving color space must be a string")?;
         spektrafilm_math::colorspace::resolve(saving_space).map_err(anyhow::Error::msg)?;
         if let Some(rust) = s["rust"].as_object() {
-            if let Some(depth) = rust.get("save_bit_depth") {
-                if !matches!(depth.as_u64(), Some(8 | 16 | 32)) {
-                    bail!("Saving bit depth must be 8, 16 or 32");
-                }
+            if let Some(depth) = rust.get("save_bit_depth")
+                && !matches!(depth.as_u64(), Some(8 | 16 | 32))
+            {
+                bail!("Saving bit depth must be 8, 16 or 32");
             }
             if let Some(space) = rust.get("export_saving_color_space") {
                 let space = space
@@ -442,7 +442,7 @@ impl GuiState {
         extras: &Value,
     ) -> Result<Self> {
         let mut base = Self::factory().sections;
-        merge(&mut base, &extras);
+        merge(&mut base, extras);
         let mut state = Self::from_value(base)?;
         let mut runtime = serde_json::to_value(params)?;
         let s = &mut state.sections;

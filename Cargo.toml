@@ -48,6 +48,13 @@ lto = "thin"
 codegen-units = 1
 opt-level = 3
 
+# Decimal literals are copied from the pinned Python reference (NumPy,
+# colour-science, the Ziggurat tables) at full printed precision. Digits
+# beyond the f64 shortest round-trip are inert after IEEE-754 rounding, and
+# keeping them lets a reader diff each constant against its Python source.
+[workspace.lints.clippy]
+excessive_precision = "allow"
+
 # WGPU 24 does not expose Metal floating-point compilation options. The local
 # HAL patch preserves CPU binary32 arithmetic only for the marked grain shader.
 [patch.crates-io]

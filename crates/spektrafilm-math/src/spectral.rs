@@ -331,6 +331,8 @@ impl SpectralShape {
         Ok(result)
     }
 
+    // Inclusive wavelength bounds always contain at least one sample.
+    #[allow(clippy::len_without_is_empty)]
     #[inline]
     pub fn len(self) -> usize {
         ((self.end_nm - self.start_nm) / self.step_nm).round() as usize + 1

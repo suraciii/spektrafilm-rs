@@ -67,8 +67,10 @@ fn gui_child_preserves_edits_while_batch_applies_stock_specifics() {
         );
         std::fs::read(raw)
             .unwrap()
-            .chunks_exact(8)
-            .map(|chunk| f64::from_ne_bytes(chunk.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| f64::from_ne_bytes(*chunk))
             .collect::<Vec<_>>()
     };
     let gui = run(true);

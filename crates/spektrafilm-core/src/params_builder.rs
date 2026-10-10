@@ -21,13 +21,15 @@ use crate::neutral_filters::NeutralFilters;
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 
+type HalationPreset = ((&'static str, &'static str), ([f64; 3], [f64; 3]));
+
 /// Halation low-level presets keyed by `(use, antihalation)`. Mirrors
 /// upstream `_HALATION_PRESETS`: `sigma_h` follows the base material
 /// (still → triacetate ~65 µm, cine → PET ~50 µm), the strength follows
 /// the antihalation undercoat. The user-facing knobs
 /// (`scatter_amount`, `halation_amount`, …) stay at 1.0 so these seeds
 /// define the physical baseline.
-const HALATION_PRESETS: &[((&str, &str), ([f64; 3], [f64; 3]))] = &[
+const HALATION_PRESETS: &[HalationPreset] = &[
     (
         ("still", "strong"),
         ([65.0, 65.0, 65.0], [0.015, 0.005, 0.0]),
@@ -183,19 +185,18 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
     }
     let print_stock = print.info.stock.as_deref().unwrap_or("");
     let film_stock = film.info.stock.as_deref().unwrap_or("");
-    match database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock)) {
-        Some([c, m, y]) => {
-            if !protected[0] {
-                params.enlarger.c_filter_neutral = c as f32;
-            }
-            if !protected[1] {
-                params.enlarger.m_filter_neutral = m as f32;
-            }
-            if !protected[2] {
-                params.enlarger.y_filter_neutral = y as f32;
-            }
+    if let Some([c, m, y]) =
+        database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock))
+    {
+        if !protected[0] {
+            params.enlarger.c_filter_neutral = c as f32;
         }
-        None => {}
+        if !protected[1] {
+            params.enlarger.m_filter_neutral = m as f32;
+        }
+        if !protected[2] {
+            params.enlarger.y_filter_neutral = y as f32;
+        }
     }
     params
 }
@@ -327,11 +328,8 @@ fn apply_coupler_preset(params: &mut RuntimeParams, film: &Profile) {
     set("gamma_interlayer_r_to_gb", &mut d.gamma_interlayer_r_to_gb);
     set("gamma_interlayer_g_to_rb", &mut d.gamma_interlayer_g_to_rb);
     set("gamma_interlayer_b_to_rg", &mut d.gamma_interlayer_b_to_rg);
-    match film.info.stock.as_deref() {
-        Some("fujifilm_velvia_100") => {
-            d.gamma_samelayer_rgb = [0.108, 0.072, 0.054];
-        }
-        _ => {}
+    if let Some("fujifilm_velvia_100") = film.info.stock.as_deref() {
+        d.gamma_samelayer_rgb = [0.108, 0.072, 0.054];
     }
 }
 
@@ -674,10 +672,12 @@ mod tests {
             "error lists valid taps: {err}"
         );
 
-        let mut params = RuntimeParams::default();
-        params.taps = TapsParams {
-            inject: Some("bogus".into()),
-            collect: None,
+        let mut params = RuntimeParams {
+            taps: TapsParams {
+                inject: Some("bogus".into()),
+                collect: None,
+            },
+            ..Default::default()
         };
         assert!(params.validate().is_err());
         params.taps = TapsParams {
