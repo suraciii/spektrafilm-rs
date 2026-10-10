@@ -119,14 +119,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "spektrafilm",
         options,
-        Box::new(|cc| {
-            Ok(Box::new(App::new(
-                cc,
-                backend,
-                initial_image,
-                initial_state,
-            )))
-        }),
+        Box::new(|_cc| Ok(Box::new(App::new(backend, initial_image, initial_state)))),
     )
 }
 
@@ -725,13 +718,10 @@ struct CalibrationJob {
 
 impl App {
     fn new(
-        cc: &eframe::CreationContext<'_>,
         backend: Arc<dyn ComputeBackend>,
         initial_image: Option<PathBuf>,
         initial_state: Option<PathBuf>,
     ) -> Self {
-        let _ = cc;
-
         let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;

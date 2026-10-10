@@ -98,16 +98,25 @@ pub fn name_error(
     })
 }
 pub fn reveal_command(path: &Path) -> std::process::Command {
-    let program = if cfg!(target_os = "macos") {
-        "open"
+    if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        command.arg("-R").arg(path);
+        command
     } else if cfg!(windows) {
-        "explorer"
+        let mut argument = std::ffi::OsString::from("/select,");
+        argument.push(path);
+        let mut command = std::process::Command::new("explorer");
+        command.arg(argument);
+        command
     } else {
-        "xdg-open"
-    };
-    let mut command = std::process::Command::new(program);
-    command.arg(path);
-    command
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(
+            path.parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        );
+        command
+    }
 }
 fn reveal(path: &Path) -> Result<(), String> {
     let status = reveal_command(path)
@@ -307,11 +316,13 @@ impl App {
                         .cloned()
                         .collect();
                     if !faults.is_empty() {
-                        ui.collapsing("Issues", |ui| {
-                            for entry in faults {
-                                show_fault(ui, &entry);
-                            }
-                        });
+                        egui::CollapsingHeader::new("Issues")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                for entry in faults {
+                                    show_fault(ui, &entry);
+                                }
+                            });
                     }
                 });
             });
@@ -326,6 +337,9 @@ impl App {
             .library
             .load(entry.group, &entry.name)
             .and_then(|selected| {
+                if self.scan_for_print_snapshot.is_some() {
+                    self.toggle_scan_for_print();
+                }
                 match selected.preset.kind()? {
                     PresetKind::Look => {
                         let resolved = selected.preset.resolve(&self.data_dir, &self.params)?;
@@ -661,6 +675,132 @@ fn show_fault(ui: &mut egui::Ui, entry: &LibraryEntry) {
 mod tests {
     use super::*;
     use crate::state;
+    fn test_app(label: &str) -> (App, PathBuf) {
+        let directory =
+            std::env::temp_dir().join(format!("spektrafilm-gui-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let state_path = directory.join("state.json");
+        state::GuiState::factory().save(&state_path).unwrap();
+        let mut app = App::new(
+            std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            None,
+            Some(state_path),
+        );
+        app.presets.library = PresetLibrary::new(directory.join("presets"));
+        app.presets.refresh();
+        (app, directory)
+    }
+
+    #[test]
+    fn section_application_restores_transient_scan_controls() {
+        let (mut app, directory) = test_app("scan-section");
+        app.params.scanner.white_correction = false;
+        app.params.scanner.black_correction = false;
+        app.params.print_render.glare.active = true;
+        for section in [Section::Grain, Section::Base] {
+            let preset =
+                Preset::capture_section("Section", section, &app.params, provenance()).unwrap();
+            app.presets
+                .library
+                .save_new(&preset, &app.data_dir)
+                .unwrap();
+            app.presets.refresh();
+            let entry = app
+                .presets
+                .entries
+                .iter()
+                .find(|entry| entry.name == "Section")
+                .unwrap()
+                .clone();
+            app.toggle_scan_for_print();
+            assert_eq!(app.scan_for_print_snapshot, Some((false, false, true)));
+            app.load_preset(&entry);
+            assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+            assert!(app.scan_for_print_snapshot.is_none());
+            let restored = app.current_state().unwrap().runtime_params().unwrap();
+            assert!(!restored.scanner.white_correction);
+            assert!(!restored.scanner.black_correction);
+            assert!(restored.print_render.glare.active);
+            app.presets.library.delete("Section").unwrap();
+        }
+        let entry = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.group == PresetGroup::BuiltIn)
+            .unwrap()
+            .clone();
+        app.toggle_scan_for_print();
+        app.load_preset(&entry);
+        assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+        assert!(app.scan_for_print_snapshot.is_none());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unusable_library_path_keeps_builtins_and_renders_fault() {
+        let (mut app, directory) = test_app("library-fault");
+        let path = directory.join("presets");
+        std::fs::write(&path, "not a directory").unwrap();
+        app.presets.refresh();
+        assert!(app.presets.scan_error.is_none());
+        assert_eq!(
+            app.presets
+                .entries
+                .iter()
+                .filter(|entry| entry.group == PresetGroup::BuiltIn)
+                .count(),
+            builtin_presets().len()
+        );
+        let fault = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.fault.is_some())
+            .unwrap();
+        assert_eq!(fault.path.as_ref(), Some(&path));
+        let fault_text = format!("{}: {}", path.display(), fault.fault.as_ref().unwrap());
+        let builtin_name = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.group == PresetGroup::BuiltIn)
+            .unwrap()
+            .name
+            .clone();
+        let context = egui::Context::default();
+        let output = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1460.0, 2000.0),
+                )),
+                ..Default::default()
+            },
+            |context| app.preset_panel(context),
+        );
+        fn texts(shape: &egui::epaint::Shape, output: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(text) => output.push(text.galley.text().to_owned()),
+                egui::epaint::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        texts(shape, output);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut rendered = vec![];
+        for shape in output.shapes {
+            texts(&shape.shape, &mut rendered);
+        }
+        assert!(rendered.contains(&fault_text), "{rendered:?}");
+        assert!(
+            rendered.iter().any(|text| text.contains(&builtin_name)),
+            "{rendered:?}"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
     use spektrafilm_core::presets::builtin_presets;
     #[test]
     fn marker_transitions_and_capture_roundtrip() {
@@ -739,12 +879,28 @@ mod tests {
         assert!(name_error("alpha", &entries, Some("alpha")).is_none());
     }
     #[test]
-    fn reveal_preserves_path_argument() {
+    fn reveal_uses_platform_file_selection_arguments() {
+        use std::ffi::OsString;
+
         let path = Path::new("/tmp/My Presets/a look.toml");
-        assert_eq!(
-            reveal_command(path).get_args().collect::<Vec<_>>(),
-            vec![path.as_os_str()]
-        );
+        let command = reveal_command(path);
+        let (program, args) = if cfg!(target_os = "macos") {
+            (
+                "open",
+                vec![OsString::from("-R"), path.as_os_str().to_owned()],
+            )
+        } else if cfg!(windows) {
+            let mut argument = OsString::from("/select,");
+            argument.push(path);
+            ("explorer", vec![argument])
+        } else {
+            (
+                "xdg-open",
+                vec![path.parent().unwrap().as_os_str().to_owned()],
+            )
+        };
+        assert_eq!(command.get_program(), program);
+        assert_eq!(command.get_args().collect::<Vec<_>>(), args);
     }
     #[test]
     fn browser_extension_preserves_existing_fields() {

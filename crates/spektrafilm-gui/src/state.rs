@@ -173,17 +173,6 @@ impl GuiState {
             }
         }
         normalize_grain_section(&mut normalized["grain"]);
-        if let Some(grain) = normalized
-            .get_mut("rust")
-            .and_then(Value::as_object_mut)
-            .and_then(|rust| rust.get_mut("runtime"))
-            .and_then(Value::as_object_mut)
-            .and_then(|runtime| runtime.get_mut("film_render"))
-            .and_then(Value::as_object_mut)
-            .and_then(|film_render| film_render.get_mut("grain"))
-        {
-            normalize_grain_section(grain);
-        }
         for section in ["input_image", "simulation", "grain"] {
             if value.get(section).is_none() {
                 normalized
@@ -498,13 +487,6 @@ impl GuiState {
             .and_then(|root| root.get_mut("workflow"))
             .and_then(Value::as_object_mut)
             .map(|workflow| workflow.remove("route"));
-        if let Some(grain) = runtime
-            .get_mut("film_render")
-            .and_then(Value::as_object_mut)
-            .and_then(|film_render| film_render.get_mut("grain"))
-        {
-            normalize_grain_section(grain);
-        }
         if let Some(grain) = s.get_mut("grain") {
             canonicalize_grain_state(grain);
         }
@@ -634,6 +616,62 @@ mod tests {
         let restored = restored.unwrap().runtime_params().unwrap();
         assert_eq!(restored.film_render.grain.rms_granularity, [0.0; 3]);
         assert_eq!(restored.io.upscale_factor, 2.5);
+    }
+
+    #[test]
+    fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
+        use spektrafilm_core::presets::{Preset, Provenance, Section};
+
+        let factory = GuiState::factory();
+        let baseline = GuiState::from_runtime(
+            &factory.runtime_params().unwrap(),
+            factory.film(),
+            factory.paper(),
+            &factory.sections,
+        )
+        .unwrap();
+        let mut source = factory.runtime_params().unwrap();
+        source.film_render.grain.particle_area_um2 = 9.0;
+        source.film_render.grain.sublayers_active = false;
+        source.film_render.grain.monochrome = true;
+        let preset = Preset::capture_section(
+            "Rust grain controls",
+            Section::Grain,
+            &source,
+            Provenance {
+                implementation_version: "test".into(),
+                model_version: "test".into(),
+            },
+        )
+        .unwrap();
+        // Monochrome is derived from the film, so sections preserve the target's value.
+        let mut target = factory.runtime_params().unwrap();
+        target.film_render.grain.monochrome = true;
+        let applied = preset.apply_section(&target).unwrap();
+        let saved =
+            GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
+                .unwrap();
+        let mut before = baseline.sections;
+        let mut after = saved.sections.clone();
+        before.as_object_mut().unwrap().remove("rust");
+        after.as_object_mut().unwrap().remove("rust");
+        assert_eq!(
+            serde_json::to_vec(&before).unwrap(),
+            serde_json::to_vec(&after).unwrap()
+        );
+
+        let serialized = serde_json::to_vec(&saved.sections).unwrap();
+        let loaded = GuiState::from_value(serde_json::from_slice(&serialized).unwrap()).unwrap();
+        for state in [saved, loaded] {
+            let restored = state.runtime_params().unwrap();
+            assert_eq!(restored.film_render.grain.particle_area_um2, 9.0);
+            assert!(!restored.film_render.grain.sublayers_active);
+            assert!(restored.film_render.grain.monochrome);
+            assert_eq!(
+                restored.render_preparation_state(),
+                applied.render_preparation_state()
+            );
+        }
     }
 
     #[test]
