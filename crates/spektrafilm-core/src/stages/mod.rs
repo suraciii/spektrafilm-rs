@@ -524,7 +524,7 @@ mod debug_tests {
             stages::printing::process(&density_cmy, &film, &print, &params, &backend).unwrap();
         eprintln!("density_print: {:?}", printed.get(0, 0));
         let density_print = printed;
-        let rgb_out = stages::scanning::scan(
+        let rgb_out = stages::scanning::process(
             &density_print,
             &print,
             &params,

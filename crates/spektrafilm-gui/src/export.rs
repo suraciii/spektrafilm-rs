@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use serde_json::{Value, json};
-use spektrafilm_core::image_io::{BitDepth, JpegSubsampling};
+use spektrafilm_core::image_io::{
+    BitDepth, Compression, ImageFormat, JpegSubsampling, SaveOptions,
+};
 
 const COLOR_SPACES: &[&str] = &[
     "sRGB",
@@ -201,6 +203,35 @@ impl ExportOptions {
                 }
             }
             ExportFormat::Tiff => {}
+        }
+    }
+
+    /// Container the writer receives for this format.
+    pub(crate) fn image_format(&self) -> ImageFormat {
+        match self.format {
+            ExportFormat::Jpeg => ImageFormat::Jpeg,
+            ExportFormat::Png => ImageFormat::Png,
+            ExportFormat::Tiff => ImageFormat::Tiff,
+            ExportFormat::Exr => ImageFormat::Exr,
+        }
+    }
+
+    /// Writer options for this format — the one mapping from export-dialog
+    /// selections to the shared image writer, consumed by both the saving
+    /// telemetry configuration and the export worker.
+    pub(crate) fn save_options(&self) -> SaveOptions<'_> {
+        SaveOptions {
+            depth: self.depth,
+            color_space: &self.saving_color_space,
+            cctf_encoding: self.saving_cctf_encoding,
+            jpeg_quality: (self.format == ExportFormat::Jpeg).then_some(self.jpeg_quality),
+            jpeg_subsampling: (self.format == ExportFormat::Jpeg).then_some(self.jpeg_subsampling),
+            compression: matches!(self.format, ExportFormat::Tiff | ExportFormat::Exr).then_some(
+                match self.compression {
+                    ExportCompression::Zip => Compression::Zip,
+                    ExportCompression::None => Compression::None,
+                },
+            ),
         }
     }
 
