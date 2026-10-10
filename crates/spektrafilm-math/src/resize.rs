@@ -131,24 +131,37 @@ fn taps(n: usize, out: usize) -> Vec<([usize; 4], [f64; 4])> {
         .collect()
 }
 
-/// Python preprocess converts to float64; interpolation remains f64 here
-/// until the configured Scalar boundary. The channel spline roundtrip is
-/// mathematically identity and is omitted (roundoff only).
-pub fn rescale_spline3(image: &ImageBuf, scale: f64) -> Result<ImageBuf, String> {
+/// Output dimensions of [`rescale_spline3`] for a `w x h` image at
+/// `scale`: `round_ties_even(dim * scale)`, at least 1 per axis and
+/// rejected beyond the u32 image limit.
+///
+/// This is the single authority for the rescale rounding rule: the grain
+/// V3 readout asks for the output grid the user's crop/upscale request
+/// resolves to, so it must not re-derive that rounding.
+pub fn rescaled_dimensions(w: u32, h: u32, scale: f64) -> Result<(u32, u32), String> {
     if !scale.is_finite() || scale <= 0.0 {
         return Err(format!(
             "io.upscale_factor must be finite and > 0 (got {scale})"
         ));
-    }
-    let (w, h) = (image.width as usize, image.height as usize);
-    if w == 0 || h == 0 {
-        return Err("cannot resize an empty image".into());
     }
     let ow = (w as f64 * scale).round_ties_even().max(1.0);
     let oh = (h as f64 * scale).round_ties_even().max(1.0);
     if ow > u32::MAX as f64 || oh > u32::MAX as f64 {
         return Err("resize dimensions exceed u32 image limits".into());
     }
+    Ok((ow as u32, oh as u32))
+}
+
+/// Python preprocess converts to float64; interpolation remains f64 here
+/// until the configured Scalar boundary. The channel spline roundtrip is
+/// mathematically identity and is omitted (roundoff only).
+pub fn rescale_spline3(image: &ImageBuf, scale: f64) -> Result<ImageBuf, String> {
+    let (w, h) = (image.width as usize, image.height as usize);
+    if w == 0 || h == 0 {
+        return Err("cannot resize an empty image".into());
+    }
+    let (ow, oh) = rescaled_dimensions(w as u32, h as u32, scale)?;
+    let (ow, oh) = (ow as f64, oh as f64);
     let (fx, fy) = (w as f64 / ow, h as f64 / oh);
     let (zx, zy) = (1.0 / fx, 1.0 / fy);
     let (ow, oh) = (

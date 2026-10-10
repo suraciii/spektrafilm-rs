@@ -61,6 +61,8 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.v2_resolution_factor" => Some((0.0, Some(100.0))),
         "film_render.grain.v2_resolution_type" => Some((0.0, Some(1.0))),
         "film_render.grain.v2_timer" => Some((0.0, Some(1.0))),
+        // Discovery range only; `validate` owns the strict positivity.
+        "film_render.grain.v3_dye_support_um" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         _ => None,
@@ -152,7 +154,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "film_render.grain.engine" => ["v1", "v2"].iter().map(|v| (*v).into()).collect(),
+        "film_render.grain.engine" => ["v1", "v2", "v3"].iter().map(|v| (*v).into()).collect(),
         "film_render.grain.v2_mode" => ["analogue", "noise"].iter().map(|v| (*v).into()).collect(),
         "film_render.grain.v2_film_type" => ["negative", "positive"]
             .iter()
@@ -244,7 +246,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
 pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
     let valid = match path {
         "scanner.scan_output" => matches!(value, "direct_scan" | "positive_scan"),
-        "film_render.grain.engine" => matches!(value, "v1" | "v2"),
+        "film_render.grain.engine" => matches!(value, "v1" | "v2" | "v3"),
         "film_render.grain.v2_mode" => matches!(value, "analogue" | "noise"),
         "film_render.grain.v2_film_type" => matches!(value, "negative" | "positive"),
         "film_render.grain.v2_profile" => {
@@ -308,6 +310,14 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         return Err("film_render.grain.v2_resolution_type: must be 0 or 1".into());
     }
     validate_v2_timer(f64::from(grain.v2_timer))?;
+    // Strict positivity is owned here: the metadata bound only reports a
+    // discovery range (`0..=inf`).
+    if !grain.v3_dye_support_um.is_finite() || grain.v3_dye_support_um <= 0.0 {
+        return Err(
+            "film_render.grain.v3_dye_support_um: must be finite and strictly positive (micrometers)"
+                .into(),
+        );
+    }
     for (name, value) in [
         ("v2_size", grain.v2_size),
         ("v2_amount", grain.v2_amount),

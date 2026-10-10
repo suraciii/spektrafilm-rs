@@ -593,6 +593,32 @@ fn cmd_process(
             bail!("EXR compression is always zip");
         }
     }
+    // Active V3 resolves its field on the CPU and never enters the resident
+    // WGPU chain, whatever backend the surrounding stages use. Its supported
+    // condition is validated here so the dry run reports and rejects exactly
+    // what a render does, and the effective backend is reported next to the
+    // selected one.
+    spektrafilm_core::stages::grain_v3::validate_supported(&film, &params)
+        .map_err(anyhow::Error::msg)?;
+    let grain_v3_active = spektrafilm_core::stages::grain_v3::active(&params);
+    if grain_v3_active {
+        eprintln!(
+            "Backend (effective): {}",
+            spektrafilm_core::stages::grain_v3::effective_backend_note()
+        );
+    }
+    // An active V3 field resolves on the CPU whatever backend the rest of
+    // the chain uses, so the dry run reports the effective backend it did
+    // not select.
+    let grain_v3 = json!({
+        "active": grain_v3_active,
+        "effective_backend": if grain_v3_active { Some("cpu") } else { None },
+        "note": if grain_v3_active {
+            Some(spektrafilm_core::stages::grain_v3::effective_backend_note())
+        } else {
+            None
+        },
+    });
     if dry_run {
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         println!(
@@ -601,6 +627,7 @@ fn cmd_process(
                 "film_profile": resolved.film_name,
                 "print_profile": resolved.print_name,
                 "parameters": params,
+                "film_grain_v3": grain_v3,
                 "output": {
                     "path": output,
                     "format": output_format.name(),

@@ -502,6 +502,28 @@ impl Pipeline {
                 );
                 print_stage_timing(print_timings, "filming_develop", t);
                 record_stage_timing(stage_timings, "filming_develop", t);
+                // The V3 field reads the developed density out at the
+                // requested geometry: the full-frame density keeps its film
+                // coordinates and the readout owns region and output grid.
+                // The scanner consumes the readout, so its pitch is the
+                // output pitch (`pixel_size_um` stays the source pitch for
+                // any earlier-consuming stage; no stage after this point in
+                // the scan chain consumes the pitch).
+                let out = if stages::grain_v3::active(&self.params) {
+                    let t = Instant::now();
+                    let out = stages::grain_v3::readout(
+                        &out,
+                        &self.film,
+                        &self.params,
+                        pixel_size_um,
+                        backend,
+                    )?;
+                    print_stage_timing(print_timings, "grain_v3_readout", t);
+                    record_stage_timing(stage_timings, "grain_v3_readout", t);
+                    out
+                } else {
+                    out
+                };
                 tracing::info!("pipeline: filming complete");
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &out);
                 Ok(out)
@@ -604,6 +626,9 @@ impl Pipeline {
             ));
         }
         let (mut cur, pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
+            // Active V3 outside its supported condition fails before any
+            // work, for tap runs as well as full runs.
+            stages::grain_v3::validate_supported(&self.film, &self.params)?;
             let metering = stages::StageObservation::cpu(
                 backend,
                 "metering",
@@ -617,11 +642,24 @@ impl Pipeline {
                 "geometry",
                 spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
             );
-            let resized = crate::resizing::crop_and_rescale(
-                &image,
-                &self.params.io,
-                self.params.camera.film_format_mm,
-            );
+            // The V3 readout owns the requested region and its output grid;
+            // the film stages see the full frame (see `process_full`).
+            let resized = if stages::grain_v3::active(&self.params) {
+                Ok((
+                    std::borrow::Cow::Borrowed(&image),
+                    crate::resizing::pixel_size_um(
+                        self.params.camera.film_format_mm,
+                        image.width,
+                        image.height,
+                    ),
+                ))
+            } else {
+                crate::resizing::crop_and_rescale(
+                    &image,
+                    &self.params.io,
+                    self.params.camera.film_format_mm,
+                )
+            };
             geometry.set_complete(resized.is_ok());
             let (working, pitch) = resized?;
             drop(geometry);
@@ -798,6 +836,10 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        // Active V3 outside its supported condition fails here, before any
+        // route work — including the passthrough and convert routes, which
+        // never reach a grain stage.
+        stages::grain_v3::validate_supported(&self.film, &self.params)?;
         if self.params.workflow.route == "input" {
             let _observation = stages::StageObservation::cpu(
                 backend,
@@ -846,11 +888,26 @@ impl Pipeline {
             "geometry",
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
-        let resized = crate::resizing::crop_and_rescale(
-            &image,
-            &self.params.io,
-            self.params.camera.film_format_mm,
-        );
+        // V3 reads the requested region out of the full developed source:
+        // cropping or rescaling first would move the film coordinates the
+        // field lives in, and the readout owns the region and its output
+        // grid.
+        let resized = if stages::grain_v3::active(&self.params) {
+            Ok((
+                std::borrow::Cow::Borrowed(&image),
+                crate::resizing::pixel_size_um(
+                    self.params.camera.film_format_mm,
+                    image.width,
+                    image.height,
+                ),
+            ))
+        } else {
+            crate::resizing::crop_and_rescale(
+                &image,
+                &self.params.io,
+                self.params.camera.film_format_mm,
+            )
+        };
         geometry.set_complete(resized.is_ok());
         let (working, pixel_size_um) = resized?;
         drop(geometry);
@@ -1008,7 +1065,9 @@ impl Pipeline {
         // buffer — one upload + one readback total. WGSL runs the
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
-        // path; backends without resident support return `None`.
+        // path; backends without resident support return `None`. An active
+        // V3 field makes `resident_decision` report a per-stage reason, so
+        // this attempt returns `None` for it.
         if self.tc_lut.is_some() || self.mallett_core.is_some() {
             if let Some(out) =
                 self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)

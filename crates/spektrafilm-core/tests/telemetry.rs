@@ -743,6 +743,25 @@ fn grain_configuration_describes_effective_sampler_branches() {
     );
 }
 
+#[test]
+fn v3_grain_configuration_reports_engine_and_field_mode() {
+    use spektrafilm_core::{params, profile, telemetry};
+    let profile: profile::Profile = serde_json::from_value(serde_json::json!({
+        "metadata": {}, "info": {}, "data": {}
+    }))
+    .unwrap();
+    let mut params = params::RuntimeParams::default();
+    params.film_render.grain.engine = params::GrainEngine::V3;
+    params.film_render.grain.v3_dye_support_um = 8.0;
+    params.settings.use_fast_stats = true;
+    params.film_render.grain.sublayers_active = true;
+    let grain = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
+    assert!(grain.active);
+    assert_eq!(grain.engine, telemetry::GrainEngine::V3);
+    assert_eq!(grain.mode, telemetry::GrainMode::DyeField);
+    assert!(!grain.v1_fast_statistics_sampler);
+}
+
 #[cfg(unix)]
 #[test]
 fn report_destination_preserves_symlink_parent_traversal_before_canonicalizing() {

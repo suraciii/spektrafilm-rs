@@ -124,6 +124,7 @@ impl GamutAlgorithm {
 pub enum GrainEngine {
     V1,
     V2,
+    V3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +133,8 @@ pub enum GrainMode {
     Analogue,
     Noise,
     V1,
+    /// The V3 conditional film-coordinate dye field.
+    DyeField,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +280,7 @@ impl RenderConfiguration {
                 engine: match grain.engine {
                     crate::params::GrainEngine::V1 => GrainEngine::V1,
                     crate::params::GrainEngine::V2 => GrainEngine::V2,
+                    crate::params::GrainEngine::V3 => GrainEngine::V3,
                 },
                 mode: match grain.engine {
                     crate::params::GrainEngine::V1 => GrainMode::V1,
@@ -284,6 +288,7 @@ impl RenderConfiguration {
                         crate::params::grain::GrainV2Mode::Analogue => GrainMode::Analogue,
                         crate::params::grain::GrainV2Mode::Noise => GrainMode::Noise,
                     },
+                    crate::params::GrainEngine::V3 => GrainMode::DyeField,
                 },
                 v1_fast_statistics_sampler: grain_active
                     && grain.engine == crate::params::GrainEngine::V1
