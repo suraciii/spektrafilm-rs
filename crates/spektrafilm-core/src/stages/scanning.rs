@@ -215,6 +215,13 @@ pub fn scan_with_options(
     include_base: bool,
 ) -> ImageBuf {
     let positive_scan = positive_scan_requested(params);
+    let _positive_scan = positive_scan.then(|| {
+        super::StageObservation::cpu(
+            backend,
+            "positive_scan",
+            spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+        )
+    });
     let backend = if positive_scan {
         static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
             spektrafilm_gpu::cpu_backend::CpuBackend;

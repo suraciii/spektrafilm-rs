@@ -220,6 +220,14 @@ fn bounded_text(value: &str) -> String {
     text
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanOutput {
+    #[default]
+    DirectScan,
+    PositiveScan,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderConfiguration {
     pub workflow_route: WorkflowRoute,
@@ -232,6 +240,8 @@ pub struct RenderConfiguration {
     pub output_transfer_encoded: bool,
     pub enlarger_lut_requested: bool,
     pub scanner_lut_requested: bool,
+    #[serde(default)]
+    pub scan_output: ScanOutput,
     pub gamut_algorithm: GamutAlgorithm,
     pub grain: GrainConfiguration,
     pub spatial: SpatialConfiguration,
@@ -256,6 +266,11 @@ impl RenderConfiguration {
             output_transfer_encoded: params.io.output_cctf_encoding,
             enlarger_lut_requested: params.settings.use_enlarger_lut,
             scanner_lut_requested: params.settings.use_scanner_lut,
+            scan_output: if params.scanner.scan_output == "positive_scan" {
+                ScanOutput::PositiveScan
+            } else {
+                ScanOutput::DirectScan
+            },
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
                 active: grain_active,

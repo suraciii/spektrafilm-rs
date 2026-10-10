@@ -71,7 +71,8 @@ vocabulary!(CpuReason {
     GrainV1Sampler,
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
-    GrainV2Unsupported
+    GrainV2Unsupported,
+    PositiveScanOutput,
 });
 vocabulary!(ResidentDeclineReason {
     WorkflowRoute,
@@ -85,7 +86,8 @@ vocabulary!(ResidentDeclineReason {
     MissingResidentFrontPass,
     MallettExecutionParity,
     BackendNoResidentSupport,
-    DiagnosticTapRoute
+    DiagnosticTapRoute,
+    PositiveScanOutput,
 });
 vocabulary!(IssueCategory {
     Input,
