@@ -2,19 +2,23 @@
 
 ## Contract
 
-A **preset** is a named, reusable combination of film and print profile selections and visual simulation controls. A preset is not a complete GUI state, an input image, a viewer state, an export configuration, a LUT, a calibration profile, or a workflow selection. A preset is either **built-in** or **user-owned**.
+A **preset** is a named, reusable set of film and print profile selections and visual simulation controls. A preset is not a complete GUI state, an input image, a viewer state, an export configuration, a LUT, a calibration profile, or a workflow selection. A preset is either **built-in** or **user-owned**.
+
+A preset document is a **look preset** or a **section preset**. A look preset carries both profile references and every look-owned group. A section preset carries exactly one section of the look and no profile reference; a section is a named set of look-owned parameter paths, defined by the [preset design](design.md). The kind is derived from the carried scope, never declared by a field, and a document that carries neither a whole look nor exactly one section must be rejected.
 
 A preset **name** is its identity: the document `name`, the document file stem, and the selector used by the GUI and the CLI. A name must be unique inside its group and may repeat across groups. The groups are `Built-in` and `My Presets`. The [preset design](design.md) owns the name rules, file locations, discovery, conflicts, and writes.
 
-The GUI provides a Presets browser in a collapsible panel on the left of the window. The browser shows the two groups. Each row shows the preset name and its film and print references. The active row is marked. A modified marker appears while the active look controls differ from the applied document. The MAIN control panel must not repeat the preset list. User presets must not be implemented by reusing complete `GuiState`.
+The GUI provides a Presets browser for look presets in a collapsible panel on the left of the window, and one preset menu per section for section presets. The browser shows the two groups. Each row shows the preset name and its film and print references. The active row is marked. A modified marker appears while the active look controls differ from the applied document. The MAIN control panel must not repeat the browser list. User presets must not be implemented by reusing complete `GuiState`.
+
+A section preset must appear only in the menu of its own section, never in the browser, and a section menu must appear only when the library carries a preset for that section. A section menu must show the name of the section preset whose controls match the section and `custom` otherwise. That match must be derived from the section's controls and must not be stored as separate state.
 
 ## User library
 
 A user preset is a valid preset document in the preset library directory. Placing such a document in that directory makes it available to the GUI browser and to preset name resolution. The browser and the CLI must use the same discovery and name rules.
 
-The GUI must support these library operations:
+The GUI must support these library operations for look presets:
 
-- **Save as**: capture the active look controls as a new user preset under a name the user edits.
+- **Save as**: capture the active look controls as a new look preset under a name the user edits.
 - **Update**: replace the stored document of the active user preset with the active look controls.
 - **Revert**: restore the look controls of the applied document and clear the modified marker.
 - **Rename**: rename the document file and its name together, and preserve its look values.
@@ -24,20 +28,26 @@ The GUI must support these library operations:
 - **Export**: write the selected document to a chosen path.
 - **Show file**: reveal the document path of a user preset. A built-in preset has no path, so this action must be unavailable for it.
 
+A section menu must offer the same operations for the section presets it lists: **Save as** captures that section's controls, and Rename, Duplicate, Delete, Export, and Show file act on that section's documents. Both kinds must share one discovery, write, and validation implementation.
+
+The remembered applied document is always a look preset; a section application is an edit and never becomes the applied preset. The GUI writes look presets through Save as and Update, and a section preset is authored as a file or through a section menu until an arbitrary scope-capture action exists.
+
 A name that exists in both groups must remain reachable in both. Editing look controls after an application must mark the active preset modified and must not rewrite any document. Built-in presets must remain immutable.
 
 The browser must list, with its path, every document that cannot be read, parsed, or accepted. An issue must not hide the remaining library. An empty library must state how to save the current look.
 
 The browser must remember the applied preset group and name across restarts. A remembered preset whose document is absent must be shown as missing. The modified state must not persist across restarts.
 
-Preset rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, search, sorting options, collections, partial presets, and batch application are outside this contract.
+Browser rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
 
 ### Apply
 
-- Selecting a preset validates the complete preset before changing active controls.
-- A preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
-- A preset does not store or directly apply a workflow. Changing film profile selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`. The user may then choose another supported workflow manually.
-- Applying a preset replaces all look-owned controls together, clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
+- Selecting a preset validates the document, or the section it carries, before changing active controls.
+- A look preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
+- A preset does not store or directly apply a workflow. A look preset selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`. The user may then choose another supported workflow manually. A section preset carries no film reference and must not change the workflow.
+- Applying a look preset replaces all look-owned controls together, clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
+- Applying a section preset replaces exactly the controls of its section, and those values count as explicit. Every other control retains its value, including explicit values from an earlier preset or parameter source, so the result does not re-derive them from stock defaults. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
+- Applying a section preset must not replace the remembered applied preset. It is an edit, so an applied look preset becomes modified.
 - Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure, crop, resize, rotation, viewer/display state, Save settings, and Export settings.
 - Built-in presets are immutable. Editing controls after an apply never rewrites the built-in definition.
 
@@ -62,7 +72,7 @@ A serialized `route` or `workflow` field is unknown and rejected.
 
 ### Look ownership
 
-A preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, glare, base, chemistry, and scanner look controls. It preserves enabled states and f64 values. It does not own workflow, image/input, RAW/source correction, geometry, viewer/display, output encoding, export destination, preview limits, cache, debug/taps, startup state, dialog directories, or random seed.
+A look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, glare, base, chemistry, and scanner look controls; a section preset owns exactly the controls of its section. A preset preserves enabled states and f64 values. It does not own workflow, image/input, RAW/source correction, geometry, viewer/display, output encoding, export destination, preview limits, cache, debug/taps, startup state, dialog directories, or random seed.
 
 ### Implementation rules
 
@@ -75,9 +85,9 @@ A preset owns film and print selection plus explicit film, print, enlarger, diff
 The portable canonical snake-case schema contains:
 
 - `schema_version`, `name`, optional `author` and `description`;
-- `film_profile` and `print_profile`, each with stock, optional profile version, and optional `sha256-<lowercase-hex>` content identity;
+- `film_profile` and `print_profile`, each with stock, optional profile version, and optional `sha256-<lowercase-hex>` content identity; both are required in a look preset and absent from a section preset;
 
-- `parameters`, the typed look-owned parameter object;
+- `parameters`, the typed look-owned parameter object: complete in a look preset, the paths of its section in a section preset;
 - `provenance`, the SpektraFilm implementation and model versions.
 
 It must not contain `route`, `workflow`, image pixels/paths, RAW data, LUT pixels, viewer rasters, GUI paths, credentials, random seeds, or Dehancer-specific fields. Unknown fields are rejected. The resolved candidate is returned without mutating active GUI state; GUI commits only after successful resolution.
@@ -88,7 +98,9 @@ TOML must be the default preset export format. Readers must accept `.toml` and `
 
 The preset schema version must be 2. A version 2 document must carry `name` and must not carry the version 1 `id` field. A reader must accept a version 1 document by reading its `name` as the preset name and discarding its `id`. An exporter must write version 2.
 
-A preset must contain every look-owned group. An exporter must write every non-optional editable look control so a newly exported preset does not depend on implicit defaults. Readers must retain the existing omitted-field and JSON null decoding rules of the typed model. Readers must materialize omitted controls before resolution or re-export. TOML absence must represent an unset optional control; an exporter must omit unset optional controls in TOML. The two carriers must not introduce a separate schema version or field vocabulary. A future change to accepted omitted-field behavior must use an explicit schema migration rather than silently rejecting existing documents.
+A look preset must contain every look-owned group. An exporter must write every non-optional editable look control so a newly exported preset does not depend on implicit defaults. Readers must retain the existing omitted-field and JSON null decoding rules of the typed model. Readers must materialize omitted controls before resolution or re-export. TOML absence must represent an unset optional control; an exporter must omit unset optional controls in TOML. The two carriers must not introduce a separate schema version or field vocabulary. A future change to accepted omitted-field behavior must use an explicit schema migration rather than silently rejecting existing documents.
+
+A section preset must carry exactly the parameter paths of its section and must not carry a profile reference. Its payload must follow the leaf-merge rules of a parameter-file source in the [CLI parameter language](../cli-parameters/spec.md), including the rejection of unknown fields, duplicate keys, and omitted values acquired by default-filled deserialization, and an exporter must write exactly what it carries rather than filling omitted controls. Both kinds use the same schema version, the same name rules, and the same profile and value validation for what they carry.
 
 Export and reload must preserve the represented finite f32 and f64 values. Export must not reduce numeric precision for shorter text. Readers must accept TOML comments. Re-export need not preserve comments or source formatting.
 
