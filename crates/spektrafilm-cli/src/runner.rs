@@ -155,24 +155,11 @@ fn render_recipe(
             Ok(backend)
         },
     )?;
-    let attempt = invocation.operation.attempt(1);
-    let attempt_id = attempt.context().id();
-    let result = invocation.phase(
-        "simulation",
-        IssueCategory::Simulation,
-        IssueBoundary::Simulation,
-        attempt.context(),
-        |simulation_context| {
-            runtime
-                .process_observed(image, backend.as_ref(), simulation_context)
-                .map_err(anyhow::Error::msg)
-                .context("running spektrafilm-rs runtime")
-        },
-    );
-    attempt.finish(if result.is_ok() {
-        spektrafilm_core::telemetry::Outcome::Succeeded
-    } else {
-        spektrafilm_core::telemetry::Outcome::Failed
+    let (attempt_id, result) = telemetry::simulation_attempt(invocation, 1, |simulation_context| {
+        runtime
+            .process_observed(image, backend.as_ref(), simulation_context)
+            .map_err(anyhow::Error::msg)
+            .context("running spektrafilm-rs runtime")
     });
     let result = result?;
     invocation.operation.set_saved_attempt(attempt_id);

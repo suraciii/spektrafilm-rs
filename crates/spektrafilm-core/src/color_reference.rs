@@ -136,7 +136,7 @@ impl ColorReference {
         black_corr: bool,
     ) -> Self {
         // Scan spectral inputs come from the film (scan_film scans the film).
-        let channel_density = profile_channel_density(film);
+        let channel_density = crate::chain_prep::channel_density(film);
         let base_density = film.data.base_density.clone();
         let illuminant: Vec<f64> = select_illuminant_f64(&film.info.viewing_illuminant).to_vec();
         let normalization = scan_normalization(&illuminant, &channel_density);
@@ -219,9 +219,9 @@ impl ColorReference {
         // Enlarger spectral exposure of those references — the same
         // `_film_cmy_to_print_log_raw` the printing stage uses, including
         // its constant preflash term (`raw += preflash` before the log10).
-        let film_channel_density = profile_channel_density(film);
+        let film_channel_density = crate::chain_prep::channel_density(film);
         let film_base_density = film.data.base_density.clone();
-        let print_sensitivity = profile_sensitivity(print);
+        let print_sensitivity = print.sensitivity_f64();
         let n_wl = print_illuminant
             .len()
             .min(film_channel_density.len())
@@ -258,7 +258,7 @@ impl ColorReference {
         let cmy_white = develop_single(log_raw_white, &log_exposure, &print_curves, 1.0);
 
         // Scan those densities through the print profile → reference luminances.
-        let print_channel_density = profile_channel_density(print);
+        let print_channel_density = crate::chain_prep::channel_density(print);
         let print_base_density = print.data.base_density.clone();
         let illuminant: Vec<f64> = select_illuminant_f64(&print.info.viewing_illuminant).to_vec();
         let normalization = scan_normalization(&illuminant, &print_channel_density);
@@ -390,36 +390,6 @@ fn develop_single(
     let out = fast_interp_image_f64(&img, &scaled, density_curves);
     let p = out.get(0, 0);
     [p[0] as f64, p[1] as f64, p[2] as f64]
-}
-
-/// Print sensitivity: `nan_to_num(10^log_sensitivity)`, matching the
-/// printing stage.
-fn profile_sensitivity(p: &Profile) -> Vec<[f64; 3]> {
-    p.log_sensitivity_f64()
-        .iter()
-        .map(|row| {
-            let mut out = [0.0f64; 3];
-            for c in 0..3 {
-                let v = 10.0f64.powf(row[c]);
-                out[c] = if v.is_nan() { 0.0 } else { v };
-            }
-            out
-        })
-        .collect()
-}
-
-fn profile_channel_density(p: &Profile) -> Vec<[f64; 3]> {
-    p.data
-        .channel_density
-        .iter()
-        .map(|r| {
-            [
-                r.first().copied().unwrap_or(0.0),
-                r.get(1).copied().unwrap_or(0.0),
-                r.get(2).copied().unwrap_or(0.0),
-            ]
-        })
-        .collect()
 }
 
 /// numpy.nanmax over rows, per channel (`nanmax(curves, axis=0)`).

@@ -852,7 +852,7 @@ fn default_route() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CameraParams, GrainParams, RuntimeParams};
+    use super::{CameraParams, RuntimeParams};
 
     #[test]
     fn null_or_missing_camera_color_filter_uses_no_filter() {
