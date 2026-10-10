@@ -72,6 +72,7 @@ impl ParameterEdits {
         let seed = params.random_seed;
         let particle_layers = params.film_render.grain.particle_scale_layers;
         let neutral_protected = params.neutral_print_filters_protected;
+        let explicit_section_paths = params.explicit_section_paths.clone();
         let mut root =
             serde_json::to_value(&*params).map_err(|e| format!("serialize parameters: {e}"))?;
         for (path, value) in &self.edits {
@@ -82,6 +83,7 @@ impl ParameterEdits {
         params.random_seed = seed;
         params.film_render.grain.particle_scale_layers = particle_layers;
         params.neutral_print_filters_protected = neutral_protected;
+        params.explicit_section_paths = explicit_section_paths;
         validate_finite(params)
     }
 
@@ -1050,14 +1052,29 @@ mod tests {
 
     #[test]
     fn apply_rejects_optional_overflow_in_legacy_baseline_before_serialization() {
-        let mut params: RuntimeParams =
-            serde_json::from_str(r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#).unwrap();
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.v2_amount = Some(f32::INFINITY);
         assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
         let edits = ParameterEdits::parse("camera.auto_exposure=false").unwrap();
         let error = edits.apply(&mut params).unwrap_err();
         assert!(error.contains("film_render.grain.v2_amount"), "{error}");
         assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
         assert!(params.camera.auto_exposure);
+    }
+
+    #[test]
+    fn json_numeric_decoding_rejects_overflow_and_preserves_legacy_finite_range() {
+        // Preset File formats: reject numbers overflowing their declared f32/f64
+        // type. Correctly rounded JSON decoding rejects overflow before merging.
+        assert!(
+            serde_json::from_str::<RuntimeParams>(
+                r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#
+            )
+            .is_err()
+        );
+        let params: RuntimeParams = serde_json::from_str(r#"{"film_render":{"grain":{"v2_amount":42.5}},"camera":{"exposure_compensation_ev":0.5}}"#).unwrap();
+        assert_eq!(params.film_render.grain.v2_amount, Some(42.5));
+        assert_eq!(params.camera.exposure_compensation_ev, 0.5);
     }
 
     fn described_field(path: &str) -> Value {

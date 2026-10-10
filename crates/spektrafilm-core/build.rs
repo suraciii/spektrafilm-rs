@@ -1,4 +1,29 @@
 fn main() {
+    println!("cargo:rerun-if-changed=assets/presets");
+    let mut assets = std::fs::read_dir("assets/presets")
+        .expect("preset asset directory")
+        .map(|entry| entry.expect("preset asset entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "toml")
+        })
+        .collect::<Vec<_>>();
+    assets.sort();
+    let mut source = String::from("const BUILTIN_ASSETS: &[(&str, &str)] = &[\n");
+    for path in assets {
+        let absolute = std::fs::canonicalize(&path).expect("preset asset path");
+        source.push_str(&format!(
+            "({:?}, include_str!({:?})),\n",
+            path.file_stem().unwrap().to_str().unwrap(),
+            absolute
+        ));
+    }
+    source.push_str("];\n");
+    std::fs::write(
+        std::path::Path::new(&std::env::var_os("OUT_DIR").unwrap()).join("preset_assets.rs"),
+        source,
+    )
+    .expect("writing preset asset list");
     let oiio = pkg_config::Config::new().probe("OpenImageIO").expect("Install OpenImageIO development libraries (libopenimageio-dev, brew install openimageio, or vcpkg openimageio)");
     let exiv = pkg_config::Config::new().probe("exiv2").expect(
         "Install Exiv2 development libraries (libexiv2-dev, brew install exiv2, or vcpkg exiv2)",

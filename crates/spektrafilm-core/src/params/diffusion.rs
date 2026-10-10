@@ -1,7 +1,7 @@
 use super::{default_half, default_one};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiffusionFilterParams {
     #[serde(default)]

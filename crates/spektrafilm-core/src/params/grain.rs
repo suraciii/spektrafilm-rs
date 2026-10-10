@@ -42,7 +42,7 @@ pub enum GrainV2FilmType {
     Positive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrainParams {
     #[serde(default = "default_true")]

@@ -56,7 +56,7 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
             let entries = builtin_presets()
                 .into_iter()
                 .map(|p| {
-                    json!({"id": p.id, "name": p.name,
+                    json!({"name": p.name,
                     "film_profile": p.film_profile, "print_profile": p.print_profile})
                 })
                 .collect::<Vec<_>>();

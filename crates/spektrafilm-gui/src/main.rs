@@ -2271,8 +2271,18 @@ impl App {
                             let preset = &self.builtins[index];
                             (
                                 preset.name.clone(),
-                                preset.film_profile.stock.clone(),
-                                preset.print_profile.stock.clone(),
+                                preset
+                                    .film_profile
+                                    .as_ref()
+                                    .expect("built-in look")
+                                    .stock
+                                    .clone(),
+                                preset
+                                    .print_profile
+                                    .as_ref()
+                                    .expect("built-in look")
+                                    .stock
+                                    .clone(),
                             )
                         };
                         ui.horizontal(|ui| {

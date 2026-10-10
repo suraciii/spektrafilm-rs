@@ -33,7 +33,7 @@ struct Cli {
 enum Commands {
     /// Process an image through the film simulation pipeline.
     #[command(
-        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400 --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --route accepts the routes listed under that option and validates them after parameter sources."
+        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset Kodak Portra 400\n  spektrafilm process input.png -o output.tif --preset Kodak Portra 400 --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --route accepts the routes listed under that option and validates them after parameter sources."
     )]
     Process {
         /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.

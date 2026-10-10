@@ -85,7 +85,7 @@ fn sources_compose_in_order_and_dry_run_preserves_existing_outputs() {
     std::fs::write(&raw, b"existing-buffer").unwrap();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         "camera.exposure_compensation_ev=-1",
         "--set",
@@ -138,19 +138,13 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|entry| entry["id"] == "classic-kodak-portra-400")
+        .find(|entry| entry["name"] == "Kodak Portra 400")
         .unwrap();
     assert_eq!(portra["film_profile"]["stock"], "kodak_portra_400");
     assert_eq!(portra["print_profile"]["stock"], "kodak_portra_endura");
     let mut reports = Vec::new();
     for format in ["json", "toml"] {
-        let shown = f.run(&[
-            "preset",
-            "show",
-            "classic-kodak-portra-400",
-            "--format",
-            format,
-        ]);
+        let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", format]);
         assert!(
             shown.status.success(),
             "{}",
@@ -291,7 +285,7 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
     ] {
         let result = f.process(&[
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--set",
             source,
             "--set",
@@ -323,7 +317,7 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
         std::fs::write(&path, contents).unwrap();
         let result = f.process(&[
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--set",
             path.to_str().unwrap(),
             "--dry-run",
@@ -336,14 +330,14 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
             .success()
     );
     assert!(
-        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
+        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
             .status
             .success()
     );
     assert!(
         !f.process(&[
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--film",
             "kodak_portra_400",
             "--dry-run"
@@ -358,7 +352,7 @@ fn final_workflow_and_runtime_constraints_resolve_after_edits() {
     let f = Fixture::new();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--scan-film",
         "--route",
         "input",
@@ -374,7 +368,7 @@ fn final_workflow_and_runtime_constraints_resolve_after_edits() {
     assert_eq!(report["print_profile"], "kodak_portra_endura");
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         "settings.preview_mode=true,film_render.grain.active=true",
         "--dry-run",
@@ -393,7 +387,7 @@ fn report_and_render_use_identical_resolved_controls() {
     let edits = "camera.auto_exposure=false,camera.exposure_compensation_ev=0.5,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true,enlarger.y_filter_neutral=12";
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         edits,
         "--backend",
@@ -403,7 +397,7 @@ fn report_and_render_use_identical_resolved_controls() {
     let raw = f.root.join("render.raw");
     let output = f.process(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         edits,
         "--backend",
@@ -454,7 +448,7 @@ fn writer_options_validate_before_decoding_and_keep_scanner_color_independent() 
     std::fs::write(&f.input, b"invalid-pixels").unwrap();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         "io.output_color_space=\"sRGB\"",
         "--saving-color-space",
@@ -478,7 +472,7 @@ fn writer_options_validate_before_decoding_and_keep_scanner_color_independent() 
         vec!["--jpeg-quality", "95"],
         vec!["--format", "png"],
     ] {
-        let mut args = vec!["--preset", "classic-kodak-portra-400", "--backend", "gpu"];
+        let mut args = vec!["--preset", "Kodak Portra 400", "--backend", "gpu"];
         args.extend(extra);
         let result = f.process(&args);
         assert!(!result.status.success());
@@ -496,7 +490,7 @@ fn raw_dry_run_enforces_linear_aces_without_decoding() {
     let mut f = Fixture::new();
     f.input = f.root.join("input.CR2");
     std::fs::write(&f.input, b"raw-placeholder").unwrap();
-    let report = f.report(&["--preset", "classic-kodak-portra-400", "--dry-run"]);
+    let report = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
     assert_eq!(
         report["parameters"]["io"]["input_color_space"],
         "ACES2065-1"
@@ -507,15 +501,9 @@ fn raw_dry_run_enforces_linear_aces_without_decoding() {
         "io.input_cctf_decoding=true",
     ] {
         assert!(
-            !f.process(&[
-                "--preset",
-                "classic-kodak-portra-400",
-                "--set",
-                edits,
-                "--dry-run"
-            ])
-            .status
-            .success()
+            !f.process(&["--preset", "Kodak Portra 400", "--set", edits, "--dry-run"])
+                .status
+                .success()
         );
     }
 }
@@ -526,14 +514,14 @@ fn dry_run_rejects_missing_inputs_and_duplicate_selectors() {
     for options in [
         vec![
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--preset",
             "classic-kodak-gold-200",
         ],
         vec!["--film", "kodak_portra_400", "--film", "kodak_gold_200"],
         vec![
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--route",
             "input",
             "--route",
@@ -546,20 +534,20 @@ fn dry_run_rejects_missing_inputs_and_duplicate_selectors() {
     }
     f.input = f.root.join("missing.png");
     assert!(
-        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
+        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
             .status
             .success()
     );
     f.input = f.root.join("unsupported.txt");
     std::fs::write(&f.input, b"text").unwrap();
     assert!(
-        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
+        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
             .status
             .success()
     );
     f.input = f.root.clone();
     assert!(
-        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
+        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
             .status
             .success()
     );
@@ -603,7 +591,7 @@ fn exr_writer_constraints_fail_before_decoding_or_device_selection() {
                 "-o",
                 output.to_str().unwrap(),
                 "--preset",
-                "classic-kodak-portra-400",
+                "Kodak Portra 400",
                 "--backend",
                 "gpu",
             ];
@@ -682,7 +670,8 @@ fn edits_reject_optional_overflow_in_legacy_baseline() {
         "--dry-run",
     ]);
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("v2_amount"));
+    // Correctly rounded JSON decoding now rejects f32 overflow before merging.
+    assert!(String::from_utf8_lossy(&result.stderr).contains("number out of range"));
     assert!(!f.root.join("output.tif").exists());
 }
 
@@ -722,7 +711,7 @@ fn magazine_enabled_preserves_preset_profiles_and_selects_direct_scan_without_pr
     let f = Fixture::new();
     for selector in [
         ["--film", "kodak_portra_400"],
-        ["--preset", "classic-kodak-portra-400"],
+        ["--preset", "Kodak Portra 400"],
     ] {
         let report = f.report(&[
             selector[0],
@@ -940,7 +929,7 @@ fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
     let f = Fixture::new();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--scan-film",
         "--set",
         "scanner.scan_output=\"positive_scan\",scanner.white_correction=true",
@@ -973,7 +962,7 @@ fn inline_strings_and_enums_accept_normal_cli_values() {
     let f = Fixture::new();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         "film_render.grain.engine=v2,film_render.grain.v2_profile=custom",
         "--set",
@@ -1015,13 +1004,7 @@ fn invalid_plain_values_report_the_field_requirement() {
         ("camera.exposure_compensation_ev=bright", "finite number"),
         ("film_render.grain.engine=unknown", "v1"),
     ] {
-        let output = f.process(&[
-            "--preset",
-            "classic-kodak-portra-400",
-            "--set",
-            source,
-            "--dry-run",
-        ]);
+        let output = f.process(&["--preset", "Kodak Portra 400", "--set", source, "--dry-run"]);
         assert!(!output.status.success());
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains(source.split_once('=').unwrap().0), "{error}");
@@ -1075,13 +1058,7 @@ fn discovery_formats_preserve_metadata_and_reject_invalid_syntax() {
             "camera",
         ],
         vec!["preset", "list", "--format", "toml"],
-        vec![
-            "preset",
-            "show",
-            "classic-kodak-portra-400",
-            "--format",
-            "text",
-        ],
+        vec!["preset", "show", "Kodak Portra 400", "--format", "text"],
     ] {
         assert_eq!(f.run(&args).status.code(), Some(2));
     }
@@ -1090,7 +1067,7 @@ fn discovery_formats_preserve_metadata_and_reject_invalid_syntax() {
 #[test]
 fn data_selection_retains_source_and_never_falls_back() {
     let f = Fixture::new();
-    let report = f.report(&["--preset", "classic-kodak-portra-400", "--dry-run"]);
+    let report = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
     assert_eq!(
         report["data"]["path"],
         std::fs::canonicalize(&f.data).unwrap().to_str().unwrap()
@@ -1102,7 +1079,7 @@ fn data_selection_retains_source_and_never_falls_back() {
     );
     let selected = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--dry-run",
         "--data-dir",
         f.data.to_str().unwrap(),
@@ -1140,7 +1117,7 @@ fn raw_dry_run_reports_validated_signed_loading_options() {
         "-o",
         output.to_str().unwrap(),
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--dry-run",
     ];
     let run = |extra: &[&str]| {

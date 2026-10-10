@@ -1,0 +1,249 @@
+schema_version = 2
+name = "Kodak Ektar 100"
+author = "SpektraFilm"
+description = "SpektraFilm classic stock look"
+
+[film_profile]
+stock = "kodak_ektar_100"
+version = "0.3.4"
+
+[print_profile]
+stock = "kodak_portra_endura"
+version = "0.3.4"
+
+[parameters.enlarger]
+illuminant = "TH-KG3"
+print_exposure = 1.0
+print_exposure_compensation = true
+normalize_print_exposure = true
+y_filter_shift = 0.0
+m_filter_shift = 0.0
+y_filter_neutral = 59.811798095703125
+m_filter_neutral = 73.61530303955078
+c_filter_neutral = 0.0
+lens_blur = 0.0
+preflash_exposure = 0.0
+preflash_y_filter_shift = 0.0
+preflash_m_filter_shift = 0.0
+
+[parameters.enlarger.diffusion_filter]
+active = false
+filter_family = "black_pro_mist"
+strength = 0.5
+spatial_scale = 1.0
+halo_warmth = 0.0
+core_intensity = 1.0
+core_size = 1.0
+halo_intensity = 1.0
+halo_size = 1.0
+bloom_intensity = 1.0
+bloom_size = 1.0
+
+[parameters.scanner]
+lens_blur = 0.0
+scan_output = "direct_scan"
+white_correction = false
+black_correction = false
+white_level = 0.9800000190734863
+black_level = 0.009999999776482582
+unsharp_mask = [
+    0.7,
+    0.7,
+]
+
+[parameters.film_render]
+density_curve_gamma = 1.0
+
+[parameters.film_render.chemistry]
+active = true
+gamma_factor = 1.0
+gamma_factor_fast = 1.0
+gamma_factor_slow = 1.0
+gamma_factor_red = 1.0
+gamma_factor_green = 1.0
+gamma_factor_blue = 1.0
+developer_exhaustion = 0.0
+
+[parameters.film_render.grain]
+active = true
+engine = "v1"
+v2_profile = "35mm250"
+v2_film_type = "negative"
+v2_mode = "analogue"
+v2_resolution_type = 1
+v2_timer = 0.0
+particle_scale_sublayers = [
+    1.0,
+    0.4,
+    0.25,
+]
+mult_usm_sigma = 0.699999988079071
+mult_usm_amount = 1.5
+micro_sublayers = 1
+sublayers_active = true
+particle_area_um2 = 0.2
+particle_scale = [
+    1.6,
+    1.6,
+    3.2,
+]
+rms_granularity = [
+    4.0,
+    4.0,
+    4.0,
+]
+density_min = [
+    0.03,
+    0.03,
+    0.03,
+]
+uniformity = [
+    0.97,
+    0.97,
+    0.97,
+]
+blur = 0.8899999856948853
+blur_dye_clouds_um = 2.0
+micro_structure = [
+    0.20000000298023224,
+    30.0,
+]
+n_sub_layers = 1
+monochrome = false
+
+[parameters.film_render.halation]
+active = true
+scatter_amount = 1.0
+scatter_spatial_scale = 1.0
+halation_amount = 1.0
+halation_spatial_scale = 1.0
+scatter_core_um = [
+    2.2,
+    2.0,
+    1.6,
+]
+scatter_tail_um = [
+    9.3,
+    9.7,
+    9.1,
+]
+scatter_tail_weight = [
+    0.78,
+    0.65,
+    0.67,
+]
+boost_ev = 0.0
+boost_range = 0.30000001192092896
+protect_ev = 4.0
+halation_strength = [
+    0.015,
+    0.005,
+    0.0,
+]
+halation_first_sigma_um = [
+    65.0,
+    65.0,
+    65.0,
+]
+halation_n_bounces = 3
+halation_bounce_decay = 0.5
+halation_renormalize = true
+
+[parameters.film_render.dir_couplers]
+active = true
+amount = 1.0
+inhibition_samelayer = 1.0
+inhibition_interlayer = 1.0
+gamma_samelayer_rgb = [
+    0.5159,
+    0.5934,
+    0.2829,
+]
+gamma_interlayer_r_to_gb = [
+    0.4032,
+    0.2488,
+]
+gamma_interlayer_g_to_rb = [
+    0.2227,
+    0.434,
+]
+gamma_interlayer_b_to_rg = [
+    0.1829,
+    0.1799,
+]
+langmuir_donor_k_rgb = [
+    1.0,
+    1.0,
+    1.0,
+]
+langmuir_receiver_k_rgb = [
+    1.0,
+    1.0,
+    1.0,
+]
+diffusion_size_um = 20.0
+diffusion_tail_um = 200.0
+diffusion_tail_weight = 0.03
+
+[parameters.film_render.glare]
+active = true
+percent = 0.029999999329447746
+roughness = 0.699999988079071
+blur = 0.5
+
+[parameters.film_render.base]
+active = true
+scale = 1.0
+tilt = 0.0
+cyan = 1.0
+magenta = 1.0
+yellow = 1.0
+
+[parameters.film_render.convert]
+scan_illuminant = "D55"
+exposure_compensation_ev = 0.0
+base_percentile = 99.0
+calibration = "1 0 0  0 1 0  0 0 1"
+
+[parameters.print_render]
+density_curve_gamma = 1.0
+
+[parameters.print_render.glare]
+active = true
+percent = 0.029999999329447746
+roughness = 0.699999988079071
+blur = 0.5
+
+[parameters.print_render.density_curves_morph]
+active = false
+gamma_factor = 1.0
+gamma_factor_fast = 1.0
+gamma_factor_slow = 1.0
+gamma_factor_red = 1.0
+gamma_factor_green = 1.0
+gamma_factor_blue = 1.0
+developer_exhaustion = 0.0
+
+[parameters.print_render.base]
+active = true
+scale = 1.0
+cyan = 1.0
+magenta = 1.0
+yellow = 1.0
+
+[parameters.camera_diffusion_filter]
+active = false
+filter_family = "black_pro_mist"
+strength = 0.5
+spatial_scale = 1.0
+halo_warmth = 0.0
+core_intensity = 1.0
+core_size = 1.0
+halo_intensity = 1.0
+halo_size = 1.0
+bloom_intensity = 1.0
+bloom_size = 1.0
+
+[provenance]
+implementation_version = "0.3.4"
+model_version = "0.3.4"

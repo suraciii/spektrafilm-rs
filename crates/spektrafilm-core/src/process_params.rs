@@ -413,16 +413,16 @@ mod tests {
         let sources = vec!["enlarger.illuminant=\"D65\"".into()];
         let mut req = request(&sources);
         req.film = None;
-        req.preset = Some("classic-kodak-portra-400");
+        req.preset = Some("Kodak Portra 400");
         let result = resolve(req, &data_dir()).unwrap();
-        let look = presets::load_selector("classic-kodak-portra-400", &data_dir()).unwrap();
+        let look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
         assert_eq!(
             result.params.enlarger.m_filter_neutral,
-            look.parameters.enlarger.m_filter_neutral
+            look.look_parameters().unwrap().enlarger.m_filter_neutral
         );
         assert_eq!(
             result.params.enlarger.y_filter_neutral,
-            look.parameters.enlarger.y_filter_neutral
+            look.look_parameters().unwrap().enlarger.y_filter_neutral
         );
         assert!(result.params.settings.neutral_print_filters_from_database);
     }
@@ -503,7 +503,7 @@ mod tests {
     fn route_precedes_scan_flag_and_derives_topology() {
         let sources = vec!["camera.auto_exposure=false".into()];
         let mut req = request(&sources);
-        req.preset = Some("classic-kodak-portra-400");
+        req.preset = Some("Kodak Portra 400");
         req.film = None;
         req.paper = None;
         req.scan_film = true;
@@ -567,10 +567,19 @@ mod tests {
 
     #[test]
     fn preset_resolver_protects_actual_runtime_axes_for_all_consumers() {
-        let mut look = presets::load_selector("classic-kodak-portra-400", &data_dir()).unwrap();
-        look.parameters.enlarger.c_filter_neutral = 12.0;
-        look.parameters.enlarger.m_filter_neutral = 34.0;
-        look.parameters.enlarger.y_filter_neutral = 56.0;
+        let mut look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
+        look.look_parameters_mut()
+            .unwrap()
+            .enlarger
+            .c_filter_neutral = 12.0;
+        look.look_parameters_mut()
+            .unwrap()
+            .enlarger
+            .m_filter_neutral = 34.0;
+        look.look_parameters_mut()
+            .unwrap()
+            .enlarger
+            .y_filter_neutral = 56.0;
         let mut context = RuntimeParams::default();
         context.settings.rgb_to_raw_method = "mallett2019".into();
         let resolved = look.resolve(&data_dir(), &context).unwrap();
