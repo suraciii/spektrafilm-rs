@@ -223,7 +223,7 @@ impl Pipeline {
         let film_channel_density = crate::chain_prep::channel_density(&self.film);
         let film_base_density = &self.film.data.base_density;
 
-        let print_sens = crate::chain_prep::print_sensitivity(&self.print);
+        let print_sens = self.print.sensitivity_f64();
         let print_curves = crate::chain_prep::PrintCurves::prepare(&self.print, &self.params)
             .expect("print density-curve model was validated at pipeline construction");
         let print_channel_density = crate::chain_prep::channel_density(&self.print);

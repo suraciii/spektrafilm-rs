@@ -399,8 +399,6 @@ use crate::spectral_service::select_illuminant;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[cfg(test)]
     mod grain_dispatch {
         use super::super::*;

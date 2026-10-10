@@ -343,19 +343,7 @@ impl WgpuBackend {
         encoder.copy_buffer_to_buffer(&buf_out, 0, &readback, 0, img_bytes as u64);
         self.queue.submit(Some(encoder.finish()));
 
-        let slice = readback.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-        self.device.materialized(img_bytes as u64);
-        let data = slice.get_mapped_range();
-        let out_f32: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
-        drop(data);
-        readback.unmap();
-
+        let out_f32 = self.read_mapped_f32(&readback, img_bytes as u64);
         ImageBuf::from_data(w, h, f32_to_scalars(out_f32))
     }
 
