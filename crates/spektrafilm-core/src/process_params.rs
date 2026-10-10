@@ -81,7 +81,7 @@ pub fn resolve(
                     "--film {name:?}: incompatible support/stage; expected film/filming"
                 ));
             }
-            if !direct_scan && (!(print.is_paper() || print.is_film()) || !print.is_printing()) {
+            if !direct_scan && !print.is_print_stock() {
                 return Err(format!(
                     "print profile {print_name:?}: incompatible support/stage; expected paper/printing or film/printing"
                 ));
