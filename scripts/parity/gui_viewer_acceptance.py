@@ -33,7 +33,7 @@ def _state_path(root: Path, name: str, state: dict) -> Path:
 
 
 def _load_state(driver, path: Path, label: str):
-    driver.file_action("Load state", path)
+    driver.state_action("Load from file", path)
     driver.rendered(label)
 
 
@@ -439,7 +439,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.tab("MAIN")
     profile_before_path = root / "viewer-profile-before-state.json"
     profile_before_path.unlink(missing_ok=True)
-    driver.file_action("Save state", profile_before_path, True)
+    driver.state_action("Save current to file", profile_before_path, True)
     _wait_file(profile_before_path, "viewer profile baseline state")
     profile_before = json.loads(profile_before_path.read_text())
     driver.tab("MAIN")
@@ -449,7 +449,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.rendered("viewer-profile-selected", action="Preview")
     selected_path = root / "viewer-profile-selected-state.json"
     selected_path.unlink(missing_ok=True)
-    driver.file_action("Save state", selected_path, True)
+    driver.state_action("Save current to file", selected_path, True)
     _wait_file(selected_path, "viewer profile state")
     selected_state = json.loads(selected_path.read_text())
     selected_simulation = selected_state["simulation"]
@@ -484,7 +484,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _load_state(driver, non_srgb_path, "viewer-non-srgb-state")
     persisted_path = root / "viewer-non-srgb-persisted.json"
     persisted_path.unlink(missing_ok=True)
-    driver.file_action("Save state", persisted_path, True)
+    driver.state_action("Save current to file", persisted_path, True)
     _wait_file(persisted_path, "non-sRGB persisted state")
     persisted = json.loads(persisted_path.read_text())
     _require(persisted["input_image"]["input_color_space"] == "ProPhoto RGB",

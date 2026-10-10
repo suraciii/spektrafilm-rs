@@ -93,6 +93,7 @@ class ExperimentalDesktop(X11):
     """Reuse native capture/chooser plumbing, without the old GUI coordinates."""
 
     def start(self, gui, env, image=None):
+        env = self.gui_environment(env)
         self.chooser_ready(env)
         self.proc = subprocess.Popen([str(gui)] + ([str(image)] if image else []),
                                     cwd=self.root, env=env, stdout=self.log, stderr=self.log)

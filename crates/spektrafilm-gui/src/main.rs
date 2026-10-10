@@ -35,6 +35,7 @@ mod export;
 mod numeric;
 mod panels;
 mod profiles;
+mod routes;
 mod state;
 use export::{ExportBackend, ExportCompression, ExportDialog, ExportFormat, ExportOptions};
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
@@ -73,6 +74,10 @@ fn main() -> eframe::Result<()> {
             }
             "--help" | "-h" => {
                 println!("Usage: spektrafilm-gui [IMAGE] [--state GUI_STATE.json]");
+                println!(
+                    "SPEKTRAFILM_GUI_DIAGNOSTICS_DIR publishes each completed operation's report \
+                     as operation-<id>.json in that existing directory."
+                );
                 return Ok(());
             }
             _ if arg.starts_with('-') => {
@@ -85,6 +90,16 @@ fn main() -> eframe::Result<()> {
         }
     }
     let backend = gui_backend();
+    let diagnostics_dir = std::env::var_os("SPEKTRAFILM_GUI_DIAGNOSTICS_DIR").map(PathBuf::from);
+    if let Some(directory) = diagnostics_dir.as_deref() {
+        if !directory.is_dir() {
+            eprintln!(
+                "SPEKTRAFILM_GUI_DIAGNOSTICS_DIR must name an existing directory: {}",
+                directory.display()
+            );
+            std::process::exit(2);
+        }
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1460.0, 980.0]),
@@ -134,6 +149,7 @@ fn main() -> eframe::Result<()> {
                 backend,
                 initial_image,
                 initial_state,
+                diagnostics_dir,
             )))
         }),
     )
@@ -741,6 +757,7 @@ impl App {
         backend: Arc<dyn ComputeBackend>,
         initial_image: Option<PathBuf>,
         initial_state: Option<PathBuf>,
+        diagnostics_dir: Option<PathBuf>,
     ) -> Self {
         let _ = cc;
 
@@ -827,6 +844,12 @@ impl App {
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
+        if let Some(directory) = diagnostics_dir {
+            // Requesting reports selects summary collection for the session, as the
+            // CLI's report request does; the panel can still change the mode.
+            app.diagnostics.mode = CollectionMode::Summary;
+            app.diagnostics.publish_completed_to(directory);
+        }
         if let Some(p) = initial_image {
             app.load_image_from_path(&p);
         }
@@ -914,6 +937,9 @@ impl App {
             .as_ref()
             .map(|job| ("Export", job.operation.mode()));
         let save_report = self.diagnostics.show(ui, render, queued, export);
+        if let Some(error) = self.diagnostics.take_publication_error() {
+            self.status = format!("Diagnostic report publication error: {error}");
+        }
         if save_report {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("JSON report", &["json"])
@@ -1007,31 +1033,12 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice_tip_labeled(
+            if controls::choice_tip_entries(
                 ui,
                 "workflow",
                 &mut self.params.workflow.route,
-                &[
-                    ("input", "Finished RGB"),
-                    ("input > film > scan", "input > film > scan"),
-                    (
-                        "input > film > print > scan",
-                        "input > film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > print > scan",
-                        "input > convert-film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > scan-minus-base",
-                        "input > convert-film > scan-minus-base",
-                    ),
-                    (
-                        "input > convert-film > scan",
-                        "input > convert-film > scan",
-                    ),
-                ],
-                "Which path the image takes through the pipeline: Finished RGB (colour-manage an already rendered RGB image to the output space), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base). Magazine print can be enabled independently for every workflow.",
+                routes::entries(),
+                routes::tooltip(),
             ) {
                 let direct_film_scan = self.params.workflow.route == "input > film > scan";
                 self.params.io.scan_film = direct_film_scan;
@@ -1043,7 +1050,10 @@ impl App {
                 self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
             if ui
-                .checkbox(&mut self.params.magazine_print_color.active, "Magazine print")
+                .checkbox(
+                    &mut self.params.magazine_print_color.active,
+                    "Magazine print",
+                )
                 .on_hover_text("Apply a magazine print appearance after the selected workflow.")
                 .changed()
             {

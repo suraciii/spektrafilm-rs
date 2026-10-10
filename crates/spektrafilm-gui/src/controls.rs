@@ -526,6 +526,18 @@ pub fn choice_tip_labeled(
     choice_tip_options(ui, label, value, choices.iter().copied(), tooltip)
 }
 
+/// Selector over an iterator of `(value, label)` pairs, so callers can render a
+/// table that also carries per-choice descriptions without building a slice.
+pub fn choice_tip_entries<'a>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    tooltip: &str,
+) -> bool {
+    choice_tip_options(ui, label, value, choices, tooltip)
+}
+
 fn choice_tip_options<'a>(
     ui: &mut Ui,
     label: &str,

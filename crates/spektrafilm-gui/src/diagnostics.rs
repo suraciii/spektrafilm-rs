@@ -5,13 +5,18 @@ use spektrafilm_core::telemetry::{
     ColorSpaceRole, Operation, Outcome, Report, validate_report_destination,
 };
 use spektrafilm_gpu::telemetry::CollectionMode;
-use std::{collections::VecDeque, path::Path};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+};
 
 #[derive(Default)]
 pub(crate) struct Diagnostics {
     pub mode: CollectionMode,
     history: VecDeque<Report>,
     selected: Option<u64>,
+    publication: Option<PathBuf>,
+    publication_error: Option<String>,
 }
 
 pub(crate) fn color_space(value: &str) -> ColorSpaceRole {
@@ -32,10 +37,36 @@ pub(crate) fn preview_backend_requested() -> BackendRequested {
 }
 
 impl Diagnostics {
+    /// Publish every completed operation's report as a new file in `directory`.
+    ///
+    /// A launch-time choice: it stays out of saved GUI state, it never replaces
+    /// an existing file, and a failure surfaces as a status diagnostic instead of
+    /// failing the operation.
+    pub fn publish_completed_to(&mut self, directory: PathBuf) {
+        self.publication = Some(directory);
+    }
+
+    pub fn take_publication_error(&mut self) -> Option<String> {
+        self.publication_error.take()
+    }
+
     pub fn finish(&mut self, operation: Operation, outcome: Outcome) {
         if let Some(report) = operation.finish(outcome) {
+            if let Err(error) = self.publish(&report) {
+                self.publication_error = Some(error);
+            }
             self.retain(report);
         }
+    }
+
+    fn publish(&self, report: &Report) -> Result<(), String> {
+        let Some(directory) = self.publication.as_deref() else {
+            return Ok(());
+        };
+        let path = directory.join(format!("operation-{}.json", report.operation.id));
+        validate_report_destination(&path, &[])
+            .and_then(|destination| destination.write_new(report))
+            .map_err(|error| error.to_string())
     }
 
     fn retain(&mut self, report: Report) {
@@ -279,5 +310,59 @@ mod tests {
         );
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(directory).unwrap();
+    }
+    #[test]
+    fn publication_writes_one_new_file_per_completed_operation() {
+        let directory = std::env::temp_dir().join(format!(
+            "spektrafilm-gui-publication-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.publish_completed_to(directory.clone());
+        let preview = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+        let preview_id = preview.id();
+        diagnostics.finish(preview, Outcome::Succeeded);
+        let scan = Operation::new(OperationKind::Scan, CollectionMode::Summary);
+        let scan_id = scan.id();
+        diagnostics.finish(scan, Outcome::Succeeded);
+        assert_ne!(preview_id, scan_id);
+        for (id, kind) in [
+            (preview_id, OperationKind::Preview),
+            (scan_id, OperationKind::Scan),
+        ] {
+            let path = directory.join(format!("operation-{id}.json"));
+            let report = Report::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(report.operation.id, id);
+            assert_eq!(report.operation.kind, kind);
+            assert_eq!(report.operation.outcome, Outcome::Succeeded);
+        }
+        assert!(diagnostics.take_publication_error().is_none());
+        // Every completed operation publishes its own file; none replaces another.
+        diagnostics.finish(
+            Operation::new(OperationKind::Preview, CollectionMode::Summary),
+            Outcome::Succeeded,
+        );
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 3);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+    #[test]
+    fn publication_failure_surfaces_without_losing_the_report() {
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.publish_completed_to(std::env::temp_dir().join(format!(
+            "spektrafilm-gui-missing-publication-{}",
+            std::process::id()
+        )));
+        diagnostics.finish(
+            Operation::new(OperationKind::Preview, CollectionMode::Summary),
+            Outcome::Succeeded,
+        );
+        assert!(diagnostics.take_publication_error().is_some());
+        assert_eq!(diagnostics.history.len(), 1);
+        assert_eq!(
+            diagnostics.history.front().unwrap().operation.outcome,
+            Outcome::Succeeded
+        );
+        assert!(diagnostics.take_publication_error().is_none());
     }
 }

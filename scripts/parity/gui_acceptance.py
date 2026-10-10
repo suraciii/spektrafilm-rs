@@ -136,6 +136,7 @@ class X11:
         self.mss, self.psutil, self.ocr, self.Image = _desktop_capture(), psutil, _desktop_ocr(), Image
         self.root, self.window, self.proc = root, None, None
         self.records, self.wm = [], None
+        self.last_report_id = 0
         self.log = (root / 'gui.log').open('w')
         wm = subprocess.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], capture_output=True, text=True)
         if 'window id #' not in wm.stdout:
@@ -182,7 +183,23 @@ class X11:
         except (subprocess.SubprocessError, self.psutil.Error, AttributeError, ValueError) as error:
             raise RuntimeError(f'{guidance} Portal probe failed: {error}') from error
 
+    def gui_environment(self, env):
+        """Environment for a GUI launch, including the report publication directory.
+
+        The GUI publishes every completed operation's report there, so readiness
+        and operation facts come from the report instead of the status line.
+        """
+        directory = self.root / 'diagnostics'
+        directory.mkdir(exist_ok=True)
+        for stale in directory.glob('operation-*.json'):
+            stale.unlink()
+        env = dict(env)
+        env['SPEKTRAFILM_GUI_DIAGNOSTICS_DIR'] = str(directory)
+        self.last_report_id = 0
+        return env
+
     def start(self, gui, env, image=None):
+        env = self.gui_environment(env)
         self.chooser_ready(env)
         command = [str(gui)] + ([str(image)] if image else [])
         self.proc = subprocess.Popen(command, cwd=self.root, env=env, stdout=self.log, stderr=self.log)
@@ -379,10 +396,6 @@ class X11:
             'Paper back': (145, 16),
             'Reveal': (1055, 180),
             'Crossfade': (1117, 180),
-            'Save state': (1085, 70),
-            'Load state': (1165, 70),
-            'Save startup default': (1275, 70),
-            'Restore factory default': (1120, 92),
             'ccw rotate': (42, 963),
             'cw rotate': (114, 963),
             '100%': (174, 963),
@@ -581,29 +594,71 @@ class X11:
         surface.save(self.root / 'native-chooser-timeout.png')
         raise RuntimeError(f'Native chooser did not accept {path}')
 
+    def state_control(self, control):
+        """Click a CONFIG state control, expanding the GUI parameters section.
+
+        The state toolbar lives inside that collapsible section, so a fresh
+        CONFIG tab may not show the control yet.
+        """
+        self.tab('CONFIG')
+        self.scroll(False)
+        _, _, lines = self.read()
+        if not self.match(lines, control):
+            self.click('GUI parameters')
+        self.click(control)
+
+    def state_action(self, control, path, save=False):
+        self.state_control(control)
+        self.dialog(path, save)
+
     def file_action(self, control, path, save=False):
-        self.tab('CONFIG' if control in ('Save state', 'Load state', 'Save startup default',
-                                         'Restore factory default') else 'MAIN')
+        self.tab('MAIN')
         self.click(control)
         if control == 'Export':
             self.export_options(path)
         self.dialog(path, save)
 
-    def rendered(self, label, previous_count=None, action=None):
+    def wait_report(self, label, action=None):
+        """Wait for the report the GUI publishes for a completed operation.
+
+        The report is the diagnostic source of truth: readiness, outcome and
+        dimensions come from it, so no status-line OCR is involved.
+        """
+        expected = (action or '').lower()
+        accepted = (expected,) if expected else ('preview', 'scan')
+        def ready():
+            require(self.proc.poll() is None, 'GUI exited; see gui.log')
+            reports = []
+            for path in (self.root / 'diagnostics').glob('operation-*.json'):
+                try:
+                    report = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    continue
+                reports.append(report)
+            reports.sort(key=lambda report: report['operation']['id'])
+            for report in reports:
+                operation = report['operation']
+                if operation['id'] <= self.last_report_id:
+                    continue
+                if operation['kind'] not in accepted:
+                    continue
+                if operation['outcome'] == 'superseded':
+                    continue
+                require(operation['outcome'] == 'succeeded',
+                        f"GUI {operation['kind']} {operation['outcome']} on {label}: "
+                        f"{report.get('diagnostic_issues')}")
+                self.last_report_id = operation['id']
+                return report
+        return wait_for(ready, label, 120)
+
+    def rendered(self, label, action=None):
         self.scroll(True)
         require(action in (None, 'Preview', 'Scan'), f'Unknown render action: {action}')
-        status = action if action else '(?:Preview|Scan)'
-        def ready():
-            image, _, lines = self.read()
-            text = '\n'.join(' '.join(w[0] for w in line) for line in lines)
-            require(not re.search(r'(?:Render|Load|Save|Export|Startup state|Preview state)\s*(?:error|failed)', text, re.I),
-                    f'GUI failure on {label}: {text}')
-            completed = re.search(rf'{status}[^\n]*?\d+\s*[x×=*]\s*\d+', text, re.I)
-            if completed:
-                if previous_count is None or render_count(completed[0]) != previous_count:
-                    self.snap(label, image, lines)
-                    return text
-        return wait_for(ready, label, 120)
+        self.wait_report(label, action)
+        image, _, lines = self.read()
+        text = '\n'.join(' '.join(w[0] for w in line) for line in lines)
+        self.snap(label, image, lines)
+        return text
 
     def export_options(self, path):
         def modal_read():
@@ -746,6 +801,7 @@ class Desktop(X11):
         self.psutil, self.ocr, self.Image, self.input = psutil, pytesseract, Image, pyautogui
         self.root, self.window, self.proc = root, None, None
         self.records, self.wm = [], None
+        self.last_report_id = 0
         self.log = (root / 'gui.log').open('w')
         executable = shutil.which('tesseract')
         if sys.platform == 'win32':
@@ -904,6 +960,7 @@ return report''')
             self.apple('set frontmost to true')
 
     def start(self, gui, env, image=None):
+        env = self.gui_environment(env)
         self.proc = subprocess.Popen([str(gui)] + ([str(image)] if image else []), cwd=self.root,
                                      env=env, stdout=self.log, stderr=self.log)
         def ready():
@@ -1154,7 +1211,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'assertion': 'fresh native window shows the load-image placeholder',
                                'screenshot': driver.records[-1]['screenshot']})
         baseline = root / 'baseline.json'
-        driver.file_action('Save state', baseline, True)
+        driver.state_action('Save current to file', baseline, True)
         wait_for(baseline.is_file, 'saved baseline state', 20)
         state = json.loads(baseline.read_text())
         state['grain']['active'] = False
@@ -1165,7 +1222,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         state['camera']['auto_exposure'] = False
         configured = root / 'configured.json'
         configured.write_text(json.dumps(state))
-        driver.file_action('Load state', configured)
+        driver.state_action('Load from file', configured)
         # Use a recognisable spatial gradient for visual comparison and finite
         # spectral rendering; the separate CLI fixture covers negative/headroom.
         standard = root / 'standard.tif'
@@ -1193,7 +1250,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'pixel_viewer_bounds': loaded_bounds,
                                'screenshot': driver.records[-1]['screenshot']})
         scan_before = root / 'scan-for-print-before.json'
-        driver.file_action('Save state', scan_before, True)
+        driver.state_action('Save current to file', scan_before, True)
         wait_for(scan_before.is_file, 'scan-for-print baseline state', 20)
         baseline_state = json.loads(scan_before.read_text())
         baseline_scan = {'scanner': baseline_state.get('scanner', {}),
@@ -1201,7 +1258,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.click('Scan-for-print')
         driver.rendered('scan-for-print-on')
         scan_on = root / 'scan-for-print-on.json'
-        driver.file_action('Save state', scan_on, True)
+        driver.state_action('Save current to file', scan_on, True)
         wait_for(scan_on.is_file, 'scan-for-print enabled state', 20)
         enabled_state = json.loads(scan_on.read_text())
         enabled_scan = {'scanner': enabled_state.get('scanner', {}),
@@ -1213,7 +1270,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.click('Scan-for-print')
         driver.rendered('scan-for-print-off')
         scan_after = root / 'scan-for-print-after.json'
-        driver.file_action('Save state', scan_after, True)
+        driver.state_action('Save current to file', scan_after, True)
         wait_for(scan_after.is_file, 'scan-for-print restored state', 20)
         restored_state = json.loads(scan_after.read_text())
         restored_scan = {'scanner': restored_state.get('scanner', {}),
@@ -1225,26 +1282,26 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'assertion': 'forced settings and exact restoration',
                                'baseline': baseline_scan, 'forced': enabled_scan,
                                'restored': restored_scan})
-        driver.file_action('Load state', scan_on)
+        driver.state_action('Load from file', scan_on)
         driver.rendered('scan-for-print-loaded-state')
         driver.click('Scan-for-print')
         driver.rendered('scan-for-print-loaded-toggle')
         loaded_toggle = root / 'scan-for-print-loaded-toggle.json'
-        driver.file_action('Save state', loaded_toggle, True)
+        driver.state_action('Save current to file', loaded_toggle, True)
         wait_for(loaded_toggle.is_file, 'scan-for-print loaded toggle state', 20)
         loaded_state = json.loads(loaded_toggle.read_text())
         require(loaded_state['scanner']['white_correction'] is True and
                 loaded_state['scanner']['black_correction'] is True and
                 loaded_state['glare']['active'] is False,
                 'Loaded state retained the transient scan-for-print snapshot')
-        driver.file_action('Load state', scan_before)
+        driver.state_action('Load from file', scan_before)
         driver.rendered('scan-for-print-baseline-restored')
         # The reported output width distinguishes reduced Preview from full
         # Scan. Save must retain the accepted full-resolution Scan output.
         _, _, lines = driver.read()
         before_scan = render_count('\n'.join(' '.join(w[0] for w in line) for line in lines))
         driver.click('Scan')
-        scan_status = driver.rendered('explicit-scan', before_scan, action='Scan')
+        scan_status = driver.rendered('explicit-scan', action='Scan')
         scan_output = root / 'scan-output.exr'
         driver.file_action('Save', scan_output, True)
         wait_for(scan_output.is_file, 'full-resolution scan output', 30)
@@ -1262,12 +1319,11 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'output_width_before': before_scan,
                                'output_width_after': render_count(scan_status),
                                'output_dimensions': [scan_spec.width, scan_spec.height]})
-        # The GUI saves asynchronously and overwrites the status line once
-        # done; wait for that before Preview so the preview render's own
-        # status is the last one written.
-        driver.wait_text(r'Saved\s+scan-output\.exr', 'scan-output-saved', 30)
+        # The GUI publishes the Save report after the write completes; wait for it
+        # before Preview so the recorded operations stay ordered.
+        driver.wait_report('scan-output-saved', action='Save')
         driver.click('Preview')
-        preview_status = driver.rendered('explicit-preview', render_count(scan_status), action='Preview')
+        preview_status = driver.rendered('explicit-preview', action='Preview')
         driver.records.append({'parity_action': 'run_preview',
                                'assertion': 'Preview click re-renders at the preview size',
                                'status': preview_status,
@@ -1275,9 +1331,9 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'output_width_after': render_count(preview_status)})
         driver.tab('CONFIG')
         driver.scroll(True)
-        driver.click('Restore factory default')
+        driver.state_control('Restore factory default')
         factory_state = root / 'factory-state.json'
-        driver.file_action('Save state', factory_state, True)
+        driver.state_action('Save current to file', factory_state, True)
         wait_for(factory_state.is_file, 'factory state saved', 20)
         factory = json.loads(factory_state.read_text())
         canonical_factory_path = Path(__file__).resolve().parents[2] / 'crates/spektrafilm-gui/src/factory_state.json'
@@ -1331,11 +1387,11 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                     f'Factory reset changed canonical section {section}')
         driver.records.append({'factory_state_neutral_normalizations': factory_normalizations})
         driver.scroll(True)
-        driver.click('Save startup default')
+        driver.state_control('Save current as default')
         driver.close()
         driver.start(gui, env, standard)
         restarted_factory = root / 'factory-restarted.json'
-        driver.file_action('Save state', restarted_factory, True)
+        driver.state_action('Save current to file', restarted_factory, True)
         wait_for(restarted_factory.is_file, 'factory state after restart', 20)
         restarted = json.loads(restarted_factory.read_text())
         for section, expected in canonical_factory.items():
@@ -1353,7 +1409,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         viewing_state['display']['preview_max_size'] = 256
         viewing = root / 'viewing.json'
         viewing.write_text(json.dumps(viewing_state))
-        driver.file_action('Load state', viewing)
+        driver.state_action('Load from file', viewing)
         driver.rendered('configured-after-factory-reset')
         driver.click('100%', False)
         zoom_100 = driver.measure_viewer('zoom-100-percent')
@@ -1365,8 +1421,10 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
         driver.click('reset view', False)
         driver.click('cw rotate', False)
-        # Tesseract renders the × separator as = or * at footer sizes.
-        driver.wait_text(r'(?:Preview|Scan)[^\n]*96\s*[x×=*]\s*192', 'clockwise-render-complete')
+        clockwise = driver.wait_report('clockwise-render-complete')
+        require(clockwise['configuration']['working_dimensions'] == [96, 192],
+                f"Clockwise rotation did not re-render portrait: "
+                f"{clockwise['configuration']['working_dimensions']}")
         cw_bounds = driver.measure_viewer('clockwise-rotation')
         driver.tab('MAIN')
         rotated_export = root / 'rotated-export.tif'
@@ -1393,7 +1451,10 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.records.append({'rotated_metadata_preserved': True, 'orientation': 1, 'dimensions': [96, 192]})
         driver.tab('CONFIG')
         driver.click('ccw rotate', False)
-        driver.wait_text(r'(?:Preview|Scan)[^\n]*192\s*[x×=*]\s*96', 'counterclockwise-render-complete')
+        counterclockwise = driver.wait_report('counterclockwise-render-complete')
+        require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
+                f"Counterclockwise rotation did not restore landscape: "
+                f"{counterclockwise['configuration']['working_dimensions']}")
         ccw_bounds = driver.measure_viewer('counterclockwise-rotation')
         require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
                 f'Clockwise rotation did not produce portrait pixels: {cw_bounds}')
@@ -1461,7 +1522,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'assertion': 'runtime editor change updates the native rendered pixels',
                                'status': auto_preview_status})
         display_probe = root / 'display-after-exposure.json'
-        driver.file_action('Save state', display_probe, True)
+        driver.state_action('Save current to file', display_probe, True)
         wait_for(display_probe.is_file, 'display probe state', 20)
         display_after = json.loads(display_probe.read_text())['display']
         require(all(display_after.get(key) == value for key, value in display_before.items()),
@@ -1470,19 +1531,19 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'checked_display_fields': list(display_before)})
         driver.tab('MAIN')
         saved_state = root / 'roundtrip.json'
-        driver.file_action('Save state', saved_state, True)
+        driver.state_action('Save current to file', saved_state, True)
         wait_for(saved_state.is_file, 'saved changed state', 20)
         saved = json.loads(saved_state.read_text())
         require(saved['camera']['auto_exposure'] is True, 'Control change absent from saved state')
         driver.records.append({'parity_action': 'save_current_state_to_file',
                                'assertion': 'Save state writes the changed control values to JSON',
                                'auto_exposure': saved['camera']['auto_exposure']})
-        driver.file_action('Load state', configured)
+        driver.state_action('Load from file', configured)
         driver.rendered('reloaded-original-state')
-        driver.file_action('Load state', saved_state)
+        driver.state_action('Load from file', saved_state)
         loaded_state_status = driver.rendered('loaded-changed-state')
         loaded_probe = root / 'loaded-state-observed.json'
-        driver.file_action('Save state', loaded_probe, True)
+        driver.state_action('Save current to file', loaded_probe, True)
         wait_for(loaded_probe.is_file, 'observed loaded state', 20)
         loaded = json.loads(loaded_probe.read_text())
         require(loaded['camera']['auto_exposure'] == saved['camera']['auto_exposure'],
@@ -1493,14 +1554,14 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'auto_exposure': loaded['camera']['auto_exposure'],
                                'observed_state': loaded_probe.name})
         driver.tab('CONFIG')
-        driver.click('Save startup default')
+        driver.state_control('Save current as default')
         startup = root / 'config' / 'gui_default_state.json'
         wait_for(startup.is_file, 'saved startup default', 20)
         driver.close()
         driver.start(gui, env, standard)
         driver.rendered('restart-startup-restored')
         restored_path = root / 'restored.json'
-        driver.file_action('Save state', restored_path, True)
+        driver.state_action('Save current to file', restored_path, True)
         wait_for(restored_path.is_file, 'restart state saved', 20)
         restored = json.loads(restored_path.read_text())
         require(restored == saved, 'Startup default did not restore the complete saved state')
@@ -1530,7 +1591,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.scroll(False)
         driver.wait_text(r'Lens correction (?:not applied|applied)',
                          'raw-lens-correction-status', timeout=20)
-        driver.file_action('Save state', root / 'raw-state.json', True)
+        driver.state_action('Save current to file', root / 'raw-state.json', True)
         wait_for((root / 'raw-state.json').is_file, 'RAW state', 20)
         raw_state = json.loads((root / 'raw-state.json').read_text())
         require(raw_state['input_image']['input_color_space'] == 'ACES2065-1', 'RAW load did not configure ACES input')
@@ -1545,7 +1606,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         writer = oiio.ImageOutput.create(str(large))
         require(writer and writer.open(str(large), oiio.ImageSpec(4096, 3072, 3, oiio.FLOAT)), 'Cannot create cancellation input')
         require(writer.write_image(pixels) and writer.close(), 'Cannot write cancellation input')
-        driver.file_action('Load state', saved_state)
+        driver.state_action('Load from file', saved_state)
         driver.tab('MAIN')
         driver.file_action('Open', large)
         driver.rendered('large-image-preview')

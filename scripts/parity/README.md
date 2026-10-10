@@ -136,7 +136,10 @@ Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver performs
 an initial preview before saving state to establish the output viewing layer.
 It selects the requested uppercase footer action independently of neighboring
 button OCR, distinguishes SCAN from the Scan for print checkbox, and observes
-the requested Preview or Scan completion after resetting the prior status.
+the requested Preview or Scan completion from the report the GUI publishes for
+each operation (`SPEKTRAFILM_GUI_DIAGNOSTICS_DIR`), so render readiness never
+depends on the status line; the human status text is still recorded in the
+scenario records.
 RAW import requires the pinned fixture's loaded/full dimensions or corresponding
 preview dimensions, plus saved ACES2065-1 state with decoding disabled; transient
 Loaded text can be replaced by a completed preview.
