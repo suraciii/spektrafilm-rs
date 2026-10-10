@@ -226,11 +226,10 @@ fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
             ("printing_develop_scan", Some(print)),
         ],
     };
-    let magazine = bundle.meta.workflow_route == "input > film > scan > magazine"
-        && bundle.meta.provenance.contains_key("magazine_print_color");
+    let magazine = bundle.meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
-    for &(role, stock) in roles {
-        let expected_role = if magazine && stock.is_some() {
+    for (stage, &(role, stock)) in roles.iter().enumerate() {
+        let expected_role = if magazine && stage + 1 == roles.len() {
             format!("magazine_{role}")
         } else {
             role.to_owned()
@@ -260,7 +259,6 @@ fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
             return Err(format!("malformed QA LUT {}", m.path));
         }
         let taps = bundle.meta.topology.taps();
-        let stage = chain.len();
         let domain = if stage == 0 {
             "input_rgb"
         } else {
@@ -1676,6 +1674,36 @@ fn picture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn magazine_roles_follow_provenance_on_any_route() {
+        let mut bundle: Bundle = serde_json::from_value(json!({
+            "spec": {"film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","topology":"1lut"},
+            "luts": [["magazine.cube", {"resolution":2,"title":"magazine","table":grid(2)}]],
+            "meta": {"schema_version":1,"name":"magazine","topology":"1lut","resolution":2,"provenance":{},"stocks":{"film":"kodak_portra_400","prints":["kodak_portra_endura"]},"color_spaces":{"input":{"name":"sRGB","cctf":true},"output":{"name":"sRGB","cctf":true}},"wires":{},"luts":[{"role":"magazine_combined","path":"magazine.cube","domain":"input_rgb","range":"output_rgb","print_profile":"kodak_portra_endura"}],"input_exposure":null,"params_snapshot":{}}
+        }))
+        .unwrap();
+        for route in [
+            "input",
+            "input > film > scan",
+            "input > film > print > scan",
+        ] {
+            bundle.meta.workflow_route = route.into();
+            bundle
+                .meta
+                .provenance
+                .insert("magazine_print_color".into(), "included".into());
+            assert_eq!(
+                effective_lut(&bundle, "kodak_portra_endura").unwrap().table,
+                grid(2)
+            );
+            bundle.meta.provenance.remove("magazine_print_color");
+            assert!(
+                effective_lut(&bundle, "kodak_portra_endura")
+                    .unwrap_err()
+                    .contains("expected one canonical LUT combined")
+            );
+        }
+    }
     #[test]
     fn perceptual_difference_matches_cie_reference() {
         assert!(

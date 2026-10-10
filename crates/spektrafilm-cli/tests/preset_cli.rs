@@ -718,7 +718,7 @@ fn dry_run_reports_runtime_route_and_monochrome_normalization() {
 }
 
 #[test]
-fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_preset() {
+fn magazine_enabled_preserves_preset_profiles_and_selects_direct_scan_without_preset() {
     let f = Fixture::new();
     for selector in [
         ["--film", "kodak_portra_400"],
@@ -728,7 +728,7 @@ fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_pres
             selector[0],
             selector[1],
             "--route",
-            "input > film > scan > magazine",
+            "input > film > scan",
             "--set",
             "magazine_print_color.active=true,magazine_print_color.strength=0.75",
             "--dry-run",
@@ -751,7 +751,7 @@ fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_pres
         "--film",
         "kodak_portra_400",
         "--route",
-        "input > film > scan > magazine",
+        "input > film > scan",
         "--set",
         "magazine_print_color.strength=1.1",
         "--set",
@@ -761,6 +761,77 @@ fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_pres
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("magazine_print_color.strength"));
     assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn finished_input_dry_run_preserves_profiles_with_independent_magazine() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input",
+        "--set",
+        "magazine_print_color.active=true,magazine_print_color.strength=0.75",
+        "--dry-run",
+    ]);
+    assert_eq!(report["film_profile"], "kodak_portra_400");
+    assert_eq!(report["print_profile"], "kodak_portra_endura");
+    assert_eq!(report["parameters"]["workflow"]["route"], "input");
+    assert_eq!(report["parameters"]["magazine_print_color"]["active"], true);
+    assert_eq!(
+        report["parameters"]["magazine_print_color"]["strength"],
+        0.75
+    );
+}
+
+#[test]
+fn removed_magazine_route_reports_migration_before_profiles_load() {
+    let f = Fixture::new();
+    let result = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input > film > scan > magazine",
+        "--dry-run",
+    ]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("input > film > scan"), "{error}");
+    assert!(
+        error.contains("magazine_print_color.active = true"),
+        "{error}"
+    );
+}
+
+#[test]
+fn saved_magazine_route_requires_migration_even_with_route_override() {
+    let f = Fixture::new();
+    let params = f.root.join("obsolete-route.json");
+    std::fs::write(
+        &params,
+        serde_json::to_vec(&json!({
+            "workflow": {"route": "input > film > scan > magazine"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let result = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--params",
+        params.to_str().unwrap(),
+        "--route",
+        "input > film > scan",
+        "--dry-run",
+    ]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("input > film > scan"), "{error}");
+    assert!(
+        error.contains("magazine_print_color.active = true"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -776,12 +847,6 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
         (
             "kodak_portra_400",
             "input > film > print > scan",
-            "camera.auto_exposure=false",
-            "direct input",
-        ),
-        (
-            "kodak_portra_400",
-            "input > film > scan > magazine",
             "camera.auto_exposure=false",
             "direct input",
         ),

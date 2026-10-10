@@ -830,6 +830,15 @@ impl Pipeline {
                     pixel[channel] = from_f64(rgb[channel]);
                 }
             });
+            // Finished RGB accepts the optional magazine finishing exactly like
+            // a scanned base workflow: after output color management, before
+            // the caller's image writer.
+            crate::magazine_print_color::apply(
+                &mut output,
+                &self.params.magazine_print_color,
+                destination,
+                self.params.io.output_cctf_encoding,
+            );
             return Ok(output);
         }
         let metering = stages::StageObservation::cpu(

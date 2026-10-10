@@ -125,8 +125,7 @@ impl BundleBuilder {
             }
         }
         let magazine_print_active = first.params().magazine_print_color.active
-            && first.params().magazine_print_color.strength > 0.0
-            && first.params().workflow.route == "input > film > scan > magazine";
+            && first.params().magazine_print_color.strength > 0.0;
         let mut provenance = BTreeMap::from([
             ("spektrafilm_version".into(), "0.3.4".into()),
             ("lut_creator_version".into(), "0.3.4".into()),
@@ -198,12 +197,7 @@ impl BundleBuilder {
     }
 }
 fn validate_route_topology(topology: Topology, route: &str) -> Result<(), String> {
-    if topology == Topology::Four
-        && matches!(
-            route,
-            "input > film > scan" | "input > film > scan > magazine"
-        )
-    {
+    if topology == Topology::Four && route == "input > film > scan" {
         return Err(
             "4lut is not supported with direct film-scan routes: the topology has no print taps"
                 .into(),
@@ -266,10 +260,7 @@ pub(crate) fn bake_params(
     if params.workflow.route == "input" {
         params.workflow.route = "input > film > print > scan".into();
     }
-    params.io.scan_film = matches!(
-        params.workflow.route.as_str(),
-        "input > film > scan" | "input > film > scan > magazine"
-    );
+    params.io.scan_film = params.workflow.route == "input > film > scan";
     params.taps.inject = None;
     params.taps.collect = None;
     params.settings.preview_mode = false;
@@ -499,8 +490,7 @@ fn bake_recipe(
     backend: &dyn ComputeBackend,
 ) -> Result<(String, Lut, LutFileMeta), String> {
     let magazine_active = pipeline.params().magazine_print_color.active
-        && pipeline.params().magazine_print_color.strength > 0.0
-        && pipeline.params().workflow.route == "input > film > scan > magazine";
+        && pipeline.params().magazine_print_color.strength > 0.0;
     let role = if magazine_active && recipe.collect == Tap::RgbOut {
         format!("magazine_{}", recipe.role)
     } else {
@@ -582,8 +572,7 @@ mod tests {
 
     #[test]
     fn lut_topology_rejects_routes_without_matching_taps() {
-        let error =
-            validate_route_topology(Topology::Four, "input > film > scan > magazine").unwrap_err();
+        let error = validate_route_topology(Topology::Four, "input > film > scan").unwrap_err();
         assert!(error.contains("no print taps"));
 
         let error = validate_route_topology(Topology::Three, "input > convert-film > print > scan")
@@ -810,10 +799,10 @@ mod tests {
         let mut base = RuntimeParams::default();
         base.magazine_print_color.active = true;
         base.magazine_print_color.strength = 0.75;
-        base.workflow.route = "input > film > scan > magazine".into();
+        base.workflow.route = "input > film > scan".into();
         let baked =
             bake_params(&s, input, input, &film, &print, &neutral, Some(&base), true).unwrap();
-        assert_eq!(baked.workflow.route, "input > film > scan > magazine");
+        assert_eq!(baked.workflow.route, "input > film > scan");
         assert!(baked.io.scan_film);
         assert_eq!(baked.magazine_print_color.strength, 0.75);
         let json = serde_json::to_value(&baked).unwrap();
