@@ -10,6 +10,7 @@ pub fn show(ui: &mut egui::Ui, g: &mut GrainParams) -> bool {
                 .selected_text(match g.engine {
                     GrainEngine::V1 => "V1 — emulsion grain",
                     GrainEngine::V2 => "V2 — procedural grain",
+                    GrainEngine::V3 => "V3 — film-coordinate dye field",
                 })
                 .show_ui(ui, |ui| {
                     changed |= ui

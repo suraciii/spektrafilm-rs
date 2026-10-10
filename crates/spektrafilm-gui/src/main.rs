@@ -244,6 +244,17 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
     }
 }
 
+/// Effective backend label for Scan and Export reports. An active V3 field
+/// resolves on the CPU and never enters the resident chain, so the selected
+/// backend name alone would misreport the executed path.
+fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
+    if spektrafilm_core::stages::grain_v3::active(params) {
+        format!("{selected} · grain V3 on CPU")
+    } else {
+        selected.to_owned()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum GuiTab {
     #[default]
@@ -1327,7 +1338,6 @@ impl App {
         operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
         operation.set_backend_requested(diagnostics::preview_backend_requested());
-        let backend_name = self.backend.name().to_owned();
         let mut params = match self
             .current_state()
             .and_then(|state| state.runtime_params())
@@ -1340,6 +1350,9 @@ impl App {
                 return;
             }
         };
+        // An active V3 field resolves its film-coordinate field on the CPU,
+        // so report the effective backend next to the selected one.
+        let backend_name = effective_backend_name(self.backend.name(), &params);
         if self.look_neutral_filters_pinned {
             params.settings.neutral_print_filters_from_database = false;
         }
@@ -1872,7 +1885,7 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            backend_name: backend.name().to_owned(),
+                            backend_name: effective_backend_name(backend.name(), pipeline.params()),
                             size: [output.width, output.height],
                             metadata_warning: report.metadata_warning,
                             staged,
