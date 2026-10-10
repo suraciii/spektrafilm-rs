@@ -110,12 +110,16 @@ const RAW_EXTENSIONS: &[&str] = &[
     "fff", "k25", "mos", "ptx",
 ];
 
+/// Every extension a container format owns, for a writer's file-dialog filter.
+pub fn container_extensions() -> Vec<&'static str> {
+    CONTAINER_FORMATS.iter().map(|(name, _)| *name).collect()
+}
+
 /// Every extension the input path accepts, containers first: the file-dialog
 /// filter list.
 pub fn accepted_extensions() -> Vec<&'static str> {
-    CONTAINER_FORMATS
-        .iter()
-        .map(|(name, _)| *name)
+    container_extensions()
+        .into_iter()
         .chain(RAW_EXTENSIONS.iter().copied())
         .collect()
 }

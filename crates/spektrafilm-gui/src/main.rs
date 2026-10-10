@@ -1513,7 +1513,7 @@ impl App {
         };
         let Some(path) = self
             .file_dialog("save_output")
-            .add_filter("Image", &["jpg", "jpeg", "png", "tif", "tiff", "exr"])
+            .add_filter("Image", &image_io::container_extensions())
             .set_file_name(&default_name)
             .save_file()
         else {
