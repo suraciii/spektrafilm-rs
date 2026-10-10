@@ -309,8 +309,13 @@ impl GuiState {
         ] {
             runtime["settings"][key] = value;
         }
-        let params: RuntimeParams =
+        let mut params: RuntimeParams =
             serde_json::from_value(runtime).context("Invalid GUI control value")?;
+        if let Some(preparation) = s["rust"].get("render_preparation") {
+            let preparation = serde_json::from_value(preparation.clone())
+                .context("Invalid render preparation ownership")?;
+            params.restore_render_preparation_state(&preparation);
+        }
         params.validate().map_err(anyhow::Error::msg)?;
         for name in ["film_channel_swap", "print_channel_swap"] {
             let order = s["special"][name]
@@ -482,6 +487,7 @@ impl GuiState {
             }
         }
         s["rust"]["version"] = json!(1);
+        s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         // Route owns the derived scan decision; do not persist the legacy
         // `scan_film` flag or a second workflow owner in the Rust snapshot.
         runtime["io"]
