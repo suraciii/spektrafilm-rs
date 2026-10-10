@@ -1,3 +1,6 @@
+mod observation;
+use crate::telemetry::*;
+use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
 /// wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 #[cfg(feature = "wgpu-backend")]
@@ -35,7 +38,7 @@ fn dispatch_grid(workgroups: u32) -> (u32, u32) {
 }
 
 #[cfg(feature = "wgpu-backend")]
-fn dispatch_linear(pass: &mut wgpu::ComputePass<'_>, n_values: u32) {
+fn dispatch_linear(pass: &mut ObservedPass<'_>, n_values: u32) {
     let (x, y) = dispatch_grid(n_values.div_ceil(LINEAR_WORKGROUP_SIZE));
     pass.dispatch_workgroups(x, y, 1);
 }
@@ -47,10 +50,11 @@ fn fir_blur_radius(sigma: f32) -> u32 {
 
 #[cfg(feature = "wgpu-backend")]
 pub struct WgpuBackend {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipeline_cache: PipelineCache,
+    device: ObservedDevice,
+    queue: ObservedQueue,
+    pipeline_cache: std::sync::Arc<PipelineCache>,
     name: String,
+    adapter: AdapterDescription,
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -61,47 +65,87 @@ impl WgpuBackend {
             ..Default::default()
         });
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let options = wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
-        }))?;
-
-        // The default `Limits` cap storage buffer bindings at 128 MB,
-        // which a 6-channel ≥ 14 MP image exceeds (image_bytes =
-        // width × height × 3 × 4). Bump every relevant limit up to the
-        // adapter's hardware ceiling so we can render arbitrary
-        // megapixel counts (within RAM).
-        let adapter_info = adapter.get_info();
-        let adapter_limits = adapter.limits();
-        let mut limits = wgpu::Limits::default();
-        limits.max_storage_buffer_binding_size = adapter_limits.max_storage_buffer_binding_size;
-        limits.max_buffer_size = adapter_limits.max_buffer_size;
-        limits.max_compute_workgroups_per_dimension =
-            adapter_limits.max_compute_workgroups_per_dimension;
-        limits.max_bind_groups = adapter_limits.max_bind_groups.max(limits.max_bind_groups);
-        // Linear kernels use 256 invocations and blur kernels use 16 × 16,
-        // both within the default compute workgroup limits.
-        // MAPPABLE_PRIMARY_BUFFERS lets the input/output STORAGE buffers also
-        // be MAP_WRITE / MAP_READ, so they map directly for a zero-copy
-        // upload/readback. On unified-memory GPUs this skips the slow
-        // Private↔Shared staging blits (~0.5 GB/s) that otherwise dominate the
-        // per-frame cost. No-op (falls back to the blit path) if unsupported.
-        let opt_feats = if adapter_info.device_type == wgpu::DeviceType::IntegratedGpu {
-            wgpu::Features::MAPPABLE_PRIMARY_BUFFERS & adapter.features()
-        } else {
-            wgpu::Features::empty()
         };
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
+        let mut adapter = pollster::block_on(instance.request_adapter(&options))?;
+        let policy = |adapter: &wgpu::Adapter, timestamp: bool| {
+            let info = adapter.get_info();
+            let hardware = adapter.limits();
+            let mut limits = wgpu::Limits::default();
+            limits.max_storage_buffer_binding_size = hardware.max_storage_buffer_binding_size;
+            limits.max_buffer_size = hardware.max_buffer_size;
+            limits.max_compute_workgroups_per_dimension =
+                hardware.max_compute_workgroups_per_dimension;
+            limits.max_bind_groups = hardware.max_bind_groups.max(limits.max_bind_groups);
+            let mut features = if info.device_type == wgpu::DeviceType::IntegratedGpu {
+                wgpu::Features::MAPPABLE_PRIMARY_BUFFERS & adapter.features()
+            } else {
+                wgpu::Features::empty()
+            };
+            if timestamp {
+                features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+            }
+            wgpu::DeviceDescriptor {
                 label: Some("spektrafilm"),
-                required_features: opt_feats,
+                required_features: features,
                 required_limits: limits,
                 memory_hints: wgpu::MemoryHints::Performance,
+            }
+        };
+        let timestamp_requested = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let first = pollster::block_on(adapter.request_device(&policy(&adapter, true), None));
+        let mut feature_request_failed = false;
+        let (device, queue) = match first {
+            Ok(value) => value,
+            Err(_) if timestamp_requested => {
+                feature_request_failed = true;
+                adapter = pollster::block_on(instance.request_adapter(&options))?;
+                match pollster::block_on(adapter.request_device(&policy(&adapter, false), None)) {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                }
+            }
+            Err(_) => return None,
+        };
+        let adapter_info = adapter.get_info();
+        let timestamp_supported = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let timestamp_enabled = device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let description = AdapterDescription {
+            api: format!("{:?}", adapter_info.backend),
+            device_type: match adapter_info.device_type {
+                wgpu::DeviceType::Cpu => AdapterDeviceType::Cpu,
+                wgpu::DeviceType::IntegratedGpu => AdapterDeviceType::Integrated,
+                wgpu::DeviceType::DiscreteGpu => AdapterDeviceType::Discrete,
+                wgpu::DeviceType::VirtualGpu => AdapterDeviceType::Virtual,
+                _ => AdapterDeviceType::Other,
             },
-            None,
-        ))
-        .ok()?;
+            name: adapter_info.name.chars().take(256).collect(),
+            description_truncated: adapter_info.name.chars().count() > 256,
+            shared_device: true,
+            timestamp_supported,
+            timestamp_enabled,
+            timestamp_period_ns: if timestamp_enabled {
+                Measurement::available(queue.get_timestamp_period() as f64)
+            } else {
+                Measurement::unavailable(if feature_request_failed {
+                    AvailabilityReason::FeatureRequestFailed
+                } else {
+                    AvailabilityReason::Unsupported
+                })
+            },
+            timestamp_reason: if timestamp_enabled {
+                None
+            } else {
+                Some(if feature_request_failed {
+                    AvailabilityReason::FeatureRequestFailed
+                } else {
+                    AvailabilityReason::Unsupported
+                })
+            },
+        };
 
         tracing::info!(
             adapter = adapter_info.name,
@@ -114,9 +158,18 @@ impl WgpuBackend {
                 "WGPU f32 · {} ({:?}, {:?})",
                 adapter_info.name, adapter_info.device_type, adapter_info.backend
             ),
-            device,
-            queue,
-            pipeline_cache: PipelineCache::default(),
+            device: ObservedDevice {
+                raw: device,
+                context: ObservationContext::default(),
+                batch: None,
+            },
+            queue: ObservedQueue {
+                raw: queue,
+                context: ObservationContext::default(),
+                batch: None,
+            },
+            pipeline_cache: std::sync::Arc::new(PipelineCache::default()),
+            adapter: description,
         })
     }
 
@@ -130,13 +183,43 @@ impl WgpuBackend {
         bindings: &[GpuBuffer],
         n_pixels: u32,
         output_idx: usize,
+        name: &'static str,
+    ) -> Vec<f32> {
+        if !self.device.context.enabled() {
+            return self.dispatch_compute_inner(
+                shader_source,
+                bindings,
+                n_pixels,
+                output_idx,
+                name,
+            );
+        }
+        let (backend, _batch) = self.observed_batch("compute");
+        backend.dispatch_compute_inner(shader_source, bindings, n_pixels, output_idx, name)
+    }
+    fn dispatch_compute_inner(
+        &self,
+        shader_source: &'static str,
+        bindings: &[GpuBuffer],
+        n_pixels: u32,
+        output_idx: usize,
+        name: &'static str,
     ) -> Vec<f32> {
         let t_start = std::time::Instant::now();
         let binding_types: Vec<wgpu::BufferBindingType> =
             bindings.iter().map(|b| b.binding_type).collect();
-        let cached =
+        let (cached, hit) =
             self.pipeline_cache
                 .get_or_compile(&self.device, shader_source, &binding_types);
+        if self.device.context.enabled() {
+            let mut work = WorkCounters::default();
+            if hit {
+                work.pipeline_cache_hit_count = Some(1);
+            } else {
+                work.pipeline_cache_miss_count = Some(1);
+            }
+            self.device.context.record_work(&work);
+        }
         let pipeline = &cached.pipeline;
         let bind_group_layout = &cached.layout;
         let t_compile = t_start.elapsed();
@@ -144,11 +227,17 @@ impl WgpuBackend {
         // Create GPU buffers
         let gpu_buffers: Vec<wgpu::Buffer> = bindings
             .iter()
-            .map(|b| {
-                use wgpu::util::DeviceExt;
+            .enumerate()
+            .map(|(index, b)| {
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("buffer"),
+                        label: Some(if index == 1 {
+                            "image_input"
+                        } else if index == output_idx {
+                            "scratch_init"
+                        } else {
+                            "spectral_resource"
+                        }),
                         contents: &b.data,
                         usage: b.usage,
                     })
@@ -185,7 +274,7 @@ impl WgpuBackend {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("compute_pass"),
+                label: Some(name),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
@@ -203,7 +292,7 @@ impl WgpuBackend {
         });
         self.device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
-
+        self.device.materialized(output_size);
         let data = slice.get_mapped_range();
         let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
@@ -219,8 +308,19 @@ impl WgpuBackend {
         shader_source: &'static str,
         binding_types: &[wgpu::BufferBindingType],
     ) -> CachedPipelineRef {
-        self.pipeline_cache
-            .get_or_compile(&self.device, shader_source, binding_types)
+        let (cached, hit) =
+            self.pipeline_cache
+                .get_or_compile(&self.device.raw, shader_source, binding_types);
+        if self.device.context.enabled() {
+            let mut w = WorkCounters::default();
+            if hit {
+                w.pipeline_cache_hit_count = Some(1)
+            } else {
+                w.pipeline_cache_miss_count = Some(1)
+            }
+            self.device.context.record_work(&w);
+        }
+        cached
     }
 }
 
@@ -258,13 +358,83 @@ impl GpuBuffer {
 
 #[cfg(feature = "wgpu-backend")]
 impl ComputeBackend for WgpuBackend {
+    fn observation_context(&self) -> Option<&ObservationContext> {
+        Some(&self.device.context)
+    }
+    fn adapter_description(&self) -> Option<AdapterDescription> {
+        Some(self.adapter.clone())
+    }
+    fn with_observation_context(
+        &self,
+        context: ObservationContext,
+    ) -> Option<Box<dyn ComputeBackend + '_>> {
+        context.set_backend_selected(BackendSelected::Wgpu);
+        context.set_adapter(self.adapter.clone());
+        if context.mode() == CollectionMode::GpuTiming && !self.adapter.timestamp_enabled {
+            context.set_effective_mode(CollectionMode::Summary);
+        }
+        Some(Box::new(Self {
+            device: ObservedDevice {
+                raw: self.device.raw.clone(),
+                context: context.clone(),
+                batch: None,
+            },
+            queue: ObservedQueue {
+                raw: self.queue.raw.clone(),
+                context,
+                batch: None,
+            },
+            pipeline_cache: self.pipeline_cache.clone(),
+            name: self.name.clone(),
+            adapter: self.adapter.clone(),
+        }))
+    }
     fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf {
+        let scope = if self.device.context.enabled() {
+            Some(self.device.context.scope(
+                "colorspace_convert",
+                ObservationKind::Stage,
+                self.device.context.purpose(),
+            ))
+        } else {
+            None
+        };
+        if let Some(s) = &scope {
+            s.context()
+                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+        }
         cpu_backend::CpuBackend.colorspace_convert(img, matrix)
     }
     fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+        let scope = if self.device.context.enabled() {
+            Some(self.device.context.scope(
+                "output_transfer",
+                ObservationKind::Stage,
+                self.device.context.purpose(),
+            ))
+        } else {
+            None
+        };
+        if let Some(s) = &scope {
+            s.context()
+                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+        }
         cpu_backend::CpuBackend.cctf_encode_srgb(img)
     }
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
+        let scope = if self.device.context.enabled() {
+            Some(self.device.context.scope(
+                "input_transfer",
+                ObservationKind::Stage,
+                self.device.context.purpose(),
+            ))
+        } else {
+            None
+        };
+        if let Some(s) = &scope {
+            s.context()
+                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+        }
         cpu_backend::CpuBackend.cctf_decode_srgb(img)
     }
     fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
@@ -279,6 +449,10 @@ impl ComputeBackend for WgpuBackend {
                 sigma,
                 execution = "cpu",
                 "Gaussian blur exceeds GPU FIR support"
+            );
+            self.device.context.record_executor(
+                Executor::Cpu,
+                Some(CpuReason::BlurRadiusExceedsBackendSupport),
             );
             return cpu_backend::CpuBackend.gaussian_blur(img, sigma);
         }
@@ -298,14 +472,44 @@ impl ComputeBackend for WgpuBackend {
                 execution = "cpu",
                 "Gaussian blur batch exceeds GPU FIR support"
             );
+            self.device.context.record_executor(
+                Executor::Cpu,
+                Some(CpuReason::BlurRadiusExceedsBackendSupport),
+            );
             return cpu_backend::CpuBackend.gaussian_blur_multi(img, sigmas);
         }
         self.gaussian_blur_multi_gpu(img, sigmas)
     }
     fn table_lookup(&self, img: &ImageBuf, table_x: &[f32], table_y: &[[f32; 3]]) -> ImageBuf {
+        let scope = if self.device.context.enabled() {
+            Some(self.device.context.scope(
+                "table_lookup",
+                ObservationKind::Stage,
+                self.device.context.purpose(),
+            ))
+        } else {
+            None
+        };
+        if let Some(s) = &scope {
+            s.context()
+                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+        }
         cpu_backend::CpuBackend.table_lookup(img, table_x, table_y)
     }
     fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> ImageBuf {
+        let scope = if self.device.context.enabled() {
+            Some(self.device.context.scope(
+                "spectral_lut",
+                ObservationKind::Stage,
+                self.device.context.purpose(),
+            ))
+        } else {
+            None
+        };
+        if let Some(s) = &scope {
+            s.context()
+                .record_executor(Executor::Cpu, Some(CpuReason::SpectralLut));
+        }
         cpu_backend::CpuBackend.lut3d_interp(img, lut)
     }
 
@@ -408,6 +612,7 @@ impl ComputeBackend for WgpuBackend {
             ],
             n_pixels,
             8, // output buffer index
+            "scan_spectral",
         );
 
         ImageBuf::from_data(
@@ -475,6 +680,7 @@ impl ComputeBackend for WgpuBackend {
             ],
             n_pixels,
             6, // output buffer index
+            "print_spectral",
         );
 
         ImageBuf::from_data(
@@ -546,6 +752,7 @@ impl ComputeBackend for WgpuBackend {
             ],
             n_pixels,
             3, // output buffer index
+            "front_transform",
         );
 
         ImageBuf::from_data(image.width, image.height, f32_to_scalars(result))
@@ -606,6 +813,7 @@ impl ComputeBackend for WgpuBackend {
             ],
             n_pixels,
             4, // output buffer index
+            "film_density",
         );
 
         ImageBuf::from_data(log_raw.width, log_raw.height, f32_to_scalars(result))
@@ -617,6 +825,9 @@ impl ComputeBackend for WgpuBackend {
                 execution = "per_stage_cpu_blur",
                 "resident blur exceeds GPU FIR support"
             );
+            self.device
+                .context
+                .decline_resident(ResidentDeclineReason::BlurRadiusExceedsBackendSupport);
             return None;
         }
         Some(self.run_film_chain(params))

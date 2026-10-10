@@ -26,7 +26,7 @@ pub(super) struct HalationState {
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) fn build_halation_state(
-    device: &wgpu::Device,
+    device: &ObservedDevice,
     hp: &crate::HalationGpuParams,
     width: u32,
     height: u32,
@@ -34,7 +34,6 @@ pub(super) fn build_halation_state(
     buf_b: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> HalationState {
-    use wgpu::util::DeviceExt;
     let n_pixels = (width as usize) * (height as usize);
     let img_bytes = (n_pixels * 3 * 4) as u64;
 
@@ -445,12 +444,12 @@ pub(super) fn build_halation_state(
 impl HalationState {
     pub(super) fn encode_passes(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut ObservedEncoder,
         n_pixels: u32,
         wg_xy: (u32, u32),
     ) {
         let _ = (&self.buf_c, &self.buf_d); // owned, just keepalive
-        let dispatch_blur = |enc: &mut wgpu::CommandEncoder, job: &BlurJob| {
+        let dispatch_blur = |enc: &mut ObservedEncoder, job: &BlurJob| {
             {
                 let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("halation_blur_h"),
@@ -470,7 +469,7 @@ impl HalationState {
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
         };
-        let dispatch_linear = |enc: &mut wgpu::CommandEncoder, job: &DispatchJob| {
+        let dispatch_linear = |enc: &mut ObservedEncoder, job: &DispatchJob| {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("halation_linear"),
                 timestamp_writes: None,

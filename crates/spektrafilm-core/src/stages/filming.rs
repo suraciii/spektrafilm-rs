@@ -75,6 +75,11 @@ pub fn expose(
     // previews/decodes internally in `small_preview` order).
     let mut rgb = image.clone();
     if params.io.input_cctf_decoding {
+        let _decode = super::StageObservation::cpu(
+            backend,
+            "input_transfer",
+            spektrafilm_gpu::telemetry::CpuReason::InputTransferDecoding,
+        );
         rgb.data.par_iter_mut().for_each(|v| {
             *v = from_f64(colorspace::cctf_decode(to_f64(*v), input_space.cctf));
         });
@@ -88,6 +93,11 @@ pub fn expose(
 
     // RGB → film raw exposure
     let mut raw = if let Some(core) = mallett_core {
+        let _mallett = super::StageObservation::cpu(
+            backend,
+            "rgb_to_raw",
+            spektrafilm_gpu::telemetry::CpuReason::Mallett,
+        );
         // Mallett2019: per-pixel `raw = (core · M_cs) · rgb`, a single 3×3
         // matrix folding the input-colour-space → linear-sRGB conversion.
         let m = crate::mallett::film_matrix(core, &params.io.input_color_space);
@@ -116,6 +126,11 @@ pub fn expose(
     // optical-scatter effects. No-op when boost_ev == 0.
     let hal_boost = &params.film_render.halation;
     if hal_boost.boost_ev != 0.0 {
+        let _boost = super::StageObservation::cpu(
+            backend,
+            "highlight_boost",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
         raw = spektrafilm_model::optics::boost_highlights(
             &raw,
             hal_boost.boost_ev as f64,
@@ -128,6 +143,11 @@ pub fn expose(
     // Preview and export use the exact sampled PSF convolution.
     let df = &params.camera.diffusion_filter;
     if df.active {
+        let _diffusion = super::StageObservation::cpu(
+            backend,
+            "optical_diffusion",
+            spektrafilm_gpu::telemetry::CpuReason::OpticalDiffusion,
+        );
         let dm = df.to_model();
         // An invalid family is rejected by `RuntimeParams::validate` /
         // `Pipeline::new_with_spectral` before any stage runs; reaching
@@ -256,6 +276,8 @@ pub fn develop(
     let grain = &params.film_render.grain;
     if grain.active && matches!(grain.engine, crate::params::grain::GrainEngine::V1) {
         let t = Instant::now();
+        let grain_observation = super::StageObservation::new(backend, "grain_v1");
+        let backend = grain_observation.backend(backend);
         // Use f64 throughout — Python reads these from JSON as f64; the
         // f32 storage in `GrainParams` would otherwise truncate to ~7
         // decimals and shift every Poisson lambda by ~5e-8, producing a

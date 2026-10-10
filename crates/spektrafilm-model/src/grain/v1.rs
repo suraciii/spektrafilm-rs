@@ -137,6 +137,26 @@ fn finish_grain(
     grain
 }
 
+fn observe_sampler(
+    backend: &dyn ComputeBackend,
+) -> Option<spektrafilm_gpu::telemetry::ObservationScope> {
+    backend
+        .observation_context()
+        .filter(|context| context.enabled())
+        .map(|context| {
+            let scope = context.scope(
+                "grain_v1_sampler",
+                spektrafilm_gpu::telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                spektrafilm_gpu::telemetry::Executor::Cpu,
+                Some(spektrafilm_gpu::telemetry::CpuReason::GrainV1Sampler),
+            );
+            scope
+        })
+}
+
 /// Apply grain to a CMY density image.
 ///
 /// Port of Python `apply_grain_to_density` (the composite-density path,
@@ -158,6 +178,7 @@ pub fn apply_grain_to_density(
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
     let stage_timings = stage_timings_enabled();
+    let sampler = observe_sampler(backend);
     let w = density_cmy.width;
     let h = density_cmy.height;
     let pixel_area = pixel_size_um * pixel_size_um;
@@ -224,6 +245,7 @@ pub fn apply_grain_to_density(
     for (ch, grain_sum) in channels {
         out.write_channel(ch, &grain_sum);
     }
+    drop(sampler);
 
     // Final blur — typically a few px sigma at 1–6 MP, big enough that the
     // GPU separable kernel wins. Upstream gates the composite path on
@@ -406,6 +428,7 @@ pub fn apply_grain_to_density_layers(
     base_seed: u64,
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
+    let sampler = observe_sampler(backend);
     let stage_timings = stage_timings_enabled();
     let pixel_area = pixel_size_um * pixel_size_um;
 
@@ -491,6 +514,7 @@ pub fn apply_grain_to_density_layers(
     for ch in 0..3 {
         out.write_channel(ch, &planes[ch]);
     }
+    drop(sampler);
 
     // Final blur and mass-conserving multiplicative USM operate on absolute
     // density, before the per-channel density floor is removed.

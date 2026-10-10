@@ -1,6 +1,7 @@
 mod contract;
 mod lut;
 mod runner;
+mod telemetry;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -69,6 +70,12 @@ enum Commands {
         /// Print per-stage timing information.
         #[arg(long)]
         timings: bool,
+        /// Save one local JSON diagnostics report without replacing an existing file.
+        #[arg(long)]
+        diagnostics: Option<PathBuf>,
+        /// Collect GPU pass timings when available; unsupported devices retain summary.
+        #[arg(long, requires = "diagnostics")]
+        gpu_timings: bool,
         /// Path to JSON params file for overrides.
         #[arg(long)]
         params: Option<PathBuf>,
@@ -129,6 +136,12 @@ enum Commands {
         output: PathBuf,
         #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
         data_dir: PathBuf,
+        /// Save one local JSON diagnostics report without replacing an existing file.
+        #[arg(long)]
+        diagnostics: Option<PathBuf>,
+        /// Collect GPU pass timings when available; unsupported devices retain summary.
+        #[arg(long, requires = "diagnostics")]
+        gpu_timings: bool,
     },
     /// Inspect an output without processing or modifying it.
     Inspect {
@@ -240,6 +253,7 @@ fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
+        .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();
@@ -263,26 +277,41 @@ fn main() -> Result<()> {
             iters,
             data_dir,
             backend,
+            diagnostics,
+            gpu_timings,
         } => {
             let data_dir = resolve_data_dir(data_dir);
-            cmd_process(
-                &input,
-                &output,
-                format,
-                bit_depth,
-                jpeg_quality,
-                jpeg_subsampling,
-                compression,
-                &workflow,
-                &film,
-                paper.as_deref(),
-                scan_film,
-                timings,
-                params_file.as_deref(),
-                raw_out.as_deref(),
-                iters,
-                &data_dir,
-                backend,
+            let mut protected = vec![input.as_path(), output.as_path()];
+            protected.extend(params_file.as_deref());
+            protected.extend(raw_out.as_deref());
+            telemetry::run(
+                spektrafilm_core::telemetry::OperationKind::Process,
+                diagnostics.as_deref(),
+                gpu_timings,
+                &protected,
+                telemetry::requested_backend(backend),
+                |invocation| {
+                    cmd_process(
+                        &input,
+                        &output,
+                        format,
+                        bit_depth,
+                        jpeg_quality,
+                        jpeg_subsampling,
+                        compression,
+                        &workflow,
+                        &film,
+                        paper.as_deref(),
+                        scan_film,
+                        timings,
+                        params_file.as_deref(),
+                        raw_out.as_deref(),
+                        iters,
+                        &data_dir,
+                        backend,
+                        invocation,
+                    )
+                },
             )?;
         }
         Commands::ListProfiles { data_dir } => {
@@ -316,7 +345,16 @@ fn main() -> Result<()> {
             recipe,
             output,
             data_dir,
-        } => runner::cmd_render(&input, &recipe, &output, &data_dir)?,
+            diagnostics,
+            gpu_timings,
+        } => runner::cmd_render(
+            &input,
+            &recipe,
+            &output,
+            &data_dir,
+            diagnostics.as_deref(),
+            gpu_timings,
+        )?,
         Commands::Inspect { input, format } => {
             if format != "json" {
                 bail!("unsupported inspect format {format}; use json");
@@ -351,8 +389,14 @@ fn cmd_process(
     iters: usize,
     data_dir: &Path,
     backend_choice: Option<Backend>,
+    invocation: &mut telemetry::Invocation,
 ) -> Result<()> {
     let total_start = Instant::now();
+    use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
+    let context = invocation.operation.context();
+    if iters == 0 {
+        bail!("--iters must be at least 1");
+    }
     let extension_format = image_io::ImageFormat::detect(output)
         .with_context(|| format!("detecting output format: {}", output.display()))?;
     let output_format = format.unwrap_or_else(|| match extension_format {
@@ -403,21 +447,32 @@ fn cmd_process(
     });
     let compression = matches!(output_format, OutputFormat::Tiff | OutputFormat::Exr)
         .then(|| compression.unwrap_or(CompressionArg::Zip).core());
-    let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
-        Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
-        Some(Backend::Gpu) => Box::new(
-            spektrafilm_gpu::wgpu_backend::WgpuBackend::new().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "GPU backend unavailable: no compatible WGPU adapter/device was found; \
+    let backend = invocation.phase(
+        "backend_init",
+        IssueCategory::Backend,
+        IssueBoundary::BackendInit,
+        &context,
+        |backend_context| {
+            let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
+                Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+                Some(Backend::Gpu) => Box::new(
+                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "GPU backend unavailable: no compatible WGPU adapter/device was found; \
                      check your graphics drivers or use --backend cpu"
-                )
-            })?,
-        ),
-        None => spektrafilm_gpu::select_backend(),
-    };
+                        )
+                    })?,
+                ),
+                None => spektrafilm_gpu::select_backend(),
+            };
+            telemetry::observe_backend(backend.as_ref(), backend_context);
+            Ok(backend)
+        },
+    )?;
     eprintln!("Backend: {}", backend.name());
 
     // Load profiles
+    invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
     let t = Instant::now();
     let mut film = profile::load_profile_by_name(data_dir, film_name)
         .with_context(|| format!("loading film profile: {film_name}"))?;
@@ -507,45 +562,66 @@ fn cmd_process(
     let params = digest_params_with_neutral(params, &film, &print, &neutral, digest_mode);
 
     let t = Instant::now();
-    let (image, metadata) = if input_is_raw {
-        let options = spektrafilm_raw::RawOptions {
-            white_balance: match workflow.raw_white_balance.as_str() {
-                "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                _ => spektrafilm_raw::WhiteBalance::AsShot,
-            },
-            temperature: workflow.raw_temperature,
-            tint: workflow.raw_tint,
-            lens_correction: workflow.lens_correction,
-        };
-        (
-            spektrafilm_raw::load(input, &options)
-                .map_err(anyhow::Error::msg)?
-                .image,
-            image_io::read_metadata(input),
-        )
-    } else {
-        let loaded =
-            image_io::load(input).with_context(|| format!("loading image: {}", input.display()))?;
-        (loaded.image, loaded.metadata)
-    };
+    let (image, metadata) = invocation.phase(
+        "input_load",
+        IssueCategory::Input,
+        IssueBoundary::InputLoad,
+        &context,
+        |_| {
+            let (image, metadata) = if input_is_raw {
+                let options = spektrafilm_raw::RawOptions {
+                    white_balance: match workflow.raw_white_balance.as_str() {
+                        "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
+                        "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
+                        "custom" => spektrafilm_raw::WhiteBalance::Custom,
+                        _ => spektrafilm_raw::WhiteBalance::AsShot,
+                    },
+                    temperature: workflow.raw_temperature,
+                    tint: workflow.raw_tint,
+                    lens_correction: workflow.lens_correction,
+                };
+                (
+                    spektrafilm_raw::load(input, &options)
+                        .map_err(anyhow::Error::msg)?
+                        .image,
+                    image_io::read_metadata(input),
+                )
+            } else {
+                let loaded = image_io::load(input)
+                    .with_context(|| format!("loading image: {}", input.display()))?;
+                (loaded.image, loaded.metadata)
+            };
+            Ok((image, metadata))
+        },
+    )?;
+    invocation
+        .operation
+        .set_input_dimensions(image.width as u32, image.height as u32);
     // Preview mode: bound the long edge before processing (upstream
     // `simulate_preview` + `resize_for_preview`).
-    let image = if params.settings.preview_mode {
-        let resized = resize_for_preview(&image, params.settings.preview_max_size);
-        eprintln!(
-            "Preview: {}x{} → {}x{} (max edge {})",
-            image.width,
-            image.height,
-            resized.width,
-            resized.height,
-            params.settings.preview_max_size
-        );
-        resized
-    } else {
-        image
-    };
+    let image = invocation.phase(
+        "input_prepare",
+        IssueCategory::Input,
+        IssueBoundary::InputPrepare,
+        &context,
+        |_| {
+            let image = if params.settings.preview_mode {
+                let resized = resize_for_preview(&image, params.settings.preview_max_size);
+                eprintln!(
+                    "Preview: {}x{} → {}x{} (max edge {})",
+                    image.width,
+                    image.height,
+                    resized.width,
+                    resized.height,
+                    params.settings.preview_max_size
+                );
+                resized
+            } else {
+                image
+            };
+            Ok(image)
+        },
+    )?;
     eprintln!(
         "Image loaded: {}x{} ({} MP), {} ms",
         image.width,
@@ -558,36 +634,75 @@ fn cmd_process(
     let t = Instant::now();
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let runtime = Runtime::new(film, print, params, data_dir).map_err(|e| {
+    let runtime = invocation.phase(
+        "runtime_prepare",
+        IssueCategory::Configuration,
+        IssueBoundary::RuntimePrepare,
+        &context,
+        |prepare_context| {
+            Runtime::new_observed(film, print, params, data_dir, prepare_context).map_err(|e| {
         anyhow::anyhow!(
             "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
              removed; check that the profiles/data directory contains the spectral LUTs \
              (looked under {})",
             data_dir.display()
         )
-    })?;
-    let run_once = |image: ImageBuf| -> Result<ImageBuf> {
-        let out = if inject.is_none() && collect.is_none() {
-            runtime
-                .process(image, backend.as_ref())
-                .map_err(anyhow::Error::msg)?
+    })
+        },
+    )?;
+    if context.enabled() {
+        invocation
+            .operation
+            .set_render_configuration(runtime.telemetry_configuration());
+    }
+    let output_attempt = std::cell::Cell::new(0);
+    let run_once = |image: ImageBuf, index: u64| -> Result<ImageBuf> {
+        let attempt = invocation.operation.attempt(index);
+        let attempt_id = attempt.context().id();
+        let result = invocation.phase(
+            "simulation",
+            IssueCategory::Simulation,
+            IssueBoundary::Simulation,
+            attempt.context(),
+            |simulation_context| {
+                let out = if inject.is_none() && collect.is_none() {
+                    runtime
+                        .process_observed(image, backend.as_ref(), simulation_context)
+                        .map_err(anyhow::Error::msg)?
+                } else {
+                    runtime
+                        .process_with_taps_observed(
+                            image,
+                            backend.as_ref(),
+                            inject,
+                            collect,
+                            simulation_context,
+                        )
+                        .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
+                };
+                Ok(out)
+            },
+        );
+        attempt.finish(if result.is_ok() {
+            spektrafilm_gpu::telemetry::Outcome::Succeeded
         } else {
-            runtime
-                .process_with_taps(image, backend.as_ref(), inject, collect)
-                .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
-        };
-        Ok(out)
+            spektrafilm_gpu::telemetry::Outcome::Failed
+        });
+        if result.is_ok() {
+            output_attempt.set(attempt_id);
+        }
+        result
     };
     let result = if iters > 1 {
         // Warm-cache bench: process the image `iters` times in the same backend
         // instance. The first iteration pays shader-compile cost; subsequent ones
         // hit the cache and reflect "GUI live preview" performance.
-        let mut last = run_once(image.clone())?;
+        let mut last = run_once(image.clone(), 1)?;
         let iter1_ms = t.elapsed().as_millis();
         eprintln!("Pipeline (iter 1): {} ms (cold)", iter1_ms);
         for i in 2..=iters {
             let ti = Instant::now();
-            last = run_once(image.clone())?;
+            last = run_once(image.clone(), i as u64)?;
             eprintln!(
                 "Pipeline (iter {}): {} ms (warm)",
                 i,
@@ -596,13 +711,14 @@ fn cmd_process(
         }
         last
     } else {
-        let r = run_once(image)?;
+        let r = run_once(image, 1)?;
         eprintln!("Pipeline: {} ms", t.elapsed().as_millis());
         r
     };
 
     // Save output
     let t = Instant::now();
+    invocation.boundary(IssueCategory::Configuration, IssueBoundary::SavingConvert);
     let saving_space =
         workflow
             .saving_color_space
@@ -624,30 +740,59 @@ fn cmd_process(
     if output_format == OutputFormat::Exr && saving_encoded {
         bail!("EXR output requires linear saving output");
     }
-    let saving_image = image_io::convert_image(
-        &result,
-        &output_color_space,
-        output_cctf_encoding,
-        saving_space,
-        saving_encoded,
-    )?;
-    let report = image_io::save(
-        output,
-        &saving_image,
-        SaveOptions {
-            depth,
-            color_space: saving_space,
-            cctf_encoding: saving_encoded,
-            jpeg_quality,
-            jpeg_subsampling,
-            compression,
+    invocation.operation.set_saved_attempt(output_attempt.get());
+    let options = SaveOptions {
+        depth,
+        color_space: saving_space,
+        cctf_encoding: saving_encoded,
+        jpeg_quality,
+        jpeg_subsampling,
+        compression,
+    };
+    invocation.operation.set_saving_configuration(
+        spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
+            output_format.image_format(),
+            &options,
+        ),
+    );
+    let saving_image = invocation.phase(
+        "saving_convert",
+        IssueCategory::Writing,
+        IssueBoundary::SavingConvert,
+        &context,
+        |_| {
+            image_io::convert_image(
+                &result,
+                &output_color_space,
+                output_cctf_encoding,
+                saving_space,
+                saving_encoded,
+            )
+            .map_err(anyhow::Error::from)
         },
-        metadata.as_ref(),
-    )
-    .with_context(|| format!("saving image: {}", output.display()))?;
+    )?;
+    let report = invocation.phase(
+        "file_write",
+        IssueCategory::Writing,
+        IssueBoundary::FileWrite,
+        &context,
+        |write_context| {
+            image_io::save_observed(
+                output,
+                &saving_image,
+                options,
+                metadata.as_ref(),
+                write_context,
+            )
+            .with_context(|| format!("saving image: {}", output.display()))
+        },
+    )?;
     if let Some(warning) = report.metadata_warning {
         eprintln!("Warning: {warning}");
     }
+    invocation
+        .operation
+        .set_published_dimensions(result.width as u32, result.height as u32);
     eprintln!(
         "Saved: {} ({}x{}), {} ms",
         output.display(),
@@ -658,13 +803,22 @@ fn cmd_process(
 
     // Optional raw f64 dump for bit-exact parity comparison.
     if let Some(p) = raw_out {
-        use std::io::Write;
-        let buf: Vec<f64> = result.data.iter().map(|&v| v as f64).collect();
-        let bytes = bytemuck_cast_f64_to_bytes(&buf);
-        let mut f = std::fs::File::create(p)
-            .with_context(|| format!("creating raw_out file: {}", p.display()))?;
-        f.write_all(bytes)?;
-        eprintln!("raw f64 buffer: {} ({} values)", p.display(), buf.len());
+        invocation.phase(
+            "file_write",
+            IssueCategory::Writing,
+            IssueBoundary::FileWrite,
+            &context,
+            |_| {
+                use std::io::Write;
+                let buf: Vec<f64> = result.data.iter().map(|&v| v as f64).collect();
+                let bytes = bytemuck_cast_f64_to_bytes(&buf);
+                let mut f = std::fs::File::create(p)
+                    .with_context(|| format!("creating raw_out file: {}", p.display()))?;
+                f.write_all(bytes)?;
+                eprintln!("raw f64 buffer: {} ({} values)", p.display(), buf.len());
+                Ok(())
+            },
+        )?;
     }
 
     if show_timings {

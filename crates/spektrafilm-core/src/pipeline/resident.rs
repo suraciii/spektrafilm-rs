@@ -162,9 +162,44 @@ impl Pipeline {
         pixel_size_um: f64,
         ae_ev: f64,
     ) -> Option<ImageBuf> {
+        if !backend.is_gpu() {
+            return None;
+        }
         match self.resident_decision() {
             ResidentDecision::UseResident => {}
             ResidentDecision::PerStage { reasons } => {
+                if let Some(context) = backend.observation_context() {
+                    for reason in &reasons {
+                        use spektrafilm_gpu::telemetry::ResidentDeclineReason as R;
+                        let reason = match reason {
+                            ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
+                            ResidentFallbackReason::LangmuirChemistry => R::LangmuirChemistry,
+                            ResidentFallbackReason::InputTransferDecoding => {
+                                R::InputTransferDecoding
+                            }
+                            ResidentFallbackReason::RequestedSpectralLut => R::RequestedSpectralLut,
+                            ResidentFallbackReason::ActiveOpticalDiffusion => {
+                                R::ActiveOpticalDiffusion
+                            }
+                            ResidentFallbackReason::FaithfulGrainDistribution => {
+                                R::FaithfulGrainDistribution
+                            }
+                            ResidentFallbackReason::UnsupportedOutputGamut => {
+                                R::UnsupportedOutputGamut
+                            }
+                            ResidentFallbackReason::BlurRadiusExceedsBackendSupport => {
+                                R::BlurRadiusExceedsBackendSupport
+                            }
+                            ResidentFallbackReason::MissingResidentFrontPass => {
+                                R::MissingResidentFrontPass
+                            }
+                            ResidentFallbackReason::MallettExecutionParity => {
+                                R::MallettExecutionParity
+                            }
+                        };
+                        context.decline_resident(reason);
+                    }
+                }
                 tracing::info!(
                     target: "spektrafilm_core::pipeline",
                     backend = backend.name(),
@@ -416,6 +451,9 @@ impl Pipeline {
             highlight_boost,
         };
         if !params.gpu_blurs_supported() {
+            if let Some(context) = backend.observation_context() {
+                context.decline_resident(spektrafilm_gpu::telemetry::ResidentDeclineReason::BlurRadiusExceedsBackendSupport);
+            }
             tracing::info!(
                 target: "spektrafilm_core::pipeline",
                 backend = backend.name(),
@@ -425,7 +463,18 @@ impl Pipeline {
             );
             return None;
         }
-        backend.try_run_film_chain(&params)
+        let resident = super::stages::StageObservation::new(backend, "film_chain");
+        let result = resident.backend(backend).try_run_film_chain(&params);
+        if let Some(context) = backend.observation_context() {
+            if result.is_some() {
+                context.set_path(spektrafilm_gpu::telemetry::ExecutionPath::GpuResident);
+            } else {
+                context.decline_resident(
+                    spektrafilm_gpu::telemetry::ResidentDeclineReason::BackendNoResidentSupport,
+                );
+            }
+        }
+        result
     }
 
     /// Finalize the export transfer without applying the same-space matrix twice.

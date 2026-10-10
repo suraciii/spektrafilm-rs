@@ -1,3 +1,4 @@
+use super::ObservedEncoder;
 use super::{
     ImageBuf, WgpuBackend, build_dir_state, build_gamut_state, build_glare_state,
     build_grain_v2_state, build_halation_state, build_highlight_boost_state,
@@ -6,14 +7,20 @@ use super::{
 };
 
 impl WgpuBackend {
+    pub fn run_film_chain(&self, p: &crate::FilmChainParams<'_>) -> ImageBuf {
+        if !self.device.context.enabled() {
+            return self.run_film_chain_inner(p);
+        }
+        let (backend, _batch) = self.observed_batch("film_chain");
+        backend.run_film_chain_inner(p)
+    }
     /// GPU-resident pipeline: runs the front pass (hanatos LUT lookup or
     /// mallett matmul), highlight boost, camera lens blur, halation,
     /// density curves, DIR, print spectral, scan spectral, glare,
     /// gamut compression, scanner lens blur,
     /// and unsharp as a single command buffer with ping-pong image storage.
     /// Only one upload at the start and one readback at the end.
-    pub fn run_film_chain(&self, p: &crate::FilmChainParams<'_>) -> ImageBuf {
-        use wgpu::util::DeviceExt;
+    fn run_film_chain_inner(&self, p: &crate::FilmChainParams<'_>) -> ImageBuf {
         let t_start = std::time::Instant::now();
         // Pull all references into locals so the existing body below
         // doesn't need a rewrite — only the param sources change.
@@ -748,12 +755,13 @@ impl WgpuBackend {
 
         // ── Single command buffer chaining everything ────────────────────
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        let dispatch = |encoder: &mut wgpu::CommandEncoder,
+        let dispatch = |encoder: &mut ObservedEncoder,
                         pipe: &wgpu::ComputePipeline,
                         bg: &wgpu::BindGroup,
-                        n: u32| {
+                        n: u32,
+                        name: &'static str| {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
+                label: Some(name),
                 timestamp_writes: None,
             });
             pass.set_pipeline(pipe);
@@ -762,7 +770,13 @@ impl WgpuBackend {
         };
 
         // 1. Front pass (hanatos or mallett): buf_a (rgb in) → buf_b (raw)
-        dispatch(&mut encoder, &front_pipe.pipeline, &bg_front, n_pixels);
+        dispatch(
+            &mut encoder,
+            &front_pipe.pipeline,
+            &bg_front,
+            n_pixels,
+            "front_transform",
+        );
         // 1a. Highlight boost on raw, before optical scatter.
         if let Some(hs) = highlight_state.as_ref() {
             hs.encode_passes(&mut encoder);
@@ -781,13 +795,20 @@ impl WgpuBackend {
         }
         // 2. log10 in-place on buf_b: raw → log_raw (3 channels per thread).
         let (log10_pipe, log10_bg, _keepalive) = &bg_log10;
-        dispatch(&mut encoder, &log10_pipe.pipeline, log10_bg, n_pixels);
+        dispatch(
+            &mut encoder,
+            &log10_pipe.pipeline,
+            log10_bg,
+            n_pixels,
+            "log_exposure",
+        );
         // 3. Density curve (film, normalized): buf_b (log_raw) → buf_a (density_cmy)
         dispatch(
             &mut encoder,
             &density_pipe.pipeline,
             &bg_density_film,
             n_pixels,
+            "film_density",
         );
         // 3b. DIR couplers (operates on buf_a, mutates buf_b → log_raw_corrected,
         //     re-interps density curve back into buf_a).
@@ -800,17 +821,30 @@ impl WgpuBackend {
         //     scan pass consumes the film density already in buf_a.
         if !p.scan_film {
             // 4. Print spectral: buf_a → buf_b (log_raw_print)
-            dispatch(&mut encoder, &print_pipe.pipeline, &bg_print, n_pixels);
+            dispatch(
+                &mut encoder,
+                &print_pipe.pipeline,
+                &bg_print,
+                n_pixels,
+                "print_spectral",
+            );
             // 5. Density curve (print, raw curves): buf_b → buf_a (density_print)
             dispatch(
                 &mut encoder,
                 &density_pipe.pipeline,
                 &bg_density_print,
                 n_pixels,
+                "print_density",
             );
         }
         // 6. Scan spectral: buf_a → buf_b (linear RGB).
-        dispatch(&mut encoder, &scan_pipe.pipeline, &bg_scan, n_pixels);
+        dispatch(
+            &mut encoder,
+            &scan_pipe.pipeline,
+            &bg_scan,
+            n_pixels,
+            "scan_spectral",
+        );
         // 6b. Glare (in place on buf_b).
         if let Some(gs) = glare_state.as_ref() {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
@@ -858,6 +892,7 @@ impl WgpuBackend {
         });
         self.device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
+        self.device.materialized(img_bytes as u64);
         let gpu_wait_ms = t_start.elapsed().as_secs_f32() * 1000.0 - cpu_setup_ms;
         let data = slice.get_mapped_range();
         let out_f32: Vec<f32> = bytemuck::cast_slice(&data).to_vec();

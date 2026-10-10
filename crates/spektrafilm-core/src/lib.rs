@@ -25,3 +25,4 @@ pub mod resizing;
 pub mod runtime;
 pub mod spectral_service;
 pub mod stages;
+pub mod telemetry;

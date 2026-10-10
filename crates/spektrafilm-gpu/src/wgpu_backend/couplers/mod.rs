@@ -29,7 +29,7 @@ pub(super) struct DirState {
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) fn build_dir_state(
-    device: &wgpu::Device,
+    device: &ObservedDevice,
     dp: &crate::DirCouplersGpuParams<'_>,
     width: u32,
     height: u32,
@@ -37,7 +37,6 @@ pub(super) fn build_dir_state(
     buf_b: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> DirState {
-    use wgpu::util::DeviceExt;
     let n_pixels = (width as usize) * (height as usize);
     let img_bytes = (n_pixels * 3 * 4) as u64;
 
@@ -497,11 +496,11 @@ pub(super) fn build_dir_state(
 impl DirState {
     pub(super) fn encode_passes(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut ObservedEncoder,
         n_pixels: u32,
         wg_xy: (u32, u32),
     ) {
-        let dispatch_linear = |enc: &mut wgpu::CommandEncoder, job: &DispatchJob| {
+        let dispatch_linear = |enc: &mut ObservedEncoder, job: &DispatchJob| {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("dir_linear"),
                 timestamp_writes: None,
@@ -510,7 +509,7 @@ impl DirState {
             pass.set_bind_group(0, &job.bg, &[]);
             dispatch_linear(&mut pass, n_pixels);
         };
-        let dispatch_blur = |enc: &mut wgpu::CommandEncoder, job: &BlurJob| {
+        let dispatch_blur = |enc: &mut ObservedEncoder, job: &BlurJob| {
             {
                 let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("dir_blur_h"),

@@ -11,13 +11,12 @@ pub(super) struct HighlightBoostState {
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) fn build_highlight_boost_state(
-    device: &wgpu::Device,
+    device: &ObservedDevice,
     hp: &crate::HighlightBoostGpuParams,
     n_pixels: u32,
     img: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> HighlightBoostState {
-    use wgpu::util::DeviceExt;
     let n_values = n_pixels * 3;
     let mut counts = Vec::new();
     let mut values = n_values;
@@ -160,7 +159,7 @@ pub(super) fn build_highlight_boost_state(
 
 #[cfg(feature = "wgpu-backend")]
 impl HighlightBoostState {
-    pub(super) fn encode_passes(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub(super) fn encode_passes(&self, encoder: &mut ObservedEncoder) {
         for (job, blocks) in &self.reductions {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("highlight_reduce"),
