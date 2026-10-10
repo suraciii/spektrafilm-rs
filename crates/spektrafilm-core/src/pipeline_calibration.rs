@@ -111,6 +111,9 @@ pub(crate) fn build(
     if params.workflow.route == "input > film > scan" {
         params.io.scan_film = true;
     }
+    if params.workflow.route == "input > film > scan > magazine" {
+        params.io.scan_film = true;
+    }
     // time and broadcast the single channel onto the 3-channel engine
     // layout. Must happen before anything reads the profile data.
     let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);

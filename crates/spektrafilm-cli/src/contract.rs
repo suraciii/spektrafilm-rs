@@ -214,6 +214,7 @@ pub fn describe() -> Value {
         "scanner",
         "film_render",
         "print_render",
+        "magazine_print_color",
         "io",
         "settings",
         "debug",

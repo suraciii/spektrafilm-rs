@@ -872,6 +872,7 @@ impl App {
                     "input",
                     "input > film > scan",
                     "input > film > print > scan",
+                    "input > film > scan > magazine",
                     "input > convert-film > print > scan",
                     "input > convert-film > scan-minus-base",
                     "input > convert-film > scan",
@@ -1981,6 +1982,7 @@ impl App {
             GuiTab::Advanced => {
                 for section in [
                     "Spectral upsampling",
+                    "Magazine print color",
                     "Input gamut compress",
                     "Output gamut compress",
                     "Experimental",
