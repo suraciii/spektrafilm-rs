@@ -130,21 +130,47 @@ pub fn validate_report_destination(
 }
 
 fn path_identity(path: &Path) -> Result<PathBuf, PersistenceError> {
-    if path.exists() {
-        return Ok(fs::canonicalize(path)?);
+    let mut resolved = path.to_path_buf();
+    // Match the usual filesystem symlink traversal limit, including dangling chains.
+    for followed in 0..=40 {
+        match fs::symlink_metadata(&resolved) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                if followed == 40 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "protected path exceeds the symlink traversal limit",
+                    )
+                    .into());
+                }
+                let target = fs::read_link(&resolved)?;
+                resolved = if target.is_absolute() {
+                    target
+                } else {
+                    resolved
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(target)
+                };
+            }
+            Ok(_) => return Ok(fs::canonicalize(&resolved)?),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(file_name) = resolved.file_name() else {
+                    return Err(PersistenceError::InvalidDestination);
+                };
+                let parent = resolved
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                return if parent.exists() {
+                    Ok(fs::canonicalize(parent)?.join(file_name))
+                } else {
+                    lexical_absolute(&resolved)
+                };
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
-    let Some(file_name) = path.file_name() else {
-        return Err(PersistenceError::InvalidDestination);
-    };
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    if parent.exists() {
-        Ok(fs::canonicalize(parent)?.join(file_name))
-    } else {
-        lexical_absolute(path)
-    }
+    unreachable!("symlink traversal returns at its limit")
 }
 
 fn lexical_absolute(path: &Path) -> Result<PathBuf, PersistenceError> {

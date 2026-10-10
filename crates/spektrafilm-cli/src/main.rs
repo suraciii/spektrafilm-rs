@@ -303,8 +303,18 @@ fn main() -> Result<()> {
             let mut protected = vec![input.as_path(), output.as_path()];
             protected.extend(params_file.as_deref());
             protected.extend(raw_out.as_deref());
-            protected.extend(preset.as_deref().filter(|selector| selector.ends_with(".toml") || selector.ends_with(".json")).map(Path::new));
-            protected.extend(sources.iter().filter(|source| source.ends_with(".toml") || source.ends_with(".json")).map(Path::new));
+            protected.extend(
+                preset
+                    .as_deref()
+                    .filter(|selector| selector.ends_with(".toml") || selector.ends_with(".json"))
+                    .map(Path::new),
+            );
+            protected.extend(
+                sources
+                    .iter()
+                    .filter(|source| source.ends_with(".toml") || source.ends_with(".json"))
+                    .map(Path::new),
+            );
             telemetry::run(
                 spektrafilm_core::telemetry::OperationKind::Process,
                 diagnostics.as_deref(),
@@ -616,8 +626,9 @@ fn cmd_process(
             let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
                 Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
                 Some(Backend::Gpu) => Box::new(
-                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-                        .ok_or_else(|| anyhow::anyhow!("GPU backend unavailable; use --backend cpu"))?,
+                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new().ok_or_else(|| {
+                        anyhow::anyhow!("GPU backend unavailable; use --backend cpu")
+                    })?,
                 ),
                 None => spektrafilm_gpu::select_backend(),
             };

@@ -36,7 +36,8 @@ pub(super) struct BatchState {
     ready: Option<Instant>,
     queries: Option<QueryResources>,
     passes: Vec<PassObservation>,
-    next_pass: u32,
+    pending_details: u32,
+    query_slots: Vec<bool>,
     executed: u64,
     timed: u64,
     period: f64,
@@ -46,6 +47,7 @@ pub(super) struct PassObservation {
     pub scope: Option<ObservationContext>,
     pub has_queries: bool,
     pub query_index: u32,
+    name: &'static str,
 }
 struct QueryResources {
     set: wgpu::QuerySet,
@@ -81,7 +83,11 @@ impl Drop for BatchGuard {
         let mut any = false;
         let mut reason = self.scope.context().adapter_reason().unwrap_or_else(|| {
             if self.scope.context().mode() == CollectionMode::GpuTiming {
-                AvailabilityReason::NotEnabledOnDevice
+                if s.queries.is_none() {
+                    AvailabilityReason::DetailLimit
+                } else {
+                    AvailabilityReason::NotReady
+                }
             } else {
                 AvailabilityReason::NotCollected
             }
@@ -176,10 +182,11 @@ impl Drop for BatchGuard {
                     reason
                 }
             } else if self.scope.context().mode() == CollectionMode::GpuTiming {
-                self.scope
-                    .context()
-                    .adapter_reason()
-                    .unwrap_or(AvailabilityReason::NotEnabledOnDevice)
+                if self.scope.context().adapter_reason().is_none() {
+                    AvailabilityReason::DetailLimit
+                } else {
+                    reason
+                }
             } else {
                 AvailabilityReason::NotCollected
             })
@@ -271,9 +278,10 @@ impl WgpuBackend {
                 start: Instant::now(),
                 submitted: None,
                 ready: None,
+                query_slots: vec![false; queries.as_ref().map_or(0, |q| q.capacity as usize / 2)],
                 queries,
                 passes: Vec::new(),
-                next_pass: 0,
+                pending_details: 0,
                 executed: 0,
                 timed: 0,
                 period: self.queue.raw.get_timestamp_period() as f64,
@@ -305,6 +313,19 @@ fn upload_category(d: &wgpu::util::BufferInitDescriptor<'_>) -> UploadCategory {
     } else {
         match d.label.unwrap_or("") {
             "spectral_resource"
+            | "film_cd"
+            | "film_bd"
+            | "print_illu"
+            | "print_sens"
+            | "print_log_exp"
+            | "print_curves"
+            | "scan_cd"
+            | "scan_bd"
+            | "view_illu"
+            | "cmf_x"
+            | "cmf_y"
+            | "cmf_z"
+            | "tc_lut"
             | "film_log_exp"
             | "film_curves"
             | "film_spectral_cd"
@@ -391,11 +412,13 @@ impl ObservedDevice {
         &self,
         d: &wgpu::CommandEncoderDescriptor<'_>,
     ) -> ObservedEncoder {
+        let mut state = CommandState::default();
+        state.batch = self.batch.clone();
         ObservedEncoder {
             raw: self.raw.create_command_encoder(d),
             context: self.context.clone(),
             batch: self.batch.clone(),
-            state: CommandState::default(),
+            state,
         }
     }
     pub fn poll(&self, maintain: wgpu::Maintain) -> wgpu::MaintainResult {
@@ -472,8 +495,23 @@ impl ObservedQueue {
             if let Some(batch) = &command.batch {
                 let mut batch = batch.lock();
                 batch.submitted.get_or_insert(submitted);
+                self.context.record_omitted_details(
+                    state.pass_count.saturating_sub(state.passes.len() as u64),
+                );
                 batch.executed += state.pass_count;
                 batch.timed += state.timed_count;
+                batch.pending_details -= state.reservation_count;
+                state.reservation_count = 0;
+                for pass in &mut state.passes {
+                    pass.index = pass
+                        .index
+                        .saturating_add((batch.executed - state.pass_count) as u32);
+                    if let Some(parent) = &pass.scope {
+                        let scope =
+                            parent.scope(pass.name, ObservationKind::Pass, parent.purpose());
+                        pass.scope = scope.context().retained().then(|| scope.context().clone());
+                    }
+                }
                 batch.passes.append(&mut state.passes);
             }
             command.raw
@@ -527,6 +565,21 @@ struct CommandState {
     query_end: u32,
     telemetry_resolve_count: u64,
     telemetry_copy_bytes: u64,
+    batch: Option<Arc<Mutex<BatchState>>>,
+    reservation_count: u32,
+}
+impl Drop for CommandState {
+    fn drop(&mut self) {
+        if let Some(batch) = &self.batch {
+            let mut batch = batch.lock();
+            batch.pending_details -= self.reservation_count;
+            for pass in &self.passes {
+                if pass.has_queries {
+                    batch.query_slots[pass.query_index as usize / 2] = false;
+                }
+            }
+        }
+    }
 }
 pub(super) struct ObservedEncoder {
     raw: wgpu::CommandEncoder,
@@ -598,32 +651,33 @@ impl ObservedEncoder {
         let mut query_index = 0;
         if let Some(batch) = &self.batch {
             let mut b = batch.lock();
-            let occurrence = b.next_pass;
-            b.next_pass = b.next_pass.saturating_add(1);
+            let occurrence = self.state.pass_count as u32;
             self.state.pass_count += 1;
-            let scope = self.context.scope(
-                pass_name(d.label),
-                ObservationKind::Pass,
-                self.context.purpose(),
-            );
-            let retained = scope.context().retained();
-            let slots = b.queries.as_ref().map_or(0, |q| q.capacity);
-            query_index = occurrence.saturating_mul(2);
-            let has_queries = retained && query_index.saturating_add(2) <= slots;
-            if has_queries {
+            let retained = b.pending_details < self.context.detail_remaining();
+            let slot = if retained {
+                b.query_slots.iter().position(|used| !used)
+            } else {
+                None
+            };
+            let has_queries = slot.is_some();
+            if let Some(slot) = slot {
+                b.query_slots[slot] = true;
+                query_index = slot as u32 * 2;
                 query = b.queries.as_ref().map(|q| q.set.clone());
                 self.state.timed_count += 1;
-                self.state.query_end = query_index + 2;
+                self.state.query_end = self.state.query_end.max(query_index + 2);
             }
             if retained {
+                b.pending_details += 1;
+                self.state.reservation_count += 1;
                 self.state.passes.push(PassObservation {
                     index: occurrence,
-                    scope: Some(scope.context().clone()),
+                    scope: Some(self.context.clone()),
+                    name: pass_name(d.label),
                     has_queries,
                     query_index,
                 });
             }
-            drop(scope);
         }
         let writes = query.as_ref().map(|set| wgpu::ComputePassTimestampWrites {
             query_set: set,

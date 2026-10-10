@@ -69,6 +69,10 @@ fn failed_before_configuration_keeps_availability_reasons() {
     let operation = Operation::new(OperationKind::Render, CollectionMode::Summary);
     let report = operation.finish(Outcome::Failed).unwrap();
     report.validate().unwrap();
+    assert!(report.configuration.working_dimensions.is_none());
+    assert!(report.configuration.unavailable_fields.iter().any(|field| {
+        field.field == "working_dimensions" && field.reason == AvailabilityReason::NotReached
+    }));
     assert!(report.configuration.unavailable_fields.iter().any(|field| {
         field.field == "render" && field.reason == AvailabilityReason::NotReached
     }));
@@ -554,6 +558,59 @@ fn report_destination_rejects_protected_symlink_and_hardlink_aliases() {
             PersistenceError::InvalidDestination
         ));
     }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn report_destination_rejects_dangling_protected_raw_output_symlinks() {
+    let directory = test_dir();
+    let report = directory.join("report.json");
+    let relative_raw = directory.join("relative-raw.bin");
+    let absolute_raw = directory.join("absolute-raw.bin");
+    let chained_raw = directory.join("chained-raw.bin");
+    std::os::unix::fs::symlink("report.json", &relative_raw).unwrap();
+    std::os::unix::fs::symlink(&report, &absolute_raw).unwrap();
+    std::os::unix::fs::symlink("absolute-raw.bin", &chained_raw).unwrap();
+
+    for raw_output in [&relative_raw, &absolute_raw, &chained_raw] {
+        assert!(matches!(
+            validate_report_destination(&report, &[raw_output]),
+            Err(PersistenceError::ProtectedAlias)
+        ));
+        assert!(!report.exists());
+        assert!(
+            fs::symlink_metadata(raw_output)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    let ordinary_raw = directory.join("ordinary-raw.bin");
+    assert_eq!(
+        validate_report_destination(&report, &[&ordinary_raw])
+            .unwrap()
+            .path(),
+        report.as_path()
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn report_destination_rejects_protected_symlink_cycles() {
+    let directory = test_dir();
+    let report = directory.join("report.json");
+    let raw_output = directory.join("raw.bin");
+    let intermediate = directory.join("intermediate.bin");
+    std::os::unix::fs::symlink("intermediate.bin", &raw_output).unwrap();
+    std::os::unix::fs::symlink("raw.bin", &intermediate).unwrap();
+    assert!(matches!(
+        validate_report_destination(&report, &[&raw_output]),
+        Err(PersistenceError::Io(_))
+    ));
+    assert!(!report.exists());
     fs::remove_dir_all(directory).unwrap();
 }
 

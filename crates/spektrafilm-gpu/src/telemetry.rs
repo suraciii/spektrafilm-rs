@@ -325,15 +325,14 @@ impl GpuTimingMeasurements {
             (_, MeasurementStatus::Unavailable) => self.compute_pass_sum = compute.clone(),
             _ => {}
         }
-        if partial.status == MeasurementStatus::Available {
-            self.partial_compute_pass_sum = match self.partial_compute_pass_sum.status {
-                MeasurementStatus::Available => Measurement::available(
-                    self.partial_compute_pass_sum.value.unwrap_or(0.0)
-                        + partial.value.unwrap_or(0.0),
-                ),
-                _ => partial.clone(),
-            };
-        }
+        self.partial_compute_pass_sum = match (self.partial_compute_pass_sum.status, partial.status)
+        {
+            (MeasurementStatus::Available, MeasurementStatus::Available) => Measurement::available(
+                self.partial_compute_pass_sum.value.unwrap_or(0.0) + partial.value.unwrap_or(0.0),
+            ),
+            (MeasurementStatus::Available, _) => self.partial_compute_pass_sum.clone(),
+            _ => partial.clone(),
+        };
     }
 }
 impl Default for GpuTimingMeasurements {
@@ -605,6 +604,15 @@ impl ObservationContext {
                 (1024 - c.snapshot.coverage.retained_observations) as u32
             }
         })
+    }
+    pub(crate) fn record_omitted_details(&self, count: u64) {
+        if count > 0 {
+            self.mutate(|s| {
+                s.coverage.omitted_observations =
+                    s.coverage.omitted_observations.saturating_add(count);
+                s.coverage.truncated = true;
+            });
+        }
     }
     pub fn snapshot(&self) -> ObservationSnapshot {
         let mut s = self
@@ -1031,6 +1039,32 @@ mod collector_edges {
             Some(AvailabilityReason::Incomplete)
         );
         assert_eq!(timing.partial_compute_pass_sum.value, Some(1.5));
+    }
+
+    #[test]
+    fn unavailable_batches_preserve_root_partial_reasons() {
+        for reason in [
+            AvailabilityReason::QueryFailed,
+            AvailabilityReason::NotReady,
+            AvailabilityReason::Unsupported,
+            AvailabilityReason::DetailLimit,
+        ] {
+            let root = ObservationContext::new(CollectionMode::GpuTiming);
+            let batch = root.scope("compute", ObservationKind::Batch, Purpose::Image);
+            batch.context().record_batch(BatchMeasurements {
+                host_prepare: Measurement::available(0.0),
+                submit_to_map_ready: Measurement::available(0.0),
+                host_materialize: Measurement::available(0.0),
+                completion_boundary: "image_map_ready".into(),
+                compute_pass_sum: Measurement::unavailable(reason),
+                partial_compute_pass_sum: Measurement::unavailable(reason),
+            });
+            drop(batch);
+            assert_eq!(
+                root.snapshot().gpu_timing.partial_compute_pass_sum,
+                Measurement::unavailable(reason)
+            );
+        }
     }
 
     #[test]

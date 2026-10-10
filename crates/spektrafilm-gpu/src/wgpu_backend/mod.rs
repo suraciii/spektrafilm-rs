@@ -516,7 +516,12 @@ impl ComputeBackend for WgpuBackend {
         if self.device.context.enabled() && self.device.batch.is_none() {
             let (backend, _batch) = self.observed_batch("compute");
             return backend.scan_spectral(
-                density_cmy, channel_density, base_density, illuminant, normalization, cat,
+                density_cmy,
+                channel_density,
+                base_density,
+                illuminant,
+                normalization,
+                cat,
                 xyz_to_rgb,
             );
         }
@@ -632,8 +637,13 @@ impl ComputeBackend for WgpuBackend {
         if self.device.context.enabled() && self.device.batch.is_none() {
             let (backend, _batch) = self.observed_batch("compute");
             return backend.print_spectral(
-                density_cmy, channel_density, base_density, illuminant, sensitivity,
-                normalization_factor, preflash,
+                density_cmy,
+                channel_density,
+                base_density,
+                illuminant,
+                sensitivity,
+                normalization_factor,
+                preflash,
             );
         }
         let n_wl = channel_density.len();
@@ -705,7 +715,11 @@ impl ComputeBackend for WgpuBackend {
         if self.device.context.enabled() && self.device.batch.is_none() {
             let (backend, _batch) = self.observed_batch("compute");
             return backend.hanatos2025_rgb_to_raw(
-                image, tc_lut, color_space, ref_illuminant, cat16,
+                image,
+                tc_lut,
+                color_space,
+                ref_illuminant,
+                cat16,
             );
         }
         // GPU live-preview path collapses the two-step CAT02 adaptation
@@ -777,7 +791,12 @@ impl ComputeBackend for WgpuBackend {
     ) -> ImageBuf {
         if self.device.context.enabled() && self.device.batch.is_none() {
             let (backend, _batch) = self.observed_batch("compute");
-            return backend.density_curve_interp(log_raw, log_exposure, density_curves, gamma_factor);
+            return backend.density_curve_interp(
+                log_raw,
+                log_exposure,
+                density_curves,
+                gamma_factor,
+            );
         }
         let n_pixels = log_raw.pixel_count() as u32;
         let k = log_exposure.len() as u32;

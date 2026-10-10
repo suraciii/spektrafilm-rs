@@ -82,6 +82,8 @@ impl WgpuBackend {
                 .get_mapped_range_mut()
                 .copy_from_slice(bytemuck::cast_slice(&input_f32));
             buf.unmap();
+            self.device
+                .upload(img_bytes as u64, crate::telemetry::UploadCategory::Image);
             buf
         } else {
             let buf = make_img_buf("img_a");
