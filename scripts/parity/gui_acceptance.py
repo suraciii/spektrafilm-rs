@@ -486,29 +486,40 @@ class X11:
                             f'{control} not visible in {name} at {"bottom" if bottom else "top"}')
                 self.snap(f'{label}-{name}-{"bottom" if bottom else "top"}', image, lines)
         self.tab('MAIN')
-    def measure_viewer(self, label, timeout=20):
-        """Record displayed image bounds from screenshot pixels, not OCR.
+    def measure_viewer(self, label, timeout=30):
+        """Record displayed image bounds once the painted frame settles.
 
-        The raster reaches the viewer on a UI frame after the render completes,
-        so wait for painted pixels instead of sampling a single frame.
+        The raster reaches the viewer through an asynchronous sampling worker,
+        so the first frame after a view change can still show the previous
+        scale; require two consecutive screenshots to agree.
         """
-        def painted():
-            image, _, _ = self.read()
+        state = {'bounds': None, 'image': None, 'previous': None}
+
+        def settled():
+            image, _ = self.image()
             pixels = np.asarray(image.convert('RGB'))
             canvas = pixels[80:max(81, image.height - 80), :min(1030, image.width)]
             channels = [canvas[..., i].astype(np.int16) for i in range(3)]
             chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
             mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
             ys, xs = np.where(mask)
-            if xs.size <= 100:
-                return None
-            return image, [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
-        image, bounds = wait_for(painted, f'viewer pixels for {label}', timeout)
+            bounds = None
+            if xs.size > 100:
+                bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
+            if bounds is not None and bounds == state['previous']:
+                state['bounds'] = bounds
+                state['image'] = image
+                return True
+            state['previous'] = bounds
+            time.sleep(.5)
+            return False
+
+        wait_for(settled, f'settled viewer frame for {label}', timeout)
         screenshot = f'{len(self.records):02d}-{label}.png'
-        image.save(self.root / screenshot)
+        state['image'].save(self.root / screenshot)
         self.records.append({'surface': label, 'screenshot': screenshot,
-                             'pixel_viewer_bounds': bounds})
-        return bounds
+                             'pixel_viewer_bounds': state['bounds']})
+        return state['bounds']
 
     def wait_text(self, pattern, label, timeout=120):
         def ready():
