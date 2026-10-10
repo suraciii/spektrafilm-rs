@@ -1,15 +1,19 @@
 use super::{RuntimeParams, Tap};
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
-pub(crate) const SUPPORTED_ROUTES: [&str; 7] = [
+pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
     "input",
     "input > film > scan",
     "input > film > print > scan",
-    "input > film > scan > magazine",
     "input > convert-film > print > scan",
     "input > convert-film > scan-minus-base",
     "input > convert-film > scan",
 ];
+
+/// The removed dedicated magazine workflow. Saved configurations that still
+/// name it must be migrated to a base workflow plus
+/// `magazine_print_color.active`; it is not a selectable route.
+pub(crate) const REMOVED_MAGAZINE_ROUTE: &str = "input > film > scan > magazine";
 
 /// Registered RGB-to-raw implementations. Parsing and construction share this
 /// vocabulary so a method cannot validate successfully and fail at dispatch.
@@ -308,6 +312,13 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
 /// pipeline artifact is produced. The schema module owns data/defaults;
 /// this module owns the accepted runtime vocabulary.
 pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
+    if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
+        return Err(
+            "workflow.route: the magazine route was removed; use input > film > scan and set \
+             magazine_print_color.active = true"
+                .into(),
+        );
+    }
     params.validate_color()?;
     let grain = &params.film_render.grain;
     if grain.v2_profile != "custom"

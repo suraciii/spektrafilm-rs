@@ -147,6 +147,8 @@ pub const CAT02_INVERSE: [[f32; 3]; 3] = [
 
 /// CIE D50 white point (XYZ, Y=1).
 pub const D50_XYZ: [f32; 3] = [0.96422, 1.0, 0.82521];
+/// CIE D50 white point (XYZ, Y=1) in f64 — the ICC PCS illuminant.
+pub const D50_XYZ_F64: [f64; 3] = [0.96422, 1.0, 0.82521];
 /// CIE D55 white point (XYZ, Y=1).
 pub const D55_XYZ: [f32; 3] = [0.95682, 1.0, 0.92149];
 /// CIE D65 white point (XYZ, Y=1).
@@ -275,6 +277,26 @@ pub fn chromatic_adaptation_matrix_cat16_f64(
             -0.03412293802851557,
             1.0499644368778496,
         ],
+    ];
+    von_kries(src_white, dst_white, &FWD, &INV)
+}
+
+/// Bradford (Lam 1985) von Kries chromatic adaptation — the ICC/LittleCMS
+/// default adaptation transform. The magazine print appearance reference
+/// converts through LittleCMS, so its Lab round-trip uses Bradford.
+pub fn chromatic_adaptation_matrix_bradford_f64(
+    src_white: [f64; 3],
+    dst_white: [f64; 3],
+) -> [[f64; 3]; 3] {
+    const FWD: [[f64; 3]; 3] = [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
+    ];
+    const INV: [[f64; 3]; 3] = [
+        [0.9869929, -0.1470543, 0.1599627],
+        [0.4323053, 0.5183603, 0.0492912],
+        [-0.0085287, 0.0400428, 0.9684867],
     ];
     von_kries(src_white, dst_white, &FWD, &INV)
 }

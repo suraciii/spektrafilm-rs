@@ -2,6 +2,7 @@
 use crate::neutral_filters::NeutralFilters;
 use crate::params::RuntimeParams;
 use crate::params::sources::{ParameterEdits, validate_finite};
+use crate::params::validation::REMOVED_MAGAZINE_ROUTE;
 use crate::params_builder::{
     apply_database_neutral_print_filters_protected, apply_film_specifics,
     apply_runtime_constraints, digest_params, normalize_runtime_topology,
@@ -43,6 +44,11 @@ pub fn resolve(
         return Err("--preset conflicts with --film, --paper and --params".into());
     }
     let mut params = load_baseline(request.params_file)?;
+    // A saved removed route must be reported before any explicit route
+    // override can mask it.
+    if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
+        params.validate()?;
+    }
     let added_sources = request.preset.is_some() || !request.sources.is_empty();
     let (film, print, film_name, print_name) = if let Some(selector) = request.preset {
         let preset = presets::load_selector(selector, data_dir)?;
@@ -56,11 +62,10 @@ pub fn resolve(
         )
     } else {
         choose_workflow(&mut params, request.route, request.scan_film);
-        let direct_scan = request.scan_film
-            || matches!(
-                params.workflow.route.as_str(),
-                "input > film > scan" | "input > film > scan > magazine"
-            );
+        if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
+            params.validate()?;
+        }
+        let direct_scan = request.scan_film || params.workflow.route == "input > film > scan";
         let name = request.film.ok_or("--film is required without --preset")?;
         let film = profile::load_profile_by_name(data_dir, name)
             .map_err(|e| format!("loading film profile {name:?}: {e}"))?;
@@ -96,11 +101,7 @@ pub fn resolve(
     if !added_sources {
         // Keep the legacy decoder, route/scan relationship and digest ordering.
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = request.scan_film
-            || matches!(
-                params.workflow.route.as_str(),
-                "input > film > scan" | "input > film > scan > magazine"
-            );
+        params.io.scan_film = request.scan_film || params.workflow.route == "input > film > scan";
         if let Some(mode) = request.scan_output {
             params.scanner.scan_output = mode.to_owned();
         }
@@ -141,10 +142,7 @@ pub fn resolve(
             }
         }
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = matches!(
-            params.workflow.route.as_str(),
-            "input > film > scan" | "input > film > scan > magazine"
-        );
+        params.io.scan_film = params.workflow.route == "input > film > scan";
         if request.input_is_raw {
             force_raw_input(&mut params);
         }
@@ -247,7 +245,6 @@ mod tests {
         let sources = [];
         for (route, scan_film) in [
             ("input > film > scan", false),
-            ("input > film > scan > magazine", false),
             ("input > film > print > scan", true),
         ] {
             let mut req = request(&sources);
@@ -258,12 +255,7 @@ mod tests {
             assert_eq!(resolved.params.workflow.route, route);
             assert_eq!(
                 resolved.print_name,
-                if scan_film
-                    || matches!(
-                        route,
-                        "input > film > scan" | "input > film > scan > magazine"
-                    )
-                {
+                if scan_film || route == "input > film > scan" {
                     "kodak_portra_400"
                 } else {
                     "kodak_portra_endura"

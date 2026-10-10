@@ -652,12 +652,12 @@ mod scan_semantics_tests {
         assert!(!any_darker, "glare darkened pixels — wrong sign");
     }
     #[test]
-    fn magazine_route_runs_after_v2_grain_and_preserves_transfer_state() {
+    fn magazine_appearance_runs_after_v2_grain_and_preserves_transfer_state() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let backend = CpuBackend;
         let mut disabled = quiet_params();
-        disabled.workflow.route = "input > film > scan > magazine".into();
+        disabled.workflow.route = "input > film > scan".into();
         disabled.io.scan_film = true;
         disabled.film_render.grain.active = true;
         disabled.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
@@ -702,6 +702,67 @@ mod scan_semantics_tests {
             "linear magazine output must preserve finite headroom"
         );
         assert!(max_diff(&linear_output, &linear_base) > 1e-5);
+    }
+
+    #[test]
+    fn finished_rgb_route_applies_magazine_appearance() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let backend = CpuBackend;
+        let mut disabled = quiet_params();
+        disabled.workflow.route = "input".into();
+        disabled.io.output_cctf_encoding = true;
+
+        let base = Pipeline::new(film.clone(), film.clone(), disabled.clone())
+            .process(flat_image(8), &backend)
+            .unwrap();
+        let mut active = disabled.clone();
+        active.magazine_print_color.active = true;
+        active.magazine_print_color.strength = 0.75;
+        let output = Pipeline::new(film.clone(), film, active.clone())
+            .process(flat_image(8), &backend)
+            .unwrap();
+        let mut expected = base.clone();
+        let output_space =
+            spektrafilm_math::colorspace::resolve(&active.io.output_color_space).unwrap();
+        crate::magazine_print_color::apply(
+            &mut expected,
+            &active.magazine_print_color,
+            output_space,
+            true,
+        );
+        assert!(
+            max_diff(&output, &expected) < 1e-6,
+            "Finished RGB must run the shared magazine finishing"
+        );
+        assert!(max_diff(&output, &base) > 1e-5);
+    }
+
+    #[test]
+    fn finished_rgb_route_ignores_resolved_profiles() {
+        let dir = data_dir();
+        let portra = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let gold = profile::load_profile_by_name(&dir, "kodak_gold_200").unwrap();
+        let endura = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let supra = profile::load_profile_by_name(&dir, "kodak_supra_endura").unwrap();
+        let backend = CpuBackend;
+        let mut params = quiet_params();
+        params.workflow.route = "input".into();
+        params.io.output_cctf_encoding = true;
+        params.magazine_print_color.active = true;
+        params.magazine_print_color.strength = 1.0;
+
+        let portra_output = Pipeline::new(portra, endura, params.clone())
+            .process(flat_image(8), &backend)
+            .unwrap();
+        let gold_output = Pipeline::new(gold, supra, params)
+            .process(flat_image(8), &backend)
+            .unwrap();
+        assert_eq!(
+            max_diff(&portra_output, &gold_output),
+            0.0,
+            "Finished RGB output must not depend on the resolved film or print profile"
+        );
     }
 
     #[test]

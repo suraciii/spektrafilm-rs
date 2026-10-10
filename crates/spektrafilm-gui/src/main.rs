@@ -746,15 +746,22 @@ impl App {
 
         let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
-        let startup = match initial_state {
+        let mut startup_error = None;
+        let gui_state = match initial_state {
             Some(path) => state::GuiState::load(&path),
             None => state::startup(),
-        };
-        let startup_error = startup
-            .as_ref()
-            .err()
-            .map(|e| format!("Startup state error: {e:#}"));
-        let gui_state = startup.unwrap_or_else(|_| state::GuiState::factory());
+        }
+        .and_then(|state| {
+            // A startup state the runtime cannot accept (a removed workflow
+            // route, an unsupported combination) must fall back to the factory
+            // state with a visible reason instead of failing at construction.
+            state.runtime_params()?;
+            Ok(state)
+        })
+        .unwrap_or_else(|error| {
+            startup_error = Some(format!("Startup state error: {error:#}"));
+            state::GuiState::factory()
+        });
         let film_name = gui_state.film().to_owned();
         let print_name = gui_state.paper().to_owned();
         let film_profile = profile::load_profile_by_name(&data_dir, &film_name).ok();
@@ -1000,20 +1007,31 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice_tip(
+            if controls::choice_tip_labeled(
                 ui,
                 "workflow",
                 &mut self.params.workflow.route,
                 &[
-                    "input",
-                    "input > film > scan",
-                    "input > film > print > scan",
-                    "input > film > scan > magazine",
-                    "input > convert-film > print > scan",
-                    "input > convert-film > scan-minus-base",
-                    "input > convert-film > scan",
+                    ("input", "Finished RGB"),
+                    ("input > film > scan", "input > film > scan"),
+                    (
+                        "input > film > print > scan",
+                        "input > film > print > scan",
+                    ),
+                    (
+                        "input > convert-film > print > scan",
+                        "input > convert-film > print > scan",
+                    ),
+                    (
+                        "input > convert-film > scan-minus-base",
+                        "input > convert-film > scan-minus-base",
+                    ),
+                    (
+                        "input > convert-film > scan",
+                        "input > convert-film > scan",
+                    ),
                 ],
-                "Which path the image takes through the pipeline: input (passthrough: just colour-manage the input to the output space for viewing), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base).",
+                "Which path the image takes through the pipeline: Finished RGB (colour-manage an already rendered RGB image to the output space), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base). Magazine print can be enabled independently for every workflow.",
             ) {
                 let direct_film_scan = self.params.workflow.route == "input > film > scan";
                 self.params.io.scan_film = direct_film_scan;
@@ -1022,6 +1040,14 @@ impl App {
                 }
                 self.dirty = true;
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+            }
+            if ui
+                .checkbox(&mut self.params.magazine_print_color.active, "Magazine print")
+                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                .changed()
+            {
+                self.dirty = true;
                 self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
         });
@@ -2285,6 +2311,12 @@ impl App {
                     self.parameter_section(ui, section);
                 }
                 ui.collapsing("Profiles", |ui| {
+                    if self.params.workflow.route == "input" {
+                        ui.weak(
+                            "Finished RGB ignores these profiles: it only colour-manages the \
+                             input to the output space.",
+                        );
+                    }
                     if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
                         let selected = self.film_name.clone();
                         self.params.film_render.development_time = None;

@@ -354,10 +354,7 @@ fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
 /// Normalize route and film topology for effective reports and pipeline construction.
 /// Scan-only routes enable film scanning; other routes preserve an explicit scan flag.
 pub(crate) fn normalize_runtime_topology(film: &Profile, params: &mut RuntimeParams) {
-    if matches!(
-        params.workflow.route.as_str(),
-        "input > film > scan" | "input > film > scan > magazine"
-    ) {
+    if params.workflow.route == "input > film > scan" {
         params.io.scan_film = true;
     }
     broadcast_monochrome_layout(film, params);

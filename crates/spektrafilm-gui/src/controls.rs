@@ -132,7 +132,6 @@ pub fn show(
         if section == "Magazine print color" {
             ui.collapsing(section, |ui| {
                 let magazine = &mut params.magazine_print_color;
-                flags.runtime_changed |= ui.checkbox(&mut magazine.active, "Active").changed();
                 flags.runtime_changed |= numeric(
                     ui,
                     "strength",
@@ -508,14 +507,45 @@ pub fn choice_tip(
     choices: &[&str],
     tooltip: &str,
 ) -> bool {
+    choice_tip_options(
+        ui,
+        label,
+        value,
+        choices.iter().map(|&option| (option, option)),
+        tooltip,
+    )
+}
+
+pub fn choice_tip_labeled(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: &[(&str, &str)],
+    tooltip: &str,
+) -> bool {
+    choice_tip_options(ui, label, value, choices.iter().copied(), tooltip)
+}
+
+fn choice_tip_options<'a>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    tooltip: &str,
+) -> bool {
+    let selected_label = choices
+        .clone()
+        .find(|&(option, _)| option == value.as_str())
+        .map(|(_, display_label)| display_label)
+        .unwrap_or(value.as_str());
     let mut changed = false;
     egui::ComboBox::from_label(label)
-        .selected_text(value.as_str())
+        .selected_text(selected_label)
         .show_ui(ui, |ui| {
-            for &option in choices {
+            for (option, display_label) in choices {
                 // Allocate only when a selection changes, not for every option each frame.
                 if ui
-                    .selectable_label(value.as_str() == option, option)
+                    .selectable_label(value.as_str() == option, display_label)
                     .on_hover_text(tooltip)
                     .clicked()
                     && value.as_str() != option
