@@ -40,7 +40,14 @@ fn main() -> Result<()> {
     };
     let result = spektrafilm_raw::load(&args.input, &options)?;
     let mut encoder = TiffEncoder::new(BufWriter::new(File::create(&args.output)?))?;
-    let pixels: Vec<f32> = result.image.data.iter().map(|&v| v as f32).collect();
+    // `Scalar` is f64 under `precision-f64`, so the conversion must be explicit.
+    let pixels: Vec<f32> = result
+        .image
+        .data
+        .iter()
+        .copied()
+        .map(spektrafilm_math::precision::to_f32)
+        .collect();
     encoder.write_image::<RGB32Float>(result.image.width, result.image.height, &pixels)?;
     eprintln!(
         "LibRaw {}: {}x{} linear ACES2065-1; {}",

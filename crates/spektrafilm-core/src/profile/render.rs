@@ -10,7 +10,7 @@ impl Profile {
             .iter()
             .map(|row| {
                 [
-                    row.get(0).copied().unwrap_or(0.0),
+                    row.first().copied().unwrap_or(0.0),
                     row.get(1).copied().unwrap_or(0.0),
                     row.get(2).copied().unwrap_or(0.0),
                 ]
@@ -30,7 +30,7 @@ impl Profile {
             .iter()
             .map(|row| {
                 [
-                    row.get(0).copied().unwrap_or(0.0) as f32,
+                    row.first().copied().unwrap_or(0.0) as f32,
                     row.get(1).copied().unwrap_or(0.0) as f32,
                     row.get(2).copied().unwrap_or(0.0) as f32,
                 ]
@@ -50,7 +50,7 @@ impl Profile {
             .iter()
             .map(|row| {
                 [
-                    row.get(0).copied().unwrap_or(0.0) as f32,
+                    row.first().copied().unwrap_or(0.0) as f32,
                     row.get(1).copied().unwrap_or(0.0) as f32,
                     row.get(2).copied().unwrap_or(0.0) as f32,
                 ]
@@ -65,7 +65,7 @@ impl Profile {
             .iter()
             .map(|row| {
                 [
-                    row.get(0).copied().unwrap_or(0.0),
+                    row.first().copied().unwrap_or(0.0),
                     row.get(1).copied().unwrap_or(0.0),
                     row.get(2).copied().unwrap_or(0.0),
                 ]

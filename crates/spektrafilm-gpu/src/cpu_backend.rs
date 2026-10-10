@@ -388,6 +388,7 @@ pub fn scan_spectral_cpu(
 
 /// Runtime-grid variant of [`scan_spectral_cpu`]. CMFs are supplied per
 /// wavelength and therefore scanning is not truncated to the historical grid.
+#[allow(clippy::too_many_arguments)]
 pub fn scan_spectral_cpu_with_cmfs(
     density_cmy: &ImageBuf,
     channel_density: &[[f64; 3]],
@@ -484,8 +485,8 @@ pub fn scan_spectral_cpu_with_cmfs(
 /// reductions, matching numpy's einsum bit-for-bit on macOS Accelerate.
 ///
 /// Algorithm (mirrors `spektrafilm/model/emulsion.py:compute_density_spectral`
-/// + `spektrafilm/utils/conversions.py:density_to_light` + the
-/// `einsum("ijk,kl->ijl", light, sensitivity)` in `printing.py`):
+///   + `spektrafilm/utils/conversions.py:density_to_light` + the
+///     `einsum("ijk,kl->ijl", light, sensitivity)` in `printing.py`):
 ///   1. density_spectral = density_cmy @ channel_density.T + base_density
 ///   2. light             = 10^(-density_spectral) * illuminant   (NaN → 0)
 ///   3. raw               = light @ sensitivity

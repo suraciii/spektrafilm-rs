@@ -122,7 +122,7 @@ enum Space {
 
 impl Space {
     #[inline]
-    fn from_rgb(self, rgb: [f64; 3], cs: &RgbColorSpace, cam: &Cam16Viewing) -> [f64; 3] {
+    fn rgb_to_perceptual(self, rgb: [f64; 3], cs: &RgbColorSpace, cam: &Cam16Viewing) -> [f64; 3] {
         let xyz = mat_vec(&cs.matrix_rgb_to_xyz, rgb);
         match self {
             Space::Oklch | Space::Oklrab => xyz_to_oklab(xyz),
@@ -334,7 +334,7 @@ impl OutputGamutCompress {
             Kind::AcesRgc => return self.compress_aces_rgc(rgb),
             Kind::Perceptual(s) => s,
         };
-        let lab = space.from_rgb(rgb, self.destination, &self.cam);
+        let lab = space.rgb_to_perceptual(rgb, self.destination, &self.cam);
         // One-sided lightness compression first (so C_max is looked up at the
         // corrected L), normalized by the perceptual white.
         let mut l = lab[0];
@@ -376,6 +376,8 @@ impl OutputGamutCompress {
     }
 }
 
+type CmaxTableCache = Mutex<HashMap<(Space, &'static str), Arc<Vec<f64>>>>;
+
 /// Process-wide tables keyed by both perceptual algorithm and destination.
 /// Builds occur outside the lock; concurrent duplicate builds are harmless.
 fn cmax_table_cached(
@@ -383,8 +385,7 @@ fn cmax_table_cached(
     destination: &'static RgbColorSpace,
     cam: &Cam16Viewing,
 ) -> Arc<Vec<f64>> {
-    static CACHE: LazyLock<Mutex<HashMap<(Space, &'static str), Arc<Vec<f64>>>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
+    static CACHE: LazyLock<CmaxTableCache> = LazyLock::new(|| Mutex::new(HashMap::new()));
     let key = (space, destination.name);
     let cache = &*CACHE;
     if let Some(table) = cache.lock().unwrap().get(&key) {
@@ -418,7 +419,7 @@ fn build_cmax_table(space: Space, destination: &RgbColorSpace, cam: &Cam16Viewin
                 for _ in 0..N_BISECT {
                     let mid = (lo + hi) * 0.5;
                     let rgb = space.to_rgb([l, mid * cos_h, mid * sin_h], destination, cam);
-                    let in_gamut = rgb.iter().all(|&v| v >= -1e-6 && v <= 1.0 + 1e-6);
+                    let in_gamut = rgb.iter().all(|&v| (-1e-6..=1.0 + 1e-6).contains(&v));
                     if in_gamut {
                         lo = mid;
                     } else {

@@ -95,7 +95,7 @@ fn next_fast_len(target: usize) -> usize {
     loop {
         let mut m = n;
         for p in [2usize, 3, 5, 7, 11] {
-            while m % p == 0 {
+            while m.is_multiple_of(p) {
                 m /= p;
             }
         }

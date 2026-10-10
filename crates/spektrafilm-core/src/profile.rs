@@ -153,9 +153,9 @@ mod tests {
         assert_eq!(layers.len(), p.data.density_curves_layers.len());
         assert_eq!(layers.len(), 256);
         for k in [0usize, 100, 255] {
-            for sl in 0..3 {
-                for ch in 0..3 {
-                    assert_eq!(layers[k][sl][ch], p.data.density_curves_layers[k][sl][ch]);
+            for (sl, layer) in layers[k].iter().enumerate() {
+                for (ch, value) in layer.iter().enumerate() {
+                    assert_eq!(*value, p.data.density_curves_layers[k][sl][ch]);
                 }
             }
         }

@@ -31,12 +31,17 @@ check:
 check-f64:
     cargo check --locked --workspace --all-targets --features precision-f64
 
+# Lint the workspace; any first-party warning fails. The vendored wgpu-hal patch
+# under vendor/ is a local path dependency and keeps its own warnings.
+clippy:
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+
 # Run the workspace test suite in the f64 reference configuration.
 test:
     cargo test --locked --workspace --features precision-f64
 
 # Full local gate. PR CI runs this same command.
-ci: fmt check check-f64 test
+ci: fmt check check-f64 clippy test
 
 # Create a self-contained portable directory and archive under dist/.
 [unix]

@@ -1,7 +1,8 @@
+//! wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
+
 mod observation;
 use crate::telemetry::*;
 use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
-/// wgpu compute backend — dispatches WGSL shaders on GPU via Metal/Vulkan/DX12.
 
 #[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
@@ -233,7 +234,7 @@ impl WgpuBackend {
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("compute_bind_group"),
-            layout: &bind_group_layout,
+            layout: bind_group_layout,
             entries: &bind_entries,
         });
 
@@ -255,7 +256,7 @@ impl WgpuBackend {
                 label: Some(name),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&pipeline);
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             dispatch_linear(&mut pass, n_pixels);
         }

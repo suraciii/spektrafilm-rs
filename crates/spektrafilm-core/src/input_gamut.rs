@@ -510,12 +510,12 @@ mod tests {
         ];
         for (i, j, expected) in cells {
             let base = (i * 64 + j) * 3;
-            for c in 0..3 {
+            for (c, expected) in expected.iter().enumerate() {
                 assert!(
-                    (out.data[base + c] - expected[c]).abs() < 1e-7,
+                    (out.data[base + c] - expected).abs() < 1e-7,
                     "cell ({i},{j}) ch {c}: got {}, expected {}",
                     out.data[base + c],
-                    expected[c],
+                    expected,
                 );
             }
         }
@@ -567,12 +567,12 @@ mod tests {
         ];
         for (i, j, want) in cells {
             let base = (i * 64 + j) * 3;
-            for c in 0..3 {
+            for (c, expected) in want.iter().enumerate() {
                 assert!(
-                    (out.data[base + c] - want[c]).abs() < 1e-6,
+                    (out.data[base + c] - expected).abs() < 1e-6,
                     "cell ({i}, {j}) channel {c}: {} expected {}",
                     out.data[base + c],
-                    want[c]
+                    expected
                 );
             }
         }

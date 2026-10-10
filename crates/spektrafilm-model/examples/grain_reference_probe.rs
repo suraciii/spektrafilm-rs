@@ -19,7 +19,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("input byte count mismatch".into());
     }
     let data: Vec<_> = raw
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
+        .iter()
         .flat_map(|p| {
             (0..3)
                 .map(move |c| from_f32(f32::from_le_bytes(p[c * 4..c * 4 + 4].try_into().unwrap())))

@@ -208,8 +208,8 @@ mod tests {
         for (destination, d_rgb, a_w) in references {
             let cs = resolve(destination).unwrap();
             let cam = Cam16Viewing::new(cs.whitepoint_xyz());
-            for i in 0..3 {
-                assert!((cam.d_rgb[i] - d_rgb[i]).abs() < 1e-14);
+            for (i, expected) in d_rgb.iter().enumerate() {
+                assert!((cam.d_rgb[i] - expected).abs() < 1e-14);
             }
             assert!((cam.a_w - a_w).abs() < 1e-12);
             let xyz = cs.whitepoint_xyz();

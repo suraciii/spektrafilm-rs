@@ -23,6 +23,8 @@ pub fn blackbody_radiance(wavelength_nm: f32, temperature_k: f32) -> f32 {
 /// Generate a full blackbody SPD (81 wavelengths, 380-780nm at 5nm).
 pub fn blackbody_spd(temperature_k: f32) -> [f32; N_WAVELENGTHS] {
     let mut spd = [0.0f32; N_WAVELENGTHS];
+    // Wavelength arithmetic depends on the spectral sample index.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..N_WAVELENGTHS {
         let wl = WAVELENGTH_MIN + (i as f32) * WAVELENGTH_STEP;
         spd[i] = blackbody_radiance(wl, temperature_k);

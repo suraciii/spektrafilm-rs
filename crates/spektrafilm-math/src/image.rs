@@ -81,11 +81,15 @@ impl ImageBuf {
     }
 
     pub fn pixels(&self) -> impl Iterator<Item = &[Scalar]> {
-        self.data.chunks_exact(3)
+        self.data.as_chunks::<3>().0.iter().map(|p| p.as_slice())
     }
 
     pub fn pixels_mut(&mut self) -> impl Iterator<Item = &mut [Scalar]> {
-        self.data.chunks_exact_mut(3)
+        self.data
+            .as_chunks_mut::<3>()
+            .0
+            .iter_mut()
+            .map(|p| p.as_mut_slice())
     }
 
     pub fn par_pixels(&self) -> rayon::slice::ChunksExact<'_, Scalar> {

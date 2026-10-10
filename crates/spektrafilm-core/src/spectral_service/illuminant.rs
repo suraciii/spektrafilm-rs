@@ -455,7 +455,9 @@ fn parse_blackbody_temperature(name: &str) -> Option<f64> {
     (temperature.is_finite() && (1667.0..=25000.0).contains(&temperature)).then_some(temperature)
 }
 
-fn generated_illuminant(name: &str) -> Option<(Cow<'static, [f32]>, Cow<'static, [f64]>)> {
+type GeneratedIlluminant = (Cow<'static, [f32]>, Cow<'static, [f64]>);
+
+fn generated_illuminant(name: &str) -> Option<GeneratedIlluminant> {
     let values =
         select_illuminant_on_grid_f64(name, SpectralShape::new(default_spectral_shape()).ok()?)
             .ok()?;
