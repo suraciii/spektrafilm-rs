@@ -218,19 +218,22 @@ fn protected_destinations_and_invalid_options_are_rejected_before_image_work() {
     assert!(!output.status.success());
 }
 
-#[cfg(unix)]
 #[test]
-fn hardlink_symlink_and_nonregular_report_paths_are_rejected() {
+fn alias_and_nonregular_report_paths_are_rejected() {
     let fixture = Fixture::new();
     fs::hard_link(fixture.path("input.png"), fixture.path("hard.json")).unwrap();
-    std::os::unix::fs::symlink(fixture.path("params.json"), fixture.path("sym.json")).unwrap();
-    for path in [
+    let mut paths = vec![
         fixture.path("hard.json"),
-        fixture.path("sym.json"),
         fixture.directory.clone(),
-        PathBuf::from("/dev/null"),
         PathBuf::from("-"),
-    ] {
+    ];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(fixture.path("params.json"), fixture.path("sym.json")).unwrap();
+        paths.push(fixture.path("sym.json"));
+        paths.push(PathBuf::from("/dev/null"));
+    }
+    for path in paths {
         let output = fixture
             .process("output.png")
             .arg("--diagnostics")
