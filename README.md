@@ -80,7 +80,7 @@ The public Canon EOS 40D sRAW CR2 fixture also matches all four modes at zero ma
 
 The rebuilt f64 CLI and its relocated Linux archive also passed eight fresh RAW comparisons against the pinned Python loader: all four white-balance modes on Kodak 768×512 with missing-lens correction, and Canon 1944×1296 with injected known-lens EXIF. The unbounded `rgb_in` boundary matched exactly (maximum and mean absolute error zero). The relocated RAW helper independently matched Kodak pixels exactly under a clean environment. The earlier packaged GUI launched under Xvfb and its prepared-image export preserved EXIF/IPTC/XMP and ICC bytes; this is historical evidence for the earlier export implementation.
 
-WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference.
+WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference. Linux GPU acceptance requires the Mesa software Vulkan adapter (`mesa-vulkan-drivers`).
 The `just` command surface also covers packaging and per-user installation:
 
 ```bash
