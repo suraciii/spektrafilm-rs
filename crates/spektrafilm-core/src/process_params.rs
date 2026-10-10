@@ -19,6 +19,7 @@ pub struct ProcessParamsRequest<'a> {
     pub sources: &'a [String],
     pub route: Option<&'a str>,
     pub scan_film: bool,
+    pub scan_output: Option<&'a str>,
     pub input_is_raw: bool,
     pub digest_mode: DigestMode,
 }
@@ -100,7 +101,11 @@ pub fn resolve(
                 params.workflow.route.as_str(),
                 "input > film > scan" | "input > film > scan > magazine"
             );
+        if let Some(mode) = request.scan_output {
+            params.scanner.scan_output = mode.to_owned();
+        }
         params.validate()?;
+        crate::pipeline_calibration::validate_scan_output(&params, &film)?;
         if request.input_is_raw {
             force_raw_input(&mut params);
         }
@@ -143,9 +148,13 @@ pub fn resolve(
         if request.input_is_raw {
             force_raw_input(&mut params);
         }
+        if let Some(mode) = request.scan_output {
+            params.scanner.scan_output = mode.to_owned();
+        }
         // Cross-field checks precede destructive preview/debug constraints.
         validate_finite(&params)?;
         params.validate()?;
+        crate::pipeline_calibration::validate_scan_output(&params, &film)?;
         let neutral = NeutralFilters::load(data_dir)?;
         params = apply_database_neutral_print_filters_protected(
             params,
@@ -160,6 +169,7 @@ pub fn resolve(
         params.validate()?;
     }
     normalize_runtime_topology(&film, &mut params);
+    crate::pipeline_calibration::validate_scan_output(&params, &film)?;
     Ok(ResolvedProcessParams {
         film,
         print,
@@ -209,6 +219,7 @@ mod tests {
             sources,
             route: None,
             scan_film: false,
+            scan_output: None,
             input_is_raw: false,
             digest_mode: DigestMode::ApplyStockSpecifics,
         }

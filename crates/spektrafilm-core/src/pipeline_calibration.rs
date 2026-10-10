@@ -98,6 +98,41 @@ pub(crate) struct CalibrationResult {
     pub output_gamut: crate::gamut_compression::OutputGamutCompress,
     pub data_dir: Option<std::path::PathBuf>,
 }
+pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
+    if params.scanner.scan_output != "positive_scan" {
+        return Ok(());
+    }
+    if params.workflow.route != "input > film > scan" || !params.io.scan_film {
+        return Err(
+            "scanner.scan_output=positive_scan requires the direct input > film > scan route"
+                .into(),
+        );
+    }
+    if !film.is_negative() || !film.is_film() || !film.is_filming() {
+        return Err(
+            "scanner.scan_output=positive_scan requires a negative film profile; \
+             positive film and paper scans use direct_scan"
+                .into(),
+        );
+    }
+    if params.scanner.white_correction || params.scanner.black_correction {
+        return Err(
+            "scanner.scan_output=positive_scan cannot be combined with scanner white/black correction"
+                .into(),
+        );
+    }
+    if params.film_render.grain.active
+        && matches!(
+            params.film_render.grain.engine,
+            crate::params::grain::GrainEngine::V2
+        )
+    {
+        return Err(
+            "scanner.scan_output=positive_scan cannot be combined with active Grain V2".into(),
+        );
+    }
+    Ok(())
+}
 
 pub(crate) fn build(
     film: Profile,
@@ -114,6 +149,7 @@ pub(crate) fn build(
     // Resolve development time and broadcast the profile's single channel
     // onto the 3-channel engine layout before reading the profile data.
     let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);
+    validate_scan_output(&params, &film)?;
     let mut print = crate::profile::resolve_for_render(print, params.print_render.development_time);
     apply_base_tuning(&mut film, &params.film_render.base, None);
     apply_film_chemistry(&mut film, &params.film_render.chemistry)
@@ -432,4 +468,55 @@ pub(crate) fn build(
         data_dir: Some(data_dir.to_path_buf()),
         output_gamut,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_scan_output;
+    use crate::params::{RuntimeParams, grain::GrainEngine};
+    use crate::profile;
+    use std::path::Path;
+
+    fn data_dir() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("data")
+    }
+
+    #[test]
+    fn positive_scan_accepts_only_a_direct_negative_film_route() {
+        let film = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "positive_scan".into();
+        assert!(validate_scan_output(&params, &film).is_ok());
+
+        params.io.scan_film = false;
+        assert!(validate_scan_output(&params, &film).is_err());
+    }
+
+    #[test]
+    fn positive_scan_rejects_positive_profiles_and_unsupported_effects() {
+        let film = profile::load_profile_by_name(&data_dir(), "fujifilm_provia_100f").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "positive_scan".into();
+        assert!(validate_scan_output(&params, &film).is_err());
+
+        let paper = profile::load_profile_by_name(&data_dir(), "kodak_portra_endura").unwrap();
+        assert!(validate_scan_output(&params, &paper).is_err());
+
+        let film = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        params.scanner.white_correction = true;
+        assert!(validate_scan_output(&params, &film).is_err());
+        params.scanner.white_correction = false;
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = GrainEngine::V2;
+        assert!(validate_scan_output(&params, &film).is_err());
+    }
 }

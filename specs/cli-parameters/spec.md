@@ -32,6 +32,8 @@ Without a preset, a print target must accept `support=paper` or `support=film` w
 
 With a preset, both profile references must come from the preset. `--scan-film` must request `input > film > scan` without replacing the preset's print reference. The preset's workflow default must apply unless `--route` or `--scan-film` supplies an explicit workflow choice. `--route` must retain precedence over `--scan-film`. For invocations with added parameter sources, the final route must determine topology: `io.scan_film` must be true exactly for `input > film > scan` and `input > film > scan > magazine`, and false for the other supported routes. The existing workflow validator must determine which routes are supported.
 
+`--scan-output direct_scan|positive_scan` must override `scanner.scan_output` after all parameter sources. The shared resolver must enforce the [direct negative-film scan contract](../film-chain/spec.md#direct-negative-film-scan-output) before runtime constraints and for the effective parameters. Dry run and rendering must reject the same unsupported scan combinations.
+
 ## `--set` sources
 
 Each `--set SOURCE` occurrence must be exactly one source. A source ending in `.toml` or `.json` is a sparse parameter-file path. Any other source must be a comma-separated list of one or more `PATH=JSON_VALUE` assignments. A source must not mix a file path and assignments. `--set` may be repeated; sources apply in appearance order. A file path must be relative to the working directory or absolute. An assignment source must be passed as one shell argument.

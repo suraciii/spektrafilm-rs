@@ -257,6 +257,8 @@ struct WorkflowOptions {
     lens_correction: bool,
     #[arg(long)]
     route: Option<String>,
+    #[arg(long, value_parser = ["direct_scan", "positive_scan"])]
+    scan_output: Option<String>,
     #[arg(long, default_value = "none")]
     film_channel_swap: String,
     #[arg(long, default_value = "none")]
@@ -517,6 +519,7 @@ fn cmd_process(
             sources,
             route: workflow.route.as_deref(),
             scan_film,
+            scan_output: workflow.scan_output.as_deref(),
             input_is_raw,
             digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
                 == Some(std::ffi::OsStr::new("1"))
