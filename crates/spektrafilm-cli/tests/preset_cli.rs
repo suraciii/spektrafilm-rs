@@ -902,3 +902,331 @@ fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("scanner.scan_output"));
     assert!(!f.root.join("output.tif").exists());
 }
+
+#[test]
+fn inline_strings_and_enums_accept_normal_cli_values() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--preset",
+        "classic-kodak-portra-400",
+        "--set",
+        "film_render.grain.engine=v2,film_render.grain.v2_profile=custom",
+        "--set",
+        "io.output_color_space=ProPhoto RGB",
+        "--set",
+        "camera.auto_exposure=false,camera.exposure_compensation_ev=+.5",
+        "--set",
+        "film_render.grain.v2_amount=25",
+        "--set",
+        "film_render.grain.v2_amount=null",
+        "--dry-run",
+    ]);
+    assert_eq!(report["parameters"]["film_render"]["grain"]["engine"], "v2");
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["v2_profile"],
+        "custom"
+    );
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["v2_amount"],
+        Value::Null
+    );
+    assert_eq!(
+        report["parameters"]["io"]["output_color_space"],
+        "ProPhoto RGB"
+    );
+    assert_eq!(report["parameters"]["camera"]["auto_exposure"], false);
+    assert_eq!(
+        report["parameters"]["camera"]["exposure_compensation_ev"],
+        0.5
+    );
+    assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn invalid_plain_values_report_the_field_requirement() {
+    let f = Fixture::new();
+    for (source, requirement) in [
+        ("camera.auto_exposure=yes", "true or false"),
+        ("camera.exposure_compensation_ev=bright", "finite number"),
+        ("film_render.grain.engine=unknown", "v1"),
+    ] {
+        let output = f.process(&[
+            "--preset",
+            "classic-kodak-portra-400",
+            "--set",
+            source,
+            "--dry-run",
+        ]);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(source.split_once('=').unwrap().0), "{error}");
+        assert!(error.contains(requirement), "{error}");
+    }
+    assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn discovery_formats_preserve_metadata_and_reject_invalid_syntax() {
+    let f = Fixture::new();
+    let module = f.run(&["describe", "--module", "film_render.grain"]);
+    assert!(module.status.success());
+    let module: Value = serde_json::from_slice(&module.stdout).unwrap();
+    for record in module["fields"].as_array().unwrap() {
+        let path = record["path"].as_str().unwrap();
+        let field = f.run(&["describe", "--field", path]);
+        assert!(
+            field.status.success(),
+            "{}",
+            String::from_utf8_lossy(&field.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&field.stdout).unwrap(),
+            *record
+        );
+        let text = f.run(&["describe", "--field", path, "--format", "text"]);
+        assert!(text.status.success());
+        let text = String::from_utf8(text.stdout).unwrap();
+        for (key, value) in record.as_object().unwrap() {
+            assert!(text.contains(&format!("{key}: {value}")), "{text}");
+        }
+    }
+    let json = f.run(&["preset", "list"]);
+    let entries: Value = serde_json::from_slice(&json.stdout).unwrap();
+    let text = f.run(&["preset", "list", "--format", "text"]);
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).unwrap();
+    for entry in entries.as_array().unwrap() {
+        for (key, value) in entry.as_object().unwrap() {
+            assert!(text.contains(&format!("{key}: {value}")), "{text}");
+        }
+    }
+    for args in [
+        vec!["describe", "--format", "toml"],
+        vec![
+            "describe",
+            "--field",
+            "camera.auto_exposure",
+            "--module",
+            "camera",
+        ],
+        vec!["preset", "list", "--format", "toml"],
+        vec![
+            "preset",
+            "show",
+            "classic-kodak-portra-400",
+            "--format",
+            "text",
+        ],
+    ] {
+        assert_eq!(f.run(&args).status.code(), Some(2));
+    }
+}
+
+#[test]
+fn data_selection_retains_source_and_never_falls_back() {
+    let f = Fixture::new();
+    let report = f.report(&["--preset", "classic-kodak-portra-400", "--dry-run"]);
+    assert_eq!(
+        report["data"]["path"],
+        std::fs::canonicalize(&f.data).unwrap().to_str().unwrap()
+    );
+    assert_eq!(report["data"]["source"], "environment");
+    assert_eq!(
+        report["input"],
+        json!({"kind":"raster", "raw_loading":null})
+    );
+    let selected = f.report(&[
+        "--preset",
+        "classic-kodak-portra-400",
+        "--dry-run",
+        "--data-dir",
+        f.data.to_str().unwrap(),
+    ]);
+    assert_eq!(selected["data"]["source"], "argument");
+    let missing = f.root.join("missing");
+    let error = f.run(&["list-profiles", "--data-dir", missing.to_str().unwrap()]);
+    assert_eq!(error.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&error.stderr).contains(missing.to_str().unwrap()));
+    let error = f.run(&["list-profiles", "--data-dir", f.root.to_str().unwrap()]);
+    assert_eq!(error.status.code(), Some(1));
+    std::fs::create_dir(f.root.join("profiles")).unwrap();
+    let empty = f.run(&["list-profiles", "--data-dir", f.root.to_str().unwrap()]);
+    assert!(empty.status.success());
+    assert!(empty.stdout.is_empty());
+    std::fs::write(f.root.join("profiles/broken.json"), b"{}").unwrap();
+    assert_eq!(
+        f.run(&["list-profiles", "--data-dir", f.root.to_str().unwrap()])
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn raw_dry_run_reports_validated_signed_loading_options() {
+    let f = Fixture::new();
+    let input = f.root.join("input.dng");
+    // Dry run checks file kind and readability without decoding RAW pixels.
+    std::fs::write(&input, b"readable-raw-placeholder").unwrap();
+    let output = f.root.join("raw-output.tif");
+    let base = [
+        "process",
+        input.to_str().unwrap(),
+        "-o",
+        output.to_str().unwrap(),
+        "--preset",
+        "classic-kodak-portra-400",
+        "--dry-run",
+    ];
+    let run = |extra: &[&str]| {
+        let mut args = base.to_vec();
+        args.extend_from_slice(extra);
+        let output = f.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let shot = run(&[]);
+    let custom = run(&[
+        "--raw-white-balance",
+        "custom",
+        "--raw-temperature",
+        "6500",
+        "--raw-tint",
+        "-5",
+    ]);
+    assert_eq!(
+        custom,
+        run(&[
+            "--raw-white-balance",
+            "custom",
+            "--raw-temperature=6500",
+            "--raw-tint=-5"
+        ])
+    );
+    assert_eq!(
+        custom["input"],
+        json!({"kind":"raw", "raw_loading":{"white_balance":"custom", "temperature":6500.0, "tint":-5.0, "lens_correction":false}})
+    );
+    assert_ne!(shot["input"], custom["input"]);
+    assert_eq!(shot["input"]["raw_loading"]["temperature"], Value::Null);
+    assert!(!custom["parameters"].to_string().contains("raw_loading"));
+    assert!(!output.exists());
+}
+
+#[test]
+fn text_discovery_lists_root_groups_and_keeps_nested_modules() {
+    let f = Fixture::new();
+    let text = f.run(&["describe", "--format", "text"]);
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let text = String::from_utf8(text.stdout).unwrap();
+    let groups: Vec<&str> = text.lines().collect();
+    assert!(groups.contains(&"film_render") && groups.contains(&"camera"));
+    assert!(groups.iter().all(|group| !group.contains('.')));
+    let nested = f.run(&[
+        "describe",
+        "--module",
+        "film_render.grain",
+        "--format",
+        "text",
+    ]);
+    assert!(
+        nested.status.success(),
+        "{}",
+        String::from_utf8_lossy(&nested.stderr)
+    );
+    assert!(
+        String::from_utf8(nested.stdout)
+            .unwrap()
+            .contains("film_render.grain.engine")
+    );
+}
+
+#[test]
+fn route_help_lists_every_validated_route() {
+    let f = Fixture::new();
+    for args in [["process", "--help"], ["process", "-h"]] {
+        let help = f.run(&args);
+        assert!(help.status.success());
+        let help = String::from_utf8(help.stdout).unwrap();
+        for route in spektrafilm_core::params::sources::supported_routes() {
+            assert!(help.contains(route), "missing route {route}");
+        }
+        assert!(!help.contains("describe --module workflow"), "{help}");
+    }
+}
+
+#[test]
+fn signed_input_exposure_stops_accept_separate_arguments() {
+    let f = Fixture::new();
+    let build = |suffix: &str, exposure: &[&str]| {
+        let out = f.root.join(format!("lut-{suffix}"));
+        let mut args = vec![
+            "lut",
+            "build",
+            out.to_str().unwrap(),
+            "--name",
+            "signed-stops",
+            "--film",
+            "kodak_portra_400",
+            "--print",
+            "kodak_portra_endura",
+            "--input",
+            "srgb",
+            "--output",
+            "srgb",
+            "--resolution",
+            "2",
+        ];
+        args.extend_from_slice(exposure);
+        let output = f.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let metadata: Value =
+            serde_json::from_slice(&std::fs::read(out.join("signed-stops/bundle.json")).unwrap())
+                .unwrap();
+        metadata["input_exposure"].clone()
+    };
+    let equal = build("equal", &["--stops-above-midgray=-1"]);
+    let separate = build("separate", &["--stops-above-midgray", "-1"]);
+    assert_eq!(equal, separate);
+    assert_eq!(separate["stops_above_midgray"], -1.0);
+    for invalid in ["-1e309", "inf", "nan"] {
+        let out = f.root.join("lut-invalid");
+        let output = f.run(&[
+            "lut",
+            "build",
+            out.to_str().unwrap(),
+            "--name",
+            "signed-stops",
+            "--film",
+            "kodak_portra_400",
+            "--print",
+            "kodak_portra_endura",
+            "--input",
+            "srgb",
+            "--output",
+            "srgb",
+            "--resolution",
+            "2",
+            &format!("--stops-above-midgray={invalid}"),
+        ]);
+        assert_eq!(output.status.code(), Some(1), "{invalid}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("finite number"),
+            "{invalid}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!out.exists());
+    }
+}

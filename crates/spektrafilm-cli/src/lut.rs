@@ -1,7 +1,8 @@
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{ArgMatches, Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 use spektrafilm_core::lut_baker::{BundleBuilder, BundleSpec, Topology};
 use spektrafilm_core::lut_delivery::{self, DeliveryOptions};
@@ -14,9 +15,11 @@ pub(crate) enum LutCommand {
     Build(BuildArgs),
     /// List sorted stock names or canonical color spaces and their short tags.
     List {
+        /// Registry to list: stocks, transport color spaces, or delivery targets.
         #[arg(value_enum)]
         kind: ListKind,
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory for stock listings; otherwise environment or discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
     },
 }
@@ -31,65 +34,102 @@ pub(crate) enum ListKind {
 }
 
 #[derive(Args)]
+#[command(
+    after_long_help = "Examples:\n  spektrafilm lut build build/lut_bundles --film kodak_portra_400 --print kodak_portra_endura --input vlog --output srgb\n  spektrafilm lut list film\n  spektrafilm lut list input\n  spektrafilm lut list target"
+)]
 pub(crate) struct BuildArgs {
     /// Load flat BundleSpec fields, including gamut-compression tables, from TOML.
-    #[arg(long = "from", value_name = "FILE")]
+    #[arg(
+        long = "from",
+        value_name = "FILE",
+        help_heading = "Bundle configuration"
+    )]
     from_toml: Option<PathBuf>,
-    /// Bundle name; computed from the stocks and color spaces when omitted.
-    #[arg(long)]
+    /// Bundle name; computed from stocks and color spaces when omitted.
+    #[arg(long, help_heading = "Bundle configuration")]
     name: Option<String>,
-    #[arg(long)]
+    /// Film stock ID; discover with lut list film.
+    #[arg(long, help_heading = "Bundle configuration")]
     film: Option<String>,
-    /// Print stock; repeat this flag for multi-print bundles.
-    #[arg(long = "print", value_name = "PRINT")]
+    /// Print stock ID (lut list print); repeat for multi-print bundles.
+    #[arg(
+        long = "print",
+        value_name = "PRINT",
+        help_heading = "Bundle configuration"
+    )]
     prints: Vec<String>,
-    /// Input color space canonical name or registry short tag.
-    #[arg(long = "input")]
+    /// Input color space name or short tag; discover with lut list input.
+    #[arg(long = "input", help_heading = "Bundle configuration")]
     input_cs: Option<String>,
-    /// Output color space canonical name or registry short tag.
-    #[arg(long = "output")]
+    /// Output color space name or short tag; discover with lut list output.
+    #[arg(long = "output", help_heading = "Bundle configuration")]
     output_cs: Option<String>,
-    #[arg(long, value_parser = ["1lut", "2lut", "3lut", "4lut"])]
+    /// Number of stages in the LUT topology.
+    #[arg(long, value_parser = ["1lut", "2lut", "3lut", "4lut"], help_heading = "Bundle configuration")]
     topology: Option<String>,
-    #[arg(long, value_name = "N")]
+    /// Cube edge resolution in samples.
+    #[arg(long, value_name = "N", help_heading = "Bundle configuration")]
     resolution: Option<usize>,
-    #[arg(long, value_name = "NAME")]
+    /// Delivery target name; discover with lut list target.
+    #[arg(long, value_name = "NAME", help_heading = "Delivery")]
     target: Option<String>,
-    #[arg(long, value_parser = ["directory", "zip"])]
+    /// Bundle delivery container.
+    #[arg(long, value_parser = ["directory", "zip"], help_heading = "Delivery")]
     container: Option<String>,
-    /// Upstream input exposure stops (`auto`, `native`, `null`, or finite number).
-    #[arg(long = "stops-above-midgray", value_name = "STOPS")]
+    /// Upstream input exposure stops (auto, native, null, or finite number).
+    #[arg(
+        long = "stops-above-midgray",
+        value_name = "STOPS",
+        allow_negative_numbers = true,
+        help_heading = "Bundle configuration"
+    )]
     stops_above_midgray: Option<String>,
     /// Legacy linear input exposure adjustment in EV.
-    #[arg(long = "exposure-ev", value_name = "EV")]
+    #[arg(
+        long = "exposure-ev",
+        value_name = "EV",
+        allow_negative_numbers = true,
+        help_heading = "Bundle configuration"
+    )]
     exposure_ev: Option<f64>,
-    #[arg(long)]
+    /// Run pinned quality assessment after baking.
+    #[arg(long, help_heading = "Quality assessment")]
     qa: bool,
-    #[arg(long, value_name = "I")]
+    /// Zero-based print index to assess; otherwise assess all prints with --qa.
+    #[arg(long, value_name = "I", help_heading = "Quality assessment")]
     qa_print_index: Option<usize>,
-    #[arg(long)]
+    /// Emit an OCIO configuration when the bundle supports it.
+    #[arg(long, help_heading = "Delivery")]
     ocio_config: bool,
-    /// Include every contiguous multi-stage sub-chain as a collapsed cube.
-    #[arg(long)]
+    /// Include contiguous multi-stage sub-chains as collapsed cubes.
+    #[arg(long, help_heading = "Bundle configuration")]
     combinations: bool,
-    /// Write the bundle inside DIR/<bundle-name>/.
     /// Captured RuntimeParams JSON snapshot to use as the bake source.
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", help_heading = "Bundle configuration")]
     params: Option<PathBuf>,
+    /// Parent directory of the generated OUT/<bundle-name>/ bundle.
+    #[arg(value_name = "OUT", help_heading = "Delivery")]
     out: PathBuf,
-    #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+    /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+    #[arg(long, default_value = "data", help_heading = "Bundle configuration")]
     data_dir: PathBuf,
 }
 
-pub(crate) fn run(command: LutCommand) -> Result<()> {
+pub(crate) fn run(command: LutCommand, matches: &ArgMatches) -> Result<()> {
+    let (_, matches) = matches.subcommand().expect("required lut subcommand");
     match command {
         LutCommand::Build(mut args) => {
-            args.data_dir = crate::resolve_data_dir(args.data_dir);
+            args.data_dir = crate::select_data_dir(args.data_dir, matches)?.path;
             build(args)
         }
         LutCommand::List { kind, data_dir } => {
-            let data_dir = crate::resolve_data_dir(data_dir);
-            list(kind, &data_dir)
+            if matches!(kind, ListKind::Film | ListKind::Print)
+                || crate::explicit_data_selection(matches)
+            {
+                list(kind, &crate::select_data_dir(data_dir, matches)?.path)
+            } else {
+                list(kind, &data_dir)
+            }
         }
     }
 }
@@ -108,6 +148,13 @@ fn load_bundle_spec(args: &BuildArgs) -> Result<BundleSpec> {
     } else {
         Map::new()
     };
+    if let Some(value) = args.stops_above_midgray.as_deref()
+        && value
+            .parse::<f64>()
+            .is_ok_and(|stops| !stops.is_finite())
+    {
+        bail!("--stops-above-midgray must be auto, native, null, or a finite number: {value}");
+    }
     for (field, value) in [
         ("name", json!(args.name)),
         ("film_profile", json!(args.film)),
@@ -185,6 +232,9 @@ fn build(args: BuildArgs) -> Result<()> {
     } else {
         BundleBuilder::new(spec)
     };
+    if std::io::stderr().is_terminal() {
+        eprintln!("[bake] Starting LUT baking");
+    }
     let bundle = builder
         .build(&args.data_dir, backend.as_ref())
         .map_err(anyhow::Error::msg)?;
@@ -196,11 +246,14 @@ fn build(args: BuildArgs) -> Result<()> {
                 lut_delivery::append_artifact(&mut meta, artifact)?;
             }
             spektrafilm_core::lut_ocio::OcioEmission::Skipped { reason } => {
-                println!("[ocio] SKIP: {reason}");
+                eprintln!("[ocio] SKIP: {reason}");
             }
         }
     }
     if bundle.spec.qa {
+        if std::io::stderr().is_terminal() {
+            eprintln!("[qa] Starting quality assessment");
+        }
         let qa_root = out.join("qa");
         let report =
             spektrafilm_core::lut_qa::run(&bundle, &args.data_dir, backend.as_ref(), &qa_root)
@@ -218,10 +271,10 @@ fn build(args: BuildArgs) -> Result<()> {
             )?;
         }
         lut_delivery::append_quality_summary(&out, &report)?;
-        println!("[qa] {}", if report.passed { "PASS" } else { "FAIL" });
+        eprintln!("[qa] {}", if report.passed { "PASS" } else { "FAIL" });
     }
     lut_delivery::finalize_bundle(&out, &meta, bundle.spec.container == "zip")?;
-    println!("[done] {}", out.display());
+    eprintln!("[done] {}", out.display());
     Ok(())
 }
 

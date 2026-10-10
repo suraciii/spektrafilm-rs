@@ -1,4 +1,15 @@
 use super::{RuntimeParams, Tap};
+use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
+
+pub(crate) const SUPPORTED_ROUTES: [&str; 7] = [
+    "input",
+    "input > film > scan",
+    "input > film > print > scan",
+    "input > film > scan > magazine",
+    "input > convert-film > print > scan",
+    "input > convert-film > scan-minus-base",
+    "input > convert-film > scan",
+];
 
 /// Registered RGB-to-raw implementations. Parsing and construction share this
 /// vocabulary so a method cannot validate successfully and fail at dispatch.
@@ -286,7 +297,10 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
     if valid {
         Ok(())
     } else {
-        Err(format!("{path}: unsupported value {value:?}"))
+        let options = enum_values(path)
+            .map(|values| format!("; choose one of: {}", values.join(", ")))
+            .unwrap_or_default();
+        Err(format!("{path}: unsupported value {value:?}{options}"))
     }
 }
 
@@ -417,23 +431,49 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     if let Some(t) = params.taps.inject.as_deref() {
         Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
     }
-    if !matches!(
-        params.workflow.route.as_str(),
-        "input"
-            | "input > film > scan"
-            | "input > film > print > scan"
-            | "input > film > scan > magazine"
-            | "input > convert-film > print > scan"
-            | "input > convert-film > scan-minus-base"
-            | "input > convert-film > scan"
-    ) {
+    if !SUPPORTED_ROUTES.contains(&params.workflow.route.as_str()) {
         return Err(format!(
-            "workflow.route: unsupported route {:?}",
-            params.workflow.route
+            "workflow.route: unsupported route {:?}; {}",
+            params.workflow.route,
+            error_suffix(
+                &closest(
+                    &params.workflow.route,
+                    SUPPORTED_ROUTES.iter().map(|route| (*route).to_owned()),
+                    MAX_SUGGESTIONS
+                ),
+                "use spektrafilm process --help to discover supported routes"
+            )
         ));
     }
     if let Some(t) = params.taps.collect.as_deref() {
         Tap::parse(t).map_err(|e| format!("taps.collect: {e}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supported_routes_remain_valid() {
+        let mut params = RuntimeParams::default();
+        for route in SUPPORTED_ROUTES {
+            params.workflow.route = route.to_owned();
+            validate(&params).unwrap();
+        }
+    }
+
+    #[test]
+    fn unknown_routes_suggest_supported_routes_or_help() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scna".into();
+        let error = validate(&params).unwrap_err();
+        assert!(error.starts_with("workflow.route: unsupported route"));
+        assert!(error.contains("did you mean input > film > scan?"));
+        params.workflow.route = "unrelated".into();
+        let error = validate(&params).unwrap_err();
+        assert!(error.contains("spektrafilm process --help"));
+        assert!(!error.contains("did you mean"));
+    }
 }
