@@ -29,6 +29,17 @@ const RUNTIME_GROUPS: &[(&str, &str, &str)] = &[
     ("convert", "film_render", "convert"),
     ("glare", "print_render", "glare"),
 ];
+/// Enlarger controls the upstream GUI also exposes under `simulation`
+/// aliases, as `(simulation key, enlarger key)`. Both directions of the
+/// state ⇄ runtime projection consume this one table, so an alias cannot be
+/// added for only one of them.
+const ENLARGER_SIMULATION_ALIASES: &[(&str, &str)] = &[
+    ("print_illuminant", "illuminant"),
+    ("print_exposure", "print_exposure"),
+    ("print_exposure_compensation", "print_exposure_compensation"),
+    ("print_y_filter_shift", "y_filter_shift"),
+    ("print_m_filter_shift", "m_filter_shift"),
+];
 
 #[derive(Clone, Debug)]
 pub struct GuiState {
@@ -137,15 +148,9 @@ impl GuiState {
             &["saving_color_space", "saving_cctf_encoding", "auto_preview"],
         );
         if let Some(enlarger) = value["simulation"].get("enlarger") {
-            for (from, to) in [
-                ("illuminant", "print_illuminant"),
-                ("print_exposure", "print_exposure"),
-                ("print_exposure_compensation", "print_exposure_compensation"),
-                ("y_filter_shift", "print_y_filter_shift"),
-                ("m_filter_shift", "print_m_filter_shift"),
-            ] {
-                if let Some(v) = enlarger.get(from) {
-                    normalized["simulation"][to] = v.clone();
+            for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
+                if let Some(v) = enlarger.get(enlarger_key) {
+                    normalized["simulation"][simulation_key] = v.clone();
                 }
             }
         }
@@ -282,14 +287,8 @@ impl GuiState {
             &s["enlarger_diffusion"],
         );
         merge(&mut runtime["enlarger"], &s["preflashing"]);
-        for (from, to) in [
-            ("print_illuminant", "illuminant"),
-            ("print_exposure", "print_exposure"),
-            ("print_exposure_compensation", "print_exposure_compensation"),
-            ("print_y_filter_shift", "y_filter_shift"),
-            ("print_m_filter_shift", "m_filter_shift"),
-        ] {
-            runtime["enlarger"][to] = s["simulation"][from].clone();
+        for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
+            runtime["enlarger"][enlarger_key] = s["simulation"][simulation_key].clone();
         }
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
         runtime["io"]["scan_film"] = json!(matches!(
@@ -465,14 +464,8 @@ impl GuiState {
         }
         s["simulation"]["film_stock"] = json!(film);
         s["simulation"]["print_paper"] = json!(paper);
-        for (from, to) in [
-            ("illuminant", "print_illuminant"),
-            ("print_exposure", "print_exposure"),
-            ("print_exposure_compensation", "print_exposure_compensation"),
-            ("y_filter_shift", "print_y_filter_shift"),
-            ("m_filter_shift", "print_m_filter_shift"),
-        ] {
-            s["simulation"][to] = runtime["enlarger"][from].clone();
+        for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
+            s["simulation"][simulation_key] = runtime["enlarger"][enlarger_key].clone();
         }
         s["simulation"]["route"] = runtime["workflow"]["route"].clone();
         copy_fields(

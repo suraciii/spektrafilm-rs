@@ -156,7 +156,7 @@ pub fn expose_calibrated(
 ) -> ImageBuf {
     let channel_density = crate::chain_prep::channel_density(film);
     let base_density = &film.data.base_density;
-    let print_sensitivity = crate::chain_prep::print_sensitivity(print);
+    let print_sensitivity = print.sensitivity_f64();
 
     // Stage 1: spectral integration → `log_raw_print` (Python parity).
     // print_spectral applies factor_midgray (exposure_factor) and the
@@ -329,7 +329,7 @@ pub fn process(
     );
     let channel_density = crate::chain_prep::channel_density(film);
     let base_density = &film.data.base_density;
-    let print_sensitivity = crate::chain_prep::print_sensitivity(print);
+    let print_sensitivity = print.sensitivity_f64();
     let n_wl = illuminant
         .len()
         .min(channel_density.len())

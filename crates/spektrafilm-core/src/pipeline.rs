@@ -604,31 +604,14 @@ impl Pipeline {
             ));
         }
         let (mut cur, pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
-            let metering = stages::StageObservation::cpu(
-                backend,
-                "metering",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-            );
-            let ae_ev = self.meter_autoexposure(&image);
-            let image = self.apply_autoexposure(image, ae_ev);
-            drop(metering);
-            let mut geometry = stages::StageObservation::cpu(
-                backend,
-                "geometry",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-            );
-            let resized = crate::resizing::crop_and_rescale(
-                &image,
-                &self.params.io,
-                self.params.camera.film_format_mm,
-            );
-            geometry.set_complete(resized.is_ok());
-            let (working, pitch) = resized?;
-            drop(geometry);
+            let image = self.expose_full_input(image, backend);
+            let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
                 std::borrow::Cow::Owned(working) => working,
                 std::borrow::Cow::Borrowed(_) => image,
             };
+            // The exposure multiply already ran, so the stage sees EV 0 —
+            // matching upstream's prepared-input contract.
             (working, pitch, 0.0)
         } else {
             let (pitch, ae_ev) = physical_context.unwrap_or_else(|| {
@@ -766,20 +749,7 @@ impl Pipeline {
             "pipeline: start"
         );
         let t = Instant::now();
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         record_stage_timing(&mut timings, "color_reference", t);
         self.run_from(image, inject, collect, backend, &color_ref, None, timings)
     }
@@ -841,28 +811,9 @@ impl Pipeline {
             );
             return Ok(output);
         }
-        let metering = stages::StageObservation::cpu(
-            backend,
-            "metering",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let ae_ev = self.meter_autoexposure(&image);
-        let image = self.apply_autoexposure(image, ae_ev);
-        drop(metering);
+        let image = self.expose_full_input(image, backend);
         let t = Instant::now();
-        let mut geometry = stages::StageObservation::cpu(
-            backend,
-            "geometry",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let resized = crate::resizing::crop_and_rescale(
-            &image,
-            &self.params.io,
-            self.params.camera.film_format_mm,
-        );
-        geometry.set_complete(resized.is_ok());
-        let (working, pixel_size_um) = resized?;
-        drop(geometry);
+        let (working, pixel_size_um) = self.rescale_working(&image, backend)?;
         print_stage_timing(stage_timings_enabled(), "resize", t);
         record_stage_timing(&mut timings, "resize", t);
         let working = match working {
@@ -910,20 +861,7 @@ impl Pipeline {
         converting.set_complete(converted.is_ok());
         let film_density = converted?;
         drop(converting);
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         if print_after_convert {
             let mut printing = stages::StageObservation::new(backend, "printing");
             let printing_backend = printing.backend(backend);
@@ -995,20 +933,7 @@ impl Pipeline {
         // white/black correction is on for a slide or print scan). Computed
         // up front so both the GPU-resident and per-stage paths share it.
         let t = Instant::now();
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         print_stage_timing(stage_timings, "color_reference", t);
         record_stage_timing(&mut timings, "color_reference", t);
 
@@ -1111,6 +1036,8 @@ impl Pipeline {
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
         let ae_ev = self.meter_autoexposure(image);
+        // Clone only when the exposure multiply actually needs owned pixels;
+        // a full-resolution preview must not deep-clone a no-op exposure.
         let exposed;
         let image = if self.params.camera.auto_exposure {
             exposed = self.apply_autoexposure(image.clone(), ae_ev);
@@ -1119,36 +1046,11 @@ impl Pipeline {
             image
         };
         drop(metering);
-        let mut geometry = stages::StageObservation::cpu(
-            backend,
-            "geometry",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let resized = crate::resizing::crop_and_rescale(
-            image,
-            &self.params.io,
-            self.params.camera.film_format_mm,
-        );
-        geometry.set_complete(resized.is_ok());
-        let (working, pixel_size_um) = resized?;
-        drop(geometry);
+        let (working, pixel_size_um) = self.rescale_working(image, backend)?;
         if let Some(context) = backend.observation_context() {
             context.set_working_dimensions(working.width, working.height);
         }
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0) {
             Some(out) => out,
             None => return Ok(None),
@@ -1175,6 +1077,66 @@ impl Pipeline {
             return 0.0;
         }
         stages::filming::meter_autoexposure_ev(image, &self.params)
+    }
+
+    /// Metering plus the exposure multiply, under the `metering` observation
+    /// scope. Both owned-image entry points apply the metered EV immediately,
+    /// so the EV itself stays internal.
+    fn expose_full_input(&self, image: ImageBuf, backend: &dyn ComputeBackend) -> ImageBuf {
+        let metering = stages::StageObservation::cpu(
+            backend,
+            "metering",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        let ae_ev = self.meter_autoexposure(&image);
+        let image = self.apply_autoexposure(image, ae_ev);
+        drop(metering);
+        image
+    }
+
+    /// Crop + rescale under the `geometry` observation scope. Callers resolve
+    /// the returned borrow against the image they still hold, so the
+    /// no-geometry case stays zero-copy.
+    fn rescale_working<'a>(
+        &self,
+        image: &'a ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> Result<(std::borrow::Cow<'a, ImageBuf>, f64), String> {
+        let mut geometry = stages::StageObservation::cpu(
+            backend,
+            "geometry",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        let resized = crate::resizing::crop_and_rescale(
+            image,
+            &self.params.io,
+            self.params.camera.film_format_mm,
+        );
+        geometry.set_complete(resized.is_ok());
+        drop(geometry);
+        resized
+    }
+
+    /// Colour reference for one render — scanner/exposure corrections shared
+    /// by the resident and per-stage routes, computed under the
+    /// `color_reference` observation scope.
+    fn color_reference(
+        &self,
+        backend: &dyn ComputeBackend,
+    ) -> crate::color_reference::ColorReference {
+        let _observation = stages::StageObservation::cpu(
+            backend,
+            "color_reference",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        crate::color_reference::ColorReference::compute(
+            &self.film,
+            &self.print,
+            &self.params,
+            &self.print_illuminant,
+            self.print_exposure_factor,
+            self.preflash_raw,
+        )
     }
 }
 

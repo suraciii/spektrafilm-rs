@@ -73,6 +73,23 @@ impl Profile {
             .collect()
     }
 
+    /// Spectral sensitivity `nan_to_num(10 ** log_sensitivity)` — the one
+    /// authoritative expansion of the stored log-sensitivity arrays
+    /// (Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`).
+    pub fn sensitivity_f64(&self) -> Vec<[f64; 3]> {
+        self.log_sensitivity_f64()
+            .into_iter()
+            .map(|row| {
+                let mut out = [0.0f64; 3];
+                for c in 0..3 {
+                    let value = 10.0f64.powf(row[c]);
+                    out[c] = if value.is_nan() { 0.0 } else { value };
+                }
+                out
+            })
+            .collect()
+    }
+
     /// Per-sublayer density curves in the Python layout
     /// `density_curves_layers[k, sublayer, channel]`, as
     /// `[exposure][3 sublayers][3 channels]` f64 (the layered-grain path
