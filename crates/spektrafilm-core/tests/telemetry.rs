@@ -558,7 +558,7 @@ fn report_destination_rejects_protected_symlink_and_hardlink_aliases() {
             PersistenceError::InvalidDestination
         ));
     }
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[cfg(unix)]
@@ -594,7 +594,7 @@ fn report_destination_rejects_dangling_protected_raw_output_symlinks() {
             .path(),
         report.as_path()
     );
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[cfg(unix)]
@@ -611,7 +611,7 @@ fn report_destination_rejects_protected_symlink_cycles() {
         Err(PersistenceError::Io(_))
     ));
     assert!(!report.exists());
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -648,7 +648,7 @@ fn report_publication_is_atomic_no_clobber_and_confirmed_overwrite_is_explicit()
     let second = fs::read_to_string(&destination_path).unwrap();
     assert_ne!(first, second);
     assert!(second.contains("\"id\": 999"));
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -758,7 +758,7 @@ fn report_destination_preserves_symlink_parent_traversal_before_canonicalizing()
         validate_report_destination(&destination, &[&protected]),
         Err(PersistenceError::ProtectedAlias)
     ));
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]
