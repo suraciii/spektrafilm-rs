@@ -11,7 +11,7 @@ use spektrafilm_math::image::ImageBuf;
 #[derive(Debug, Clone, Copy)]
 pub struct GrainV2GpuParams {
     pub mode: u32,
-    /// Dehancer resolution type: 0 = OpticalResolution, 1 = FastBlur.
+    /// Host Film Resolution implementation: 0 = OpticalResolution, 1 = FastBlur.
     pub resolution_type: u32,
     pub amount: f32,
     pub shadows: f32,
@@ -23,6 +23,8 @@ pub struct GrainV2GpuParams {
     pub color: f32,
     pub resolution_factor: f32,
     pub seed: u32,
+    /// Explicit host timer; `None` derives the canonical phase from `seed`.
+    pub timer: Option<f32>,
     pub colored: bool,
     pub clustered: bool,
 }
@@ -181,8 +183,9 @@ pub trait ComputeBackend: Send + Sync {
 
     /// Optional fused fast-path: runs filming + printing + scanning as a single
     /// GPU-resident command buffer (one upload at start, one readback at end).
-    /// Returns linear RGB, or `None` to fall back to per-stage trait methods.
-    /// The caller applies the destination transfer curve on the CPU without clipping.
+    /// Returns native encoded destination RGB when Grain V2 is active, and
+    /// linear destination RGB otherwise, or `None` for the per-stage path.
+    /// The caller decodes only the transfer when linear grain output is requested.
     fn try_run_film_chain(&self, _params: &FilmChainParams<'_>) -> Option<ImageBuf> {
         None
     }
@@ -251,9 +254,11 @@ pub struct FilmChainParams<'a> {
     /// before readback). Blur σ in pixels + amount scalar; both come
     /// from `scanner.unsharp_mask`.
     pub unsharp: Option<UnsharpGpuParams>,
-    /// Optional Grain V2 pass — applied after all scanner-domain effects and
-    /// before the destination transfer curve on the CPU.
+    /// Optional Grain V2 pass — applied after scanner effects, the destination
+    /// same-space matrix roundtrip, and transfer encoding. Returns encoded RGB.
     pub grain_v2: Option<GrainV2GpuParams>,
+    /// Destination space used to encode the resident Grain V2 input.
+    pub scan_output_space: &'a spektrafilm_math::colorspace::RgbColorSpace,
     /// Optional camera lens Gaussian blur on the raw film exposure buffer,
     /// before halation.
     pub camera_lens_blur_px: Option<f32>,

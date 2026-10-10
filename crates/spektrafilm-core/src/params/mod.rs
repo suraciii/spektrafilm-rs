@@ -347,12 +347,8 @@ where
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
-/// User-facing controls for the s023 print density-curve morph (see
-/// `crate::print_morph`). Kept in f64 — the morph is a parity-sensitive f64
-/// computation. The standalone helper defaults `active` to `true`, matching
-/// upstream `PrintCurvesMorphParams`; nested print-render controls default
-/// it to `false`, matching `PrintRenderingParams`. Development still evaluates
-/// a profile's fitted model when present; `active` controls coupled-gamma morphing.
+/// Film and print chemistry controls. Kept in f64 for parity-sensitive curve
+/// evaluation; both stages default to active in the experimental contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintCurvesMorphParams {
@@ -448,7 +444,11 @@ pub struct InputGamutCompressParams {
     pub active: bool,
     #[serde(default = "default_xy")]
     pub algorithm: String,
-    #[serde(default = "default_gamut_knee")]
+    #[serde(default = "default_gamut_boundary")]
+    pub boundary: String,
+    #[serde(default = "default_hull_detail")]
+    pub hull_detail: f64,
+    #[serde(default = "default_input_gamut_knee")]
     pub knee: [f32; 3],
 }
 
@@ -457,19 +457,21 @@ impl Default for InputGamutCompressParams {
         Self {
             active: true,
             algorithm: "xy".into(),
-            knee: [0.0, 1.0, 6.0],
+            boundary: "inscribed_hull".into(),
+            hull_detail: 5.0,
+            knee: [0.815, 1.0, 1.2],
         }
     }
 }
 
 /// Output gamut compression config — mirrors upstream `OutputGamutCompressSpec`.
-/// `"cam16ucs"` (the default, matching upstream 0.3.4) applies the CAM16-UCS
-/// chroma knee + one-sided lightness roll-off; `"off"` passes RGB through
-/// unchanged.
+/// `"oklch"` (the upstream default) applies perceptual OkLab chroma reduction
+/// against the destination RGB cube plus one-sided lightness roll-off;
+/// `"off"` passes RGB through unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputGamutCompressParams {
-    #[serde(default = "default_cam16ucs")]
+    #[serde(default = "default_output_gamut_algorithm")]
     pub algorithm: String,
     #[serde(default = "default_gamut_knee")]
     pub knee: [f32; 3],
@@ -480,24 +482,33 @@ pub struct OutputGamutCompressParams {
 impl Default for OutputGamutCompressParams {
     fn default() -> Self {
         Self {
-            algorithm: "cam16ucs".into(),
-            knee: [0.0, 1.0, 6.0],
-            lightness_compression: Some([0.7, 1.0, 2.2]),
+            algorithm: "oklch".into(),
+            knee: [0.95, 1.0, 1.6],
+            lightness_compression: Some([0.95, 1.0, 1.6]),
         }
     }
 }
 
+fn default_gamut_boundary() -> String {
+    "inscribed_hull".into()
+}
+fn default_hull_detail() -> f64 {
+    5.0
+}
 fn default_xy() -> String {
     "xy".into()
 }
-fn default_cam16ucs() -> String {
-    "cam16ucs".into()
+fn default_output_gamut_algorithm() -> String {
+    "oklch".into()
+}
+fn default_input_gamut_knee() -> [f32; 3] {
+    [0.815, 1.0, 1.2]
 }
 fn default_gamut_knee() -> [f32; 3] {
-    [0.0, 1.0, 6.0]
+    [0.95, 1.0, 1.6]
 }
 fn default_gamut_lightness() -> Option<[f32; 3]> {
-    Some([0.7, 1.0, 2.2])
+    Some([0.95, 1.0, 1.6])
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -805,7 +816,7 @@ fn default_route() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::CameraParams;
+    use super::{CameraParams, GrainParams, RuntimeParams};
 
     #[test]
     fn null_or_missing_camera_color_filter_uses_no_filter() {
@@ -826,16 +837,24 @@ mod tests {
         grain.v2_amount = Some(25.0);
         grain.v2_mode = super::grain::GrainV2Mode::Noise;
         grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
+        grain.v2_resolution_type = 0;
+        grain.v2_timer = 0.25;
         let preset = grain.resolved_grain_v2();
         assert_eq!(preset.amount, 0.25);
         assert_eq!(
             preset.mode,
             spektrafilm_model::grain::v2::GrainV2Mode::Analogue
         );
-        assert_eq!(preset.resolution_type, 1);
+        assert_eq!(preset.resolution_type, 0);
+        assert_eq!(preset.timer, Some(0.25));
+        assert_eq!(preset.film_type, 0);
         grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
-        assert_eq!(grain.resolved_grain_v2().resolution_type, 1);
+        assert_eq!(grain.resolved_grain_v2().film_type, 0);
+        assert_eq!(grain.resolved_grain_v2().resolution_type, 0);
         grain.select_custom_grain_v2();
+        grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
+        assert_eq!(grain.v2_resolution_type, 0);
+        assert_eq!(grain.v2_timer, 0.25);
         assert_eq!(grain.v2_amount, Some(25.0));
         assert_eq!(grain.v2_size, Some(48.0));
         assert_eq!(grain.v2_resolution_factor, Some(75.0));
@@ -850,7 +869,8 @@ mod tests {
             custom.mode,
             spektrafilm_model::grain::v2::GrainV2Mode::Noise
         );
-        assert_eq!(custom.resolution_type, 1);
+        assert_eq!(custom.resolution_type, 0);
+        assert_eq!(custom.timer, Some(0.25));
         params.film_render.grain.v2_profile = "35mm250".into();
         params.film_render.grain.v2_amount = None;
         params.film_render.grain.select_custom_grain_v2();
@@ -867,8 +887,24 @@ mod tests {
             params.film_render.grain.v2_amount = Some(value);
             assert!(params.validate().is_err());
         }
+        params.film_render.grain.v2_resolution_type = 2;
+        assert!(params.validate().is_err());
+        params.film_render.grain.v2_resolution_type = 0;
+        params.film_render.grain.v2_timer = 1.0;
+        assert!(params.validate().is_err());
+        params.film_render.grain.v2_timer = f32::NAN;
+        assert!(params.validate().is_err());
+        params.film_render.grain.v2_timer = 0.0;
         params.film_render.grain.v2_amount = None;
         params.film_render.grain.v2_profile = "unknown".into();
         assert!(params.validate().is_err());
+    }
+    #[test]
+    fn legacy_zero_timer_keeps_seed_derived_phase() {
+        let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
+        value["film_render"]["grain"]["v2_timer"] = serde_json::json!(0.0);
+        let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
+        assert_eq!(params.film_render.grain.v2_timer, 0.0);
+        assert_eq!(params.film_render.grain.resolved_grain_v2().timer, None);
     }
 }
