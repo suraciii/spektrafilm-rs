@@ -205,9 +205,11 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
 /// positive/negative DIR-coupler gammas, the `(use, antihalation)` halation
 /// preset, and the velvia/provia slide-film coupler retunes.
 pub(crate) fn apply_film_specifics(params: &mut RuntimeParams, film: &Profile) {
+    let explicit = crate::presets::explicit_stock_values(params);
     apply_grain_preset(params, film);
     apply_coupler_preset(params, film);
     apply_halation_preset(params, film);
+    crate::presets::restore_explicit_stock_values(params, explicit);
 }
 
 #[derive(serde::Deserialize)]

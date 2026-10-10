@@ -16,7 +16,7 @@ use eframe::egui;
 use parking_lot::{Condvar, Mutex};
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
 use spektrafilm_core::params::RuntimeParams;
-use spektrafilm_core::presets::{LookPreset, builtin_look_presets, workflow_default};
+use spektrafilm_core::presets::{Section, workflow_default};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
@@ -31,6 +31,7 @@ mod diagnostics;
 mod display;
 mod export;
 mod numeric;
+mod presets;
 mod profiles;
 mod state;
 use export::{ExportBackend, ExportDialog, ExportOptions};
@@ -118,14 +119,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "spektrafilm",
         options,
-        Box::new(|cc| {
-            Ok(Box::new(App::new(
-                cc,
-                backend,
-                initial_image,
-                initial_state,
-            )))
-        }),
+        Box::new(|_cc| Ok(Box::new(App::new(backend, initial_image, initial_state)))),
     )
 }
 
@@ -272,7 +266,7 @@ struct App {
     /// Print stocks usable as the print stage (`Profile::is_print_stock`:
     /// paper/printing or film/printing).
     papers: Vec<ProfileEntry>,
-    builtins: Vec<LookPreset>,
+    presets: presets::Browser,
     film_name: String,
     print_name: String,
     /// Development-time family (minutes) of the selected film / paper —
@@ -333,9 +327,6 @@ struct App {
     calibration_job: Option<CalibrationJob>,
     calibration_epoch: u64,
     parameter_revision: u64,
-    /// Applied look presets own explicit neutral filter values without
-    /// changing the persisted calibration setting.
-    look_neutral_filters_pinned: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -727,13 +718,10 @@ struct CalibrationJob {
 
 impl App {
     fn new(
-        cc: &eframe::CreationContext<'_>,
         backend: Arc<dyn ComputeBackend>,
         initial_image: Option<PathBuf>,
         initial_state: Option<PathBuf>,
     ) -> Self {
-        let _ = cc;
-
         let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
@@ -770,7 +758,7 @@ impl App {
             data_dir,
             films,
             papers,
-            builtins: builtin_look_presets(),
+            presets: presets::Browser::new(&gui_state.sections),
             film_name,
             print_name,
             film_dev_times,
@@ -813,7 +801,6 @@ impl App {
             calibration_job: None,
             calibration_epoch: 0,
             parameter_revision: 0,
-            look_neutral_filters_pinned: false,
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
@@ -841,6 +828,7 @@ impl App {
         }
         extras["rust"]["viewer"] = self.viewer.persistent_state();
         self.export_options.write_state(&mut extras);
+        extras["rust"]["presets"] = serde_json::to_value(&self.presets.state)?;
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
     }
 
@@ -855,13 +843,13 @@ impl App {
         self.print_name = state.paper().to_owned();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
-        self.look_neutral_filters_pinned = false;
         self.film_dev_times = profile_dev_times(&self.data_dir, &self.film_name);
         self.print_dev_times = profile_dev_times(&self.data_dir, &self.print_name);
         self.viewer.settings = display::DisplaySettings::from_json(&state.sections["display"]);
         self.params = params;
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();
+        self.presets = presets::Browser::new(&state.sections);
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
         self.raw_lens_info = None;
@@ -1106,31 +1094,6 @@ impl App {
         self.dirty = true;
     }
 
-    fn apply_builtin_preset(&mut self, index: usize) {
-        let Some(preset) = self.builtins.get(index) else {
-            return;
-        };
-        let preset_name = preset.name.clone();
-        let resolved = match preset.resolve(&self.data_dir, &self.params) {
-            Ok(value) => value,
-            Err(error) => {
-                self.status = format!("Preset error: {error}");
-                return;
-            }
-        };
-        self.film_name = resolved.film_name;
-        self.print_name = resolved.print_name;
-        self.params = resolved.params;
-        if resolved.film.is_positive() || self.params.workflow.route != "input > film > scan" {
-            self.params.scanner.scan_output = "direct_scan".into();
-        }
-        self.film_dev_times = resolved.film.data.development_time.clone();
-        self.print_dev_times = resolved.print.data.development_time.clone();
-        self.look_neutral_filters_pinned = true;
-        self.invalidate_look_render();
-        self.status = format!("Applied built-in preset '{preset_name}'");
-    }
-
     fn select_film_profile(&mut self, selected: String) {
         let film = match profile::load_profile_by_name(&self.data_dir, &selected) {
             Ok(profile) if profile.is_film() && profile.is_filming() => profile,
@@ -1145,7 +1108,6 @@ impl App {
             }
         };
         self.film_name = selected;
-        self.look_neutral_filters_pinned = false;
         self.film_dev_times = film.data.development_time.clone();
         self.params.workflow.route = workflow_default(&film);
         self.params.io.scan_film = film.is_positive();
@@ -1168,7 +1130,6 @@ impl App {
         };
         self.print_name = selected;
         self.print_dev_times = print.data.development_time.clone();
-        self.look_neutral_filters_pinned = false;
         self.invalidate_look_render();
     }
 
@@ -1326,7 +1287,7 @@ impl App {
         operation.set_input_dimensions(image.width, image.height);
         operation.set_backend_requested(diagnostics::preview_backend_requested());
         let backend_name = self.backend.name().to_owned();
-        let mut params = match self
+        let params = match self
             .current_state()
             .and_then(|state| state.runtime_params())
         {
@@ -1338,9 +1299,6 @@ impl App {
                 return;
             }
         };
-        if self.look_neutral_filters_pinned {
-            params.settings.neutral_print_filters_from_database = false;
-        }
         let parameter_revision = self.parameter_revision;
         let request = RenderRequest {
             input_epoch,
@@ -2125,6 +2083,41 @@ impl App {
     }
 
     fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str) {
+        let preset_section = match section {
+            "Film base" => Some((Section::Base, "Base", false)),
+            "Grain" => Some((Section::Grain, "Grain", true)),
+            "Halation" => Some((Section::Halation, "Halation", false)),
+            "Couplers" => Some((Section::Couplers, "Couplers", false)),
+            "Convert" => Some((Section::Convert, "Convert", false)),
+            "Camera diffusion" => Some((Section::CameraFilter, "Diffusion", false)),
+            "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
+            "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
+            "Scanner" => Some((Section::Scanner, "Scanner", false)),
+            _ => None,
+        };
+        if let Some((kind, label, default_open)) = preset_section {
+            let mut label_clicked = false;
+            let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                ui.make_persistent_id(("preset-section", section)),
+                default_open,
+            )
+            .show_header(ui, |ui| {
+                label_clicked = ui
+                    .add(egui::Label::new(label).sense(egui::Sense::click()))
+                    .clicked();
+                self.section_preset_menu(ui, kind);
+            });
+            if label_clicked {
+                header.toggle();
+            }
+            header.body(|ui| self.parameter_section_controls(ui, section));
+        } else {
+            self.parameter_section_controls(ui, section);
+        }
+    }
+
+    fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
         let changes = controls::show(ui, &mut self.params, &mut self.gui_state.sections, section);
         if changes.runtime_changed {
             self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
@@ -2191,7 +2184,22 @@ impl App {
             });
     }
     fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
-        ui.collapsing("Chemistry", |ui| {
+        let mut label_clicked = false;
+        let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            ui.make_persistent_id(("chemistry", film)),
+            false,
+        )
+        .show_header(ui, |ui| {
+            label_clicked = ui
+                .add(egui::Label::new("Chemistry").sense(egui::Sense::click()))
+                .clicked();
+            self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
+        });
+        if label_clicked {
+            header.toggle();
+        }
+        header.body(|ui| {
             let (times, selected) = if film {
                 (
                     &self.film_dev_times,
@@ -2259,25 +2267,6 @@ impl App {
                         let selected = self.print_name.clone();
                         self.params.print_render.development_time = None;
                         self.select_print_profile(selected);
-                    }
-                    ui.separator();
-                    ui.label("Built-in Presets");
-                    for index in 0..self.builtins.len() {
-                        let (name, film, print) = {
-                            let preset = &self.builtins[index];
-                            (
-                                preset.name.clone(),
-                                preset.film_profile.stock.clone(),
-                                preset.print_profile.stock.clone(),
-                            )
-                        };
-                        ui.horizontal(|ui| {
-                            ui.label(name);
-                            ui.small(format!("{film} / {print}"));
-                            if ui.button("Apply").clicked() {
-                                self.apply_builtin_preset(index);
-                            }
-                        });
                     }
                 });
                 for section in ["Enlarger", "Scanner"] {
@@ -2395,6 +2384,7 @@ impl eframe::App for App {
         if let Some(options) = self.export_dialog.show(ctx) {
             self.start_export(ctx, options);
         }
+        self.preset_panel(ctx);
         egui::SidePanel::right("controls")
             .resizable(false)
             .exact_width(420.0)

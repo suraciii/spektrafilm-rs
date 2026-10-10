@@ -173,24 +173,27 @@ executable.
 
 See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
 
-`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments in order. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
+`process` accepts an exact preset name or a TOML/JSON preset file through `--preset`. Repeat `--preset` to apply documents in appearance order: a look selects profiles and replaces look controls, then a section edits only its supplied controls. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments after the presets. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths and composition.
+
+Preset names are their portable identities. Core reads schema v1 documents by discarding their old `id` and exports schema v2. Built-ins are compiled from `crates/spektrafilm-core/assets/presets`; user documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in; `user:` and `built-in:` select one group. Section documents contain sparse editable leaves from exactly one look section and retain omitted controls on application. Explicit JSON null edits require JSON export; TOML cannot represent those edits.
 
 ```bash
-# Discover portable looks and editable grain controls
-./target/release/spektrafilm preset list --data-dir data
-./target/release/spektrafilm preset show classic-kodak-portra-400 --data-dir data
+# Discover portable presets and editable grain controls
+./target/release/spektrafilm preset list --source all --format text
+./target/release/spektrafilm preset show 'Kodak Portra 400' --data-dir data
 ./target/release/spektrafilm describe --module film_render.grain --format json
 
 # Inspect the effective configuration without decoding pixels or creating output
 ./target/release/spektrafilm process input.png -o output.tif \
-    --preset classic-kodak-portra-400 \
+    --preset 'Kodak Portra 400' \
+    --preset 'Soft grain' \
     --set film_render.grain.engine=v2 \
     --set 'camera.exposure_compensation_ev=0.5,film_render.grain.v2_amount=25' \
     --dry-run --data-dir data
 
 # Apply a sparse file, then an inline edit, with independent writer settings
 ./target/release/spektrafilm-f64 process input.png -o output.tif \
-    --preset classic-kodak-portra-400 --set adjustments.toml \
+    --preset 'Kodak Portra 400' --set adjustments.toml \
     --set 'enlarger.print_exposure=1.2' --backend cpu \
     --format tiff --bit-depth 16 --compression zip \
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
@@ -258,8 +261,8 @@ SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build build/lut_bun
 ```
 Data-consuming commands select `--data-dir`, then `SPEKTRAFILM_DATA_DIR`, then
 automatic executable-relative or working-directory data. Explicit selections
-must exist and never fall back. Help, version, field discovery, and built-in
-preset listing without an explicit selection need no data. See the
+must exist and never fall back. Help, version, field discovery, and preset
+listing without an explicit selection need no data. See the
 [CLI workflow contract](specs/cli-workflow/spec.md#data-directory-selection).
 Profile metadata and array dimensions are validated before construction;
 present but malformed neutral-filter JSON is an error.
