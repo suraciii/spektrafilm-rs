@@ -606,6 +606,58 @@ mod scan_semantics_tests {
             .any(|(h, l)| to_f64(*h) < to_f64(*l) - 1e-6);
         assert!(!any_darker, "glare darkened pixels — wrong sign");
     }
+    #[test]
+    fn magazine_route_runs_after_v2_grain_and_preserves_transfer_state() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let backend = CpuBackend;
+        let mut disabled = quiet_params();
+        disabled.workflow.route = "input > film > scan > magazine".into();
+        disabled.io.scan_film = true;
+        disabled.film_render.grain.active = true;
+        disabled.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
+        disabled.io.output_cctf_encoding = true;
+
+        let base = Pipeline::new(film.clone(), film.clone(), disabled.clone())
+            .process(flat_image(8), &backend)
+            .unwrap();
+        let mut active = disabled.clone();
+        active.magazine_print_color.active = true;
+        active.magazine_print_color.strength = 0.75;
+        let output = Pipeline::new(film.clone(), film.clone(), active.clone())
+            .process(flat_image(8), &backend)
+            .unwrap();
+        let mut expected = base.clone();
+        let output_space =
+            spektrafilm_math::colorspace::resolve(&active.io.output_color_space).unwrap();
+        crate::magazine_print_color::apply(
+            &mut expected,
+            &active.magazine_print_color,
+            output_space,
+            true,
+        );
+        assert!(
+            max_diff(&output, &expected) < 1e-6,
+            "magazine color must run after V2 grain"
+        );
+
+        disabled.io.output_cctf_encoding = false;
+        active.io.output_cctf_encoding = false;
+        let linear_base = Pipeline::new(film.clone(), film.clone(), disabled)
+            .process(flat_image(8), &backend)
+            .unwrap();
+        let linear_output = Pipeline::new(film.clone(), film, active)
+            .process(flat_image(8), &backend)
+            .unwrap();
+        assert!(
+            linear_output
+                .data
+                .iter()
+                .all(|value| to_f64(*value).is_finite()),
+            "linear magazine output must preserve finite headroom"
+        );
+        assert!(max_diff(&linear_output, &linear_base) > 1e-5);
+    }
 
     #[test]
     fn preflash_shifts_print_black_white_references() {

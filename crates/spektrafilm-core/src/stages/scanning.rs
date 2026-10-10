@@ -281,7 +281,11 @@ pub fn scan_with_options(
             params.film_render.grain.engine,
             crate::params::grain::GrainEngine::V2
         );
-    if params.io.output_cctf_encoding || grain_v2_active {
+    let magazine_active = params.magazine_print_color.active
+        && params.magazine_print_color.strength > 0.0
+        && params.workflow.route == "input > film > scan > magazine";
+    let encoded_domain = params.io.output_cctf_encoding || grain_v2_active;
+    if encoded_domain {
         let _encoding = super::StageObservation::cpu(
             backend,
             "output_transfer",
@@ -316,7 +320,22 @@ pub fn scan_with_options(
             spektrafilm_model::grain::v2::apply_cpu(&rgb, grain)
         });
     }
-
+    // Magazine color is the final post-scan appearance, after scanner-domain
+    // grain. A linear export uses the helper's finite transfer round-trip and
+    // remains linear at the API boundary.
+    if magazine_active {
+        let _magazine = super::StageObservation::cpu(
+            backend,
+            "magazine_print_color",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        crate::magazine_print_color::apply(
+            &mut rgb,
+            &params.magazine_print_color,
+            output_space,
+            encoded_domain,
+        );
+    }
     // Linear exports retain the same grain realization as encoded exports.
     // Decode only the transfer; the stored same-space matrix ran above once.
     if grain_v2_active && !params.io.output_cctf_encoding {

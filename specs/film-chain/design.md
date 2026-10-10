@@ -12,3 +12,4 @@
 - Working pixel pitch is carried with the image through crop and resize and is consumed by spatial stages; stages do not infer it from the current raster size.
 - Color-domain transitions are explicit. The chain does not apply an implicit transfer curve or primaries conversion inside an effect.
 - No generic graph or backend-specific public parameter schema is required; runtime parameters remain the single caller-facing model.
+- The magazine print appearance route delegates its color contract to [Magazine print color](../magazine-print-color/design.md).

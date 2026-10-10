@@ -63,7 +63,24 @@ pub fn digest_params(
     apply_stocks_specifics: bool,
 ) -> RuntimeParams {
     params = apply_database_neutral_print_filters(params, film, print, database);
+    apply_preview_constraints(&mut params);
 
+    if apply_stocks_specifics {
+        apply_film_specifics(&mut params, film);
+        // Upstream `_apply_print_specifics` is intentionally empty in 0.3.4.
+    }
+    apply_debug_constraints(&mut params);
+
+    params
+}
+
+/// Apply final runtime switches without reapplying stock look defaults.
+pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
+    apply_preview_constraints(params);
+    apply_debug_constraints(params);
+}
+
+fn apply_preview_constraints(params: &mut RuntimeParams) {
     if params.settings.preview_mode {
         // Upstream preview: kill the spatially-variant and stochastic
         // cost centres but keep the (cheap, per-pixel) colour chain.
@@ -79,12 +96,9 @@ pub fn digest_params(
         params.scanner.lens_blur = 0.0;
         params.scanner.unsharp_mask = [0.0, 0.0];
     }
+}
 
-    if apply_stocks_specifics {
-        apply_film_specifics(&mut params, film);
-        // Upstream `_apply_print_specifics` is intentionally empty in 0.3.4.
-    }
-
+fn apply_debug_constraints(params: &mut RuntimeParams) {
     if params.debug.lut_mode {
         // LUT-sampling regime: force the pipeline into a deterministic
         // per-pixel transform. Enabling lut_mode promotes spatial and
@@ -142,17 +156,27 @@ pub fn digest_params(
         params.film_render.grain.active = false;
         params.print_render.glare.active = false;
     }
-
-    params
 }
 
 /// Set neutral dichroic filters from the stock database. Missing combinations
 /// leave the caller's configured defaults unchanged, matching upstream.
 pub fn apply_database_neutral_print_filters(
+    params: RuntimeParams,
+    film: &Profile,
+    print: &Profile,
+    database: Option<&NeutralFilters>,
+) -> RuntimeParams {
+    let protected = params.neutral_print_filters_protected;
+    apply_database_neutral_print_filters_protected(params, film, print, database, protected)
+}
+
+/// Protected axes are ordered cyan, magenta, yellow; calibration policy is retained.
+pub(crate) fn apply_database_neutral_print_filters_protected(
     mut params: RuntimeParams,
     film: &Profile,
     print: &Profile,
     database: Option<&NeutralFilters>,
+    protected: [bool; 3],
 ) -> RuntimeParams {
     if !params.settings.neutral_print_filters_from_database {
         return params;
@@ -161,9 +185,15 @@ pub fn apply_database_neutral_print_filters(
     let film_stock = film.info.stock.as_deref().unwrap_or("");
     match database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock)) {
         Some([c, m, y]) => {
-            params.enlarger.c_filter_neutral = c as f32;
-            params.enlarger.m_filter_neutral = m as f32;
-            params.enlarger.y_filter_neutral = y as f32;
+            if !protected[0] {
+                params.enlarger.c_filter_neutral = c as f32;
+            }
+            if !protected[1] {
+                params.enlarger.m_filter_neutral = m as f32;
+            }
+            if !protected[2] {
+                params.enlarger.y_filter_neutral = y as f32;
+            }
         }
         None => {}
     }
@@ -321,8 +351,20 @@ fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
     }
 }
 
-/// B&W engine-layout broadcast, applied by the pipeline after the digest
-/// (digest output stays in user units so GUI state seeds cleanly).
+/// Normalize route and film topology for effective reports and pipeline construction.
+/// Scan-only routes enable film scanning; other routes preserve an explicit scan flag.
+pub(crate) fn normalize_runtime_topology(film: &Profile, params: &mut RuntimeParams) {
+    if matches!(
+        params.workflow.route.as_str(),
+        "input > film > scan" | "input > film > scan > magazine"
+    ) {
+        params.io.scan_film = true;
+    }
+    broadcast_monochrome_layout(film, params);
+}
+
+/// B&W engine-layout broadcast, applied after digestion by the process resolver
+/// and pipeline (digest output stays in user units so GUI state seeds cleanly).
 ///
 /// Upstream `n_channels == 1` profiles keep channel-0 of every per-channel
 /// tuple (the DIR matrix degenerates to 1×1 self-inhibition with no

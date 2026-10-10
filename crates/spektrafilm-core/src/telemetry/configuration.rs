@@ -41,6 +41,7 @@ impl ColorSpaceRole {
 pub enum WorkflowRoute {
     Input,
     FilmScan,
+    FilmScanMagazine,
     FilmPrintScan,
     ConvertFilmPrintScan,
     ConvertFilmScanMinusBase,
@@ -53,6 +54,7 @@ impl WorkflowRoute {
         match value {
             "input" => Self::Input,
             "input > film > scan" => Self::FilmScan,
+            "input > film > scan > magazine" => Self::FilmScanMagazine,
             "input > film > print > scan" => Self::FilmPrintScan,
             "input > convert-film > print > scan" => Self::ConvertFilmPrintScan,
             "input > convert-film > scan-minus-base" => Self::ConvertFilmScanMinusBase,

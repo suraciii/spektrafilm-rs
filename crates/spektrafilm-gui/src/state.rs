@@ -257,6 +257,10 @@ impl GuiState {
         for group in ["camera", "scanner"] {
             merge(&mut runtime[group], &s[group]);
         }
+        merge(
+            &mut runtime["magazine_print_color"],
+            &s["magazine_print_color"],
+        );
         for &(section, group, leaf) in RUNTIME_GROUPS {
             merge(&mut runtime[group][leaf], &s[section]);
         }
@@ -288,7 +292,10 @@ impl GuiState {
             runtime["enlarger"][to] = s["simulation"][from].clone();
         }
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
-        runtime["io"]["scan_film"] = json!(s["simulation"]["route"] == "input > film > scan");
+        runtime["io"]["scan_film"] = json!(matches!(
+            s["simulation"]["route"].as_str(),
+            Some("input > film > scan" | "input > film > scan > magazine")
+        ));
         copy_fields(
             &mut runtime["io"],
             &s["simulation"],
@@ -438,6 +445,10 @@ impl GuiState {
         for group in ["camera", "scanner"] {
             merge(&mut s[group], &runtime[group]);
         }
+        merge(
+            &mut s["magazine_print_color"],
+            &runtime["magazine_print_color"],
+        );
         for &(section, group, leaf) in RUNTIME_GROUPS {
             merge(&mut s[section], &runtime[group][leaf]);
         }
@@ -601,6 +612,14 @@ mod tests {
         }
         let factory = GuiState::factory();
         let mut shared = factory.sections.clone();
+        let magazine = shared
+            .as_object_mut()
+            .and_then(|sections| sections.remove("magazine_print_color"));
+        assert_eq!(
+            magazine,
+            Some(json!({"active": false, "strength": 1.0})),
+            "magazine print color factory defaults",
+        );
         shared.as_object_mut().unwrap().remove("rust");
         assert_eq!(compare(&shared, &expected, "factory"), 187);
         let params = factory.runtime_params().unwrap();

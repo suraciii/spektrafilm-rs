@@ -14,8 +14,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Interactive preview** through wgpu (Metal on macOS), with CPU stages for exact optical diffusion and V1 grain sampling; V2 uses a compute shader. Frame rate depends on image size, controls and hardware.
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
 - **Independent GUI export.** **Export…** opens its own settings dialog, then a file chooser, and renders an immutable snapshot of the full input and simulation parameters through the GUI's Runtime worker. CPU uses the GUI build's native precision; GPU uses WGPU f32 and faithful CPU stages where required. GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Cancellation discards work at the next boundary before atomic publication and may wait for an active computation.
-- **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
-- **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
+- **Magazine print color.** The optional post-scan `input > film > scan > magazine` route applies a bundled RGB appearance: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. It remains RGB-only and exposes one appearance strength; it does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 - **Selectable grain engines.** V1 remains the default emulsion model. V2 provides procedural Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls.
 
@@ -113,7 +112,7 @@ executable.
 ./target/release/spektrafilm-gui [optional/path/to/image.orf]
 ```
 
-- **Sidebar workflow** — the Rust GUI follows the upstream sidebar tabs: **MAIN** (load, input image, profiles, exposure, crop, preview/RAW, scanner, enlarger and output), **FILM** (halation, DIR couplers, diffusion and grain), **PRINT** (glare, print curves, enlarger details/diffusion and saving color), **ADVANCED** (spectral/color controls), and **CONFIG** (state persistence and display controls). The tab row and Preview/Scan action bar remain fixed while each tab's controls scroll.
+- **Magazine print color** — in **ADVANCED**, enable the bundled appearance and set Strength from 0 to 1. Strength 0 is a no-op. Photographic print controls remain separate.
 - **Open…** — load standard images or camera RAW. RAW processing uses LibRaw and exposes as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction; RAW enters the runtime as linear ACES2065-1.
 - **Input image / Profiles** — choose input/output color workflow, film stock and print paper. Picking a film auto-selects its paired paper (`target_print` in the profile).
 - **Numeric fields** — click to type exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger and output values. The fields use the text cursor. Scrolling over a field changes its value by the control's step; scrolling elsewhere moves the sidebar. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value and resets when focus leaves the field.
@@ -165,6 +164,29 @@ executable.
 ```
 
 See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
+`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=JSON_VALUE` assignments in order. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
+
+```bash
+# Discover portable looks and editable grain controls
+./target/release/spektrafilm preset list --data-dir data
+./target/release/spektrafilm preset show classic-kodak-portra-400 --data-dir data
+./target/release/spektrafilm describe --module film_render.grain --format json
+
+# Inspect the effective configuration without decoding pixels or creating output
+./target/release/spektrafilm process input.png -o output.tif \
+    --preset classic-kodak-portra-400 \
+    --set 'camera.exposure_compensation_ev=0.5,film_render.grain.v2_amount=25' \
+    --dry-run --data-dir data
+
+# Apply a sparse file, then an inline edit, with independent writer settings
+./target/release/spektrafilm-f64 process input.png -o output.tif \
+    --preset classic-kodak-portra-400 --set adjustments.toml \
+    --set 'enlarger.print_exposure=1.2' --backend cpu \
+    --format tiff --bit-depth 16 --compression zip \
+    --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
+```
+
+`--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy. It checks the input path and supported file kind. Image decoding and compute-adapter availability remain unchecked. Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.
 
 Working geometry follows Python 0.3.4 (`3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`). In JSON, set `io.crop`, `io.crop_center: [x, y]`, `io.crop_size: [width, height]`, and `io.upscale_factor`. Center coordinates are normalized to the source axes; both size components are fractions of the source's long edge. Bounds and rounding follow the upstream NumPy slice convention, including negative-index slicing when a crop exceeds the short edge. Empty crops and nonpositive/nonfinite resize factors return errors before output is written.
 

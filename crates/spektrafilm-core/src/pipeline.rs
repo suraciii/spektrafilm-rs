@@ -344,10 +344,7 @@ impl Pipeline {
         let mut film =
             crate::profile::resolve_for_render(film, params.film_render.development_time);
         let mut params = params;
-        if params.workflow.route == "input > film > scan" {
-            params.io.scan_film = true;
-        }
-        crate::params_builder::broadcast_monochrome_layout(&film, &mut params);
+        crate::params_builder::normalize_runtime_topology(&film, &mut params);
         let mut print =
             crate::profile::resolve_for_render(print, params.print_render.development_time);
         apply_base_tuning(&mut film, &params.film_render.base, None);

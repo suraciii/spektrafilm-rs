@@ -9,6 +9,7 @@ pub mod diffusion;
 pub mod glare;
 pub mod grain;
 pub mod halation;
+pub mod sources;
 
 pub(crate) mod validation;
 use couplers::DirCouplersParams;
@@ -225,6 +226,23 @@ impl Default for ConvertFilmParams {
             exposure_compensation_ev: 0.0,
             base_percentile: 99.0,
             calibration: default_calibration(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MagazinePrintColorParams {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default = "default_one_f64")]
+    pub strength: f64,
+}
+impl Default for MagazinePrintColorParams {
+    fn default() -> Self {
+        Self {
+            active: false,
+            strength: 1.0,
         }
     }
 }
@@ -683,6 +701,10 @@ pub struct RuntimeParams {
     /// it does not become part of the user parameter schema or digest.
     #[serde(skip)]
     pub random_seed: u64,
+    /// CMY axes owned by a resolved look or explicit parameter edits.
+    /// Calibration uses database precision only for unprotected axes.
+    #[serde(skip)]
+    pub(crate) neutral_print_filters_protected: [bool; 3],
     #[serde(default)]
     pub camera: CameraParams,
     #[serde(default)]
@@ -698,6 +720,8 @@ pub struct RuntimeParams {
     #[serde(default)]
     pub workflow: WorkflowParams,
     #[serde(default)]
+    pub magazine_print_color: MagazinePrintColorParams,
+    #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]
     pub debug: DebugParams,
@@ -709,6 +733,7 @@ impl Default for RuntimeParams {
     fn default() -> Self {
         Self {
             random_seed: 0,
+            neutral_print_filters_protected: [false; 3],
             camera: CameraParams::default(),
             enlarger: EnlargerParams::default(),
             scanner: ScannerParams::default(),
@@ -716,6 +741,7 @@ impl Default for RuntimeParams {
             print_render: PrintRenderingParams::default(),
             io: IoParams::default(),
             workflow: WorkflowParams::default(),
+            magazine_print_color: MagazinePrintColorParams::default(),
             settings: SettingsParams::default(),
             debug: DebugParams::default(),
             taps: TapsParams::default(),

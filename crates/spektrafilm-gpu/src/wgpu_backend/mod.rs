@@ -185,17 +185,7 @@ impl WgpuBackend {
         output_idx: usize,
         name: &'static str,
     ) -> Vec<f32> {
-        if !self.device.context.enabled() {
-            return self.dispatch_compute_inner(
-                shader_source,
-                bindings,
-                n_pixels,
-                output_idx,
-                name,
-            );
-        }
-        let (backend, _batch) = self.observed_batch("compute");
-        backend.dispatch_compute_inner(shader_source, bindings, n_pixels, output_idx, name)
+        self.dispatch_compute_inner(shader_source, bindings, n_pixels, output_idx, name)
     }
     fn dispatch_compute_inner(
         &self,
@@ -523,6 +513,13 @@ impl ComputeBackend for WgpuBackend {
         cat: &[[f64; 3]; 3],
         xyz_to_rgb: &[[f64; 3]; 3],
     ) -> ImageBuf {
+        if self.device.context.enabled() && self.device.batch.is_none() {
+            let (backend, _batch) = self.observed_batch("compute");
+            return backend.scan_spectral(
+                density_cmy, channel_density, base_density, illuminant, normalization, cat,
+                xyz_to_rgb,
+            );
+        }
         // GPU live-preview path collapses CAT and XYZ→RGB into a single
         // matrix — small precision drop acceptable for preview, matches
         // the same trade-off as `hanatos2025_rgb_to_raw`.
@@ -632,6 +629,13 @@ impl ComputeBackend for WgpuBackend {
         normalization_factor: f64,
         preflash: [f64; 3],
     ) -> ImageBuf {
+        if self.device.context.enabled() && self.device.batch.is_none() {
+            let (backend, _batch) = self.observed_batch("compute");
+            return backend.print_spectral(
+                density_cmy, channel_density, base_density, illuminant, sensitivity,
+                normalization_factor, preflash,
+            );
+        }
         let n_wl = channel_density.len();
         let n_pixels = density_cmy.pixel_count() as u32;
 
@@ -698,6 +702,12 @@ impl ComputeBackend for WgpuBackend {
         ref_illuminant: &[f32],
         cat16: bool,
     ) -> ImageBuf {
+        if self.device.context.enabled() && self.device.batch.is_none() {
+            let (backend, _batch) = self.observed_batch("compute");
+            return backend.hanatos2025_rgb_to_raw(
+                image, tc_lut, color_space, ref_illuminant, cat16,
+            );
+        }
         // GPU live-preview path collapses the two-step CAT02 adaptation
         // into a single matmul — small visible-spectrum precision drop
         // that's acceptable for preview. The CPU path keeps the two-step
@@ -765,6 +775,10 @@ impl ComputeBackend for WgpuBackend {
         density_curves: &[[f64; 3]],
         gamma_factor: f64,
     ) -> ImageBuf {
+        if self.device.context.enabled() && self.device.batch.is_none() {
+            let (backend, _batch) = self.observed_batch("compute");
+            return backend.density_curve_interp(log_raw, log_exposure, density_curves, gamma_factor);
+        }
         let n_pixels = log_raw.pixel_count() as u32;
         let k = log_exposure.len() as u32;
 
