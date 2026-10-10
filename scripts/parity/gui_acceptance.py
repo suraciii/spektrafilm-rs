@@ -394,8 +394,6 @@ class X11:
             'Input': (26, 16),
             'Output': (78, 16),
             'Paper back': (145, 16),
-            'Reveal': (1055, 180),
-            'Crossfade': (1117, 180),
             'ccw rotate': (42, 963),
             'cw rotate': (114, 963),
             '100%': (174, 963),
@@ -414,7 +412,7 @@ class X11:
                 y = image.height - 17
             self.xd('mousemove', '--window', self.window, x, y)
             self.xd('click', 1)
-            time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back', 'Reveal', 'Crossfade') else .15)
+            time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back') else .15)
             return
         if label in ('Open', 'Export', 'Cancel'):
             self.scroll(True)
@@ -488,17 +486,24 @@ class X11:
                             f'{control} not visible in {name} at {"bottom" if bottom else "top"}')
                 self.snap(f'{label}-{name}-{"bottom" if bottom else "top"}', image, lines)
         self.tab('MAIN')
-    def measure_viewer(self, label):
-        """Record displayed image bounds from screenshot pixels, not OCR."""
-        image, _, lines = self.read()
-        pixels = np.asarray(image.convert('RGB'))
-        canvas = pixels[80:max(81, image.height - 80), :min(1030, image.width)]
-        channels = [canvas[..., i].astype(np.int16) for i in range(3)]
-        chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
-        mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
-        ys, xs = np.where(mask)
-        require(xs.size > 100, f'No rendered viewer pixels found in screenshot for {label}')
-        bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
+    def measure_viewer(self, label, timeout=20):
+        """Record displayed image bounds from screenshot pixels, not OCR.
+
+        The raster reaches the viewer on a UI frame after the render completes,
+        so wait for painted pixels instead of sampling a single frame.
+        """
+        def painted():
+            image, _, _ = self.read()
+            pixels = np.asarray(image.convert('RGB'))
+            canvas = pixels[80:max(81, image.height - 80), :min(1030, image.width)]
+            channels = [canvas[..., i].astype(np.int16) for i in range(3)]
+            chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
+            mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
+            ys, xs = np.where(mask)
+            if xs.size <= 100:
+                return None
+            return image, [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
+        image, bounds = wait_for(painted, f'viewer pixels for {label}', timeout)
         screenshot = f'{len(self.records):02d}-{label}.png'
         image.save(self.root / screenshot)
         self.records.append({'surface': label, 'screenshot': screenshot,
@@ -1242,10 +1247,13 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         metadata.xmpData()['Xmp.dc.description'] = 'GUI rotation description'
         metadata.writeMetadata()
         driver.file_action('Open', standard)
+        # The Input view samples the raster a completed render consumed, so wait
+        # for the automatic preview before measuring the viewer.
+        driver.wait_report('loaded-input-auto-preview')
         driver.click('Input', False)
         loaded_bounds = driver.measure_viewer('loaded-input-image')
         driver.records.append({'parity_action': 'load_input_image',
-                               'assertion': 'opened raster produces non-empty native Input viewer pixels',
+                               'assertion': 'completed render seeds non-empty native Input viewer pixels',
                                'source_dimensions': [192, 96],
                                'pixel_viewer_bounds': loaded_bounds,
                                'screenshot': driver.records[-1]['screenshot']})
@@ -1255,7 +1263,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         baseline_state = json.loads(scan_before.read_text())
         baseline_scan = {'scanner': baseline_state.get('scanner', {}),
                          'glare': baseline_state.get('glare', {})}
-        driver.click('Scan-for-print')
+        driver.click('black and white correction')
         driver.rendered('scan-for-print-on')
         scan_on = root / 'scan-for-print-on.json'
         driver.state_action('Save current to file', scan_on, True)
@@ -1267,7 +1275,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                 enabled_scan['scanner'].get('black_correction') is True and
                 enabled_scan['glare'].get('active') is False,
                 'Scan-for-print did not force correction/glare settings')
-        driver.click('Scan-for-print')
+        driver.click('black and white correction')
         driver.rendered('scan-for-print-off')
         scan_after = root / 'scan-for-print-after.json'
         driver.state_action('Save current to file', scan_after, True)
@@ -1284,7 +1292,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'restored': restored_scan})
         driver.state_action('Load from file', scan_on)
         driver.rendered('scan-for-print-loaded-state')
-        driver.click('Scan-for-print')
+        driver.click('black and white correction')
         driver.rendered('scan-for-print-loaded-toggle')
         loaded_toggle = root / 'scan-for-print-loaded-toggle.json'
         driver.state_action('Save current to file', loaded_toggle, True)
@@ -1412,10 +1420,13 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.state_action('Load from file', viewing)
         driver.rendered('configured-after-factory-reset')
         driver.click('100%', False)
+        driver.wait_text(r'zoom\s*100', 'zoom-100-selected')
         zoom_100 = driver.measure_viewer('zoom-100-percent')
         driver.click('200%', False)
+        driver.wait_text(r'zoom\s*200', 'zoom-200-selected')
         zoom_200 = driver.measure_viewer('zoom-200-percent')
         driver.click('400%', False)
+        driver.wait_text(r'zoom\s*400', 'zoom-400-selected')
         zoom_400 = driver.measure_viewer('zoom-400-percent')
         widths = [item[2] - item[0] for item in (zoom_100, zoom_200, zoom_400)]
         require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
