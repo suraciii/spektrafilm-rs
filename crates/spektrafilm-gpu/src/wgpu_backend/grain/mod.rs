@@ -75,19 +75,8 @@ impl WgpuBackend {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         state.encode_pass(&mut encoder, img.pixel_count() as u32, &readback);
         self.queue.submit(Some(encoder.finish()));
-        let slice = readback.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-        self.device.materialized(state.n_bytes);
-        let data = slice.get_mapped_range();
-        let output = f32_to_scalars(bytemuck::cast_slice(&data).to_vec());
-        drop(data);
-        readback.unmap();
-        ImageBuf::from_data(img.width, img.height, output)
+        let output = self.read_mapped_f32(&readback, state.n_bytes);
+        ImageBuf::from_data(img.width, img.height, f32_to_scalars(output))
     }
 }
 

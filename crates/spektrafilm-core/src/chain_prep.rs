@@ -78,22 +78,6 @@ pub(crate) fn channel_density(profile: &Profile) -> Vec<[f64; 3]> {
         .collect()
 }
 
-pub(crate) fn print_sensitivity(print: &Profile) -> Vec<[f64; 3]> {
-    print
-        .data
-        .log_sensitivity
-        .iter()
-        .map(|row| {
-            let mut sensitivity = [0.0; 3];
-            for c in 0..3 {
-                let value = 10.0f64.powf(row.get(c).copied().unwrap_or(0.0));
-                sensitivity[c] = if value.is_nan() { 0.0 } else { value };
-            }
-            sensitivity
-        })
-        .collect()
-}
-
 pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[f64; 3]; 3] {
     spektrafilm_model::couplers::compute_dir_couplers_matrix(
         dir.gamma_samelayer_rgb,

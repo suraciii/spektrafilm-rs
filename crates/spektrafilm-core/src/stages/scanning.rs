@@ -57,7 +57,8 @@ fn scanner_lut_bounds(profile: &Profile, params: &RuntimeParams) -> ([f64; 3], [
 /// PCHIP-interpolate per pixel, then apply `10^log_xyz → CAT →
 /// xyz_to_rgb` to get RGB. Glare is added after this returns in RGB
 /// space — algebraically equivalent to Python's add_glare-in-XYZ
-/// because the matrices are linear (see comment in `scan()` below).
+/// because the matrices are linear (see the glare note in
+/// `scan_with_options` below).
 ///
 /// This LUTs the *same intermediate quantity* Python LUTs
 /// (`cmy_to_log_xyz`), not the post-`10^x`/post-matrix RGB output —
@@ -138,30 +139,32 @@ fn scan_spectral_via_lut(
     out
 }
 
-fn scan_reference_rgb(
-    density_cmy: [f64; 3],
+/// Spectral integration of one density image under the scan colour context.
+///
+/// The faithful B&W/slide luminance remap (`color_ref.has_remap`) only exists
+/// on the LUT path, so it forces that path; `settings.use_scanner_lut` selects
+/// it otherwise. The bulk scan and the one-pixel reference samples share this
+/// switch, so a new path condition cannot desynchronize them.
+fn scan_spectral_rgb(
+    density_cmy: &ImageBuf,
     profile: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
     color_ref: &crate::color_reference::ColorReference,
     channel_density: &[[f64; 3]],
     base_density: &[f64],
-    illuminant: &[f64],
-    normalization: f64,
-    adapt: &[[f64; 3]; 3],
-    xyz_to_rgb: &[[f64; 3]; 3],
-) -> [f64; 3] {
-    let sample = ImageBuf::from_data(1, 1, density_cmy.into_iter().map(from_f64).collect());
-    let captured = if color_ref.has_remap() || params.settings.use_scanner_lut {
+    color: &crate::chain_prep::ScanColorContext,
+) -> ImageBuf {
+    if color_ref.has_remap() || params.settings.use_scanner_lut {
         let (data_min, data_max) = scanner_lut_bounds(profile, params);
         scan_spectral_via_lut(
-            &sample,
+            density_cmy,
             channel_density,
             base_density,
-            illuminant,
-            normalization,
-            adapt,
-            xyz_to_rgb,
+            &color.illuminant,
+            color.normalization,
+            &color.adapt,
+            &color.base_xyz_to_rgb,
             backend,
             data_min,
             data_max,
@@ -170,15 +173,40 @@ fn scan_reference_rgb(
         )
     } else {
         backend.scan_spectral(
-            &sample,
+            density_cmy,
             channel_density,
             base_density,
-            illuminant,
-            normalization,
-            adapt,
-            xyz_to_rgb,
+            &color.illuminant,
+            color.normalization,
+            &color.adapt,
+            &color.base_xyz_to_rgb,
         )
-    };
+    }
+}
+
+/// One-pixel scan reference through [`scan_spectral_rgb`] — used for the
+/// positive-scan clear/dense endpoints.
+fn scan_reference_rgb(
+    density_cmy: [f64; 3],
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    channel_density: &[[f64; 3]],
+    base_density: &[f64],
+    color: &crate::chain_prep::ScanColorContext,
+) -> [f64; 3] {
+    let sample = ImageBuf::from_data(1, 1, density_cmy.into_iter().map(from_f64).collect());
+    let captured = scan_spectral_rgb(
+        &sample,
+        profile,
+        params,
+        backend,
+        color_ref,
+        channel_density,
+        base_density,
+        color,
+    );
     [
         to_f64(captured.data[0]),
         to_f64(captured.data[1]),
@@ -255,10 +283,7 @@ pub fn scan_with_options(
         .expect("output color space must be validated before scanning");
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, scan_illuminant);
     let scan_context = &prepared.scan;
-    let illuminant = &scan_context.illuminant;
-    let normalization = scan_context.normalization;
-    let adapt = scan_context.adapt;
-    let base_xyz_to_rgb = scan_context.base_xyz_to_rgb;
+    let base_density = base_density.as_ref();
 
     // Dispatch spectral integration to backend (GPU or CPU). The backend
     // applies the two matrices in sequence — we pass them separately.
@@ -267,38 +292,19 @@ pub fn scan_with_options(
     // grid and PCHIP-interpolate per pixel. Glare is added in RGB
     // space after this returns (the existing post-step at the bottom
     // of this function), so swapping to the LUT path is glare-safe.
-    // The faithful B&W/slide luminance remap (color_ref.has_remap) applies
-    // per-pixel on the scan XYZ inside scan_spectral_via_lut — so route
-    // through the LUT path when it's active (the LUT result matches the
-    // direct spectral path to sub-LSB, and only this path exposes the
-    // pre-CAT XYZ hook). Otherwise honour use_scanner_lut.
-    let mut rgb = if color_ref.has_remap() || params.settings.use_scanner_lut {
-        let (data_min, data_max) = scanner_lut_bounds(profile, params);
-        scan_spectral_via_lut(
-            density_cmy,
-            &channel_density,
-            &base_density,
-            &illuminant,
-            normalization,
-            &adapt,
-            &base_xyz_to_rgb,
-            backend,
-            data_min,
-            data_max,
-            params.settings.lut_resolution as usize,
-            color_ref,
-        )
-    } else {
-        backend.scan_spectral(
-            density_cmy,
-            &channel_density,
-            &base_density,
-            &illuminant,
-            normalization,
-            &adapt,
-            &base_xyz_to_rgb,
-        )
-    };
+    // The path selection (including the faithful B&W/slide luminance
+    // remap) lives in `scan_spectral_rgb` so the reference samples
+    // below cannot diverge from this bulk scan.
+    let mut rgb = scan_spectral_rgb(
+        density_cmy,
+        profile,
+        params,
+        backend,
+        color_ref,
+        &channel_density,
+        base_density,
+        scan_context,
+    );
 
     // White/black correction is fully handled by color_ref's XYZ luminance
     // remap (applied inside the scan paths above). For the combos where no
@@ -352,11 +358,8 @@ pub fn scan_with_options(
             backend,
             color_ref,
             &channel_density,
-            base_density.as_ref(),
-            &illuminant,
-            normalization,
-            &adapt,
-            &base_xyz_to_rgb,
+            base_density,
+            scan_context,
         );
         let (_, dense_density) = scanner_lut_bounds(profile, params);
         let dense_rgb = scan_reference_rgb(
@@ -366,11 +369,8 @@ pub fn scan_with_options(
             backend,
             color_ref,
             &channel_density,
-            base_density.as_ref(),
-            &illuminant,
-            normalization,
-            &adapt,
-            &base_xyz_to_rgb,
+            base_density,
+            scan_context,
         );
         if params.scanner.lens_blur > 0.0 {
             rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
@@ -486,7 +486,9 @@ pub fn scan_with_options(
     rgb
 }
 
-pub fn scan(
+/// Scan with the profile's own viewing illuminant and the film base included
+/// — the per-stage topology entry point.
+pub fn process(
     density_cmy: &ImageBuf,
     profile: &Profile,
     params: &RuntimeParams,
@@ -504,17 +506,6 @@ pub fn scan(
         None,
         true,
     )
-}
-
-pub fn process(
-    density_cmy: &ImageBuf,
-    profile: &Profile,
-    params: &RuntimeParams,
-    backend: &dyn ComputeBackend,
-    color_ref: &crate::color_reference::ColorReference,
-    gamut: &crate::gamut_compression::OutputGamutCompress,
-) -> ImageBuf {
-    scan(density_cmy, profile, params, backend, color_ref, gamut)
 }
 
 #[cfg(test)]

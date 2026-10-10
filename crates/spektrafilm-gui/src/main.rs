@@ -14,9 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use parking_lot::{Condvar, Mutex};
-use spektrafilm_core::image_io::{
-    self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions,
-};
+use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::presets::{LookPreset, builtin_look_presets, workflow_default};
 use spektrafilm_core::profile;
@@ -33,20 +31,12 @@ mod diagnostics;
 mod display;
 mod export;
 mod numeric;
-mod panels;
 mod profiles;
 mod state;
-use export::{ExportBackend, ExportCompression, ExportDialog, ExportFormat, ExportOptions};
+use export::{ExportBackend, ExportDialog, ExportOptions};
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
-const IMAGE_FILE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "tif", "tiff", "exr",
-    // Keep this list in lockstep with image_io::is_raw.
-    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw",
-    "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef", "kdc", "ari", "bay", "dcr", "drf", "erf",
-    "fff", "k25", "mos", "ptx",
-];
 
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt()
@@ -1245,31 +1235,7 @@ impl App {
                 self.input_epoch = self.input_epoch.wrapping_add(1);
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
-                match display::input_display_raster(
-                    self.image.as_ref().unwrap(),
-                    &self.params.io.input_color_space,
-                    self.params.io.input_cctf_decoding,
-                    self.params.settings.preview_max_size as usize,
-                ) {
-                    Ok(raster) => {
-                        self.viewer.set_input(
-                            raster,
-                            [
-                                self.image.as_ref().unwrap().width as usize,
-                                self.image.as_ref().unwrap().height as usize,
-                            ],
-                        );
-                        self.viewer.set_input_display_source(
-                            &self.params.io.input_color_space,
-                            self.params.io.input_cctf_decoding,
-                        );
-                        self.viewer.seed_prepared_input(
-                            self.image.as_ref().unwrap().clone(),
-                            self.params.settings.preview_max_size,
-                        );
-                    }
-                    Err(e) => self.status = format!("Viewer input error: {e}"),
-                }
+                self.refresh_input_viewer();
                 self.image_path = Some(path.to_path_buf());
                 self.output_image = None;
                 self.output_metadata = None;
@@ -1297,29 +1263,38 @@ impl App {
         self.output_image = None;
         self.output_metadata = None;
         self.source_render = None;
-        if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(
-                image,
-                &self.params.io.input_color_space,
-                self.params.io.input_cctf_decoding,
-                self.params.settings.preview_max_size as usize,
-            ) {
-                Ok(raster) => {
-                    self.viewer
-                        .set_input(raster, [image.width as usize, image.height as usize]);
-                    self.viewer.set_input_display_source(
-                        &self.params.io.input_color_space,
-                        self.params.io.input_cctf_decoding,
-                    );
-                    self.viewer
-                        .seed_prepared_input(image.clone(), self.params.settings.preview_max_size);
-                }
-                Err(e) => self.status = format!("Viewer input error: {e}"),
-            }
-        }
+        self.refresh_input_viewer();
         self.dirty = true;
         self.force_preview = true;
         self.status = format!("Rotated input {}°", self.input_rotation as i32 * 90);
+    }
+
+    /// Hand the current input image to the viewer: capped input raster, its
+    /// display source, and the full-resolution source the viewer later prepares
+    /// display rasters from. Every path that replaces `image` ends here, so a
+    /// new handoff step cannot land in only one of them.
+    fn refresh_input_viewer(&mut self) {
+        let Some(image) = self.image.as_ref() else {
+            return;
+        };
+        match display::input_display_raster(
+            image,
+            &self.params.io.input_color_space,
+            self.params.io.input_cctf_decoding,
+            self.params.settings.preview_max_size as usize,
+        ) {
+            Ok(raster) => {
+                self.viewer
+                    .set_input(raster, [image.width as usize, image.height as usize]);
+                self.viewer.set_input_display_source(
+                    &self.params.io.input_color_space,
+                    self.params.io.input_cctf_decoding,
+                );
+                self.viewer
+                    .seed_prepared_input(image.clone(), self.params.settings.preview_max_size);
+            }
+            Err(e) => self.status = format!("Viewer input error: {e}"),
+        }
     }
 
     fn rotate_input_image_clockwise(&mut self) {
@@ -1538,7 +1513,7 @@ impl App {
         };
         let Some(path) = self
             .file_dialog("save_output")
-            .add_filter("Image", &["jpg", "jpeg", "png", "tif", "tiff", "exr"])
+            .add_filter("Image", &image_io::container_extensions())
             .set_file_name(&default_name)
             .save_file()
         else {
@@ -1688,35 +1663,10 @@ impl App {
             ExportBackend::Gpu => diagnostics::BackendRequested::Wgpu,
         });
         if operation.enabled() {
-            let format = match options.format {
-                ExportFormat::Jpeg => image_io::ImageFormat::Jpeg,
-                ExportFormat::Png => image_io::ImageFormat::Png,
-                ExportFormat::Tiff => image_io::ImageFormat::Tiff,
-                ExportFormat::Exr => image_io::ImageFormat::Exr,
-            };
             operation.set_saving_configuration(
                 spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
-                    format,
-                    &SaveOptions {
-                        depth: options.depth,
-                        color_space: &options.saving_color_space,
-                        cctf_encoding: options.saving_cctf_encoding,
-                        jpeg_quality: (options.format == ExportFormat::Jpeg)
-                            .then_some(options.jpeg_quality),
-                        jpeg_subsampling: (options.format == ExportFormat::Jpeg)
-                            .then_some(options.jpeg_subsampling),
-                        compression: matches!(
-                            options.format,
-                            ExportFormat::Tiff | ExportFormat::Exr
-                        )
-                        .then_some(
-                            if options.compression == ExportCompression::Zip {
-                                Compression::Zip
-                            } else {
-                                Compression::None
-                            },
-                        ),
-                    },
+                    options.image_format(),
+                    &options.save_options(),
                 ),
             );
         }
@@ -1859,26 +1809,7 @@ impl App {
                         let report = image_io::save_observed(
                             &staged.0,
                             &converted,
-                            SaveOptions {
-                                depth: options.depth,
-                                color_space: &options.saving_color_space,
-                                cctf_encoding: options.saving_cctf_encoding,
-                                jpeg_quality: (options.format == ExportFormat::Jpeg)
-                                    .then_some(options.jpeg_quality),
-                                jpeg_subsampling: (options.format == ExportFormat::Jpeg)
-                                    .then_some(options.jpeg_subsampling),
-                                compression: matches!(
-                                    options.format,
-                                    ExportFormat::Tiff | ExportFormat::Exr
-                                )
-                                .then_some(
-                                    if options.compression == ExportCompression::Zip {
-                                        Compression::Zip
-                                    } else {
-                                        Compression::None
-                                    },
-                                ),
-                            },
+                            options.save_options(),
                             metadata.as_ref(),
                             file_write.context(),
                         );
@@ -2224,7 +2155,7 @@ impl App {
             } else {
                 "Select an input image"
             }).clicked() {
-                if let Some(path) = self.file_dialog("load").add_filter("Image", IMAGE_FILE_EXTENSIONS).pick_file() {
+                if let Some(path) = self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()).pick_file() {
                     self.remember_dialog("load", &path);
                     self.load_image_from_path(&path);
                 }

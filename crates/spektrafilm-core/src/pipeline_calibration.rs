@@ -203,19 +203,8 @@ pub(crate) fn build(
     ]);
     let (c_neutral_f64, m_neutral_f64, y_neutral_f64) = (cmy_f64[0], cmy_f64[1], cmy_f64[2]);
 
-    // Film sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)` — f64.
-    let log_sens = film.log_sensitivity_f64();
-    let mut sensitivity: Vec<[f64; 3]> = log_sens
-        .iter()
-        .map(|row| {
-            let mut out = [0.0f64; 3];
-            for c in 0..3 {
-                let v = 10.0f64.powf(row[c]);
-                out[c] = if v.is_nan() { 0.0 } else { v };
-            }
-            out
-        })
-        .collect();
+    // Film sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`.
+    let mut sensitivity: Vec<[f64; 3]> = film.sensitivity_f64();
 
     let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
     let ref_illuminant_f64 = select_illuminant_f64(&film.info.reference_illuminant);
@@ -367,19 +356,8 @@ pub(crate) fn build(
     let density_spectral_midgray =
         enlarger::midgray_density_spectral_from_raw(midgray_raw(1.0), &film, &params);
 
-    // Print sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)` — f64 with NaN→0.
-    let print_log_sens = print.log_sensitivity_f64();
-    let print_sensitivity: Vec<[f64; 3]> = print_log_sens
-        .iter()
-        .map(|row| {
-            let mut out = [0.0f64; 3];
-            for c in 0..3 {
-                let v = 10.0f64.powf(row[c]);
-                out[c] = if v.is_nan() { 0.0 } else { v };
-            }
-            out
-        })
-        .collect();
+    // Print sensitivity: Python `sensitivity = np.nan_to_num(10 ** log_sensitivity)`.
+    let print_sensitivity: Vec<[f64; 3]> = print.sensitivity_f64();
 
     // Constant enlarger preflash exposure (Python `_compute_raw_preflash`):
     // film base density lit by the preflash-filtered illuminant, integrated
