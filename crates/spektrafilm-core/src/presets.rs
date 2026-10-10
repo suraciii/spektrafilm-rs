@@ -253,6 +253,10 @@ impl Preset {
         let default_route = workflow_default(&film);
         params.workflow.route = default_route.clone();
         params.io.scan_film = film.is_positive();
+        if film.is_positive() || params.workflow.route != "input > film > scan" {
+            params.scanner.scan_output = "direct_scan".into();
+        }
+        crate::pipeline_calibration::validate_scan_output_route(&params)?;
         params.validate()?;
         Ok(ResolvedPreset {
             film_name: film_ref.stock.clone(),
@@ -330,6 +334,9 @@ impl Preset {
             }
         }
         params.validate()?;
+        if crate::pipeline_calibration::validate_scan_output_route(current).is_ok() {
+            crate::pipeline_calibration::validate_scan_output_route(&params)?;
+        }
         Ok(params)
     }
 }

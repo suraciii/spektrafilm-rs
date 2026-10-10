@@ -98,7 +98,7 @@ pub(crate) struct CalibrationResult {
     pub output_gamut: crate::gamut_compression::OutputGamutCompress,
     pub data_dir: Option<std::path::PathBuf>,
 }
-pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
+pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), String> {
     if params.scanner.scan_output != "positive_scan" {
         return Ok(());
     }
@@ -107,6 +107,14 @@ pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Re
             "scanner.scan_output=positive_scan requires the direct input > film > scan route"
                 .into(),
         );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
+    validate_scan_output_route(params)?;
+    if params.scanner.scan_output != "positive_scan" {
+        return Ok(());
     }
     if !film.is_negative() || !film.is_film() || !film.is_filming() {
         return Err(
@@ -450,7 +458,7 @@ pub(crate) fn build(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_scan_output;
+    use super::{validate_scan_output, validate_scan_output_route};
     use crate::params::{RuntimeParams, grain::GrainEngine};
     use crate::profile;
     use std::path::Path;
@@ -462,6 +470,21 @@ mod tests {
             .parent()
             .unwrap()
             .join("data")
+    }
+
+    #[test]
+    fn positive_scan_route_rejects_print_and_accepts_direct_film_scan() {
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "positive_scan".into();
+        params.io.scan_film = true;
+        params.workflow.route = "input > film > print > scan".into();
+        let error = validate_scan_output_route(&params).unwrap_err();
+        assert!(error.contains("scanner.scan_output=positive_scan"));
+        assert!(error.contains("input > film > scan route"));
+        params.workflow.route = "input > film > scan".into();
+        assert!(validate_scan_output_route(&params).is_ok());
+        params.io.scan_film = false;
+        assert!(validate_scan_output_route(&params).is_err());
     }
 
     #[test]

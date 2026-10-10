@@ -85,6 +85,12 @@ fn portable_names() {
 }
 #[test]
 fn every_section_roundtrips_and_applies_only_carried_values() {
+    fn contains_null(value: &Value) -> bool {
+        value.is_null()
+            || value
+                .as_object()
+                .is_some_and(|map| map.values().any(contains_null))
+    }
     let params = RuntimeParams::default();
     for section in SECTIONS {
         let p = Preset::capture_section(section.name(), *section, &params, provenance()).unwrap();
@@ -92,8 +98,14 @@ fn every_section_roundtrips_and_applies_only_carried_values() {
         let json = p.to_json().unwrap();
         let q = Preset::from_json_str(&json).unwrap();
         assert_eq!(p, q);
-        let toml = p.to_toml().unwrap();
-        let q = Preset::from_toml_str(&toml).unwrap();
+        let payload = serde_json::to_value(&p.parameters).unwrap();
+        if contains_null(&payload) {
+            assert!(p.to_toml().unwrap_err().contains("explicit null"));
+        } else {
+            let toml = p.to_toml().unwrap();
+            let q = Preset::from_toml_str(&toml).unwrap();
+            assert_eq!(q.kind().unwrap(), p.kind().unwrap());
+        }
         let actual = p.apply_section(&params).unwrap();
         assert!(section_matches(&p, &actual).unwrap());
         assert_eq!(q.kind().unwrap(), p.kind().unwrap());
@@ -374,5 +386,137 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     assert_eq!(
         restored.settings.neutral_print_filters_from_database,
         current.settings.neutral_print_filters_from_database
+    );
+}
+
+#[test]
+fn captured_optional_section_controls_restore_unset_and_set_values() {
+    let mut current = RuntimeParams::default();
+    current.film_render.grain.v2_amount = None;
+    let unset =
+        Preset::capture_section("Unset grain", Section::Grain, &current, provenance()).unwrap();
+    let json = unset.to_json().unwrap();
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        value.pointer("/parameters/film_render/grain/v2_amount"),
+        Some(&Value::Null)
+    );
+    let unset = Preset::from_json_str(&json).unwrap();
+    current.film_render.grain.v2_amount = Some(42.0);
+    let applied = unset.apply_section(&current).unwrap();
+    assert_eq!(applied.film_render.grain.v2_amount, None);
+    assert_eq!(
+        Preset::capture_section("Unset grain", Section::Grain, &applied, provenance()).unwrap(),
+        unset
+    );
+    let set = Preset::capture_section("Set grain", Section::Grain, &current, provenance()).unwrap();
+    assert_eq!(
+        set.apply_section(&applied)
+            .unwrap()
+            .film_render
+            .grain
+            .v2_amount,
+        Some(42.0)
+    );
+    for section in [Section::Film, Section::Print] {
+        let captured =
+            Preset::capture_section(section.name(), section, &applied, provenance()).unwrap();
+        let mut changed = applied.clone();
+        changed.film_render.development_time = Some(8.0);
+        changed.print_render.development_time = Some(8.0);
+        let restored = captured.apply_section(&changed).unwrap();
+        let development_time = if section == Section::Film {
+            restored.film_render.development_time
+        } else {
+            restored.print_render.development_time
+        };
+        assert_eq!(development_time, None);
+    }
+}
+
+#[test]
+fn section_matching_compares_typed_carried_values() {
+    for (payload, mismatch) in [
+        (
+            serde_json::json!({"film_render":{"grain":{"v2_amount":25}}}),
+            serde_json::json!({"film_render":{"grain":{"v2_amount":26}}}),
+        ),
+        (
+            serde_json::json!({"film_render":{"halation":{"boost_ev":0.1}}}),
+            serde_json::json!({"film_render":{"halation":{"boost_ev":0.2}}}),
+        ),
+        (
+            serde_json::json!({"film_render":{"grain":{"v2_amount":null}}}),
+            serde_json::json!({"film_render":{"grain":{"v2_amount":26}}}),
+        ),
+    ] {
+        let preset = Preset::from_json_str(
+            &serde_json::json!({
+                "schema_version":2,"name":"Typed section","parameters":payload,
+                "provenance":provenance()
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let applied = preset.apply_section(&RuntimeParams::default()).unwrap();
+        assert!(section_matches(&preset, &applied).unwrap());
+        let mut different = applied;
+        parameter_edits(&mismatch)
+            .unwrap()
+            .apply(&mut different)
+            .unwrap();
+        assert!(!section_matches(&preset, &different).unwrap());
+    }
+}
+
+#[test]
+fn look_resolution_normalizes_scan_output_for_film_and_route() {
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    current.scanner.scan_output = "positive_scan".into();
+    for stock in ["kodak_ektachrome_100", "kodak_portra_400"] {
+        let preset = Preset::capture(
+            "Scan look",
+            stock,
+            "kodak_portra_endura",
+            &current,
+            provenance(),
+        );
+        let resolved = preset.resolve(&data(), &current).unwrap();
+        assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+        if resolved.film.is_positive() {
+            assert_eq!(resolved.params.workflow.route, "input > film > scan");
+        } else {
+            assert_eq!(
+                resolved.params.workflow.route,
+                "input > film > print > scan"
+            );
+        }
+    }
+}
+
+#[test]
+fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() {
+    let preset = Preset::from_json_str(r#"{"schema_version":2,"name":"Positive scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > print > scan".into();
+    let error = preset.apply_section(&current).unwrap_err();
+    assert!(error.contains("scanner.scan_output=positive_scan"));
+    assert!(error.contains("input > film > scan route"));
+    current.scanner.scan_output = "positive_scan".into();
+    assert_eq!(
+        preset.apply_section(&current).unwrap().scanner.scan_output,
+        "positive_scan"
+    );
+    let unrelated =
+        Preset::capture_section("Halation", Section::Halation, &current, provenance()).unwrap();
+    assert!(unrelated.apply_section(&current).is_ok());
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    current.scanner.scan_output = "direct_scan".into();
+    assert_eq!(
+        preset.apply_section(&current).unwrap().scanner.scan_output,
+        "positive_scan"
     );
 }

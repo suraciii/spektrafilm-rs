@@ -110,7 +110,7 @@ pub fn extract_section(section: Section, params: &RuntimeParams) -> Result<Value
     flatten("", &root, &mut leaves);
     let mut payload = serde_json::json!({});
     for (path, value) in leaves {
-        if section.owns(&path) && path != "film_render.grain.monochrome" && !value.is_null() {
+        if section.owns(&path) && path != "film_render.grain.monochrome" {
             insert(&mut payload, &path, value);
         }
     }
@@ -139,12 +139,16 @@ pub fn section_matches(preset: &Preset, params: &RuntimeParams) -> Result<bool, 
         unreachable!()
     };
     crate::params::sources::validate_finite(params)?;
+    let applied = preset.apply_section(params)?;
+    let expected =
+        serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| e.to_string())?;
     let current =
         serde_json::to_value(LookParameters::capture(params)).map_err(|e| e.to_string())?;
     let mut leaves = Vec::new();
     flatten("", payload, &mut leaves);
-    Ok(leaves.iter().all(|(path, value)| {
-        current.pointer(&format!("/{}", path.replace('.', "/"))) == Some(value)
+    Ok(leaves.iter().all(|(path, _)| {
+        let pointer = format!("/{}", path.replace('.', "/"));
+        current.pointer(&pointer) == expected.pointer(&pointer)
     }))
 }
 pub fn matching_section_preset<'a>(
