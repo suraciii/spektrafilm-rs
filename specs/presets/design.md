@@ -13,11 +13,12 @@
 
 A section is a named set of look-owned parameter paths. This table is authoritative for routing, and a section preset carries exactly its section's paths.
 
+A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` stays a document field for upstream parity but is not a section, because the pipeline never reads it and no control surface edits it. The print-stage glare belongs to `print` through `print_render`.
+
 - `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`
 - `grain`: `film_render.grain`
 - `halation`: `film_render.halation`
 - `couplers`: `film_render.dir_couplers`
-- `glare`: `film_render.glare`
 - `base`: `film_render.base`
 - `convert`: `film_render.convert`
 - `camera filter`: `camera_diffusion_filter`
@@ -28,7 +29,7 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 
 - The browser lists look presets only. A section preset must not appear in it and must not be applicable from it.
 - A section preset loads from the menu of its own section. The menu must show the preset whose carried controls equal the section's current controls, or `custom`. The comparison must use the carried editable controls and never derived or prepared values, and equal matches must resolve deterministically by name order.
-- Every section in this table carries its menu, because Save as lives there. A menu whose list is empty must offer Save as for the section's current controls and must state that a preset file can also be placed in the library. The menu must not repeat a control that already exists inside the section.
+- Every section in this table carries its menu, because Save as lives there. A section that spans several visible headers (for example `print`, which covers print chemistry, print base, print glare, and the print density-curve morph) carries one menu on its primary header, so a menu belongs to a section and never to a visible label. A menu whose list is empty must offer Save as for the section's current controls and must state that a preset file can also be placed in the library. The menu must not repeat a control that already exists inside the section.
 - The section menu owns load, Save as, Rename, Duplicate, Delete, Export, and Show file for its own documents; the browser keeps the same operations for look presets. Both must call the shared library implementation.
 - A section preset must not change a profile reference or the workflow.
 

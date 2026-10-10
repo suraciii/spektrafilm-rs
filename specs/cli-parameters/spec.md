@@ -17,6 +17,7 @@ spektrafilm process INPUT --output OUTPUT --film STOCK [--paper STOCK] [--params
 spektrafilm process INPUT --output OUTPUT --preset SELECTOR [OPTIONS]
 
 OPTIONS may include:
+  --preset SELECTOR     repeatable; presets apply in appearance order
   --set SOURCE          repeatable file or comma-separated assignments
   --dry-run             resolve and validate; print effective parameters without rendering
 ```
@@ -97,7 +98,7 @@ spektrafilm process input.png --output output.tif \
 
 The assignment parser must split only at top-level commas, then interpret each value using the shared field description. It must not split commas in double-quoted strings or arrays. The sparse-file carrier rules must remain unchanged.
 
-`--set` sources must be syntactically valid even if a later source replaces one of their leaves. The existing `--preset`, `--film`, `--paper`, `--params`, and `--route` selectors must each occur at most once.
+`--set` sources must be syntactically valid even if a later source replaces one of their leaves. The existing `--film`, `--paper`, `--params`, and `--route` selectors must each occur at most once; `--preset` is repeatable as defined in [Preset selector](#preset-selector).
 
 ### Editable paths and conditional controls
 
