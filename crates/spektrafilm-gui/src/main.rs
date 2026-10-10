@@ -279,8 +279,8 @@ struct App {
     data_dir: PathBuf,
     /// Profiles where `info.support == "film"`.
     films: Vec<ProfileEntry>,
-    /// Profiles where `info.support == "paper"` (or other print-stage
-    /// supports).
+    /// Print stocks usable as the print stage (`Profile::is_print_stock`:
+    /// paper/printing or film/printing).
     papers: Vec<ProfileEntry>,
     builtins: Vec<LookPreset>,
     film_name: String,
@@ -1142,7 +1142,7 @@ impl App {
 
     fn select_print_profile(&mut self, selected: String) {
         let print = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_paper() && profile.is_printing() => profile,
+            Ok(profile) if profile.is_print_stock() => profile,
             Ok(_) => {
                 self.status =
                     format!("Profile selection error: '{selected}' is not a print profile");

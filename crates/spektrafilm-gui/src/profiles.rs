@@ -14,8 +14,8 @@ pub(super) struct ProfileEntry {
 }
 
 /// Scan `<data_dir>/profiles/*.json`, parse each profile's `info`, and
-/// bucket the results by `info.support`. Films go into the first vec,
-/// papers (and any other print-stage supports) into the second.
+/// bucket the results into print stocks (usable as the print stage:
+/// `Profile::is_print_stock`) and everything else as films.
 /// Each entry carries the filename stem (the unique loader key) plus a
 /// human-readable display label.
 pub(super) fn scan_profiles(data_dir: &Path) -> (Vec<ProfileEntry>, Vec<ProfileEntry>) {
@@ -32,19 +32,17 @@ pub(super) fn scan_profiles(data_dir: &Path) -> (Vec<ProfileEntry>, Vec<ProfileE
             continue;
         };
         let stock = stem.to_string();
-        // Cheap probe: just deserialize the file's `info` field. We
-        // could skip the rest of the profile but `Profile` already does
-        // the right thing — and we pay this once at startup.
-        let (display, is_paper) = match profile::load_profile_by_name(data_dir, &stock) {
+        // Full load (parse + validation) through the profile loader; the
+        // bucket only needs `info`, but startup pays this once.
+        let (display, is_print_stock) = match profile::load_profile_by_name(data_dir, &stock) {
             Ok(p) => {
                 let display = p.info.name.clone().unwrap_or_else(|| stock.clone());
-                let is_paper = p.info.support == "paper" || p.info.stage == "printing";
-                (display, is_paper)
+                (display, p.is_print_stock())
             }
             Err(_) => (stock.clone(), false),
         };
         let entry = ProfileEntry { stock, display };
-        if is_paper {
+        if is_print_stock {
             papers.push(entry);
         } else {
             films.push(entry);
