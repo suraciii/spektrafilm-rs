@@ -35,6 +35,7 @@ mod export;
 mod numeric;
 mod panels;
 mod profiles;
+mod routes;
 mod state;
 use export::{ExportBackend, ExportCompression, ExportDialog, ExportFormat, ExportOptions};
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
@@ -244,17 +245,6 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
     }
 }
 
-/// Effective backend label for Scan and Export reports. An active V3 field
-/// resolves on the CPU and never enters the resident chain, so the selected
-/// backend name alone would misreport the executed path.
-fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
-    if spektrafilm_core::stages::grain_v3::active(params) {
-        format!("{selected} · grain V3 on CPU")
-    } else {
-        selected.to_owned()
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum GuiTab {
     #[default]
@@ -290,8 +280,8 @@ struct App {
     data_dir: PathBuf,
     /// Profiles where `info.support == "film"`.
     films: Vec<ProfileEntry>,
-    /// Profiles where `info.support == "paper"` (or other print-stage
-    /// supports).
+    /// Print stocks usable as the print stage (`Profile::is_print_stock`:
+    /// paper/printing or film/printing).
     papers: Vec<ProfileEntry>,
     builtins: Vec<LookPreset>,
     film_name: String,
@@ -757,15 +747,22 @@ impl App {
 
         let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
-        let startup = match initial_state {
+        let mut startup_error = None;
+        let gui_state = match initial_state {
             Some(path) => state::GuiState::load(&path),
             None => state::startup(),
-        };
-        let startup_error = startup
-            .as_ref()
-            .err()
-            .map(|e| format!("Startup state error: {e:#}"));
-        let gui_state = startup.unwrap_or_else(|_| state::GuiState::factory());
+        }
+        .and_then(|state| {
+            // A startup state the runtime cannot accept (a removed workflow
+            // route, an unsupported combination) must fall back to the factory
+            // state with a visible reason instead of failing at construction.
+            state.runtime_params()?;
+            Ok(state)
+        })
+        .unwrap_or_else(|error| {
+            startup_error = Some(format!("Startup state error: {error:#}"));
+            state::GuiState::factory()
+        });
         let film_name = gui_state.film().to_owned();
         let print_name = gui_state.paper().to_owned();
         let film_profile = profile::load_profile_by_name(&data_dir, &film_name).ok();
@@ -1011,20 +1008,12 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice_tip(
+            if controls::choice_tip_entries(
                 ui,
                 "workflow",
                 &mut self.params.workflow.route,
-                &[
-                    "input",
-                    "input > film > scan",
-                    "input > film > print > scan",
-                    "input > film > scan > magazine",
-                    "input > convert-film > print > scan",
-                    "input > convert-film > scan-minus-base",
-                    "input > convert-film > scan",
-                ],
-                "Which path the image takes through the pipeline: input (passthrough: just colour-manage the input to the output space for viewing), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base).",
+                routes::entries(),
+                routes::tooltip(),
             ) {
                 let direct_film_scan = self.params.workflow.route == "input > film > scan";
                 self.params.io.scan_film = direct_film_scan;
@@ -1033,6 +1022,17 @@ impl App {
                 }
                 self.dirty = true;
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+            }
+            if ui
+                .checkbox(
+                    &mut self.params.magazine_print_color.active,
+                    "Magazine print",
+                )
+                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                .changed()
+            {
+                self.dirty = true;
                 self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
         });
@@ -1153,7 +1153,7 @@ impl App {
 
     fn select_print_profile(&mut self, selected: String) {
         let print = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_paper() && profile.is_printing() => profile,
+            Ok(profile) if profile.is_print_stock() => profile,
             Ok(_) => {
                 self.status =
                     format!("Profile selection error: '{selected}' is not a print profile");
@@ -1338,6 +1338,7 @@ impl App {
         operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
         operation.set_backend_requested(diagnostics::preview_backend_requested());
+        let backend_name = self.backend.name().to_owned();
         let mut params = match self
             .current_state()
             .and_then(|state| state.runtime_params())
@@ -1350,9 +1351,6 @@ impl App {
                 return;
             }
         };
-        // An active V3 field resolves its film-coordinate field on the CPU,
-        // so report the effective backend next to the selected one.
-        let backend_name = effective_backend_name(self.backend.name(), &params);
         if self.look_neutral_filters_pinned {
             params.settings.neutral_print_filters_from_database = false;
         }
@@ -1885,7 +1883,7 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            backend_name: effective_backend_name(backend.name(), pipeline.params()),
+                            backend_name: backend.name().to_owned(),
                             size: [output.width, output.height],
                             metadata_warning: report.metadata_warning,
                             staged,
@@ -2298,6 +2296,12 @@ impl App {
                     self.parameter_section(ui, section);
                 }
                 ui.collapsing("Profiles", |ui| {
+                    if self.params.workflow.route == "input" {
+                        ui.weak(
+                            "Finished RGB ignores these profiles: it only colour-manages the \
+                             input to the output space.",
+                        );
+                    }
                     if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
                         let selected = self.film_name.clone();
                         self.params.film_render.development_time = None;
