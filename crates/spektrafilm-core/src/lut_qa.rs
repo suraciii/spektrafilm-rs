@@ -2448,7 +2448,7 @@ fn run_print(
             }
         }
     }
-    let mut r = result(
+    let r = result(
         "jacobian_condition",
         json!({"max_log10_cond":max(&cond),"p99_log10_cond":percentile(&cond,0.99),"p50_log10_cond":percentile(&cond,0.5)}),
         None,
@@ -2465,7 +2465,7 @@ fn run_print(
         tv[a] /= counts[a] as f64;
     }
     let fft = fft_ratios(lut);
-    let mut r = result(
+    let r = result(
         "total_variation",
         json!({"tv":tv.iter().sum::<f64>(),"tv_r":tv[0],"tv_g":tv[1],"tv_b":tv[2],"axial_highband_ratio_r":fft[2],"axial_highband_ratio_g":fft[1],"axial_highband_ratio_b":fft[0],"axial_highband_ratio_mean":mean(&fft)}),
         None,
@@ -2580,7 +2580,7 @@ fn run_print(
     let gamma = (mean(&neutral[mid + 1]).clamp(1e-4, 1.).log10()
         - mean(&neutral[mid - 1]).clamp(1e-4, 1.).log10())
         / (axis(mid + 1).log10() - axis(mid - 1).log10());
-    let mut r = result(
+    let r = result(
         "characteristic_curve",
         json!({"system_gamma_at_mid":gamma,"max_channel_density_spread":spread}),
         None,
@@ -2700,7 +2700,7 @@ fn run_print(
     summary.insert("max_hue_rotation_deg".into(), json!(worst));
     summary.insert("samples_in_locus".into(), json!(input_lab.len()));
     summary.insert("samples_filtered_out_of_locus".into(), json!(filtered));
-    let mut r = result(
+    let r = result(
         "hue_twist_oklab",
         serde_json::to_value(summary).unwrap(),
         None,
@@ -2738,7 +2738,7 @@ fn run_print(
         }
     }
     let valid = valid_xy.len();
-    let mut r = result(
+    let r = result(
         "spectral_locus_envelope",
         json!({"cube_resolution":n,"cube_cells":n.pow(3),"valid_cells":valid,"inside_output_gamut_fraction":in_gamut as f64/valid.max(1) as f64,"near_locus_fraction":near as f64/valid.max(1) as f64}),
         None,
@@ -2982,7 +2982,7 @@ fn input_compression(
             }
         }
     }
-    let mut r = result(
+    let r = result(
         "input_gamut_compression_preview",
         json!({"active":active,"algorithm":spec.algorithm,"knee_threshold":spec.knee[0],"knee_limit":spec.knee[1],"knee_power":spec.knee[2],"oog_fraction":oog as f64/valid.max(1) as f64,"n_oog_samples":oog,"n_oog_bright":bright,"reference_illuminant":illuminant}),
         None,
@@ -3005,7 +3005,7 @@ fn input_compression(
         .map(|p| (p[1][0] - p[0][0]).hypot(p[1][1] - p[0][1]))
         .collect();
     let med = percentile(&lengths, 0.5);
-    let mut smooth = result(
+    let smooth = result(
         "input_gamut_compression_smoothness",
         json!({"active":active,"algorithm":spec.algorithm,"knee_threshold":spec.knee[0],"knee_limit":spec.knee[1],"knee_power":spec.knee[2],"probe_radius":0.30,"probe_samples":720,"worst_step":max(&lengths),"median_step":med,"worst_over_median_step":max(&lengths)/med.max(1e-9),"reference_illuminant":illuminant}),
         None,
@@ -3075,21 +3075,7 @@ fn picture(
         let mut worst_hue = 0.;
         let mut rotation = 0.;
         for &p in &samples {
-            let mut j = [[0.; 3]; 3];
-            for a in 0..3 {
-                let mut plus = p;
-                let mut minus = p;
-                plus[a] += 0.005;
-                minus[a] -= 0.005;
-                let d = diff(
-                    oklab(xyz(output, lut.sample(plus))),
-                    oklab(xyz(output, lut.sample(minus))),
-                );
-                for c in 0..3 {
-                    j[c][a] = d[c] / 0.01;
-                }
-            }
-            let s = singular(j);
+            let s = singular(encoded_to_oklab_jacobian(lut, output, p));
             sigma.push(s[0]);
             anisotropy.push(s[0] / s[2].max(1e-9));
             let a = oklab(xyz(input, p));
@@ -3148,7 +3134,7 @@ fn picture(
         panels[row * side * 2 + col] = display(a, output);
         panels[row * side * 2 + side + col] = display(b, output);
     }
-    let mut r = result(
+    let r = result(
         "noise_gradient",
         json!({"image_side":side,"sigma_in_encoded":0.02,"mid_L":l,"rim_scale":0.96,"input_in_gamut_fraction":in_gamut as f64/clean.len() as f64,"mean_abs_output_delta":mean(&differences),"p99_abs_output_delta":percentile(&differences,0.99)}),
         None,
@@ -3206,7 +3192,7 @@ fn picture(
                 json!(oog as f64 / band_count as f64),
             );
         }
-        let mut r = result(
+        let r = result(
             "output_gamut_edge_stress",
             serde_json::to_value(summary).unwrap(),
             None,
@@ -3229,7 +3215,7 @@ fn picture(
             }
         }
     }
-    let mut r = result(
+    let r = result(
         "rg_plane_slices",
         json!({"n_slices":count,"cube_resolution":n}),
         None,
@@ -3361,6 +3347,28 @@ mod tests {
     }
 }
 
+/// Central-difference Jacobian of encoded-input RGB → output OkLab at `p`:
+/// ±0.005 probes on the encoded input, divided by the 0.01 span, through the
+/// printed LUT and the output space's decode. The noise-sensitivity metric and
+/// its ellipse figure share this derivative.
+fn encoded_to_oklab_jacobian(lut: &Lut, output: &ColorSpaceEntry, p: [f64; 3]) -> [[f64; 3]; 3] {
+    let mut j = [[0.; 3]; 3];
+    for a in 0..3 {
+        let mut plus = p;
+        let mut minus = p;
+        plus[a] += 0.005;
+        minus[a] -= 0.005;
+        let d = diff(
+            oklab(xyz(output, lut.sample(plus))),
+            oklab(xyz(output, lut.sample(minus))),
+        );
+        for c in 0..3 {
+            j[c][a] = d[c] / 0.01;
+        }
+    }
+    j
+}
+
 fn noise_figure(
     root: &Path,
     lut: &Lut,
@@ -3383,23 +3391,6 @@ fn noise_figure(
     let size = 480;
     let width = size * 3;
     let mut pixels = vec![[0.04; 3]; width * size];
-    let jacobian = |p: [f64; 3]| {
-        let mut j = [[0.; 3]; 3];
-        for a in 0..3 {
-            let mut plus = p;
-            let mut minus = p;
-            plus[a] += 0.005;
-            minus[a] -= 0.005;
-            let d = diff(
-                oklab(xyz(output, lut.sample(plus))),
-                oklab(xyz(output, lut.sample(minus))),
-            );
-            for c in 0..3 {
-                j[c][a] = d[c] / 0.01;
-            }
-        }
-        j
-    };
     let put = |pixels: &mut Vec<[f64; 3]>, panel: usize, a: f64, b: f64, c: [f64; 3]| {
         let x = ((a + extent) / (2. * extent) * (size - 1) as f64).round() as isize;
         let y = ((extent - b) / (2. * extent) * (size - 1) as f64).round() as isize;
@@ -3410,7 +3401,7 @@ fn noise_figure(
     for &p in samples {
         let out = lut.sample(p);
         let lab = oklab(xyz(output, out));
-        let j = jacobian(p);
+        let j = encoded_to_oklab_jacobian(lut, output, p);
         let cov = |r: usize, c: usize| {
             (0..3)
                 .map(|k| j[r][k] * j[c][k] * 0.005f64.powi(2))
@@ -3448,7 +3439,7 @@ fn noise_figure(
                 let p = input
                     .encode_rgb(rgb.map(|v| v / gain))
                     .map(|v| v.clamp(0.006, 0.994));
-                let s = singular(jacobian(p))[0];
+                let s = singular(encoded_to_oklab_jacobian(lut, output, p))[0];
                 maximum = maximum.max(s);
                 heat.push(Some(s));
             } else {
@@ -3474,7 +3465,7 @@ fn noise_figure(
         if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
             let p = input.encode_rgb(rgb.map(|v| v / gain));
             if p.iter().all(|v| *v > 0.006 && *v < 0.994) {
-                let j = jacobian(p);
+                let j = encoded_to_oklab_jacobian(lut, output, p);
                 let sl = (j[0].iter().map(|v| v * v).sum::<f64>()).sqrt() * 0.005;
                 let sab = (j[1].iter().chain(&j[2]).map(|v| v * v).sum::<f64>()).sqrt() * 0.005;
                 scale = scale.max(sl).max(sab);

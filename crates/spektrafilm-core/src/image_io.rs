@@ -91,16 +91,43 @@ pub enum ImageFormat {
     Tiff = 2,
     Exr = 3,
 }
+/// Container extensions the loader resolves, paired with their format. The
+/// file dialog and `detect` read this one table, so a new container cannot be
+/// offered by the dialog without being loadable, or the reverse.
+const CONTAINER_FORMATS: &[(&str, ImageFormat)] = &[
+    ("jpg", ImageFormat::Jpeg),
+    ("jpeg", ImageFormat::Jpeg),
+    ("png", ImageFormat::Png),
+    ("tif", ImageFormat::Tiff),
+    ("tiff", ImageFormat::Tiff),
+    ("exr", ImageFormat::Exr),
+];
+
+/// RAW extensions LibRaw decodes.
+const RAW_EXTENSIONS: &[&str] = &[
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw",
+    "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef", "kdc", "ari", "bay", "dcr", "drf", "erf",
+    "fff", "k25", "mos", "ptx",
+];
+
+/// Every extension the input path accepts, containers first: the file-dialog
+/// filter list.
+pub fn accepted_extensions() -> Vec<&'static str> {
+    CONTAINER_FORMATS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(RAW_EXTENSIONS.iter().copied())
+        .collect()
+}
+
 impl ImageFormat {
     pub fn detect(path: &Path) -> Result<Self, ImageIoError> {
         let ext = extension(path);
-        match ext.as_str() {
-            "jpg" | "jpeg" => Ok(Self::Jpeg),
-            "png" => Ok(Self::Png),
-            "tif" | "tiff" => Ok(Self::Tiff),
-            "exr" => Ok(Self::Exr),
-            _ => Err(ImageIoError::UnsupportedFormat(ext)),
-        }
+        CONTAINER_FORMATS
+            .iter()
+            .find(|(name, _)| *name == ext)
+            .map(|(_, format)| *format)
+            .ok_or(ImageIoError::UnsupportedFormat(ext))
     }
 }
 fn extension(path: &Path) -> String {
@@ -110,39 +137,7 @@ fn extension(path: &Path) -> String {
         .to_ascii_lowercase()
 }
 pub fn is_raw(path: &Path) -> bool {
-    matches!(
-        extension(path).as_str(),
-        "dng"
-            | "cr2"
-            | "cr3"
-            | "nef"
-            | "nrw"
-            | "arw"
-            | "srf"
-            | "sr2"
-            | "raf"
-            | "orf"
-            | "rw2"
-            | "pef"
-            | "srw"
-            | "x3f"
-            | "iiq"
-            | "3fr"
-            | "crw"
-            | "rwl"
-            | "mrw"
-            | "mef"
-            | "kdc"
-            | "ari"
-            | "bay"
-            | "dcr"
-            | "drf"
-            | "erf"
-            | "fff"
-            | "k25"
-            | "mos"
-            | "ptx"
-    )
+    RAW_EXTENSIONS.contains(&extension(path).as_str())
 }
 #[derive(Debug)]
 struct NativeMetadata(*mut c_void);

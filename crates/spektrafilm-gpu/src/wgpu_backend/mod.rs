@@ -183,17 +183,6 @@ impl WgpuBackend {
         output_idx: usize,
         name: &'static str,
     ) -> Vec<f32> {
-        self.dispatch_compute_inner(shader_source, bindings, n_pixels, output_idx, name)
-    }
-    fn dispatch_compute_inner(
-        &self,
-        shader_source: &'static str,
-        bindings: &[GpuBuffer],
-        n_pixels: u32,
-        output_idx: usize,
-        name: &'static str,
-    ) -> Vec<f32> {
-        let t_start = std::time::Instant::now();
         let binding_types: Vec<wgpu::BufferBindingType> =
             bindings.iter().map(|b| b.binding_type).collect();
         let (cached, hit) =
@@ -210,7 +199,6 @@ impl WgpuBackend {
         }
         let pipeline = &cached.pipeline;
         let bind_group_layout = &cached.layout;
-        let t_compile = t_start.elapsed();
 
         // Create GPU buffers
         let gpu_buffers: Vec<wgpu::Buffer> = bindings
@@ -273,21 +261,25 @@ impl WgpuBackend {
         self.queue.submit(Some(encoder.finish()));
 
         // Read back
-        let slice = readback.slice(..);
+        self.read_mapped_f32(&readback, output_size)
+    }
+
+    /// The one readback protocol: map `buffer`, wait for the GPU, record the
+    /// materialized bytes, then copy the mapped range out as f32.
+    fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+        let slice = buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
             tx.send(r).unwrap();
         });
         self.device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
-        self.device.materialized(output_size);
+        self.device.materialized(bytes);
         let data = slice.get_mapped_range();
-        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        let out: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
-        readback.unmap();
-        let _t_total = t_start.elapsed();
-        let _ = t_compile;
-        result
+        buffer.unmap();
+        out
     }
 
     /// GPU separable Gaussian blur via two FIR passes (horizontal then vertical).

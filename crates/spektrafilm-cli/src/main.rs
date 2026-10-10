@@ -270,6 +270,146 @@ impl CompressionArg {
     }
 }
 
+/// Validated writer decision for one `process` invocation: container, depth,
+/// codec options, and the saving space/transfer the writer describes. The
+/// dry-run report, the saving telemetry and the writer all consume this one
+/// decision, so a rule added for a container cannot land in only one of them.
+struct OutputPlan {
+    format: OutputFormat,
+    depth: BitDepth,
+    jpeg_quality: Option<u8>,
+    jpeg_subsampling: Option<JpegSubsampling>,
+    compression: Option<Compression>,
+    saving_space: String,
+    saving_encoded: bool,
+}
+
+impl OutputPlan {
+    /// Resolve the container from the flag/extension pair and reject codec
+    /// options the selected container does not carry.
+    fn from_flags(
+        output: &Path,
+        format: Option<OutputFormat>,
+        bit_depth: Option<u8>,
+        jpeg_quality: Option<u8>,
+        jpeg_subsampling: Option<JpegSubsamplingArg>,
+        compression: Option<CompressionArg>,
+    ) -> Result<Self> {
+        let extension_format = image_io::ImageFormat::detect(output)
+            .with_context(|| format!("detecting output format: {}", output.display()))?;
+        let format = format.unwrap_or_else(|| match extension_format {
+            image_io::ImageFormat::Jpeg => OutputFormat::Jpeg,
+            image_io::ImageFormat::Png => OutputFormat::Png,
+            image_io::ImageFormat::Tiff => OutputFormat::Tiff,
+            image_io::ImageFormat::Exr => OutputFormat::Exr,
+        });
+        if format.image_format() != extension_format {
+            bail!(
+                "--format {} disagrees with output extension ({})",
+                format.name(),
+                format_name(extension_format)
+            );
+        }
+        let default_depth = match format {
+            OutputFormat::Jpeg | OutputFormat::Png => 8,
+            OutputFormat::Tiff | OutputFormat::Exr => 16,
+        };
+        let depth = BitDepth::try_from(bit_depth.unwrap_or(default_depth))?;
+        if matches!(format, OutputFormat::Jpeg | OutputFormat::Png) && depth != BitDepth::Eight {
+            bail!("{} output requires 8-bit depth", format.name());
+        }
+        if matches!(format, OutputFormat::Exr) && depth == BitDepth::Eight {
+            bail!("EXR output requires 16-bit or 32-bit depth");
+        }
+        if matches!(format, OutputFormat::Jpeg) {
+            if let Some(quality) = jpeg_quality {
+                if !(1..=100).contains(&quality) {
+                    bail!("JPEG quality must be in 1..=100");
+                }
+            }
+        } else if jpeg_quality.is_some() {
+            bail!("--jpeg-quality is only valid for JPEG output");
+        }
+        if !matches!(format, OutputFormat::Jpeg) && jpeg_subsampling.is_some() {
+            bail!("--jpeg-subsampling is only valid for JPEG output");
+        }
+        if matches!(format, OutputFormat::Jpeg | OutputFormat::Png) && compression.is_some() {
+            bail!("--compression is only valid for TIFF or EXR output");
+        }
+        Ok(Self {
+            format,
+            depth,
+            jpeg_quality: matches!(format, OutputFormat::Jpeg).then(|| jpeg_quality.unwrap_or(95)),
+            jpeg_subsampling: matches!(format, OutputFormat::Jpeg).then(|| {
+                jpeg_subsampling
+                    .unwrap_or(JpegSubsamplingArg::Yuv444)
+                    .core()
+            }),
+            compression: matches!(format, OutputFormat::Tiff | OutputFormat::Exr)
+                .then(|| compression.unwrap_or(CompressionArg::Zip).core()),
+            saving_space: String::new(),
+            saving_encoded: false,
+        })
+    }
+
+    /// Adopt the saving color space/transfer this container writes. Kept
+    /// separate from [`Self::validate_saving`] so the color spaces resolve —
+    /// and fail — in the same order every writer flag was checked before.
+    fn with_saving(
+        mut self,
+        workflow: &WorkflowOptions,
+        output_color_space: &str,
+        output_cctf_encoding: bool,
+    ) -> Self {
+        self.saving_space = workflow.saving_color_space.clone().unwrap_or_else(|| {
+            if self.format == OutputFormat::Exr {
+                "ACES2065-1".into()
+            } else {
+                output_color_space.to_owned()
+            }
+        });
+        self.saving_encoded = workflow
+            .saving_cctf_encoding
+            .unwrap_or(self.format != OutputFormat::Exr && output_cctf_encoding);
+        self
+    }
+
+    /// Reject the saving/container combinations the selected container cannot
+    /// represent.
+    fn validate_saving(&self) -> Result<()> {
+        if matches!(self.format, OutputFormat::Jpeg | OutputFormat::Png) && !self.saving_encoded {
+            bail!(
+                "{} output requires encoded saving output",
+                self.format.name()
+            );
+        }
+        if self.format == OutputFormat::Exr {
+            if self.saving_encoded {
+                bail!("EXR output requires linear saving output");
+            }
+            if !matches!(self.saving_space.as_str(), "sRGB" | "ACES2065-1") {
+                bail!("EXR color space must be sRGB or ACES2065-1");
+            }
+            if matches!(self.compression, Some(Compression::None)) {
+                bail!("EXR compression is always zip");
+            }
+        }
+        Ok(())
+    }
+
+    /// Writer options describing the pixels the saving conversion produces.
+    fn save_options(&self) -> SaveOptions<'_> {
+        SaveOptions {
+            depth: self.depth,
+            color_space: &self.saving_space,
+            cctf_encoding: self.saving_encoded,
+            jpeg_quality: self.jpeg_quality,
+            jpeg_subsampling: self.jpeg_subsampling,
+            compression: self.compression,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum DiscoveryFormat {
     Json,
@@ -522,56 +662,14 @@ fn cmd_process(
     if iters == 0 {
         bail!("--iters must be at least 1");
     }
-    let extension_format = image_io::ImageFormat::detect(output)
-        .with_context(|| format!("detecting output format: {}", output.display()))?;
-    let output_format = format.unwrap_or_else(|| match extension_format {
-        image_io::ImageFormat::Jpeg => OutputFormat::Jpeg,
-        image_io::ImageFormat::Png => OutputFormat::Png,
-        image_io::ImageFormat::Tiff => OutputFormat::Tiff,
-        image_io::ImageFormat::Exr => OutputFormat::Exr,
-    });
-    if output_format.image_format() != extension_format {
-        bail!(
-            "--format {} disagrees with output extension ({})",
-            output_format.name(),
-            format_name(extension_format)
-        );
-    }
-    let default_depth = match output_format {
-        OutputFormat::Jpeg | OutputFormat::Png => 8,
-        OutputFormat::Tiff | OutputFormat::Exr => 16,
-    };
-    let depth = BitDepth::try_from(bit_depth.unwrap_or(default_depth))?;
-    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && depth != BitDepth::Eight {
-        bail!("{} output requires 8-bit depth", output_format.name());
-    }
-    if matches!(output_format, OutputFormat::Exr) && depth == BitDepth::Eight {
-        bail!("EXR output requires 16-bit or 32-bit depth");
-    }
-    if matches!(output_format, OutputFormat::Jpeg) {
-        if let Some(quality) = jpeg_quality {
-            if !(1..=100).contains(&quality) {
-                bail!("JPEG quality must be in 1..=100");
-            }
-        }
-    } else if jpeg_quality.is_some() {
-        bail!("--jpeg-quality is only valid for JPEG output");
-    }
-    if !matches!(output_format, OutputFormat::Jpeg) && jpeg_subsampling.is_some() {
-        bail!("--jpeg-subsampling is only valid for JPEG output");
-    }
-    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && compression.is_some() {
-        bail!("--compression is only valid for TIFF or EXR output");
-    }
-    let jpeg_quality =
-        matches!(output_format, OutputFormat::Jpeg).then(|| jpeg_quality.unwrap_or(95));
-    let jpeg_subsampling = matches!(output_format, OutputFormat::Jpeg).then(|| {
-        jpeg_subsampling
-            .unwrap_or(JpegSubsamplingArg::Yuv444)
-            .core()
-    });
-    let compression = matches!(output_format, OutputFormat::Tiff | OutputFormat::Exr)
-        .then(|| compression.unwrap_or(CompressionArg::Zip).core());
+    let plan = OutputPlan::from_flags(
+        output,
+        format,
+        bit_depth,
+        jpeg_quality,
+        jpeg_subsampling,
+        compression,
+    )?;
     invocation.boundary(IssueCategory::Input, IssueBoundary::InputLoad);
     if !input.is_file() {
         bail!("input is not a regular file: {}", input.display());
@@ -634,15 +732,14 @@ fn cmd_process(
 
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let saving_space = workflow.saving_color_space.clone().unwrap_or_else(|| {
-        if output_format == OutputFormat::Exr {
-            "ACES2065-1".into()
-        } else {
-            output_color_space.clone()
-        }
-    });
-    let saving_space_resolved = spektrafilm_math::colorspace::resolve(&saving_space)
-        .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
+    let plan = plan.with_saving(workflow, &output_color_space, output_cctf_encoding);
+    let saving_space_resolved =
+        spektrafilm_math::colorspace::resolve(&plan.saving_space).map_err(|e| {
+            anyhow::anyhow!(
+                "unsupported saving color space {:?}: {e}",
+                plan.saving_space
+            )
+        })?;
     let output_space_resolved = spektrafilm_math::colorspace::resolve(&output_color_space)
         .map_err(|e| {
             anyhow::anyhow!("unsupported output color space {output_color_space:?}: {e}")
@@ -651,26 +748,7 @@ fn cmd_process(
         output_space_resolved,
         saving_space_resolved,
     );
-    let saving_encoded = workflow
-        .saving_cctf_encoding
-        .unwrap_or(output_format != OutputFormat::Exr && output_cctf_encoding);
-    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && !saving_encoded {
-        bail!(
-            "{} output requires encoded saving output",
-            output_format.name()
-        );
-    }
-    if output_format == OutputFormat::Exr && saving_encoded {
-        bail!("EXR output requires linear saving output");
-    }
-    if output_format == OutputFormat::Exr {
-        if !matches!(saving_space.as_str(), "sRGB" | "ACES2065-1") {
-            bail!("EXR color space must be sRGB or ACES2065-1");
-        }
-        if matches!(compression, Some(Compression::None)) {
-            bail!("EXR compression is always zip");
-        }
-    }
+    plan.validate_saving()?;
     if dry_run {
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         println!(
@@ -691,13 +769,13 @@ fn cmd_process(
                 },
                 "output": {
                     "path": output,
-                    "format": output_format.name(),
-                    "bit_depth": depth.bits(),
-                    "color_space": saving_space,
-                    "cctf_encoding": saving_encoded,
-                    "compression": compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
-                    "jpeg_quality": jpeg_quality,
-                    "jpeg_subsampling": jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
+                    "format": plan.format.name(),
+                    "bit_depth": plan.depth.bits(),
+                    "color_space": plan.saving_space,
+                    "cctf_encoding": plan.saving_encoded,
+                    "compression": plan.compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
+                    "jpeg_quality": plan.jpeg_quality,
+                    "jpeg_subsampling": plan.jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
                 },
                 "backend": {
                     "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
@@ -813,14 +891,8 @@ fn cmd_process(
     }
     let output_attempt = std::cell::Cell::new(0);
     let run_once = |image: ImageBuf, index: u64| -> Result<ImageBuf> {
-        let attempt = invocation.operation.attempt(index);
-        let attempt_id = attempt.context().id();
-        let result = invocation.phase(
-            "simulation",
-            IssueCategory::Simulation,
-            IssueBoundary::Simulation,
-            attempt.context(),
-            |simulation_context| {
+        let (attempt_id, result) =
+            telemetry::simulation_attempt(invocation, index, |simulation_context| {
                 let out = if inject.is_none() && collect.is_none() {
                     runtime
                         .process_observed(image, backend.as_ref(), simulation_context)
@@ -837,13 +909,7 @@ fn cmd_process(
                         .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                 };
                 Ok(out)
-            },
-        );
-        attempt.finish(if result.is_ok() {
-            spektrafilm_gpu::telemetry::Outcome::Succeeded
-        } else {
-            spektrafilm_gpu::telemetry::Outcome::Failed
-        });
+            });
         if result.is_ok() {
             output_attempt.set(attempt_id);
         }
@@ -875,17 +941,10 @@ fn cmd_process(
     // Save output
     let t = Instant::now();
     invocation.operation.set_saved_attempt(output_attempt.get());
-    let options = SaveOptions {
-        depth,
-        color_space: &saving_space,
-        cctf_encoding: saving_encoded,
-        jpeg_quality,
-        jpeg_subsampling,
-        compression,
-    };
+    let options = plan.save_options();
     invocation.operation.set_saving_configuration(
         spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
-            output_format.image_format(),
+            plan.format.image_format(),
             &options,
         ),
     );
@@ -899,8 +958,8 @@ fn cmd_process(
                 &result,
                 &output_color_space,
                 output_cctf_encoding,
-                &saving_space,
-                saving_encoded,
+                &plan.saving_space,
+                plan.saving_encoded,
             )
             .map_err(anyhow::Error::from)
         },

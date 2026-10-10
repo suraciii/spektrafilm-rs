@@ -887,19 +887,8 @@ impl WgpuBackend {
         // Single sync point at the end. Map buf_b directly on the zero-copy
         // path, or the staging buffer otherwise.
         let map_target = readback.as_ref().unwrap_or(&buf_b);
-        let slice = map_target.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-        self.device.materialized(img_bytes as u64);
+        let out_f32 = self.read_mapped_f32(map_target, img_bytes as u64);
         let gpu_wait_ms = t_start.elapsed().as_secs_f32() * 1000.0 - cpu_setup_ms;
-        let data = slice.get_mapped_range();
-        let out_f32: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
-        drop(data);
-        map_target.unmap();
 
         let out = ImageBuf::from_data(image.width, image.height, f32_to_scalars(out_f32));
         tracing::debug!(
