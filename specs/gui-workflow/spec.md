@@ -7,3 +7,7 @@
 - Save writes retained output. Export re-renders through the selected CPU f64 or WGPU f32 backend and exposes cancellation.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.
 - Viewer-only state, such as zoom, interpolation, reveal, and canvas presentation, must not alter saved or exported pixels.
+
+- For the direct `input > film > scan` route, the Scanner controls expose
+  `direct_scan` and `positive_scan`. Route changes away from direct film scan
+  reset the output mode to `direct_scan`.

@@ -15,7 +15,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
 - **Independent GUI export.** **Export…** opens its own settings dialog, then a file chooser, and renders an immutable snapshot of the full input and simulation parameters through the GUI's Runtime worker. CPU uses the GUI build's native precision; GPU uses WGPU f32 and faithful CPU stages where required. GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Cancellation discards work at the next boundary before atomic publication and may wait for an active computation.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
-- **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
+- **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|positive_scan`; `positive_scan` uses the CPU per-stage scanner-domain interpretation and is rejected for paper, positive-film, convert-film, white/black-corrected, or active-Grain-V2 routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 - **Selectable grain engines.** V1 remains the default emulsion model. V2 provides procedural Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls.
 
@@ -145,6 +145,11 @@ executable.
     --format jpeg --bit-depth 8 --jpeg-quality 95 --jpeg-subsampling 444 \
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
+
+# Direct negative-film scan interpreted as a positive image
+./target/release/spektrafilm-f64 process input.tif -o positive.tif \
+    --backend cpu --film kodak_portra_400 --scan-film \
+    --scan-output positive_scan --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json

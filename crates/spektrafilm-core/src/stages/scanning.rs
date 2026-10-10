@@ -6,7 +6,7 @@ use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::colorspace;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::pchip3d::{pchip_interp, prepare_pchip_3d};
-use spektrafilm_math::precision::{Scalar, from_f64};
+use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
 
 use super::build_lut_grid;
 use crate::params::RuntimeParams;
@@ -133,6 +133,73 @@ fn scan_spectral_via_lut(
     out
 }
 
+fn scan_reference_rgb(
+    density_cmy: [f64; 3],
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    channel_density: &[[f64; 3]],
+    base_density: &[f64],
+    illuminant: &[f64],
+    normalization: f64,
+    adapt: &[[f64; 3]; 3],
+    xyz_to_rgb: &[[f64; 3]; 3],
+) -> [f64; 3] {
+    let sample = ImageBuf::from_data(1, 1, density_cmy.into_iter().map(from_f64).collect());
+    let captured = if color_ref.has_remap() || params.settings.use_scanner_lut {
+        let (data_min, data_max) = scanner_lut_bounds(profile, params);
+        scan_spectral_via_lut(
+            &sample,
+            channel_density,
+            base_density,
+            illuminant,
+            normalization,
+            adapt,
+            xyz_to_rgb,
+            backend,
+            data_min,
+            data_max,
+            params.settings.lut_resolution as usize,
+            color_ref,
+        )
+    } else {
+        backend.scan_spectral(
+            &sample,
+            channel_density,
+            base_density,
+            illuminant,
+            normalization,
+            adapt,
+            xyz_to_rgb,
+        )
+    };
+    [
+        to_f64(captured.data[0]),
+        to_f64(captured.data[1]),
+        to_f64(captured.data[2]),
+    ]
+}
+
+fn positive_scan_requested(params: &RuntimeParams) -> bool {
+    params.scanner.scan_output == "positive_scan"
+}
+
+fn interpret_negative_capture(
+    mut rgb: ImageBuf,
+    clear_rgb: [f64; 3],
+    dense_rgb: [f64; 3],
+) -> ImageBuf {
+    rgb.data.par_chunks_exact_mut(3).for_each(|px| {
+        for channel in 0..3 {
+            let span = (clear_rgb[channel] - dense_rgb[channel]).max(1e-12);
+            px[channel] =
+                from_f64(((clear_rgb[channel] - to_f64(px[channel])) / span).clamp(0.0, 1.0));
+        }
+    });
+    rgb
+}
+
 pub fn scan_with_options(
     density_cmy: &ImageBuf,
     profile: &Profile,
@@ -143,6 +210,14 @@ pub fn scan_with_options(
     scan_illuminant: Option<&str>,
     include_base: bool,
 ) -> ImageBuf {
+    let positive_scan = positive_scan_requested(params);
+    let backend = if positive_scan {
+        static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
+            spektrafilm_gpu::cpu_backend::CpuBackend;
+        &CPU_BACKEND as &dyn ComputeBackend
+    } else {
+        backend
+    };
     let channel_density = crate::chain_prep::channel_density(profile);
     let base_density = if include_base {
         std::borrow::Cow::Borrowed(profile.data.base_density.as_slice())
@@ -236,8 +311,44 @@ pub fn scan_with_options(
         spektrafilm_model::glare::add_glare_with_amount(&mut rgb, &glare_amount, glare_rgb_offset);
     }
 
-    // Output gamut compression — mirrors Python's `compress_rgb` after
-    // XYZ→RGB and glare, before blur/unsharp. No-op when inactive.
+    // Positive interpretation is scanner-domain: optical capture and lens
+    // blur happen before the calibrated negative endpoint inversion.
+    if positive_scan {
+        let clear_rgb = scan_reference_rgb(
+            [0.0; 3],
+            profile,
+            params,
+            backend,
+            color_ref,
+            &channel_density,
+            base_density.as_ref(),
+            &illuminant,
+            normalization,
+            &adapt,
+            &base_xyz_to_rgb,
+        );
+        let (_, dense_density) = scanner_lut_bounds(profile, params);
+        let dense_rgb = scan_reference_rgb(
+            dense_density,
+            profile,
+            params,
+            backend,
+            color_ref,
+            &channel_density,
+            base_density.as_ref(),
+            &illuminant,
+            normalization,
+            &adapt,
+            &base_xyz_to_rgb,
+        );
+        if params.scanner.lens_blur > 0.0 {
+            rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
+        }
+        rgb = interpret_negative_capture(rgb, clear_rgb, dense_rgb);
+    }
+
+    // Output gamut compression — direct scans preserve the historical
+    // capture order; positive scans compress only after interpretation.
     if gamut.is_active() {
         rgb.data.par_chunks_exact_mut(3).for_each(|px| {
             let out = gamut.compress([px[0] as f64, px[1] as f64, px[2] as f64]);
@@ -247,8 +358,9 @@ pub fn scan_with_options(
         });
     }
 
-    // Lens blur
-    if params.scanner.lens_blur > 0.0 {
+    // Direct scans apply optical blur after gamut compression, preserving
+    // the established direct-scan behavior.
+    if !positive_scan && params.scanner.lens_blur > 0.0 {
         rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
     }
 

@@ -213,6 +213,51 @@ mod integration_tests {
     }
 
     #[test]
+    fn positive_scan_inverts_negative_capture_on_cpu_path() {
+        let dir = data_dir();
+        let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.io.input_color_space = "sRGB".into();
+        params.io.output_color_space = "sRGB".into();
+        params.io.output_cctf_encoding = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.unsharp_mask = [0.0, 0.0];
+        params.camera.auto_exposure = false;
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.settings.use_scanner_lut = false;
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let mut updated_params = pipeline.params.clone();
+        updated_params.io.scan_film = false;
+        let pipeline = pipeline.with_params(updated_params).unwrap();
+        assert!(pipeline.params.io.scan_film);
+        let render = |value| {
+            pipeline
+                .process(
+                    ImageBuf::from_data(1, 1, vec![from_f64(value); 3]),
+                    &backend,
+                )
+                .unwrap()
+        };
+        let shadow = render(0.1);
+        let highlight = render(0.8);
+        let shadow_mean = shadow.data.iter().copied().sum::<Scalar>() / from_f64(3.0);
+        let highlight_mean = highlight.data.iter().copied().sum::<Scalar>() / from_f64(3.0);
+        assert!(shadow.data.iter().all(|value| value.is_finite()));
+        assert!(highlight.data.iter().all(|value| value.is_finite()));
+        assert!(
+            shadow_mean < highlight_mean,
+            "positive interpretation must reverse negative polarity: shadow={shadow_mean}, highlight={highlight_mean}"
+        );
+    }
+
+    #[test]
     fn passthrough_route_skips_simulation() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();

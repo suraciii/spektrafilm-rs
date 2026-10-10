@@ -289,7 +289,12 @@ impl Pipeline {
     /// instead of retaining stale calibration.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         let mut params = params;
+        if params.workflow.route == "input > film > scan" {
+            params.io.scan_film = true;
+        }
+        params.validate()?;
         params.validate_color()?;
+        crate::pipeline_calibration::validate_scan_output(&params, &self.film)?;
         crate::params_builder::broadcast_monochrome_layout(&self.film, &mut params);
         if let Some(model) = self.print.data.density_curves_model.as_ref() {
             crate::print_morph::morph_density_curves(
@@ -322,6 +327,15 @@ impl Pipeline {
         self.params = params;
         Ok(self)
     }
+    fn effective_backend<'a>(&self, backend: &'a dyn ComputeBackend) -> &'a dyn ComputeBackend {
+        if self.params.scanner.scan_output == "positive_scan" {
+            static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
+                spektrafilm_gpu::cpu_backend::CpuBackend;
+            &CPU_BACKEND
+        } else {
+            backend
+        }
+    }
 }
 
 impl Pipeline {
@@ -346,6 +360,8 @@ impl Pipeline {
         if params.workflow.route == "input > film > scan" {
             params.io.scan_film = true;
         }
+        crate::pipeline_calibration::validate_scan_output(&params, &film)
+            .expect("invalid scan output mode");
         crate::params_builder::broadcast_monochrome_layout(&film, &mut params);
         let mut print =
             crate::profile::resolve_for_render(print, params.print_render.development_time);
@@ -658,6 +674,7 @@ impl Pipeline {
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        let backend = self.effective_backend(backend);
         let inject = match inject {
             Some(tap) => tap,
             None => self

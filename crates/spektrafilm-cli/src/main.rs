@@ -229,6 +229,8 @@ struct WorkflowOptions {
     lens_correction: bool,
     #[arg(long)]
     route: Option<String>,
+    #[arg(long, value_parser = ["direct_scan", "positive_scan"])]
+    scan_output: Option<String>,
     #[arg(long, default_value = "none")]
     film_channel_swap: String,
     #[arg(long, default_value = "none")]
@@ -457,6 +459,9 @@ fn cmd_process(
         .unwrap_or_else(|| params.workflow.route.clone());
     params.workflow.route = route;
     params.io.scan_film = scan_film;
+    if let Some(scan_output) = &workflow.scan_output {
+        params.scanner.scan_output = scan_output.clone();
+    }
     params
         .validate()
         .map_err(anyhow::Error::msg)
