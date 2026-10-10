@@ -32,7 +32,8 @@ jobs:
             build-essential pkg-config curl ca-certificates \
             libgtk-3-dev libudev-dev libxkbcommon-dev \
             liblensfun-dev libexiv2-dev libglib2.0-dev libopenimageio-dev \
-            libjpeg-dev zlib1g-dev libopenblas-dev
+            libjpeg-dev zlib1g-dev libopenblas-dev \
+            libvulkan1 mesa-vulkan-drivers
       - name: Cache pinned LibRaw
         id: libraw
         uses: actions/cache@v4
@@ -51,9 +52,9 @@ jobs:
           ./configure --prefix="$RUNNER_TEMP/libraw-022" --disable-static --disable-examples
           make -j"$(nproc)"
           make install
-      - name: Check workspace targets (default features)
-        run: cargo check --locked --workspace --all-targets
-      - name: Check workspace targets (f64)
-        run: cargo check --locked --workspace --all-targets --features precision-f64
-      - name: Run fast math unit tests
-        run: cargo test --locked -p spektrafilm-math --lib --features precision-f64
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Run the full gate (fmt, check, tests)
+        run: just ci

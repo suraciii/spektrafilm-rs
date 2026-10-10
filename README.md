@@ -80,7 +80,8 @@ The public Canon EOS 40D sRAW CR2 fixture also matches all four modes at zero ma
 
 The rebuilt f64 CLI and its relocated Linux archive also passed eight fresh RAW comparisons against the pinned Python loader: all four white-balance modes on Kodak 768×512 with missing-lens correction, and Canon 1944×1296 with injected known-lens EXIF. The unbounded `rgb_in` boundary matched exactly (maximum and mean absolute error zero). The relocated RAW helper independently matched Kodak pixels exactly under a clean environment. The earlier packaged GUI launched under Xvfb and its prepared-image export preserved EXIF/IPTC/XMP and ICC bytes; this is historical evidence for the earlier export implementation.
 
-WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference.
+WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference. Linux GPU acceptance requires the Mesa software Vulkan adapter (`mesa-vulkan-drivers`).
+
 The `just` command surface also covers packaging and per-user installation:
 
 ```bash
@@ -171,7 +172,8 @@ executable.
 ```
 
 See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
-`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=JSON_VALUE` assignments in order. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
+
+`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments in order. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
 
 ```bash
 # Discover portable looks and editable grain controls
@@ -182,6 +184,7 @@ See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs
 # Inspect the effective configuration without decoding pixels or creating output
 ./target/release/spektrafilm process input.png -o output.tif \
     --preset classic-kodak-portra-400 \
+    --set film_render.grain.engine=v2 \
     --set 'camera.exposure_compensation_ev=0.5,film_render.grain.v2_amount=25' \
     --dry-run --data-dir data
 
@@ -246,17 +249,20 @@ per-layer median-preserving skew parameters.
 ```bash
 ./target/release/spektrafilm lut list input
 ./target/release/spektrafilm lut list output
-SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build \
+SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build build/lut_bundles \
     --film kodak_portra_400 --print kodak_portra_endura \
     --input vlog --output srgb --topology 4lut --resolution 33 \
-    --combinations --out build/lut_bundles --data-dir data
-./target/release/spektrafilm lut build --from bundle.toml \
-    --resolution 65 --out build/lut_bundles --data-dir data
+    --combinations --data-dir data
+./target/release/spektrafilm lut build build/lut_bundles --from bundle.toml \
+    --resolution 65 --data-dir data
 ```
-The CLI also resolves the packaged `../share/data` directory for `lut` and
-`export-lut` when invoked outside the package directory. Profile metadata and
-array dimensions are validated before construction; present but malformed
-neutral-filter JSON is an error rather than an empty-database fallback.
+Data-consuming commands select `--data-dir`, then `SPEKTRAFILM_DATA_DIR`, then
+automatic executable-relative or working-directory data. Explicit selections
+must exist and never fall back. Help, version, field discovery, and built-in
+preset listing without an explicit selection need no data. See the
+[CLI workflow contract](specs/cli-workflow/spec.md#data-directory-selection).
+Profile metadata and array dimensions are validated before construction;
+present but malformed neutral-filter JSON is an error.
 
 TOML fields match the typed `spektrafilm_core::lut_baker::BundleSpec`; supplied
 CLI flags override file values. A minimal spec is:
