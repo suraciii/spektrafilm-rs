@@ -177,6 +177,7 @@ impl Pipeline {
                         use spektrafilm_gpu::telemetry::ResidentDeclineReason as R;
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
+                            ResidentFallbackReason::PositiveScanOutput => R::PositiveScanOutput,
                             ResidentFallbackReason::LangmuirChemistry => R::LangmuirChemistry,
                             ResidentFallbackReason::InputTransferDecoding => {
                                 R::InputTransferDecoding
