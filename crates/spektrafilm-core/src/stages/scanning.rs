@@ -193,8 +193,7 @@ fn interpret_negative_capture(
     rgb.data.par_chunks_exact_mut(3).for_each(|px| {
         for channel in 0..3 {
             let span = (clear_rgb[channel] - dense_rgb[channel]).max(1e-12);
-            px[channel] =
-                from_f64(((clear_rgb[channel] - to_f64(px[channel])) / span).clamp(0.0, 1.0));
+            px[channel] = from_f64((clear_rgb[channel] - to_f64(px[channel])) / span);
         }
     });
     rgb
@@ -456,4 +455,27 @@ pub fn process(
     gamut: &crate::gamut_compression::OutputGamutCompress,
 ) -> ImageBuf {
     scan(density_cmy, profile, params, backend, color_ref, gamut)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positive_scan_preserves_samples_beyond_capture_endpoints() {
+        let capture = ImageBuf::from_data(
+            5,
+            1,
+            [1.0, 0.75, 0.5, 0.25, 0.0]
+                .into_iter()
+                .flat_map(|value| [from_f64(value); 3])
+                .collect(),
+        );
+        let positive = interpret_negative_capture(capture, [0.75; 3], [0.25; 3]);
+        let expected: Vec<_> = [-0.5, 0.0, 0.5, 1.0, 1.5]
+            .into_iter()
+            .flat_map(|value| [from_f64(value); 3])
+            .collect();
+        assert_eq!(positive.data, expected);
+    }
 }
