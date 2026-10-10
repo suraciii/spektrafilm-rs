@@ -238,6 +238,12 @@ impl Operation {
         let working_dimensions = self
             .working_dimensions
             .or(snapshot.execution.working_dimensions);
+        if working_dimensions.is_none() {
+            unavailable_fields.push(UnavailableField {
+                field: "working_dimensions".to_owned(),
+                reason: AvailabilityReason::NotReached,
+            });
+        }
         let saved_attempt_retained = self
             .saved_attempt
             .is_some_and(|attempt| attempts.iter().any(|observation| observation.id == attempt));
