@@ -112,12 +112,12 @@ pub fn write_lut_ref(
             match format {
                 LutFormat::Cube => {
                     write_comments(&mut out, header_lines)?;
-                    write_title(&mut out, &document.title)?;
+                    write_title(&mut out, document.title)?;
                     write_domain(&mut out, document, false)?;
                     writeln!(out, "LUT_3D_SIZE {}", document.resolution)?;
                 }
                 LutFormat::Lumix => {
-                    write_title(&mut out, &document.title)?;
+                    write_title(&mut out, document.title)?;
                     if let Some(tag) = photo_style_tag.filter(|tag| !tag.is_empty()) {
                         ensure!(
                             !tag.contains(['\r', '\n']),

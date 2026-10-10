@@ -1,7 +1,7 @@
-/// Color space conversion matrices and utilities.
-///
-/// All matrices are row-major: output[i] = dot(matrix[i], input).
-/// Source: IEC 61966-2-1 (sRGB), ICC profiles, CIE standards.
+//! Color space conversion matrices and utilities.
+//!
+//! All matrices are row-major: output[i] = dot(matrix[i], input).
+//! Source: IEC 61966-2-1 (sRGB), ICC profiles, CIE standards.
 
 /// sRGB → CIE XYZ (D65), assuming linear input.
 /// Matches Python colour-science 4-digit precision for exact parity.
@@ -423,6 +423,8 @@ impl RgbColorSpace {
     /// reproduces for Python parity.
     pub fn rgb_to_rgb_identity(&self) -> [[f64; 3]; 3] {
         let mut m = [[0.0f64; 3]; 3];
+        // Keep reference matrix products in index form.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             for j in 0..3 {
                 m[i][j] = self.matrix_xyz_to_rgb[i][0] * self.matrix_rgb_to_xyz[0][j]
@@ -700,6 +702,8 @@ pub fn conversion_matrix(source: &RgbColorSpace, destination: &RgbColorSpace) ->
         chromatic_adaptation_matrix_f64(source.whitepoint_xyz(), destination.whitepoint_xyz());
     let mut adapted = [[0.0; 3]; 3];
     let mut result = [[0.0; 3]; 3];
+    // Keep reference CAT02 matrix products in index form.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..3 {
         for j in 0..3 {
             for k in 0..3 {
@@ -707,6 +711,8 @@ pub fn conversion_matrix(source: &RgbColorSpace, destination: &RgbColorSpace) ->
             }
         }
     }
+    // Keep reference CAT02 matrix products in index form.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..3 {
         for j in 0..3 {
             for k in 0..3 {
@@ -1381,8 +1387,8 @@ mod tests {
         };
         for (name, white, expected) in references {
             let space = resolve(name).unwrap();
-            for channel in 0..3 {
-                assert_reference(space.whitepoint_xyz()[channel], white[channel], name);
+            for (channel, &expected_white) in white.iter().enumerate() {
+                assert_reference(space.whitepoint_xyz()[channel], expected_white, name);
             }
             for (index, probe) in probes.iter().copied().enumerate() {
                 let multiply = |matrix: &[[f64; 3]; 3]| {
@@ -1464,6 +1470,8 @@ mod tests {
     #[test]
     fn test_identity_adaptation() {
         let m = chromatic_adaptation_matrix(D65_XYZ, D65_XYZ);
+        // Keep reference matrix indices for the identity comparison.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };

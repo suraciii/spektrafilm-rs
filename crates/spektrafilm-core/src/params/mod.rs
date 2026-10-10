@@ -604,6 +604,7 @@ impl Default for SettingsParams {
 /// call-site flag instead), so it is preserved as an upstream no-op.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct DebugParams {
     #[serde(default)]
     pub deactivate_spatial_effects: bool,
@@ -613,17 +614,6 @@ pub struct DebugParams {
     pub print_timings: bool,
     #[serde(default)]
     pub lut_mode: bool,
-}
-
-impl Default for DebugParams {
-    fn default() -> Self {
-        Self {
-            deactivate_spatial_effects: false,
-            deactivate_stochastic_effects: false,
-            print_timings: false,
-            lut_mode: false,
-        }
-    }
 }
 
 /// Pipeline tap configuration — mirrors upstream 0.3.4 `TapsParams`.
@@ -702,6 +692,7 @@ impl RuntimeParams {
 /// profile objects (Rust passes `Profile` values alongside the params).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct RuntimeParams {
     /// Per-render stochastic seed. The recipe runner sets this out-of-band so
     /// it does not become part of the user parameter schema or digest.
@@ -733,26 +724,6 @@ pub struct RuntimeParams {
     pub debug: DebugParams,
     #[serde(default)]
     pub taps: TapsParams,
-}
-
-impl Default for RuntimeParams {
-    fn default() -> Self {
-        Self {
-            random_seed: 0,
-            neutral_print_filters_protected: [false; 3],
-            camera: CameraParams::default(),
-            enlarger: EnlargerParams::default(),
-            scanner: ScannerParams::default(),
-            film_render: FilmRenderingParams::default(),
-            print_render: PrintRenderingParams::default(),
-            io: IoParams::default(),
-            workflow: WorkflowParams::default(),
-            magazine_print_color: MagazinePrintColorParams::default(),
-            settings: SettingsParams::default(),
-            debug: DebugParams::default(),
-            taps: TapsParams::default(),
-        }
-    }
 }
 
 impl RuntimeParams {

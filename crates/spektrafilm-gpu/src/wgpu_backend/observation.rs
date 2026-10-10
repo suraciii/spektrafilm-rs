@@ -165,8 +165,10 @@ impl Drop for BatchGuard {
             }
         }
         let full = valid == s.timed && s.timed == s.executed && s.submitted.is_some();
-        let mut work = WorkCounters::default();
-        work.valid_pass_count = Some(valid);
+        let work = WorkCounters {
+            valid_pass_count: Some(valid),
+            ..Default::default()
+        };
         self.scope.context().record_work(&work);
         let compute = if full {
             Measurement::available(sum)
@@ -210,10 +212,10 @@ impl Drop for BatchGuard {
             compute_pass_sum: compute,
             partial_compute_pass_sum: partial,
         });
-        if let Some(q) = &s.queries {
-            if q.map_requested {
-                q.readback.unmap();
-            }
+        if let Some(q) = &s.queries
+            && q.map_requested
+        {
+            q.readback.unmap();
         }
         s.passes.clear();
     }
@@ -259,9 +261,11 @@ impl WgpuBackend {
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });
-                let mut w = WorkCounters::default();
-                w.telemetry_buffer_create_count = Some(2);
-                w.telemetry_buffer_create_bytes = Some(size * 2);
+                let w = WorkCounters {
+                    telemetry_buffer_create_count: Some(2),
+                    telemetry_buffer_create_bytes: Some(size * 2),
+                    ..Default::default()
+                };
                 context.record_work(&w);
                 Some(QueryResources {
                     set,
@@ -354,9 +358,11 @@ impl ObservedDevice {
     pub fn create_buffer(&self, d: &wgpu::BufferDescriptor<'_>) -> wgpu::Buffer {
         let b = self.raw.create_buffer(d);
         if self.context.enabled() {
-            let mut w = WorkCounters::default();
-            w.buffer_create_count = Some(1);
-            w.buffer_create_bytes = Some(d.size);
+            let w = WorkCounters {
+                buffer_create_count: Some(1),
+                buffer_create_bytes: Some(d.size),
+                ..Default::default()
+            };
             self.context.record_work(&w);
         }
         b
@@ -365,9 +371,11 @@ impl ObservedDevice {
         use wgpu::util::DeviceExt;
         let b = self.raw.create_buffer_init(d);
         if self.context.enabled() {
-            let mut w = WorkCounters::default();
-            w.buffer_create_count = Some(1);
-            w.buffer_create_bytes = Some(b.size());
+            let w = WorkCounters {
+                buffer_create_count: Some(1),
+                buffer_create_bytes: Some(b.size()),
+                ..Default::default()
+            };
             self.context.record_work(&w);
             self.upload(d.contents.len() as u64, upload_category(d));
         }
@@ -377,9 +385,11 @@ impl ObservedDevice {
         if !self.context.enabled() {
             return;
         }
-        let mut w = WorkCounters::default();
-        w.upload_count = Some(1);
-        w.upload_bytes = Some(bytes);
+        let mut w = WorkCounters {
+            upload_count: Some(1),
+            upload_bytes: Some(bytes),
+            ..Default::default()
+        };
         match category {
             UploadCategory::Image => {
                 w.image_upload_count = Some(1);
@@ -402,9 +412,11 @@ impl ObservedDevice {
     }
     pub fn materialized(&self, bytes: u64) {
         if self.context.enabled() {
-            let mut w = WorkCounters::default();
-            w.readback_count = Some(1);
-            w.readback_bytes = Some(bytes);
+            let w = WorkCounters {
+                readback_count: Some(1),
+                readback_bytes: Some(bytes),
+                ..Default::default()
+            };
             self.context.record_work(&w);
         }
     }
@@ -440,8 +452,10 @@ impl ObservedDevice {
                 true
             };
             if first_wait {
-                let mut work = WorkCounters::default();
-                work.host_wait_count = Some(1);
+                let work = WorkCounters {
+                    host_wait_count: Some(1),
+                    ..Default::default()
+                };
                 self.context.record_work(&work);
             }
         }
@@ -452,11 +466,13 @@ impl ObservedQueue {
     pub fn write_buffer(&self, b: &wgpu::Buffer, offset: u64, data: &[u8]) {
         self.raw.write_buffer(b, offset, data);
         if self.context.enabled() {
-            let mut w = WorkCounters::default();
-            w.upload_count = Some(1);
-            w.upload_bytes = Some(data.len() as u64);
-            w.image_upload_count = Some(1);
-            w.image_upload_bytes = Some(data.len() as u64);
+            let w = WorkCounters {
+                upload_count: Some(1),
+                upload_bytes: Some(data.len() as u64),
+                image_upload_count: Some(1),
+                image_upload_bytes: Some(data.len() as u64),
+                ..Default::default()
+            };
             self.context.record_work(&w);
         }
     }
@@ -516,36 +532,37 @@ impl ObservedQueue {
             }
             command.raw
         }));
-        let mut work = WorkCounters::default();
-        work.submit_count = Some(1);
-        work.command_buffer_count = Some(count);
-        work.dispatch_count = Some(dispatches);
-        work.executed_pass_count = Some(passes);
-        work.timed_pass_count = Some(timed);
-        work.omitted_pass_count = Some(passes.saturating_sub(timed));
-        work.staging_copy_count = Some(staging_count);
-        work.staging_copy_bytes = Some(staging_bytes);
-        work.device_copy_count = Some(device_count);
-        work.device_copy_bytes = Some(device_bytes);
-        work.telemetry_resolve_count = Some(resolve_count);
-        work.telemetry_copy_count = Some(resolve_count);
-        work.telemetry_copy_bytes = Some(telemetry_bytes);
+        let work = WorkCounters {
+            submit_count: Some(1),
+            command_buffer_count: Some(count),
+            dispatch_count: Some(dispatches),
+            executed_pass_count: Some(passes),
+            timed_pass_count: Some(timed),
+            omitted_pass_count: Some(passes.saturating_sub(timed)),
+            staging_copy_count: Some(staging_count),
+            staging_copy_bytes: Some(staging_bytes),
+            device_copy_count: Some(device_count),
+            device_copy_bytes: Some(device_bytes),
+            telemetry_resolve_count: Some(resolve_count),
+            telemetry_copy_count: Some(resolve_count),
+            telemetry_copy_bytes: Some(telemetry_bytes),
+            ..Default::default()
+        };
         if let Some(batch) = &self.batch {
             let mut batch = batch.lock();
-            if batch.timed > 0 {
-                if let Some(query) = &mut batch.queries {
-                    if !query.map_requested {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        query
-                            .readback
-                            .slice(..)
-                            .map_async(wgpu::MapMode::Read, move |result| {
-                                let _ = tx.send(result);
-                            });
-                        query.receiver = Some(rx);
-                        query.map_requested = true;
-                    }
-                }
+            if batch.timed > 0
+                && let Some(query) = &mut batch.queries
+                && !query.map_requested
+            {
+                let (tx, rx) = std::sync::mpsc::channel();
+                query
+                    .readback
+                    .slice(..)
+                    .map_async(wgpu::MapMode::Read, move |result| {
+                        let _ = tx.send(result);
+                    });
+                query.receiver = Some(rx);
+                query.map_requested = true;
             }
         }
         self.context.record_work(&work);

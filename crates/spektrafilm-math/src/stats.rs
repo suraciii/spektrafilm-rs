@@ -245,7 +245,7 @@ mod tests {
         // normal regime's scale.
         for _ in 0..1000 {
             let k = fast_poisson(&mut rng, 4.0);
-            assert!(k >= 0 && k <= 30);
+            assert!((0..=30).contains(&k));
         }
         // Normal regime: rounded, clamped at 0, centered on λ (individual
         // draws can dip below 30 — Poisson(60) has σ ≈ 7.7).

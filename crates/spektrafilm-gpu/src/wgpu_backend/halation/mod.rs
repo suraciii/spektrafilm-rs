@@ -229,6 +229,8 @@ pub(super) fn build_halation_state(
     let n = hp.halation_n_bounces as usize;
     // Pre-compute normalized decay weights.
     let mut decay = vec![0.0f32; n];
+    // The bounce index also determines the decay exponent.
+    #[allow(clippy::needless_range_loop)]
     for k in 0..n {
         decay[k] = hp.halation_bounce_decay.powi(k as i32);
     }

@@ -64,30 +64,30 @@ pub fn load_npy_f32<R: Read>(mut reader: R) -> Result<(Vec<usize>, Vec<f32>), Np
             // float16, little-endian
             let mut raw = vec![0u8; total_elements * 2];
             reader.read_exact(&mut raw)?;
-            raw.chunks_exact(2)
-                .map(|chunk| f16::from_le_bytes([chunk[0], chunk[1]]).to_f32())
+            raw.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| f16::from_le_bytes(*chunk).to_f32())
                 .collect()
         }
         "<f4" => {
             // float32, little-endian
             let mut raw = vec![0u8; total_elements * 4];
             reader.read_exact(&mut raw)?;
-            raw.chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|chunk| f32::from_le_bytes(*chunk))
                 .collect()
         }
         "<f8" => {
             // float64, little-endian
             let mut raw = vec![0u8; total_elements * 8];
             reader.read_exact(&mut raw)?;
-            raw.chunks_exact(8)
-                .map(|chunk| {
-                    let v = f64::from_le_bytes([
-                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
-                        chunk[7],
-                    ]);
-                    v as f32
-                })
+            raw.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|chunk| f64::from_le_bytes(*chunk) as f32)
                 .collect()
         }
         other => return Err(NpyError::Parse(format!("unsupported dtype: {other}"))),
@@ -97,15 +97,15 @@ pub fn load_npy_f32<R: Read>(mut reader: R) -> Result<(Vec<usize>, Vec<f32>), Np
 }
 
 /// Extract a field value from a Python dict-like header string.
-fn extract_field<'a>(header: &'a str, key: &str) -> Option<String> {
+fn extract_field(header: &str, key: &str) -> Option<String> {
     let pattern = format!("'{key}':");
     let start = header.find(&pattern)?;
     let rest = &header[start + pattern.len()..];
     let rest = rest.trim_start();
 
     // Handle string values: 'value'
-    if rest.starts_with('\'') {
-        let end = rest[1..].find('\'')?;
+    if let Some(stripped) = rest.strip_prefix('\'') {
+        let end = stripped.find('\'')?;
         return Some(rest[..end + 2].to_string());
     }
 
@@ -116,9 +116,7 @@ fn extract_field<'a>(header: &'a str, key: &str) -> Option<String> {
     }
 
     // Handle bare values: True, False, etc.
-    let end = rest
-        .find(|c: char| c == ',' || c == '}')
-        .unwrap_or(rest.len());
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
     Some(rest[..end].trim().to_string())
 }
 

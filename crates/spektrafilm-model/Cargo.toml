@@ -21,3 +21,6 @@ libm.workspace = true
 half = "2.7"
 thiserror.workspace = true
 tracing.workspace = true
+
+[lints]
+workspace = true

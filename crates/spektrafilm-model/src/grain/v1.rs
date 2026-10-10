@@ -39,6 +39,7 @@ const BINOMIAL_TAG: u64 = 1;
 /// `RandomState`), true uses the `fast_stats` kernels (statistical parity
 /// only — upstream's numba thread-global RNG is nondeterministic, so the
 /// Rust port drives each element from its own deterministic tagged stream).
+#[allow(clippy::too_many_arguments)]
 pub fn layer_particle_model(
     density: &[Scalar],
     width: u32,
@@ -72,8 +73,7 @@ pub fn layer_particle_model(
         sat_arr.push(saturation);
     }
 
-    let grain: Vec<Scalar>;
-    if use_fast_stats {
+    let grain: Vec<Scalar> = if use_fast_stats {
         // `fast_stats` regime: Python runs `fast_poisson(lam_array)` then
         // `fast_binomial(seeds, p)` as whole-array numba kernels whose
         // element draws are independent, so per-element tagged streams
@@ -81,11 +81,11 @@ pub fn layer_particle_model(
         // parallel) regardless of numba's thread schedule.
         let lam: Vec<f64> = sat_arr.iter().map(|&sat| npp / sat).collect();
         let seeds = stats::fast_poisson_array(seed, POISSON_TAG, &lam);
-        grain = stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
+        stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
             .into_iter()
             .zip(&sat_arr)
             .map(|(developed, &sat)| from_f64((developed as f64) * od_particle * sat))
-            .collect();
+            .collect()
     } else {
         // scipy regime — Python-bit-exact RNG: numpy's MT19937 +
         // RandomState distribution algorithms (`rk_poisson` / `rk_binomial`).
@@ -112,8 +112,8 @@ pub fn layer_particle_model(
             let developed = spektrafilm_math::numpy_rng::rk_binomial(&mut rng, seeds[i], p_arr[i]);
             *slot = from_f64((developed as f64) * od_particle * sat_arr[i]);
         }
-        grain = out;
-    }
+        out
+    };
     finish_grain(grain, width, height, blur_particle, od_particle)
 }
 
@@ -284,6 +284,8 @@ fn add_micro_structure(
     }
 
     let n = planes[0].len();
+    // Channel indices select deterministic RNG streams.
+    #[allow(clippy::needless_range_loop)]
     for ch in 0..3 {
         // Clumping field: iid lognormal(mean=1, std=sigma) per channel —
         // each element from its own deterministic stream (Python draws the
@@ -439,9 +441,11 @@ pub fn apply_grain_to_density_layers(
     //   density_max_layers    += density_min_layers
     //   n_particles_per_pixel  = pixel_area * fraction / particle_area_layer
     let mut density_max_total = [0.0f64; 3];
-    for sl in 0..3 {
+    for layer in density_max_layers {
+        // Channel indices align layer densities with accumulated totals.
+        #[allow(clippy::needless_range_loop)]
         for ch in 0..3 {
-            density_max_total[ch] += density_max_layers[sl][ch];
+            density_max_total[ch] += layer[ch];
         }
     }
     let mut fractions = [[0.0f64; 3]; 3];
@@ -511,8 +515,8 @@ pub fn apply_grain_to_density_layers(
     );
 
     let mut out = ImageBuf::new(width, height);
-    for ch in 0..3 {
-        out.write_channel(ch, &planes[ch]);
+    for (ch, plane) in planes.iter().enumerate() {
+        out.write_channel(ch, plane);
     }
     drop(sampler);
 
@@ -642,12 +646,12 @@ mod tests {
         // upstream defaults disable the clumping field there.
         let d = [0.8, 1.0, 1.2];
         let out = layered(d, PARTICLE_SCALE_LAYERS, 1.0, [0.2, 30.0], 12.0, false);
-        for ch in 0..3 {
+        for (ch, &density) in d.iter().enumerate() {
             let m = mean(&out.extract_channel(ch));
             assert!(
-                (m - d[ch]).abs() < 0.15,
+                (m - density).abs() < 0.15,
                 "ch {ch}: mean {m} vs density {}",
-                d[ch]
+                density
             );
         }
         assert!(var(&out.extract_channel(0)) > 1e-6);

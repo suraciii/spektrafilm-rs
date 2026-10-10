@@ -451,6 +451,8 @@ fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams) -> bool {
     changed
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn optional_numeric(
     ui: &mut Ui,
     label: &str,
@@ -470,6 +472,8 @@ fn optional_numeric(
     changed
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn tuple<T: egui::emath::Numeric, const N: usize>(
     ui: &mut Ui,
     label: &str,
@@ -560,6 +564,8 @@ fn choice_tip_options<'a>(
     changed
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn extra_choice(
     ui: &mut Ui,
     extras: &mut Value,
@@ -614,6 +620,8 @@ pub fn extra_bool_tip(
     }
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn extra_number(
     ui: &mut Ui,
     extras: &mut Value,

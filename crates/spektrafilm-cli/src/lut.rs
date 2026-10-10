@@ -9,6 +9,8 @@ use spektrafilm_core::lut_delivery::{self, DeliveryOptions};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::{lut_transport, profile};
 
+// Clap subcommands are built once at startup, outside hot paths.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum LutCommand {
     /// Bake a deterministic LUT bundle. CLI flags override a flat TOML BundleSpec.

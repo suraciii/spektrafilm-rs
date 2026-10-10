@@ -317,6 +317,8 @@ fn dichroic_filters_f64() -> [[f64; 3]; N_WAVELENGTHS] {
     let transitions = [12.0f64, 8.0, 8.0, 8.0];
 
     let mut filters = [[0.0f64; 3]; N_WAVELENGTHS];
+    // The sample index determines the wavelength used by each filter.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..N_WAVELENGTHS {
         let wl = spectral::WAVELENGTH_MIN as f64 + (i as f64) * spectral::WAVELENGTH_STEP as f64;
         filters[i][2] = erf((wl - edges[0]) / transitions[0]) / 2.0 + 0.5;
@@ -395,6 +397,8 @@ pub fn midgray_density_spectral_from_raw(
     // Python: compute_density_spectral — einsum + base_density. NaN propagates per wavelength.
     let n_wl = film.data.channel_density.len();
     let mut spectral = vec![0.0f64; n_wl];
+    // The wavelength index aligns spectral output, dye, and base density.
+    #[allow(clippy::needless_range_loop)]
     for wl in 0..n_wl {
         let cd = &film.data.channel_density[wl];
         let s = density_cmy[0] * cd[0] + density_cmy[1] * cd[1] + density_cmy[2] * cd[2];
