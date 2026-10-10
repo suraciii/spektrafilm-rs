@@ -294,7 +294,7 @@ impl GuiState {
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
         runtime["io"]["scan_film"] = json!(matches!(
             s["simulation"]["route"].as_str(),
-            Some("input > film > scan" | "input > film > scan > magazine")
+            Some("input > film > scan")
         ));
         copy_fields(
             &mut runtime["io"],
