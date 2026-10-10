@@ -1,6 +1,6 @@
 mod observed_backend;
 pub mod telemetry;
-pub use observed_backend::bind_backend;
+pub use observed_backend::{bind_backend, bind_cpu_fallback};
 pub mod cpu_backend;
 mod gpu_helpers;
 #[cfg(feature = "wgpu-backend")]

@@ -222,10 +222,25 @@ pub fn scan_with_options(
             spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
         )
     });
+    let cpu_fallback = positive_scan
+        .then(|| {
+            backend
+                .observation_context()
+                .filter(|context| context.enabled())
+                .map(|context| {
+                    spektrafilm_gpu::bind_cpu_fallback(
+                        context.clone(),
+                        spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+                    )
+                })
+        })
+        .flatten();
     let backend = if positive_scan {
         static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
             spektrafilm_gpu::cpu_backend::CpuBackend;
-        &CPU_BACKEND as &dyn ComputeBackend
+        cpu_fallback
+            .as_deref()
+            .unwrap_or(&CPU_BACKEND as &dyn ComputeBackend)
     } else {
         backend
     };

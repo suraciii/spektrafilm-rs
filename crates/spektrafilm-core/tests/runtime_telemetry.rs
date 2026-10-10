@@ -75,3 +75,75 @@ fn concurrent_runtime_calls_preserve_pixels_and_operation_ownership() {
         );
     }
 }
+
+#[test]
+fn positive_scan_cpu_override_preserves_stage_reports() {
+    use spektrafilm_gpu::telemetry::{BackendSelected, Executor, ResidentDeclineReason};
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.scan_output = "positive_scan".into();
+    params.camera.auto_exposure = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let image = ImageBuf::from_data(
+        3,
+        2,
+        (0..18)
+            .map(|index| from_f64(0.1 + index as f64 * 0.015))
+            .collect(),
+    );
+    let expected = runtime.process(image.clone(), &CpuBackend).unwrap();
+    for backend in [&CpuBackend as &dyn spektrafilm_gpu::ComputeBackend] {
+        let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+        operation.set_render_configuration(runtime.telemetry_configuration());
+        operation.set_input_dimensions(image.width, image.height);
+        let attempt = operation.attempt(1);
+        let simulation =
+            attempt
+                .context()
+                .scope("simulation", ObservationKind::Phase, Purpose::Image);
+        let output = runtime
+            .process_observed(image.clone(), backend, simulation.context())
+            .unwrap();
+        drop(simulation);
+        attempt.finish(Outcome::Succeeded);
+        let report = operation.finish(Outcome::Succeeded).unwrap();
+        report.validate().unwrap();
+        assert_eq!(output.data, expected.data);
+        assert_eq!(
+            report.execution.backend_selected,
+            Some(if backend.is_gpu() {
+                BackendSelected::Wgpu
+            } else {
+                BackendSelected::Cpu
+            })
+        );
+        assert_eq!(report.execution.path, Some(ExecutionPath::Cpu));
+        assert_eq!(report.measurements.work.dispatch_count, Some(0));
+        assert_eq!(
+            report
+                .execution
+                .resident_decline_reasons
+                .contains(&ResidentDeclineReason::PositiveScanOutput),
+            backend.is_gpu()
+        );
+        assert!(
+            report
+                .stages
+                .iter()
+                .any(|stage| stage.name == "positive_scan"
+                    && stage.executor == Some(Executor::Cpu)
+                    && stage.cpu_reason == Some(CpuReason::PositiveScanOutput))
+        );
+        assert!(
+            report
+                .stages
+                .iter()
+                .any(|stage| stage.name == "filming_develop")
+        );
+    }
+}

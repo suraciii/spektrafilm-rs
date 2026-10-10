@@ -5,6 +5,9 @@ pub fn bind_backend<'a>(
     backend: &'a dyn ComputeBackend,
     context: ObservationContext,
 ) -> Box<dyn ComputeBackend + 'a> {
+    if let Some(bound) = backend.with_observation_context(context.clone()) {
+        return bound;
+    }
     if backend.is_gpu() {
         context.set_backend_selected(BackendSelected::Wgpu);
         if let Some(a) = backend.adapter_description() {
@@ -13,20 +16,35 @@ pub fn bind_backend<'a>(
     } else {
         context.set_backend_selected(BackendSelected::Cpu);
     }
-    backend
-        .with_observation_context(context.clone())
-        .unwrap_or_else(|| Box::new(ObservedBackend { backend, context }))
+    Box::new(ObservedBackend {
+        backend,
+        context,
+        cpu_reason: None,
+    })
+}
+
+pub fn bind_cpu_fallback(
+    context: ObservationContext,
+    reason: CpuReason,
+) -> Box<dyn ComputeBackend> {
+    Box::new(ObservedBackend {
+        backend: &cpu_backend::CpuBackend,
+        context,
+        cpu_reason: Some(reason),
+    })
 }
 struct ObservedBackend<'a> {
     backend: &'a dyn ComputeBackend,
     context: ObservationContext,
+    cpu_reason: Option<CpuReason>,
 }
 impl ObservedBackend<'_> {
     fn cpu(&self) {
         if !self.backend.is_gpu() {
-            self.context.set_backend_selected(BackendSelected::Cpu);
-            self.context
-                .record_executor(Executor::Cpu, Some(CpuReason::CpuSelected));
+            self.context.record_executor(
+                Executor::Cpu,
+                Some(self.cpu_reason.unwrap_or(CpuReason::CpuSelected)),
+            );
         }
     }
 }
@@ -38,7 +56,11 @@ impl ComputeBackend for ObservedBackend<'_> {
         &self,
         c: ObservationContext,
     ) -> Option<Box<dyn ComputeBackend + '_>> {
-        Some(bind_backend(self.backend, c))
+        Some(Box::new(ObservedBackend {
+            backend: self.backend,
+            context: c,
+            cpu_reason: self.cpu_reason,
+        }))
     }
     fn name(&self) -> &str {
         self.backend.name()

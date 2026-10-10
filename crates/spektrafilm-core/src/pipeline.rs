@@ -702,7 +702,27 @@ impl Pipeline {
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
-        let backend = self.effective_backend(backend);
+        let cpu_fallback = if self.params.scanner.scan_output == "positive_scan" {
+            backend
+                .observation_context()
+                .filter(|context| context.enabled())
+                .map(|context| {
+                    if backend.is_gpu() {
+                        context.decline_resident(
+                            spektrafilm_gpu::telemetry::ResidentDeclineReason::PositiveScanOutput,
+                        );
+                    }
+                    spektrafilm_gpu::bind_cpu_fallback(
+                        context.clone(),
+                        spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+                    )
+                })
+        } else {
+            None
+        };
+        let backend = cpu_fallback
+            .as_deref()
+            .unwrap_or_else(|| self.effective_backend(backend));
         let inject = match inject {
             Some(tap) => tap,
             None => self
