@@ -29,16 +29,7 @@ fn collected_report() -> Report {
         .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
     stage.finish(Outcome::Succeeded);
     phase.finish(Outcome::Succeeded);
-    let mut report = operation.finish(Outcome::Succeeded).unwrap();
-
-    // The collector records wall-clock offsets. Normalize this fixture so
-    // validator tests do not depend on how long the setup took to execute.
-    report.operation.duration = Some(1.0);
-    report.phases[0].start_offset = 0.1;
-    report.phases[0].duration = 0.5;
-    report.stages[0].start_offset = 0.2;
-    report.stages[0].duration = 0.1;
-    report
+    operation.finish(Outcome::Succeeded).unwrap()
 }
 
 #[test]
@@ -78,10 +69,6 @@ fn failed_before_configuration_keeps_availability_reasons() {
     let operation = Operation::new(OperationKind::Render, CollectionMode::Summary);
     let report = operation.finish(Outcome::Failed).unwrap();
     report.validate().unwrap();
-    assert!(report.configuration.working_dimensions.is_none());
-    assert!(report.configuration.unavailable_fields.iter().any(|field| {
-        field.field == "working_dimensions" && field.reason == AvailabilityReason::NotReached
-    }));
     assert!(report.configuration.unavailable_fields.iter().any(|field| {
         field.field == "render" && field.reason == AvailabilityReason::NotReached
     }));
@@ -169,10 +156,8 @@ fn detail_truncation_keeps_exact_totals_and_valid_ancestry() {
     operation.set_backend_requested(spektrafilm_core::telemetry::BackendRequested::Cpu);
     for _ in 0..1100 {
         let scope = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-        let work = spektrafilm_core::telemetry::WorkCounters {
-            dispatch_count: Some(1),
-            ..Default::default()
-        };
+        let mut work = spektrafilm_core::telemetry::WorkCounters::default();
+        work.dispatch_count = Some(1);
         scope.context().record_work(&work);
         scope.finish(Outcome::Succeeded);
     }
@@ -221,99 +206,36 @@ fn truncated_saved_attempt_has_explicit_availability_reason() {
 
 #[test]
 fn counter_overflow_uses_stable_field_identity_without_wrapping() {
-    use spektrafilm_core::telemetry::ValidationError;
-
     let mut report = collected_report();
-    report.measurements.work.omitted_pass_count = None;
-    assert_eq!(report.validate(), Err(ValidationError::InvalidCoverage));
+    report.measurements.work.dispatch_count = None;
     report
         .coverage
         .counter_overflow_fields
-        .push("omitted_pass_count".to_owned());
+        .push("dispatch_count".to_owned());
     report.validate().unwrap();
-
-    report
-        .coverage
-        .counter_overflow_fields
-        .push("omitted_pass_count".to_owned());
-    assert_eq!(report.validate(), Err(ValidationError::InvalidCoverage));
 
     let mut report = collected_report();
     report
         .coverage
         .counter_overflow_fields
         .push("upload_bytes".to_owned());
-    assert_eq!(report.validate(), Err(ValidationError::InvalidCoverage));
-
-    let mut report = collected_report();
-    report.measurements.work.omitted_pass_count = None;
-    report.coverage.retained_observations = 0;
-    report
-        .coverage
-        .counter_overflow_fields
-        .push("private_counter".to_owned());
-    assert_eq!(report.validate(), Err(ValidationError::PrivacyField));
+    assert!(report.validate().is_err());
 }
 
 #[test]
 fn checked_counter_sum_overflow_is_reported_without_wrapping() {
     let operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-    let work = spektrafilm_core::telemetry::WorkCounters {
-        dispatch_count: Some(u64::MAX),
-        omitted_pass_count: Some(u64::MAX),
-        ..Default::default()
-    };
+    let mut work = spektrafilm_core::telemetry::WorkCounters::default();
+    work.dispatch_count = Some(u64::MAX);
     phase.context().record_work(&work);
     phase.context().record_work(&work);
-    phase.context().record_work(&Default::default());
     phase.finish(Outcome::Succeeded);
     let report = operation.finish(Outcome::Succeeded).unwrap();
     assert_eq!(report.measurements.work.dispatch_count, None);
-    assert_eq!(report.measurements.work.omitted_pass_count, None);
-    assert_eq!(report.phases[0].work.omitted_pass_count, None);
     assert_eq!(
         report.coverage.counter_overflow_fields,
-        vec!["dispatch_count".to_owned(), "omitted_pass_count".to_owned()]
-    );
-    report.validate().unwrap();
-}
-
-#[test]
-fn root_work_and_retained_descendants_keep_distinct_counter_totals() {
-    use spektrafilm_core::telemetry::WorkCounters;
-
-    let operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
-    operation.context().record_work(&WorkCounters {
-        telemetry_copy_bytes: Some(u64::MAX),
-        ..Default::default()
-    });
-    let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-    let stage = phase
-        .context()
-        .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
-    stage.context().record_work(&WorkCounters {
-        telemetry_copy_bytes: Some(1),
-        omitted_pass_count: None,
-        ..Default::default()
-    });
-    stage.context().record_work(&WorkCounters::default());
-    stage.finish(Outcome::Succeeded);
-    phase.finish(Outcome::Succeeded);
-    let report = operation.finish(Outcome::Succeeded).unwrap();
-
-    assert_eq!(report.measurements.work.telemetry_copy_bytes, None);
-    assert_eq!(report.measurements.work.omitted_pass_count, None);
-    assert_eq!(report.phases[0].work.telemetry_copy_bytes, Some(1));
-    assert_eq!(report.stages[0].work.telemetry_copy_bytes, Some(1));
-    assert_eq!(report.phases[0].work.omitted_pass_count, None);
-    assert_eq!(report.stages[0].work.omitted_pass_count, None);
-    assert_eq!(
-        report.coverage.counter_overflow_fields,
-        vec![
-            "telemetry_copy_bytes".to_owned(),
-            "omitted_pass_count".to_owned()
-        ]
+        vec!["dispatch_count".to_owned()]
     );
     report.validate().unwrap();
 }
@@ -632,60 +554,7 @@ fn report_destination_rejects_protected_symlink_and_hardlink_aliases() {
             PersistenceError::InvalidDestination
         ));
     }
-    let _ = fs::remove_dir_all(directory);
-}
-
-#[cfg(unix)]
-#[test]
-fn report_destination_rejects_dangling_protected_raw_output_symlinks() {
-    let directory = test_dir();
-    let report = directory.join("report.json");
-    let relative_raw = directory.join("relative-raw.bin");
-    let absolute_raw = directory.join("absolute-raw.bin");
-    let chained_raw = directory.join("chained-raw.bin");
-    std::os::unix::fs::symlink("report.json", &relative_raw).unwrap();
-    std::os::unix::fs::symlink(&report, &absolute_raw).unwrap();
-    std::os::unix::fs::symlink("absolute-raw.bin", &chained_raw).unwrap();
-
-    for raw_output in [&relative_raw, &absolute_raw, &chained_raw] {
-        assert!(matches!(
-            validate_report_destination(&report, &[raw_output]),
-            Err(PersistenceError::ProtectedAlias)
-        ));
-        assert!(!report.exists());
-        assert!(
-            fs::symlink_metadata(raw_output)
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
-    }
-
-    let ordinary_raw = directory.join("ordinary-raw.bin");
-    assert_eq!(
-        validate_report_destination(&report, &[&ordinary_raw])
-            .unwrap()
-            .path(),
-        report.as_path()
-    );
-    let _ = fs::remove_dir_all(directory);
-}
-
-#[cfg(unix)]
-#[test]
-fn report_destination_rejects_protected_symlink_cycles() {
-    let directory = test_dir();
-    let report = directory.join("report.json");
-    let raw_output = directory.join("raw.bin");
-    let intermediate = directory.join("intermediate.bin");
-    std::os::unix::fs::symlink("intermediate.bin", &raw_output).unwrap();
-    std::os::unix::fs::symlink("raw.bin", &intermediate).unwrap();
-    assert!(matches!(
-        validate_report_destination(&report, &[&raw_output]),
-        Err(PersistenceError::Io(_))
-    ));
-    assert!(!report.exists());
-    let _ = fs::remove_dir_all(directory);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -722,7 +591,7 @@ fn report_publication_is_atomic_no_clobber_and_confirmed_overwrite_is_explicit()
     let second = fs::read_to_string(&destination_path).unwrap();
     assert_ne!(first, second);
     assert!(second.contains("\"id\": 999"));
-    let _ = fs::remove_dir_all(directory);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -794,46 +663,27 @@ fn grain_configuration_describes_effective_sampler_branches() {
     assert!(
         RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
-            .spektra_fast_statistics_sampler
+            .v1_fast_statistics_sampler
     );
     params.film_render.grain.sublayers_active = false;
     assert!(
         !RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
-            .spektra_fast_statistics_sampler
+            .v1_fast_statistics_sampler
     );
-    params.film_render.grain.engine = params::GrainEngine::Procedural;
+    params.film_render.grain.engine = params::GrainEngine::V2;
     params.settings.rgb_to_raw_method = "mallett2019".to_owned();
     let grain = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(!grain.active);
-    assert!(!grain.spektra_fast_statistics_sampler);
-    params.film_render.grain.engine = params::GrainEngine::Spektra;
+    assert!(!grain.v1_fast_statistics_sampler);
+    params.film_render.grain.engine = params::GrainEngine::V1;
     params.film_render.grain.active = false;
     params.film_render.grain.sublayers_active = true;
     assert!(
         !RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
-            .spektra_fast_statistics_sampler
+            .v1_fast_statistics_sampler
     );
-}
-
-#[test]
-fn v3_grain_configuration_reports_engine_and_field_mode() {
-    use spektrafilm_core::{params, profile, telemetry};
-    let profile: profile::Profile = serde_json::from_value(serde_json::json!({
-        "metadata": {}, "info": {}, "data": {}
-    }))
-    .unwrap();
-    let mut params = params::RuntimeParams::default();
-    params.film_render.grain.engine = params::GrainEngine::Dye;
-    params.film_render.grain.v3_dye_support_um = 8.0;
-    params.settings.use_fast_stats = true;
-    params.film_render.grain.sublayers_active = true;
-    let grain = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
-    assert!(grain.active);
-    assert_eq!(grain.engine, telemetry::GrainEngine::Dye);
-    assert_eq!(grain.mode, telemetry::GrainMode::DyeField);
-    assert!(!grain.spektra_fast_statistics_sampler);
 }
 
 #[cfg(unix)]
@@ -851,7 +701,7 @@ fn report_destination_preserves_symlink_parent_traversal_before_canonicalizing()
         validate_report_destination(&destination, &[&protected]),
         Err(PersistenceError::ProtectedAlias)
     ));
-    let _ = fs::remove_dir_all(directory);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

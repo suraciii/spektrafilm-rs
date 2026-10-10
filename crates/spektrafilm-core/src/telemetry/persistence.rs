@@ -104,10 +104,10 @@ pub fn validate_report_destination(
     if !parent.is_dir() {
         return Err(PersistenceError::MissingParent);
     }
-    if let Ok(metadata) = fs::symlink_metadata(path)
-        && (!metadata.file_type().is_file() || metadata.file_type().is_symlink())
-    {
-        return Err(PersistenceError::InvalidDestination);
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(PersistenceError::InvalidDestination);
+        }
     }
     let destination_identity = path_identity(path)?;
     for protected_path in protected {
@@ -115,9 +115,13 @@ pub fn validate_report_destination(
             return Err(PersistenceError::ProtectedAlias);
         }
     }
-    for protected_path in protected {
-        if same_file(path, protected_path) {
-            return Err(PersistenceError::ProtectedAlias);
+    if let Ok(metadata) = fs::metadata(path) {
+        for protected_path in protected {
+            if let Ok(protected_metadata) = fs::metadata(protected_path) {
+                if same_file(&metadata, &protected_metadata) {
+                    return Err(PersistenceError::ProtectedAlias);
+                }
+            }
         }
     }
     Ok(ReportDestination {
@@ -126,47 +130,21 @@ pub fn validate_report_destination(
 }
 
 fn path_identity(path: &Path) -> Result<PathBuf, PersistenceError> {
-    let mut resolved = path.to_path_buf();
-    // Match the usual filesystem symlink traversal limit, including dangling chains.
-    for followed in 0..=40 {
-        match fs::symlink_metadata(&resolved) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                if followed == 40 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "protected path exceeds the symlink traversal limit",
-                    )
-                    .into());
-                }
-                let target = fs::read_link(&resolved)?;
-                resolved = if target.is_absolute() {
-                    target
-                } else {
-                    resolved
-                        .parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .join(target)
-                };
-            }
-            Ok(_) => return Ok(fs::canonicalize(&resolved)?),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let Some(file_name) = resolved.file_name() else {
-                    return Err(PersistenceError::InvalidDestination);
-                };
-                let parent = resolved
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                    .unwrap_or_else(|| Path::new("."));
-                return if parent.exists() {
-                    Ok(fs::canonicalize(parent)?.join(file_name))
-                } else {
-                    lexical_absolute(&resolved)
-                };
-            }
-            Err(error) => return Err(error.into()),
-        }
+    if path.exists() {
+        return Ok(fs::canonicalize(path)?);
     }
-    unreachable!("symlink traversal returns at its limit")
+    let Some(file_name) = path.file_name() else {
+        return Err(PersistenceError::InvalidDestination);
+    };
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if parent.exists() {
+        Ok(fs::canonicalize(parent)?.join(file_name))
+    } else {
+        lexical_absolute(path)
+    }
 }
 
 fn lexical_absolute(path: &Path) -> Result<PathBuf, PersistenceError> {
@@ -191,83 +169,20 @@ fn lexical_absolute(path: &Path) -> Result<PathBuf, PersistenceError> {
 }
 
 #[cfg(unix)]
-fn same_file(left: &Path, right: &Path) -> bool {
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
-    let (Ok(left), Ok(right)) = (fs::metadata(left), fs::metadata(right)) else {
-        return false;
-    };
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
-/// Stable file identity for Windows. The standard library's volume/file-index
-/// metadata accessors still require the unstable `windows_by_handle` feature, so
-/// the identity comes from the documented handle interface instead.
 #[cfg(windows)]
-fn same_file(left: &Path, right: &Path) -> bool {
-    let (Some(left), Some(right)) = (handle_identity(left), handle_identity(right)) else {
-        return false;
-    };
-    left == right
-}
-
-#[cfg(windows)]
-fn handle_identity(path: &Path) -> Option<(u32, u64)> {
-    use std::ffi::c_void;
-    use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
-
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-
-    #[repr(C)]
-    #[derive(Default)]
-    struct FileTime {
-        low: u32,
-        high: u32,
-    }
-
-    #[repr(C)]
-    #[derive(Default)]
-    #[allow(dead_code)] // Unused fields keep the platform layout.
-    struct ByHandleFileInformation {
-        file_attributes: u32,
-        creation_time: FileTime,
-        last_access_time: FileTime,
-        last_write_time: FileTime,
-        volume_serial_number: u32,
-        file_size_high: u32,
-        file_size_low: u32,
-        number_of_links: u32,
-        file_index_high: u32,
-        file_index_low: u32,
-    }
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetFileInformationByHandle(
-            handle: *mut c_void,
-            information: *mut ByHandleFileInformation,
-        ) -> i32;
-    }
-
-    // Identity needs no data access: the standard library's Windows
-    // `fs::metadata` also opens with access mode 0 before querying the handle.
-    let file = fs::OpenOptions::new()
-        .access_mode(0)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(path)
-        .ok()?;
-    let mut information = ByHandleFileInformation::default();
-    // SAFETY: `file` owns a live handle and `information` is writable storage of
-    // the exact layout `GetFileInformationByHandle` fills.
-    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
-    (ok != 0).then_some((
-        information.volume_serial_number,
-        (u64::from(information.file_index_high) << 32) | u64::from(information.file_index_low),
-    ))
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    left.volume_serial_number() == right.volume_serial_number()
+        && left.file_index() == right.file_index()
 }
 
 #[cfg(not(any(unix, windows)))]
-fn same_file(_left: &Path, _right: &Path) -> bool {
+fn same_file(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
     false
 }
 

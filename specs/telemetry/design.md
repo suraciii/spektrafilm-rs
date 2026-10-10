@@ -10,9 +10,7 @@ Observations must attach to the current operation explicitly. A backend may serv
 
 A caller must propagate the operation context across spawned threads and bounded tasks that emit observations. Pure per-pixel Rayon work needs no telemetry context or span entry. CPU stage timing must enclose the stage call once, rather than create events per pixel. A `tracing` span must be entered on the thread that emits its work observations. Backend work must carry its parent operation and stage so GPU work cannot be attributed to a concurrent request.
 
-The shared typed observation vocabulary must live below core in the compute backend crate so model and backend code do not acquire a dependency on core. Its location is governed by [compute backend boundary](../compute-backend/design.md). Core owns the complete operation report and its serialization; frontends own collection selection and report storage. A scoped backend view may bind an operation sink to the existing `ComputeBackend` interface, but it must share the original device and cache. Default backend implementations must identify the CPU image work they actually perform. Host orchestration and image-independent preparation are host observations, not CPU image execution. Instrumentation must not require a second rendering pipeline or a new telemetry crate. Context must be passed explicitly through the operation's borrowed sink or scoped backend view; a thread-local current report is not an attribution boundary.
-
-Counter aggregation, overflow reconciliation, and report validation must use one counter field definition. Phase recording and validation must use one ordered phase vocabulary.
+The shared typed observation vocabulary must live below core in the existing GPU crate so model and backend code do not acquire a dependency on core. Core owns the complete operation report and its serialization; frontends own collection selection and report storage. A scoped backend view may bind an operation sink to the existing `ComputeBackend` interface, but it must share the original device and cache. Default backend implementations must identify the CPU work they actually perform. Instrumentation must not require a second rendering pipeline or a new telemetry crate. Context must be passed explicitly through the operation's borrowed sink or scoped backend view; a thread-local current report is not an attribution boundary.
 
 ## Collection and signals
 
@@ -30,12 +28,9 @@ Event filtering must not change explicitly requested report collection. Summary 
 
 ## Routing and timing
 
-Runtime reports the resident eligibility decision separately from the route that actually executed. A declined resident route can still dispatch GPU stages. The backend reports actual executed work; it must not count work from requested or prepared parameters. CPU image implementations used inside a WGPU backend must report CPU execution. Host preparation or orchestration must not be reported as CPU image arithmetic, and host activity alone must not be used to guess an image stage's executor.
-Full-GPU scope and acceptance follow the [GPU execution contract](../gpu-execution/spec.md#computation-scope), including its [backend selection](../gpu-execution/spec.md#backend-selection), [algorithm alignment](../gpu-execution/spec.md#algorithm-alignment), and [acceptance](../gpu-execution/spec.md#acceptance) rules. Device residency and numerical and stochastic evidence follow the GPU execution [device residency](../gpu-execution/design.md#device-residency), [numerical alignment](../gpu-execution/design.md#numerical-alignment), and [stochastic alignment](../gpu-execution/design.md#stochastic-alignment) design. Telemetry reports actual work and retains its existing schema and path meanings.
+Runtime reports the resident eligibility decision separately from the route that actually executed. A declined resident route can still dispatch GPU stages. The backend reports actual executed work; it must not count work from requested or prepared parameters. CPU implementations used inside a WGPU backend must report CPU execution.
 
 Host durations use a monotonic clock. Each observation must name its boundary and parent. Phase and stage durations are inclusive wall durations; backend batch durations nest within stages. Nested durations must not be summed as if they were disjoint. Cross-thread overlaps must remain visible rather than be converted into a serial total.
-
-Each host observation must derive its start offset and duration from the same captured start instant. Computing the offset must not read the clock again, because scheduling delay between readings would inflate the reconstructed end time.
 
 A backend batch covers host preparation, command submission, completion wait, and result materialization. Host preparation can include parameter conversion, cache lookup, resource creation, upload calls, and command encoding. It is not CPU utilization. Submit-to-map-ready includes submission overhead, queue contention, device work, staging copies, driver scheduling, callback scheduling, and host wakeup. It is not kernel time. Materialization covers mapped-range access, CPU copying, scalar conversion, result construction, and unmap work.
 
@@ -61,7 +56,7 @@ Requested GPU buffer bytes describe API resource sizes. They do not describe com
 
 ## Terminal records and overhead
 
-The frontend finalizes the record at the [operation terminal boundary](metrics/spec.md#operation-and-phase-wall-time). CPU or GPU failure may leave partial observations; those values must identify their completed scope. Telemetry persistence errors must not rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
+The frontend finalizes the record at the [operation terminal boundary](metrics.md#operation-and-phase-wall-time). CPU or GPU failure may leave partial observations; those values must identify their completed scope. Telemetry persistence errors must not rewrite the operation outcome. Preview completion ends at the presentation handoff, not at physical display scanout.
 
 Detailed reports must use stable schema fields and stable enumerated categories. Paths and raw exceptions must not enter those fields. Operation and revision identifiers are correlation fields for local reports and traces; they must not become metric labels. Device names, stock identifiers, dimensions, seeds, and arbitrary user strings must not become aggregate metric labels.
 

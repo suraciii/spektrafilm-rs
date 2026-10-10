@@ -60,28 +60,6 @@ impl WorkflowRoute {
             _ => Self::Custom,
         }
     }
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Input => "input",
-            Self::FilmScan => "input > film > scan",
-            Self::FilmPrintScan => "input > film > print > scan",
-            Self::ConvertFilmPrintScan => "input > convert-film > print > scan",
-            Self::ConvertFilmScanMinusBase => "input > convert-film > scan-minus-base",
-            Self::ConvertFilmScan => "input > convert-film > scan",
-            Self::Custom => "",
-        }
-    }
-
-    pub fn prints(&self) -> bool {
-        matches!(self, Self::FilmPrintScan | Self::ConvertFilmPrintScan)
-    }
-
-    pub fn is_convert_film(&self) -> bool {
-        matches!(
-            self,
-            Self::ConvertFilmPrintScan | Self::ConvertFilmScanMinusBase | Self::ConvertFilmScan
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,10 +120,8 @@ impl GamutAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GrainEngine {
-    Spektra,
-    Procedural,
-    Dye,
-    Fotufilm,
+    V1,
+    V2,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,11 +129,7 @@ pub enum GrainEngine {
 pub enum GrainMode {
     Analogue,
     Noise,
-    Spektra,
-    /// The Dye conditional film-coordinate dye field.
-    DyeField,
-    /// The Fotufilm effective-appearance film population model.
-    FotufilmFilm,
+    V1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,7 +137,7 @@ pub struct GrainConfiguration {
     pub active: bool,
     pub engine: GrainEngine,
     pub mode: GrainMode,
-    pub spektra_fast_statistics_sampler: bool,
+    pub v1_fast_statistics_sampler: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,46 +218,7 @@ fn bounded_text(value: &str) -> String {
     text
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ScanOutput {
-    #[default]
-    DirectScan,
-    NegativeToPositive,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NegativeConversionMethod {
-    #[default]
-    Density,
-    Separable,
-    Coupled,
-    DigitalReference,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReceiverConfiguration {
-    pub profile: String,
-    pub calibration_status: String,
-    pub source_version: String,
-    pub approximate: bool,
-}
-
-impl Default for ReceiverConfiguration {
-    fn default() -> Self {
-        let p =
-            crate::scan_receiver::provenance(crate::params::ReceiverProfile::LegacyColorimetric);
-        Self {
-            profile: p.profile.as_str().to_string(),
-            calibration_status: p.calibration_status.to_string(),
-            source_version: p.version.to_string(),
-            approximate: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderConfiguration {
     pub workflow_route: WorkflowRoute,
     pub film_stock: Option<StockId>,
@@ -297,35 +230,9 @@ pub struct RenderConfiguration {
     pub output_transfer_encoded: bool,
     pub enlarger_lut_requested: bool,
     pub scanner_lut_requested: bool,
-    #[serde(default)]
-    pub scan_output: ScanOutput,
-    #[serde(default)]
-    pub negative_conversion_method: NegativeConversionMethod,
-    #[serde(default)]
-    pub receiver: ReceiverConfiguration,
-    #[serde(default)]
-    pub setup_mode: String,
-    #[serde(default)]
-    pub finish: String,
-    #[serde(default = "default_finish_strength")]
-    pub finish_strength: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference: Option<crate::digital_reference::ReferenceProvenance>,
-    #[serde(default)]
-    pub reference_exposure_ev: f64,
-    #[serde(default)]
-    pub reference_balance_ev: [f64; 3],
-    #[serde(default = "default_finish_strength")]
-    pub output_mix_amount: f64,
-    #[serde(default)]
-    pub model_version: String,
     pub gamut_algorithm: GamutAlgorithm,
     pub grain: GrainConfiguration,
     pub spatial: SpatialConfiguration,
-}
-
-fn default_finish_strength() -> f64 {
-    1.0
 }
 
 impl RenderConfiguration {
@@ -333,12 +240,9 @@ impl RenderConfiguration {
         let grain = &params.film_render.grain;
         let grain_active = grain.active
             && !params.debug.deactivate_stochastic_effects
-            && !(grain.engine == crate::params::GrainEngine::Procedural
-                && params.settings.rgb_to_raw_method == "mallett2019")
-            && !(grain.engine == crate::params::GrainEngine::Fotufilm
-                && grain.fotufilm.amount == 0.0);
+            && !(grain.engine == crate::params::GrainEngine::V2
+                && params.settings.rgb_to_raw_method == "mallett2019");
         let spatial_active = !params.debug.deactivate_spatial_effects;
-        let receiver = crate::scan_receiver::provenance(params.scanner.receiver_profile);
         Self {
             workflow_route: WorkflowRoute::parse(&params.workflow.route),
             film_stock: StockId::bundled(film),
@@ -350,59 +254,22 @@ impl RenderConfiguration {
             output_transfer_encoded: params.io.output_cctf_encoding,
             enlarger_lut_requested: params.settings.use_enlarger_lut,
             scanner_lut_requested: params.settings.use_scanner_lut,
-            scan_output: if params.scanner.scan_output == "negative_to_positive" {
-                ScanOutput::NegativeToPositive
-            } else {
-                ScanOutput::DirectScan
-            },
-            negative_conversion_method: match params.scanner.negative_conversion_method {
-                crate::params::NegativeConversionMethod::Density => {
-                    NegativeConversionMethod::Density
-                }
-                crate::params::NegativeConversionMethod::Separable => {
-                    NegativeConversionMethod::Separable
-                }
-                crate::params::NegativeConversionMethod::Coupled => {
-                    NegativeConversionMethod::Coupled
-                }
-                crate::params::NegativeConversionMethod::DigitalReference => {
-                    NegativeConversionMethod::DigitalReference
-                }
-            },
-            receiver: ReceiverConfiguration {
-                profile: receiver.profile.as_str().to_string(),
-                calibration_status: receiver.calibration_status.to_string(),
-                source_version: receiver.version.to_string(),
-                approximate: receiver.calibration_status.contains("approximate"),
-            },
-            setup_mode: params.scanner.auto_setup.as_str().to_string(),
-            finish: params.scanner.finish.as_str().to_string(),
-            finish_strength: params.scanner.finish_strength,
-            reference: None,
-            reference_exposure_ev: params.scanner.reference_exposure_ev,
-            reference_balance_ev: params.scanner.reference_balance_ev,
-            output_mix_amount: params.output_mix.amount,
-            model_version: crate::runtime::MODEL_VERSION.into(),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
                 active: grain_active,
                 engine: match grain.engine {
-                    crate::params::GrainEngine::Spektra => GrainEngine::Spektra,
-                    crate::params::GrainEngine::Procedural => GrainEngine::Procedural,
-                    crate::params::GrainEngine::Dye => GrainEngine::Dye,
-                    crate::params::GrainEngine::Fotufilm => GrainEngine::Fotufilm,
+                    crate::params::GrainEngine::V1 => GrainEngine::V1,
+                    crate::params::GrainEngine::V2 => GrainEngine::V2,
                 },
                 mode: match grain.engine {
-                    crate::params::GrainEngine::Spektra => GrainMode::Spektra,
-                    crate::params::GrainEngine::Procedural => match grain.v2_mode {
+                    crate::params::GrainEngine::V1 => GrainMode::V1,
+                    crate::params::GrainEngine::V2 => match grain.v2_mode {
                         crate::params::grain::GrainV2Mode::Analogue => GrainMode::Analogue,
                         crate::params::grain::GrainV2Mode::Noise => GrainMode::Noise,
                     },
-                    crate::params::GrainEngine::Dye => GrainMode::DyeField,
-                    crate::params::GrainEngine::Fotufilm => GrainMode::FotufilmFilm,
                 },
-                spektra_fast_statistics_sampler: grain_active
-                    && grain.engine == crate::params::GrainEngine::Spektra
+                v1_fast_statistics_sampler: grain_active
+                    && grain.engine == crate::params::GrainEngine::V1
                     && grain.sublayers_active
                     && params.settings.use_fast_stats,
             },
@@ -527,32 +394,5 @@ impl SavingConfiguration {
             ColorSpaceRole::parse(options.color_space),
             options.cctf_encoding,
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fotufilm_engine_and_model_have_distinct_telemetry_identity() {
-        assert_eq!(
-            serde_json::to_value(GrainEngine::Fotufilm).unwrap(),
-            "fotufilm"
-        );
-        assert_eq!(
-            serde_json::to_value(GrainMode::FotufilmFilm).unwrap(),
-            "fotufilm_film"
-        );
-        assert_ne!(GrainMode::FotufilmFilm, GrainMode::DyeField);
-        assert_eq!(
-            serde_json::to_value(GrainEngine::Spektra).unwrap(),
-            "spektra"
-        );
-        assert_eq!(
-            serde_json::to_value(GrainEngine::Procedural).unwrap(),
-            "procedural"
-        );
-        assert_eq!(serde_json::to_value(GrainEngine::Dye).unwrap(), "dye");
     }
 }

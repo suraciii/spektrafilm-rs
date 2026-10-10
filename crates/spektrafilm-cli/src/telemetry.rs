@@ -2,13 +2,10 @@ use std::cell::Cell;
 use std::path::Path;
 
 use anyhow::Result;
-use spektrafilm_backend::telemetry::{
-    CollectionMode, ObservationContext, ObservationKind, Purpose,
-};
 use spektrafilm_core::telemetry::{
     BackendRequested, IssueBoundary, IssueCategory, Operation, OperationKind, Outcome,
 };
-use spektrafilm_math::image::ImageBuf;
+use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext, ObservationKind, Purpose};
 
 /// One accepted CLI invocation. Report persistence is deliberately outside its lifetime.
 pub(crate) struct Invocation {
@@ -41,31 +38,6 @@ impl Invocation {
         });
         result
     }
-}
-
-/// One instrumented simulation attempt: the `simulation` phase around `run`,
-/// the attempt's identity, and its terminal outcome. Both render paths share
-/// this helper so attempt numbering and outcome policy cannot drift apart.
-pub(crate) fn simulation_attempt(
-    invocation: &Invocation,
-    index: u64,
-    run: impl FnOnce(&ObservationContext) -> Result<ImageBuf>,
-) -> (u64, Result<ImageBuf>) {
-    let attempt = invocation.operation.attempt(index);
-    let attempt_id = attempt.context().id();
-    let result = invocation.phase(
-        "simulation",
-        IssueCategory::Simulation,
-        IssueBoundary::Simulation,
-        attempt.context(),
-        run,
-    );
-    attempt.finish(if result.is_ok() {
-        Outcome::Succeeded
-    } else {
-        Outcome::Failed
-    });
-    (attempt_id, result)
 }
 
 pub(crate) fn run<T>(
@@ -135,14 +107,14 @@ pub(crate) fn requested_backend(explicit: Option<crate::Backend>) -> BackendRequ
 }
 
 pub(crate) fn observe_backend(
-    backend: &dyn spektrafilm_backend::ComputeBackend,
+    backend: &dyn spektrafilm_gpu::ComputeBackend,
     context: &ObservationContext,
 ) {
     if !context.enabled() {
         return;
     }
     if !backend.is_gpu() {
-        context.set_backend_selected(spektrafilm_backend::telemetry::BackendSelected::Cpu);
+        context.set_backend_selected(spektrafilm_gpu::telemetry::BackendSelected::Cpu);
     }
-    drop(spektrafilm_backend::bind_backend(backend, context.clone()));
+    drop(spektrafilm_gpu::bind_backend(backend, context.clone()));
 }

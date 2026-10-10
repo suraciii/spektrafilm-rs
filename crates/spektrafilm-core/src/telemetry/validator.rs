@@ -1,9 +1,23 @@
 use super::report::{OperationKind, Report};
-use spektrafilm_backend::telemetry::{
-    MeasurementStatus, Observation, ObservationKind, PHASE_NAMES,
-};
+use spektrafilm_gpu::telemetry::{MeasurementStatus, Observation, ObservationKind};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
+
+const PHASE_NAMES: &[&str] = &[
+    "input_load",
+    "backend_init",
+    "input_prepare",
+    "runtime_prepare",
+    "simulation",
+    "display_prepare",
+    "presentation_handoff",
+    "saving_convert",
+    "file_write",
+    "metadata",
+    "publication",
+    "result_prepare",
+    "worker_wait",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ValidationError {
@@ -91,22 +105,14 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
     if report.operation.kind == OperationKind::Save && !report.attempts.is_empty() {
         return Err(ValidationError::UnexpectedAttempts);
     }
-    if let Some(source) = &report.source_render
-        && (source.operation_id == 0 || source.dimensions.contains(&0))
-    {
-        return Err(ValidationError::NonFinite("source_render"));
+    if let Some(source) = &report.source_render {
+        if source.operation_id == 0 || source.dimensions.contains(&0) {
+            return Err(ValidationError::NonFinite("source_render"));
+        }
     }
     validate_unavailable(&report.configuration.unavailable_fields)?;
     validate_unavailable(&report.execution.unavailable_fields)?;
     if let Some(render) = &report.configuration.render {
-        validate_finite(
-            render.output_mix_amount,
-            "configuration.render.output_mix_amount",
-        )?;
-        if !(0.0..=1.0).contains(&render.output_mix_amount) {
-            return Err(ValidationError::InvalidMeasurement);
-        }
-        validate_text(&render.model_version)?;
         for stock in [&render.film_stock, &render.print_stock]
             .into_iter()
             .flatten()
@@ -293,19 +299,115 @@ fn validate_counter_overflow(report: &Report) -> Result<(), ValidationError> {
     }
     let mut names = HashSet::new();
     for field in &report.coverage.counter_overflow_fields {
-        let Some(value) = report.measurements.work.named_value(field) else {
+        let Some(is_none) = counter_is_none(&report.measurements.work, field) else {
             return Err(ValidationError::PrivacyField);
         };
-        if value.is_some() || !names.insert(field.as_str()) {
+        if !is_none || !names.insert(field.as_str()) {
             return Err(ValidationError::InvalidCoverage);
         }
     }
-    for (field, value) in report.measurements.work.named_fields() {
+    let counters = &report.measurements.work;
+    let fields = [
+        ("dispatch_count", counters.dispatch_count),
+        ("submit_count", counters.submit_count),
+        ("command_buffer_count", counters.command_buffer_count),
+        ("host_wait_count", counters.host_wait_count),
+        ("upload_count", counters.upload_count),
+        ("upload_bytes", counters.upload_bytes),
+        ("image_upload_count", counters.image_upload_count),
+        ("image_upload_bytes", counters.image_upload_bytes),
+        (
+            "spectral_lut_upload_count",
+            counters.spectral_lut_upload_count,
+        ),
+        (
+            "spectral_lut_upload_bytes",
+            counters.spectral_lut_upload_bytes,
+        ),
+        ("uniform_upload_count", counters.uniform_upload_count),
+        ("uniform_upload_bytes", counters.uniform_upload_bytes),
+        ("scratch_upload_count", counters.scratch_upload_count),
+        ("scratch_upload_bytes", counters.scratch_upload_bytes),
+        ("readback_count", counters.readback_count),
+        ("readback_bytes", counters.readback_bytes),
+        ("staging_copy_count", counters.staging_copy_count),
+        ("staging_copy_bytes", counters.staging_copy_bytes),
+        ("device_copy_count", counters.device_copy_count),
+        ("device_copy_bytes", counters.device_copy_bytes),
+        ("buffer_create_count", counters.buffer_create_count),
+        ("buffer_create_bytes", counters.buffer_create_bytes),
+        (
+            "pipeline_cache_hit_count",
+            counters.pipeline_cache_hit_count,
+        ),
+        (
+            "pipeline_cache_miss_count",
+            counters.pipeline_cache_miss_count,
+        ),
+        (
+            "telemetry_buffer_create_count",
+            counters.telemetry_buffer_create_count,
+        ),
+        (
+            "telemetry_buffer_create_bytes",
+            counters.telemetry_buffer_create_bytes,
+        ),
+        ("telemetry_resolve_count", counters.telemetry_resolve_count),
+        ("telemetry_copy_count", counters.telemetry_copy_count),
+        ("telemetry_copy_bytes", counters.telemetry_copy_bytes),
+        ("executed_pass_count", counters.executed_pass_count),
+        ("timed_pass_count", counters.timed_pass_count),
+        ("valid_pass_count", counters.valid_pass_count),
+        ("omitted_pass_count", counters.omitted_pass_count),
+    ];
+    for (field, value) in fields {
         if value.is_none() && !names.contains(field) {
             return Err(ValidationError::InvalidCoverage);
         }
     }
     Ok(())
+}
+
+fn counter_is_none(
+    counters: &spektrafilm_gpu::telemetry::WorkCounters,
+    field: &str,
+) -> Option<bool> {
+    Some(match field {
+        "dispatch_count" => counters.dispatch_count.is_none(),
+        "submit_count" => counters.submit_count.is_none(),
+        "command_buffer_count" => counters.command_buffer_count.is_none(),
+        "host_wait_count" => counters.host_wait_count.is_none(),
+        "upload_count" => counters.upload_count.is_none(),
+        "upload_bytes" => counters.upload_bytes.is_none(),
+        "image_upload_count" => counters.image_upload_count.is_none(),
+        "image_upload_bytes" => counters.image_upload_bytes.is_none(),
+        "spectral_lut_upload_count" => counters.spectral_lut_upload_count.is_none(),
+        "spectral_lut_upload_bytes" => counters.spectral_lut_upload_bytes.is_none(),
+        "uniform_upload_count" => counters.uniform_upload_count.is_none(),
+        "uniform_upload_bytes" => counters.uniform_upload_bytes.is_none(),
+        "scratch_upload_count" => counters.scratch_upload_count.is_none(),
+        "scratch_upload_bytes" => counters.scratch_upload_bytes.is_none(),
+        "readback_count" => counters.readback_count.is_none(),
+        "readback_bytes" => counters.readback_bytes.is_none(),
+        "staging_copy_count" => counters.staging_copy_count.is_none(),
+        "staging_copy_bytes" => counters.staging_copy_bytes.is_none(),
+        "device_copy_count" => counters.device_copy_count.is_none(),
+        "device_copy_bytes" => counters.device_copy_bytes.is_none(),
+        "buffer_create_count" => counters.buffer_create_count.is_none(),
+        "buffer_create_bytes" => counters.buffer_create_bytes.is_none(),
+        "pipeline_cache_hit_count" => counters.pipeline_cache_hit_count.is_none(),
+        "pipeline_cache_miss_count" => counters.pipeline_cache_miss_count.is_none(),
+        "telemetry_buffer_create_count" => counters.telemetry_buffer_create_count.is_none(),
+        "telemetry_buffer_create_bytes" => counters.telemetry_buffer_create_bytes.is_none(),
+        "telemetry_resolve_count" => counters.telemetry_resolve_count.is_none(),
+        "telemetry_copy_count" => counters.telemetry_copy_count.is_none(),
+        "telemetry_copy_bytes" => counters.telemetry_copy_bytes.is_none(),
+        "executed_pass_count" => counters.executed_pass_count.is_none(),
+        "timed_pass_count" => counters.timed_pass_count.is_none(),
+        "valid_pass_count" => counters.valid_pass_count.is_none(),
+        "omitted_pass_count" => counters.omitted_pass_count.is_none(),
+        _ => return None,
+    })
 }
 
 fn validate_observation_name(observation: &Observation) -> Result<(), ValidationError> {
@@ -322,16 +424,9 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "grain_v1_sampler",
         "grain_v2",
         "grain_v2_cpu",
-        "grain_v3_field",
-        "grain_fotufilm",
         "printing",
         "scanning",
         "post_scan",
-        "magazine_print_color",
-        "output_mix",
-        "negative_to_positive",
-        "scanner_film_points",
-        "scanner_finish",
         "input_transfer",
         "output_transfer",
         "rgb_to_raw",
@@ -379,7 +474,7 @@ fn validate_unavailable(fields: &[super::report::UnavailableField]) -> Result<()
 }
 
 fn validate_execution_parts(
-    adapter: Option<&spektrafilm_backend::telemetry::AdapterDescription>,
+    adapter: Option<&spektrafilm_gpu::telemetry::AdapterDescription>,
     dimensions: Option<[u32; 2]>,
 ) -> Result<(), ValidationError> {
     if let Some(adapter) = adapter {
@@ -401,7 +496,7 @@ fn validate_execution_parts(
 }
 
 fn validate_measurement(
-    measurement: &spektrafilm_backend::telemetry::Measurement,
+    measurement: &spektrafilm_gpu::telemetry::Measurement,
 ) -> Result<(), ValidationError> {
     match measurement.status {
         MeasurementStatus::Available => {

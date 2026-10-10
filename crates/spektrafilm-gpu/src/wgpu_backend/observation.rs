@@ -1,6 +1,6 @@
 use super::*;
+use crate::telemetry::*;
 use parking_lot::Mutex;
-use spektrafilm_backend::telemetry::*;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -22,6 +22,7 @@ impl Deref for ObservedDevice {
 pub(super) struct ObservedQueue {
     pub raw: wgpu::Queue,
     pub context: ObservationContext,
+    pub batch: Option<Arc<Mutex<BatchState>>>,
 }
 impl Deref for ObservedQueue {
     type Target = wgpu::Queue;
@@ -34,12 +35,8 @@ pub(super) struct BatchState {
     submitted: Option<Instant>,
     ready: Option<Instant>,
     queries: Option<QueryResources>,
-    /// Device the batch submits on, used to complete the telemetry readback
-    /// at the batch boundary.
-    device: Option<wgpu::Device>,
     passes: Vec<PassObservation>,
-    pending_details: u32,
-    query_slots: Vec<bool>,
+    next_pass: u32,
     executed: u64,
     timed: u64,
     period: f64,
@@ -49,7 +46,6 @@ pub(super) struct PassObservation {
     pub scope: Option<ObservationContext>,
     pub has_queries: bool,
     pub query_index: u32,
-    name: &'static str,
 }
 struct QueryResources {
     set: wgpu::QuerySet,
@@ -67,28 +63,6 @@ impl Drop for BatchGuard {
     fn drop(&mut self) {
         let Some(state) = &self.state else { return };
         let mut s = state.lock();
-        // Timestamp collection is completed here, at the batch boundary: the
-        // batch may hold several submissions, and a mapped readback must not
-        // outlive the submission that follows it. The blocking poll is
-        // confined to collected timings, which the batch already paid for.
-        if s.timed > 0
-            && let Some(q) = &mut s.queries
-            && !q.map_requested
-        {
-            let (tx, rx) = std::sync::mpsc::channel();
-            q.readback
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |result| {
-                    let _ = tx.send(result);
-                });
-            q.receiver = Some(rx);
-            q.map_requested = true;
-        }
-        if s.queries.as_ref().is_some_and(|q| q.map_requested)
-            && let Some(device) = &s.device
-        {
-            device.poll(wgpu::Maintain::Wait);
-        }
         let end = Instant::now();
         let prepare = s.submitted.map_or_else(
             || Measurement::unavailable(AvailabilityReason::Incomplete),
@@ -105,16 +79,9 @@ impl Drop for BatchGuard {
         let mut sum = 0.0;
         let mut valid = 0u64;
         let mut any = false;
-        // A readback is only unmapped once its mapping actually completed; a
-        // failed map leaves the buffer unmapped and `unmap` would panic.
-        let mut map_completed = false;
         let mut reason = self.scope.context().adapter_reason().unwrap_or_else(|| {
             if self.scope.context().mode() == CollectionMode::GpuTiming {
-                if s.queries.is_none() {
-                    AvailabilityReason::DetailLimit
-                } else {
-                    AvailabilityReason::NotReady
-                }
+                AvailabilityReason::NotEnabledOnDevice
             } else {
                 AvailabilityReason::NotCollected
             }
@@ -122,7 +89,6 @@ impl Drop for BatchGuard {
         if let Some(q) = &s.queries {
             reason = AvailabilityReason::NotReady;
             if let Some(result) = q.receiver.as_ref().and_then(|r| r.try_recv().ok()) {
-                map_completed = result.is_ok();
                 if result.is_ok() {
                     let mapped = q.readback.slice(..).get_mapped_range();
                     let ticks: &[u64] = match bytemuck::try_cast_slice(&mapped) {
@@ -193,10 +159,8 @@ impl Drop for BatchGuard {
             }
         }
         let full = valid == s.timed && s.timed == s.executed && s.submitted.is_some();
-        let work = WorkCounters {
-            valid_pass_count: Some(valid),
-            ..Default::default()
-        };
+        let mut work = WorkCounters::default();
+        work.valid_pass_count = Some(valid);
         self.scope.context().record_work(&work);
         let compute = if full {
             Measurement::available(sum)
@@ -212,11 +176,10 @@ impl Drop for BatchGuard {
                     reason
                 }
             } else if self.scope.context().mode() == CollectionMode::GpuTiming {
-                if self.scope.context().adapter_reason().is_none() {
-                    AvailabilityReason::DetailLimit
-                } else {
-                    reason
-                }
+                self.scope
+                    .context()
+                    .adapter_reason()
+                    .unwrap_or(AvailabilityReason::NotEnabledOnDevice)
             } else {
                 AvailabilityReason::NotCollected
             })
@@ -240,11 +203,10 @@ impl Drop for BatchGuard {
             compute_pass_sum: compute,
             partial_compute_pass_sum: partial,
         });
-        if let Some(q) = &s.queries
-            && q.map_requested
-            && map_completed
-        {
-            q.readback.unmap();
+        if let Some(q) = &s.queries {
+            if q.map_requested {
+                q.readback.unmap();
+            }
         }
         s.passes.clear();
     }
@@ -290,11 +252,9 @@ impl WgpuBackend {
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });
-                let w = WorkCounters {
-                    telemetry_buffer_create_count: Some(2),
-                    telemetry_buffer_create_bytes: Some(size * 2),
-                    ..Default::default()
-                };
+                let mut w = WorkCounters::default();
+                w.telemetry_buffer_create_count = Some(2);
+                w.telemetry_buffer_create_bytes = Some(size * 2);
                 context.record_work(&w);
                 Some(QueryResources {
                     set,
@@ -311,11 +271,9 @@ impl WgpuBackend {
                 start: Instant::now(),
                 submitted: None,
                 ready: None,
-                device: queries.as_ref().map(|_| self.device.raw.clone()),
-                query_slots: vec![false; queries.as_ref().map_or(0, |q| q.capacity as usize / 2)],
                 queries,
                 passes: Vec::new(),
-                pending_details: 0,
+                next_pass: 0,
                 executed: 0,
                 timed: 0,
                 period: self.queue.raw.get_timestamp_period() as f64,
@@ -324,17 +282,6 @@ impl WgpuBackend {
             None
         };
         let backend = Self {
-            pipe: self.pipe.with_observed(
-                ObservedDevice {
-                    raw: self.device.raw.clone(),
-                    context: context.clone(),
-                    batch: state.clone(),
-                },
-                ObservedQueue {
-                    raw: self.queue.raw.clone(),
-                    context: context.clone(),
-                },
-            ),
             device: ObservedDevice {
                 raw: self.device.raw.clone(),
                 context: context.clone(),
@@ -343,11 +290,11 @@ impl WgpuBackend {
             queue: ObservedQueue {
                 raw: self.queue.raw.clone(),
                 context,
+                batch: state.clone(),
             },
             pipeline_cache: self.pipeline_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
-            explicit: self.explicit,
         };
         (backend, BatchGuard { scope, state })
     }
@@ -358,19 +305,6 @@ fn upload_category(d: &wgpu::util::BufferInitDescriptor<'_>) -> UploadCategory {
     } else {
         match d.label.unwrap_or("") {
             "spectral_resource"
-            | "film_cd"
-            | "film_bd"
-            | "print_illu"
-            | "print_sens"
-            | "print_log_exp"
-            | "print_curves"
-            | "scan_cd"
-            | "scan_bd"
-            | "view_illu"
-            | "cmf_x"
-            | "cmf_y"
-            | "cmf_z"
-            | "tc_lut"
             | "film_log_exp"
             | "film_curves"
             | "film_spectral_cd"
@@ -399,11 +333,9 @@ impl ObservedDevice {
     pub fn create_buffer(&self, d: &wgpu::BufferDescriptor<'_>) -> wgpu::Buffer {
         let b = self.raw.create_buffer(d);
         if self.context.enabled() {
-            let w = WorkCounters {
-                buffer_create_count: Some(1),
-                buffer_create_bytes: Some(d.size),
-                ..Default::default()
-            };
+            let mut w = WorkCounters::default();
+            w.buffer_create_count = Some(1);
+            w.buffer_create_bytes = Some(d.size);
             self.context.record_work(&w);
         }
         b
@@ -412,11 +344,9 @@ impl ObservedDevice {
         use wgpu::util::DeviceExt;
         let b = self.raw.create_buffer_init(d);
         if self.context.enabled() {
-            let w = WorkCounters {
-                buffer_create_count: Some(1),
-                buffer_create_bytes: Some(b.size()),
-                ..Default::default()
-            };
+            let mut w = WorkCounters::default();
+            w.buffer_create_count = Some(1);
+            w.buffer_create_bytes = Some(b.size());
             self.context.record_work(&w);
             self.upload(d.contents.len() as u64, upload_category(d));
         }
@@ -426,11 +356,9 @@ impl ObservedDevice {
         if !self.context.enabled() {
             return;
         }
-        let mut w = WorkCounters {
-            upload_count: Some(1),
-            upload_bytes: Some(bytes),
-            ..Default::default()
-        };
+        let mut w = WorkCounters::default();
+        w.upload_count = Some(1);
+        w.upload_bytes = Some(bytes);
         match category {
             UploadCategory::Image => {
                 w.image_upload_count = Some(1);
@@ -453,11 +381,9 @@ impl ObservedDevice {
     }
     pub fn materialized(&self, bytes: u64) {
         if self.context.enabled() {
-            let w = WorkCounters {
-                readback_count: Some(1),
-                readback_bytes: Some(bytes),
-                ..Default::default()
-            };
+            let mut w = WorkCounters::default();
+            w.readback_count = Some(1);
+            w.readback_bytes = Some(bytes);
             self.context.record_work(&w);
         }
     }
@@ -465,13 +391,11 @@ impl ObservedDevice {
         &self,
         d: &wgpu::CommandEncoderDescriptor<'_>,
     ) -> ObservedEncoder {
-        let mut state = CommandState::default();
-        state.batch = self.batch.clone();
         ObservedEncoder {
             raw: self.raw.create_command_encoder(d),
             context: self.context.clone(),
             batch: self.batch.clone(),
-            state,
+            state: CommandState::default(),
         }
     }
     pub fn poll(&self, maintain: wgpu::Maintain) -> wgpu::MaintainResult {
@@ -493,10 +417,8 @@ impl ObservedDevice {
                 true
             };
             if first_wait {
-                let work = WorkCounters {
-                    host_wait_count: Some(1),
-                    ..Default::default()
-                };
+                let mut work = WorkCounters::default();
+                work.host_wait_count = Some(1);
                 self.context.record_work(&work);
             }
         }
@@ -507,13 +429,11 @@ impl ObservedQueue {
     pub fn write_buffer(&self, b: &wgpu::Buffer, offset: u64, data: &[u8]) {
         self.raw.write_buffer(b, offset, data);
         if self.context.enabled() {
-            let w = WorkCounters {
-                upload_count: Some(1),
-                upload_bytes: Some(data.len() as u64),
-                image_upload_count: Some(1),
-                image_upload_bytes: Some(data.len() as u64),
-                ..Default::default()
-            };
+            let mut w = WorkCounters::default();
+            w.upload_count = Some(1);
+            w.upload_bytes = Some(data.len() as u64);
+            w.image_upload_count = Some(1);
+            w.image_upload_bytes = Some(data.len() as u64);
             self.context.record_work(&w);
         }
     }
@@ -552,47 +472,44 @@ impl ObservedQueue {
             if let Some(batch) = &command.batch {
                 let mut batch = batch.lock();
                 batch.submitted.get_or_insert(submitted);
-                self.context.record_omitted_details(
-                    state.pass_count.saturating_sub(state.passes.len() as u64),
-                );
                 batch.executed += state.pass_count;
                 batch.timed += state.timed_count;
-                batch.pending_details -= state.reservation_count;
-                state.reservation_count = 0;
-                for pass in &mut state.passes {
-                    pass.index = pass
-                        .index
-                        .saturating_add((batch.executed - state.pass_count) as u32);
-                    if let Some(parent) = &pass.scope {
-                        let scope =
-                            parent.scope(pass.name, ObservationKind::Pass, parent.purpose());
-                        pass.scope = scope.context().retained().then(|| scope.context().clone());
-                    }
-                }
                 batch.passes.append(&mut state.passes);
             }
             command.raw
         }));
-        let work = WorkCounters {
-            submit_count: Some(1),
-            command_buffer_count: Some(count),
-            dispatch_count: Some(dispatches),
-            executed_pass_count: Some(passes),
-            timed_pass_count: Some(timed),
-            omitted_pass_count: Some(passes.saturating_sub(timed)),
-            staging_copy_count: Some(staging_count),
-            staging_copy_bytes: Some(staging_bytes),
-            device_copy_count: Some(device_count),
-            device_copy_bytes: Some(device_bytes),
-            telemetry_resolve_count: Some(resolve_count),
-            telemetry_copy_count: Some(resolve_count),
-            telemetry_copy_bytes: Some(telemetry_bytes),
-            ..Default::default()
-        };
-        // The telemetry readback is mapped at the batch boundary, not here:
-        // a batch may hold several submissions (a host fence splits the
-        // resident chain), and a mapped readback must not outlive the
-        // submission that follows it.
+        let mut work = WorkCounters::default();
+        work.submit_count = Some(1);
+        work.command_buffer_count = Some(count);
+        work.dispatch_count = Some(dispatches);
+        work.executed_pass_count = Some(passes);
+        work.timed_pass_count = Some(timed);
+        work.omitted_pass_count = Some(passes.saturating_sub(timed));
+        work.staging_copy_count = Some(staging_count);
+        work.staging_copy_bytes = Some(staging_bytes);
+        work.device_copy_count = Some(device_count);
+        work.device_copy_bytes = Some(device_bytes);
+        work.telemetry_resolve_count = Some(resolve_count);
+        work.telemetry_copy_count = Some(resolve_count);
+        work.telemetry_copy_bytes = Some(telemetry_bytes);
+        if let Some(batch) = &self.batch {
+            let mut batch = batch.lock();
+            if batch.timed > 0 {
+                if let Some(query) = &mut batch.queries {
+                    if !query.map_requested {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        query
+                            .readback
+                            .slice(..)
+                            .map_async(wgpu::MapMode::Read, move |result| {
+                                let _ = tx.send(result);
+                            });
+                        query.receiver = Some(rx);
+                        query.map_requested = true;
+                    }
+                }
+            }
+        }
         self.context.record_work(&work);
         result
     }
@@ -610,21 +527,6 @@ struct CommandState {
     query_end: u32,
     telemetry_resolve_count: u64,
     telemetry_copy_bytes: u64,
-    batch: Option<Arc<Mutex<BatchState>>>,
-    reservation_count: u32,
-}
-impl Drop for CommandState {
-    fn drop(&mut self) {
-        if let Some(batch) = &self.batch {
-            let mut batch = batch.lock();
-            batch.pending_details -= self.reservation_count;
-            for pass in &self.passes {
-                if pass.has_queries {
-                    batch.query_slots[pass.query_index as usize / 2] = false;
-                }
-            }
-        }
-    }
 }
 pub(super) struct ObservedEncoder {
     raw: wgpu::CommandEncoder,
@@ -685,13 +587,6 @@ fn pass_name(label: Option<&str>) -> &'static str {
         "unsharp_blur_h" => "unsharp_blur_h",
         "unsharp_blur_v" => "unsharp_blur_v",
         "unsharp_combine" => "unsharp_combine",
-        // Pipe tail (S4): output transfer encoding and magazine appearance
-        // must identify their executed work rather than the generic name
-        // (telemetry metrics: pass names identify the executed work).
-        "cctf_transfer_params" => "cctf_transfer_params",
-        "output_transfer" => "output_transfer",
-        "magazine_params" => "magazine_params",
-        "magazine" => "magazine",
         x if x.starts_with("blur_multi_h") => "blur_h",
         x if x.starts_with("blur_multi_v") => "blur_v",
         _ => "compute",
@@ -703,33 +598,32 @@ impl ObservedEncoder {
         let mut query_index = 0;
         if let Some(batch) = &self.batch {
             let mut b = batch.lock();
-            let occurrence = self.state.pass_count as u32;
+            let occurrence = b.next_pass;
+            b.next_pass = b.next_pass.saturating_add(1);
             self.state.pass_count += 1;
-            let retained = b.pending_details < self.context.detail_remaining();
-            let slot = if retained {
-                b.query_slots.iter().position(|used| !used)
-            } else {
-                None
-            };
-            let has_queries = slot.is_some();
-            if let Some(slot) = slot {
-                b.query_slots[slot] = true;
-                query_index = slot as u32 * 2;
+            let scope = self.context.scope(
+                pass_name(d.label),
+                ObservationKind::Pass,
+                self.context.purpose(),
+            );
+            let retained = scope.context().retained();
+            let slots = b.queries.as_ref().map_or(0, |q| q.capacity);
+            query_index = occurrence.saturating_mul(2);
+            let has_queries = retained && query_index.saturating_add(2) <= slots;
+            if has_queries {
                 query = b.queries.as_ref().map(|q| q.set.clone());
                 self.state.timed_count += 1;
-                self.state.query_end = self.state.query_end.max(query_index + 2);
+                self.state.query_end = query_index + 2;
             }
             if retained {
-                b.pending_details += 1;
-                self.state.reservation_count += 1;
                 self.state.passes.push(PassObservation {
                     index: occurrence,
-                    scope: Some(self.context.clone()),
-                    name: pass_name(d.label),
+                    scope: Some(scope.context().clone()),
                     has_queries,
                     query_index,
                 });
             }
+            drop(scope);
         }
         let writes = query.as_ref().map(|set| wgpu::ComputePassTimestampWrites {
             query_set: set,
@@ -787,10 +681,3 @@ impl ObservedEncoder {
 #[cfg(test)]
 #[path = "observation_tests.rs"]
 mod tests;
-
-/// Serial lock shared by all wgpu-backend test modules: the software Vulkan
-/// driver (llvmpipe) is not safe under concurrent device use in one process.
-/// The one definition lives in [`crate::test_support::DEVICE_LOCK`] so this
-/// crate's tests and every downstream test binary serialize on the same lock.
-#[cfg(test)]
-pub(super) static TEST_DEVICE_LOCK: &std::sync::Mutex<()> = &crate::test_support::DEVICE_LOCK;

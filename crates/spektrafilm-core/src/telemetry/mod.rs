@@ -6,8 +6,8 @@ mod validator;
 
 pub use configuration::{
     BitDepth, ColorSpaceRole, Compression, GamutAlgorithm, GrainConfiguration, GrainEngine,
-    GrainMode, NegativeConversionMethod, OutputFormat, ReceiverConfiguration, RenderConfiguration,
-    RgbToRawAlgorithm, SavingConfiguration, SpatialConfiguration, StockId, WorkflowRoute,
+    GrainMode, OutputFormat, RenderConfiguration, RgbToRawAlgorithm, SavingConfiguration,
+    SpatialConfiguration, StockId, WorkflowRoute,
 };
 pub use operation::Operation;
 pub use persistence::{PersistenceError, ReportDestination, validate_report_destination};
@@ -15,7 +15,7 @@ pub use report::{
     BackendRequested, BuildIdentity, Configuration, Execution, Measurements, OperationIdentity,
     OperationKind, Precision, Report, ReportSummary, SourceRender, UnavailableField,
 };
-pub use spektrafilm_backend::telemetry::{
+pub use spektrafilm_gpu::telemetry::{
     AdapterDescription, AdapterDeviceType, AvailabilityReason, BackendSelected, BatchMeasurements,
     CollectionMode, Coverage, CpuReason, DiagnosticIssue, ExecutionFacts, ExecutionPath, Executor,
     GpuTimingMeasurements, IssueBoundary, IssueCategory, Measurement, MeasurementStatus,

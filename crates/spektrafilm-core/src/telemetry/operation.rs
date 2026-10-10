@@ -5,7 +5,7 @@ use super::{
         OperationKind, Precision, Report, ReportSummary, SourceRender, UnavailableField,
     },
 };
-use spektrafilm_backend::telemetry::{
+use spektrafilm_gpu::telemetry::{
     AvailabilityReason, CollectionMode, IssueBoundary, IssueCategory, ObservationContext,
     ObservationKind, ObservationScope, Outcome, Purpose,
 };
@@ -215,7 +215,7 @@ impl Operation {
                     AvailabilityReason::CounterOverflow
                 } else if self.kind == OperationKind::Save
                     || snapshot.execution.backend_selected
-                        == Some(spektrafilm_backend::telemetry::BackendSelected::Cpu)
+                        == Some(spektrafilm_gpu::telemetry::BackendSelected::Cpu)
                 {
                     AvailabilityReason::NotApplicable
                 } else {
@@ -238,12 +238,6 @@ impl Operation {
         let working_dimensions = self
             .working_dimensions
             .or(snapshot.execution.working_dimensions);
-        if working_dimensions.is_none() {
-            unavailable_fields.push(UnavailableField {
-                field: "working_dimensions".to_owned(),
-                reason: AvailabilityReason::NotReached,
-            });
-        }
         let saved_attempt_retained = self
             .saved_attempt
             .is_some_and(|attempt| attempts.iter().any(|observation| observation.id == attempt));
@@ -255,7 +249,7 @@ impl Operation {
                 reason: AvailabilityReason::DetailLimit,
             });
             if diagnostic_issues.len() < 64 {
-                diagnostic_issues.push(spektrafilm_backend::telemetry::DiagnosticIssue {
+                diagnostic_issues.push(spektrafilm_gpu::telemetry::DiagnosticIssue {
                     category: IssueCategory::CollectionUnavailable,
                     boundary: IssueBoundary::Operation,
                 });
@@ -344,23 +338,60 @@ impl Operation {
     }
 }
 
-fn merge_counter_overflow_fields(
-    snapshot: &mut spektrafilm_backend::telemetry::ObservationSnapshot,
-) {
-    for (name, value) in snapshot.totals.named_fields() {
-        if value.is_none()
-            && !snapshot
-                .coverage
-                .counter_overflow_fields
-                .iter()
-                .any(|field| field == name)
-        {
-            snapshot
-                .coverage
-                .counter_overflow_fields
-                .push(name.to_owned());
-        }
+fn merge_counter_overflow_fields(snapshot: &mut spektrafilm_gpu::telemetry::ObservationSnapshot) {
+    macro_rules! merge_fields {
+        ($($field:ident),* $(,)?) => {{
+            $(
+                if snapshot.totals.$field.is_none()
+                    && !snapshot
+                        .coverage
+                        .counter_overflow_fields
+                        .iter()
+                        .any(|field| field == stringify!($field))
+                {
+                    snapshot
+                        .coverage
+                        .counter_overflow_fields
+                        .push(stringify!($field).to_owned());
+                }
+            )*
+        }};
     }
+    merge_fields!(
+        dispatch_count,
+        submit_count,
+        command_buffer_count,
+        host_wait_count,
+        upload_count,
+        upload_bytes,
+        image_upload_count,
+        image_upload_bytes,
+        spectral_lut_upload_count,
+        spectral_lut_upload_bytes,
+        uniform_upload_count,
+        uniform_upload_bytes,
+        scratch_upload_count,
+        scratch_upload_bytes,
+        readback_count,
+        readback_bytes,
+        staging_copy_count,
+        staging_copy_bytes,
+        device_copy_count,
+        device_copy_bytes,
+        buffer_create_count,
+        buffer_create_bytes,
+        pipeline_cache_hit_count,
+        pipeline_cache_miss_count,
+        telemetry_buffer_create_count,
+        telemetry_buffer_create_bytes,
+        telemetry_resolve_count,
+        telemetry_copy_count,
+        telemetry_copy_bytes,
+        executed_pass_count,
+        timed_pass_count,
+        valid_pass_count,
+        omitted_pass_count,
+    );
 }
 
 fn bounded_report_text(value: &str) -> (String, bool) {
@@ -395,8 +426,8 @@ impl Report {
                     .filter(|_| {
                         matches!(
                             stage.executor,
-                            Some(spektrafilm_backend::telemetry::Executor::Cpu)
-                                | Some(spektrafilm_backend::telemetry::Executor::Mixed)
+                            Some(spektrafilm_gpu::telemetry::Executor::Cpu)
+                                | Some(spektrafilm_gpu::telemetry::Executor::Mixed)
                         )
                     })
                     .map(|reason| (stage.name.clone(), reason))
@@ -415,15 +446,13 @@ impl Report {
             resident_decline_reasons: self.execution.resident_decline_reasons.clone(),
             cpu_stage_reasons,
             software_adapter: self.execution.adapter.as_ref().is_some_and(|adapter| {
-                adapter.device_type == spektrafilm_backend::telemetry::AdapterDeviceType::Cpu
+                adapter.device_type == spektrafilm_gpu::telemetry::AdapterDeviceType::Cpu
             }),
         }
     }
 }
 
 impl SourceRender {
-    // Source render metadata is supplied as independent fields.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         operation_id: u64,
         input_revision: Option<u64>,

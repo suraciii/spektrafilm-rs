@@ -1,25 +1,17 @@
 //! Session-only native diagnostics. No field belongs to persisted GUI state.
 use eframe::egui;
-use spektrafilm_backend::telemetry::CollectionMode;
 pub use spektrafilm_core::telemetry::BackendRequested;
 use spektrafilm_core::telemetry::{
     ColorSpaceRole, Operation, Outcome, Report, validate_report_destination,
 };
-use std::{
-    collections::VecDeque,
-    path::{Path, PathBuf},
-};
-
-use spektrafilm_core::params::RuntimeParams;
+use spektrafilm_gpu::telemetry::CollectionMode;
+use std::{collections::VecDeque, path::Path};
 
 #[derive(Default)]
 pub(crate) struct Diagnostics {
     pub mode: CollectionMode,
     history: VecDeque<Report>,
     selected: Option<u64>,
-    user_selected: bool,
-    publication: Option<PathBuf>,
-    publication_error: Option<String>,
 }
 
 pub(crate) fn color_space(value: &str) -> ColorSpaceRole {
@@ -40,65 +32,21 @@ pub(crate) fn preview_backend_requested() -> BackendRequested {
 }
 
 impl Diagnostics {
-    /// Publish every completed operation's report as a new file in `directory`.
-    ///
-    /// A launch-time choice: it stays out of saved GUI state, it never replaces
-    /// an existing file, and a failure surfaces as a status diagnostic instead of
-    /// failing the operation.
-    pub fn publish_completed_to(&mut self, directory: PathBuf) {
-        self.publication = Some(directory);
-    }
-
-    pub fn take_publication_error(&mut self) -> Option<String> {
-        self.publication_error.take()
-    }
-
     pub fn finish(&mut self, operation: Operation, outcome: Outcome) {
         if let Some(report) = operation.finish(outcome) {
-            if let Err(error) = self.publish(&report) {
-                self.publication_error = Some(error);
-            }
             self.retain(report);
         }
     }
 
-    fn publish(&self, report: &Report) -> Result<(), String> {
-        let Some(directory) = self.publication.as_deref() else {
-            return Ok(());
-        };
-        let path = directory.join(format!("operation-{}.json", report.operation.id));
-        validate_report_destination(&path, &[])
-            .and_then(|destination| destination.write_new(report))
-            .map_err(|error| error.to_string())
-    }
-
     fn retain(&mut self, report: Report) {
-        if !self.user_selected {
-            self.selected = Some(report.operation.id);
-        }
+        self.selected = Some(report.operation.id);
         self.history.push_front(report);
         self.history.truncate(20);
-        // If the selected report aged out of history, resume auto-follow.
-        if self.user_selected
-            && !self
-                .history
-                .iter()
-                .any(|r| Some(r.operation.id) == self.selected)
-        {
-            self.user_selected = false;
-            self.selected = self.history.front().map(|r| r.operation.id);
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn selected_report_id(&self) -> Option<u64> {
-        self.selected
     }
 
     pub fn clear(&mut self) {
         self.history.clear();
         self.selected = None;
-        self.user_selected = false;
     }
 
     pub fn save_selected(&self, path: &Path) -> Result<(), String> {
@@ -130,9 +78,7 @@ impl Diagnostics {
             if self.history.is_empty() { ui.label("No completed reports. Collection applies to the next operation."); }
             for report in &self.history {
                 let label = format!("#{} {} · {}", report.operation.id, words(&report.operation.kind), words(&report.operation.outcome));
-                if ui.selectable_value(&mut self.selected, Some(report.operation.id), label).clicked() {
-                    self.user_selected = true;
-                }
+                ui.selectable_value(&mut self.selected, Some(report.operation.id), label);
             }
             if let Some(report) = self.history.iter().find(|report| Some(report.operation.id) == self.selected) {
                 let summary = report.summary();
@@ -153,27 +99,6 @@ impl Diagnostics {
             }
         });
         save
-    }
-}
-
-/// Effective backend label for Scan and Export reports. An active Dye field
-/// resolves on the device whenever the render backend has one and the
-/// request is device-representable, and on the host with its fallback reason
-/// otherwise (`grain_v3::effective_field_backend` is the authority), so the
-/// selected backend name alone would misreport where the grain runs.
-pub(crate) fn effective_backend_name(
-    backend: &dyn spektrafilm_backend::ComputeBackend,
-    params: &RuntimeParams,
-) -> String {
-    if spektrafilm_core::stages::grain_v3::active(params) {
-        let executor =
-            spektrafilm_core::stages::grain_v3::effective_field_backend(params, backend.is_gpu());
-        let executor = if executor == "gpu" { "GPU" } else { "CPU" };
-        format!("{} · grain Dye on {executor}", backend.name())
-    } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
-        format!("{} · grain Fotufilm on CPU", backend.name())
-    } else {
-        backend.name().to_owned()
     }
 }
 
@@ -313,6 +238,19 @@ mod tests {
         assert!(report.attempts.is_empty());
     }
     #[test]
+    fn changing_mode_does_not_change_accepted_operation() {
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.mode = CollectionMode::Summary;
+        let operation = Operation::new(OperationKind::Preview, diagnostics.mode);
+        diagnostics.mode = CollectionMode::Off;
+        diagnostics.finish(operation, Outcome::Superseded);
+        assert_eq!(diagnostics.history.len(), 1);
+        assert_eq!(
+            diagnostics.history.front().unwrap().operation.outcome,
+            Outcome::Superseded
+        );
+    }
+    #[test]
     fn report_export_and_persistence_failure_do_not_change_history() {
         let mut diagnostics = Diagnostics::default();
         let operation = Operation::new(OperationKind::Preview, CollectionMode::Summary);
@@ -341,59 +279,5 @@ mod tests {
         );
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(directory).unwrap();
-    }
-    #[test]
-    fn publication_writes_one_new_file_per_completed_operation() {
-        let directory = std::env::temp_dir().join(format!(
-            "spektrafilm-gui-publication-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&directory).unwrap();
-        let mut diagnostics = Diagnostics::default();
-        diagnostics.publish_completed_to(directory.clone());
-        let preview = Operation::new(OperationKind::Preview, CollectionMode::Summary);
-        let preview_id = preview.id();
-        diagnostics.finish(preview, Outcome::Succeeded);
-        let scan = Operation::new(OperationKind::Scan, CollectionMode::Summary);
-        let scan_id = scan.id();
-        diagnostics.finish(scan, Outcome::Succeeded);
-        assert_ne!(preview_id, scan_id);
-        for (id, kind) in [
-            (preview_id, OperationKind::Preview),
-            (scan_id, OperationKind::Scan),
-        ] {
-            let path = directory.join(format!("operation-{id}.json"));
-            let report = Report::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            assert_eq!(report.operation.id, id);
-            assert_eq!(report.operation.kind, kind);
-            assert_eq!(report.operation.outcome, Outcome::Succeeded);
-        }
-        assert!(diagnostics.take_publication_error().is_none());
-        // Every completed operation publishes its own file; none replaces another.
-        diagnostics.finish(
-            Operation::new(OperationKind::Preview, CollectionMode::Summary),
-            Outcome::Succeeded,
-        );
-        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 3);
-        std::fs::remove_dir_all(&directory).unwrap();
-    }
-    #[test]
-    fn publication_failure_surfaces_without_losing_the_report() {
-        let mut diagnostics = Diagnostics::default();
-        diagnostics.publish_completed_to(std::env::temp_dir().join(format!(
-            "spektrafilm-gui-missing-publication-{}",
-            std::process::id()
-        )));
-        diagnostics.finish(
-            Operation::new(OperationKind::Preview, CollectionMode::Summary),
-            Outcome::Succeeded,
-        );
-        assert!(diagnostics.take_publication_error().is_some());
-        assert_eq!(diagnostics.history.len(), 1);
-        assert_eq!(
-            diagnostics.history.front().unwrap().operation.outcome,
-            Outcome::Succeeded
-        );
-        assert!(diagnostics.take_publication_error().is_none());
     }
 }

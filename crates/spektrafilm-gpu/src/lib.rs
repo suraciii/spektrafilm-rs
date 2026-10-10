@@ -1,3 +1,6 @@
+mod observed_backend;
+pub mod telemetry;
+pub use observed_backend::bind_backend;
 pub mod cpu_backend;
 mod gpu_helpers;
 #[cfg(feature = "wgpu-backend")]
@@ -35,6 +38,18 @@ pub struct GrainV2GpuParams {
 /// Default implementations fall back to CPU. GPU backends override the
 /// spectral methods for massive speedups.
 pub trait ComputeBackend: Send + Sync {
+    fn observation_context(&self) -> Option<&telemetry::ObservationContext> {
+        None
+    }
+    fn with_observation_context(
+        &self,
+        _context: telemetry::ObservationContext,
+    ) -> Option<Box<dyn ComputeBackend + '_>> {
+        None
+    }
+    fn adapter_description(&self) -> Option<telemetry::AdapterDescription> {
+        None
+    }
     fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf;
     fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf;
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf;
@@ -69,6 +84,18 @@ pub trait ComputeBackend: Send + Sync {
         cat: &[[f64; 3]; 3],
         xyz_to_rgb: &[[f64; 3]; 3],
     ) -> ImageBuf {
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "scan_spectral",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
         cpu_backend::scan_spectral_cpu(
             density_cmy,
             channel_density,
@@ -94,6 +121,18 @@ pub trait ComputeBackend: Send + Sync {
         cat: &[[f64; 3]; 3],
         xyz_to_rgb: &[[f64; 3]; 3],
     ) -> ImageBuf {
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "scan_spectral",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
         cpu_backend::scan_spectral_cpu_with_cmfs(
             density_cmy,
             channel_density,
@@ -118,6 +157,18 @@ pub trait ComputeBackend: Send + Sync {
         normalization_factor: f64,
         preflash: [f64; 3],
     ) -> ImageBuf {
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "print_spectral",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
         cpu_backend::print_spectral_cpu(
             density_cmy,
             channel_density,
@@ -144,6 +195,18 @@ pub trait ComputeBackend: Send + Sync {
         ref_illuminant: &[f32],
         cat16: bool,
     ) -> ImageBuf {
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "rgb_to_raw",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
         spektrafilm_math::spectral::hanatos2025_rgb_to_raw(
             image,
             tc_lut,
@@ -165,6 +228,18 @@ pub trait ComputeBackend: Send + Sync {
         density_curves: &[[f64; 3]],
         gamma_factor: f64,
     ) -> ImageBuf {
+        let _observation = self.observation_context().map(|context| {
+            let scope = context.scope(
+                "density_curve_interp",
+                telemetry::ObservationKind::Stage,
+                context.purpose(),
+            );
+            scope.context().record_executor(
+                telemetry::Executor::Cpu,
+                Some(telemetry::CpuReason::BackendDefault),
+            );
+            scope
+        });
         // CPU fallback — uses the f64 reference (`fast_interp_image_f64`).
         // Scalar gamma is broadcast to all channels; we just stretch the x-axis once.
         let scaled: Vec<f64> = if (gamma_factor - 1.0).abs() < 1e-12 {

@@ -22,7 +22,7 @@ pub(super) struct GlareState {
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) fn build_glare_state(
-    device: &wgpu::Device,
+    device: &ObservedDevice,
     gp: &crate::GlareGpuParams,
     width: u32,
     height: u32,
@@ -30,7 +30,6 @@ pub(super) fn build_glare_state(
     buf_b: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> GlareState {
-    use wgpu::util::DeviceExt;
     let n_pixels = (width as usize) * (height as usize);
     let img_bytes = (n_pixels * 3 * 4) as u64;
 
@@ -260,7 +259,7 @@ pub(super) fn build_glare_state(
 impl GlareState {
     pub(super) fn encode_passes(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut ObservedEncoder,
         n_pixels: u32,
         wg_xy: (u32, u32),
     ) {

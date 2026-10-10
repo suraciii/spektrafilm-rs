@@ -30,7 +30,21 @@ fn print_spectral_via_lut(
     steps: usize,
 ) -> ImageBuf {
     let grid = build_lut_grid(steps, data_min, data_max);
-    let lut_image = backend.print_spectral(
+    let calibration = backend
+        .observation_context()
+        .filter(|context| context.enabled())
+        .map(|context| {
+            context.scope(
+                "enlarger_lut_prepare",
+                spektrafilm_gpu::telemetry::ObservationKind::Stage,
+                spektrafilm_gpu::telemetry::Purpose::Calibration,
+            )
+        });
+    let calibrated_backend = calibration
+        .as_ref()
+        .map(|scope| spektrafilm_gpu::bind_backend(backend, scope.context().clone()));
+    let calibration_backend = calibrated_backend.as_deref().unwrap_or(backend);
+    let lut_image = calibration_backend.print_spectral(
         &grid,
         channel_density,
         base_density,
@@ -44,6 +58,13 @@ fn print_spectral_via_lut(
     // regardless to match Python's f64 LUT type.
     let lut_f64: Vec<f64> = lut_image.data.iter().map(|&v| v as f64).collect();
     let prepared = prepare_pchip_3d(lut_f64, steps);
+    drop(calibrated_backend);
+    drop(calibration);
+    let _interpolation = super::StageObservation::cpu(
+        backend,
+        "enlarger_lut_interpolate",
+        spektrafilm_gpu::telemetry::CpuReason::SpectralLut,
+    );
     apply_pchip_lut(cmy_film, &prepared, data_min, data_max)
 }
 
@@ -196,6 +217,11 @@ pub fn expose_calibrated(
     // otherwise the 10^x → ×exposure → log10 collapse into one pass.
     let edf = &params.enlarger.diffusion_filter;
     if edf.active {
+        let _diffusion = super::StageObservation::cpu(
+            backend,
+            "optical_diffusion",
+            spektrafilm_gpu::telemetry::CpuReason::OpticalDiffusion,
+        );
         let mut lin = log_raw_print;
         lin.data.par_chunks_mut(BLOCK).for_each(|chunk| {
             let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
