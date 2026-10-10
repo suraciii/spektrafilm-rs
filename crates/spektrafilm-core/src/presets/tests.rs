@@ -312,3 +312,67 @@ fn explicit_null_is_json_only_and_never_discarded() {
     assert_eq!(path.extension().unwrap(), "json");
     assert_eq!(load_file(&path).unwrap(), preset);
 }
+
+#[test]
+fn parity_only_film_glare_has_no_section() {
+    assert_eq!(SECTIONS.len(), 11);
+    let error = section_from_payload(&serde_json::json!({"film_render":{"glare":{"active":true}}}))
+        .unwrap_err();
+    assert!(error.contains("exactly one section"));
+}
+
+#[test]
+fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() {
+    use crate::params::RenderPreparationState;
+    let mut current = RuntimeParams::default();
+    current.film_render.grain.rms_granularity = [1.234; 3];
+    current.enlarger.c_filter_neutral = 12.0;
+    current.neutral_print_filters_protected = [true, false, true];
+    current
+        .explicit_section_paths
+        .insert("film_render.grain.rms_granularity".into());
+    // A valid editable path outside the section table must survive restoration.
+    current
+        .explicit_section_paths
+        .insert("camera.exposure_compensation_ev".into());
+    let state = current.render_preparation_state();
+    let mut state: RenderPreparationState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(state, current.render_preparation_state());
+    state
+        .explicit_section_paths
+        .push("film_render.grain.removed_control".into());
+    state
+        .explicit_section_paths
+        .push("film_render.grain".into());
+    let serialized = serde_json::to_value(&current).unwrap();
+    assert!(serialized.get("explicit_section_paths").is_none());
+    assert!(serialized.get("neutral_print_filters_protected").is_none());
+    let mut restored: RuntimeParams = serde_json::from_value(serialized.clone()).unwrap();
+    restored.restore_render_preparation_state(&state);
+    assert_eq!(
+        restored.render_preparation_state(),
+        current.render_preparation_state()
+    );
+    assert_eq!(serde_json::to_value(&restored).unwrap(), serialized);
+    let film = profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap();
+    let print = profile::load_profile_by_name(&data(), "kodak_portra_endura").unwrap();
+    apply_film_specifics(&mut restored, &film);
+    assert_eq!(restored.film_render.grain.rms_granularity, [1.234; 3]);
+    let database = crate::neutral_filters::NeutralFilters::load(&data()).unwrap();
+    let restored = crate::params_builder::apply_database_neutral_print_filters(
+        restored,
+        &film,
+        &print,
+        Some(&database),
+    );
+    assert_eq!(restored.enlarger.c_filter_neutral, 12.0);
+    assert_eq!(
+        restored.neutral_print_filters_protected,
+        [true, false, true]
+    );
+    assert_eq!(
+        restored.settings.neutral_print_filters_from_database,
+        current.settings.neutral_print_filters_from_database
+    );
+}

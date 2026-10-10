@@ -695,7 +695,38 @@ impl RuntimeParams {
     pub fn validate(&self) -> Result<(), String> {
         validation::validate(self)
     }
+
+    /// Snapshot transient preparation ownership separately from the runtime schema.
+    pub fn render_preparation_state(&self) -> RenderPreparationState {
+        RenderPreparationState {
+            explicit_section_paths: self.explicit_section_paths.iter().cloned().collect(),
+            neutral_print_filters_protected: self.neutral_print_filters_protected,
+        }
+    }
+
+    /// Restore ownership, ignoring leaves removed from the editable schema.
+    /// Values and paths need not belong to any currently known preset section.
+    pub fn restore_render_preparation_state(&mut self, state: &RenderPreparationState) {
+        self.explicit_section_paths.clear();
+        self.explicit_section_paths.extend(
+            state
+                .explicit_section_paths
+                .iter()
+                .filter(|path| sources::describe_field(path).is_ok())
+                .cloned(),
+        );
+        self.neutral_print_filters_protected = state.neutral_print_filters_protected;
+    }
 }
+/// Serde-visible GUI state carrier for runtime preparation ownership.
+/// Kept separate so runtime parameters, recipes and digests retain their shape.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenderPreparationState {
+    pub explicit_section_paths: Vec<String>,
+    pub neutral_print_filters_protected: [bool; 3],
+}
+
 /// Top-level runtime parameters. Combines all sub-parameter groups.
 ///
 /// Mirrors upstream 0.3.4 `RuntimePhotoParams` minus the `film` / `print`
