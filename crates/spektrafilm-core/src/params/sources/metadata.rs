@@ -402,6 +402,8 @@ fn conditions(path: &str) -> Vec<String> {
         out.push("io.crop = true".into());
     } else if path == "debug.print_timings" {
         out.push("declared upstream no-op".into());
+    } else if path == "scanner.scan_output" {
+        out.push("positive_scan requires a negative film and workflow.route = input > film > scan; scanner white/black correction and active Grain V2 are unsupported".into());
     } else if path.starts_with("magazine_print_color.") {
         out.push("workflow.route = input > film > scan > magazine".into());
         if path.ends_with(".strength") {

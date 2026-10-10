@@ -123,6 +123,11 @@ impl Default for EnlargerParams {
 pub struct ScannerParams {
     #[serde(default)]
     pub lens_blur: f32,
+    /// Scan output polarity: `direct_scan` preserves the scanner capture;
+    /// `positive_scan` interprets a direct negative-film capture as a
+    /// positive image.
+    #[serde(default = "default_direct_scan")]
+    pub scan_output: String,
     #[serde(default)]
     pub white_correction: bool,
     #[serde(default)]
@@ -139,6 +144,7 @@ impl Default for ScannerParams {
     fn default() -> Self {
         Self {
             lens_blur: 0.0,
+            scan_output: default_direct_scan(),
             white_correction: false,
             black_correction: false,
             white_level: 0.98,
@@ -797,6 +803,10 @@ fn default_55() -> f32 {
 fn default_65() -> f32 {
     65.0
 }
+fn default_direct_scan() -> String {
+    "direct_scan".into()
+}
+
 fn default_098() -> f32 {
     0.98
 }
@@ -854,6 +864,16 @@ mod tests {
 
         let named: CameraParams = serde_json::from_str(r#"{"color_filter":"hoya_r1"}"#).unwrap();
         assert_eq!(named.color_filter, "hoya_r1");
+    }
+
+    #[test]
+    fn scanner_output_defaults_to_direct_and_rejects_unknown_modes() {
+        let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.scan_output, "direct_scan");
+
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "unknown".into();
+        assert!(params.validate().is_err());
     }
     #[test]
     fn grain_v2_profile_inheritance_and_overrides() {

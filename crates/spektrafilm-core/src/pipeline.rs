@@ -289,8 +289,10 @@ impl Pipeline {
     /// instead of retaining stale calibration.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         let mut params = params;
+        crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
+        params.validate()?;
         params.validate_color()?;
-        crate::params_builder::broadcast_monochrome_layout(&self.film, &mut params);
+        crate::pipeline_calibration::validate_scan_output(&params, &self.film)?;
         if let Some(model) = self.print.data.density_curves_model.as_ref() {
             crate::print_morph::morph_density_curves(
                 &self.print.log_exposure_f64(),
@@ -322,6 +324,15 @@ impl Pipeline {
         self.params = params;
         Ok(self)
     }
+    fn effective_backend<'a>(&self, backend: &'a dyn ComputeBackend) -> &'a dyn ComputeBackend {
+        if self.params.scanner.scan_output == "positive_scan" {
+            static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
+                spektrafilm_gpu::cpu_backend::CpuBackend;
+            &CPU_BACKEND
+        } else {
+            backend
+        }
+    }
 }
 
 impl Pipeline {
@@ -344,6 +355,8 @@ impl Pipeline {
             crate::profile::resolve_for_render(film, params.film_render.development_time);
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&film, &mut params);
+        crate::pipeline_calibration::validate_scan_output(&params, &film)
+            .expect("invalid scan output mode");
         let mut print =
             crate::profile::resolve_for_render(print, params.print_render.development_time);
         apply_base_tuning(&mut film, &params.film_render.base, None);
@@ -655,6 +668,7 @@ impl Pipeline {
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        let backend = self.effective_backend(backend);
         let inject = match inject {
             Some(tap) => tap,
             None => self

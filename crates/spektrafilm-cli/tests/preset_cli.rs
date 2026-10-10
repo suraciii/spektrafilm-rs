@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 struct Fixture {
@@ -11,13 +12,15 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "spektrafilm-preset-cli-{}-{}",
+            "spektrafilm-preset-cli-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&root).unwrap();
         let input = root.join("input.png");
@@ -757,5 +760,145 @@ fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_pres
     ]);
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("magazine_print_color.strength"));
+    assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
+    let f = Fixture::new();
+    let cases: &[(&str, &str, &str, &str)] = &[
+        (
+            "fujifilm_provia_100f",
+            "input > film > scan",
+            "camera.auto_exposure=false",
+            "negative film",
+        ),
+        (
+            "kodak_portra_400",
+            "input > film > print > scan",
+            "camera.auto_exposure=false",
+            "direct input",
+        ),
+        (
+            "kodak_portra_400",
+            "input > film > scan > magazine",
+            "camera.auto_exposure=false",
+            "direct input",
+        ),
+        (
+            "kodak_portra_400",
+            "input > convert-film > scan",
+            "camera.auto_exposure=false",
+            "direct input",
+        ),
+        (
+            "kodak_portra_400",
+            "input > film > scan",
+            "scanner.white_correction=true",
+            "white/black correction",
+        ),
+        (
+            "kodak_portra_400",
+            "input > film > scan",
+            "scanner.black_correction=true",
+            "white/black correction",
+        ),
+        (
+            "kodak_portra_400",
+            "input > film > scan",
+            "film_render.grain.engine=\"v2\",film_render.grain.active=true,settings.preview_mode=true",
+            "active Grain V2",
+        ),
+    ];
+    std::fs::write(f.root.join("output.tif"), b"retained output").unwrap();
+    for (film, route, edits, message) in cases {
+        for dry_run in [false, true] {
+            let mut args = vec![
+                "--film",
+                film,
+                "--route",
+                route,
+                "--scan-output",
+                "positive_scan",
+                "--set",
+                edits,
+                "--backend",
+                "cpu",
+            ];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let result = f.process(&args);
+            assert!(
+                !result.status.success(),
+                "accepted {film}, {route}, {edits}"
+            );
+            let error = String::from_utf8_lossy(&result.stderr);
+            assert!(error.contains(message), "{error}");
+            assert_eq!(
+                std::fs::read(f.root.join("output.tif")).unwrap(),
+                b"retained output"
+            );
+        }
+    }
+}
+
+#[test]
+fn positive_scan_rejects_paper_without_sparse_parameter_edits() {
+    let f = Fixture::new();
+    for dry_run in [false, true] {
+        let mut args = vec![
+            "--film",
+            "kodak_portra_endura",
+            "--scan-film",
+            "--scan-output",
+            "positive_scan",
+            "--backend",
+            "cpu",
+        ];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let result = f.process(&args);
+        assert!(!result.status.success());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            error.contains("requires a negative film profile"),
+            "{error}"
+        );
+        assert!(!f.root.join("output.tif").exists());
+    }
+}
+
+#[test]
+fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--preset",
+        "classic-kodak-portra-400",
+        "--scan-film",
+        "--set",
+        "scanner.scan_output=\"positive_scan\",scanner.white_correction=true",
+        "--scan-output",
+        "direct_scan",
+        "--dry-run",
+    ]);
+    assert_eq!(
+        report["parameters"]["scanner"]["scan_output"],
+        "direct_scan"
+    );
+    assert_eq!(report["parameters"]["scanner"]["white_correction"], true);
+    let result = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--scan-film",
+        "--set",
+        "scanner.scan_output=\"unknown\"",
+        "--scan-output",
+        "direct_scan",
+        "--dry-run",
+    ]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("scanner.scan_output"));
     assert!(!f.root.join("output.tif").exists());
 }

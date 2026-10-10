@@ -148,6 +148,10 @@ pub(crate) fn validate_v2_timer(value: f64) -> Result<(), String> {
 /// validated but not enumerable (for example `BB<kelvin>` blackbody sources).
 pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     let values: Vec<String> = match path {
+        "scanner.scan_output" => ["direct_scan", "positive_scan"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
         "film_render.grain.engine" => ["v1", "v2"].iter().map(|v| (*v).into()).collect(),
         "film_render.grain.v2_mode" => ["analogue", "noise"].iter().map(|v| (*v).into()).collect(),
         "film_render.grain.v2_film_type" => ["negative", "positive"]
@@ -239,6 +243,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
 /// Per-leaf vocabulary validation, independent of cross-field state.
 pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
     let valid = match path {
+        "scanner.scan_output" => matches!(value, "direct_scan" | "positive_scan"),
         "film_render.grain.engine" => matches!(value, "v1" | "v2"),
         "film_render.grain.v2_mode" => matches!(value, "analogue" | "noise"),
         "film_render.grain.v2_film_type" => matches!(value, "negative" | "positive"),
@@ -359,6 +364,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             params.camera.color_filter
         ));
     }
+    validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     RgbToRawMethod::parse(&params.settings.rgb_to_raw_method)?;
     if !crate::spectral_service::is_supported_illuminant(&params.enlarger.illuminant) {
         let supported = crate::spectral_service::available_illuminants().join(", ");

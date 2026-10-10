@@ -742,9 +742,12 @@ impl App {
     }
 
     fn apply_state(&mut self, state: state::GuiState) -> Result<()> {
-        let params = state.runtime_params()?;
-        profile::load_profile_by_name(&self.data_dir, state.film())?;
+        let mut params = state.runtime_params()?;
+        let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
+        if film.is_positive() || params.workflow.route != "input > film > scan" {
+            params.scanner.scan_output = "direct_scan".into();
+        }
         self.film_name = state.film().to_owned();
         self.print_name = state.paper().to_owned();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
@@ -879,7 +882,11 @@ impl App {
                 ],
                 "Which path the image takes through the pipeline: input (passthrough: just colour-manage the input to the output space for viewing), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base).",
             ) {
-                self.params.io.scan_film = false;
+                let direct_film_scan = self.params.workflow.route == "input > film > scan";
+                self.params.io.scan_film = direct_film_scan;
+                if !direct_film_scan {
+                    self.params.scanner.scan_output = "direct_scan".into();
+                }
                 self.dirty = true;
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.parameter_revision = self.parameter_revision.wrapping_add(1);
@@ -968,6 +975,9 @@ impl App {
         self.film_name = resolved.film_name;
         self.print_name = resolved.print_name;
         self.params = resolved.params;
+        if resolved.film.is_positive() || self.params.workflow.route != "input > film > scan" {
+            self.params.scanner.scan_output = "direct_scan".into();
+        }
         self.film_dev_times = resolved.film.data.development_time.clone();
         self.print_dev_times = resolved.print.data.development_time.clone();
         self.look_neutral_filters_pinned = true;
@@ -993,6 +1003,7 @@ impl App {
         self.film_dev_times = film.data.development_time.clone();
         self.params.workflow.route = workflow_default(&film);
         self.params.io.scan_film = film.is_positive();
+        self.params.scanner.scan_output = "direct_scan".into();
         self.invalidate_look_render();
     }
 
