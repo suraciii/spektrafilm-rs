@@ -28,9 +28,20 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 
 - The browser lists look presets only. A section preset must not appear in it and must not be applicable from it.
 - A section preset loads from the menu of its own section. The menu must show the preset whose carried controls equal the section's current controls, or `custom`. The comparison must use the carried editable controls and never derived or prepared values, and equal matches must resolve deterministically by name order.
-- A section menu must not appear while the library carries no preset for that section, and the menu must not repeat a control that already exists inside the section.
+- Every section in this table carries its menu, because Save as lives there. A menu whose list is empty must offer Save as for the section's current controls and must state that a preset file can also be placed in the library. The menu must not repeat a control that already exists inside the section.
 - The section menu owns load, Save as, Rename, Duplicate, Delete, Export, and Show file for its own documents; the browser keeps the same operations for look presets. Both must call the shared library implementation.
 - A section preset must not change a profile reference or the workflow.
+
+## Everyday flows
+
+The flows a user actually runs must be short; every one below is two or three steps, and none of them needs a dialog that asks for a scope.
+
+- Start a look: pick a browser row. Profiles, every look control, and the workflow default follow, and a render is scheduled.
+- Keep a section: adjust that section, open its menu (it reads `custom`), Save as, name it. The file lands in the library and the menu reads that name; the next image applies it in one click after the look.
+- Change an applied look: edit any look control, then Update the user document, Save as under a new name, or Revert.
+- Move a preset between machines: Export either kind, drop the file into `<config_dir>/presets`, refresh. The same name then resolves for the GUI and the CLI.
+- Reopen the app: controls come from the restored state, and the browser re-marks the remembered group and name; a missing document shows as missing.
+- Script a run: `preset list` and `preset show` describe the same names and groups the browser shows, and `--preset` resolves them with the same rules.
 
 ## Names and groups
 
@@ -38,6 +49,7 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 - The built-in documents form the `Built-in` group. The library directory forms the `My Presets` group.
 - A name must be unique inside a group. Two built-in documents must not share a name, and two library documents must not share a name. The same name in both groups is valid.
 - Name comparison must be case-insensitive, because some file systems resolve names without case.
+- Browser rows and section menus must sort by name, case-insensitively, with a deterministic tie-break. A file-system scan order must never reach the UI, and one library must present one order.
 - A name must be 1 to 64 characters. It must not contain `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, or control characters. It must not end with a period or with a carrier extension. It must not be a Windows reserved device name. These rules must hold on every platform, so a library can move between hosts.
 - A library document must be named `<name>.toml` or `<name>.json`. A document whose `name` differs from its file stem must be a fault of that document.
 
@@ -56,11 +68,14 @@ A section is a named set of look-owned parameter paths. This table is authoritat
 - A write must be atomic: write a temporary file in the library directory, then rename it. A failed write must retain the preceding document.
 - Rename must change the document name and the file name together. A failed rename must leave the preceding document reachable under its old name.
 - Import must not replace an existing name in `My Presets`. A conflict must be reported and must offer a renamed copy.
+- Export must default its file name to the preset name with the carrier extension and must not write into the library directory unless the user picks it.
 - Deleting or updating one document must not modify another document or a built-in document.
 
 ## Boundaries
 
 - The GUI state keeps its complete-state contract. The panel width, the expanded state, and the last applied group and name belong to the versioned Rust extension and must not enter the Python-compatible sections. They must not change the meaning of a saved preset document.
 - Modified detection compares the captured look controls and the film and print references with the applied document. It must not compare GUI state or a prepared runtime parameter tree.
-- Built-in documents must stay read-only at run time. A user edit must produce a user document or no change. The `My Presets` group header must offer to reveal the library directory, because only user documents have a path.
+- Built-in documents must stay read-only at run time. A user edit must produce a user document or no change. The `My Presets` group header must show the resolved library directory path, must offer to reveal it, and must offer to refresh discovery, so a document placed while the GUI runs becomes visible without a restart. Only user documents have a path.
+- Renaming the applied user preset must follow the marker to the new name. Deleting it must leave the look controls untouched and must show the remembered name as missing.
+- Restoring GUI state must restore the stored controls and must not re-apply the remembered preset document. The applied marker is recomputed against the restored controls.
 - Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, inheritance, remote distribution, and scanning directories other than the library directory are outside this boundary.

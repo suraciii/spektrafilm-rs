@@ -10,7 +10,9 @@ A preset **name** is its identity: the document `name`, the document file stem, 
 
 The GUI provides a Presets browser for look presets in a collapsible panel on the left of the window, and one preset menu per section for section presets. The browser shows the two groups. Each row shows the preset name and its film and print references. The active row is marked. A modified marker appears while the active look controls differ from the applied document. The MAIN control panel must not repeat the browser list. User presets must not be implemented by reusing complete `GuiState`.
 
-A section preset must appear only in the menu of its own section, never in the browser, and a section menu must appear only when the library carries a preset for that section. A section menu must show the name of the section preset whose controls match the section and `custom` otherwise. That match must be derived from the section's controls and must not be stored as separate state.
+A section preset must appear only in the menu of its own section, never in the browser. Every section of the section table must carry that menu, because Save as lives there: an empty list must offer to save the section's current controls and must state that a preset file can also be placed in the library. A section menu must report the issues of the documents it would carry. A section menu must show the name of the section preset whose controls match the section and `custom` otherwise. That match must be derived from the section's controls and must not be stored as separate state.
+
+Browser rows and section menus must be ordered by name, case-insensitively, with a deterministic tie-break, so one library always presents one order. User-selectable sorting is outside this contract.
 
 ## User library
 
@@ -36,7 +38,9 @@ A name that exists in both groups must remain reachable in both. Editing look co
 
 The browser must list, with its path, every document that cannot be read, parsed, or accepted. An issue must not hide the remaining library. An empty library must state how to save the current look.
 
-The browser must remember the applied preset group and name across restarts. A remembered preset whose document is absent must be shown as missing. The modified state must not persist across restarts.
+The browser must remember the applied preset group and name across restarts. A remembered preset whose document is absent must be shown as missing. The modified state must not persist across restarts. Restoring GUI state must restore its stored controls and must not re-apply the remembered preset document.
+
+Renaming or deleting the applied user preset must update the marker: a rename follows the new name, and a delete leaves the look controls untouched and shows the remembered name as missing.
 
 Browser rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
 
@@ -45,7 +49,7 @@ Browser rows must show the preset name, the film reference, and the print refere
 - Selecting a preset validates the document, or the section it carries, before changing active controls.
 - A look preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
 - A preset does not store or directly apply a workflow. A look preset selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`. The user may then choose another supported workflow manually. A section preset carries no film reference and must not change the workflow.
-- Applying a look preset replaces all look-owned controls together, clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
+- Applying a look preset replaces all look-owned controls together, including the controls of every section, so a section preset must be applied after a look change to take effect. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
 - Applying a section preset replaces exactly the controls of its section, and those values count as explicit. Every other control retains its value, including explicit values from an earlier preset or parameter source, so the result does not re-derive them from stock defaults. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
 - Applying a section preset must not replace the remembered applied preset. It is an edit, so an applied look preset becomes modified.
 - Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure, crop, resize, rotation, viewer/display state, Save settings, and Export settings.
