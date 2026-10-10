@@ -713,3 +713,49 @@ fn dry_run_reports_runtime_route_and_monochrome_normalization() {
     );
     assert_eq!(report["print_profile"], "kodak_doublex");
 }
+
+#[test]
+fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_preset() {
+    let f = Fixture::new();
+    for selector in [
+        ["--film", "kodak_portra_400"],
+        ["--preset", "classic-kodak-portra-400"],
+    ] {
+        let report = f.report(&[
+            selector[0],
+            selector[1],
+            "--route",
+            "input > film > scan > magazine",
+            "--set",
+            "magazine_print_color.active=true,magazine_print_color.strength=0.75",
+            "--dry-run",
+        ]);
+        assert_eq!(report["parameters"]["io"]["scan_film"], true);
+        assert_eq!(
+            report["parameters"]["magazine_print_color"]["strength"],
+            0.75
+        );
+        assert_eq!(
+            report["print_profile"],
+            if selector[0] == "--preset" {
+                "kodak_portra_endura"
+            } else {
+                "kodak_portra_400"
+            }
+        );
+    }
+    let result = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input > film > scan > magazine",
+        "--set",
+        "magazine_print_color.strength=1.1",
+        "--set",
+        "magazine_print_color.strength=0.75",
+        "--dry-run",
+    ]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("magazine_print_color.strength"));
+    assert!(!f.root.join("output.tif").exists());
+}

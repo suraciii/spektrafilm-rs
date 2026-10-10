@@ -62,6 +62,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.v2_resolution_type" => Some((0.0, Some(1.0))),
         "film_render.grain.v2_timer" => Some((0.0, Some(1.0))),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
+        "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         _ => None,
     }
 }
@@ -402,6 +403,11 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         }
     }
     RgbToRawMethod::parse(&params.settings.rgb_to_raw_method)?;
+    let magazine = &params.magazine_print_color;
+    let (min, max) = leaf_numeric_bounds("magazine_print_color.strength").unwrap();
+    if !magazine.strength.is_finite() || !(min..=max.unwrap()).contains(&magazine.strength) {
+        return Err("magazine_print_color.strength: must be finite and in 0..=1".into());
+    }
     if let Some(t) = params.taps.inject.as_deref() {
         Tap::parse(t).map_err(|e| format!("taps.inject: {e}"))?;
     }
@@ -410,6 +416,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         "input"
             | "input > film > scan"
             | "input > film > print > scan"
+            | "input > film > scan > magazine"
             | "input > convert-film > print > scan"
             | "input > convert-film > scan-minus-base"
             | "input > convert-film > scan"

@@ -402,6 +402,13 @@ fn conditions(path: &str) -> Vec<String> {
         out.push("io.crop = true".into());
     } else if path == "debug.print_timings" {
         out.push("declared upstream no-op".into());
+    } else if path.starts_with("magazine_print_color.") {
+        out.push("workflow.route = input > film > scan > magazine".into());
+        if path.ends_with(".strength") {
+            out.push("magazine_print_color.active = true".into());
+        } else {
+            out.push("magazine_print_color.strength > 0".into());
+        }
     }
     out
 }

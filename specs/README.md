@@ -5,6 +5,7 @@
 Capabilities:
 
 - [Film chain](film-chain/spec.md) — spectral film, print, and scan processing.
+- [Magazine print color](magazine-print-color/spec.md) — bundled RGB color appearance for a film image published as a magazine print.
 - [Film grain](film-grain/spec.md) — shared grain contract and engine selection.
 - [Image input](image-input/spec.md) — raster and RAW ingestion.
 - [Photo export](photo-export/spec.md) — preview output, Save, and Export.

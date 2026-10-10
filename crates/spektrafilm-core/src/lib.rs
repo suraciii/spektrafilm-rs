@@ -11,6 +11,7 @@ pub mod lut_formats;
 pub mod lut_ocio;
 pub mod lut_qa;
 pub mod lut_transport;
+pub mod magazine_print_color;
 pub mod mallett;
 pub mod measurement;
 pub mod neutral_filters;

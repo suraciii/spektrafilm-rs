@@ -226,16 +226,25 @@ fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
             ("printing_develop_scan", Some(print)),
         ],
     };
+    let magazine = bundle.meta.workflow_route == "input > film > scan > magazine"
+        && bundle.meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
     for &(role, stock) in roles {
+        let expected_role = if magazine && stock.is_some() {
+            format!("magazine_{role}")
+        } else {
+            role.to_owned()
+        };
         let candidates: Vec<_> = bundle
             .meta
             .luts
             .iter()
-            .filter(|m| m.role == role && m.print_profile.as_deref() == stock)
+            .filter(|m| m.role == expected_role && m.print_profile.as_deref() == stock)
             .collect();
         if candidates.len() != 1 {
-            return Err(format!("expected one canonical LUT {role} for {stock:?}"));
+            return Err(format!(
+                "expected one canonical LUT {expected_role} for {stock:?}"
+            ));
         }
         let m = candidates[0];
         let lut = bundle

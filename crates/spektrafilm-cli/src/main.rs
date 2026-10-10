@@ -61,7 +61,8 @@ enum Commands {
         #[arg(long, required_unless_present = "preset", conflicts_with = "preset")]
         film: Option<String>,
         /// Paper stock name (e.g. fujifilm_crystal_archive_typeii).
-        /// If omitted and --scan-film is not set, uses the film's target_print.
+        /// If omitted for --scan-film or a direct scan route, uses the film as
+        /// the scan profile; otherwise it uses the film's target_print.
         #[arg(long, conflicts_with = "preset")]
         paper: Option<String>,
         /// A built-in preset ID or .toml/.json preset file.

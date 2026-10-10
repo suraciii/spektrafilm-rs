@@ -120,6 +120,22 @@ pub fn show(
                 });
             });
         }
+        if section == "Magazine print color" {
+            ui.collapsing(section, |ui| {
+                let magazine = &mut params.magazine_print_color;
+                flags.runtime_changed |= ui.checkbox(&mut magazine.active, "Active").changed();
+                flags.runtime_changed |= numeric(
+                    ui,
+                    "strength",
+                    &mut magazine.strength,
+                    0.0,
+                    1.0,
+                    0.01,
+                    2,
+                    "Magazine print color appearance strength.",
+                );
+            });
+        }
         if section == "Input gamut compress" {
             egui::CollapsingHeader::new("Input gamut compress").default_open(false).show(ui, |ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.io.input_gamut_compress.active, "Compress input chromaticities toward the visible spectral locus before spectral upsampling. Off passes input through unchanged.");
