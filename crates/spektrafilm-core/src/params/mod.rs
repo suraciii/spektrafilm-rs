@@ -230,6 +230,23 @@ impl Default for ConvertFilmParams {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MagazinePrintColorParams {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default = "default_one_f64")]
+    pub strength: f64,
+}
+impl Default for MagazinePrintColorParams {
+    fn default() -> Self {
+        Self {
+            active: false,
+            strength: 1.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowParams {
@@ -703,6 +720,8 @@ pub struct RuntimeParams {
     #[serde(default)]
     pub workflow: WorkflowParams,
     #[serde(default)]
+    pub magazine_print_color: MagazinePrintColorParams,
+    #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]
     pub debug: DebugParams,
@@ -722,6 +741,7 @@ impl Default for RuntimeParams {
             print_render: PrintRenderingParams::default(),
             io: IoParams::default(),
             workflow: WorkflowParams::default(),
+            magazine_print_color: MagazinePrintColorParams::default(),
             settings: SettingsParams::default(),
             debug: DebugParams::default(),
             taps: TapsParams::default(),

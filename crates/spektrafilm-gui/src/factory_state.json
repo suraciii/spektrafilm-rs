@@ -274,6 +274,10 @@
       1.6
     ]
   },
+  "magazine_print_color": {
+    "active": false,
+    "strength": 1.0
+  },
   "special": {
     "film_channel_swap": [
       0,

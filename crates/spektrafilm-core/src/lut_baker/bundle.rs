@@ -396,6 +396,8 @@ pub struct BundleMeta {
     pub topology: Topology,
     pub resolution: usize,
     pub target: Option<String>,
+    #[serde(default)]
+    pub workflow_route: String,
     pub provenance: BTreeMap<String, String>,
     pub stocks: StocksMeta,
     pub color_spaces: BTreeMap<String, ColorSpaceMeta>,

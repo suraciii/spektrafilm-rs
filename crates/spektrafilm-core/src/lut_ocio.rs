@@ -205,13 +205,20 @@ fn chain_for_print<'a>(
             ("printing_develop_scan", "log_e_print", "output_rgb", false),
         ],
     };
+    let magazine = meta.workflow_route == "input > film > scan > magazine"
+        && meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
     for &(role, domain, range, shared) in stages {
+        let expected_role = if magazine && range == "output_rgb" {
+            format!("magazine_{role}")
+        } else {
+            role.to_owned()
+        };
         let candidates = meta
             .luts
             .iter()
             .filter(|lut| {
-                lut.role == role
+                lut.role == expected_role
                     && if shared {
                         lut.print_profile.is_none()
                     } else {

@@ -357,12 +357,18 @@ pub fn bundle_readme_text(meta: &BundleMeta) -> String {
         }
     }
     s.push_str("\n## Apply order\n\n");
-    s.push_str(match meta.topology {
-        Topology::One => "Apply the combined LUT for the chosen print in the declared input and output encodings.\n",
-        Topology::Two => "Apply the shared film LUT, then the matching print LUT.\n",
-        Topology::Three => "Apply L1 → L2 → the chosen print's L3. L1 and L2 are shared.\n",
-        Topology::Four => "Apply L1 → L2 → the chosen print's L3 → L4. L1 and L2 are shared; L3 and L4 are print-specific.\n",
-    });
+    if meta.workflow_route == "input > film > scan > magazine"
+        && meta.provenance.contains_key("magazine_print_color")
+    {
+        s.push_str("Apply the film-scan stages in the declared topology; the final `magazine_*` RGB LUT includes the bundled magazine print color appearance. This is a magazine appearance route, not a photographic print transform.\n");
+    } else {
+        s.push_str(match meta.topology {
+            Topology::One => "Apply the combined LUT for the chosen print in the declared input and output encodings.\n",
+            Topology::Two => "Apply the shared film LUT, then the matching print LUT.\n",
+            Topology::Three => "Apply L1 → L2 → the chosen print's L3. L1 and L2 are shared.\n",
+            Topology::Four => "Apply L1 → L2 → the chosen print's L3 → L4. L1 and L2 are shared; L3 and L4 are print-specific.\n",
+        });
+    }
     if meta.topology != Topology::One {
         s.push_str("\nEvery intermediate LUT carries [0,1] codes. Do not cross-chain LUTs from different bundles: stock-specific wire constants differ. Decode density using D = code * (d_max - d_min) + d_min; decode log exposure using log10(E) = code * (max - min) + min. Use the matching wire in bundle.json. Modify physical units, then re-encode using the same constants.\n\nFilm-density code reserves negative base+fog headroom for downstream grain. The log_e_film tap is appropriate for light-domain halation and diffusion. The 4-LUT topology additionally exposes log_e_print for enlarger manipulation; the 3-LUT topology collapses this tap.\n");
     }
