@@ -19,13 +19,24 @@ build-f64:
 decode-raw:
     cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui
 
-check:
-    cargo check --locked --workspace
+# Check formatting without modifying files.
+fmt:
+    cargo fmt --all -- --check
 
+# Type-check every workspace target with default features.
+check:
+    cargo check --locked --workspace --all-targets
+
+# Type-check every workspace target with f64 precision.
+check-f64:
+    cargo check --locked --workspace --all-targets --features precision-f64
+
+# Run the workspace test suite in the f64 reference configuration.
 test:
     cargo test --locked --workspace --features precision-f64
 
-ci: check test
+# Full local gate. PR CI runs this same command.
+ci: fmt check check-f64 test
 
 # Create a self-contained portable directory and archive under dist/.
 [unix]
