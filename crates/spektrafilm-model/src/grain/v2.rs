@@ -63,9 +63,12 @@ pub fn profile_index(name: &str) -> Option<usize> {
 pub struct GrainV2Params {
     pub mode: GrainV2Mode,
     pub profile: usize,
-    /// Host grainResolutionType: 0 = Negative (optical), 1 = Positive (FastBlur).
+    /// Profile metadata: 0 = Negative, 1 = Positive.
+    ///
+    /// Dehancer does not pass this field to the grain kernels. It remains
+    /// separate from `resolution_type`, which selects Film Resolution.
     pub film_type: u32,
-    /// Profile metadata; Film Type selects the actual resolution filter.
+    /// Host Film Resolution implementation: 0 = OpticalResolution, 1 = FastBlur.
     pub resolution_type: u32,
     pub size: f32,
     pub amount: f32,
@@ -74,6 +77,8 @@ pub struct GrainV2Params {
     pub highlights: f32,
     pub resolution_factor: f32,
     pub seed: u32,
+    /// Explicit host timer; `None` derives the canonical phase from `seed`.
+    pub timer: Option<f32>,
     pub color: f32,
     pub cluster_size: f32,
     pub rotation: f32,
@@ -91,9 +96,9 @@ impl GrainV2Params {
         Self {
             mode: GrainV2Mode::Analogue,
             profile: index.min(11),
-            // Host grainResolutionType: Negative = 0 (optical),
-            // Positive = 1 (folded Gaussian FastBlur).
-            film_type: 1,
+            // Bundled profile metadata is type=0 (Negative); Film Resolution
+            // remains a separate profile field.
+            film_type: 0,
             resolution_type: 1,
             size: p.scale,
             amount: p.amount,
@@ -102,6 +107,7 @@ impl GrainV2Params {
             highlights: p.highlights,
             resolution_factor: p.resolution_factor,
             seed: 0,
+            timer: None,
             color: p.color,
             cluster_size: 1.6,
             rotation: 1.,
@@ -115,22 +121,24 @@ impl GrainV2Params {
     pub fn profile_name(self) -> &'static str {
         self.profile_data().name
     }
+    /// Resolve the host timer while retaining the seed-based default.
+    pub fn resolved_timer(self) -> f32 {
+        self.timer
+            .unwrap_or_else(|| spektrafilm_math::grain::seeded_phase(self.seed))
+    }
     pub fn resampler_scale(self) -> f32 {
         1.0 + (self.size - 1.0) / 47.0 * 1.5
     }
-    /// Film Resolution radius in output pixels. Positive selects folded
-    /// Gaussian FastBlur; Negative selects the optical resampling kernel.
+    /// Film Resolution radius in output pixels; Noise deliberately returns zero.
     pub fn resolution_radius(self, width: u32, height: u32) -> f32 {
+        if self.mode == GrainV2Mode::Noise {
+            return 0.;
+        }
         let gsf = (5200.0 / width.max(1) as f32).max(3100.0 / height.max(1) as f32);
         let a = self.amount.clamp(0., 1.);
         let s = 1.0 + (self.size - 1.0) / 47.0;
-        if self.mode == GrainV2Mode::Noise {
-            return s * (1. - self.resolution_factor.clamp(0., 100.) / 100.) / gsf
-                * 1.87
-                * effective_control(a);
-        }
         s * (1.0 - self.resolution_factor.clamp(0., 100.) / 100.) / gsf
-            * if self.film_type == 1 { 1.2 } else { 1.6 }
+            * if self.resolution_type == 1 { 1.2 } else { 1.6 }
             * (0.7 * a * a + 0.3 * a + 0.05)
     }
 }
@@ -160,13 +168,18 @@ fn fract(v: f32) -> f32 {
 fn fade(t: f32) -> f32 {
     t * t * t * (t * (t * 6. - 15.) + 10.)
 }
-// The reference grad4 leaves its local p3 adjustment unassigned to p.
-// Preserve that observable kernel behavior, including its fourth component.
+// The vendor grad4 computes an adjusted local p3 but returns p itself. Keep
+// that observable return value while naming the helper after the source kernel.
+fn grad4(j: f32, ip: [f32; 4]) -> [f32; 4] {
+    let px = (fract(j * ip[0]) * 7.).floor() * ip[2] - 1.;
+    let py = (fract(j * ip[1]) * 7.).floor() * ip[2] - 1.;
+    let pz = (fract(j * ip[2]) * 7.).floor() * ip[2] - 1.;
+    [px, py, pz, 1.5 - (px.abs() + py.abs() + pz.abs())]
+}
 fn snoise(timer: f32, v: [f32; 4]) -> [f32; 4] {
     let r = random(v);
     let ip = random(v.map(|x| mix(r, timer, timer * x)));
-    let p = (fract(0.5 * ip) * 7.).floor() * ip - 1.;
-    [p, p, p, 1.5 - (p.abs() + p.abs() + p.abs())]
+    grad4(0.5, [ip; 4])
 }
 // Independent binary32 trig with split constants and ordinary multiply/add.
 // The small-range products are exact before cancellation; neither backend
@@ -551,8 +564,8 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
     if input.width == 0 || input.height == 0 {
         return input.clone();
     }
-    let phase = spektrafilm_math::grain::seeded_phase(p.seed);
-    let optical = p.film_type == 0;
+    let phase = p.resolved_timer();
+    let optical = p.resolution_type == 0;
     let radius = p.resolution_radius(input.width, input.height);
     // Photo Grain preserves the caller's native encoded RGB domain; only the
     // half-storage boundary is applied before filtering and composition.
@@ -561,8 +574,9 @@ pub fn apply_cpu(input: &ImageBuf, p: GrainV2Params) -> ImageBuf {
         .data
         .iter_mut()
         .for_each(|value| *value = from_f32(half::f16::from_f32(to_f32(*value)).to_f32()));
-    // The generator samples the original working image, while composition
-    // uses the Film Resolution result.
+    // Analogue's generator samples the original working image, while its
+    // composition uses the Film Resolution result. Noise is single-pass and
+    // consumes the prepared input directly.
     let original = (radius > 0. && p.mode == GrainV2Mode::Analogue).then(|| source.clone());
     if radius > 0. {
         if optical {
@@ -702,6 +716,63 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn explicit_timer_overrides_seed_and_changes_phase() {
+        let image = ImageBuf::from_data(
+            4,
+            4,
+            (0..4 * 4 * 3)
+                .map(|v| from_f32((v % 11) as f32 / 11.0))
+                .collect(),
+        );
+        let mut seeded = GrainV2Params::for_profile(0);
+        seeded.mode = GrainV2Mode::Noise;
+        seeded.resolution_factor = 100.0;
+        seeded.seed = 42;
+        let mut explicit = seeded;
+        explicit.seed = 777;
+        explicit.timer = Some(spektrafilm_math::grain::seeded_phase(42));
+        assert_eq!(
+            apply_cpu(&image, seeded).data,
+            apply_cpu(&image, explicit).data
+        );
+
+        explicit.timer = Some(0.25);
+        assert_ne!(
+            apply_cpu(&image, seeded).data,
+            apply_cpu(&image, explicit).data
+        );
+    }
+
+    #[test]
+    fn grad4_matches_vendor_return_value() {
+        assert_eq!(grad4(0.5, [0.25, 0.75, 0.5, 0.0]), [-1.0, 0.0, -0.5, 0.0]);
+        assert_eq!(grad4(0.5, [0.75; 4]), [0.5, 0.5, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn resample_3x3_averages_clamped_neighborhood() {
+        let value = resample_3x3(
+            |x, y| {
+                let x = x.clamp(0, 1) as f32;
+                let y = y.clamp(0, 1) as f32;
+                [x, y, 1.0]
+            },
+            0,
+            0,
+        );
+        assert!((value[0] - 1.0 / 3.0).abs() < 1e-6);
+        assert!((value[1] - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(value[2], 1.0);
+    }
+
+    #[test]
+    fn overlay_matches_photoshop_midpoint_and_endpoints() {
+        assert_eq!(overlay(0.5, 0.0), 0.0);
+        assert_eq!(overlay(0.5, 1.0), 1.0);
+        assert!((overlay(0.25, 0.75) - 0.375).abs() < 1e-6);
+        assert!((overlay(0.75, 0.25) - 0.625).abs() < 1e-6);
+    }
 
     #[test]
     fn zero_amount_still_runs_pipeline() {
@@ -714,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn film_types_select_distinct_resolution_paths() {
+    fn resolution_type_selects_analogue_path_and_noise_bypasses_resolution() {
         let weights = fast_blur_weights(0.5);
         assert_eq!(weights.len(), 1);
         assert!((weights[0][0] - 0.5).abs() < 1e-6);
@@ -726,19 +797,33 @@ mod tests {
                 .flat_map(|i| [from_f32(if i % 192 < 96 { 0.1 } else { 0.8 }); 3])
                 .collect(),
         );
-        for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
-            let mut params = GrainV2Params::default();
-            params.mode = mode;
-            params.size = 48.;
-            params.amount = 1.;
-            params.resolution_factor = 0.;
-            params.film_type = 0;
-            let negative = apply_cpu(&image, params);
-            params.film_type = 1;
-            let positive = apply_cpu(&image, params);
-            let edge = |img: &ImageBuf| to_f32(img.get(96, 54)[0]) - to_f32(img.get(95, 54)[0]);
-            assert!((edge(&negative) - edge(&positive)).abs() > 1e-3, "{mode:?}");
-        }
+
+        let mut analogue = GrainV2Params::default();
+        analogue.mode = GrainV2Mode::Analogue;
+        analogue.size = 48.;
+        analogue.amount = 1.;
+        analogue.resolution_factor = 0.;
+        analogue.resolution_type = 0;
+        let optical = apply_cpu(&image, analogue);
+        analogue.resolution_type = 1;
+        let fast = apply_cpu(&image, analogue);
+        let edge = |img: &ImageBuf| to_f32(img.get(96, 54)[0]) - to_f32(img.get(95, 54)[0]);
+        assert!((edge(&optical) - edge(&fast)).abs() > 1e-3);
+        analogue.film_type = 1;
+        assert_eq!(apply_cpu(&image, analogue).data, fast.data);
+
+        let mut noise = analogue;
+        noise.mode = GrainV2Mode::Noise;
+        noise.resolution_type = 0;
+        noise.resolution_factor = 0.;
+        let optical_noise = apply_cpu(&image, noise);
+        noise.resolution_type = 1;
+        noise.resolution_factor = 100.;
+        let fast_noise = apply_cpu(&image, noise);
+        assert_eq!(noise.resolution_radius(image.width, image.height), 0.);
+        assert_eq!(optical_noise.data, fast_noise.data);
+        noise.film_type = 0;
+        assert_eq!(apply_cpu(&image, noise).data, fast_noise.data);
     }
     #[test]
     fn modes_resolution_and_color() {
@@ -867,11 +952,11 @@ mod tests {
                 .collect(),
         );
         for profile in 0..PROFILES.len() {
-            for film_type in [0, 1] {
+            for resolution_type in [0, 1] {
                 for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
                     for control in [0., 1.] {
                         let mut params = GrainV2Params::for_profile(profile);
-                        params.film_type = film_type;
+                        params.resolution_type = resolution_type;
                         params.mode = mode;
                         params.seed = 42;
                         params.amount = control;
@@ -879,10 +964,17 @@ mod tests {
                         params.midtones = control;
                         params.highlights = control;
                         params.color = control;
+                        if profile == 0
+                            && resolution_type == 0
+                            && mode == GrainV2Mode::Noise
+                            && control == 1.
+                        {
+                            params.timer = Some(0.25);
+                        }
                         let cpu = apply_cpu(&image, params);
                         let gpu_params = spektrafilm_gpu::GrainV2GpuParams {
                             mode: params.mode as u32,
-                            film_type: params.film_type,
+                            resolution_type: params.resolution_type,
                             amount: params.amount,
                             shadows: params.shadows,
                             midtones: params.midtones,
@@ -893,6 +985,7 @@ mod tests {
                             color: params.color,
                             resolution_factor: params.resolution_factor,
                             seed: params.seed,
+                            timer: params.timer,
                             colored: params.colored,
                             clustered: params.clustered,
                         };
@@ -913,7 +1006,7 @@ mod tests {
                             .fold(0.0f32, f32::max);
                         assert!(
                             max_error < 5e-3,
-                            "CPU/GPU Grain V2 drift: {max_error}, profile={profile}, film_type={film_type}, mode={mode:?}, control={control}"
+                            "CPU/GPU Grain V2 drift: {max_error}, profile={profile}, resolution_type={resolution_type}, mode={mode:?}, control={control}"
                         );
                     }
                 }

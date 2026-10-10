@@ -837,21 +837,27 @@ mod tests {
         grain.v2_amount = Some(25.0);
         grain.v2_mode = super::grain::GrainV2Mode::Noise;
         grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
+        grain.v2_resolution_type = 0;
+        grain.v2_timer = 0.25;
         let preset = grain.resolved_grain_v2();
         assert_eq!(preset.amount, 0.25);
         assert_eq!(
             preset.mode,
             spektrafilm_model::grain::v2::GrainV2Mode::Analogue
         );
-        assert_eq!(preset.resolution_type, 1);
-        assert_eq!(preset.film_type, 1);
+        assert_eq!(preset.resolution_type, 0);
+        assert_eq!(preset.timer, Some(0.25));
+        assert_eq!(preset.film_type, 0);
         grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
-        assert_eq!(grain.resolved_grain_v2().resolution_type, 1);
+        assert_eq!(grain.resolved_grain_v2().film_type, 0);
+        assert_eq!(grain.resolved_grain_v2().resolution_type, 0);
         grain.select_custom_grain_v2();
+        grain.v2_film_type = super::grain::GrainV2FilmType::Positive;
+        assert_eq!(grain.v2_resolution_type, 0);
+        assert_eq!(grain.v2_timer, 0.25);
         assert_eq!(grain.v2_amount, Some(25.0));
         assert_eq!(grain.v2_size, Some(48.0));
         assert_eq!(grain.v2_resolution_factor, Some(75.0));
-        assert_eq!(grain.v2_film_type, super::grain::GrainV2FilmType::Positive);
         grain.v2_amount = Some(25.0);
         grain.v2_mode = super::grain::GrainV2Mode::Noise;
         grain.v2_film_type = super::grain::GrainV2FilmType::Negative;
@@ -863,8 +869,8 @@ mod tests {
             custom.mode,
             spektrafilm_model::grain::v2::GrainV2Mode::Noise
         );
-        assert_eq!(custom.resolution_type, 1);
-        assert_eq!(custom.film_type, 0);
+        assert_eq!(custom.resolution_type, 0);
+        assert_eq!(custom.timer, Some(0.25));
         params.film_render.grain.v2_profile = "35mm250".into();
         params.film_render.grain.v2_amount = None;
         params.film_render.grain.select_custom_grain_v2();
@@ -881,8 +887,24 @@ mod tests {
             params.film_render.grain.v2_amount = Some(value);
             assert!(params.validate().is_err());
         }
+        params.film_render.grain.v2_resolution_type = 2;
+        assert!(params.validate().is_err());
+        params.film_render.grain.v2_resolution_type = 0;
+        params.film_render.grain.v2_timer = 1.0;
+        assert!(params.validate().is_err());
+        params.film_render.grain.v2_timer = f32::NAN;
+        assert!(params.validate().is_err());
+        params.film_render.grain.v2_timer = 0.0;
         params.film_render.grain.v2_amount = None;
         params.film_render.grain.v2_profile = "unknown".into();
         assert!(params.validate().is_err());
+    }
+    #[test]
+    fn legacy_zero_timer_keeps_seed_derived_phase() {
+        let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
+        value["film_render"]["grain"]["v2_timer"] = serde_json::json!(0.0);
+        let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
+        assert_eq!(params.film_render.grain.v2_timer, 0.0);
+        assert_eq!(params.film_render.grain.resolved_grain_v2().timer, None);
     }
 }

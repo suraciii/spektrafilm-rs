@@ -1,7 +1,7 @@
 // Grain V2: independent deterministic noise, native encoded RGB composition.
 // Uniform layout: dimensions [width,height,phase_bits,mode], controls [amount,shadows,
 // midtones,highlights], geometry [raw_scale,cluster_size,rotation,color], flags
-// [resolution_factor,film_type,colored,clustered]. 64 bytes total.
+// [resolution_factor,resolution_type,colored,clustered]. 64 bytes total.
 struct Params { dimensions:vec4<u32>, controls:vec4<f32>, geometry:vec4<f32>, flags:vec4<f32> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> input_rgb:array<f32>;
@@ -17,6 +17,12 @@ fn random4(v:vec4<f32>)->f32 {
  let b=bitcast<vec4<u32>>(v);
  let h=hash(b.x^hash(b.y)^hash(b.z)^hash(b.w));
  return bitcast<f32>((h&0x007fffffu)|0x3f800000u)-1.;
+}
+fn grad4(j:f32,ip:vec4<f32>)->vec4<f32>{
+ let px=floor(fract(j*ip.x)*7.)*ip.z-1.;
+ let py=floor(fract(j*ip.y)*7.)*ip.z-1.;
+ let pz=floor(fract(j*ip.z)*7.)*ip.z-1.;
+ return vec4(px,py,pz,1.5-(abs(px)+abs(py)+abs(pz)));
 }
 fn snoise(timer:f32,v:vec4<f32>)->vec4<f32> {
  // The integer hash consumes float bits. Materialize both products so Metal

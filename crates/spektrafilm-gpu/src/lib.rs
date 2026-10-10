@@ -11,8 +11,8 @@ use spektrafilm_math::image::ImageBuf;
 #[derive(Debug, Clone, Copy)]
 pub struct GrainV2GpuParams {
     pub mode: u32,
-    /// Recovered film type: 0 = Negative (optical), 1 = Positive (fast blur).
-    pub film_type: u32,
+    /// Host Film Resolution implementation: 0 = OpticalResolution, 1 = FastBlur.
+    pub resolution_type: u32,
     pub amount: f32,
     pub shadows: f32,
     pub midtones: f32,
@@ -23,6 +23,8 @@ pub struct GrainV2GpuParams {
     pub color: f32,
     pub resolution_factor: f32,
     pub seed: u32,
+    /// Explicit host timer; `None` derives the canonical phase from `seed`.
+    pub timer: Option<f32>,
     pub colored: bool,
     pub clustered: bool,
 }

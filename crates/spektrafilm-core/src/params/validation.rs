@@ -50,6 +50,14 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             grain.v2_profile
         ));
     }
+    if grain.v2_resolution_type > 1 {
+        return Err("film_render.grain.v2_resolution_type: must be 0 or 1".into());
+    }
+    if grain.v2_timer != 0.0
+        && (!grain.v2_timer.is_finite() || !(0.0..1.0).contains(&grain.v2_timer))
+    {
+        return Err("film_render.grain.v2_timer: must be 0 or finite in (0,1)".into());
+    }
     for (name, value, min, max) in [
         ("v2_size", grain.v2_size, 1.0, 48.0),
         ("v2_amount", grain.v2_amount, 0.0, 100.0),

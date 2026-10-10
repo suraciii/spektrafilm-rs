@@ -10,13 +10,11 @@ struct ShaderParams {
 }
 
 fn shader_params(width: u32, height: u32, params: &crate::GrainV2GpuParams) -> ShaderParams {
+    let timer = params
+        .timer
+        .unwrap_or_else(|| spektrafilm_math::grain::seeded_phase(params.seed));
     ShaderParams {
-        dimensions: [
-            width,
-            height,
-            spektrafilm_math::grain::seeded_phase(params.seed).to_bits(),
-            params.mode,
-        ],
+        dimensions: [width, height, timer.to_bits(), params.mode],
         controls: [
             params.amount,
             params.shadows,
@@ -31,7 +29,7 @@ fn shader_params(width: u32, height: u32, params: &crate::GrainV2GpuParams) -> S
         ],
         flags: [
             params.resolution_factor,
-            params.film_type as f32,
+            params.resolution_type as f32,
             params.colored as u32 as f32,
             params.clustered as u32 as f32,
         ],
@@ -86,9 +84,8 @@ impl WgpuBackend {
     }
 }
 
-/// Shared standalone/resident preparation, separable resolution filter, and grain.
-/// Resident input is encoded on GPU before the same half-storage preparation;
-/// the state only encodes commands and never submits or reads image data.
+/// Shared standalone/resident preparation, optional Analogue resolution filter,
+/// and Grain V2 execution. Noise remains a single-pass image-resolution path.
 pub(super) struct GrainV2State {
     output: wgpu::Buffer,
     _buffers: Vec<wgpu::Buffer>,
@@ -134,13 +131,17 @@ pub(super) fn build_grain_v2_state(
     let base = (1. + (params.raw_scale - 1.) / 47.)
         * (1. - params.resolution_factor.clamp(0., 100.) / 100.)
         / gsf;
-    let radius = base
-        * if params.mode != 0 {
-            1.87 * (0.12 * a * a + 0.68 * a + 0.2)
-        } else {
-            (if params.film_type == 1 { 1.2 } else { 1.6 }) * (0.7 * a * a + 0.3 * a + 0.05)
-        };
-    let optical = params.film_type != 1;
+    let resolution_scale = if params.resolution_type == 1 {
+        1.2
+    } else {
+        1.6
+    };
+    let radius = if params.mode != 0 {
+        0.
+    } else {
+        base * resolution_scale * (0.7 * a * a + 0.3 * a + 0.05)
+    };
+    let optical = params.resolution_type == 0;
     let weights: Vec<[f32; 2]> = if optical {
         spektrafilm_math::grain::optical_weights(radius)
             .into_iter()

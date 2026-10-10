@@ -7,7 +7,7 @@
 >
 > 本文档只记录算法行为、参数语义与公式（以自有伪代码/公式表述），不含 Dehancer 源码原文。
 
-> 第 1–13 节保留早期调查记录，其中 Noise 滤波、零 Amount、Film Type 路由与固定 Rec.709 包装等结论已由第 14–15 节的宿主证据取代；当前集成以末尾的实现与验证记录为准。
+> 第 1–13 节保留早期调查记录，其中部分域、零 Amount、Film Type 路由与固定 Rec.709 包装结论已由后续证据修正；当前集成以末尾的实现与验证记录为准。Noise 的单遍、不执行 Film Resolution 契约与提取的 `kernel_scan_grain` 保持一致。
 
 ## 0. 逆向方法与证据来源
 
@@ -220,11 +220,10 @@ if (radius > 0) {
 
 （历史版本 `get_resolution_radius_legacy` 用 `×1.87` 与 amount 的 effective 曲线，现行主路径如上。）
 
-语义与官方文档完全对应："胶片上最小细节不会小于颗粒尺寸"。**把源图预先模糊到颗粒尺度**，模糊半径同样除以 gsf → 分辨率等比；resolution_factor=100 保留原始清晰度，50 为"细节与颗粒平衡"，0 全糊。`resolution_type=1`（所有 profile 默认）走精确 Gaussian FastBlur；`=0` 走整数 tap OpticalResolution。Noise/Digital 路径不使用 Film Resolution。
+语义与官方文档完全对应："胶片上最小细节不会小于颗粒尺寸"。**FilmGrain/Analogue 把源图预先模糊到颗粒尺度**，模糊半径同样除以 gsf → 分辨率等比；resolution_factor=100 保留原始清晰度，50 为"细节与颗粒平衡"。`resolution_type=1`（所有 profile 默认）走精确 Gaussian FastBlur；`=0` 走整数 tap OpticalResolution。`ScanGrain/Noise` 是独立的图像分辨率单遍路径，不执行该预模糊。
 
 ## 7. 颗粒类型（Negative / Positive）与 Expand
-
-- `type`、`Film Type` 与 `resolution_type` 是不同概念。当前 12 个 profile 的 JSON 为 `type=0`（负片）和 `resolution_type=1`；前者是 profile 元数据，后者才决定 Film Resolution 算法。SpektraFilm 不再让 Negative/Positive 选择 OpticalResolution/FastBlur。
+- `type` 字段（0=Negative）在 GPU kernel 参数中不出现；它与 Film Resolution 的 `resolution_type` 是不同概念。当前 12 个 profile 的 JSON 为 `type=0`、`resolution_type=1`；`resolution_type` 才决定 OpticalResolution/FastBlur。UI 的 Film Type 元数据不能复用为滤波选择。
 - 官方文档提示：颗粒影响黑白场（Overlay 在 0/1 处仍会推动），需要 **Expand** 工具恢复对比度——与 SpektraFilm 的 density_min/expand 概念同源。
 
 ## 8. 与 SpektraFilm 的对照与可借鉴设计
@@ -270,9 +269,9 @@ if (radius > 0) {
 
 Analogue 仍对九个重采样 tap 共用目标像素亮度；原生成器在每个虚拟 texel 读取源图亮度。该差异可能影响强边缘附近的颗粒，属于尚未逐值复刻的边界，与本次低频旋转导致的天空脊纹分开记录。
 
-**Noise 的 Film Resolution 语义已纠正。** `ScanGrainKernel` 直接从输入图像生成 Noise；SpektraFilm 的 V2 Noise 路径因此将 `resolution_radius` 固定为 0，不再使用历史 `1.87` 半径或 `effective(amount)×0.5` 强度。Noise 的 scale 仍按 `(1+(s−1)/47) * 2.4 * max(W/1920,H/1080)` 计算。
+**当前 V2 契约保留原始 ScanGrain 路径。** `kernel_scan_grain` 是图像分辨率上的单遍 Noise；它直接读取 prepared input，不执行 Film Resolution。`resolution_type` 与 `v2_resolution_factor` 仅影响 Analogue 的 Film Resolution；Noise 仍使用 `(1+(s−1)/47) * 2.4 * max(W/1920,H/1080)` 的采样分母。
 
-**零值遵循参数直通语义。** `Amount=0` 或三个亮度分区全部为 0 时，SpektraFilm V2 返回输入图像；单个分区强度直接使用 0–1 值，不经过额外 `effective_control()` 曲线。
+**零值遵循宿主响应曲线。** `Amount=0` 或单个亮度分区为 0 仍经过 `effective_control()`（其零点为 0.2），不会隐式旁路；需要精确旁路时使用 `active=false`。三个分区都为 0 时 Noise 仍生成噪声，但不执行 Film Resolution。
 
 **GPU 路由边界。** `resolution_type=1` 的 FastBlur 路径有 CPU/WGPU 对照；`resolution_type=0` 的 OpticalResolution 保留 CPU 兼容实现，WGPU 路由回退 CPU。当前内置 profile 均使用 FastBlur。
 
@@ -282,10 +281,10 @@ Analogue 仍对九个重采样 tap 共用目标像素亮度；原生成器在每
 
 ## 12. 公开参数对齐（2026-10-08）
 
-- 对外保留 Grain Profiles / Custom、Film Type、Processing Mode、Size、Amount、Shadows、Midtones、Highlights、Film Resolution、Chroma、Enabled。移除独立 Resolution filter、V2 timer 和额外 reset 行为。静态相位复用 recipe `random_seed`。
-- Amount、三个亮度分区和 Chroma 的 GUI/JSON 范围均为 0–100，运行时除以 100；Size 为 1–48，Film Resolution 为 0–100。
+- 对外保留 Grain Profiles / Custom、Film Type、Processing Mode、Size、Amount、Shadows、Midtones、Highlights、Film Resolution、Chroma、Enabled；运行时另暴露 `v2_resolution_type`（0=OpticalResolution，1=FastBlur）和 `v2_timer`。`v2_timer=0.0` 保持旧版 seed phase 语义，非零值才覆盖 phase。
+- Amount、三个亮度分区和 Chroma 的 GUI/JSON 范围均为 0–100，运行时除以 100；Size 为 1–48，Film Resolution 为 0–100；`v2_resolution_type` 仅接受 0/1，非零 `v2_timer` 必须为有限的 `(0,1)` 值。
 - 预设下 Amount 仍可调：构造函数 `0x57cb9a–0x57cba3` 将 grainAmount 存入 context+`0x28`，没有加入隐藏控件列表；`update_state` 在 `0x57e250–0x57e264` 复制预设后，`0x57e280–0x57e292` 再读取并覆盖 Amount。其他控件只在 Custom 下生效。GUI 切换 Custom 复制当前有效参数，选择新预设恢复其 Amount。
-- Film Type 的执行分支已确认：`FilmGrainKernel::process` 在 `0x5ed417` 比较复制后的 state+`0x9ac`；Negative=0 跳到 `0x5ed4f8` 并调用 OpticalResolution（`0x5ed611`），Positive=1 调用 FastBlur（`0x5ed471`）。内置预设的 resolution type 均为 1，因此保持 Positive 分支。SpektraFilm 使用既有 Gaussian / fractional box FIR 兼容实现，未宣称还原参考 PSF。
+- Film Type is profile metadata and does not select the Film Resolution implementation. The bundled profiles carry `type=0` and `resolution_type=1`; SpektraFilm keeps those fields separate. `resolution_type=0` selects OpticalResolution and `=1` selects FastBlur.
 - 本次验收：f32/f64 各 9 项 grain 测试通过，包含 Film Type 边缘响应、零 Amount 非旁路和 CPU/WGPU 对照；shader device check、预设/Custom 参数继承及 4 项 GUI state 测试通过。f32/f64 各完成 10 个 TIFF render/export 往返（V1 对照及 V2 两种 Film Type × 两种模式，均覆盖 film/paper 输出）。
 - 独立 release f64 CLI 的 768×512 合成天空导出：Negative/Positive 最大像素差为 Analogue `0.0000915825`、Noise `0.0012207031`；Amount 与三个分区全零相对显式禁用的 RMS 为 `0.0021044274`。这些数值证明当前实现的分支与零端点有效，不证明与 Dehancer 像素一致。
 - 原生 GUI 实际完成 Positive/Noise WGPU 扫描；选 `8mm500` 后只显示 Amount，修改至 25 再切 Custom，继承 Positive/Analogue、Size 48、Shadows 30、Midtones 45、Highlights 65、Film Resolution 75、Chroma 90、Amount 25。当前隔离显示环境的 Save state 未出现文件对话框，因此未计入本次原生保存验收；状态持久化由上述 roundtrip 测试覆盖。
@@ -307,9 +306,9 @@ Analogue 仍对九个重采样 tap 共用目标像素亮度；原生成器在每
 
 ### 已恢复的执行语义
 
-- 静态 seed 经 MT19937 和两次取数的 `generate_canonical<double>` 运算转为 float 相位，替代未经证实的 `seed/65536`。seed 5489 的相位位模式为 `0x3e0aba7c`。原版宿主的全局随机流不等于 SpektraFilm 的可重复 recipe seed；后者是现有产品契约。
+- 静态 seed 经 MT19937 和两次取数的 `generate_canonical<double>` 运算转为 float 相位，替代未经证实的 `seed/65536`；`v2_timer` 提供可选的显式相位并优先于 seed。seed 5489 的相位位模式为 `0x3e0aba7c`。原版宿主的全局随机流不等于 SpektraFilm 的可重复 recipe seed；后者是现有产品契约。
 - 工作 RGB、生成颗粒和合成输出按 half 存储边界舍入。WGSL 使用显式 IEEE round-to-nearest-even，避免驱动将 pack/unpack 往返消除。Optical 的 H/V 之间保持 float；FastBlur 的每一遍均写 half。
-- Negative 使用 Optical 平顶核；Positive 使用折叠 Gaussian FastBlur，保留原 line kernel 的越界回到中心和采样偏移。Analogue 生成器读取未做 Film Resolution 的原始工作图，合成读取滤波结果；Noise 的相位、噪声与合成都读取滤波结果。
+- Negative/Positive Film Type is metadata; `resolution_type` selects OpticalResolution or folded Gaussian FastBlur for Analogue only. Analogue's generator reads the unfiltered encoded source while composition reads the Film Resolution result; Noise's phase, noise, and composition read the prepared input without Film Resolution.
 - Noise 使用 RGBA 内容相位（alpha=1），Analogue 逐个虚拟 texel 读取源图。两种模式恢复 sine permutation 和三维梯度插值；共享的独立三角函数、乘法舍入边界使 CPU/WGSL 可重复。
 - 虚拟纹理尺寸为 `floor(image_size * max(5200/W,3100/H))`，原宿主没有旧报告所称的 `−0.2` 微调。按需生成不分配该纹理，因此不模拟设备的纹理尺寸上限。
 
@@ -358,7 +357,7 @@ Negative 分支的 OpticalResolution 边界实参已确认：OFX `FilmGrainKerne
 
 工作域疑点已由后续宿主报告 §6.1–6.5 解除，当前实现与验证见第 15 节。此前固定 BT.709 包装已删除。
 
-Noise 的输入绑定已直接核实：`ScanGrainKernel::process` 在 `0x5eeb67` / `0x5eed04` 将源图滤波到 destination；执行回调 `0x5ef280` 在 `0x5ef29f`、`0x5ef2b6` 两次通过 vtable+0x70 取 destination，分别绑定 kernel arg0 和 arg1（`0x5ef2ad`、`0x5ef2c7`）。因此原版 Noise 从 Film Resolution 结果计算颜色相位，当前 CPU/WGSL 一致；不能把 Analogue 生成器的原图输入约定套用到 Noise。原版 `blend_normal` 在外部源码 `1446–1461` 明确 clamp 到 [0,1]，当前最终合成 clamp 也符合该逻辑。
+Noise 的输入绑定已直接核实为 `kernel_scan_grain(inTexture, outTexture, ...)`：它从 prepared input 读取 `inColor`，在图像分辨率上完成 phase、noise 和合成，不包含 Film Resolution 参数或阶段。当前 CPU/WGSL 保持该单遍路径；不能把 Analogue 的 Film Resolution 输入约定套用到 Noise。原版 `blend_normal` 在外部源码 `1446–1461` 明确 clamp 到 [0,1]，当前最终合成 clamp 也符合该逻辑。
 
 
 ### 较大样本的效果对照
@@ -390,9 +389,15 @@ CPU `apply_cpu`、WGPU `grain_v2_gpu` 已统一为原生编码 RGB 输入/输出
 
 ## 16. 主干驻留链集成（2026-10-09）
 
-集成远端 `5b538ed` 的模块拆分、统一 GPU 参数与 pipeline cache。独立 WGPU 调用和驻留链共用输入 half 舍入、可选水平/垂直 Film Resolution、颗粒合成三段调度；驻留链在 GPU 上先执行扫描输出空间的 same-space 矩阵和 CCTF。V2 输出保持编码 RGB，线性导出只解码一次。恢复 Film Type 选择滤波分支、seeded phase 和参考半精度边界。
+集成远端 `5b538ed` 的模块拆分、统一 GPU 参数与 pipeline cache。独立 WGPU 调用和驻留链共用输入 half 舍入、可选水平/垂直 Film Resolution、颗粒合成三段调度；驻留链在 GPU 上先执行扫描输出空间的 same-space 矩阵和 CCTF。V2 输出保持编码 RGB，线性导出只解码一次。恢复 Film Type 选择滤波分支、seeded/explicit phase 和参考半精度边界。
 
 合并后 `scripts/parity/grain_v2_acceptance.py` 通过：f32/f64 各 9 个模型测试、WGSL 编译、profile 参数继承、两种精度下扫描编码回归，以及每种精度 10 组真实 TIFF render/save/load。`cargo check --workspace --all-targets --all-features` 与 GUI 的 2 个 Grain V2 状态测试通过；已有 unused/dead-code 等编译警告仍存在。
 
 临时实际 pipeline smoke 使用 32×24 非均匀 RGB，覆盖 8 个注册输出空间 × 胶片/纸基扫描 × Analogue/Noise × Negative/Positive，共 64 组；分别在默认分辨率参数和 Size=48、Film Resolution=0 下运行。驻留路径明确禁止 fallback，输出与同一无颗粒驻留基底上的独立 GPU Grain 完全一致，线性导出相对所选 CCTF 解码最大误差为 `5.876e-8`。这是本机可用 WGPU adapter 的执行证据，不是独立显卡性能证明；本轮未重跑原生 GUI 交互。临时 smoke 源已删除。
+
+## 17. V2 参数路径与全尺寸回归（2026-10-10）
+
+- Core runtime maps `film_render.grain.v2_resolution_type` (`0`/`1`) and the nonzero `film_render.grain.v2_timer` override into both CPU and WGPU V2 parameters. `0.0` remains the legacy seed-phase sentinel. Validation rejects other resolution values, non-finite/out-of-range nonzero timers, and the Noise path ignores Film Resolution controls. Parameter round-trip and explicit-timer phase tests pass.
+- The CPU model uses the explicit timer when nonzero and otherwise retains the MT19937-derived seed phase. The WGPU upload carries the same optional internal timer; the adapter-backed CPU/WGPU parity test passes with an explicit timer case.
+- Release f64 CLI smoke processed the 6342×9543 (60.5 MP) Kodak Gold input through full-size V2 Analogue and Noise TIFF exports, including the Analogue `Film Resolution=100` parameter cases. `tiffinfo` confirmed 6342×9543 RGB 32-bit outputs; finite-value checks passed. These are pipeline and boundary-smoke results, not vendor-device pixel-parity claims.
 

@@ -73,6 +73,8 @@ pub struct GrainParams {
     pub v2_chroma: Option<f32>,
     #[serde(default = "default_grain_v2_resolution_type")]
     pub v2_resolution_type: u32,
+    /// Explicit host timer in the canonical phase domain. Legacy `0.0`
+    /// remains the seed-derived phase sentinel.
     #[serde(default = "default_grain_v2_timer")]
     pub v2_timer: f32,
     #[serde(default = "default_particle_scale_sublayers_f64")]
@@ -133,7 +135,7 @@ fn default_particle_scale_sublayers_f64() -> [f64; 3] {
     [1.0, 0.4, 0.25]
 }
 fn default_grain_v2_resolution_type() -> u32 {
-    0
+    1
 }
 fn default_grain_v2_timer() -> f32 {
     0.0
@@ -170,8 +172,8 @@ impl Default for GrainParams {
             v2_midtones: None,
             v2_highlights: None,
             v2_chroma: None,
-            v2_resolution_type: 0,
-            v2_timer: 0.0,
+            v2_resolution_type: default_grain_v2_resolution_type(),
+            v2_timer: default_grain_v2_timer(),
             v2_resolution_factor: None,
             sublayers_active: true,
             particle_area_um2: 0.2,
@@ -201,6 +203,8 @@ impl GrainParams {
         let index = v2::profile_index(if custom { "35mm250" } else { &self.v2_profile })
             .expect("Grain V2 profile must be validated before rendering");
         let mut params = GrainV2Params::for_profile(index);
+        params.resolution_type = self.v2_resolution_type;
+        params.timer = (self.v2_timer != 0.0).then_some(self.v2_timer);
         params.amount = self.v2_amount.map_or(params.amount, |v| v / 100.0);
         if custom {
             params.mode = match self.v2_mode {
@@ -235,7 +239,7 @@ impl GrainParams {
         grain.seed = random_seed as u32;
         spektrafilm_gpu::GrainV2GpuParams {
             mode: grain.mode as u32,
-            film_type: grain.film_type,
+            resolution_type: grain.resolution_type,
             amount: grain.amount,
             shadows: grain.shadows,
             midtones: grain.midtones,
@@ -246,6 +250,7 @@ impl GrainParams {
             color: grain.color,
             resolution_factor: grain.resolution_factor,
             seed: grain.seed,
+            timer: grain.timer,
             colored: grain.colored,
             clustered: grain.clustered,
         }
@@ -264,6 +269,8 @@ impl GrainParams {
         } else {
             GrainV2FilmType::Negative
         };
+        self.v2_resolution_type = params.resolution_type;
+        self.v2_timer = params.timer.unwrap_or(0.0);
         self.v2_size = Some(params.size);
         self.v2_amount = Some(params.amount * 100.0);
         self.v2_shadows = Some(params.shadows * 100.0);

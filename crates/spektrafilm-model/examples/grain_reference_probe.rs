@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let gpu = WgpuBackend::new().ok_or("no WGPU adapter")?;
     let gp = GrainV2GpuParams {
         mode: p.mode as u32,
-        film_type: p.film_type,
+        resolution_type: p.resolution_type,
         amount: p.amount,
         shadows: p.shadows,
         midtones: p.midtones,
@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         color: p.color,
         resolution_factor: p.resolution_factor,
         seed: p.seed,
+        timer: p.timer,
         colored: p.colored,
         clustered: p.clustered,
     };
