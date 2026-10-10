@@ -11,6 +11,14 @@ on:
 permissions:
   contents: write
 
+# One release run per ref at a time. A run started while another run is active
+# stays pending, and a newer queued run replaces it, so successive commits
+# collapse into a single run of the newest commit. The active run is never
+# cancelled, and each tag keeps its own group so no tag release is dropped.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   windows-x64:
     name: Windows x64
