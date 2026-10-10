@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use eframe::egui;
+use parking_lot::{Condvar, Mutex};
 use spektrafilm_core::image_io::{
     self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions,
 };
@@ -25,6 +26,7 @@ use spektrafilm_math::image::ImageBuf;
 mod controls;
 mod display;
 mod export;
+mod numeric;
 mod panels;
 mod profiles;
 mod state;
@@ -32,7 +34,6 @@ use export::{ExportBackend, ExportCompression, ExportDialog, ExportFormat, Expor
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
-const IN_FLIGHT_REPAINT: Duration = Duration::from_millis(16);
 const IMAGE_FILE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "tif", "tiff", "exr",
     // Keep this list in lockstep with image_io::is_raw.
@@ -298,9 +299,8 @@ struct App {
     export_options: ExportOptions,
     export_dialog: ExportDialog,
     input_epoch: u64,
-    /// Last rendered pipeline output (post sRGB encode + clip). Retained
-    /// so the Save button can write it without re-running the pipeline.
-    output_image: Option<ImageBuf>,
+    /// Latest accepted floating output, shared with background viewing workers.
+    output_image: Option<Arc<ImageBuf>>,
     output_metadata: Option<ImageMetadata>,
     viewer: display::Viewer,
     gui_tab: GuiTab,
@@ -313,16 +313,8 @@ struct App {
     last_preview_ms: f32,
     last_worker_total_ms: f32,
     status: String,
-    /// Set when any control change should trigger a re-render. The
-    /// next `update()` tick dispatches the render onto a worker
-    /// thread so the UI stays responsive while the pipeline (up to
-    /// ~500 ms on 6 MP) runs in the background.
+    /// Controls changed since the latest submitted render snapshot.
     dirty: bool,
-    /// Marked when the user changes a param while a previous render
-    /// is still in flight. After that render finishes we re-arm
-    /// `dirty` so the latest state gets a fresh pass instead of
-    /// dropping the user's mid-render edits on the floor.
-    pending_dirty: bool,
     dirty_since: Option<Instant>,
     /// macOS-only: tag the wgpu CAMetalLayer's `colorspace` as sRGB on
     /// the first `update()` tick (it's not yet wired up at
@@ -330,12 +322,9 @@ struct App {
     /// don't retry every frame.
     #[cfg(target_os = "macos")]
     metal_colorspace_tagged: bool,
-    /// In-flight pipeline render. `Some` while the worker thread is
-    /// running; main thread polls the receiver each frame and
-    /// uploads the resulting texture once it lands. Decoupling the
-    /// render from the UI thread is what keeps sliders responsive —
-    /// the 250–500 ms pipeline used to block input handling.
+    /// Latest submitted render, including a request queued behind active work.
     render_job: Option<RenderJob>,
+    render_worker: RenderWorker,
     /// In-flight export job. `Some` while the immutable snapshot is rendering;
     /// the `update()` loop polls the receiver each frame and
     /// surfaces success/failure in `status` when the worker thread
@@ -366,18 +355,52 @@ impl RenderKind {
     }
 }
 
-/// One in-flight preview render. The worker owns a Runtime + the
-/// ImageBuf clone and, when it finishes, sends back the output buffer
-/// plus the two timings the status bar shows.
 struct RenderJob {
     input_epoch: u64,
     parameter_revision: u64,
+    request_id: u64,
     kind: RenderKind,
+    animate: bool,
     backend_name: String,
-    rx: mpsc::Receiver<Result<RenderResult, String>>,
-    handle: Option<JoinHandle<()>>,
 }
 
+impl RenderJob {
+    fn matches(
+        &self,
+        latest: Option<&RenderJob>,
+        input_epoch: u64,
+        parameter_revision: u64,
+    ) -> bool {
+        latest.is_some_and(|job| job.request_id == self.request_id)
+            && self.input_epoch == input_epoch
+            && self.parameter_revision == parameter_revision
+    }
+}
+
+struct RenderRequest {
+    input_epoch: u64,
+    parameter_revision: u64,
+    request_id: u64,
+    kind: RenderKind,
+    animate: bool,
+    backend_name: String,
+    image: Arc<ImageBuf>,
+    input_clone_ms: f32,
+    snapshot: RenderSnapshot,
+    backend: Arc<dyn ComputeBackend>,
+    source_metadata: Option<ImageMetadata>,
+    display_enabled: bool,
+    display_profile: Option<PathBuf>,
+    ctx: egui::Context,
+}
+
+struct RenderWorker {
+    state: Arc<(Mutex<Option<RenderRequest>>, Condvar)>,
+    rx: mpsc::Receiver<(RenderJob, Result<RenderResult, String>)>,
+    shutdown: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    next_request_id: u64,
+}
 struct RenderResult {
     output: ImageBuf,
     preview: display::DisplayRaster,
@@ -402,6 +425,129 @@ struct RenderSnapshot {
     print_name: String,
     data_dir: PathBuf,
     special: serde_json::Value,
+}
+
+impl RenderWorker {
+    fn new() -> Self {
+        let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let state_for_worker = state.clone();
+        let shutdown_for_worker = shutdown.clone();
+        let handle = std::thread::Builder::new()
+            .name("spektrafilm-render".into())
+            .spawn(move || {
+                loop {
+                    let request = {
+                        let (lock, wake) = &*state_for_worker;
+                        let mut queued = lock.lock();
+                        while queued.is_none() && !shutdown_for_worker.load(Ordering::SeqCst) {
+                            wake.wait(&mut queued);
+                        }
+                        if shutdown_for_worker.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        queued.take().expect("render request signaled")
+                    };
+                    let job = RenderJob {
+                        input_epoch: request.input_epoch,
+                        parameter_revision: request.parameter_revision,
+                        request_id: request.request_id,
+                        kind: request.kind,
+                        animate: request.animate,
+                        backend_name: request.backend_name.clone(),
+                    };
+                    let ctx = request.ctx.clone();
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let t_total = Instant::now();
+                        let t_pipeline = Instant::now();
+                        let pipeline_template =
+                            build_runtime(&request.snapshot, request.kind == RenderKind::Preview)?;
+                        let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
+                        let runtime_params = pipeline_template.params();
+                        let t_scale = Instant::now();
+                        let working_image = if runtime_params.settings.preview_mode {
+                            spektrafilm_core::params_builder::resize_for_preview(
+                                &request.image,
+                                runtime_params.settings.preview_max_size,
+                            )
+                        } else {
+                            (*request.image).clone()
+                        };
+                        let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
+                        let t = Instant::now();
+                        let output =
+                            pipeline_template.process(working_image, request.backend.as_ref())?;
+                        let render_ms = t.elapsed().as_secs_f32() * 1000.0;
+                        let t_preview = Instant::now();
+                        let (preview, display_status) = display::output_display_raster(
+                            &output,
+                            &runtime_params.io.output_color_space,
+                            runtime_params.io.output_cctf_encoding,
+                            request.display_enabled,
+                            request.display_profile.as_deref(),
+                            runtime_params.settings.preview_max_size as usize,
+                        )?;
+                        let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
+                        Ok(RenderResult {
+                            source_metadata: request.source_metadata,
+                            output_color_space: runtime_params.io.output_color_space.clone(),
+                            output_cctf_encoding: runtime_params.io.output_cctf_encoding,
+                            output,
+                            preview,
+                            display_status,
+                            display_enabled: request.display_enabled,
+                            display_profile: request.display_profile,
+                            display_max_size: runtime_params.settings.preview_max_size,
+                            input_clone_ms: request.input_clone_ms,
+                            scale_ms,
+                            pipeline_build_ms,
+                            render_ms,
+                            preview_ms,
+                            worker_total_ms: t_total.elapsed().as_secs_f32() * 1000.0,
+                        })
+                    }))
+                    .unwrap_or_else(|panic| Err(panic_message(&panic)));
+                    let _ = tx.send((job, result));
+                    ctx.request_repaint();
+                }
+            });
+        Self {
+            state,
+            rx,
+            shutdown,
+            handle: Some(handle.expect("OS thread spawn")),
+            next_request_id: 0,
+        }
+    }
+
+    fn submit(&mut self, mut request: RenderRequest) -> u64 {
+        self.next_request_id = self.next_request_id.wrapping_add(1);
+        request.request_id = self.next_request_id;
+        let (lock, wake) = &*self.state;
+        *lock.lock() = Some(request);
+        wake.notify_one();
+        self.next_request_id
+    }
+
+    fn shutdown(&mut self) {
+        {
+            let (lock, wake) = &*self.state;
+            let mut queued = lock.lock();
+            self.shutdown.store(true, Ordering::SeqCst);
+            *queued = None;
+            wake.notify_one();
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for RenderWorker {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
 }
 
 fn build_runtime(snapshot: &RenderSnapshot, preview: bool) -> Result<Runtime, String> {
@@ -553,9 +699,9 @@ impl App {
             last_scale_ms: 0.0,
             last_preview_ms: 0.0,
             last_worker_total_ms: 0.0,
-            pending_dirty: false,
             dirty_since: None,
             render_job: None,
+            render_worker: RenderWorker::new(),
             export_job: None,
             status: startup_error.unwrap_or_else(|| String::from("Load an image to start.")),
             dirty: false,
@@ -624,49 +770,19 @@ impl App {
     }
 
     fn refresh_viewing_artifacts(&mut self) {
-        if let Some(image) = self.image.as_ref() {
-            match display::input_display_raster(
-                image,
-                &self.params.io.input_color_space,
-                self.params.io.input_cctf_decoding,
-                self.params.settings.preview_max_size as usize,
-            ) {
-                Ok(raster) => {
-                    self.viewer.replace_input_display(raster);
-                    self.viewer.set_input_display_source(
-                        &self.params.io.input_color_space,
-                        self.params.io.input_cctf_decoding,
-                    );
-                }
-                Err(e) => self.status = format!("Viewer input error: {e}"),
-            }
-        }
-        if let Some(output) = self.output_image.as_ref() {
-            match display::output_display_raster(
-                output,
-                &self.output_color_space,
-                self.output_cctf_encoding,
-                self.viewer.settings.use_display_transform,
-                self.gui_state.sections["rust"]["display_profile"]
-                    .as_str()
-                    .map(Path::new),
-                self.params.settings.preview_max_size as usize,
-            ) {
-                Ok((raster, status)) => {
-                    self.viewer.replace_output_display(raster);
-                    self.viewer.transform_status = status;
-                }
-                Err(e) => self.status = format!("Viewer display error: {e}"),
-            }
-            self.viewer.set_output_display_source(
-                &self.output_color_space,
-                self.output_cctf_encoding,
-                self.viewer.settings.use_display_transform,
-                self.gui_state.sections["rust"]["display_profile"]
-                    .as_str()
-                    .map(Path::new),
-            );
-        }
+        self.viewer.set_input_display_source(
+            &self.params.io.input_color_space,
+            self.params.io.input_cctf_decoding,
+        );
+        self.viewer.set_output_display_source(
+            &self.output_color_space,
+            self.output_cctf_encoding,
+            self.viewer.settings.use_display_transform,
+            self.gui_state.sections["rust"]["display_profile"]
+                .as_str()
+                .map(Path::new),
+        );
+        self.viewer.invalidate_display();
     }
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -735,6 +851,7 @@ impl App {
             self.params.print_render.glare.active = false;
         }
         self.dirty = true;
+        self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.force_preview = true;
     }
 
@@ -764,6 +881,7 @@ impl App {
                 self.params.io.scan_film = false;
                 self.dirty = true;
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
         });
         ui.horizontal(|ui| {
@@ -832,9 +950,6 @@ impl App {
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.dirty = true;
-        if self.render_job.is_some() {
-            self.pending_dirty = true;
-        }
     }
 
     fn apply_builtin_preset(&mut self, index: usize) {
@@ -977,6 +1092,10 @@ impl App {
                             &self.params.io.input_color_space,
                             self.params.io.input_cctf_decoding,
                         );
+                        self.viewer.seed_prepared_input(
+                            self.image.as_ref().unwrap().clone(),
+                            self.params.settings.preview_max_size,
+                        );
                     }
                     Err(e) => self.status = format!("Viewer input error: {e}"),
                 }
@@ -1019,6 +1138,8 @@ impl App {
                         &self.params.io.input_color_space,
                         self.params.io.input_cctf_decoding,
                     );
+                    self.viewer
+                        .seed_prepared_input(image.clone(), self.params.settings.preview_max_size);
                 }
                 Err(e) => self.status = format!("Viewer input error: {e}"),
             }
@@ -1036,16 +1157,8 @@ impl App {
         self.rotate_input_image(false);
     }
 
-    /// Spawn a render on a worker thread. The UI stays interactive
-    /// during the 250–500 ms pipeline run (previously this blocked
-    /// the main thread, dropping mid-drag slider events). If a job
-    /// is already in flight, mark `pending_dirty` so the latest
-    /// params get re-rendered as soon as the in-flight one returns.
+    /// Submit the latest snapshot without waiting for active computation.
     fn dispatch_render(&mut self, ctx: &egui::Context) {
-        if self.render_job.is_some() {
-            self.pending_dirty = true;
-            return;
-        }
         let t_clone = Instant::now();
         let Some(image) = self.image.as_ref().cloned() else {
             return;
@@ -1072,185 +1185,127 @@ impl App {
             params.settings.neutral_print_filters_from_database = false;
         }
         let parameter_revision = self.parameter_revision;
-        let snapshot = RenderSnapshot {
-            params,
-            film_name: self.film_name.clone(),
-            print_name: self.print_name.clone(),
-            data_dir: self.data_dir.clone(),
-            special: self.gui_state.sections["special"].clone(),
+        let request = RenderRequest {
+            input_epoch,
+            parameter_revision,
+            request_id: 0,
+            kind,
+            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
+            backend_name: backend_name.clone(),
+            image,
+            input_clone_ms,
+            snapshot: RenderSnapshot {
+                params,
+                film_name: self.film_name.clone(),
+                print_name: self.print_name.clone(),
+                data_dir: self.data_dir.clone(),
+                special: self.gui_state.sections["special"].clone(),
+            },
+            backend: self.backend.clone(),
+            source_metadata: self.source_metadata.clone(),
+            display_enabled: self.viewer.settings.use_display_transform,
+            display_profile: self.gui_state.sections["rust"]["display_profile"]
+                .as_str()
+                .map(PathBuf::from),
+            ctx: ctx.clone(),
         };
-        let backend = self.backend.clone();
-        let source_metadata = self.source_metadata.clone();
-        let (tx, rx) = mpsc::channel();
-        let ctx_for_worker = ctx.clone();
-        let display_enabled = self.viewer.settings.use_display_transform;
-        let display_profile = self.gui_state.sections["rust"]["display_profile"]
-            .as_str()
-            .map(PathBuf::from);
-        let handle = std::thread::Builder::new()
-            .name("spektrafilm-render".into())
-            .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let t_total = Instant::now();
-                    let t_pipeline = Instant::now();
-                    let pipeline_template = build_runtime(&snapshot, kind == RenderKind::Preview)?;
-                    let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
-                    let runtime_params = pipeline_template.params();
-                    let t_scale = Instant::now();
-                    let working_image = if runtime_params.settings.preview_mode {
-                        spektrafilm_core::params_builder::resize_for_preview(
-                            &image,
-                            runtime_params.settings.preview_max_size,
-                        )
-                    } else {
-                        (*image).clone()
-                    };
-                    let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
-                    let t = Instant::now();
-                    let output = pipeline_template.process(working_image, backend.as_ref())?;
-                    let render_ms = t.elapsed().as_secs_f32() * 1000.0;
-                    let t_preview = Instant::now();
-                    let (preview, display_status) = display::output_display_raster(
-                        &output,
-                        &runtime_params.io.output_color_space,
-                        runtime_params.io.output_cctf_encoding,
-                        display_enabled,
-                        display_profile.as_deref(),
-                        runtime_params.settings.preview_max_size as usize,
-                    )?;
-                    let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
-                    let worker_total_ms = t_total.elapsed().as_secs_f32() * 1000.0;
-                    Ok(RenderResult {
-                        source_metadata,
-                        output_color_space: runtime_params.io.output_color_space.clone(),
-                        output_cctf_encoding: runtime_params.io.output_cctf_encoding,
-                        output,
-                        preview,
-                        display_status,
-                        display_enabled,
-                        display_profile,
-                        display_max_size: runtime_params.settings.preview_max_size,
-                        input_clone_ms,
-                        scale_ms,
-                        pipeline_build_ms,
-                        render_ms,
-                        preview_ms,
-                        worker_total_ms,
-                    })
-                }))
-                .unwrap_or_else(|panic| Err(panic_message(&panic)));
-                let _ = tx.send(result);
-                ctx_for_worker.request_repaint();
-            })
-            .expect("OS thread spawn");
+        let request_id = self.render_worker.submit(request);
         self.render_job = Some(RenderJob {
             input_epoch,
             parameter_revision,
+            request_id,
             kind,
+            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
             backend_name,
-            rx,
-            handle: Some(handle),
         });
         self.full_scan_requested = false;
     }
 
-    /// Called once per `update()`. If the in-flight render finished,
-    /// upload the texture and unblock the next pass. If more changes
-    /// arrived during the render, re-arm `dirty`.
     fn poll_render_job(&mut self, ctx: &egui::Context) {
-        let Some(job) = self.render_job.as_mut() else {
-            return;
-        };
-        let result = match job.rx.try_recv() {
-            Ok(r) => r,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.render_job = None;
-                self.status = "Render error: worker thread vanished".into();
-                return;
-            }
-        };
-        if let Some(h) = job.handle.take() {
-            let _ = h.join();
-        }
-        let current_input = job.input_epoch == self.input_epoch;
-        let current_revision = job.parameter_revision == self.parameter_revision;
-        let kind = job.kind;
-        let backend_name = job.backend_name.clone();
-        self.render_job = None;
-        if !current_input || !current_revision {
-            self.pending_dirty = false;
-            self.dirty = true;
-            return;
-        }
-        match result {
-            Ok(mut r) => {
-                let display_profile = self.gui_state.sections["rust"]["display_profile"]
-                    .as_str()
-                    .map(Path::new);
-                if r.display_enabled != self.viewer.settings.use_display_transform
-                    || r.display_profile.as_deref() != display_profile
-                    || r.display_max_size != self.params.settings.preview_max_size
-                {
-                    match display::output_display_raster(
-                        &r.output,
-                        &r.output_color_space,
-                        r.output_cctf_encoding,
-                        self.viewer.settings.use_display_transform,
-                        display_profile,
-                        self.params.settings.preview_max_size as usize,
-                    ) {
-                        Ok((preview, status)) => {
-                            r.preview = preview;
-                            r.display_status = status;
-                        }
-                        Err(error) => {
-                            self.status = format!("Viewer display error: {error}");
-                            return;
-                        }
-                    }
+        loop {
+            let (response_job, result) = match self.render_worker.rx.try_recv() {
+                Ok(response) => response,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.render_job = None;
+                    self.status = "Render error: worker thread vanished".into();
+                    return;
                 }
-                self.last_input_clone_ms = r.input_clone_ms;
-                self.last_scale_ms = r.scale_ms;
-                self.last_pipeline_build_ms = r.pipeline_build_ms;
-                self.last_render_ms = r.render_ms;
-                self.last_preview_ms = r.preview_ms;
-                self.last_worker_total_ms = r.worker_total_ms;
-                self.output_color_space = r.output_color_space;
-                self.output_cctf_encoding = r.output_cctf_encoding;
-                self.output_metadata = r.source_metadata;
-                self.viewer.transform_status = r.display_status;
-                self.viewer.set_output(
-                    r.preview,
-                    [r.output.width as usize, r.output.height as usize],
-                    ctx.input(|i| i.time),
-                );
-                self.viewer.set_output_display_source(
-                    &self.output_color_space,
-                    self.output_cctf_encoding,
-                    self.viewer.settings.use_display_transform,
-                    self.gui_state.sections["rust"]["display_profile"]
+            };
+            if !response_job.matches(
+                self.render_job.as_ref(),
+                self.input_epoch,
+                self.parameter_revision,
+            ) {
+                if self
+                    .render_job
+                    .as_ref()
+                    .is_some_and(|job| job.request_id == response_job.request_id)
+                {
+                    self.render_job = None;
+                }
+                continue;
+            }
+            self.render_job = None;
+            let kind = response_job.kind;
+            let backend_name = response_job.backend_name;
+            match result {
+                Ok(r) => {
+                    let display_profile = self.gui_state.sections["rust"]["display_profile"]
                         .as_str()
-                        .map(Path::new),
-                );
-                self.status = format!(
-                    "{} · {} · {} × {} ({:.1} MP)",
-                    kind.label(),
-                    backend_name,
-                    r.output.width,
-                    r.output.height,
-                    r.output.pixel_count() as f64 / 1e6
-                );
-                self.output_image = Some(r.output);
+                        .map(Path::new);
+                    let display_current = r.display_enabled
+                        == self.viewer.settings.use_display_transform
+                        && r.display_profile.as_deref() == display_profile
+                        && r.display_max_size == self.params.settings.preview_max_size;
+                    self.last_input_clone_ms = r.input_clone_ms;
+                    self.last_scale_ms = r.scale_ms;
+                    self.last_pipeline_build_ms = r.pipeline_build_ms;
+                    self.last_render_ms = r.render_ms;
+                    self.last_preview_ms = r.preview_ms;
+                    self.last_worker_total_ms = r.worker_total_ms;
+                    self.output_color_space = r.output_color_space;
+                    self.output_cctf_encoding = r.output_cctf_encoding;
+                    self.output_metadata = r.source_metadata;
+                    self.viewer.transform_status = r.display_status;
+                    self.viewer.set_output(
+                        r.preview,
+                        [r.output.width as usize, r.output.height as usize],
+                        ctx.input(|i| i.time),
+                        response_job.animate && display_current,
+                    );
+                    self.viewer.set_output_display_source(
+                        &self.output_color_space,
+                        self.output_cctf_encoding,
+                        self.viewer.settings.use_display_transform,
+                        self.gui_state.sections["rust"]["display_profile"]
+                            .as_str()
+                            .map(Path::new),
+                    );
+                    self.status = format!(
+                        "{} · {} · {} × {} ({:.1} MP)",
+                        kind.label(),
+                        backend_name,
+                        r.output.width,
+                        r.output.height,
+                        r.output.pixel_count() as f64 / 1e6
+                    );
+                    let output = Arc::new(r.output);
+                    self.viewer.seed_prepared_output(
+                        output.clone(),
+                        &self.output_color_space,
+                        self.output_cctf_encoding,
+                        r.display_enabled,
+                        r.display_profile.as_deref(),
+                        r.display_max_size,
+                    );
+                    self.output_image = Some(output);
+                }
+                Err(msg) => {
+                    eprintln!("[spektrafilm] render error: {msg}");
+                    self.status = format!("Render error: {msg}");
+                }
             }
-            Err(msg) => {
-                eprintln!("[spektrafilm] render error: {msg}");
-                self.status = format!("Render error: {msg}");
-            }
-        }
-        if self.pending_dirty {
-            self.pending_dirty = false;
-            self.dirty = true;
         }
     }
 
@@ -1685,7 +1740,7 @@ impl App {
         let result = match job.rx.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => {
-                ctx.request_repaint_after(IN_FLIGHT_REPAINT);
+                ctx.request_repaint_after(Duration::from_millis(16));
                 return;
             }
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -1713,6 +1768,7 @@ impl App {
             }) => {
                 self.params.film_render.base = params;
                 self.params.film_render.convert.exposure_compensation_ev = exposure_ev;
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
                 self.dirty = true;
                 self.force_preview = true;
                 self.status =
@@ -1720,6 +1776,7 @@ impl App {
             }
             Ok(CalibrationResult::BlindCalibration(calibration)) => {
                 self.params.film_render.convert.calibration = calibration;
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
                 self.dirty = true;
                 self.force_preview = true;
                 self.status = "Blind calibration fitted.".into();
@@ -1727,6 +1784,7 @@ impl App {
             Ok(CalibrationResult::NeutralizeFilters { m_shift, y_shift }) => {
                 self.params.enlarger.m_filter_shift = m_shift;
                 self.params.enlarger.y_filter_shift = y_shift;
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
                 self.dirty = true;
                 self.force_preview = true;
                 self.status =
@@ -1743,6 +1801,7 @@ impl App {
         let changes = controls::show(ui, &mut self.params, &mut self.gui_state.sections, section);
         if changes.runtime_changed {
             self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+            self.parameter_revision = self.parameter_revision.wrapping_add(1);
             self.dirty = true;
         }
         if let Some(action) = changes.action {
@@ -1827,6 +1886,7 @@ impl App {
                 selected,
             ) {
                 self.dirty = true;
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
             self.parameter_section(
                 ui,
@@ -1839,7 +1899,7 @@ impl App {
         });
     }
 
-    fn controls_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn controls_panel(&mut self, ui: &mut egui::Ui) {
         let input_view_before = (
             self.params.io.input_color_space.clone(),
             self.params.io.input_cctf_decoding,
@@ -1987,24 +2047,15 @@ impl eframe::App for App {
         {
             let now = Instant::now();
             let dirty_since = *self.dirty_since.get_or_insert(now);
-            if self.render_job.is_some() {
-                self.pending_dirty = true;
+            let elapsed = now.saturating_duration_since(dirty_since);
+            if elapsed >= PREVIEW_DEBOUNCE {
+                self.dispatch_render(ctx);
+                self.force_preview = false;
                 self.dirty = false;
                 self.dirty_since = None;
             } else {
-                let elapsed = now.saturating_duration_since(dirty_since);
-                if elapsed >= PREVIEW_DEBOUNCE {
-                    self.dispatch_render(ctx);
-                    self.force_preview = false;
-                    self.dirty = false;
-                    self.dirty_since = None;
-                } else {
-                    ctx.request_repaint_after(PREVIEW_DEBOUNCE - elapsed);
-                }
+                ctx.request_repaint_after(PREVIEW_DEBOUNCE - elapsed);
             }
-        }
-        if self.render_job.is_some() {
-            ctx.request_repaint_after(IN_FLIGHT_REPAINT);
         }
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
@@ -2029,7 +2080,7 @@ impl eframe::App for App {
                     egui::ScrollArea::vertical()
                         .id_salt("controls-scroll")
                         .auto_shrink([false, false])
-                        .show(ui, |ui| self.controls_panel(ui, ctx));
+                        .show(ui, |ui| self.controls_panel(ui));
                 });
                 ui.separator();
                 self.simulation_action_bar(ui);
@@ -2064,7 +2115,9 @@ impl eframe::App for App {
             });
             self.viewer.layer_controls(ui);
             self.viewer
-                .show(ui, self.image.as_deref(), self.output_image.as_ref());
+                .set_display_max_size(self.params.settings.preview_max_size);
+            self.viewer
+                .show(ui, self.image.as_ref(), self.output_image.as_ref());
         });
 
         // Accept drag-and-dropped image files.
@@ -2082,13 +2135,13 @@ impl eframe::App for App {
 
     /// Cancel pending export publication and drain its worker before exiting.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let Some(job) = self.export_job.take() else {
-            return;
-        };
-        job.cancel.store(true, Ordering::SeqCst);
-        if let Some(h) = job.handle {
-            let _ = h.join();
+        if let Some(job) = self.export_job.take() {
+            job.cancel.store(true, Ordering::SeqCst);
+            if let Some(h) = job.handle {
+                let _ = h.join();
+            }
         }
+        self.render_worker.shutdown();
     }
 }
 

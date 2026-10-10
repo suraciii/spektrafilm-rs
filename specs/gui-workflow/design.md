@@ -6,5 +6,8 @@
 - Viewer presentation uses disposable display rasters. Save and Export consume retained native output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.
 - Full-source sampling transforms each source tap before interpolation. Capped display rasters reduce the source in f64 before color conversion.
+- Preview and viewport composition use separate persistent workers. Each worker retains one queued snapshot and replaces it when a newer request arrives.
+- The UI accepts pipeline output only when request, input, and parameter revisions match. It accepts composed frames only when the generation and viewport key match.
+- Pipeline and viewer workers share immutable native images. The viewer reuses prepared display pixels when the source, display settings, and preview size match.
 - Persistent startup state and transient viewer state use separate stores and invalidation rules.
 - Export work runs outside the UI event loop. Completion, failure, and cancellation are explicit states; temporary output is never presented as completed output.
