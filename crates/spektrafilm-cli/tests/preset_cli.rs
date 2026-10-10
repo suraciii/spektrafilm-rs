@@ -1152,13 +1152,15 @@ fn text_discovery_lists_root_groups_and_keeps_nested_modules() {
 #[test]
 fn route_help_lists_every_validated_route() {
     let f = Fixture::new();
-    let help = f.run(&["process", "--help"]);
-    assert!(help.status.success());
-    let help = String::from_utf8(help.stdout).unwrap();
-    for route in spektrafilm_core::params::sources::supported_routes() {
-        assert!(help.contains(route), "missing route {route}");
+    for args in [["process", "--help"], ["process", "-h"]] {
+        let help = f.run(&args);
+        assert!(help.status.success());
+        let help = String::from_utf8(help.stdout).unwrap();
+        for route in spektrafilm_core::params::sources::supported_routes() {
+            assert!(help.contains(route), "missing route {route}");
+        }
+        assert!(!help.contains("describe --module workflow"), "{help}");
     }
-    assert!(!help.contains("describe --module workflow"), "{help}");
 }
 
 #[test]
@@ -1199,4 +1201,32 @@ fn signed_input_exposure_stops_accept_separate_arguments() {
     let separate = build("separate", &["--stops-above-midgray", "-1"]);
     assert_eq!(equal, separate);
     assert_eq!(separate["stops_above_midgray"], -1.0);
+    for invalid in ["-1e309", "inf", "nan"] {
+        let out = f.root.join("lut-invalid");
+        let output = f.run(&[
+            "lut",
+            "build",
+            out.to_str().unwrap(),
+            "--name",
+            "signed-stops",
+            "--film",
+            "kodak_portra_400",
+            "--print",
+            "kodak_portra_endura",
+            "--input",
+            "srgb",
+            "--output",
+            "srgb",
+            "--resolution",
+            "2",
+            &format!("--stops-above-midgray={invalid}"),
+        ]);
+        assert_eq!(output.status.code(), Some(1), "{invalid}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("finite number"),
+            "{invalid}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!out.exists());
+    }
 }

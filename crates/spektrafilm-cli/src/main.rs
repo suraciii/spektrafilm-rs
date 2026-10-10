@@ -358,7 +358,9 @@ fn main() -> Result<()> {
         .name(name.as_str())
         .version(version.as_str())
         .mut_subcommand("process", |command| {
-            command.mut_arg("route", |arg| arg.long_help(route_help.clone()))
+            command.mut_arg("route", |arg| {
+                arg.help(route_help.clone()).long_help(route_help.clone())
+            })
         })
         .get_matches();
     let cli = Cli::from_arg_matches(&matches)?;

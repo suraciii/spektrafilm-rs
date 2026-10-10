@@ -148,6 +148,13 @@ fn load_bundle_spec(args: &BuildArgs) -> Result<BundleSpec> {
     } else {
         Map::new()
     };
+    if let Some(value) = args.stops_above_midgray.as_deref()
+        && value
+            .parse::<f64>()
+            .is_ok_and(|stops| !stops.is_finite())
+    {
+        bail!("--stops-above-midgray must be auto, native, null, or a finite number: {value}");
+    }
     for (field, value) in [
         ("name", json!(args.name)),
         ("film_profile", json!(args.film)),
