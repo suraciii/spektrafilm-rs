@@ -5,4 +5,5 @@
 - Printing and scanning use one authoritative LUT-grid layout and coordinate convention. Each stage owns its physical conversion and output interpretation.
 - Transport artifacts carry their role, domain, range, color space, and wire metadata. OCIO and documentation are generated from the same bundle metadata.
 - QA evaluates the emitted bundle and is stored as delivery metadata; it does not redefine the film-chain contract.
-- A private QA stimulus module owns deterministic random streams and their distribution tables. Scenario evaluation owns sampling order and measurement logic.
+- A private QA stimulus module owns deterministic random streams, distribution tables, and hull index selection. Scenario evaluation owns sampling order and measurement logic.
+- The private convex-hull module owns hull construction and volume calculation. QA scenarios retain metric thresholds and failure interpretation.
