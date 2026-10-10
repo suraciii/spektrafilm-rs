@@ -1,37 +1,37 @@
-//! Portable look presets: strict look-owned schema and transactional resolution.
+//! Portable look and section documents. Library operations are shared by both frontends.
+mod library;
+mod sections;
+use crate::params::sources::{ParameterEdits, parse_carrier};
 use crate::params::{
     DiffusionFilterParams, EnlargerParams, FilmRenderingParams, PrintRenderingParams,
     RuntimeParams, ScannerParams,
 };
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
-use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
+pub use library::*;
+pub use sections::*;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const LOOK_SCHEMA_VERSION: u32 = 1;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+pub const PRESET_SCHEMA_VERSION: u32 = 2;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
     pub stock: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_identity: Option<String>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LookProvenance {
+pub struct Provenance {
     pub implementation_version: String,
     pub model_version: String,
 }
-
-/// Parameters owned by a look. Every group is explicit so later stock-default
-/// changes cannot silently rewrite a saved preset.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LookParameters {
     pub enlarger: EnlargerParams,
@@ -40,25 +40,36 @@ pub struct LookParameters {
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LookPreset {
-    pub schema_version: u32,
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub author: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
-    pub film_profile: ProfileRef,
-    pub print_profile: ProfileRef,
-    pub parameters: LookParameters,
-    pub provenance: LookProvenance,
+// The look variant owns the full look, and preset collections are small.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum PresetParameters {
+    Look(LookParameters),
+    Section(Value),
 }
-
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Preset {
+    pub schema_version: u32,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub film_profile: Option<ProfileRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub print_profile: Option<ProfileRef>,
+    pub parameters: PresetParameters,
+    pub provenance: Provenance,
+}
+impl<'de> Deserialize<'de> for Preset {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_value(Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
 #[derive(Debug, Clone)]
-pub struct ResolvedLookPreset {
+pub struct ResolvedPreset {
     pub film_name: String,
     pub print_name: String,
     pub default_route: String,
@@ -66,198 +77,289 @@ pub struct ResolvedLookPreset {
     pub film: Profile,
     pub print: Profile,
 }
-
-impl LookPreset {
-    pub fn from_json_str(json: &str) -> Result<Self, String> {
-        Self::from_carrier(json, false)
+impl LookParameters {
+    pub fn capture(params: &RuntimeParams) -> Self {
+        Self {
+            enlarger: params.enlarger.clone(),
+            scanner: params.scanner.clone(),
+            film_render: params.film_render.clone(),
+            print_render: params.print_render.clone(),
+            camera_diffusion_filter: params.camera.diffusion_filter.clone(),
+        }
     }
-
-    pub fn to_json(&self) -> Result<String, String> {
-        validate_document(self)?;
-        validate_look_values(&self.parameters)?;
-        serde_json::to_string_pretty(self).map_err(|e| format!("serializing look preset: {e}"))
+}
+impl Preset {
+    pub fn look_parameters(&self) -> Option<&LookParameters> {
+        if let PresetParameters::Look(look) = &self.parameters {
+            Some(look)
+        } else {
+            None
+        }
     }
-
-    pub fn from_toml_str(toml: &str) -> Result<Self, String> {
-        Self::from_carrier(toml, true)
+    pub fn look_parameters_mut(&mut self) -> Option<&mut LookParameters> {
+        if let PresetParameters::Look(look) = &mut self.parameters {
+            Some(look)
+        } else {
+            None
+        }
     }
-
-    fn from_carrier(text: &str, is_toml: bool) -> Result<Self, String> {
-        let value = crate::params::sources::parse_carrier(text, is_toml)?;
-        let preset: Self =
-            serde_json::from_value(value).map_err(|e| format!("invalid look preset: {e}"))?;
-        validate_document(&preset)?;
-        validate_look_values(&preset.parameters)?;
+    pub fn from_json_str(text: &str) -> Result<Self, String> {
+        Self::from_value(parse_carrier(text, false)?)
+    }
+    pub fn from_toml_str(text: &str) -> Result<Self, String> {
+        Self::from_value(parse_carrier(text, true)?)
+    }
+    fn from_value(mut value: Value) -> Result<Self, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            schema_version: u32,
+            name: String,
+            author: Option<String>,
+            description: Option<String>,
+            film_profile: Option<ProfileRef>,
+            print_profile: Option<ProfileRef>,
+            parameters: Value,
+            provenance: Provenance,
+        }
+        if value["schema_version"] == 1 {
+            let object = value.as_object_mut().ok_or("preset must be an object")?;
+            object.remove("id");
+            object.insert("schema_version".into(), 2.into());
+        }
+        let wire: Wire =
+            serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
+        let parameters = if wire.film_profile.is_some() || wire.print_profile.is_some() {
+            PresetParameters::Look(
+                serde_json::from_value(wire.parameters)
+                    .map_err(|e| format!("invalid look: {e}"))?,
+            )
+        } else {
+            PresetParameters::Section(wire.parameters)
+        };
+        let preset = Self {
+            schema_version: wire.schema_version,
+            name: wire.name,
+            author: wire.author,
+            description: wire.description,
+            film_profile: wire.film_profile,
+            print_profile: wire.print_profile,
+            parameters,
+            provenance: wire.provenance,
+        };
+        preset.validate()?;
         Ok(preset)
     }
-
-    pub fn to_toml(&self) -> Result<String, String> {
-        validate_document(self)?;
-        validate_look_values(&self.parameters)?;
-        toml::to_string_pretty(self).map_err(|e| format!("serializing look preset TOML: {e}"))
+    pub fn kind(&self) -> Result<PresetKind, String> {
+        match &self.parameters {
+            PresetParameters::Look(_) if self.film_profile.is_some() && self.print_profile.is_some()=>Ok(PresetKind::Look),
+            PresetParameters::Section(payload) if self.film_profile.is_none() && self.print_profile.is_none()=>Ok(PresetKind::Section(section_from_payload(payload)?)),
+            _=>Err("a preset must carry a complete look with both profiles or exactly one section without profiles".into()),
+        }
     }
-
-    /// Resolve without mutating the caller's active runtime context.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != PRESET_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported preset schema version {}",
+                self.schema_version
+            ));
+        }
+        validate_name(&self.name)?;
+        if self.provenance.implementation_version.trim().is_empty()
+            || self.provenance.model_version.trim().is_empty()
+        {
+            return Err("preset provenance versions must not be empty".into());
+        }
+        self.kind()?;
+        for (kind, reference) in [("film", &self.film_profile), ("print", &self.print_profile)] {
+            if let Some(reference) = reference {
+                validate_stock_id(kind, &reference.stock)?;
+                validate_content_identity(kind, reference)?;
+            }
+        }
+        let mut params = RuntimeParams::default();
+        match &self.parameters {
+            PresetParameters::Look(look) => {
+                params.enlarger = look.enlarger.clone();
+                params.scanner = look.scanner.clone();
+                params.film_render = look.film_render.clone();
+                params.print_render = look.print_render.clone();
+                params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
+            }
+            PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
+        }
+        crate::params::sources::validate_finite(&params)?;
+        params.validate()
+    }
+    pub fn to_json(&self) -> Result<String, String> {
+        self.validate()?;
+        serde_json::to_string_pretty(self).map_err(|e| e.to_string())
+    }
+    pub fn to_toml(&self) -> Result<String, String> {
+        self.validate()?;
+        if let PresetParameters::Section(payload) = &self.parameters {
+            fn null_paths(prefix: &str, value: &Value, out: &mut Vec<String>) {
+                if let Some(map) = value.as_object() {
+                    for (key, value) in map {
+                        let path = if prefix.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{prefix}.{key}")
+                        };
+                        null_paths(&path, value, out);
+                    }
+                } else if value.is_null() {
+                    out.push(prefix.to_owned());
+                }
+            }
+            let mut paths = Vec::new();
+            null_paths("", payload, &mut paths);
+            if !paths.is_empty() {
+                return Err(format!(
+                    "TOML cannot represent explicit null at {}; use --format json or a .json extension",
+                    paths.join(", ")
+                ));
+            }
+        }
+        toml::to_string_pretty(self).map_err(|e| e.to_string())
+    }
     pub fn resolve(
         &self,
         data_dir: &Path,
-        current_params: &RuntimeParams,
-    ) -> Result<ResolvedLookPreset, String> {
-        validate_document(self)?;
-        validate_look_values(&self.parameters)?;
-        let film_identity = profile_content_identity_if_requested(data_dir, &self.film_profile)?;
-        let print_identity = profile_content_identity_if_requested(data_dir, &self.print_profile)?;
-        let film = profile::load_profile_by_name(data_dir, &self.film_profile.stock)
-            .map_err(|e| format!("loading film profile {:?}: {e}", self.film_profile.stock))?;
-        let print = profile::load_profile_by_name(data_dir, &self.print_profile.stock)
-            .map_err(|e| format!("loading print profile {:?}: {e}", self.print_profile.stock))?;
-        validate_profile_ref("film", &self.film_profile, &film, film_identity.as_deref())?;
-        validate_profile_ref(
-            "print",
-            &self.print_profile,
-            &print,
-            print_identity.as_deref(),
-        )?;
-
-        // Stock initialization is independent of preview/debug constraints.
-        // The complete look replaces its owned controls, preserving all context.
-        let mut params = current_params.clone();
+        current: &RuntimeParams,
+    ) -> Result<ResolvedPreset, String> {
+        self.validate()?;
+        let (Some(film_ref), Some(print_ref), PresetParameters::Look(look)) =
+            (&self.film_profile, &self.print_profile, &self.parameters)
+        else {
+            return Err("section presets use apply_section, not look resolution".into());
+        };
+        let film_identity = profile_content_identity_if_requested(data_dir, film_ref)?;
+        let print_identity = profile_content_identity_if_requested(data_dir, print_ref)?;
+        let film =
+            profile::load_profile_by_name(data_dir, &film_ref.stock).map_err(|e| e.to_string())?;
+        let print =
+            profile::load_profile_by_name(data_dir, &print_ref.stock).map_err(|e| e.to_string())?;
+        validate_profile_ref("film", film_ref, &film, film_identity.as_deref())?;
+        validate_profile_ref("print", print_ref, &print, print_identity.as_deref())?;
+        let mut params = current.clone();
         apply_film_specifics(&mut params, &film);
-        params.enlarger = self.parameters.enlarger.clone();
+        params.enlarger = look.enlarger.clone();
+        params.scanner = look.scanner.clone();
+        params.film_render = look.film_render.clone();
+        params.print_render = look.print_render.clone();
+        params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
         params.neutral_print_filters_protected = [true; 3];
-        params.scanner = self.parameters.scanner.clone();
-        params.film_render = self.parameters.film_render.clone();
-        params.print_render = self.parameters.print_render.clone();
-        params.camera.diffusion_filter = self.parameters.camera_diffusion_filter.clone();
         let default_route = workflow_default(&film);
         params.workflow.route = default_route.clone();
-        params.io.scan_film = default_route == "input > film > scan";
+        params.io.scan_film = film.is_positive();
         params.validate()?;
-        Ok(ResolvedLookPreset {
-            film_name: self.film_profile.stock.clone(),
-            print_name: self.print_profile.stock.clone(),
+        Ok(ResolvedPreset {
+            film_name: film_ref.stock.clone(),
+            print_name: print_ref.stock.clone(),
             default_route,
             params,
             film,
             print,
         })
     }
-
     pub fn capture(
         name: impl Into<String>,
-        id: impl Into<String>,
         film: impl Into<String>,
         print: impl Into<String>,
         params: &RuntimeParams,
-        provenance: LookProvenance,
+        provenance: Provenance,
     ) -> Self {
         Self {
-            schema_version: LOOK_SCHEMA_VERSION,
-            id: id.into(),
+            schema_version: 2,
             name: name.into(),
             author: None,
             description: None,
-            film_profile: ProfileRef {
+            film_profile: Some(ProfileRef {
                 stock: film.into(),
                 version: None,
                 content_identity: None,
-            },
-            print_profile: ProfileRef {
+            }),
+            print_profile: Some(ProfileRef {
                 stock: print.into(),
                 version: None,
                 content_identity: None,
-            },
-            parameters: LookParameters {
-                enlarger: params.enlarger.clone(),
-                scanner: params.scanner.clone(),
-                film_render: params.film_render.clone(),
-                print_render: params.print_render.clone(),
-                camera_diffusion_filter: params.camera.diffusion_filter.clone(),
-            },
+            }),
+            parameters: PresetParameters::Look(LookParameters::capture(params)),
             provenance,
         }
     }
-}
-
-fn validate_look_values(look: &LookParameters) -> Result<(), String> {
-    let params = RuntimeParams {
-        enlarger: look.enlarger.clone(),
-        scanner: look.scanner.clone(),
-        film_render: look.film_render.clone(),
-        print_render: look.print_render.clone(),
-        camera: crate::params::CameraParams {
-            diffusion_filter: look.camera_diffusion_filter.clone(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    crate::params::sources::validate_finite(&params)?;
-    params.validate()
-}
-
-/// Extension-selected files or exact immutable built-in IDs, never GUI names.
-pub fn load_selector(selector: &str, _data_dir: &Path) -> Result<LookPreset, String> {
-    if selector.ends_with(".toml") || selector.ends_with(".json") {
-        let text = std::fs::read_to_string(selector)
-            .map_err(|e| format!("reading preset file {selector:?}: {e}"))?;
-        return if selector.ends_with(".toml") {
-            LookPreset::from_toml_str(&text)
-        } else {
-            LookPreset::from_json_str(&text)
+    pub fn capture_section(
+        name: impl Into<String>,
+        section: Section,
+        params: &RuntimeParams,
+        provenance: Provenance,
+    ) -> Result<Self, String> {
+        let preset = Self {
+            schema_version: 2,
+            name: name.into(),
+            author: None,
+            description: None,
+            film_profile: None,
+            print_profile: None,
+            parameters: PresetParameters::Section(extract_section(section, params)?),
+            provenance,
+        };
+        preset.validate()?;
+        Ok(preset)
+    }
+    /// Returns a validated candidate, retaining workflow, calibration policy and all
+    /// explicit values outside this section. Supplied leaves become explicit.
+    pub fn apply_section(&self, current: &RuntimeParams) -> Result<RuntimeParams, String> {
+        self.validate()?;
+        let PresetParameters::Section(payload) = &self.parameters else {
+            return Err("expected a section preset".into());
+        };
+        let edits = parameter_edits(payload)?;
+        let mut params = current.clone();
+        edits.apply(&mut params)?;
+        for path in edits.paths() {
+            params.explicit_section_paths.insert(path.to_owned());
+            for (axis, name) in ["c_filter_neutral", "m_filter_neutral", "y_filter_neutral"]
+                .iter()
+                .enumerate()
+            {
+                if path == format!("enlarger.{name}") {
+                    params.neutral_print_filters_protected[axis] = true;
+                }
+            }
         }
-        .map_err(|e| format!("preset file {selector:?}: {e}"));
+        params.validate()?;
+        Ok(params)
     }
-    if selector.contains('/') || selector.contains('\\') {
-        return Err(format!(
-            "invalid preset ID {selector:?}: path separators require a .toml or .json file"
-        ));
-    }
-    let mut presets = builtin_look_presets();
-    if let Some(index) = presets.iter().position(|preset| preset.id == selector) {
-        return Ok(presets.remove(index));
-    }
-    Err(format!(
-        "unknown built-in preset ID {selector:?}; {}",
-        error_suffix(
-            &closest(
-                selector,
-                presets.into_iter().map(|preset| preset.id),
-                MAX_SUGGESTIONS
-            ),
-            "use spektrafilm preset list to list built-in IDs"
-        )
-    ))
 }
-
-pub fn suggest_preset_ids(input: &str) -> Vec<String> {
-    closest(
-        input,
-        builtin_look_presets().into_iter().map(|preset| preset.id),
-        MAX_SUGGESTIONS,
-    )
-}
-fn validate_document(preset: &LookPreset) -> Result<(), String> {
-    if preset.schema_version != LOOK_SCHEMA_VERSION {
-        return Err(format!(
-            "unsupported look preset schema version {}",
-            preset.schema_version
-        ));
-    }
-    if preset.id.trim().is_empty() || preset.name.trim().is_empty() {
-        return Err("look preset id and name must not be empty".into());
-    }
-    if preset.provenance.implementation_version.trim().is_empty()
-        || preset.provenance.model_version.trim().is_empty()
+fn parameter_edits(payload: &Value) -> Result<ParameterEdits, String> {
+    let mut value = payload.clone();
+    if let Some(filter) = value
+        .as_object_mut()
+        .and_then(|m| m.remove("camera_diffusion_filter"))
     {
-        return Err("look preset provenance versions must not be empty".into());
+        value["camera"] = serde_json::json!({"diffusion_filter":filter});
     }
-    validate_stock_id("film", &preset.film_profile.stock)?;
-    validate_content_identity("film", &preset.film_profile)?;
-    validate_stock_id("print", &preset.print_profile.stock)?;
-    validate_content_identity("print", &preset.print_profile)?;
-    Ok(())
+    ParameterEdits::from_value(value)
 }
-
+include!(concat!(env!("OUT_DIR"), "/preset_assets.rs"));
+pub fn builtin_presets() -> Vec<Preset> {
+    let mut presets = BUILTIN_ASSETS
+        .iter()
+        .map(|(_, text)| Preset::from_toml_str(text).expect("invalid compiled preset asset"))
+        .collect::<Vec<_>>();
+    presets.sort_by(|a, b| name_order(&a.name, &b.name));
+    presets
+}
+pub fn load_selector(selector: &str, _data_dir: &Path) -> Result<Preset, String> {
+    PresetLibrary::default()
+        .resolve_selector(selector)
+        .map(|selection| selection.preset)
+}
+pub fn suggest_preset_names(input: &str) -> Vec<String> {
+    PresetLibrary::default().suggest(input)
+}
 fn validate_stock_id(kind: &str, stock: &str) -> Result<(), String> {
     if stock.is_empty()
         || !stock
@@ -358,345 +460,39 @@ pub fn workflow_default(film: &Profile) -> String {
     }
 }
 
-fn classic_parameters(film: &str) -> LookParameters {
-    let mut params = RuntimeParams::default();
-    let grain = &mut params.film_render.grain;
-    grain.rms_granularity = match film {
-        "kodak_gold_200" => [5.0; 3],
-        "kodak_portra_400" => [4.5; 3],
-        "kodak_ektar_100" => [4.0; 3],
-        _ => [8.0; 3],
-    };
-    grain.density_min = [0.03; 3];
-    grain.uniformity = if film == "kodak_portra_400" {
-        [0.97, 0.99, 0.97]
-    } else {
-        [0.97; 3]
-    };
-    grain.particle_scale_sublayers = [1.0, 0.4, 0.25];
-
-    let couplers = &mut params.film_render.dir_couplers;
-    match film {
-        "fujifilm_velvia_100" => {
-            couplers.gamma_samelayer_rgb = [0.108, 0.072, 0.054];
-            couplers.gamma_interlayer_r_to_gb = [0.0707, 0.2367];
-            couplers.gamma_interlayer_g_to_rb = [0.0119, 0.0380];
-            couplers.gamma_interlayer_b_to_rg = [0.0111, 0.1413];
-        }
-        "fujifilm_provia_100f" => {
-            couplers.gamma_samelayer_rgb = [0.2786, 0.1257, 0.3480];
-            couplers.gamma_interlayer_r_to_gb = [0.1448, 0.2003];
-            couplers.gamma_interlayer_g_to_rb = [0.0516, 0.1250];
-            couplers.gamma_interlayer_b_to_rg = [0.0518, 0.3089];
-        }
-        _ => {
-            couplers.gamma_samelayer_rgb = [0.5159, 0.5934, 0.2829];
-            couplers.gamma_interlayer_r_to_gb = [0.4032, 0.2488];
-            couplers.gamma_interlayer_g_to_rb = [0.2227, 0.4340];
-            couplers.gamma_interlayer_b_to_rg = [0.1829, 0.1799];
-        }
+pub(crate) fn explicit_stock_values(params: &RuntimeParams) -> Option<ParameterEdits> {
+    if params.explicit_section_paths.is_empty() {
+        return None;
     }
-
-    let halation = &mut params.film_render.halation;
-    halation.halation_first_sigma_um = [65.0; 3];
-    halation.halation_strength = if film == "kodak_gold_200" {
-        [0.08, 0.02, 0.0]
-    } else {
-        [0.015, 0.005, 0.0]
-    };
-    params.enlarger.c_filter_neutral = 0.0;
-    (
-        params.enlarger.m_filter_neutral,
-        params.enlarger.y_filter_neutral,
-    ) = match film {
-        "kodak_gold_200" => (58.4153, 55.5983),
-        "kodak_portra_400" => (51.8405, 51.2543),
-        "kodak_ektar_100" => (73.6153, 59.8118),
-        _ => (50.0, 50.0),
-    };
-    LookParameters {
-        enlarger: params.enlarger,
-        scanner: params.scanner,
-        film_render: params.film_render,
-        print_render: params.print_render,
-        camera_diffusion_filter: params.camera.diffusion_filter,
-    }
-}
-
-fn builtin(id: &str, name: &str, film: &str, print: &str) -> LookPreset {
-    LookPreset {
-        schema_version: LOOK_SCHEMA_VERSION,
-        id: id.into(),
-        name: name.into(),
-        author: Some("SpektraFilm".into()),
-        description: Some("SpektraFilm classic stock look".into()),
-        film_profile: ProfileRef {
-            stock: film.into(),
-            version: Some("0.3.4".into()),
-            content_identity: None,
-        },
-        print_profile: ProfileRef {
-            stock: print.into(),
-            version: Some("0.3.4".into()),
-            content_identity: None,
-        },
-        parameters: classic_parameters(film),
-        provenance: LookProvenance {
-            implementation_version: "0.3.4".into(),
-            model_version: "0.3.4".into(),
-        },
-    }
-}
-
-/// Immutable classic presets. Returned values are owned clones and cannot
-/// mutate the built-in definitions.
-pub fn builtin_look_presets() -> Vec<LookPreset> {
-    vec![
-        builtin(
-            "classic-kodak-gold-200",
-            "Kodak Gold 200",
-            "kodak_gold_200",
-            "kodak_portra_endura",
-        ),
-        builtin(
-            "classic-kodak-portra-400",
-            "Kodak Portra 400",
-            "kodak_portra_400",
-            "kodak_portra_endura",
-        ),
-        builtin(
-            "classic-kodak-ektar-100",
-            "Kodak Ektar 100",
-            "kodak_ektar_100",
-            "kodak_portra_endura",
-        ),
-        builtin(
-            "classic-fujifilm-velvia-100",
-            "Fujifilm Velvia 100",
-            "fujifilm_velvia_100",
-            "fujifilm_crystal_archive_typeii",
-        ),
-        builtin(
-            "classic-fujifilm-provia-100f",
-            "Fujifilm Provia 100F",
-            "fujifilm_provia_100f",
-            "fujifilm_crystal_archive_typeii",
-        ),
-    ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unknown_preset_ids_suggest_builtin_ids_or_discovery() {
-        assert_eq!(
-            suggest_preset_ids("classic-kodak-gold-20"),
-            ["classic-kodak-gold-200"]
-        );
-        let error = load_selector("classic-kodak-gold-20", Path::new("data")).unwrap_err();
-        assert!(error.contains("did you mean classic-kodak-gold-200?"));
-        assert!(suggest_preset_ids("unrelated").is_empty());
-        assert!(
-            load_selector("unrelated", Path::new("data"))
-                .unwrap_err()
-                .contains("spektrafilm preset list")
-        );
-    }
-
-    #[test]
-    fn toml_roundtrip_preserves_optional_and_precise_controls() {
-        let mut preset = builtin_look_presets().remove(0);
-        preset.parameters.film_render.grain.v2_amount = None;
-        preset.parameters.film_render.chemistry.gamma_factor = 1.2345678901234567;
-        let text = preset.to_toml().unwrap();
-        assert!(!text.contains("v2_amount"));
-        let restored = LookPreset::from_toml_str(&text).unwrap();
-        assert_eq!(restored.parameters.film_render.grain.v2_amount, None);
-        assert_eq!(
-            restored.parameters.film_render.chemistry.gamma_factor,
-            preset.parameters.film_render.chemistry.gamma_factor
-        );
-        assert_eq!(
-            serde_json::to_value(restored).unwrap(),
-            serde_json::to_value(preset).unwrap()
-        );
-    }
-
-    #[test]
-    fn carriers_reject_duplicate_keys_and_f32_overflow() {
-        let preset = builtin_look_presets().remove(0);
-        let mut value = serde_json::to_value(&preset).unwrap();
-        value["parameters"]["enlarger"]["print_exposure"] = serde_json::json!(1e100);
-        assert!(LookPreset::from_json_str(&value.to_string()).is_err());
-        let duplicate = preset.to_json().unwrap().replacen(
-            "\"schema_version\": 1",
-            "\"schema_version\": 1, \"schema_version\": 1",
-            1,
-        );
-        assert!(LookPreset::from_json_str(&duplicate).is_err());
-        let text = preset
-            .to_toml()
-            .unwrap()
-            .replace("print_exposure = 1.0", "print_exposure = inf");
-        assert!(LookPreset::from_toml_str(&text).is_err());
-    }
-
-    #[test]
-    fn selectors_are_exact_and_missing_files_do_not_fall_back() {
-        assert!(load_selector("Kodak Gold 200", Path::new("data")).is_err());
-        assert!(load_selector("classic-kodak-gold-200.toml", Path::new("data")).is_err());
-        assert!(load_selector("folder/classic-kodak-gold-200", Path::new("data")).is_err());
-        assert_eq!(
-            load_selector("classic-kodak-gold-200", Path::new("data"))
-                .unwrap()
-                .id,
-            "classic-kodak-gold-200"
-        );
-    }
-
-    #[test]
-    fn version_one_materializes_omitted_look_controls() {
-        let json = r#"{"schema_version":1,"id":"x","name":"X","film_profile":{"stock":"f"},"print_profile":{"stock":"p"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"x","model_version":"x"}}"#;
-        let preset = LookPreset::from_json_str(json).unwrap();
-        assert_eq!(preset.parameters.enlarger.y_filter_neutral, 55.0);
-        let materialized = preset.to_toml().unwrap();
-        assert!(materialized.contains("y_filter_neutral"));
-        assert!(materialized.contains("gamma_factor"));
-        let null = json.replace(
-            "\"film_render\":{}",
-            "\"film_render\":{\"grain\":{\"v2_amount\":null}}",
-        );
-        let restored = LookPreset::from_json_str(&null).unwrap();
-        assert_eq!(restored.parameters.film_render.grain.v2_amount, None);
-    }
-
-    fn provenance() -> LookProvenance {
-        LookProvenance {
-            implementation_version: "test".into(),
-            model_version: "test".into(),
-        }
-    }
-
-    #[test]
-    fn route_is_rejected_as_unknown() {
-        let json = r#"{"schema_version":1,"id":"x","name":"X","film_profile":{"stock":"f"},"print_profile":{"stock":"p"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"x","model_version":"x"},"route":"input"}"#;
-        assert!(LookPreset::from_json_str(json).is_err());
-    }
-
-    #[test]
-    fn content_identity_requires_canonical_sha256() {
-        let mut preset = builtin_look_presets()[0].clone();
-        preset.film_profile.content_identity = Some("sha256-not-a-hash".into());
-        let json = serde_json::to_string(&preset).unwrap();
-        let error = LookPreset::from_json_str(&json).unwrap_err();
-        assert!(error.contains("content identity"));
-    }
-
-    #[test]
-    fn capture_roundtrip_preserves_f64() {
-        let mut params = RuntimeParams::default();
-        params.film_render.chemistry.gamma_factor = 1.234567890123;
-        params.film_render.halation.halation_strength = [0.765432109876; 3];
-        let preset = LookPreset::capture(
-            "Test",
-            "test",
-            "kodak_portra_400",
-            "kodak_portra_endura",
-            &params,
-            provenance(),
-        );
-        let restored = LookPreset::from_json_str(&preset.to_json().unwrap()).unwrap();
-        let film = restored.parameters.film_render;
-        assert_eq!(
-            film.chemistry.gamma_factor,
-            params.film_render.chemistry.gamma_factor
-        );
-        assert_eq!(
-            film.halation.halation_strength,
-            params.film_render.halation.halation_strength
-        );
-    }
-
-    #[test]
-    fn five_classics_have_stable_ids_explicit_pairs_and_look_values() {
-        let presets = builtin_look_presets();
-        assert_eq!(presets.len(), 5);
-        assert!(presets.iter().all(|p| {
-            !p.id.is_empty()
-                && p.film_profile.version.is_some()
-                && p.print_profile.version.is_some()
-                && p.parameters.film_render.grain.rms_granularity != [0.0; 3]
-        }));
-        assert_eq!(presets[0].film_profile.stock, "kodak_gold_200");
-        assert_eq!(
-            presets[3].print_profile.stock,
-            "fujifilm_crystal_archive_typeii"
-        );
-        assert_eq!(
-            presets[3]
-                .parameters
-                .film_render
-                .dir_couplers
-                .gamma_samelayer_rgb,
-            [0.108, 0.072, 0.054]
-        );
-    }
-
-    #[test]
-    fn portable_schema_has_no_route() {
-        let json = builtin_look_presets()[0].to_json().unwrap();
-        assert!(!json.contains("\"route\""));
-        assert!(!json.contains("\"workflow\""));
-    }
-    #[test]
-    fn builtins_resolve_against_shipped_profiles() {
-        let data_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-        let mut context = RuntimeParams::default();
-        context.io.crop = true;
-        context.random_seed = 1234;
-        context.debug.lut_mode = true;
-        context.settings.use_enlarger_lut = true;
-        for preset in builtin_look_presets() {
-            let resolved = preset.resolve(&data_dir, &context).unwrap();
-            assert_eq!(resolved.film_name, preset.film_profile.stock);
-            assert_eq!(resolved.print_name, preset.print_profile.stock);
-            assert_eq!(
-                resolved.params.workflow.route,
-                if resolved.film.is_positive() {
-                    "input > film > scan"
-                } else {
-                    "input > film > print > scan"
+    let root = serde_json::to_value(params).expect("runtime parameters serialize");
+    let mut payload = serde_json::json!({});
+    for path in &params.explicit_section_paths {
+        if let Some(value) = root.pointer(&format!("/{}", path.replace('.', "/"))) {
+            let mut parts = path.split('.').peekable();
+            let mut current = &mut payload;
+            while let Some(part) = parts.next() {
+                if parts.peek().is_none() {
+                    current[part] = value.clone();
+                    break;
                 }
-            );
-            assert!(resolved.params.io.crop);
-            assert!(resolved.params.debug.lut_mode);
-            assert!(resolved.params.settings.use_enlarger_lut);
-            assert_eq!(resolved.params.random_seed, 1234);
-            assert!(resolved.params.settings.neutral_print_filters_from_database);
+                if current.get(part).is_none() {
+                    current[part] = serde_json::json!({});
+                }
+                current = &mut current[part];
+            }
         }
     }
-    #[test]
-    fn failed_resolution_is_non_mutating_and_route_is_derived() {
-        let data_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-        let mut context = RuntimeParams::default();
-        context.workflow.route = "input".into();
-        let before = serde_json::to_value(&context).unwrap();
-        let negative = builtin_look_presets()[0]
-            .resolve(&data_dir, &context)
-            .unwrap();
-        assert_eq!(negative.default_route, "input > film > print > scan");
-        assert_eq!(negative.params.workflow.route, negative.default_route);
-        assert_eq!(
-            serde_json::to_value(&context).unwrap(),
-            before,
-            "resolution must not mutate the active context"
-        );
-
-        let mut invalid = builtin_look_presets()[0].clone();
-        invalid.film_profile.stock = "../outside".into();
-        assert!(invalid.resolve(&data_dir, &context).is_err());
-        assert_eq!(serde_json::to_value(&context).unwrap(), before);
+    Some(ParameterEdits::from_value(payload).expect("validated explicit paths"))
+}
+pub(crate) fn restore_explicit_stock_values(
+    params: &mut RuntimeParams,
+    edits: Option<ParameterEdits>,
+) {
+    if let Some(edits) = edits {
+        edits
+            .apply(params)
+            .expect("retaining validated explicit controls");
     }
 }
+#[cfg(test)]
+mod tests;

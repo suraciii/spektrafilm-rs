@@ -19,7 +19,7 @@ pub use grain::GrainEngine;
 pub use grain::GrainParams;
 pub use halation::HalationParams;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CameraParams {
     #[serde(default)]
@@ -64,7 +64,7 @@ impl Default for CameraParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnlargerParams {
     #[serde(default = "default_th_kg3")]
@@ -118,7 +118,7 @@ impl Default for EnlargerParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
     #[serde(default)]
@@ -158,7 +158,7 @@ fn default_one_f64() -> f64 {
     1.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilmBaseParams {
     #[serde(default = "default_true")]
@@ -187,7 +187,7 @@ impl Default for FilmBaseParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintBaseParams {
     #[serde(default = "default_true")]
@@ -213,7 +213,7 @@ impl Default for PrintBaseParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConvertFilmParams {
     #[serde(default = "default_d55")]
@@ -253,7 +253,7 @@ impl Default for MagazinePrintColorParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowParams {
     #[serde(default = "default_route")]
@@ -267,7 +267,7 @@ impl Default for WorkflowParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilmRenderingParams {
     #[serde(default = "default_one")]
@@ -305,7 +305,7 @@ impl Default for FilmRenderingParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintRenderingParams {
     #[serde(default = "default_one")]
@@ -373,7 +373,7 @@ where
 
 /// Film and print chemistry controls. Kept in f64 for parity-sensitive curve
 /// evaluation; both stages default to active in the experimental contract.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintCurvesMorphParams {
     #[serde(default = "default_true")]
@@ -409,7 +409,7 @@ impl Default for PrintCurvesMorphParams {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IoParams {
     #[serde(default = "default_prophoto")]
@@ -492,7 +492,7 @@ impl Default for InputGamutCompressParams {
 /// `"oklch"` (the upstream default) applies perceptual OkLab chroma reduction
 /// against the destination RGB cube plus one-sided lightness roll-off;
 /// `"off"` passes RGB through unchanged.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputGamutCompressParams {
     #[serde(default = "default_output_gamut_algorithm")]
@@ -535,7 +535,7 @@ fn default_gamut_lightness() -> Option<[f32; 3]> {
     Some([0.95, 1.0, 1.6])
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsParams {
     /// Working wavelength grid: [start_nm, end_nm, step_nm].
@@ -602,9 +602,8 @@ impl Default for SettingsParams {
 /// but is a no-op at digest time — upstream 0.3.4 declares it without ever
 /// reading it (timing output goes through the `Simulator.print_timings()`
 /// call-site flag instead), so it is preserved as an upstream no-op.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[derive(Default)]
 pub struct DebugParams {
     #[serde(default)]
     pub deactivate_spatial_effects: bool,
@@ -623,7 +622,7 @@ pub struct DebugParams {
 /// `cmy_print`, `rgb_out`). Defaults of `None` mean "normal end-to-end run"
 /// (inject at `rgb_in`, collect at `rgb_out`); call-site overrides passed to
 /// `Pipeline::process_with_taps` win over these persistent values.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TapsParams {
     #[serde(default)]
@@ -685,14 +684,44 @@ impl RuntimeParams {
     pub fn validate(&self) -> Result<(), String> {
         validation::validate(self)
     }
+
+    /// Snapshot transient preparation ownership separately from the runtime schema.
+    pub fn render_preparation_state(&self) -> RenderPreparationState {
+        RenderPreparationState {
+            explicit_section_paths: self.explicit_section_paths.iter().cloned().collect(),
+            neutral_print_filters_protected: self.neutral_print_filters_protected,
+        }
+    }
+
+    /// Restore ownership, ignoring leaves removed from the editable schema.
+    /// Values and paths need not belong to any currently known preset section.
+    pub fn restore_render_preparation_state(&mut self, state: &RenderPreparationState) {
+        self.explicit_section_paths.clear();
+        self.explicit_section_paths.extend(
+            state
+                .explicit_section_paths
+                .iter()
+                .filter(|path| sources::describe_field(path).is_ok())
+                .cloned(),
+        );
+        self.neutral_print_filters_protected = state.neutral_print_filters_protected;
+    }
 }
+/// Serde-visible GUI state carrier for runtime preparation ownership.
+/// Kept separate so runtime parameters, recipes and digests retain their shape.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenderPreparationState {
+    pub explicit_section_paths: Vec<String>,
+    pub neutral_print_filters_protected: [bool; 3],
+}
+
 /// Top-level runtime parameters. Combines all sub-parameter groups.
 ///
 /// Mirrors upstream 0.3.4 `RuntimePhotoParams` minus the `film` / `print`
 /// profile objects (Rust passes `Profile` values alongside the params).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[derive(Default)]
 pub struct RuntimeParams {
     /// Per-render stochastic seed. The recipe runner sets this out-of-band so
     /// it does not become part of the user parameter schema or digest.
@@ -702,6 +731,10 @@ pub struct RuntimeParams {
     /// Calibration uses database precision only for unprotected axes.
     #[serde(skip)]
     pub(crate) neutral_print_filters_protected: [bool; 3],
+    /// Editable leaves explicitly supplied by section documents. Stock initialization
+    /// retains these values; legacy parameter decoding does not populate this set.
+    #[serde(skip)]
+    pub(crate) explicit_section_paths: std::collections::BTreeSet<String>,
     #[serde(default)]
     pub camera: CameraParams,
     #[serde(default)]
