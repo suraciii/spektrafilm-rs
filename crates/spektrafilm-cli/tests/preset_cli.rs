@@ -512,15 +512,18 @@ fn raw_dry_run_enforces_linear_aces_without_decoding() {
 }
 
 #[test]
-fn dry_run_rejects_missing_inputs_and_duplicate_selectors() {
+fn dry_run_rejects_missing_inputs_unknown_presets_and_duplicate_single_selectors() {
     let mut f = Fixture::new();
+    let unknown = f.process(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Definitely nonexistent preset",
+        "--dry-run",
+    ]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("Definitely nonexistent preset"));
     for options in [
-        vec![
-            "--preset",
-            "Kodak Portra 400",
-            "--preset",
-            "classic-kodak-gold-200",
-        ],
         vec!["--film", "kodak_portra_400", "--film", "kodak_gold_200"],
         vec![
             "--preset",
@@ -659,7 +662,7 @@ fn every_gamut_array_source_validates_before_later_overrides() {
 }
 
 #[test]
-fn edits_reject_optional_overflow_in_legacy_baseline() {
+fn legacy_json_decoder_rejects_optional_f32_overflow_before_finite_validation() {
     let f = Fixture::new();
     let path = f.root.join("legacy.json");
     std::fs::write(&path, r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#).unwrap();
@@ -673,7 +676,8 @@ fn edits_reject_optional_overflow_in_legacy_baseline() {
         "--dry-run",
     ]);
     assert!(!result.status.success());
-    // Correctly rounded JSON decoding now rejects f32 overflow before merging.
+    // The workspace's correctly rounded JSON decoder rejects overflow of the declared
+    // f32 type before finite validation; this diagnostic belongs to the decoder.
     assert!(String::from_utf8_lossy(&result.stderr).contains("number out of range"));
     assert!(!f.root.join("output.tif").exists());
 }
@@ -1578,4 +1582,107 @@ fn later_look_replaces_earlier_section_and_section_only_keeps_static_route() {
     ]);
     assert_eq!(section["parameters"]["io"]["scan_film"], false);
     assert_eq!(section["print_profile"], "kodak_portra_endura");
+}
+
+#[test]
+fn look_preset_normalizes_inapplicable_positive_scan_to_direct_scan() {
+    let f = Fixture::new();
+    let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
+    assert!(shown.status.success());
+    let mut document: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    document["parameters"]["scanner"]["scan_output"] = json!("positive_scan");
+    let path = f.root.join("positive-output-look.json");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+
+    let report = f.report(&["--preset", path.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(
+        report["parameters"]["workflow"]["route"],
+        "input > film > print > scan"
+    );
+    assert_eq!(
+        report["parameters"]["scanner"]["scan_output"],
+        "direct_scan"
+    );
+}
+
+#[test]
+fn invalid_scanner_section_rejects_without_printing_effective_configuration() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Positive scanner",
+        json!({"scanner":{"scan_output":"positive_scan"}}),
+    );
+    let baseline = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
+    let rejected = f.process(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Positive scanner",
+        "--dry-run",
+    ]);
+    assert!(!rejected.status.success());
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        error.contains("scanner.scan_output=positive_scan")
+            && error.contains("requires the direct input > film > scan route"),
+        "{error}"
+    );
+    assert!(rejected.stdout.is_empty());
+    assert_eq!(
+        f.report(&["--preset", "Kodak Portra 400", "--dry-run"]),
+        baseline
+    );
+}
+
+#[test]
+fn json_section_export_reload_preserves_optional_grain_clearing_edit() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Clear amount",
+        json!({"film_render":{"grain":{"v2_amount":null}}}),
+    );
+    library_document(
+        &f,
+        "Amount twelve",
+        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
+    );
+    // `preset show` exports documents; selecting the exported path reloads them.
+    let exported = f.run(&["preset", "show", "Clear amount", "--format", "json"]);
+    assert!(exported.status.success());
+    let document: Value = serde_json::from_slice(&exported.stdout).unwrap();
+    assert_eq!(
+        document["parameters"]["film_render"]["grain"]
+            .as_object()
+            .unwrap()
+            .get("v2_amount"),
+        Some(&Value::Null)
+    );
+    let path = f.root.join("exported-clear-amount.json");
+    std::fs::write(&path, exported.stdout).unwrap();
+    let baseline = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Amount twelve",
+        "--dry-run",
+    ]);
+    assert_eq!(
+        baseline["parameters"]["film_render"]["grain"]["v2_amount"],
+        12.0
+    );
+    let cleared = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Amount twelve",
+        "--preset",
+        path.to_str().unwrap(),
+        "--dry-run",
+    ]);
+    assert_eq!(
+        cleared["parameters"]["film_render"]["grain"]["v2_amount"],
+        Value::Null
+    );
 }
