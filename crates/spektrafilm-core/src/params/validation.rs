@@ -115,6 +115,15 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             params.camera.color_filter
         ));
     }
+    if !matches!(
+        params.scanner.scan_output.as_str(),
+        "direct_scan" | "positive_scan"
+    ) {
+        return Err(format!(
+            "scanner.scan_output: unsupported mode {:?}; supported: direct_scan, positive_scan",
+            params.scanner.scan_output
+        ));
+    }
     RgbToRawMethod::parse(&params.settings.rgb_to_raw_method)?;
     if !crate::spectral_service::is_supported_illuminant(&params.enlarger.illuminant) {
         let supported = crate::spectral_service::available_illuminants().join(", ");

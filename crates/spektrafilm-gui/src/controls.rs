@@ -75,6 +75,15 @@ pub fn show(
         }
         if section == "Scanner" {
             egui::CollapsingHeader::new("Scanner").default_open(false).show(ui, |ui| {
+                if params.workflow.route == "input > film > scan" {
+                    flags.runtime_changed |= choice_tip(
+                        ui,
+                        "scan output",
+                        &mut params.scanner.scan_output,
+                        &["direct_scan", "positive_scan"],
+                        "direct_scan preserves the negative scanner capture; positive_scan interprets a direct negative-film scan as a positive image.",
+                    );
+                }
                 flags.runtime_changed |= numeric(ui, "lens blur", &mut params.scanner.lens_blur, 0.0, 1000000.0, 0.05, 2, "Sigma of gaussian filter in pixel for the scanner lens blur.");
                 flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable white point correction applied to the scanner output.");
                 flags.runtime_changed |= numeric(ui, "white level", &mut params.scanner.white_level, 0.0, 1.0, 0.005, 3, "Target white level applied when white correction is enabled.");

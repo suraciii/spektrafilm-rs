@@ -5,6 +5,7 @@ use spektrafilm_math::image::ImageBuf;
 #[derive(Debug, Clone, Copy)]
 enum ResidentFallbackReason {
     WorkflowRoute,
+    PositiveScanOutput,
     LangmuirChemistry,
     InputTransferDecoding,
     RequestedSpectralLut,
@@ -47,6 +48,9 @@ impl Pipeline {
             "input > film > scan" | "input > film > print > scan"
         ) {
             reasons.push(ResidentFallbackReason::WorkflowRoute);
+        }
+        if self.params.scanner.scan_output == "positive_scan" {
+            reasons.push(ResidentFallbackReason::PositiveScanOutput);
         }
         let dir = &self.params.film_render.dir_couplers;
         let coefficients = if self.film.is_positive() {
