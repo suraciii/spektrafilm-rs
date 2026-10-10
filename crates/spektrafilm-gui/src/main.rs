@@ -21,9 +21,15 @@ use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::presets::{LookPreset, builtin_look_presets, workflow_default};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
+use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
+use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};
 use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_gpu::telemetry::{
+    CollectionMode, ObservationContext, ObservationKind, ObservationScope, Purpose,
+};
 use spektrafilm_math::image::ImageBuf;
 mod controls;
+mod diagnostics;
 mod display;
 mod export;
 mod numeric;
@@ -302,6 +308,8 @@ struct App {
     /// Latest accepted floating output, shared with background viewing workers.
     output_image: Option<Arc<ImageBuf>>,
     output_metadata: Option<ImageMetadata>,
+    source_render: Option<SourceRender>,
+    diagnostics: diagnostics::Diagnostics,
     viewer: display::Viewer,
     gui_tab: GuiTab,
     output_color_space: String,
@@ -362,6 +370,7 @@ struct RenderJob {
     kind: RenderKind,
     animate: bool,
     backend_name: String,
+    collection_mode: CollectionMode,
 }
 
 impl RenderJob {
@@ -392,11 +401,14 @@ struct RenderRequest {
     display_enabled: bool,
     display_profile: Option<PathBuf>,
     ctx: egui::Context,
+    operation: Operation,
+    worker_wait: ObservationScope,
 }
 
 struct RenderWorker {
     state: Arc<(Mutex<Option<RenderRequest>>, Condvar)>,
-    rx: mpsc::Receiver<(RenderJob, Result<RenderResult, String>)>,
+    active: Arc<Mutex<Option<(u64, RenderKind, CollectionMode)>>>,
+    rx: mpsc::Receiver<(RenderJob, Operation, Result<RenderResult, String>)>,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     next_request_id: u64,
@@ -431,6 +443,8 @@ impl RenderWorker {
     fn new() -> Self {
         let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(Mutex::new(None));
+        let active_for_worker = active.clone();
         let (tx, rx) = mpsc::channel();
         let state_for_worker = state.clone();
         let shutdown_for_worker = shutdown.clone();
@@ -449,6 +463,10 @@ impl RenderWorker {
                         }
                         queued.take().expect("render request signaled")
                     };
+                    drop(request.worker_wait);
+                    let mut operation = request.operation;
+                    let attempt = operation.attempt(1);
+                    let observation = attempt.context().clone();
                     let job = RenderJob {
                         input_epoch: request.input_epoch,
                         parameter_revision: request.parameter_revision,
@@ -456,16 +474,32 @@ impl RenderWorker {
                         kind: request.kind,
                         animate: request.animate,
                         backend_name: request.backend_name.clone(),
+                        collection_mode: observation.mode(),
                     };
+                    *active_for_worker.lock() =
+                        Some((job.request_id, job.kind, job.collection_mode));
                     let ctx = request.ctx.clone();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let t_total = Instant::now();
                         let t_pipeline = Instant::now();
-                        let pipeline_template =
-                            build_runtime(&request.snapshot, request.kind == RenderKind::Preview)?;
+                        let pipeline_template = build_runtime_observed(
+                            &request.snapshot,
+                            request.kind == RenderKind::Preview,
+                            &observation,
+                        )?;
+                        if operation.enabled() {
+                            operation.set_render_configuration(
+                                pipeline_template.telemetry_configuration(),
+                            );
+                        }
                         let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
                         let runtime_params = pipeline_template.params();
                         let t_scale = Instant::now();
+                        let input_prepare = observation.scope(
+                            "input_prepare",
+                            ObservationKind::Phase,
+                            Purpose::Image,
+                        );
                         let working_image = if runtime_params.settings.preview_mode {
                             spektrafilm_core::params_builder::resize_for_preview(
                                 &request.image,
@@ -475,18 +509,41 @@ impl RenderWorker {
                             (*request.image).clone()
                         };
                         let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
+                        drop(input_prepare);
                         let t = Instant::now();
-                        let output =
-                            pipeline_template.process(working_image, request.backend.as_ref())?;
+                        let simulation =
+                            observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
+                        let processed = pipeline_template.process_observed(
+                            working_image,
+                            request.backend.as_ref(),
+                            simulation.context(),
+                        );
+                        let output = observed_result(
+                            simulation,
+                            processed,
+                            IssueCategory::Simulation,
+                            IssueBoundary::Simulation,
+                        )?;
                         let render_ms = t.elapsed().as_secs_f32() * 1000.0;
                         let t_preview = Instant::now();
-                        let (preview, display_status) = display::output_display_raster(
+                        let display_prepare = observation.scope(
+                            "display_prepare",
+                            ObservationKind::Phase,
+                            Purpose::Image,
+                        );
+                        let display_result = display::output_display_raster(
                             &output,
                             &runtime_params.io.output_color_space,
                             runtime_params.io.output_cctf_encoding,
                             request.display_enabled,
                             request.display_profile.as_deref(),
                             runtime_params.settings.preview_max_size as usize,
+                        );
+                        let (preview, display_status) = observed_result(
+                            display_prepare,
+                            display_result,
+                            IssueCategory::Backend,
+                            IssueBoundary::DisplayPrepare,
                         )?;
                         let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                         Ok(RenderResult {
@@ -508,12 +565,19 @@ impl RenderWorker {
                         })
                     }))
                     .unwrap_or_else(|panic| Err(panic_message(&panic)));
-                    let _ = tx.send((job, result));
+                    attempt.finish(if result.is_ok() {
+                        Outcome::Succeeded
+                    } else {
+                        Outcome::Failed
+                    });
+                    let _ = tx.send((job, operation, result));
+                    *active_for_worker.lock() = None;
                     ctx.request_repaint();
                 }
             });
         Self {
             state,
+            active,
             rx,
             shutdown,
             handle: Some(handle.expect("OS thread spawn")),
@@ -521,26 +585,34 @@ impl RenderWorker {
         }
     }
 
-    fn submit(&mut self, mut request: RenderRequest) -> u64 {
+    fn submit(&mut self, mut request: RenderRequest) -> (u64, Option<Operation>) {
         self.next_request_id = self.next_request_id.wrapping_add(1);
         request.request_id = self.next_request_id;
         let (lock, wake) = &*self.state;
-        *lock.lock() = Some(request);
+        let replaced = lock.lock().replace(request).map(|request| {
+            drop(request.worker_wait);
+            request.operation
+        });
         wake.notify_one();
-        self.next_request_id
+        (self.next_request_id, replaced)
     }
 
-    fn shutdown(&mut self) {
+    fn shutdown(&mut self) -> Option<Operation> {
+        let cancelled;
         {
             let (lock, wake) = &*self.state;
             let mut queued = lock.lock();
             self.shutdown.store(true, Ordering::SeqCst);
-            *queued = None;
+            cancelled = queued.take().map(|request| {
+                drop(request.worker_wait);
+                request.operation
+            });
             wake.notify_one();
         }
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+        cancelled
     }
 }
 
@@ -550,47 +622,77 @@ impl Drop for RenderWorker {
     }
 }
 
-fn build_runtime(snapshot: &RenderSnapshot, preview: bool) -> Result<Runtime, String> {
-    let mut params = snapshot.params.clone();
-    params.settings.preview_mode = preview;
-    let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-        .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
-    let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
-        .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
-    let photo = RuntimePhotoParams {
-        film,
-        print,
-        params,
-        data_dir: snapshot.data_dir.clone(),
-    };
-    let params = photo
-        .digested_params(DigestMode::PreserveUserEdits)
-        .map_err(|e| format!("parameter digest: {e}"))?;
-    let mut film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-        .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
-    let effective_print_name = if params.io.scan_film {
-        snapshot.film_name.as_str()
-    } else {
-        snapshot.print_name.as_str()
-    };
-    let mut print = profile::load_profile_by_name(&snapshot.data_dir, effective_print_name)
-        .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
-    for (profile, key) in [
-        (&mut film, "film_channel_swap"),
-        (&mut print, "print_channel_swap"),
-    ] {
-        if let Some(order) = snapshot.special[key].as_array() {
-            for row in &mut profile.data.channel_density {
-                if row.len() >= 3 {
-                    let original = [row[0], row[1], row[2]];
-                    for ch in 0..3 {
-                        row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
+fn build_runtime_observed(
+    snapshot: &RenderSnapshot,
+    preview: bool,
+    context: &ObservationContext,
+) -> Result<Runtime, String> {
+    let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
+    let result = (|| {
+        let mut params = snapshot.params.clone();
+        params.settings.preview_mode = preview;
+        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
+            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+        let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
+            .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
+        let photo = RuntimePhotoParams {
+            film,
+            print,
+            params,
+            data_dir: snapshot.data_dir.clone(),
+        };
+        let params = photo
+            .digested_params(DigestMode::PreserveUserEdits)
+            .map_err(|e| format!("parameter digest: {e}"))?;
+        let mut film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
+            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+        let effective_print_name = if params.io.scan_film {
+            snapshot.film_name.as_str()
+        } else {
+            snapshot.print_name.as_str()
+        };
+        let mut print = profile::load_profile_by_name(&snapshot.data_dir, effective_print_name)
+            .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
+        for (profile, key) in [
+            (&mut film, "film_channel_swap"),
+            (&mut print, "print_channel_swap"),
+        ] {
+            if let Some(order) = snapshot.special[key].as_array() {
+                for row in &mut profile.data.channel_density {
+                    if row.len() >= 3 {
+                        let original = [row[0], row[1], row[2]];
+                        for ch in 0..3 {
+                            row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
+                        }
                     }
                 }
             }
         }
-    }
-    Runtime::new(film, print, params, &snapshot.data_dir).map_err(|e| format!("runtime build: {e}"))
+        Runtime::new_observed(film, print, params, &snapshot.data_dir, prepare.context())
+            .map_err(|e| format!("runtime build: {e}"))
+    })();
+    observed_result(
+        prepare,
+        result,
+        IssueCategory::Configuration,
+        IssueBoundary::RuntimePrepare,
+    )
+}
+
+fn observed_result<T, E>(
+    scope: ObservationScope,
+    result: Result<T, E>,
+    category: IssueCategory,
+    boundary: IssueBoundary,
+) -> Result<T, E> {
+    let outcome = if result.is_ok() {
+        Outcome::Succeeded
+    } else {
+        scope.context().issue(category, boundary);
+        Outcome::Failed
+    };
+    scope.finish(outcome);
+    result
 }
 
 /// One in-flight export owning an immutable input, pipeline and option snapshot.
@@ -601,7 +703,9 @@ struct ExportJob {
     handle: Option<JoinHandle<()>>,
     cancel: Arc<AtomicBool>,
     started_at: Instant,
+    configuration: Option<Arc<Mutex<Option<spektrafilm_core::telemetry::RenderConfiguration>>>>,
     backend: ExportBackend,
+    operation: Operation,
 }
 
 struct ExportResult {
@@ -689,6 +793,8 @@ impl App {
             input_epoch: 0,
             output_image: None,
             output_metadata: None,
+            source_render: None,
+            diagnostics: diagnostics::Diagnostics::default(),
             viewer: display::Viewer::new(),
             gui_tab: GuiTab::default(),
             output_color_space: "sRGB".into(),
@@ -786,6 +892,33 @@ impl App {
                 .map(Path::new),
         );
         self.viewer.invalidate_display();
+    }
+
+    fn diagnostics_panel(&mut self, ui: &mut egui::Ui) {
+        let active = *self.render_worker.active.lock();
+        let render = active.map(|(_, kind, mode)| (kind.label(), mode));
+        let queued = self
+            .render_job
+            .as_ref()
+            .filter(|job| active.is_none_or(|(id, _, _)| id != job.request_id))
+            .map(|job| (job.kind.label(), job.collection_mode));
+        let export = self
+            .export_job
+            .as_ref()
+            .map(|job| ("Export", job.operation.mode()));
+        let save_report = self.diagnostics.show(ui, render, queued, export);
+        if save_report {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("JSON report", &["json"])
+                .set_file_name("spektrafilm-report.json")
+                .save_file()
+            {
+                self.status = match self.diagnostics.save_selected(&path) {
+                    Ok(()) => "Saved diagnostic report.".into(),
+                    Err(error) => format!("Diagnostic report save error: {error}"),
+                };
+            }
+        }
     }
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -1114,6 +1247,7 @@ impl App {
                 self.image_path = Some(path.to_path_buf());
                 self.output_image = None;
                 self.output_metadata = None;
+                self.source_render = None;
                 self.dirty = true;
             }
             Err(e) => {
@@ -1136,6 +1270,7 @@ impl App {
         self.full_scan_requested = false;
         self.output_image = None;
         self.output_metadata = None;
+        self.source_render = None;
         if let Some(image) = self.image.as_ref() {
             match display::input_display_raster(
                 image,
@@ -1182,6 +1317,16 @@ impl App {
             RenderKind::Preview
         };
         let input_epoch = self.input_epoch;
+        let mut operation = Operation::new(
+            match kind {
+                RenderKind::Preview => OperationKind::Preview,
+                RenderKind::Scan => OperationKind::Scan,
+            },
+            self.diagnostics.mode,
+        );
+        operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
+        operation.set_input_dimensions(image.width, image.height);
+        operation.set_backend_requested(diagnostics::preview_backend_requested());
         let backend_name = self.backend.name().to_owned();
         let mut params = match self
             .current_state()
@@ -1190,6 +1335,8 @@ impl App {
             Ok(params) => params,
             Err(error) => {
                 self.status = format!("{} state error: {error:#}", kind.label());
+                operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
+                self.diagnostics.finish(operation, Outcome::Failed);
                 return;
             }
         };
@@ -1220,8 +1367,13 @@ impl App {
                 .as_str()
                 .map(PathBuf::from),
             ctx: ctx.clone(),
+            worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
+            operation,
         };
-        let request_id = self.render_worker.submit(request);
+        let (request_id, replaced) = self.render_worker.submit(request);
+        if let Some(operation) = replaced {
+            self.diagnostics.finish(operation, Outcome::Superseded);
+        }
         self.render_job = Some(RenderJob {
             input_epoch,
             parameter_revision,
@@ -1229,13 +1381,14 @@ impl App {
             kind,
             animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
             backend_name,
+            collection_mode: self.diagnostics.mode,
         });
         self.full_scan_requested = false;
     }
 
     fn poll_render_job(&mut self, ctx: &egui::Context) {
         loop {
-            let (response_job, result) = match self.render_worker.rx.try_recv() {
+            let (response_job, operation, result) = match self.render_worker.rx.try_recv() {
                 Ok(response) => response,
                 Err(mpsc::TryRecvError::Empty) => return,
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -1256,6 +1409,7 @@ impl App {
                 {
                     self.render_job = None;
                 }
+                self.diagnostics.finish(operation, Outcome::Superseded);
                 continue;
             }
             self.render_job = None;
@@ -1263,6 +1417,21 @@ impl App {
             let backend_name = response_job.backend_name;
             match result {
                 Ok(r) => {
+                    let handoff = operation.scope(
+                        "presentation_handoff",
+                        ObservationKind::Phase,
+                        Purpose::Image,
+                    );
+                    self.source_render = Some(SourceRender::new(
+                        operation.id(),
+                        Some(response_job.input_epoch),
+                        Some(response_job.parameter_revision),
+                        r.output.width,
+                        r.output.height,
+                        response_job.collection_mode != CollectionMode::Off,
+                        diagnostics::color_space(&r.output_color_space),
+                        r.output_cctf_encoding,
+                    ));
                     let display_profile = self.gui_state.sections["rust"]["display_profile"]
                         .as_str()
                         .map(Path::new);
@@ -1312,10 +1481,13 @@ impl App {
                         r.display_max_size,
                     );
                     self.output_image = Some(output);
+                    drop(handoff);
+                    self.diagnostics.finish(operation, Outcome::Succeeded);
                 }
                 Err(msg) => {
                     eprintln!("[spektrafilm] render error: {msg}");
                     self.status = format!("Render error: {msg}");
+                    self.diagnostics.finish(operation, Outcome::Failed);
                 }
             }
         }
@@ -1346,11 +1518,20 @@ impl App {
         else {
             return;
         };
+        let mut operation = Operation::new(OperationKind::Save, self.diagnostics.mode);
+        if let Some(source) = self.source_render.clone() {
+            operation.set_source_render(source);
+        }
+        if let Some(source) = &self.source_render {
+            operation.set_working_dimensions(source.dimensions[0], source.dimensions[1]);
+        }
         self.remember_dialog("save_output", &path);
         let actual_format = match image_io::ImageFormat::detect(&path) {
             Ok(format) => format,
             Err(error) => {
                 self.status = format!("Save error: {error}");
+                operation.issue(IssueCategory::Writing, IssueBoundary::Operation);
+                self.diagnostics.finish(operation, Outcome::Failed);
                 return;
             }
         };
@@ -1365,6 +1546,27 @@ impl App {
         let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"]
             .as_bool()
             .unwrap_or(true);
+        let save_options = SaveOptions {
+            depth: match actual_format {
+                image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
+                image_io::ImageFormat::Tiff | image_io::ImageFormat::Exr => BitDepth::Sixteen,
+            },
+            color_space: destination,
+            cctf_encoding: encoded,
+            jpeg_quality: None,
+            jpeg_subsampling: None,
+            compression: None,
+        };
+        if operation.enabled() {
+            operation.set_saving_configuration(
+                spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
+                    actual_format,
+                    &save_options,
+                ),
+            );
+        }
+        let saving_convert =
+            operation.scope("saving_convert", ObservationKind::Phase, Purpose::Image);
         let converted = match image_io::convert_image(
             out,
             &self.output_color_space,
@@ -1375,25 +1577,30 @@ impl App {
             Ok(image) => image,
             Err(error) => {
                 self.status = format!("Save error: {error}");
+                saving_convert
+                    .context()
+                    .issue(IssueCategory::Writing, IssueBoundary::SavingConvert);
+                saving_convert.finish(Outcome::Failed);
+                self.diagnostics.finish(operation, Outcome::Failed);
                 return;
             }
         };
-        match image_io::save_rendered_output(
+        drop(saving_convert);
+        let file_write = operation.scope("file_write", ObservationKind::Phase, Purpose::Image);
+        let result = image_io::save_rendered_output_observed(
             &path,
             &converted,
-            SaveOptions {
-                depth: match actual_format {
-                    image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
-                    image_io::ImageFormat::Tiff | image_io::ImageFormat::Exr => BitDepth::Sixteen,
-                },
-                color_space: destination,
-                cctf_encoding: encoded,
-                jpeg_quality: None,
-                jpeg_subsampling: None,
-                compression: None,
-            },
+            save_options,
             self.output_metadata.as_ref(),
-        ) {
+            file_write.context(),
+        );
+        let result = observed_result(
+            file_write,
+            result,
+            IssueCategory::Writing,
+            IssueBoundary::FileWrite,
+        );
+        match result {
             Ok(report) => {
                 self.status = format!(
                     "Saved {} in {:.0} ms",
@@ -1406,17 +1613,19 @@ impl App {
                     self.status
                         .push_str(&format!(" — Metadata warning: {warning}"));
                 }
+                operation.set_published_dimensions(converted.width, converted.height);
+                self.diagnostics.finish(operation, Outcome::Succeeded);
             }
             Err(e) => {
                 self.status = format!("Save error: {e:#}");
+                self.diagnostics.finish(operation, Outcome::Failed);
             }
         }
     }
 
     /// Render an immutable snapshot of the loaded full input independently of Save.
     fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
-        if self.render_job.is_some() || self.export_job.is_some() || self.calibration_job.is_some()
-        {
+        if self.export_job.is_some() || self.calibration_job.is_some() {
             self.status = "Wait for the current operation before exporting.".into();
             return;
         }
@@ -1445,12 +1654,54 @@ impl App {
         else {
             return;
         };
+        let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
+        operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
+        operation.set_input_dimensions(image.width, image.height);
+        operation.set_backend_requested(match options.backend {
+            ExportBackend::Cpu => diagnostics::BackendRequested::Cpu,
+            ExportBackend::Gpu => diagnostics::BackendRequested::Wgpu,
+        });
+        if operation.enabled() {
+            let format = match options.format {
+                ExportFormat::Jpeg => image_io::ImageFormat::Jpeg,
+                ExportFormat::Png => image_io::ImageFormat::Png,
+                ExportFormat::Tiff => image_io::ImageFormat::Tiff,
+                ExportFormat::Exr => image_io::ImageFormat::Exr,
+            };
+            operation.set_saving_configuration(
+                spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
+                    format,
+                    &SaveOptions {
+                        depth: options.depth,
+                        color_space: &options.saving_color_space,
+                        cctf_encoding: options.saving_cctf_encoding,
+                        jpeg_quality: (options.format == ExportFormat::Jpeg)
+                            .then_some(options.jpeg_quality),
+                        jpeg_subsampling: (options.format == ExportFormat::Jpeg)
+                            .then_some(options.jpeg_subsampling),
+                        compression: matches!(
+                            options.format,
+                            ExportFormat::Tiff | ExportFormat::Exr
+                        )
+                        .then_some(
+                            if options.compression == ExportCompression::Zip {
+                                Compression::Zip
+                            } else {
+                                Compression::None
+                            },
+                        ),
+                    },
+                ),
+            );
+        }
         let out_path = options.format.output_path(&chosen_path);
         if out_path != chosen_path && out_path.exists() {
             self.status = format!(
                 "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
                 out_path.display()
             );
+            operation.issue(IssueCategory::Publication, IssueBoundary::Operation);
+            self.diagnostics.finish(operation, Outcome::Failed);
             return;
         }
         let params = match self
@@ -1460,6 +1711,8 @@ impl App {
             Ok(params) => params,
             Err(error) => {
                 self.status = format!("Export state error: {error:#}");
+                operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
+                self.diagnostics.finish(operation, Outcome::Failed);
                 return;
             }
         };
@@ -1480,42 +1733,89 @@ impl App {
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_worker = Arc::clone(&cancel);
         let started_at = Instant::now();
+        let configuration = operation.enabled().then(|| Arc::new(Mutex::new(None)));
+        let worker_configuration = configuration.clone();
+        let attempt = operation.attempt(1);
+        if operation.enabled() {
+            operation.set_saved_attempt(attempt.id());
+        }
+        let observation = attempt.context().clone();
+        let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
         let handle = std::thread::Builder::new()
             .name("spektrafilm-export".into())
             .spawn(move || {
+                drop(worker_wait);
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
                     || -> Result<ExportResult> {
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
-                        let pipeline =
-                            build_runtime(&snapshot, false).map_err(anyhow::Error::msg)?;
-                        if cancel_for_worker.load(Ordering::SeqCst) {
-                            anyhow::bail!("cancelled");
-                        }
-                        let backend: Arc<dyn ComputeBackend> = match export_backend {
-                            ExportBackend::Cpu => {
-                                Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend)
-                            }
-                            ExportBackend::Gpu if selected_backend.is_gpu() => selected_backend,
-                            ExportBackend::Gpu => Arc::new(
-                                spektrafilm_gpu::wgpu_backend::WgpuBackend::new().context(
-                                    "GPU export requested but no WGPU adapter is available",
-                                )?,
-                            ),
-                        };
-                        let output = pipeline
-                            .process((*image).clone(), backend.as_ref())
+                        let pipeline = build_runtime_observed(&snapshot, false, &observation)
                             .map_err(anyhow::Error::msg)?;
+                        if let Some(slot) = &worker_configuration {
+                            *slot.lock() = Some(pipeline.telemetry_configuration());
+                        }
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
+                        let backend_init = observation.scope(
+                            "backend_init",
+                            ObservationKind::Phase,
+                            Purpose::Image,
+                        );
+                        let backend_result: Result<Arc<dyn ComputeBackend>> = match export_backend {
+                            ExportBackend::Cpu => {
+                                Ok(Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend))
+                            }
+                            ExportBackend::Gpu if selected_backend.is_gpu() => Ok(selected_backend),
+                            ExportBackend::Gpu => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+                                .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
+                                .context("GPU export requested but no WGPU adapter is available"),
+                        };
+                        let backend = observed_result(
+                            backend_init,
+                            backend_result,
+                            IssueCategory::Backend,
+                            IssueBoundary::BackendInit,
+                        )?;
+                        let input_prepare = observation.scope(
+                            "input_prepare",
+                            ObservationKind::Phase,
+                            Purpose::Image,
+                        );
+                        let working_image = (*image).clone();
+                        drop(input_prepare);
+                        let simulation =
+                            observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
+                        let processed = pipeline
+                            .process_observed(working_image, backend.as_ref(), simulation.context())
+                            .map_err(anyhow::Error::msg);
+                        let output = observed_result(
+                            simulation,
+                            processed,
+                            IssueCategory::Simulation,
+                            IssueBoundary::Simulation,
+                        )?;
+                        if cancel_for_worker.load(Ordering::SeqCst) {
+                            anyhow::bail!("cancelled");
+                        }
+                        let saving_convert = observation.scope(
+                            "saving_convert",
+                            ObservationKind::Phase,
+                            Purpose::Image,
+                        );
                         let converted = image_io::convert_image(
                             &output,
                             &pipeline.params().io.output_color_space,
                             pipeline.params().io.output_cctf_encoding,
                             &options.saving_color_space,
                             options.saving_cctf_encoding,
+                        );
+                        let converted = observed_result(
+                            saving_convert,
+                            converted,
+                            IssueCategory::Writing,
+                            IssueBoundary::SavingConvert,
                         )?;
                         let nanos = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)?
@@ -1528,7 +1828,9 @@ impl App {
                             )),
                             Some(out_path.clone()),
                         );
-                        let report = image_io::save(
+                        let file_write =
+                            observation.scope("file_write", ObservationKind::Phase, Purpose::Image);
+                        let report = image_io::save_observed(
                             &staged.0,
                             &converted,
                             SaveOptions {
@@ -1552,6 +1854,13 @@ impl App {
                                 ),
                             },
                             metadata.as_ref(),
+                            file_write.context(),
+                        );
+                        let report = observed_result(
+                            file_write,
+                            report,
+                            IssueCategory::Writing,
+                            IssueBoundary::FileWrite,
                         )?;
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
@@ -1571,6 +1880,13 @@ impl App {
                     },
                 ))
                 .unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
+                attempt.finish(if res.is_ok() {
+                    Outcome::Succeeded
+                } else if cancel_for_worker.load(Ordering::SeqCst) {
+                    Outcome::Cancelled
+                } else {
+                    Outcome::Failed
+                });
                 let msg = res.map_err(|e| format!("{e:#}"));
                 let _ = tx.send(msg);
                 ctx_for_worker.request_repaint();
@@ -1583,6 +1899,8 @@ impl App {
             cancel,
             started_at,
             backend: export_backend,
+            operation,
+            configuration,
         });
     }
 
@@ -1619,37 +1937,80 @@ impl App {
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.status = "Export error: worker thread vanished".into();
-                self.export_job = None;
+                let mut job = self.export_job.take().expect("export job exists");
+                if let Some(handle) = job.handle.take() {
+                    let _ = handle.join();
+                }
+                if let Some(configuration) = job
+                    .configuration
+                    .as_ref()
+                    .and_then(|slot| slot.lock().take())
+                {
+                    job.operation.set_render_configuration(configuration);
+                }
+                job.operation
+                    .issue(IssueCategory::Backend, IssueBoundary::Operation);
+                self.diagnostics.finish(job.operation, Outcome::Failed);
                 return;
             }
         };
+        let mut job = self.export_job.take().expect("export job exists");
         if let Some(h) = job.handle.take() {
             let _ = h.join();
         }
         let cancelled = job.cancel.load(Ordering::SeqCst);
-        self.export_job = None;
+        let mut operation = job.operation;
+        if let Some(configuration) = job
+            .configuration
+            .as_ref()
+            .and_then(|slot| slot.lock().take())
+        {
+            operation.set_render_configuration(configuration);
+        }
+        let mut outcome = if cancelled {
+            Outcome::Cancelled
+        } else {
+            Outcome::Failed
+        };
         self.status = match msg {
             Ok(_) if cancelled => "Export cancelled.".into(),
-            Ok(result) => match result.staged.publish() {
-                Ok(()) => {
-                    let mut status = format!(
-                        "Exported ({}) {} · {} × {} in {:.1} s",
-                        result.backend_name,
-                        result.filename,
-                        result.size[0],
-                        result.size[1],
-                        result.elapsed
-                    );
-                    if let Some(warning) = result.metadata_warning {
-                        status.push_str(&format!(" — Metadata warning: {warning}"));
+            Ok(result) => {
+                let publication =
+                    operation.scope("publication", ObservationKind::Phase, Purpose::Image);
+                let published = result.staged.publish();
+                let published = observed_result(
+                    publication,
+                    published,
+                    IssueCategory::Publication,
+                    IssueBoundary::Publication,
+                );
+                match published {
+                    Ok(()) => {
+                        outcome = Outcome::Succeeded;
+                        operation.set_published_dimensions(result.size[0], result.size[1]);
+                        let mut status = format!(
+                            "Exported ({}) {} · {} × {} in {:.1} s",
+                            result.backend_name,
+                            result.filename,
+                            result.size[0],
+                            result.size[1],
+                            result.elapsed
+                        );
+                        if let Some(warning) = result.metadata_warning {
+                            status.push_str(&format!(" — Metadata warning: {warning}"));
+                        }
+                        status
                     }
-                    status
+                    Err(e) => format!("Export error: {e:#}"),
                 }
-                Err(e) => format!("Export error: {e:#}"),
-            },
-            Err(e) if e.contains("cancelled") => "Export cancelled.".into(),
+            }
+            Err(_) if cancelled => "Export cancelled.".into(),
             Err(e) => format!("Export error: {e}"),
         };
+        if cancelled {
+            operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
+        }
+        self.diagnostics.finish(operation, outcome);
     }
 
     fn start_calibration(&mut self, action: controls::CalibrationAction) {
@@ -1865,7 +2226,6 @@ impl App {
                     }
                 } else {
                     let enabled = self.image.is_some()
-                        && self.render_job.is_none()
                         && self.calibration_job.is_none()
                         && !self.export_dialog.is_open();
                     if ui.add_enabled(enabled, egui::Button::new("Export…"))
@@ -2002,6 +2362,7 @@ impl App {
                 }
             }
             GuiTab::Config => {
+                self.diagnostics_panel(ui);
                 ui.collapsing("GUI parameters", |ui| {
                     self.state_toolbar(ui);
                 });
@@ -2053,7 +2414,6 @@ impl eframe::App for App {
 
         if self.dirty
             && self.image.is_some()
-            && self.export_job.is_none()
             && self.calibration_job.is_none()
             && !self.export_dialog.is_open()
             && (self.gui_state.auto_preview() || self.force_preview)
@@ -2148,13 +2508,37 @@ impl eframe::App for App {
 
     /// Cancel pending export publication and drain its worker before exiting.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Some(job) = self.export_job.take() {
+        if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);
-            if let Some(h) = job.handle {
+            if let Some(h) = job.handle.take() {
                 let _ = h.join();
             }
+            if let Some(configuration) = job
+                .configuration
+                .as_ref()
+                .and_then(|slot| slot.lock().take())
+            {
+                job.operation.set_render_configuration(configuration);
+            }
+            let _ = job.rx.try_recv();
+            job.operation
+                .issue(IssueCategory::Cancelled, IssueBoundary::Operation);
+            self.diagnostics.finish(job.operation, Outcome::Cancelled);
         }
-        self.render_worker.shutdown();
+        if let Some(mut operation) = self.render_worker.shutdown() {
+            operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
+            self.diagnostics.finish(operation, Outcome::Cancelled);
+        }
+        while let Ok((_, mut operation, _)) = self.render_worker.rx.try_recv() {
+            operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
+            self.diagnostics.finish(operation, Outcome::Cancelled);
+        }
+        if let Some(mut job) = self.calibration_job.take() {
+            if let Some(handle) = job.handle.take() {
+                let _ = handle.join();
+            }
+        }
+        self.diagnostics.clear();
     }
 }
 
@@ -2317,4 +2701,87 @@ fn tag_metal_layer_srgb<H: raw_window_handle::HasWindowHandle>(h: &H) -> Result<
         tracing::info!("tagged CAMetalLayer.colorspace = sRGB");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod telemetry_lifecycle_tests {
+    use super::*;
+
+    fn job(request_id: u64) -> RenderJob {
+        RenderJob {
+            input_epoch: 2,
+            parameter_revision: 5,
+            request_id,
+            kind: RenderKind::Preview,
+            animate: false,
+            backend_name: "CPU".into(),
+            collection_mode: CollectionMode::Summary,
+        }
+    }
+
+    #[test]
+    fn acceptance_rejects_both_revision_changes_and_newer_requests() {
+        let old = job(1);
+        let latest = job(2);
+        assert!(!old.matches(Some(&latest), 2, 5));
+        assert!(!latest.matches(Some(&latest), 3, 5));
+        assert!(!latest.matches(Some(&latest), 2, 6));
+        assert!(latest.matches(Some(&latest), 2, 5));
+    }
+
+    #[test]
+    fn failed_write_keeps_partial_scope_and_failed_terminal_outcome() {
+        let operation = Operation::new(OperationKind::Save, CollectionMode::Summary);
+        let scope = operation.scope("file_write", ObservationKind::Phase, Purpose::Image);
+        let result: Result<(), &str> = observed_result(
+            scope,
+            Err("write failure"),
+            IssueCategory::Writing,
+            IssueBoundary::FileWrite,
+        );
+        assert!(result.is_err());
+        let report = operation.finish(Outcome::Failed).unwrap();
+        assert_eq!(report.operation.outcome, Outcome::Failed);
+        assert!(report.phases.iter().any(|phase| phase.name == "file_write"
+            && !phase.complete
+            && phase.outcome == Some(Outcome::Failed)));
+        assert!(
+            report
+                .diagnostic_issues
+                .iter()
+                .any(|issue| issue.category == IssueCategory::Writing
+                    && issue.boundary == IssueBoundary::FileWrite)
+        );
+    }
+
+    #[test]
+    fn concurrent_contexts_do_not_share_observations() {
+        let preview = Operation::new(OperationKind::Preview, CollectionMode::Summary);
+        let export = Operation::new(OperationKind::Export, CollectionMode::Summary);
+        let preview_context = preview.context();
+        let export_context = export.context();
+        let handle = std::thread::spawn(move || {
+            let phase = export_context.scope("file_write", ObservationKind::Phase, Purpose::Image);
+            phase.finish(Outcome::Succeeded);
+        });
+        let phase =
+            preview_context.scope("display_prepare", ObservationKind::Phase, Purpose::Image);
+        phase.finish(Outcome::Succeeded);
+        handle.join().unwrap();
+        let preview = preview.finish(Outcome::Superseded).unwrap();
+        let export = export.finish(Outcome::Cancelled).unwrap();
+        assert!(
+            preview
+                .phases
+                .iter()
+                .all(|phase| phase.name != "file_write")
+        );
+        assert!(
+            export
+                .phases
+                .iter()
+                .all(|phase| phase.name != "display_prepare")
+        );
+        assert_ne!(preview.operation.id, export.operation.id);
+    }
 }

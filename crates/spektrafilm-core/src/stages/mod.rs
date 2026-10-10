@@ -7,6 +7,65 @@ pub mod scanning;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::from_f64;
 
+/// Keep a stage's backend view and observation lifetime together.
+pub(crate) struct StageObservation<'a> {
+    bound: Option<Box<dyn spektrafilm_gpu::ComputeBackend + 'a>>,
+    scope: spektrafilm_gpu::telemetry::ObservationScope,
+}
+
+impl<'a> StageObservation<'a> {
+    pub(crate) fn new(
+        backend: &'a dyn spektrafilm_gpu::ComputeBackend,
+        name: &'static str,
+    ) -> Self {
+        let Some(context) = backend
+            .observation_context()
+            .filter(|context| context.enabled())
+        else {
+            return Self {
+                bound: None,
+                scope: Default::default(),
+            };
+        };
+        let scope = context.scope(
+            name,
+            spektrafilm_gpu::telemetry::ObservationKind::Stage,
+            context.purpose(),
+        );
+        let bound = Some(spektrafilm_gpu::bind_backend(
+            backend,
+            scope.context().clone(),
+        ));
+        Self { bound, scope }
+    }
+
+    pub(crate) fn cpu(
+        backend: &'a dyn spektrafilm_gpu::ComputeBackend,
+        name: &'static str,
+        reason: spektrafilm_gpu::telemetry::CpuReason,
+    ) -> Self {
+        let stage = Self::new(backend, name);
+        if stage.scope.context().enabled() {
+            stage
+                .scope
+                .context()
+                .record_executor(spektrafilm_gpu::telemetry::Executor::Cpu, Some(reason));
+        }
+        stage
+    }
+
+    pub(crate) fn backend(
+        &self,
+        original: &'a dyn spektrafilm_gpu::ComputeBackend,
+    ) -> &dyn spektrafilm_gpu::ComputeBackend {
+        self.bound.as_deref().unwrap_or(original)
+    }
+
+    pub(crate) fn set_complete(&mut self, complete: bool) {
+        self.scope.set_complete(complete);
+    }
+}
+
 /// Build a `steps × steps² × 3` ImageBuf holding the LUT-input cmy
 /// grid. Layout mirrors Python's `_create_lut_3d`:
 ///

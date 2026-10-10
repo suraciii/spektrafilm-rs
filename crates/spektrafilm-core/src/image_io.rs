@@ -1,5 +1,8 @@
 //! Shared prepared-image I/O. Loading and writing retain sample interpretation;
 //! saving-space conversion is an explicit operation separate from simulation.
+use spektrafilm_gpu::telemetry::{
+    IssueBoundary, IssueCategory, ObservationContext, ObservationKind, Purpose,
+};
 use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f64, to_f64},
@@ -268,7 +271,25 @@ pub fn save(
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
 ) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, false)
+    save_inner(path, image, options, metadata, false, None)
+}
+
+/// Write pixels with metadata observations attributed to the caller's file-write phase.
+pub fn save_observed(
+    path: &Path,
+    image: &ImageBuf,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    context: &ObservationContext,
+) -> Result<SaveReport, ImageIoError> {
+    save_inner(
+        path,
+        image,
+        options,
+        metadata,
+        false,
+        context.enabled().then_some(context),
+    )
 }
 
 /// Save an existing GUI output with the upstream extension and color semantics.
@@ -280,7 +301,24 @@ pub fn save_rendered_output(
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
 ) -> Result<SaveReport, ImageIoError> {
-    save_inner(path, image, options, metadata, true)
+    save_inner(path, image, options, metadata, true, None)
+}
+
+pub fn save_rendered_output_observed(
+    path: &Path,
+    image: &ImageBuf,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    context: &ObservationContext,
+) -> Result<SaveReport, ImageIoError> {
+    save_inner(
+        path,
+        image,
+        options,
+        metadata,
+        true,
+        context.enabled().then_some(context),
+    )
 }
 
 /// Compatibility helper for callers that need an explicit JPEG quality.
@@ -292,7 +330,7 @@ pub fn save_jpeg_quality(
     quality: u8,
 ) -> Result<SaveReport, ImageIoError> {
     options.jpeg_quality = Some(quality);
-    save_inner(path, image, options, metadata, false)
+    save_inner(path, image, options, metadata, false, None)
 }
 
 fn save_inner(
@@ -301,6 +339,7 @@ fn save_inner(
     options: SaveOptions<'_>,
     metadata: Option<&ImageMetadata>,
     rendered_output: bool,
+    observation: Option<&ObservationContext>,
 ) -> Result<SaveReport, ImageIoError> {
     let format = ImageFormat::detect(path)?;
     let format_name = match format {
@@ -428,6 +467,8 @@ fn save_inner(
     }
     let mut report = SaveReport::default();
     if format != ImageFormat::Exr {
+        let metadata_scope = observation
+            .map(|context| context.scope("metadata", ObservationKind::Phase, Purpose::Image));
         let source = metadata.map_or(std::ptr::null(), |m| m.0.0.cast_const());
         if unsafe {
             sf_metadata_write(
@@ -442,7 +483,11 @@ fn save_inner(
         } == 0
         {
             report.metadata_warning = Some(take_error(error));
+            if let Some(context) = observation {
+                context.issue(IssueCategory::MetadataWarning, IssueBoundary::Metadata);
+            }
         }
+        drop(metadata_scope);
     }
     Ok(report)
 }

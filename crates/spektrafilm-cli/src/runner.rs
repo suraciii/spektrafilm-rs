@@ -10,22 +10,44 @@ use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, RuntimePhotoParams};
 
 use crate::contract;
+use crate::telemetry;
+use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory, OperationKind};
 
 pub(super) fn cmd_render(
     input: &Path,
     recipe_path: &Path,
     output: &Path,
     data_dir: &Path,
+    diagnostics: Option<&Path>,
+    gpu_timings: bool,
 ) -> Result<()> {
-    if output.exists() {
-        bail!("refusing to replace existing output {}", output.display());
-    }
-    if !input.is_file() {
-        bail!("input is not a regular file: {}", input.display());
-    }
-    let recipe = contract::read_recipe(recipe_path)?;
-    let facts = render_recipe(input, &recipe, output, data_dir)?;
-    println!("{}", serde_json::to_string_pretty(&facts)?);
+    let facts = telemetry::run(
+        OperationKind::Render,
+        diagnostics,
+        gpu_timings,
+        &[input, recipe_path, output],
+        telemetry::requested_backend(None),
+        |invocation| {
+            if output.exists() {
+                bail!("refusing to replace existing output {}", output.display());
+            }
+            invocation.boundary(IssueCategory::Input, IssueBoundary::InputLoad);
+            if !input.is_file() {
+                bail!("input is not a regular file: {}", input.display());
+            }
+            invocation.boundary(IssueCategory::Configuration, IssueBoundary::Operation);
+            let recipe = contract::read_recipe(recipe_path)?;
+            let facts = render_recipe(input, &recipe, output, data_dir, invocation)?;
+            invocation.phase(
+                "result_prepare",
+                IssueCategory::Publication,
+                IssueBoundary::ResultPrepare,
+                &invocation.operation.context(),
+                |_| Ok(serde_json::to_string_pretty(&facts)?),
+            )
+        },
+    )?;
+    println!("{facts}");
     Ok(())
 }
 
@@ -34,7 +56,10 @@ fn render_recipe(
     recipe: &contract::RenderRecipe,
     output: &Path,
     data_dir: &Path,
+    invocation: &mut telemetry::Invocation,
 ) -> Result<Value> {
+    let context = invocation.operation.context();
+    invocation.boundary(IssueCategory::Configuration, IssueBoundary::Operation);
     contract::validate_output(&recipe.output)?;
     contract::validate_output_path(output, &recipe.output)?;
     contract::validate_input_path(input)?;
@@ -53,6 +78,7 @@ fn render_recipe(
     params.io.output_cctf_encoding = true;
     params.io.scan_film = false;
     params.validate_color().map_err(anyhow::Error::msg)?;
+    invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
     let film = profile::load_profile_by_name(data_dir, &recipe.film_profile)
         .with_context(|| format!("loading film profile {}", recipe.film_profile))?;
     let print_name = recipe
@@ -68,25 +94,87 @@ fn render_recipe(
         params,
         data_dir: data_dir.to_owned(),
     };
-    let runtime = photo
-        .into_runtime(DigestMode::ApplyStockSpecifics)
-        .map_err(anyhow::Error::msg)
-        .context("building spektrafilm-rs spectral runtime")?;
+    let runtime = invocation.phase(
+        "runtime_prepare",
+        IssueCategory::Configuration,
+        IssueBoundary::RuntimePrepare,
+        &context,
+        |prepare_context| {
+            photo
+                .into_runtime_observed(DigestMode::ApplyStockSpecifics, prepare_context)
+                .map_err(anyhow::Error::msg)
+                .context("building spektrafilm-rs spectral runtime")
+        },
+    )?;
+    if context.enabled() {
+        invocation
+            .operation
+            .set_render_configuration(runtime.telemetry_configuration());
+    }
     let params = runtime.params();
-    let loaded = image_io::load(input)
-        .with_context(|| format!("loading staged input {}", input.display()))?;
-    contract::validate_input_dimensions(loaded.image.width, loaded.image.height)?;
+    let loaded = invocation.phase(
+        "input_load",
+        IssueCategory::Input,
+        IssueBoundary::InputLoad,
+        &context,
+        |_| {
+            let loaded = image_io::load(input)
+                .with_context(|| format!("loading staged input {}", input.display()))?;
+            contract::validate_input_dimensions(loaded.image.width, loaded.image.height)?;
+            Ok(loaded)
+        },
+    )?;
+    invocation
+        .operation
+        .set_input_dimensions(loaded.image.width as u32, loaded.image.height as u32);
     let input_size = [loaded.image.width, loaded.image.height];
-    let image = if recipe.output.format == "png" {
-        resize_for_preview(&loaded.image, params.settings.preview_max_size)
+    let image = invocation.phase(
+        "input_prepare",
+        IssueCategory::Input,
+        IssueBoundary::InputPrepare,
+        &context,
+        |_| {
+            let image = if recipe.output.format == "png" {
+                resize_for_preview(&loaded.image, params.settings.preview_max_size)
+            } else {
+                loaded.image
+            };
+            Ok(image)
+        },
+    )?;
+    let backend = invocation.phase(
+        "backend_init",
+        IssueCategory::Backend,
+        IssueBoundary::BackendInit,
+        &context,
+        |backend_context| {
+            let backend = spektrafilm_gpu::select_backend();
+            telemetry::observe_backend(backend.as_ref(), backend_context);
+            Ok(backend)
+        },
+    )?;
+    let attempt = invocation.operation.attempt(1);
+    let attempt_id = attempt.context().id();
+    let result = invocation.phase(
+        "simulation",
+        IssueCategory::Simulation,
+        IssueBoundary::Simulation,
+        attempt.context(),
+        |simulation_context| {
+            runtime
+                .process_observed(image, backend.as_ref(), simulation_context)
+                .map_err(anyhow::Error::msg)
+                .context("running spektrafilm-rs runtime")
+        },
+    );
+    attempt.finish(if result.is_ok() {
+        spektrafilm_core::telemetry::Outcome::Succeeded
     } else {
-        loaded.image
-    };
-    let backend = spektrafilm_gpu::select_backend();
-    let result = runtime
-        .process(image, backend.as_ref())
-        .map_err(anyhow::Error::msg)
-        .context("running spektrafilm-rs runtime")?;
+        spektrafilm_core::telemetry::Outcome::Failed
+    });
+    let result = result?;
+    invocation.operation.set_saved_attempt(attempt_id);
+    invocation.boundary(IssueCategory::Writing, IssueBoundary::FileWrite);
     let parent = output
         .parent()
         .ok_or_else(|| anyhow::anyhow!("output has no parent directory"))?;
@@ -108,46 +196,89 @@ fn render_recipe(
         bail!("temporary output already exists: {}", temporary.display());
     }
     let jpeg_output = recipe.output.format == "jpeg";
-    if let Err(error) = image_io::save(
-        &temporary,
-        &result,
-        SaveOptions {
-            depth: BitDepth::Eight,
-            color_space: "sRGB",
-            cctf_encoding: true,
-            jpeg_quality: jpeg_output.then_some(contract::FINISHED_JPEG_QUALITY),
-            jpeg_subsampling: jpeg_output
-                .then_some(spektrafilm_core::image_io::JpegSubsampling::Yuv444),
-            compression: None,
+    let options = SaveOptions {
+        depth: BitDepth::Eight,
+        color_space: "sRGB",
+        cctf_encoding: true,
+        jpeg_quality: jpeg_output.then_some(contract::FINISHED_JPEG_QUALITY),
+        jpeg_subsampling: jpeg_output
+            .then_some(spektrafilm_core::image_io::JpegSubsampling::Yuv444),
+        compression: None,
+    };
+    let format = image_io::ImageFormat::detect(output)?;
+    invocation.operation.set_saving_configuration(
+        spektrafilm_core::telemetry::SavingConfiguration::from_save_options(format, &options),
+    );
+    let write_result = invocation.phase(
+        "file_write",
+        IssueCategory::Writing,
+        IssueBoundary::FileWrite,
+        &context,
+        |write_context| {
+            image_io::save_observed(
+                &temporary,
+                &result,
+                options,
+                loaded.metadata.as_ref(),
+                write_context,
+            )
+            .map_err(anyhow::Error::from)
         },
-        loaded.metadata.as_ref(),
-    ) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error).context("writing spektrafilm-rs output");
+    );
+    match write_result {
+        Ok(report) => {
+            if let Some(warning) = report.metadata_warning {
+                eprintln!("Warning: {warning}");
+            }
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(error).context("writing spektrafilm-rs output");
+        }
     }
-    if let Err(error) = fs::rename(&temporary, output) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error).context("committing spektrafilm-rs output");
-    }
-    let bytes = fs::read(output)?;
-    Ok(json!({
-        "implementation": contract::IMPLEMENTATION,
-        "adapterVersion": contract::ADAPTER_VERSION,
-        "parameterSchemaVersion": contract::PARAMETER_SCHEMA_VERSION,
-        "parameterDigest": contract::parameter_digest(&recipe.parameters),
-        "input": {"path": input, "width": input_size[0], "height": input_size[1]},
-        "output": {
-            "path": output,
-            "format": recipe.output.format,
-            "width": result.width,
-            "height": result.height,
-            "size": bytes.len(),
-            "sha256": format!("{:x}", Sha256::digest(&bytes)),
+    invocation.phase(
+        "publication",
+        IssueCategory::Publication,
+        IssueBoundary::Publication,
+        &context,
+        |_| {
+            if let Err(error) = fs::rename(&temporary, output) {
+                let _ = fs::remove_file(&temporary);
+                return Err(error).context("committing spektrafilm-rs output");
+            }
+            Ok(())
         },
-        "seed": recipe.seed,
-        "resource": {"backend": backend.name()},
-        "terminalOutcome": "succeeded",
-    }))
+    )?;
+    invocation
+        .operation
+        .set_published_dimensions(result.width as u32, result.height as u32);
+    invocation.phase(
+        "result_prepare",
+        IssueCategory::Publication,
+        IssueBoundary::ResultPrepare,
+        &context,
+        |_| {
+            let bytes = fs::read(output)?;
+            Ok(json!({
+                "implementation": contract::IMPLEMENTATION,
+                "adapterVersion": contract::ADAPTER_VERSION,
+                "parameterSchemaVersion": contract::PARAMETER_SCHEMA_VERSION,
+                "parameterDigest": contract::parameter_digest(&recipe.parameters),
+                "input": {"path": input, "width": input_size[0], "height": input_size[1]},
+                "output": {
+                    "path": output,
+                    "format": recipe.output.format,
+                    "width": result.width,
+                    "height": result.height,
+                    "size": bytes.len(),
+                    "sha256": format!("{:x}", Sha256::digest(&bytes)),
+                },
+                "seed": recipe.seed,
+                "resource": {"backend": backend.name()},
+                "terminalOutcome": "succeeded",
+            }))
+        },
+    )
 }
 
 pub(super) fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
@@ -255,7 +386,14 @@ fn run_parity_case(
     if output.exists() {
         bail!("parity output already exists: {}", output.display());
     }
-    let render = render_recipe(&input, &recipe_value, &output, data_dir);
+    let render = telemetry::run(
+        OperationKind::Render,
+        None,
+        false,
+        &[],
+        telemetry::requested_backend(None),
+        |invocation| render_recipe(&input, &recipe_value, &output, data_dir, invocation),
+    );
     let result = match render {
         Ok(facts) => {
             let reference_path = entry

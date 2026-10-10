@@ -19,7 +19,7 @@ pub(super) struct UnsharpState {
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) fn build_unsharp_state(
-    device: &wgpu::Device,
+    device: &ObservedDevice,
     up: &crate::UnsharpGpuParams,
     width: u32,
     height: u32,
@@ -27,7 +27,6 @@ pub(super) fn build_unsharp_state(
     buf_b: &wgpu::Buffer,
     backend: &WgpuBackend,
 ) -> UnsharpState {
-    use wgpu::util::DeviceExt;
     let n_pixels = (width as usize) * (height as usize);
     let img_bytes = (n_pixels * 3 * 4) as u64;
 
@@ -236,7 +235,7 @@ pub(super) fn build_unsharp_state(
 impl UnsharpState {
     pub(super) fn encode_passes(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut ObservedEncoder,
         n_pixels: u32,
         wg_xy: (u32, u32),
         buf_b: &wgpu::Buffer,

@@ -14,6 +14,7 @@ spektrafilm-math.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+serde.workspace = true
 wgpu = { workspace = true, optional = true, features = ["wgsl"] }
 bytemuck = { version = "1.25", features = ["derive"] }
 pollster = "0.4"

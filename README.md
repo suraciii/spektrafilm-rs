@@ -130,6 +130,7 @@ executable.
 - **Viewer** — switch Input / Output / Paper back; choose nearest, linear, cubic, spline16, spline36, Lanczos or Blackman sampling for Output. Input retains the upstream nearest interpolation; Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail; the preview long-edge limit controls Preview rendering, not Scan's available detail. The canvas is the pinned 18% gray (`#767676`) or black, with normalized white padding and the upstream paper watermark. Reveal and crossfade affect the disposable viewing frame; hovering reports the original floating RGB pixel.
 - **Display transform / Display ICC…** — when enabled, every platform converts output-space pixels to encoded sRGB for the disposable viewer raster; Save and Export use their respective saving color and encoding settings. Windows discovers the primary display ICC profile, and an explicitly selected ICC profile is applied on every platform that supports LittleCMS. On macOS the Metal surface is tagged sRGB; without an ICC profile the encoded sRGB preview is used directly.
 - **Launch state** — `spektrafilm-gui IMAGE --state GUI_STATE.json` loads a deterministic state for repeatable sessions. `SPEKTRAFILM_GUI_STATE` provides the same startup override.
+- **Diagnostics** — CONFIG selects Off, Summary, or GPU timing for subsequent operations. Changing the mode leaves running operations on their captured mode. The session keeps the latest 20 collected operation reports. Select a report to inspect its phases, stages, GPU work, timing availability, and outcome. **Save report** writes local JSON without rendering. Save reports identify the retained render that supplied their pixels, including renders made with collection off or removed from history.
 
 ### CLI
 
@@ -162,6 +163,14 @@ executable.
 
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. `--format` must match the output extension when supplied; otherwise the extension selects JPEG/PNG/TIFF/EXR. Bit depth defaults to 8 for JPEG/PNG and 16 for TIFF/EXR; JPEG/PNG require 8-bit, EXR requires 16- or 32-bit. JPEG defaults to quality 95 and 4:4:4; `--compression zip|none` applies to TIFF/EXR, while JPEG/PNG reject compression options. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
+`process` and `render` accept `--diagnostics REPORT.json`. Add `--gpu-timings` to collect compute-pass timestamps when the adapter supports them. The report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons. Diagnostics do not change image parameters or machine-readable render output. Report-write errors are reported separately from the image result. CLI reports never replace an existing file. Report paths must not alias input, output, or configuration files.
+
+```bash
+./target/release/spektrafilm process input.tif -o out.png \
+    --backend gpu --diagnostics report.json --gpu-timings --data-dir data
+```
+
+See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
 `process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=JSON_VALUE` assignments in order. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
 
 ```bash

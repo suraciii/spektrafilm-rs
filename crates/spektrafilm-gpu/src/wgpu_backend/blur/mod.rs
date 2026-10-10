@@ -25,7 +25,7 @@ pub(super) struct SimpleBlurState {
 
 #[cfg(feature = "wgpu-backend")]
 pub(super) fn build_simple_blur_state(
-    device: &wgpu::Device,
+    device: &ObservedDevice,
     sigma: f32,
     width: u32,
     height: u32,
@@ -34,7 +34,6 @@ pub(super) fn build_simple_blur_state(
     label: &str,
     backend: &WgpuBackend,
 ) -> SimpleBlurState {
-    use wgpu::util::DeviceExt;
     let n_bytes = (width as u64) * (height as u64) * 3 * 4;
     let dst = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("{label}_blur_dst")),
@@ -150,7 +149,7 @@ pub(super) fn build_simple_blur_state(
 impl SimpleBlurState {
     pub(super) fn encode_passes(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut ObservedEncoder,
         wg_xy: (u32, u32),
         dst_main: &wgpu::Buffer,
     ) {
@@ -177,10 +176,16 @@ impl SimpleBlurState {
 }
 impl WgpuBackend {
     /// GPU separable Gaussian blur via two FIR passes (horizontal then vertical).
+    pub fn gaussian_blur_gpu(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
+        if !self.device.context.enabled() || sigma <= 0.0 || !crate::gpu_blur_supported(sigma) {
+            return self.gaussian_blur_gpu_inner(img, sigma);
+        }
+        let (backend, _batch) = self.observed_batch("gaussian_blur");
+        backend.gaussian_blur_gpu_inner(img, sigma)
+    }
     /// Kernel weights are computed on CPU and uploaded as a storage buffer.
     /// Two ping-pong image buffers minimize allocations.
-    pub fn gaussian_blur_gpu(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
-        use wgpu::util::DeviceExt;
+    fn gaussian_blur_gpu_inner(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
         if sigma <= 0.0 || !crate::gpu_blur_supported(sigma) {
             tracing::info!(target: "spektrafilm_gpu::wgpu_backend", sigma, execution = "cpu", "using faithful CPU Gaussian blur");
             return cpu_backend::CpuBackend.gaussian_blur(img, sigma);
@@ -345,6 +350,7 @@ impl WgpuBackend {
         });
         self.device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
+        self.device.materialized(img_bytes as u64);
         let data = slice.get_mapped_range();
         let out_f32: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
@@ -353,14 +359,24 @@ impl WgpuBackend {
         ImageBuf::from_data(w, h, f32_to_scalars(out_f32))
     }
 
+    pub fn gaussian_blur_multi_gpu(&self, img: &ImageBuf, sigmas: &[f32]) -> Vec<ImageBuf> {
+        if !self.device.context.enabled()
+            || sigmas
+                .iter()
+                .any(|&s| s <= 0.0 || !crate::gpu_blur_supported(s))
+        {
+            return self.gaussian_blur_multi_gpu_inner(img, sigmas);
+        }
+        let (backend, _batch) = self.observed_batch("gaussian_blur_multi");
+        backend.gaussian_blur_multi_gpu_inner(img, sigmas)
+    }
     /// Blur `img` with every sigma in `sigmas`, all within a single command
     /// buffer. One upload, N pairs of H/V dispatches, one submit, one
     /// readback that fans out into N output `ImageBuf`s.
     ///
     /// Used by halation (multi-bounce blurs of the same source) and any
     /// caller that needs the same input at several radii.
-    pub fn gaussian_blur_multi_gpu(&self, img: &ImageBuf, sigmas: &[f32]) -> Vec<ImageBuf> {
-        use wgpu::util::DeviceExt;
+    fn gaussian_blur_multi_gpu_inner(&self, img: &ImageBuf, sigmas: &[f32]) -> Vec<ImageBuf> {
         assert!(!sigmas.is_empty(), "gaussian_blur_multi_gpu: empty sigmas");
         if sigmas
             .iter()
@@ -577,6 +593,7 @@ impl WgpuBackend {
         for rb in &readbacks {
             let slice = rb.slice(..);
             let data = slice.get_mapped_range();
+            self.device.materialized(img_bytes as u64);
             let chunk: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
             out_imgs.push(ImageBuf::from_data(w, h, f32_to_scalars(chunk)));
             drop(data);

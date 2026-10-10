@@ -3,6 +3,7 @@ use crate::params::{RuntimeParams, Tap};
 use crate::pipeline::Pipeline;
 use crate::profile;
 use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_gpu::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -89,6 +90,32 @@ impl RuntimePhotoParams {
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
         Runtime::new(self.film, self.print, params, &self.data_dir)
     }
+
+    /// Build the runtime under the caller-owned preparation observation.
+    pub fn into_runtime_observed(
+        self,
+        mode: DigestMode,
+        context: &ObservationContext,
+    ) -> Result<Runtime, String> {
+        if !context.enabled() {
+            return self.into_runtime(mode);
+        }
+        let mut preparation = context.scope(
+            "spectral_prepare",
+            ObservationKind::Stage,
+            Purpose::Calibration,
+        );
+        preparation.context().record_executor(
+            spektrafilm_gpu::telemetry::Executor::Cpu,
+            Some(spektrafilm_gpu::telemetry::CpuReason::BackendDefault),
+        );
+        let _span = preparation.context().span().map(|span| span.enter());
+        let result = self.into_runtime(mode);
+        drop(_span);
+        preparation.set_complete(result.is_ok());
+        drop(preparation);
+        result
+    }
 }
 
 #[derive(Clone)]
@@ -113,6 +140,34 @@ impl Runtime {
             timings: Arc::new(Mutex::new(BTreeMap::new())),
             last_elapsed_seconds: Arc::new(Mutex::new(None)),
         })
+    }
+
+    /// Preserve construction semantics while attributing preparation to this operation.
+    pub fn new_observed(
+        film: profile::Profile,
+        print: profile::Profile,
+        params: RuntimeParams,
+        data_dir: &Path,
+        context: &ObservationContext,
+    ) -> Result<Self, String> {
+        if !context.enabled() {
+            return Self::new(film, print, params, data_dir);
+        }
+        let mut preparation = context.scope(
+            "spectral_prepare",
+            ObservationKind::Stage,
+            Purpose::Calibration,
+        );
+        preparation.context().record_executor(
+            spektrafilm_gpu::telemetry::Executor::Cpu,
+            Some(spektrafilm_gpu::telemetry::CpuReason::BackendDefault),
+        );
+        let _span = preparation.context().span().map(|span| span.enter());
+        let result = Self::new(film, print, params, data_dir);
+        drop(_span);
+        preparation.set_complete(result.is_ok());
+        drop(preparation);
+        result
     }
 
     pub fn from_stocks(
@@ -148,6 +203,48 @@ impl Runtime {
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
         self.process_with_taps(image, backend, None, None)
+    }
+
+    /// Process with an explicit operation context, independent of last-call timings.
+    pub fn process_observed(
+        &self,
+        image: ImageBuf,
+        backend: &dyn ComputeBackend,
+        context: &ObservationContext,
+    ) -> Result<ImageBuf, String> {
+        self.process_with_taps_observed(image, backend, None, None, context)
+    }
+
+    pub fn process_with_taps_observed(
+        &self,
+        image: ImageBuf,
+        backend: &dyn ComputeBackend,
+        inject: Option<Tap>,
+        collect: Option<Tap>,
+        context: &ObservationContext,
+    ) -> Result<ImageBuf, String> {
+        if !context.enabled() {
+            return self.process_with_taps(image, backend, inject, collect);
+        }
+        let _span = context.span().map(|span| span.enter());
+        let bound = spektrafilm_gpu::bind_backend(backend, context.clone());
+        self.process_with_taps(image, bound.as_ref(), inject, collect)
+    }
+
+    /// Keep the borrowed resident route available to operation-owned GUI work.
+    pub fn process_resident_borrowed_observed(
+        &self,
+        image: &ImageBuf,
+        backend: &dyn ComputeBackend,
+        context: &ObservationContext,
+    ) -> Result<Option<ImageBuf>, String> {
+        if !context.enabled() {
+            return self.pipeline.process_resident_borrowed(image, backend);
+        }
+        let _span = context.span().map(|span| span.enter());
+        let bound = spektrafilm_gpu::bind_backend(backend, context.clone());
+        self.pipeline
+            .process_resident_borrowed(image, bound.as_ref())
     }
 
     pub fn process_with_taps(
@@ -246,6 +343,14 @@ impl Runtime {
 
     pub fn params(&self) -> &RuntimeParams {
         &self.pipeline.params
+    }
+
+    pub fn telemetry_configuration(&self) -> crate::telemetry::RenderConfiguration {
+        crate::telemetry::RenderConfiguration::from_runtime(
+            &self.pipeline.params,
+            &self.pipeline.film,
+            &self.pipeline.print,
+        )
     }
 
     pub fn data_dir(&self) -> &Path {

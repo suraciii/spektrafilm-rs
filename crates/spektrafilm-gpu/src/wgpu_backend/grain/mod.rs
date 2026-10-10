@@ -37,9 +37,15 @@ fn shader_params(width: u32, height: u32, params: &crate::GrainV2GpuParams) -> S
 }
 
 impl WgpuBackend {
-    /// Execute Grain V2 on native encoded RGB with no transfer or primaries conversion.
     pub fn grain_v2_gpu(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> ImageBuf {
-        use wgpu::util::DeviceExt;
+        if !self.device.context.enabled() || img.width == 0 || img.height == 0 {
+            return self.grain_v2_gpu_inner(img, params);
+        }
+        let (backend, _batch) = self.observed_batch("grain_v2");
+        backend.grain_v2_gpu_inner(img, params)
+    }
+    /// Execute Grain V2 on native encoded RGB with no transfer or primaries conversion.
+    fn grain_v2_gpu_inner(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> ImageBuf {
         if img.width == 0 || img.height == 0 {
             return img.clone();
         }
@@ -76,6 +82,7 @@ impl WgpuBackend {
         });
         self.device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
+        self.device.materialized(state.n_bytes);
         let data = slice.get_mapped_range();
         let output = f32_to_scalars(bytemuck::cast_slice(&data).to_vec());
         drop(data);
@@ -98,7 +105,7 @@ pub(super) struct GrainV2State {
 }
 
 pub(super) fn build_grain_v2_state(
-    device: &wgpu::Device,
+    device: &ObservedDevice,
     params: &crate::GrainV2GpuParams,
     width: u32,
     height: u32,
@@ -107,7 +114,6 @@ pub(super) fn build_grain_v2_state(
     backend: &WgpuBackend,
 ) -> GrainV2State {
     use spektrafilm_math::colorspace::Cctf;
-    use wgpu::util::DeviceExt;
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
     struct FilterParams {
@@ -249,11 +255,11 @@ pub(super) fn build_grain_v2_state(
 impl GrainV2State {
     pub(super) fn encode_pass(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut ObservedEncoder,
         n_pixels: u32,
         output: &wgpu::Buffer,
     ) {
-        let run = |encoder: &mut wgpu::CommandEncoder,
+        let run = |encoder: &mut ObservedEncoder,
                    pipeline: &CachedPipelineRef,
                    group: &wgpu::BindGroup| {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
