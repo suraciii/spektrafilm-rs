@@ -58,6 +58,7 @@ The flows a user actually runs must be short; every one below is two or three st
 
 - Discovery must not recurse. Only `.toml` and `.json` names must be documents; other entries must be ignored.
 - An unreadable, unparsable, or invalid document must be a fault of that document. A per-document fault must not fail the scan or hide other entries.
+- An unusable `My Presets` scope — a path that is not a readable directory — must register one fault entry for that scope and must retain every compiled `Built-in` entry. An explicit `built-in:` selector must resolve from the compiled documents without scanning `My Presets`.
 - Name resolution must be exact. Without a prefix it must try `My Presets`, then `Built-in`, and then fail. The optional `user:` and `built-in:` prefixes must select one group.
 - A bare name that resolves in `My Presets` while a built-in document carries the same name must report the resolved group. A shadowed built-in preset must stay reachable through its prefix.
 - An unknown name must not trigger a filesystem search or a name-similarity match.
@@ -67,7 +68,9 @@ The flows a user actually runs must be short; every one below is two or three st
 - A missing library directory is an empty library, not a fault. Discovery must not create it; the first write must create it.
 - A write must validate the whole document and resolve it before it replaces anything.
 - A write must be atomic: write a temporary file in the library directory, then rename it. A failed write must retain the preceding document.
-- Rename must change the document name and the file name together. A failed rename must leave the preceding document reachable under its old name.
+- Creating a name that already exists must fail without touching the existing document, including when two writers create the same new name at the same time.
+- A new document must default to TOML. A document whose explicit null leaves TOML cannot represent must be stored as JSON; rename and duplicate must preserve the source document's carrier.
+- Rename must change the document name and the file name together. A failed rename must leave the preceding document reachable under its old name. A rename that only changes letter case must keep the document reachable on a case-insensitive filesystem.
 - Import must not replace an existing name in `My Presets`. A conflict must be reported and must offer a renamed copy.
 - Export must default its file name to the preset name with the carrier extension and must not write into the library directory unless the user picks it.
 - Deleting or updating one document must not modify another document or a built-in document.

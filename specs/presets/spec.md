@@ -50,7 +50,10 @@ Browser rows must show the preset name, the film reference, and the print refere
 - A look preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
 - A preset does not store or directly apply a workflow. A look preset selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`. The user may then choose another supported workflow manually. A section preset carries no film reference and must not change the workflow.
 - Applying a look preset replaces all look-owned controls together, including the controls of every section, so a section preset must be applied after a look change to take effect. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
+- Applying a look preset normalizes the scanner output: when the resolved film is positive or the selected workflow route is not `input > film > scan`, the output becomes the direct-scan mode. `core` owns that rule once for the GUI and the CLI.
+- Applying a look preset does not change recorded explicit-leaf ownership. Only a section preset or a sparse parameter source marks its own leaves explicit, and those marks survive a later look application.
 - Applying a section preset replaces exactly the controls of its section, and those values count as explicit. Every other control retains its value, including explicit values from an earlier preset or parameter source, so the result does not re-derive them from stock defaults. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
+- Applying a section preset that would introduce a scanner-output, workflow-route, or scan-film combination the pipeline rejects must fail without changing any control. A state that already fails that check may still receive an unrelated section edit.
 - Applying a section preset must not replace the remembered applied preset. It is an edit, so an applied look preset becomes modified.
 - Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure, crop, resize, rotation, viewer/display state, Save settings, and Export settings.
 - Built-in presets are immutable. Editing controls after an apply never rewrites the built-in definition.
@@ -118,7 +121,7 @@ GUI state must retain its JSON contract. Loading a GUI state must not interpret 
 
 Saving state after applying or editing a preset must store the actual controls and the calibration policy needed to restore them. Restoring that state must preserve explicit neutral filters through runtime preparation. The saved state must not depend on the preset file or built-in definition remaining available or unchanged. Any new Rust-owned state metadata must use the existing versioned Rust extension and must preserve existing Python state normalization.
 
-Capturing a preset from the GUI must use the active look controls. Applying it must preserve the excluded context defined in [Look ownership](#look-ownership).
+Capturing a preset from the GUI must use the active look controls. Applying it must preserve the excluded context defined in [Look ownership](#look-ownership). A captured section must carry an unset optional control as an explicit null, so re-applying the capture restores the captured unset value; a capture that carries explicit nulls uses the JSON carrier.
 
 ### Resolution flow
 
