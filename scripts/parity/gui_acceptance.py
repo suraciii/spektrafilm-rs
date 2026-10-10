@@ -136,6 +136,7 @@ class X11:
         self.mss, self.psutil, self.ocr, self.Image = _desktop_capture(), psutil, _desktop_ocr(), Image
         self.root, self.window, self.proc = root, None, None
         self.records, self.wm = [], None
+        self.last_report_id = 0
         self.log = (root / 'gui.log').open('w')
         wm = subprocess.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], capture_output=True, text=True)
         if 'window id #' not in wm.stdout:
@@ -182,7 +183,23 @@ class X11:
         except (subprocess.SubprocessError, self.psutil.Error, AttributeError, ValueError) as error:
             raise RuntimeError(f'{guidance} Portal probe failed: {error}') from error
 
+    def gui_environment(self, env):
+        """Environment for a GUI launch, including the report publication directory.
+
+        The GUI publishes every completed operation's report there, so readiness
+        and operation facts come from the report instead of the status line.
+        """
+        directory = self.root / 'diagnostics'
+        directory.mkdir(exist_ok=True)
+        for stale in directory.glob('operation-*.json'):
+            stale.unlink()
+        env = dict(env)
+        env['SPEKTRAFILM_GUI_DIAGNOSTICS_DIR'] = str(directory)
+        self.last_report_id = 0
+        return env
+
     def start(self, gui, env, image=None):
+        env = self.gui_environment(env)
         self.chooser_ready(env)
         command = [str(gui)] + ([str(image)] if image else [])
         self.proc = subprocess.Popen(command, cwd=self.root, env=env, stdout=self.log, stderr=self.log)
@@ -589,21 +606,47 @@ class X11:
             self.export_options(path)
         self.dialog(path, save)
 
-    def rendered(self, label, previous_count=None, action=None):
+    def wait_report(self, label, action=None):
+        """Wait for the report the GUI publishes for a completed operation.
+
+        The report is the diagnostic source of truth: readiness, outcome and
+        dimensions come from it, so no status-line OCR is involved.
+        """
+        expected = (action or '').lower()
+        accepted = (expected,) if expected else ('preview', 'scan')
+        def ready():
+            require(self.proc.poll() is None, 'GUI exited; see gui.log')
+            reports = []
+            for path in (self.root / 'diagnostics').glob('operation-*.json'):
+                try:
+                    report = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    continue
+                reports.append(report)
+            reports.sort(key=lambda report: report['operation']['id'])
+            for report in reports:
+                operation = report['operation']
+                if operation['id'] <= self.last_report_id:
+                    continue
+                if operation['kind'] not in accepted:
+                    continue
+                if operation['outcome'] == 'superseded':
+                    continue
+                require(operation['outcome'] == 'succeeded',
+                        f"GUI {operation['kind']} {operation['outcome']} on {label}: "
+                        f"{report.get('diagnostic_issues')}")
+                self.last_report_id = operation['id']
+                return report
+        return wait_for(ready, label, 120)
+
+    def rendered(self, label, action=None):
         self.scroll(True)
         require(action in (None, 'Preview', 'Scan'), f'Unknown render action: {action}')
-        status = action if action else '(?:Preview|Scan)'
-        def ready():
-            image, _, lines = self.read()
-            text = '\n'.join(' '.join(w[0] for w in line) for line in lines)
-            require(not re.search(r'(?:Render|Load|Save|Export|Startup state|Preview state)\s*(?:error|failed)', text, re.I),
-                    f'GUI failure on {label}: {text}')
-            completed = re.search(rf'{status}[^\n]*?\d+\s*[x×=*]\s*\d+', text, re.I)
-            if completed:
-                if previous_count is None or render_count(completed[0]) != previous_count:
-                    self.snap(label, image, lines)
-                    return text
-        return wait_for(ready, label, 120)
+        self.wait_report(label, action)
+        image, _, lines = self.read()
+        text = '\n'.join(' '.join(w[0] for w in line) for line in lines)
+        self.snap(label, image, lines)
+        return text
 
     def export_options(self, path):
         def modal_read():
@@ -746,6 +789,7 @@ class Desktop(X11):
         self.psutil, self.ocr, self.Image, self.input = psutil, pytesseract, Image, pyautogui
         self.root, self.window, self.proc = root, None, None
         self.records, self.wm = [], None
+        self.last_report_id = 0
         self.log = (root / 'gui.log').open('w')
         executable = shutil.which('tesseract')
         if sys.platform == 'win32':
@@ -904,6 +948,7 @@ return report''')
             self.apple('set frontmost to true')
 
     def start(self, gui, env, image=None):
+        env = self.gui_environment(env)
         self.proc = subprocess.Popen([str(gui)] + ([str(image)] if image else []), cwd=self.root,
                                      env=env, stdout=self.log, stderr=self.log)
         def ready():
@@ -1244,7 +1289,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         _, _, lines = driver.read()
         before_scan = render_count('\n'.join(' '.join(w[0] for w in line) for line in lines))
         driver.click('Scan')
-        scan_status = driver.rendered('explicit-scan', before_scan, action='Scan')
+        scan_status = driver.rendered('explicit-scan', action='Scan')
         scan_output = root / 'scan-output.exr'
         driver.file_action('Save', scan_output, True)
         wait_for(scan_output.is_file, 'full-resolution scan output', 30)
@@ -1262,12 +1307,11 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'output_width_before': before_scan,
                                'output_width_after': render_count(scan_status),
                                'output_dimensions': [scan_spec.width, scan_spec.height]})
-        # The GUI saves asynchronously and overwrites the status line once
-        # done; wait for that before Preview so the preview render's own
-        # status is the last one written.
-        driver.wait_text(r'Saved\s+scan-output\.exr', 'scan-output-saved', 30)
+        # The GUI publishes the Save report after the write completes; wait for it
+        # before Preview so the recorded operations stay ordered.
+        driver.wait_report('scan-output-saved', action='Save')
         driver.click('Preview')
-        preview_status = driver.rendered('explicit-preview', render_count(scan_status), action='Preview')
+        preview_status = driver.rendered('explicit-preview', action='Preview')
         driver.records.append({'parity_action': 'run_preview',
                                'assertion': 'Preview click re-renders at the preview size',
                                'status': preview_status,
@@ -1365,8 +1409,10 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
         driver.click('reset view', False)
         driver.click('cw rotate', False)
-        # Tesseract renders the × separator as = or * at footer sizes.
-        driver.wait_text(r'(?:Preview|Scan)[^\n]*96\s*[x×=*]\s*192', 'clockwise-render-complete')
+        clockwise = driver.wait_report('clockwise-render-complete')
+        require(clockwise['configuration']['working_dimensions'] == [96, 192],
+                f"Clockwise rotation did not re-render portrait: "
+                f"{clockwise['configuration']['working_dimensions']}")
         cw_bounds = driver.measure_viewer('clockwise-rotation')
         driver.tab('MAIN')
         rotated_export = root / 'rotated-export.tif'
@@ -1393,7 +1439,10 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.records.append({'rotated_metadata_preserved': True, 'orientation': 1, 'dimensions': [96, 192]})
         driver.tab('CONFIG')
         driver.click('ccw rotate', False)
-        driver.wait_text(r'(?:Preview|Scan)[^\n]*192\s*[x×=*]\s*96', 'counterclockwise-render-complete')
+        counterclockwise = driver.wait_report('counterclockwise-render-complete')
+        require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
+                f"Counterclockwise rotation did not restore landscape: "
+                f"{counterclockwise['configuration']['working_dimensions']}")
         ccw_bounds = driver.measure_viewer('counterclockwise-rotation')
         require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
                 f'Clockwise rotation did not produce portrait pixels: {cw_bounds}')
