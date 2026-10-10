@@ -233,7 +233,8 @@ class X11:
             background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
             return ImageOps.invert(grayscale) if ImageStat.Stat(background).median[0] < 128 else grayscale
 
-        for offset, region in ((0, image.crop((0, 0, image.width - 420, image.height))),
+        for offset, region in ((0, image.crop((0, 0, 260, image.height))),
+                               (260, image.crop((260, 0, image.width - 420, image.height))),
                                (image.width - 420, image.crop((image.width - 420, 0, image.width, image.height)))):
             prepared = normalize(region)
             data = self.ocr.image_to_data(prepared.resize((region.width * 3, region.height * 3)),
