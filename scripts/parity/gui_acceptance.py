@@ -253,8 +253,9 @@ class X11:
         for offset, region in ((0, image.crop((0, 0, image.width - 420, image.height))),
                                (image.width - 420, image.crop((image.width - 420, 0, image.width, image.height)))):
             prepared = normalize(region)
+            # The viewer crop is large; a tight bound trips on a loaded machine.
             data = self.ocr.image_to_data(prepared.resize((region.width * 3, region.height * 3)),
-                                          config='--psm 11', output_type=self.ocr.Output.DICT, timeout=15)
+                                          config='--psm 11', output_type=self.ocr.Output.DICT, timeout=60)
             grouped = {}
             for i, text in enumerate(data['text']):
                 if text.strip():
@@ -486,19 +487,37 @@ class X11:
                             f'{control} not visible in {name} at {"bottom" if bottom else "top"}')
                 self.snap(f'{label}-{name}-{"bottom" if bottom else "top"}', image, lines)
         self.tab('MAIN')
-    def measure_viewer(self, label, timeout=30):
-        """Record displayed image bounds once the painted frame settles.
+    def viewer_canvas(self):
+        """Viewer canvas pixels, excluding both status bars."""
+        image, _ = self.image()
+        pixels = np.asarray(image.convert('RGB'))
+        return image, pixels[80:max(81, image.height - 80), :min(1030, image.width)]
 
-        The raster reaches the viewer through an asynchronous sampling worker,
-        so the first frame after a view change can still show the previous
-        scale; require two consecutive screenshots to agree.
+    def viewer_fingerprint(self):
+        """Canvas hash captured before a view change, for the next measurement."""
+        _, canvas = self.viewer_canvas()
+        return hashlib.sha256(canvas.tobytes()).hexdigest()
+
+    def measure_viewer(self, label, changed_from=None, timeout=60):
+        """Record displayed image bounds once the view change has been painted.
+
+        The raster reaches the viewer through an asynchronous composition
+        worker, so the frame right after a view change still shows the previous
+        scale and can stay that way for seconds under load. Wait until the
+        canvas differs from the frame captured before the change, then until
+        two consecutive screenshots agree.
         """
-        state = {'bounds': None, 'image': None, 'previous': None}
+        state = {'bounds': None, 'image': None, 'digest': None, 'changed': changed_from is None}
 
         def settled():
-            image, _ = self.image()
-            pixels = np.asarray(image.convert('RGB'))
-            canvas = pixels[80:max(81, image.height - 80), :min(1030, image.width)]
+            image, canvas = self.viewer_canvas()
+            digest = hashlib.sha256(canvas.tobytes()).hexdigest()
+            if not state['changed']:
+                if digest != changed_from:
+                    state['changed'] = True
+                else:
+                    time.sleep(.5)
+                    return False
             channels = [canvas[..., i].astype(np.int16) for i in range(3)]
             chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
             mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
@@ -506,11 +525,11 @@ class X11:
             bounds = None
             if xs.size > 100:
                 bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
-            if bounds is not None and bounds == state['previous']:
+            if bounds is not None and digest == state['digest']:
                 state['bounds'] = bounds
                 state['image'] = image
                 return True
-            state['previous'] = bounds
+            state['digest'] = digest
             time.sleep(.5)
             return False
 
@@ -1261,8 +1280,9 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         # The Input view samples the raster a completed render consumed, so wait
         # for the automatic preview before measuring the viewer.
         driver.wait_report('loaded-input-auto-preview')
+        before_input = driver.viewer_fingerprint()
         driver.click('Input', False)
-        loaded_bounds = driver.measure_viewer('loaded-input-image')
+        loaded_bounds = driver.measure_viewer('loaded-input-image', before_input)
         driver.records.append({'parity_action': 'load_input_image',
                                'assertion': 'completed render seeds non-empty native Input viewer pixels',
                                'source_dimensions': [192, 96],
@@ -1430,24 +1450,30 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         viewing.write_text(json.dumps(viewing_state))
         driver.state_action('Load from file', viewing)
         driver.rendered('configured-after-factory-reset')
+        before_zoom = driver.viewer_fingerprint()
         driver.click('100%', False)
         driver.wait_text(r'zoom\s*100', 'zoom-100-selected')
-        zoom_100 = driver.measure_viewer('zoom-100-percent')
+        zoom_100 = driver.measure_viewer('zoom-100-percent', before_zoom)
+        before_zoom = driver.viewer_fingerprint()
         driver.click('200%', False)
         driver.wait_text(r'zoom\s*200', 'zoom-200-selected')
-        zoom_200 = driver.measure_viewer('zoom-200-percent')
+        zoom_200 = driver.measure_viewer('zoom-200-percent', before_zoom)
+        before_zoom = driver.viewer_fingerprint()
         driver.click('400%', False)
         driver.wait_text(r'zoom\s*400', 'zoom-400-selected')
-        zoom_400 = driver.measure_viewer('zoom-400-percent')
+        zoom_400 = driver.measure_viewer('zoom-400-percent', before_zoom)
         widths = [item[2] - item[0] for item in (zoom_100, zoom_200, zoom_400)]
         require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
+        before_reset = driver.viewer_fingerprint()
         driver.click('reset view', False)
+        driver.measure_viewer('zoom-reset-view', before_reset)
+        before_rotate = driver.viewer_fingerprint()
         driver.click('cw rotate', False)
         clockwise = driver.wait_report('clockwise-render-complete')
         require(clockwise['configuration']['working_dimensions'] == [96, 192],
                 f"Clockwise rotation did not re-render portrait: "
                 f"{clockwise['configuration']['working_dimensions']}")
-        cw_bounds = driver.measure_viewer('clockwise-rotation')
+        cw_bounds = driver.measure_viewer('clockwise-rotation', before_rotate)
         driver.tab('MAIN')
         rotated_export = root / 'rotated-export.tif'
         driver.file_action('Export', rotated_export, True)
@@ -1472,12 +1498,13 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require('GUI rotation description' in metadata.xmpData()['Xmp.dc.description'].toString(), 'Rotated XMP lost')
         driver.records.append({'rotated_metadata_preserved': True, 'orientation': 1, 'dimensions': [96, 192]})
         driver.tab('CONFIG')
+        before_ccw = driver.viewer_fingerprint()
         driver.click('ccw rotate', False)
         counterclockwise = driver.wait_report('counterclockwise-render-complete')
         require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
                 f"Counterclockwise rotation did not restore landscape: "
                 f"{counterclockwise['configuration']['working_dimensions']}")
-        ccw_bounds = driver.measure_viewer('counterclockwise-rotation')
+        ccw_bounds = driver.measure_viewer('counterclockwise-rotation', before_ccw)
         require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
                 f'Clockwise rotation did not produce portrait pixels: {cw_bounds}')
         require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
