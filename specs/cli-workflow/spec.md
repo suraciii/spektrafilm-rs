@@ -10,7 +10,7 @@ This capability owns help, version identification, data-directory selection, com
 
 Every public command and option must have a help description. Descriptions must identify the purpose, expected value form, and applicability of the option. Dimensional numeric options must state their units. Options with finite choices must show the choices from their authoritative definition. A field with an open vocabulary must explain how to discover or supply its values.
 
-`process` help must group options by input and RAW loading, look and workflow, output, and execution and diagnostics. LUT build help must distinguish bundle configuration, delivery, and quality assessment. Long help must include a basic preset process command, a parameter override command, and the relevant discovery commands. It must distinguish scanner color controls from saving color conversion. The preset list help must state that it lists built-in presets only.
+`process` help must group options by input and RAW loading, look and workflow, output, and execution and diagnostics. LUT build help must distinguish bundle configuration, delivery, and quality assessment. Long help must include a basic preset process command, a parameter override command, and the relevant discovery commands. It must distinguish scanner color controls from saving color conversion. The preset list help must state the default source selection, the preset library directory, and the group order that resolves a bare preset name.
 
 Signed numeric options must accept a negative number as the following argument. This rule includes `process --raw-tint -5` and `lut build OUT --exposure-ev -1`. Accepting this argument form must not relax numeric domains or cross-field validation.
 
@@ -28,7 +28,7 @@ When neither source is supplied, automatic discovery must try `data` beside the 
 
 Selection must not change the working directory. Commands must validate the resources they consume within the selected directory. Missing required resources must not trigger selection of another directory. A profile-listing command must fail if the profile directory cannot be read or a listed profile cannot be loaded. A valid empty profile directory may produce an empty list.
 
-Commands that consume data must use this selection policy. Built-in preset listing must remain available without data when no explicit selection is supplied. If it receives a flag or environment selection, it must validate that selection without claiming to validate profile contents. Help, version, and field discovery must not require data.
+Commands that consume data must use this selection policy. Built-in preset listing must remain available without data when no explicit selection is supplied. Preset library listing must read the preset library directory defined in the [preset design](../presets/design.md) and must not require a data directory. If it receives a flag or environment selection, it must validate that selection without claiming to validate profile contents. Help, version, and field discovery must not require data.
 
 The process dry-run report must expose the selected data location as defined in the [CLI parameter specification](../cli-parameters/spec.md#discovery-and-dry-run). A data-related failure must identify the selected or rejected path. Absolute-path reporting here must not change the separate privacy contract for [telemetry](../telemetry/spec.md).
 
@@ -36,7 +36,7 @@ The process dry-run report must expose the selected data location as defined in 
 
 Invalid command syntax must return status `2`. A failed command after successful argument parsing must return status `1`. A completed command must return status `0`. Existing telemetry-report persistence exceptions must follow the [telemetry contract](../telemetry/spec.md#local-surfaces).
 
-An error must identify the offending option or input and explain the corrective action when it is known. Unknown parameter paths, preset IDs, module prefixes, and workflow routes must offer up to three nearby canonical candidates when a sufficiently close match exists. Otherwise, they must identify the relevant discovery command or help option. Candidate suggestions must not change the supplied value, accept an invalid invocation, introduce aliases, or search for an unknown preset ID in a user directory.
+An error must identify the offending option or input and explain the corrective action when it is known. Unknown parameter paths, preset names, module prefixes, and workflow routes must offer up to three nearby canonical candidates when a sufficiently close match exists. Otherwise, they must identify the relevant discovery command or help option. Candidate suggestions must not change the supplied value, accept an invalid invocation, introduce aliases, or search the filesystem for an unknown preset name.
 
 CLI errors must use stderr. Machine results must use stdout. Progress, timing, selected-backend messages, and completion notices must use stderr. Human messages must not be inserted into JSON or TOML results. Normal image processing must continue to leave stdout empty.
 
@@ -52,12 +52,12 @@ An explicit missing directory must fail even when working-directory data exists.
 
 Automatic discovery must exercise relocated executable-relative data, working-directory data, and exhaustion of all candidates. Built-in preset listing must succeed without data when no explicit selection exists.
 
-A misspelled known field or preset ID must fail and suggest its nearby canonical spelling. An unrelated unknown value must fail without a misleading correction. Existing invalid-option suggestions must remain available.
+A misspelled known field or preset name must fail and suggest its nearby canonical spelling, including a library name. An unrelated unknown value must fail without a misleading correction. Existing invalid-option suggestions must remain available.
 
 JSON and TOML discovery, dry-run, render, and inspect output must remain parseable with stderr captured separately. LUT bake and quality messages must use stderr. Normal image rendering must preserve its stdout behavior and output pixels.
 
 ## Implementation gap
 
-Current CLI arguments reject separate negative tint and exposure values. Data selection falls back after an explicit invalid path. Profile listing can report a missing directory and return success. Help lacks several descriptions, groups, and examples. Version flags are absent. Domain errors lack candidate or discovery guidance. LUT README examples use unsupported `--out`, and LUT stage notices use stdout.
+Current CLI arguments reject separate negative tint and exposure values. Data selection falls back after an explicit invalid path. Profile listing can report a missing directory and return success. Help lacks several descriptions, groups, and examples. Version flags are absent. Domain errors lack candidate or discovery guidance. LUT README examples use unsupported `--out`, and LUT stage notices use stdout. Preset listing has no source selection and does not read the preset library directory.
 
 LUT QA exit semantics, bundle replacement protection, and multi-print naming collisions require a separate behavioral investigation before a publication or quality contract is changed. They are not acceptance criteria for this implementation.

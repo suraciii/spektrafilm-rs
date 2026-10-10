@@ -11,7 +11,7 @@ Capabilities:
 - [Photo export](photo-export/spec.md) — preview output, Save, and Export.
 - [LUT delivery](lut-delivery/spec.md) — deterministic LUT bundles.
 - [GUI workflow](gui-workflow/spec.md) — interactive control and state behavior.
-- [Look presets](presets/spec.md) — portable film and print looks and GUI state compatibility.
+- [Presets](presets/spec.md) — portable film and print looks, the user library, and GUI state compatibility.
 - [CLI parameters](cli-parameters/spec.md) — preset selection, sparse parameter overrides, and parameter discovery.
 - [CLI workflow](cli-workflow/spec.md) — help, version identity, data selection, command status, and human feedback.
 

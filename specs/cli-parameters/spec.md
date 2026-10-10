@@ -2,7 +2,7 @@
 
 ## Contract
 
-The `process` command must support [look presets](../presets/spec.md), sparse parameter files, and individual parameter assignments through the unified `--set` option. Both `spektrafilm` and `spektrafilm-f64` must accept the same language. The executable and backend must retain their existing computation precision contracts.
+The `process` command must support [presets](../presets/spec.md), sparse parameter files, and individual parameter assignments through the unified `--set` option. Both `spektrafilm` and `spektrafilm-f64` must accept the same language. The executable and backend must retain their existing computation precision contracts.
 
 A **parameter override** is a sparse set of explicit edits to runtime controls for one invocation. It may contain look-owned and non-look controls. It must not change profile references or rewrite its source preset. A parameter override is not a complete preset, GUI state, or render recipe.
 
@@ -25,7 +25,7 @@ Existing backend, workflow, RAW, output, and data-directory options must remain 
 
 ### Preset selector
 
-A selector ending in `.toml` or `.json` must designate a file path relative to the current working directory or an absolute path. It must not fall back to a built-in ID if the file is absent or invalid. A selector without a supported extension must designate an exact built-in preset ID. Such an ID must not contain a path separator. Names shown in the GUI must not act as IDs. The command must not search user libraries or directories for an unknown ID.
+A selector ending in `.toml` or `.json` must designate a file path relative to the current working directory or an absolute path. It must not fall back to a preset name if the file is absent or invalid. A selector without a supported extension must designate an exact preset name. A name must resolve with the group order of the [preset design](../presets/design.md): the user library first, then the built-in presets. The prefixes `user:` and `built-in:` must select one group explicitly and must otherwise be optional. A name must not contain a path separator. A bare name that also exists in another group must resolve in the user library, and the command must report the resolved group and the shadowed name. An unknown name must not trigger a filesystem search or a name-similarity match.
 
 `--preset` must conflict with `--film`, `--paper`, and `--params`. Without `--preset`, `--film` must remain required to resolve the runtime profiles. The `input` workflow must ignore the resolved film and paper profiles. Without a preset, `--scan-film` or the direct film scan route must select the film as the runtime print profile. Otherwise, a photographic print route must obtain its print profile from `--paper` or the film's `target_print`. Magazine enablement must not affect these profile requirements.
 Without a preset, a print target must accept `support=paper` or `support=film` with `stage=printing` when parameter sources are added. Preset print references retain the paper-only restriction in the preset specification.
@@ -38,7 +38,7 @@ With a preset, both profile references must come from the preset. `--scan-film` 
 
 Each `--set SOURCE` occurrence must be exactly one source. A source beginning with a canonical `PATH=` must be an inline assignment source, even when its value ends in `.toml` or `.json`. Otherwise, a source ending in `.toml` or `.json` must be a sparse parameter-file path. An inline source must contain one or more comma-separated `PATH=VALUE` assignments. A source must not mix a file path and assignments. `--set` may be repeated; sources apply in appearance order. A file path must be relative to the working directory or absolute. An assignment source must be passed as one shell argument.
 
-For a file source, the extension must select the parser. Parse failure must not cause a fallback to another parser. Files must not support includes or environment interpolation. A missing or invalid `.toml`/`.json` source must fail as a file error; it must not fall back to a built-in preset ID or assignment parsing.
+For a file source, the extension must select the parser. Parse failure must not cause a fallback to another parser. Files must not support includes or environment interpolation. A missing or invalid `.toml`/`.json` source must fail as a file error; it must not fall back to a preset name or assignment parsing.
 
 The document root must be an object. Nested objects or TOML tables must locate runtime parameter groups. Only supplied leaves must be edited. A missing leaf must retain its value from the preceding layer. An empty object must make no edits. Scalars and arrays must replace their whole leaf value. Arrays must not merge by index. A group must not be replaced by a scalar or `null`.
 
@@ -89,7 +89,7 @@ For a POSIX shell, quote a source containing brackets, spaces, or shell-signific
 
 ```bash
 spektrafilm process input.png --output output.tif \
-  --preset classic-kodak-portra-400 \
+  --preset 'Kodak Portra 400' \
   --set film_render.grain.engine=v2 \
   --set 'io.output_color_space=ProPhoto RGB' \
   --set 'camera.exposure_compensation_ev=0.5,io.input_cctf_decoding=true'
@@ -140,7 +140,7 @@ The following POSIX command combines a look with independent TIFF export options
 
 ```bash
 spektrafilm-f64 process input.png --output output.tif \
-  --preset classic-kodak-portra-400 \
+  --preset 'Kodak Portra 400' \
   --backend cpu --format tiff --bit-depth 16 --compression zip \
   --saving-color-space "ProPhoto RGB" --saving-cctf-encoding true
 ```
@@ -159,7 +159,7 @@ A failed configuration must return a nonzero status before rendering or writing 
 
 `describe --format text` without a selector must list the discoverable top-level parameter groups. With `--module`, it must show one record per editable leaf, sorted by canonical path. With `--field`, it must show the selected leaf. A record must show path, type, nullability, default and its source, unit when applicable, enum values or bounds, distinct array-component domains, and effect conditions. Missing units, bounds, and finite enum inventories must not be presented as invented values. `describe` must retain JSON as its default format.
 
-`preset list --format json` must list built-in IDs, names, and film and print references. `preset list --format text` must show those same facts in one readable record per built-in preset. It must not search user libraries. `preset show SELECTOR --format toml|json` must write a complete preset to stdout. `--format` must default to TOML for `preset show` and JSON for `preset list`. Both commands must follow the [CLI data-directory selection policy](../cli-workflow/spec.md#data-directory-selection). `preset show` must validate the selected document and profile references using that data directory. These commands must not inspect a GUI state or render an image. Export must preserve the selected preset ID and must not modify its source file.
+`preset list --format json` must list preset names, film and print references, and the group of each entry. `preset list --source built-in|user|all` must select the listed groups and must default to `built-in`. `preset list --format text` must show those same facts in one readable record per preset. Listing must report every unreadable or conflicting library document with its path and must not hide the remaining entries. Listing must not search directories other than the library directory. `preset show SELECTOR --format toml|json` must write a complete preset to stdout. `--format` must default to TOML for `preset show` and JSON for `preset list`. Both commands must follow the [CLI data-directory selection policy](../cli-workflow/spec.md#data-directory-selection), and listing library entries must not require a data directory. `preset show` must validate the selected document and profile references using that data directory. These commands must not inspect a GUI state or render an image. Export must preserve the selected preset name and must not modify its source file.
 
 `process --dry-run` must accept the same configuration and required input/output paths as a normal process invocation. It must resolve parameters, workflow, and writer options using the same decisions as normal processing. It must check input existence, readability, and supported file kind without decoding input pixels. It must not initialize a compute device, render, or create or truncate any output, including `--raw-out`. It must print one JSON object to stdout with `film_profile`, `print_profile`, `parameters`, `output`, and `backend`. `parameters` must contain the effective runtime controls after constraints. `output` must contain `path`, `format`, `bit_depth`, `color_space`, `cctf_encoding`, `compression`, `jpeg_quality`, and `jpeg_subsampling`; inapplicable options must be `null`. `backend` must report the requested `cpu` or `gpu` policy, or `auto` when normal selection remains deferred. It must not claim compute-adapter availability. Diagnostics must go to stderr. The result must be a resolution report rather than an implicit RenderRecipe or GUI state. It must not claim pixel-dependent values such as metered auto-exposure or successful image decoding. A configuration valid in dry run may still fail on input decoding, resource availability, or rendering.
 
@@ -184,7 +184,7 @@ Dry run for custom RAW white balance with temperature `6500` and tint `-5` must 
 
 ## Implementation gap
 
-Discovery currently supports module JSON only, with no single-field selector or text format. Preset listing currently supports JSON only. Dry run omits data-selection source and RAW loading choices. The added syntax and report keys in this document are target behavior awaiting implementation.
+Discovery currently supports module JSON only, with no single-field selector or text format. Preset listing currently supports JSON only, with built-in entries and no library group. Dry run omits data-selection source and RAW loading choices. The added syntax and report keys in this document are target behavior awaiting implementation.
 
 ## Compatibility
 
