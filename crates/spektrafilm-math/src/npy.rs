@@ -64,30 +64,30 @@ pub fn load_npy_f32<R: Read>(mut reader: R) -> Result<(Vec<usize>, Vec<f32>), Np
             // float16, little-endian
             let mut raw = vec![0u8; total_elements * 2];
             reader.read_exact(&mut raw)?;
-            raw.chunks_exact(2)
-                .map(|chunk| f16::from_le_bytes([chunk[0], chunk[1]]).to_f32())
+            raw.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| f16::from_le_bytes(*chunk).to_f32())
                 .collect()
         }
         "<f4" => {
             // float32, little-endian
             let mut raw = vec![0u8; total_elements * 4];
             reader.read_exact(&mut raw)?;
-            raw.chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|chunk| f32::from_le_bytes(*chunk))
                 .collect()
         }
         "<f8" => {
             // float64, little-endian
             let mut raw = vec![0u8; total_elements * 8];
             reader.read_exact(&mut raw)?;
-            raw.chunks_exact(8)
-                .map(|chunk| {
-                    let v = f64::from_le_bytes([
-                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
-                        chunk[7],
-                    ]);
-                    v as f32
-                })
+            raw.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|chunk| f64::from_le_bytes(*chunk) as f32)
                 .collect()
         }
         other => return Err(NpyError::Parse(format!("unsupported dtype: {other}"))),

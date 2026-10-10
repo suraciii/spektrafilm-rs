@@ -73,8 +73,7 @@ pub fn layer_particle_model(
         sat_arr.push(saturation);
     }
 
-    let grain: Vec<Scalar>;
-    if use_fast_stats {
+    let grain: Vec<Scalar> = if use_fast_stats {
         // `fast_stats` regime: Python runs `fast_poisson(lam_array)` then
         // `fast_binomial(seeds, p)` as whole-array numba kernels whose
         // element draws are independent, so per-element tagged streams
@@ -82,11 +81,11 @@ pub fn layer_particle_model(
         // parallel) regardless of numba's thread schedule.
         let lam: Vec<f64> = sat_arr.iter().map(|&sat| npp / sat).collect();
         let seeds = stats::fast_poisson_array(seed, POISSON_TAG, &lam);
-        grain = stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
+        stats::fast_binomial_array(seed, BINOMIAL_TAG, &seeds, &p_arr)
             .into_iter()
             .zip(&sat_arr)
             .map(|(developed, &sat)| from_f64((developed as f64) * od_particle * sat))
-            .collect();
+            .collect()
     } else {
         // scipy regime — Python-bit-exact RNG: numpy's MT19937 +
         // RandomState distribution algorithms (`rk_poisson` / `rk_binomial`).
@@ -113,8 +112,8 @@ pub fn layer_particle_model(
             let developed = spektrafilm_math::numpy_rng::rk_binomial(&mut rng, seeds[i], p_arr[i]);
             *slot = from_f64((developed as f64) * od_particle * sat_arr[i]);
         }
-        grain = out;
-    }
+        out
+    };
     finish_grain(grain, width, height, blur_particle, od_particle)
 }
 

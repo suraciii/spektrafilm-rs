@@ -440,8 +440,10 @@ fn report_and_render_use_identical_resolved_controls() {
         .unwrap();
     let rendered: Vec<f64> = std::fs::read(raw)
         .unwrap()
-        .chunks_exact(8)
-        .map(|bytes| f64::from_ne_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| f64::from_ne_bytes(*bytes))
         .collect();
     let expected: Vec<f64> = expected.data.iter().map(|&v| v as f64).collect();
     assert_eq!(rendered, expected);

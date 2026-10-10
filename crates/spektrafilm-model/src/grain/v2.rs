@@ -923,7 +923,9 @@ mod tests {
         let out = apply_cpu(&ImageBuf::from_data(w, h, data), p);
         let mut r: Vec<f32> = out
             .data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|v| (to_f32(v[0]) + to_f32(v[1]) + to_f32(v[2])) / 3.)
             .collect();
         for row in r.chunks_exact_mut(w as usize) {

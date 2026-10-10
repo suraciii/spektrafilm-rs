@@ -408,7 +408,9 @@ fn process_linear(
     )?;
     let rows: Vec<_> = out
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| [to_f64(p[0]), to_f64(p[1]), to_f64(p[2])])
         .collect();
     if rows.iter().flatten().any(|x| !x.is_finite()) {

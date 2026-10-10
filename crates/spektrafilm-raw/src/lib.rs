@@ -133,7 +133,7 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
         lens_info = c_string(&summary);
     }
     if let Some(matrix) = adaptation {
-        for rgb in floats.chunks_exact_mut(3) {
+        for rgb in floats.as_chunks_mut::<3>().0 {
             let xyz = mv(ACES_TO_XYZ, [rgb[0] as f64, rgb[1] as f64, rgb[2] as f64]);
             let output = mv(XYZ_TO_ACES, mv(matrix, xyz));
             for c in 0..3 {
@@ -145,7 +145,7 @@ pub fn load(path: &Path, options: &RawOptions) -> Result<RawResult, RawError> {
         let tint = options.tint.unwrap_or(1.0);
         // Match numpy.isclose(tint, 1), including its default relative tolerance.
         if (tint - 1.0).abs() > 1.001e-5 {
-            for rgb in floats.chunks_exact_mut(3) {
+            for rgb in floats.as_chunks_mut::<3>().0 {
                 rgb[1] *= tint as f32;
             }
         }
