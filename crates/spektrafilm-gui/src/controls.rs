@@ -1,7 +1,12 @@
 //! Editors for the pinned experimental GUI sections.
 use egui::{DragValue, Ui};
 use serde_json::{Map, Value};
-use spektrafilm_core::params::{RuntimeParams, diffusion::DiffusionFilterParams};
+use spektrafilm_core::params::{
+    RuntimeParams,
+    diffusion::DiffusionFilterParams,
+    grain::{GrainEngine, GrainV2FilmType, GrainV2Mode},
+};
+use spektrafilm_model::grain::v2::PROFILE_NAMES;
 
 const COLOR_SPACES: &[&str] = &[
     "sRGB",
@@ -186,23 +191,59 @@ pub fn show(
             });
         }
         if section == "Grain" {
-            egui::CollapsingHeader::new("Grain").default_open(false).show(ui, |ui| {
-                flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.grain.active, "Add grain to the negative");
-                flags.runtime_changed |= tuple(ui, "rms granularity", &mut params.film_render.grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel (RGB) RMS granularity from the datasheet (sigma_D x 1000, 48 um aperture, net density 1.0). Higher = coarser grain. Typical consumer films ~4 (fine) to ~40 (coarse).");
-                ui.collapsing("pixel statistics", |ui| {
-                    flags.runtime_changed |= tuple(ui, "density min", &mut params.film_render.grain.density_min, -1000000.0, 1000000.0, 1.0, 2, "Minimum density of the grain, typical values (0.03-0.06).");
-                    flags.runtime_changed |= tuple(ui, "uniformity", &mut params.film_render.grain.uniformity, -1000000.0, 1000000.0, 1.0, 2, "Grain uniformity per channel; lower bends the noise curve toward the Selwyn bell, typical values (0.94-0.98).");
-                    flags.runtime_changed |= tuple(ui, "particle scale sublayers", &mut params.film_render.grain.particle_scale_sublayers, 0.0, 1000000.0, 0.25, 2, "Relative particle-area scale per emulsion sublayer (coarsest sublayer = 1, finer sublayers smaller).");
-                });
-                ui.collapsing("texture", |ui| {
-                    flags.runtime_changed |= numeric(ui, "blur", &mut params.film_render.grain.blur, 0.0, 1000000.0, 0.05, 2, "Sigma of gaussian blur in pixels for the grain, to be increased at high magnifications, (should be 0.8-0.9 at high resolution, reduce down to 0.6 for lower res).");
-                    flags.runtime_changed |= numeric(ui, "mult usm amount", &mut params.film_render.grain.mult_usm_amount, 0.0, 1000000.0, 0.1, 2, "Strength of the mass-conserving density unsharp mask applied after the grain blur: it makes the pixel/sampling grid disappear while keeping the grain and image content (positive, mass-conserving, not a denoiser). 0 disables. Default 1.5.");
-                    flags.runtime_changed |= numeric(ui, "mult usm sigma", &mut params.film_render.grain.mult_usm_sigma, 0.0, 1000000.0, 0.1, 2, "Radius (px) of the density unsharp mask. Broad (default 0.7) puts the acutance in the mid-band, away from Nyquist, so the pixel stays gone while perceived sharpness comes back.");
-                });
-                ui.collapsing("micro substructure", |ui| {
-                    flags.runtime_changed |= numeric(ui, "blur dye clouds um", &mut params.film_render.grain.blur_dye_clouds_um, 0.0, 1000000.0, 0.1, 2, "Scale the sigma of gaussian blur in um for the dye clouds, to be used at high magnifications, (default 1).");
-                    flags.runtime_changed |= tuple(ui, "micro structure", &mut params.film_render.grain.micro_structure, 0.0, 1000000.0, 0.1, 2, "Clumps at the molecular level, [sigma blur of micro-structure / ultimate light-resolution (0.10 um default), size of molecular clumps in nm (30 nm default)]. Only for insane magnifications.");
-                });
+            egui::CollapsingHeader::new("Grain").default_open(true).show(ui, |ui| {
+                let grain = &mut params.film_render.grain;
+                flags.runtime_changed |= toggle(ui, "active", &mut grain.active, "Add grain to the negative");
+                egui::ComboBox::from_label("Engine")
+                    .selected_text(match grain.engine { GrainEngine::V1 => "V1 — emulsion grain", GrainEngine::V2 => "V2 — procedural grain" })
+                    .show_ui(ui, |ui| {
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V1, "V1 — emulsion grain").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V2, "V2 — procedural grain").changed();
+                    });
+                if grain.engine == GrainEngine::V2 {
+                    let mut profile = grain.v2_profile.clone();
+                    egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
+                        for name in PROFILE_NAMES { ui.selectable_value(&mut profile, (*name).to_owned(), name); }
+                        ui.selectable_value(&mut profile, "custom".to_owned(), "Custom");
+                    });
+                    if profile != grain.v2_profile {
+                        if profile == "custom" { grain.select_custom_grain_v2(); } else { grain.v2_profile = profile; grain.v2_amount = None; }
+                        flags.runtime_changed = true;
+                    }
+                    if grain.v2_profile == "custom" {
+                        egui::ComboBox::from_label("Film Type")
+                            .selected_text(match grain.v2_film_type { GrainV2FilmType::Negative => "Negative", GrainV2FilmType::Positive => "Positive" })
+                            .show_ui(ui, |ui| {
+                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_film_type, GrainV2FilmType::Negative, "Negative").changed();
+                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_film_type, GrainV2FilmType::Positive, "Positive").changed();
+                            });
+                        egui::ComboBox::from_label("Processing Mode")
+                            .selected_text(match grain.v2_mode { GrainV2Mode::Analogue => "Analogue", GrainV2Mode::Noise => "Noise" })
+                            .show_ui(ui, |ui| {
+                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_mode, GrainV2Mode::Analogue, "Analogue").changed();
+                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_mode, GrainV2Mode::Noise, "Noise").changed();
+                            });
+                        let resolved = grain.resolved_grain_v2();
+                        flags.runtime_changed |= optional_numeric(ui, "Size", &mut grain.v2_size, resolved.size, 1.0, 48.0, 0.5, 1, "Grain particle size.");
+                        flags.runtime_changed |= optional_numeric(ui, "Shadows", &mut grain.v2_shadows, resolved.shadows * 100.0, 0.0, 100.0, 1.0, 1, "Shadow grain amount.");
+                        flags.runtime_changed |= optional_numeric(ui, "Midtones", &mut grain.v2_midtones, resolved.midtones * 100.0, 0.0, 100.0, 1.0, 1, "Midtone grain amount.");
+                        flags.runtime_changed |= optional_numeric(ui, "Highlights", &mut grain.v2_highlights, resolved.highlights * 100.0, 0.0, 100.0, 1.0, 1, "Highlight grain amount.");
+                        flags.runtime_changed |= optional_numeric(ui, "Film Resolution", &mut grain.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0, 1.0, 1, "Film resolution factor.");
+                        flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, 0.0, 100.0, 1.0, 1, "Chromatic grain amount.");
+                    }
+                    let resolved = grain.resolved_grain_v2();
+                    flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
+                } else {
+                    flags.runtime_changed |= tuple(ui, "rms granularity", &mut grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel RMS granularity.");
+                    flags.runtime_changed |= tuple(ui, "density min", &mut grain.density_min, -1000000.0, 1000000.0, 1.0, 2, "Minimum grain density.");
+                    flags.runtime_changed |= tuple(ui, "uniformity", &mut grain.uniformity, -1000000.0, 1000000.0, 1.0, 2, "Per-channel grain uniformity.");
+                    flags.runtime_changed |= tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, 0.0, 1000000.0, 0.25, 2, "Relative particle scale per emulsion sublayer.");
+                    flags.runtime_changed |= numeric(ui, "blur", &mut grain.blur, 0.0, 3.0, 0.05, 2, "Post-blur sigma.");
+                    flags.runtime_changed |= numeric(ui, "dye-cloud blur", &mut grain.blur_dye_clouds_um, 0.0, 10.0, 0.1, 2, "Dye-cloud blur in micrometers.");
+                    flags.runtime_changed |= numeric(ui, "mult usm amount", &mut grain.mult_usm_amount, 0.0, 1000000.0, 0.1, 2, "Density unsharp-mask amount.");
+                    flags.runtime_changed |= numeric(ui, "mult usm sigma", &mut grain.mult_usm_sigma, 0.0, 1000000.0, 0.1, 2, "Density unsharp-mask radius.");
+                    flags.runtime_changed |= tuple(ui, "micro structure", &mut grain.micro_structure, 0.0, 1000000.0, 0.1, 2, "Micro-structure scale and clump size.");
+                }
             });
         }
         if section == "Halation" {
@@ -387,6 +428,56 @@ fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams) -> bool {
 
 // The pinned Qt editors default to two decimals, a step of one, and bounds
 // of +/-1e6. Preserve saved values until an explicit edit, even out of range.
+fn apply_wheel_delta<T: egui::emath::Numeric>(
+    value: &mut T,
+    delta: f32,
+    min: f64,
+    max: f64,
+    step: f64,
+) -> bool {
+    if delta == 0.0 {
+        return false;
+    }
+    let direction = if delta.is_sign_positive() { 1.0 } else { -1.0 };
+    let current = value.to_f64();
+    let next = (current + direction * step).clamp(min, max);
+    if next == current {
+        return false;
+    }
+    *value = T::from_f64(next);
+    true
+}
+
+fn wheel_adjust<T: egui::emath::Numeric>(
+    ui: &Ui,
+    response: &egui::Response,
+    value: &mut T,
+    min: f64,
+    max: f64,
+    step: f64,
+) -> bool {
+    if !response.hovered() {
+        return false;
+    }
+    let (raw_delta, smooth_delta) =
+        ui.input(|input| (input.raw_scroll_delta.y, input.smooth_scroll_delta.y));
+    if raw_delta == 0.0 {
+        if smooth_delta != 0.0 {
+            ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+        }
+        return false;
+    }
+    if apply_wheel_delta(value, raw_delta, min, max, step) {
+        ui.input_mut(|input| {
+            input.raw_scroll_delta.y = 0.0;
+            input.smooth_scroll_delta.y = 0.0;
+        });
+        true
+    } else {
+        false
+    }
+}
+
 fn numeric<T: egui::emath::Numeric>(
     ui: &mut Ui,
     label: &str,
@@ -400,17 +491,38 @@ fn numeric<T: egui::emath::Numeric>(
     let decimals = if T::INTEGRAL { 0 } else { decimals };
     ui.horizontal(|ui| {
         ui.label(label).on_hover_text(tooltip);
-        ui.add(
-            DragValue::new(value)
-                .range(min..=max)
-                .clamp_existing_to_range(false)
-                .speed(step)
-                .fixed_decimals(decimals),
-        )
-        .on_hover_text(tooltip)
-        .changed()
+        let response = ui
+            .add(
+                DragValue::new(value)
+                    .range(min..=max)
+                    .clamp_existing_to_range(false)
+                    .speed(step)
+                    .fixed_decimals(decimals),
+            )
+            .on_hover_text(tooltip);
+        let wheel_changed = wheel_adjust(ui, &response, value, min, max, step);
+        response.changed() || wheel_changed
     })
     .inner
+}
+
+fn optional_numeric(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut Option<f32>,
+    inherited: f32,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    tooltip: &str,
+) -> bool {
+    let mut displayed = value.unwrap_or(inherited);
+    let changed = numeric(ui, label, &mut displayed, min, max, step, decimals, tooltip);
+    if changed {
+        *value = Some(displayed);
+    }
+    changed
 }
 
 fn tuple<T: egui::emath::Numeric, const N: usize>(
@@ -429,7 +541,7 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
         ui.horizontal(|ui| {
             let mut changed = false;
             for value in values {
-                changed |= ui
+                let response = ui
                     .add(
                         DragValue::new(value)
                             .range(min..=max)
@@ -437,8 +549,9 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
                             .speed(step)
                             .fixed_decimals(decimals),
                     )
-                    .on_hover_text(tooltip)
-                    .changed();
+                    .on_hover_text(tooltip);
+                changed |= response.changed();
+                changed |= wheel_adjust(ui, &response, value, min, max, step);
             }
             changed
         })
@@ -581,4 +694,26 @@ fn set_extra(extras: &mut Value, section: &str, key: &str, value: Value) {
         extras[section] = Value::Object(Map::new());
     }
     extras[section][key] = value;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_wheel_delta;
+
+    #[test]
+    fn wheel_delta_changes_by_step() {
+        let mut value = 1.0_f64;
+        assert!(apply_wheel_delta(&mut value, 1.0, 0.0, 2.0, 0.25));
+        assert_eq!(value, 1.25);
+    }
+
+    #[test]
+    fn wheel_delta_preserves_bounds() {
+        let mut min = 0.0_f64;
+        assert!(!apply_wheel_delta(&mut min, -1.0, 0.0, 2.0, 0.25));
+        assert_eq!(min, 0.0);
+        let mut max = 2.0_f64;
+        assert!(!apply_wheel_delta(&mut max, 1.0, 0.0, 2.0, 0.25));
+        assert_eq!(max, 2.0);
+    }
 }
