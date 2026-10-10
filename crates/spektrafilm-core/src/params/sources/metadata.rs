@@ -361,6 +361,9 @@ fn conditions(path: &str) -> Vec<String> {
                     "0 selects seed-derived phase; otherwise phase is strictly below 1".into(),
                 );
             }
+        } else if path.contains(".v3_") {
+            out.push("film_render.grain.engine = v3".into());
+            out.push("film grain V3 selected under its supported stock, format and route".into());
         } else if !path.ends_with(".active") && !path.ends_with(".engine") {
             out.push("film_render.grain.engine = v1".into());
             if path.ends_with(".n_sub_layers") {

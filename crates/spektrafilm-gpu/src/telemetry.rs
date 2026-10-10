@@ -74,6 +74,7 @@ vocabulary!(CpuReason {
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     GrainV2Unsupported,
+    GrainV3FieldCpu,
     PositiveScanOutput,
 });
 vocabulary!(ResidentDeclineReason {
@@ -83,6 +84,7 @@ vocabulary!(ResidentDeclineReason {
     RequestedSpectralLut,
     ActiveOpticalDiffusion,
     FaithfulGrainDistribution,
+    GrainV3FieldCpu,
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     MissingResidentFrontPass,
