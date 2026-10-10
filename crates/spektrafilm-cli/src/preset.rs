@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{ArgMatches, Args, Subcommand, ValueEnum};
 use serde_json::json;
-use spektrafilm_core::presets::{builtin_look_presets, load_selector};
+use spektrafilm_core::presets::{builtin_presets, load_selector};
 use std::path::PathBuf;
 
 #[derive(Subcommand)]
@@ -53,7 +53,7 @@ pub fn run(command: PresetCommand, matches: &ArgMatches) -> Result<()> {
             if crate::explicit_data_selection(matches) {
                 crate::select_data_dir(args.data_dir, matches)?;
             }
-            let entries = builtin_look_presets()
+            let entries = builtin_presets()
                 .into_iter()
                 .map(|p| {
                     json!({"id": p.id, "name": p.name,

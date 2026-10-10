@@ -1,10 +1,10 @@
 # Preset design
 
-- A **preset** is the named artifact: a document, a file, a library entry, a name, a group. A **look** is the content a preset owns: the look controls and their values. The terms *look preset* and *look document*, and a `looks` directory, must not appear. Names that mirror the pinned upstream (`apply_grain_preset`, `HALATION_PRESETS`, `v2_profile` and its values) keep their upstream spelling for parity traceability; they are not part of the preset vocabulary.
+- Vocabularies: a **preset** is a named parameter set — the user-facing one is a library document (`Built-in` compiled from the crate's `assets/presets`, `My Presets` read from `<config_dir>/presets`), while `data/presets/` keeps the upstream scope, the per-stock grain and coupler tables the runtime compiles in. A **look** is the content a preset owns: the look controls and their values. The terms *look preset* and *look document*, and a `looks` directory, must not appear.
+- *Calibration* stays reserved for the Convert device-correction matrix and its worker. Names that mirror the pinned upstream (`apply_grain_preset`, `HALATION_PRESETS`, `v2_profile` and its values) keep their upstream spelling for parity traceability.
 - The preset document, strict validation, resolution, capture, the library directory policy, discovery, name conflict rejection, and atomic writes belong to `core`. The Rust document type is `presets::Preset`, named after its module like `profile::Profile`; `LookParameters` remains the look payload.
 - Built-in preset documents are repository files in `crates/spektrafilm-core/assets/presets`. The build must compile them in, so built-in listing and name resolution must not require a data directory, and packaged data directories must not carry copies.
 - The library directory is `<config_dir>/presets`. The configuration directory policy is shared by the GUI and the CLI. `SPEKTRAFILM_CONFIG_DIR` must override it; there is no separate preset directory override. The library directory must not require a data directory.
-- The data directory carries no preset document. The stock-calibration tables are `data/calibration/grain.toml` and `data/calibration/couplers.toml`.
 
 ## Names and groups
 

@@ -173,10 +173,10 @@ executable.
 
 See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
 
-`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments in order. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
+`process` accepts a built-in preset or a TOML/JSON preset file through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments in order. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
 
 ```bash
-# Discover portable looks and editable grain controls
+# Discover portable presets and editable grain controls
 ./target/release/spektrafilm preset list --data-dir data
 ./target/release/spektrafilm preset show classic-kodak-portra-400 --data-dir data
 ./target/release/spektrafilm describe --module film_render.grain --format json

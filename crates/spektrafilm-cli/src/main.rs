@@ -187,7 +187,7 @@ enum Commands {
         #[arg(long, default_value = "json")]
         format: String,
     },
-    /// Inspect immutable built-in look presets.
+    /// Inspect immutable built-in presets.
     Preset {
         #[command(subcommand)]
         command: preset::PresetCommand,

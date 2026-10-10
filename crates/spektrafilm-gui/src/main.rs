@@ -18,7 +18,7 @@ use spektrafilm_core::image_io::{
     self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions,
 };
 use spektrafilm_core::params::RuntimeParams;
-use spektrafilm_core::presets::{LookPreset, builtin_look_presets, workflow_default};
+use spektrafilm_core::presets::{Preset, builtin_presets, workflow_default};
 use spektrafilm_core::profile;
 use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
@@ -282,7 +282,7 @@ struct App {
     /// Print stocks usable as the print stage (`Profile::is_print_stock`:
     /// paper/printing or film/printing).
     papers: Vec<ProfileEntry>,
-    builtins: Vec<LookPreset>,
+    builtins: Vec<Preset>,
     film_name: String,
     print_name: String,
     /// Development-time family (minutes) of the selected film / paper —
@@ -343,7 +343,7 @@ struct App {
     calibration_job: Option<CalibrationJob>,
     calibration_epoch: u64,
     parameter_revision: u64,
-    /// Applied look presets own explicit neutral filter values without
+    /// Applied presets own explicit neutral filter values without
     /// changing the persisted calibration setting.
     look_neutral_filters_pinned: bool,
 }
@@ -780,7 +780,7 @@ impl App {
             data_dir,
             films,
             papers,
-            builtins: builtin_look_presets(),
+            builtins: builtin_presets(),
             film_name,
             print_name,
             film_dev_times,
