@@ -33,7 +33,7 @@ struct Cli {
 enum Commands {
     /// Process an image through the film simulation pipeline.
     #[command(
-        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400 --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module workflow --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. Discover supported route values with describe --module workflow."
+        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400 --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --route accepts the routes listed under that option and validates them after parameter sources."
     )]
     Process {
         /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
@@ -278,7 +278,9 @@ enum DiscoveryFormat {
 
 #[derive(clap::Args)]
 struct WorkflowOptions {
-    /// Writer-stage color conversion; separate from scanner io.output_color_space.
+    /// Writer-stage color conversion; defaults to the scanner color space and
+    /// ACES2065-1 for EXR. Names are shared with the scanner registry: discover
+    /// them with `describe --field io.output_color_space`.
     #[arg(long, help_heading = "Output")]
     saving_color_space: Option<String>,
     /// Writer-stage transfer-function encoding; EXR requires false, JPEG/PNG true.
@@ -294,7 +296,8 @@ struct WorkflowOptions {
         help_heading = "Input and RAW loading"
     )]
     raw_temperature: Option<f64>,
-    /// Custom RAW white-balance tint adjustment (signed); requires custom balance.
+    /// Green-channel tint multiplier for custom RAW white balance; 1 is neutral.
+    /// Requires --raw-white-balance custom.
     #[arg(
         long,
         allow_negative_numbers = true,
@@ -304,7 +307,7 @@ struct WorkflowOptions {
     /// Apply lens correction while loading RAW input.
     #[arg(long, help_heading = "Input and RAW loading")]
     lens_correction: bool,
-    /// Workflow route; discover values with describe --module workflow.
+    /// Workflow route; this help lists the supported values.
     #[arg(long, help_heading = "Look and workflow")]
     route: Option<String>,
     /// Film scanner output mode; applied after parameter sources.
@@ -347,9 +350,16 @@ fn main() -> Result<()> {
         )
     });
     let (name, version) = &*IDENTITY;
+    let route_help = format!(
+        "Workflow route; supported values: {}",
+        spektrafilm_core::params::sources::supported_routes().join(", ")
+    );
     let matches = Cli::command()
         .name(name.as_str())
         .version(version.as_str())
+        .mut_subcommand("process", |command| {
+            command.mut_arg("route", |arg| arg.long_help(route_help.clone()))
+        })
         .get_matches();
     let cli = Cli::from_arg_matches(&matches)?;
     let (_, command_matches) = matches.subcommand().expect("required subcommand");
@@ -1109,9 +1119,11 @@ pub(crate) fn select_data_dir(argument: PathBuf, matches: &ArgMatches) -> Result
 }
 
 fn cmd_describe(format: DiscoveryFormat, module: Option<&str>, field: Option<&str>) -> Result<()> {
-    use spektrafilm_core::params::sources::{describe_field, describe_groups, describe_module};
+    use spektrafilm_core::params::sources::{
+        describe_field, describe_module, describe_root_groups,
+    };
     if matches!(format, DiscoveryFormat::Text) && module.is_none() && field.is_none() {
-        for group in describe_groups() {
+        for group in describe_root_groups() {
             println!("{group}");
         }
         return Ok(());

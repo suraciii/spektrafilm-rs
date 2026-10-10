@@ -166,9 +166,7 @@ fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
 fn parse_inline_value(path: &str, raw: &str) -> Result<Value, String> {
     let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
     if expected.is_object() {
-        return Err(format!(
-            "{path}: assign a parameter within this group, not the whole group"
-        ));
+        return Err(group_rejected(path));
     }
     let ty = rust_type(path);
     let base_ty = ty
@@ -290,7 +288,10 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
     if !finite_json(value) {
         return Err(format!("{path}: non-finite numbers are not allowed"));
     }
-    if expected.is_object() || value.is_object() {
+    if expected.is_object() {
+        return Err(group_rejected(path));
+    }
+    if value.is_object() {
         return Err(format!(
             "{path}: assignments must address scalar or array leaves"
         ));
@@ -570,6 +571,13 @@ fn unknown_path(path: &str) -> String {
     )
 }
 
+/// One shared rejection for a value assigned to a parameter group.
+fn group_rejected(path: &str) -> String {
+    format!(
+        "{path}: assign a parameter within this group, not the whole group; spektrafilm describe --module {path} lists its fields"
+    )
+}
+
 /// Describe one editable leaf using the module discovery metadata.
 pub fn describe_field(path: &str) -> Result<Value, String> {
     let default = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
@@ -581,30 +589,51 @@ pub fn describe_field(path: &str) -> Result<Value, String> {
     Ok(metadata(path, default))
 }
 
+fn collect_groups(prefix: &str, value: &Value, groups: &mut Vec<String>) -> bool {
+    let Some(map) = value.as_object() else {
+        return true;
+    };
+    let mut has_leaves = false;
+    for (key, child) in map {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        has_leaves |= collect_groups(&path, child, groups);
+    }
+    if has_leaves && !prefix.is_empty() {
+        groups.push(prefix.to_owned());
+    }
+    has_leaves
+}
+
 /// Canonical group prefixes with editable leaves, including nested groups.
 pub fn describe_groups() -> Vec<String> {
-    fn collect(prefix: &str, value: &Value, groups: &mut Vec<String>) -> bool {
-        let Some(map) = value.as_object() else {
-            return true;
-        };
-        let mut has_leaves = false;
-        for (key, child) in map {
-            let path = if prefix.is_empty() {
-                key.clone()
-            } else {
-                format!("{prefix}.{key}")
-            };
-            has_leaves |= collect(&path, child, groups);
-        }
-        if has_leaves && !prefix.is_empty() {
-            groups.push(prefix.to_owned());
-        }
-        has_leaves
-    }
     let mut groups = Vec::new();
-    collect("", schema_value(), &mut groups);
+    collect_groups("", schema_value(), &mut groups);
     groups.sort();
     groups
+}
+
+/// Top-level groups that contain editable leaves.
+pub fn describe_root_groups() -> Vec<String> {
+    let mut roots = Vec::new();
+    if let Some(map) = schema_value().as_object() {
+        for (key, child) in map {
+            let mut nested = Vec::new();
+            if collect_groups(key, child, &mut nested) {
+                roots.push(key.clone());
+            }
+        }
+    }
+    roots.sort();
+    roots
+}
+
+/// Workflow routes accepted by parameter validation.
+pub fn supported_routes() -> &'static [&'static str] {
+    &super::validation::SUPPORTED_ROUTES
 }
 
 pub fn suggest_parameter_paths(input: &str) -> Vec<String> {
@@ -795,6 +824,37 @@ mod tests {
                     .is_empty()
             );
         }
+    }
+
+    #[test]
+    fn root_groups_are_the_first_segment_of_editable_groups() {
+        let roots = describe_root_groups();
+        let mut expected: Vec<String> = describe_groups()
+            .into_iter()
+            .map(|group| group.split('.').next().unwrap().to_owned())
+            .collect();
+        expected.dedup();
+        assert_eq!(roots, expected);
+        assert!(roots.iter().any(|group| group == "film_render"));
+        assert!(!roots.iter().any(|group| group.contains('.')));
+        for root in &roots {
+            assert!(
+                !describe_module(root).unwrap()["fields"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn group_values_share_one_rejection_across_sources() {
+        let inline = ParameterEdits::parse("film_render.convert=nope").unwrap_err();
+        let file =
+            ParameterEdits::from_value(serde_json::json!({"film_render": {"convert": "nope"}}))
+                .unwrap_err();
+        assert_eq!(inline, file);
+        assert!(inline.contains("describe --module film_render.convert"));
     }
 
     #[test]

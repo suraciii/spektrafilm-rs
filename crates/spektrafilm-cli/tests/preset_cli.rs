@@ -1116,3 +1116,87 @@ fn raw_dry_run_reports_validated_signed_loading_options() {
     assert!(!custom["parameters"].to_string().contains("raw_loading"));
     assert!(!output.exists());
 }
+
+#[test]
+fn text_discovery_lists_root_groups_and_keeps_nested_modules() {
+    let f = Fixture::new();
+    let text = f.run(&["describe", "--format", "text"]);
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let text = String::from_utf8(text.stdout).unwrap();
+    let groups: Vec<&str> = text.lines().collect();
+    assert!(groups.contains(&"film_render") && groups.contains(&"camera"));
+    assert!(groups.iter().all(|group| !group.contains('.')));
+    let nested = f.run(&[
+        "describe",
+        "--module",
+        "film_render.grain",
+        "--format",
+        "text",
+    ]);
+    assert!(
+        nested.status.success(),
+        "{}",
+        String::from_utf8_lossy(&nested.stderr)
+    );
+    assert!(
+        String::from_utf8(nested.stdout)
+            .unwrap()
+            .contains("film_render.grain.engine")
+    );
+}
+
+#[test]
+fn route_help_lists_every_validated_route() {
+    let f = Fixture::new();
+    let help = f.run(&["process", "--help"]);
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout).unwrap();
+    for route in spektrafilm_core::params::sources::supported_routes() {
+        assert!(help.contains(route), "missing route {route}");
+    }
+    assert!(!help.contains("describe --module workflow"), "{help}");
+}
+
+#[test]
+fn signed_input_exposure_stops_accept_separate_arguments() {
+    let f = Fixture::new();
+    let build = |suffix: &str, exposure: &[&str]| {
+        let out = f.root.join(format!("lut-{suffix}"));
+        let mut args = vec![
+            "lut",
+            "build",
+            out.to_str().unwrap(),
+            "--name",
+            "signed-stops",
+            "--film",
+            "kodak_portra_400",
+            "--print",
+            "kodak_portra_endura",
+            "--input",
+            "srgb",
+            "--output",
+            "srgb",
+            "--resolution",
+            "2",
+        ];
+        args.extend_from_slice(exposure);
+        let output = f.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let metadata: Value =
+            serde_json::from_slice(&std::fs::read(out.join("signed-stops/bundle.json")).unwrap())
+                .unwrap();
+        metadata["input_exposure"].clone()
+    };
+    let equal = build("equal", &["--stops-above-midgray=-1"]);
+    let separate = build("separate", &["--stops-above-midgray", "-1"]);
+    assert_eq!(equal, separate);
+    assert_eq!(separate["stops_above_midgray"], -1.0);
+}

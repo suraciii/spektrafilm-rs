@@ -1,7 +1,7 @@
 use super::{RuntimeParams, Tap};
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
-const SUPPORTED_ROUTES: [&str; 7] = [
+pub(crate) const SUPPORTED_ROUTES: [&str; 7] = [
     "input",
     "input > film > scan",
     "input > film > print > scan",

@@ -80,6 +80,7 @@ pub(crate) struct BuildArgs {
     #[arg(
         long = "stops-above-midgray",
         value_name = "STOPS",
+        allow_negative_numbers = true,
         help_heading = "Bundle configuration"
     )]
     stops_above_midgray: Option<String>,
