@@ -15,7 +15,7 @@ use std::path::Path;
 pub struct ProcessParamsRequest<'a> {
     pub film: Option<&'a str>,
     pub paper: Option<&'a str>,
-    pub preset: Option<&'a str>,
+    pub presets: &'a [presets::Preset],
     pub params_file: Option<&'a Path>,
     pub sources: &'a [String],
     pub route: Option<&'a str>,
@@ -38,10 +38,19 @@ pub fn resolve(
     request: ProcessParamsRequest<'_>,
     data_dir: &Path,
 ) -> Result<ResolvedProcessParams, String> {
-    if request.preset.is_some()
-        && (request.film.is_some() || request.paper.is_some() || request.params_file.is_some())
+    let supplies_film = request
+        .presets
+        .iter()
+        .any(|preset| preset.film_profile.is_some());
+    let supplies_print = request
+        .presets
+        .iter()
+        .any(|preset| preset.print_profile.is_some());
+    if (supplies_film && request.film.is_some())
+        || (supplies_print && request.paper.is_some())
+        || ((supplies_film || supplies_print) && request.params_file.is_some())
     {
-        return Err("--preset conflicts with --film, --paper and --params".into());
+        return Err("--preset conflicts with --film, --paper and --params when it supplies their profile references".into());
     }
     let mut params = load_baseline(request.params_file)?;
     // A saved removed route must be reported before any explicit route
@@ -49,24 +58,37 @@ pub fn resolve(
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
         params.validate()?;
     }
-    let added_sources = request.preset.is_some() || !request.sources.is_empty();
-    let (film, print, film_name, print_name) = if let Some(selector) = request.preset {
-        let preset = presets::load_selector(selector, data_dir)?;
-        let resolved = preset.resolve(data_dir, &params)?;
-        params = resolved.params;
-        (
-            resolved.film,
-            resolved.print,
-            resolved.film_name,
-            resolved.print_name,
-        )
+    let added_sources = !request.presets.is_empty() || !request.sources.is_empty();
+    let mut resolved_profiles = None;
+    if supplies_film {
+        for preset in request.presets {
+            preset.validate()?;
+            if preset.kind()? == presets::PresetKind::Look {
+                let resolved = preset.resolve(data_dir, &params)?;
+                params = resolved.params;
+                resolved_profiles = Some((
+                    resolved.film,
+                    resolved.print,
+                    resolved.film_name,
+                    resolved.print_name,
+                ));
+            } else {
+                params = preset.apply_section(&params)?;
+            }
+        }
+    }
+    let (film, print, film_name, print_name) = if let Some(profiles) = resolved_profiles {
+        profiles
     } else {
         choose_workflow(&mut params, request.route, request.scan_film);
         if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
             params.validate()?;
         }
-        let direct_scan = request.scan_film || params.workflow.route == "input > film > scan";
-        let name = request.film.ok_or("--film is required without --preset")?;
+        let direct_scan =
+            params.workflow.route == "input > film > scan" || (!added_sources && request.scan_film);
+        let name = request
+            .film
+            .ok_or("--film is required when the preset set supplies no film reference")?;
         let film = profile::load_profile_by_name(data_dir, name)
             .map_err(|e| format!("loading film profile {name:?}: {e}"))?;
         let print_name = if direct_scan {
@@ -94,6 +116,10 @@ pub fn resolve(
         }
         if added_sources && request.digest_mode == DigestMode::ApplyStockSpecifics {
             apply_film_specifics(&mut params, &film);
+        }
+        for preset in request.presets {
+            preset.validate()?;
+            params = preset.apply_section(&params)?;
         }
         (film, print, name.to_owned(), print_name)
     };
@@ -212,7 +238,7 @@ mod tests {
         ProcessParamsRequest {
             film: Some("kodak_portra_400"),
             paper: None,
-            preset: None,
+            presets: &[],
             params_file: None,
             sources,
             route: None,
@@ -413,7 +439,8 @@ mod tests {
         let sources = vec!["enlarger.illuminant=\"D65\"".into()];
         let mut req = request(&sources);
         req.film = None;
-        req.preset = Some("Kodak Portra 400");
+        let documents = vec![presets::load_selector("Kodak Portra 400", &data_dir()).unwrap()];
+        req.presets = &documents;
         let result = resolve(req, &data_dir()).unwrap();
         let look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
         assert_eq!(
@@ -503,7 +530,8 @@ mod tests {
     fn route_precedes_scan_flag_and_derives_topology() {
         let sources = vec!["camera.auto_exposure=false".into()];
         let mut req = request(&sources);
-        req.preset = Some("Kodak Portra 400");
+        let documents = vec![presets::load_selector("Kodak Portra 400", &data_dir()).unwrap()];
+        req.presets = &documents;
         req.film = None;
         req.paper = None;
         req.scan_film = true;

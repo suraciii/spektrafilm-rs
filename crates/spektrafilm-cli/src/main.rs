@@ -33,7 +33,7 @@ struct Cli {
 enum Commands {
     /// Process an image through the film simulation pipeline.
     #[command(
-        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset Kodak Portra 400\n  spektrafilm process input.png -o output.tif --preset Kodak Portra 400 --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --route accepts the routes listed under that option and validates them after parameter sources."
+        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400'\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --preset 'Soft grain'\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision."
     )]
     Process {
         /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
@@ -66,16 +66,15 @@ enum Commands {
         #[arg(
             long,
             required_unless_present = "preset",
-            conflicts_with = "preset",
             help_heading = "Look and workflow"
         )]
         film: Option<String>,
         /// Print stock ID; otherwise uses film for direct scans or its target_print.
-        #[arg(long, conflicts_with = "preset", help_heading = "Look and workflow")]
+        #[arg(long, help_heading = "Look and workflow")]
         paper: Option<String>,
-        /// Built-in ID (preset list) or a .toml/.json preset file.
-        #[arg(long, conflicts_with_all = ["film", "paper", "params"], help_heading = "Look and workflow")]
-        preset: Option<String>,
+        /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
+        #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
+        preset: Vec<String>,
         /// Scan film directly, skipping printing unless --route overrides it.
         #[arg(long, help_heading = "Look and workflow")]
         scan_film: bool,
@@ -93,7 +92,7 @@ enum Commands {
         )]
         gpu_timings: bool,
         /// Legacy RuntimeParams JSON snapshot used as the parameter baseline.
-        #[arg(long, conflicts_with = "preset", help_heading = "Look and workflow")]
+        #[arg(long, help_heading = "Look and workflow")]
         params: Option<PathBuf>,
         /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
         /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
@@ -187,7 +186,7 @@ enum Commands {
         #[arg(long, default_value = "json")]
         format: String,
     },
-    /// Inspect immutable built-in presets.
+    /// Inspect presets from the built-in group and user library.
     Preset {
         #[command(subcommand)]
         command: preset::PresetCommand,
@@ -536,7 +535,7 @@ fn main() -> Result<()> {
             protected.extend(raw_out.as_deref());
             protected.extend(
                 preset
-                    .as_deref()
+                    .iter()
                     .filter(|selector| selector.ends_with(".toml") || selector.ends_with(".json"))
                     .map(Path::new),
             );
@@ -565,7 +564,7 @@ fn main() -> Result<()> {
                         &workflow,
                         film.as_deref(),
                         paper.as_deref(),
-                        preset.as_deref(),
+                        &preset,
                         scan_film,
                         timings,
                         params_file.as_deref(),
@@ -655,7 +654,7 @@ fn cmd_process(
     workflow: &WorkflowOptions,
     film_name: Option<&str>,
     paper_name: Option<&str>,
-    preset: Option<&str>,
+    selectors: &[String],
     scan_film: bool,
     show_timings: bool,
     params_file: Option<&Path>,
@@ -698,11 +697,16 @@ fn cmd_process(
         validate_raw_options(&raw_options)?;
     }
     invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
+    let library = spektrafilm_core::presets::PresetLibrary::default();
+    let presets = selectors
+        .iter()
+        .map(|selector| preset::select(&library, selector).map(|selected| selected.preset))
+        .collect::<Result<Vec<_>>>()?;
     let resolved = spektrafilm_core::process_params::resolve(
         spektrafilm_core::process_params::ProcessParamsRequest {
             film: film_name,
             paper: paper_name,
-            preset,
+            presets: &presets,
             params_file,
             sources,
             route: workflow.route.as_deref(),
