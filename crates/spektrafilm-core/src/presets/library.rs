@@ -87,14 +87,16 @@ fn carrier(path: &Path) -> Result<bool, String> {
     }
 }
 pub fn load_file(path: &Path) -> Result<Preset, String> {
+    load_document(path).map_err(|error| format!("{}: {error}", path.display()))
+}
+fn load_document(path: &Path) -> Result<Preset, String> {
     let is_toml = carrier(path)?;
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     if is_toml {
         Preset::from_toml_str(&text)
     } else {
         Preset::from_json_str(&text)
     }
-    .map_err(|e| format!("{}: {e}", path.display()))
 }
 fn user_scope_fault(directory: &Path, error: std::io::Error) -> LibraryEntry {
     LibraryEntry {
@@ -104,7 +106,7 @@ fn user_scope_fault(directory: &Path, error: std::io::Error) -> LibraryEntry {
         film_profile: None,
         print_profile: None,
         path: Some(directory.to_owned()),
-        fault: Some(format!("{}: {error}", directory.display())),
+        fault: Some(format!("reading My Presets directory: {error}")),
         preset: None,
     }
 }
@@ -171,7 +173,7 @@ impl PresetLibrary {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_owned();
-            match load_file(&path).and_then(|p| {
+            match load_document(&path).and_then(|p| {
                 if p.name == stem {
                     Ok(p)
                 } else {
@@ -507,6 +509,46 @@ mod tests {
             .to_string(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn document_fault_stores_cause_and_selector_prefixes_path_once() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.clone());
+        let path = temp.0.join("Native Grain Check.json");
+        std::fs::write(
+            &path,
+            r#"{"schema_version":2,"name":"Native Grain Check","parameters":{"film_render":{"grain":{"v2_amount":null}}}}"#,
+        )
+        .unwrap();
+        let entries = library.scan().unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.path.as_ref() == Some(&path))
+            .unwrap();
+        let cause = "invalid preset: missing field `provenance`";
+        assert_eq!(entry.fault.as_deref(), Some(cause));
+        let diagnostic = format!("{}: {cause}", path.display());
+        assert_eq!(load_file(&path).unwrap_err(), diagnostic);
+        assert_eq!(
+            library
+                .resolve_selector("user:Native Grain Check")
+                .unwrap_err(),
+            diagnostic
+        );
+    }
+
+    #[test]
+    fn scope_fault_stores_directory_in_path_and_cause_in_message() {
+        let temp = Temp::new();
+        let directory = temp.0.join("presets");
+        std::fs::write(&directory, "not a directory").unwrap();
+        let error = std::fs::read_dir(&directory).unwrap_err();
+        let expected = format!("reading My Presets directory: {error}");
+        let entries = PresetLibrary::new(directory.clone()).scan().unwrap();
+        let fault = entries.iter().find(|entry| entry.fault.is_some()).unwrap();
+        assert_eq!(fault.path.as_ref(), Some(&directory));
+        assert_eq!(fault.fault.as_deref(), Some(expected.as_str()));
     }
 
     #[cfg(unix)]
