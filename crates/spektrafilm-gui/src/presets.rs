@@ -216,10 +216,10 @@ impl App {
                             let directory = self.presets.library.directory().to_path_buf();
                             ui.small(directory.display().to_string());
                             ui.horizontal(|ui| {
-                                if ui.button("Show directory").clicked() {
-                                    if let Err(e) = reveal(&directory) {
-                                        self.status = e;
-                                    }
+                                if ui.button("Show directory").clicked()
+                                    && let Err(e) = reveal(&directory)
+                                {
+                                    self.status = e;
                                 }
                                 if ui.button("Refresh").clicked() {
                                     self.presets.refresh();
@@ -285,17 +285,16 @@ impl App {
                             ));
                         }
                     }
-                    if let Some(applied) = &self.presets.state.applied {
-                        if marker(
+                    if let Some(applied) = &self.presets.state.applied
+                        && marker(
                             applied,
                             &self.presets.entries,
                             &self.params,
                             &self.film_name,
                             &self.print_name,
                         ) == Marker::Missing
-                        {
-                            ui.label(format!("{} • missing", applied.name));
-                        }
+                    {
+                        ui.label(format!("{} • missing", applied.name));
                     }
                     if let Some(error) = &self.presets.scan_error {
                         ui.colored_label(egui::Color32::LIGHT_RED, error);
@@ -503,13 +502,13 @@ impl App {
             }
             ui.close_menu();
         }
-        if let Some(path) = &entry.path {
-            if ui.button("Show file").clicked() {
-                if let Err(e) = reveal(path) {
-                    self.status = e;
-                }
-                ui.close_menu();
+        if let Some(path) = &entry.path
+            && ui.button("Show file").clicked()
+        {
+            if let Err(e) = reveal(path) {
+                self.status = e;
             }
+            ui.close_menu();
         }
         if entry.group == PresetGroup::User && ui.button("Delete…").clicked() {
             self.presets.delete = Some(entry.name.clone());
@@ -592,12 +591,12 @@ impl App {
                 };
                 match result {
                     Ok(path) => {
-                        if let NameAction::Rename(old) = &dialog.action {
-                            if let Some(active) = self.presets.state.applied.as_mut() {
-                                if active.group == PresetGroup::User && active.name == *old {
-                                    active.name = dialog.name.clone();
-                                }
-                            }
+                        if let NameAction::Rename(old) = &dialog.action
+                            && let Some(active) = self.presets.state.applied.as_mut()
+                            && active.group == PresetGroup::User
+                            && active.name == *old
+                        {
+                            active.name = dialog.name.clone();
                         }
                         if matches!(&dialog.action, NameAction::Save(p) if p.kind() == Ok(PresetKind::Look))
                         {

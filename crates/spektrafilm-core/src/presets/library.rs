@@ -321,11 +321,11 @@ impl PresetLibrary {
             preset.to_json()?
         };
         atomic_write(&new, &text)?;
-        if new != old {
-            if let Err(e) = std::fs::remove_file(&old) {
-                let _ = std::fs::remove_file(&new);
-                return Err(format!("renaming {}: {e}", old.display()));
-            }
+        if new != old
+            && let Err(e) = std::fs::remove_file(&old)
+        {
+            let _ = std::fs::remove_file(&new);
+            return Err(format!("renaming {}: {e}", old.display()));
         }
         Ok(new)
     }

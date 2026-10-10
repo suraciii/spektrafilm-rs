@@ -40,6 +40,8 @@ pub struct LookParameters {
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
 }
+// The look variant owns the full look, and preset collections are small.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum PresetParameters {
@@ -431,21 +433,21 @@ fn validate_profile_ref(
             reference.stock
         ));
     }
-    if let Some(version) = &reference.version {
-        if &profile.metadata.version != version {
-            return Err(format!(
-                "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
-                reference.stock, profile.metadata.version
-            ));
-        }
+    if let Some(version) = &reference.version
+        && &profile.metadata.version != version
+    {
+        return Err(format!(
+            "{kind} profile {:?} version mismatch: expected {version:?}, got {:?}",
+            reference.stock, profile.metadata.version
+        ));
     }
-    if let Some(expected) = content_identity {
-        if Some(expected) != reference.content_identity.as_deref() {
-            return Err(format!(
-                "{kind} profile {:?} content identity was not verified",
-                reference.stock
-            ));
-        }
+    if let Some(expected) = content_identity
+        && Some(expected) != reference.content_identity.as_deref()
+    {
+        return Err(format!(
+            "{kind} profile {:?} content identity was not verified",
+            reference.stock
+        ));
     }
     Ok(())
 }

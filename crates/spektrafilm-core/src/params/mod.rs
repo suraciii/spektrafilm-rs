@@ -602,7 +602,7 @@ impl Default for SettingsParams {
 /// but is a no-op at digest time — upstream 0.3.4 declares it without ever
 /// reading it (timing output goes through the `Simulator.print_timings()`
 /// call-site flag instead), so it is preserved as an upstream no-op.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugParams {
     #[serde(default)]
@@ -613,17 +613,6 @@ pub struct DebugParams {
     pub print_timings: bool,
     #[serde(default)]
     pub lut_mode: bool,
-}
-
-impl Default for DebugParams {
-    fn default() -> Self {
-        Self {
-            deactivate_spatial_effects: false,
-            deactivate_stochastic_effects: false,
-            print_timings: false,
-            lut_mode: false,
-        }
-    }
 }
 
 /// Pipeline tap configuration — mirrors upstream 0.3.4 `TapsParams`.
@@ -731,7 +720,7 @@ pub struct RenderPreparationState {
 ///
 /// Mirrors upstream 0.3.4 `RuntimePhotoParams` minus the `film` / `print`
 /// profile objects (Rust passes `Profile` values alongside the params).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeParams {
     /// Per-render stochastic seed. The recipe runner sets this out-of-band so
@@ -768,27 +757,6 @@ pub struct RuntimeParams {
     pub debug: DebugParams,
     #[serde(default)]
     pub taps: TapsParams,
-}
-
-impl Default for RuntimeParams {
-    fn default() -> Self {
-        Self {
-            random_seed: 0,
-            neutral_print_filters_protected: [false; 3],
-            explicit_section_paths: std::collections::BTreeSet::new(),
-            camera: CameraParams::default(),
-            enlarger: EnlargerParams::default(),
-            scanner: ScannerParams::default(),
-            film_render: FilmRenderingParams::default(),
-            print_render: PrintRenderingParams::default(),
-            io: IoParams::default(),
-            workflow: WorkflowParams::default(),
-            magazine_print_color: MagazinePrintColorParams::default(),
-            settings: SettingsParams::default(),
-            debug: DebugParams::default(),
-            taps: TapsParams::default(),
-        }
-    }
 }
 
 impl RuntimeParams {
