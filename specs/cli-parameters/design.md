@@ -8,6 +8,8 @@ A complete preset, a sparse parameter file, and inline assignments must remain d
 
 TOML and JSON must map into the same parameter types. Carrier parsing must not select a different resolver. Syntax adapters must not change units or coerce strings. The semantic validator must remain authoritative for field support, bounds, and combinations.
 
+Inline assignments must use the shared field types to distinguish plain strings from boolean, numeric, and array values. JSON quoting must remain available for strings that need escaping. Invalid numeric or boolean input must fail with a type-specific message instead of falling back to text. The carrier parser must return the same typed values to the existing leaf validator.
+
 ## Parameter preparation
 
 Stock look initialization, explicit controls, and runtime constraints must be separate preparation decisions. Preparation must retain each explicit neutral-filter axis through database calibration. It must use supplied-field information rather than comparing numbers with defaults. A value equal to a stock default is still an explicit edit.
@@ -25,6 +27,12 @@ The resolution report must include deterministic topology and monochrome channel
 The editable field description must serve parameter-file and inline-assignment validation and parameter discovery. It must identify leaves, types, optional values, units, domains, and effect conditions. These facts must come from the owning parameter definitions and validators. The CLI must not maintain a second handwritten list of bounds or enum values. The carrier adapter may map field names to this description but must not invent shorter aliases.
 
 Array controls with distinct component domains must describe each component. Source validation must apply the same component rules as runtime construction before a later source can replace the array.
+
+Single-field and module discovery must use the same metadata records. Text output must format these records without changing validation or static defaults. Selector-free JSON must remain the render adapter contract; selector-free text must list the editable groups instead. This explicit format choice must not depend on terminal detection.
+
+The dry-run report must combine the shared runtime result with the CLI's selected data location and RAW loading options. These adapter choices must remain outside runtime parameters. Raster input must not report RAW controls as active. Reporting the selected directory must not reselect it or load image pixels.
+
+The [CLI workflow design](../cli-workflow/design.md) owns source-aware data selection, help, signed numeric argument handling, and corrective suggestions.
 
 ## Existing contracts
 

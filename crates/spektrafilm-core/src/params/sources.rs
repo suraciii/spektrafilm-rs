@@ -1,6 +1,7 @@
 mod metadata;
 
 use super::RuntimeParams;
+use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 use metadata::{metadata, nullable, rust_type};
 use serde_json::{Map, Value};
 
@@ -15,7 +16,10 @@ impl ParameterEdits {
         if source.trim().is_empty() {
             return Err("parameter source is empty".into());
         }
-        if source.ends_with(".toml") || source.ends_with(".json") {
+        let assignment = source
+            .split_once('=')
+            .is_some_and(|(path, _)| path.trim().split('.').all(valid_ident));
+        if !assignment && (source.ends_with(".toml") || source.ends_with(".json")) {
             let text = std::fs::read_to_string(source).map_err(|e| format!("{source}: {e}"))?;
             return Self::from_value(parse_carrier(&text, source.ends_with(".toml"))?)
                 .map_err(|e| format!("{source}: {e}"));
@@ -26,15 +30,16 @@ impl ParameterEdits {
             if item.is_empty() {
                 return Err("empty parameter assignment".into());
             }
-            let eq = find_equals(item).ok_or_else(|| format!("assignment missing '=': {item}"))?;
+            let eq = find_equals(item).ok_or_else(|| {
+                format!("expected PATH=VALUE or a .toml/.json file, got {item:?}; example: --set film_render.grain.engine=v2")
+            })?;
             let path = item[..eq].trim();
             let raw = item[eq + 1..].trim();
             validate_path(path)?;
             if raw.is_empty() {
                 return Err(format!("empty value for {path}"));
             }
-            let value: Value = serde_json::from_str(raw)
-                .map_err(|e| format!("{path}: invalid JSON value: {e}"))?;
+            let value = parse_inline_value(path, raw)?;
             out.push(path, value)?;
         }
         Ok(out)
@@ -50,8 +55,7 @@ impl ParameterEdits {
     }
 
     fn push(&mut self, path: &str, value: Value) -> Result<(), String> {
-        let expected = lookup(schema_value(), path)
-            .ok_or_else(|| format!("unknown parameter path: {path}"))?;
+        let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
         validate_leaf(path, &value, expected)?;
         self.edits.push((path.to_owned(), value));
         Ok(())
@@ -157,6 +161,121 @@ fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
             .ok_or_else(|| format!("unknown parameter path: {path}"))?;
     }
     Err(format!("invalid parameter path: {path}"))
+}
+
+fn parse_inline_value(path: &str, raw: &str) -> Result<Value, String> {
+    let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
+    if expected.is_object() {
+        return Err(format!(
+            "{path}: assign a parameter within this group, not the whole group"
+        ));
+    }
+    let ty = rust_type(path);
+    let base_ty = ty
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(&ty);
+    let string_value = !matches!(
+        base_ty,
+        "bool" | "f32" | "f64" | "u32" | "u64" | "i32" | "i64"
+    ) && !base_ty.starts_with('[');
+    if string_value && !raw.starts_with('"') && !(raw == "null" && nullable(path)) {
+        return Ok(Value::String(raw.to_owned()));
+    }
+    if let Ok(value) = serde_json::from_str(raw) {
+        return Ok(value);
+    }
+    if matches!(base_ty, "f32" | "f64") {
+        if let Ok(number) = raw.parse::<f64>() {
+            if let Some(number) = serde_json::Number::from_f64(number) {
+                return Ok(Value::Number(number));
+            }
+        }
+    }
+    let form = if string_value {
+        "text or a double-quoted string"
+    } else if base_ty == "bool" {
+        "true or false"
+    } else if base_ty.starts_with('[') {
+        "a numeric array, such as [1,2,3]"
+    } else {
+        "a finite number"
+    };
+    let unset = if nullable(path) {
+        "; use null to clear it"
+    } else {
+        ""
+    };
+    Err(format!("{path}: expected {form}{unset}, got {raw:?}"))
+}
+
+#[cfg(test)]
+mod inline_value_tests {
+    use super::*;
+
+    #[test]
+    fn plain_values_follow_parameter_types_and_preserve_quoted_forms() {
+        let source = "film_render.grain.engine=v2,film_render.grain.v2_profile=custom,io.output_color_space=ProPhoto RGB,camera.auto_exposure=false,camera.exposure_compensation_ev=+.5,camera.filter_uv=[1,2,3],film_render.grain.v2_amount=null";
+        let mut params = RuntimeParams::default();
+        ParameterEdits::parse(source)
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(
+            params.film_render.grain.engine,
+            super::super::grain::GrainEngine::V2
+        );
+        assert_eq!(params.film_render.grain.v2_profile, "custom");
+        assert_eq!(params.io.output_color_space, "ProPhoto RGB");
+        assert!(!params.camera.auto_exposure);
+        assert_eq!(params.camera.exposure_compensation_ev, 0.5);
+        assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);
+        assert_eq!(params.film_render.grain.v2_amount, None);
+        ParameterEdits::parse(r#"io.output_color_space="sRGB",film_render.grain.engine="v1""#)
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(params.io.output_color_space, "sRGB");
+        assert_eq!(
+            params.film_render.grain.engine,
+            super::super::grain::GrainEngine::V1
+        );
+    }
+
+    #[test]
+    fn unquoted_text_keeps_equals_and_file_extensions() {
+        let mut params = RuntimeParams::default();
+        ParameterEdits::parse("film_render.convert.calibration=example=value.json")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(params.film_render.convert.calibration, "example=value.json");
+        ParameterEdits::parse(r#"film_render.convert.calibration="a,b=c""#)
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert_eq!(params.film_render.convert.calibration, "a,b=c");
+    }
+
+    #[test]
+    fn invalid_typed_values_do_not_become_text_or_disappear_under_overrides() {
+        for source in [
+            "camera.auto_exposure=yes,camera.auto_exposure=false",
+            "camera.exposure_compensation_ev=fast,camera.exposure_compensation_ev=0",
+            "camera.exposure_compensation_ev=inf",
+            "film_render.grain.engine=invalid,film_render.grain.engine=v2",
+            "settings.preview_max_size=1.5",
+            "camera.filter_uv=1,2,3",
+            r#"camera.auto_exposure="false""#,
+            r#"camera.exposure_compensation_ev="0.5""#,
+        ] {
+            assert!(ParameterEdits::parse(source).is_err(), "accepted {source}");
+        }
+        let error = ParameterEdits::parse("camera.auto_exposure=yes").unwrap_err();
+        assert!(error.contains("true or false"));
+        let error = ParameterEdits::parse("film_render.grain.engine=unknown").unwrap_err();
+        assert!(error.contains("v1") && error.contains("v2"));
+    }
 }
 
 fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), String> {
@@ -441,12 +560,92 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
     out.push(&s[start..]);
     Ok(out)
 }
+fn unknown_path(path: &str) -> String {
+    format!(
+        "unknown parameter path: {path}; {}",
+        error_suffix(
+            &suggest_parameter_paths(path),
+            "use spektrafilm describe --module MODULE --format text to list fields, then --field PATH to describe one"
+        )
+    )
+}
+
+/// Describe one editable leaf using the module discovery metadata.
+pub fn describe_field(path: &str) -> Result<Value, String> {
+    let default = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
+    if default.is_object() {
+        return Err(format!(
+            "parameter field is a group: {path}; use spektrafilm describe --module {path}"
+        ));
+    }
+    Ok(metadata(path, default))
+}
+
+/// Canonical group prefixes with editable leaves, including nested groups.
+pub fn describe_groups() -> Vec<String> {
+    fn collect(prefix: &str, value: &Value, groups: &mut Vec<String>) -> bool {
+        let Some(map) = value.as_object() else {
+            return true;
+        };
+        let mut has_leaves = false;
+        for (key, child) in map {
+            let path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            has_leaves |= collect(&path, child, groups);
+        }
+        if has_leaves && !prefix.is_empty() {
+            groups.push(prefix.to_owned());
+        }
+        has_leaves
+    }
+    let mut groups = Vec::new();
+    collect("", schema_value(), &mut groups);
+    groups.sort();
+    groups
+}
+
+pub fn suggest_parameter_paths(input: &str) -> Vec<String> {
+    fn collect(prefix: &str, value: &Value, paths: &mut Vec<String>) {
+        if let Some(map) = value.as_object() {
+            for (key, child) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                collect(&path, child, paths);
+            }
+        } else {
+            paths.push(prefix.to_owned());
+        }
+    }
+    let mut paths = Vec::new();
+    collect("", schema_value(), &mut paths);
+    closest(input, paths.into_iter(), MAX_SUGGESTIONS)
+}
+
+pub fn suggest_groups(input: &str) -> Vec<String> {
+    closest(input, describe_groups().into_iter(), MAX_SUGGESTIONS)
+}
+
 pub fn describe_module(prefix: &str) -> Result<Value, String> {
     let schema = schema_value();
-    let group =
-        lookup(schema, prefix).ok_or_else(|| format!("unknown parameter module: {prefix}"))?;
+    let group = lookup(schema, prefix).ok_or_else(|| {
+        format!(
+            "unknown parameter module: {prefix}; {}",
+            error_suffix(
+                &suggest_groups(prefix),
+                "use spektrafilm describe --format text to list modules"
+            )
+        )
+    })?;
     if !group.is_object() {
-        return Err(format!("parameter module is not a group: {prefix}"));
+        return Err(format!(
+            "parameter module is not a group: {prefix}; use spektrafilm describe --field {prefix}"
+        ));
     }
     let mut fields = Vec::new();
     collect_metadata(prefix, group, &mut fields);
@@ -558,6 +757,95 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_field_discovery_reuses_module_records() {
+        for group in describe_groups() {
+            for record in describe_module(&group).unwrap()["fields"]
+                .as_array()
+                .unwrap()
+            {
+                let path = record["path"].as_str().unwrap();
+                assert_eq!(describe_field(path).unwrap(), *record, "{path}");
+            }
+        }
+        assert!(
+            describe_field("film_render.grain")
+                .unwrap_err()
+                .contains("--module film_render.grain")
+        );
+        assert!(
+            describe_module("film_render.grain.engine")
+                .unwrap_err()
+                .contains("--field film_render.grain.engine")
+        );
+    }
+
+    #[test]
+    fn discoverable_groups_are_sorted_and_editable() {
+        let groups = describe_groups();
+        assert!(groups.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(groups.iter().any(|group| group == "film_render.grain"));
+        assert!(!groups.iter().any(|group| group == "workflow"));
+        for group in groups {
+            assert!(
+                !describe_module(&group).unwrap()["fields"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_leaves_suggest_canonical_paths_or_discovery() {
+        let typo = "film_render.grain.engin";
+        assert_eq!(suggest_parameter_paths(typo), ["film_render.grain.engine"]);
+        for error in [
+            describe_field(typo).unwrap_err(),
+            ParameterEdits::parse("film_render.grain.engin=v2").unwrap_err(),
+            ParameterEdits::from_value(
+                serde_json::json!({"film_render": {"grain": {"engin": "v2"}}}),
+            )
+            .unwrap_err(),
+        ] {
+            assert!(
+                error.contains("did you mean film_render.grain.engine?"),
+                "{error}"
+            );
+        }
+        assert!(suggest_parameter_paths("completely_unrelated.field").is_empty());
+        let error = describe_field("completely_unrelated.field").unwrap_err();
+        assert!(error.contains("spektrafilm describe --module MODULE --format text"));
+        assert!(error.contains("--field"));
+        assert!(
+            ParameterEdits::parse("camera.unknown_leaf=1")
+                .unwrap_err()
+                .contains("--module MODULE")
+        );
+        assert!(
+            ParameterEdits::from_value(serde_json::json!({"camera": {"unknown_leaf": 1}}))
+                .unwrap_err()
+                .contains("--module MODULE")
+        );
+        assert!(suggest_parameter_paths("workflow.route").is_empty());
+    }
+
+    #[test]
+    fn unknown_groups_suggest_canonical_prefixes_or_discovery() {
+        assert_eq!(suggest_groups("film_render.grai"), ["film_render.grain"]);
+        assert!(
+            describe_module("film_render.grai")
+                .unwrap_err()
+                .contains("did you mean film_render.grain?")
+        );
+        assert!(suggest_groups("completely_unrelated").is_empty());
+        assert!(
+            describe_module("completely_unrelated")
+                .unwrap_err()
+                .contains("spektrafilm describe --format text")
+        );
+    }
 
     #[test]
     fn inline_apply_is_ordered_and_preserves_runtime_state() {

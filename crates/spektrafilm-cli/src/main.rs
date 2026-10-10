@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
@@ -32,79 +32,94 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Process an image through the film simulation pipeline.
+    #[command(
+        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400\n  spektrafilm process input.png -o output.tif --preset classic-kodak-portra-400 --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module workflow --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. Discover supported route values with describe --module workflow."
+    )]
     Process {
-        /// Compute backend (cpu or gpu). If omitted, uses SPEKTRAFILM_BACKEND/default selection.
-        #[arg(long, value_enum)]
+        /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
+        #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
         backend: Option<Backend>,
-        /// Input image (TIFF, EXR, PNG, JPEG, or camera RAW).
+        /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
+        #[arg(help_heading = "Input and RAW loading")]
         input: PathBuf,
-        /// Output image path (TIFF, EXR, PNG, or JPEG).
-        #[arg(short, long)]
+        /// Destination TIFF, EXR, PNG, or JPEG image.
+        #[arg(short, long, help_heading = "Output")]
         output: PathBuf,
-        /// Output format. If omitted, inferred from the output extension.
-        #[arg(long, value_enum)]
+        /// Output container; otherwise inferred from the destination extension.
+        #[arg(long, value_enum, help_heading = "Output")]
         format: Option<OutputFormat>,
-        /// Output bit depth: 8, 16, or 32.
-        #[arg(long)]
+        /// Output sample depth: 8, 16, or 32 bits (JPEG/PNG require 8).
+        #[arg(long, help_heading = "Output")]
         bit_depth: Option<u8>,
-        /// JPEG quality (1..=100).
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100))]
+        /// JPEG quality from 1 to 100; applies only to JPEG.
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100), help_heading = "Output")]
         jpeg_quality: Option<u8>,
-        /// JPEG chroma subsampling (444 or 420).
-        #[arg(long, value_enum)]
+        /// JPEG chroma subsampling; applies only to JPEG.
+        #[arg(long, value_enum, help_heading = "Output")]
         jpeg_subsampling: Option<JpegSubsamplingArg>,
-        /// TIFF/EXR compression.
-        #[arg(long, value_enum)]
+        /// TIFF/EXR compression (EXR requires zip).
+        #[arg(long, value_enum, help_heading = "Output")]
         compression: Option<CompressionArg>,
         #[command(flatten)]
         workflow: WorkflowOptions,
-        /// Film stock name (e.g. kodak_portra_400). Required unless --preset is used.
-        #[arg(long, required_unless_present = "preset", conflicts_with = "preset")]
+        /// Film stock ID; discover with list-profiles. Required without --preset.
+        #[arg(
+            long,
+            required_unless_present = "preset",
+            conflicts_with = "preset",
+            help_heading = "Look and workflow"
+        )]
         film: Option<String>,
-        /// Paper stock name (e.g. fujifilm_crystal_archive_typeii).
-        /// If omitted for --scan-film or a direct scan route, uses the film as
-        /// the scan profile; otherwise it uses the film's target_print.
-        #[arg(long, conflicts_with = "preset")]
+        /// Print stock ID; otherwise uses film for direct scans or its target_print.
+        #[arg(long, conflicts_with = "preset", help_heading = "Look and workflow")]
         paper: Option<String>,
-        /// A built-in preset ID or .toml/.json preset file.
-        #[arg(long, conflicts_with_all = ["film", "paper", "params"])]
+        /// Built-in ID (preset list) or a .toml/.json preset file.
+        #[arg(long, conflicts_with_all = ["film", "paper", "params"], help_heading = "Look and workflow")]
         preset: Option<String>,
-        /// Scan film directly (skip printing stage).
-        #[arg(long)]
+        /// Scan film directly, skipping printing unless --route overrides it.
+        #[arg(long, help_heading = "Look and workflow")]
         scan_film: bool,
-        /// Print per-stage timing information.
-        #[arg(long)]
+        /// Print per-stage timing information to stderr.
+        #[arg(long, help_heading = "Execution and diagnostics")]
         timings: bool,
-        /// Save one local JSON diagnostics report without replacing an existing file.
-        #[arg(long)]
+        /// Save a local JSON diagnostics report without replacing an existing file.
+        #[arg(long, help_heading = "Execution and diagnostics")]
         diagnostics: Option<PathBuf>,
-        /// Collect GPU pass timings when available; unsupported devices retain summary.
-        #[arg(long, requires = "diagnostics")]
+        /// Collect available GPU pass timings; requires --diagnostics.
+        #[arg(
+            long,
+            requires = "diagnostics",
+            help_heading = "Execution and diagnostics"
+        )]
         gpu_timings: bool,
-        /// Path to JSON params file for overrides.
-        #[arg(long, conflicts_with = "preset")]
+        /// Legacy RuntimeParams JSON snapshot used as the parameter baseline.
+        #[arg(long, conflicts_with = "preset", help_heading = "Look and workflow")]
         params: Option<PathBuf>,
-        /// Sparse parameter source (a .toml/.json file or comma-separated assignments).
-        #[arg(long = "set", action = clap::ArgAction::Append)]
+        /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
+        /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
+        #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
         sources: Vec<String>,
-        /// Resolve and validate without decoding or rendering.
-        #[arg(long)]
+        /// Validate and print effective configuration without decoding or rendering.
+        #[arg(long, help_heading = "Execution and diagnostics")]
         dry_run: bool,
-        /// Dump the raw f64 output buffer (HxWx3, row-major, channel-interleaved)
-        /// before sRGB encoding/clipping. Used for bit-exact parity comparison.
-        #[arg(long)]
+        /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
+        #[arg(long, help_heading = "Output")]
         raw_out: Option<PathBuf>,
-        /// Run the pipeline N times in the same process.
-        #[arg(long, default_value = "1")]
+        /// Run the pipeline this many times in one process (at least 1).
+        #[arg(long, default_value = "1", help_heading = "Execution and diagnostics")]
         iters: usize,
-        /// Path to the data directory.
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(
+            long,
+            default_value = "data",
+            help_heading = "Execution and diagnostics"
+        )]
         data_dir: PathBuf,
     },
     /// List available film and paper profiles.
     ListProfiles {
-        /// Path to the data directory.
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
     },
     /// Build LUT bundles or list stocks and transport color spaces.
@@ -114,50 +129,61 @@ enum Commands {
     },
     /// Export a canonical 1-LUT cube (encoded ProPhoto RGB to sRGB, native headroom).
     ExportLut {
-        /// Film stock name.
+        /// Film stock ID; discover with list-profiles.
         #[arg(long)]
         film: String,
-        /// Paper stock name.
+        /// Print stock ID; otherwise use the film's target_print.
         #[arg(long)]
         paper: Option<String>,
-        /// LUT cube size (e.g. 33, 65).
+        /// LUT cube edge resolution (for example 33 or 65).
         #[arg(long, default_value = "33")]
         size: u32,
-        /// Output .cube file path.
+        /// Destination .cube file.
         #[arg(short, long)]
         output: PathBuf,
-        /// Path to the data directory.
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
     },
-    /// Describe the machine-readable runtime and admitted contract.
+    /// Describe runtime fields or the machine-readable render contract.
     Describe {
-        #[arg(long, default_value = "json")]
-        format: String,
-        #[arg(long)]
+        /// Discovery output format.
+        #[arg(long, default_value = "json", value_enum)]
+        format: DiscoveryFormat,
+        /// Canonical parameter group; discover groups with --format text.
+        #[arg(long, conflicts_with = "field")]
         module: Option<String>,
+        /// One canonical editable parameter leaf.
+        #[arg(long, conflicts_with = "module")]
+        field: Option<String>,
     },
     /// Render one structured recipe under the fork runner contract.
     Render {
+        /// Input image path.
         #[arg(long)]
         input: PathBuf,
+        /// RenderRecipe JSON file.
         #[arg(long)]
         recipe: PathBuf,
+        /// Destination image path.
         #[arg(long)]
         output: PathBuf,
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
         /// Save one local JSON diagnostics report without replacing an existing file.
         #[arg(long)]
         diagnostics: Option<PathBuf>,
-        /// Collect GPU pass timings when available; unsupported devices retain summary.
+        /// Collect GPU pass timings when available; requires --diagnostics.
         #[arg(long, requires = "diagnostics")]
         gpu_timings: bool,
     },
     /// Inspect an output without processing or modifying it.
     Inspect {
+        /// Existing image to inspect.
         #[arg(long)]
         input: PathBuf,
+        /// Inspection format (json).
         #[arg(long, default_value = "json")]
         format: String,
     },
@@ -168,11 +194,14 @@ enum Commands {
     },
     /// Run the declared corpus and write a structured parity report.
     Parity {
+        /// Declared parity corpus JSON file.
         #[arg(long)]
         corpus: PathBuf,
+        /// Destination parity report JSON file.
         #[arg(long)]
         report: PathBuf,
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
     },
 }
@@ -241,27 +270,51 @@ impl CompressionArg {
     }
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DiscoveryFormat {
+    Json,
+    Text,
+}
+
 #[derive(clap::Args)]
 struct WorkflowOptions {
-    #[arg(long)]
+    /// Writer-stage color conversion; separate from scanner io.output_color_space.
+    #[arg(long, help_heading = "Output")]
     saving_color_space: Option<String>,
-    #[arg(long, action = clap::ArgAction::Set)]
+    /// Writer-stage transfer-function encoding; EXR requires false, JPEG/PNG true.
+    #[arg(long, action = clap::ArgAction::Set, help_heading = "Output")]
     saving_cctf_encoding: Option<bool>,
-    #[arg(long, default_value = "as-shot", value_parser = ["as-shot", "daylight", "tungsten", "custom"])]
+    /// RAW loading white balance; custom requires --raw-temperature.
+    #[arg(long, default_value = "as-shot", value_parser = ["as-shot", "daylight", "tungsten", "custom"], help_heading = "Input and RAW loading")]
     raw_white_balance: String,
-    #[arg(long)]
+    /// Custom RAW white-balance temperature in Kelvin.
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help_heading = "Input and RAW loading"
+    )]
     raw_temperature: Option<f64>,
-    #[arg(long)]
+    /// Custom RAW white-balance tint adjustment (signed); requires custom balance.
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help_heading = "Input and RAW loading"
+    )]
     raw_tint: Option<f64>,
-    #[arg(long)]
+    /// Apply lens correction while loading RAW input.
+    #[arg(long, help_heading = "Input and RAW loading")]
     lens_correction: bool,
-    #[arg(long)]
+    /// Workflow route; discover values with describe --module workflow.
+    #[arg(long, help_heading = "Look and workflow")]
     route: Option<String>,
-    #[arg(long, value_parser = ["direct_scan", "positive_scan"])]
+    /// Film scanner output mode; applied after parameter sources.
+    #[arg(long, value_parser = ["direct_scan", "positive_scan"], help_heading = "Look and workflow")]
     scan_output: Option<String>,
-    #[arg(long, default_value = "none")]
+    /// Film density channel order: none or three comma-separated indices in 0..2.
+    #[arg(long, default_value = "none", help_heading = "Look and workflow")]
     film_channel_swap: String,
-    #[arg(long, default_value = "none")]
+    /// Print density channel order: none or three comma-separated indices in 0..2.
+    #[arg(long, default_value = "none", help_heading = "Look and workflow")]
     print_channel_swap: String,
 }
 
@@ -274,7 +327,32 @@ fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    let cli = Cli::parse();
+    static IDENTITY: std::sync::LazyLock<(String, String)> = std::sync::LazyLock::new(|| {
+        let name = std::env::current_exe()
+            .ok()
+            .and_then(|path| {
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "spektrafilm".into());
+        let precision = if cfg!(feature = "precision-f64") {
+            "f64"
+        } else {
+            "f32"
+        };
+        (
+            name,
+            format!("{} (native CPU {})", env!("CARGO_PKG_VERSION"), precision),
+        )
+    });
+    let (name, version) = &*IDENTITY;
+    let matches = Cli::command()
+        .name(name.as_str())
+        .version(version.as_str())
+        .get_matches();
+    let cli = Cli::from_arg_matches(&matches)?;
+    let (_, command_matches) = matches.subcommand().expect("required subcommand");
 
     match cli.command {
         Commands::Process {
@@ -301,7 +379,6 @@ fn main() -> Result<()> {
             diagnostics,
             gpu_timings,
         } => {
-            let data_dir = resolve_data_dir(data_dir);
             let mut protected = vec![input.as_path(), output.as_path()];
             protected.extend(params_file.as_deref());
             protected.extend(raw_out.as_deref());
@@ -324,6 +401,7 @@ fn main() -> Result<()> {
                 &protected,
                 telemetry::requested_backend(backend),
                 |invocation| {
+                    let data = select_data_dir(data_dir, command_matches)?;
                     cmd_process(
                         &input,
                         &output,
@@ -343,7 +421,7 @@ fn main() -> Result<()> {
                         dry_run,
                         raw_out.as_deref(),
                         iters,
-                        &data_dir,
+                        &data,
                         backend,
                         invocation,
                     )
@@ -351,10 +429,10 @@ fn main() -> Result<()> {
             )?;
         }
         Commands::ListProfiles { data_dir } => {
-            let data_dir = resolve_data_dir(data_dir);
-            cmd_list_profiles(&data_dir);
+            let data = select_data_dir(data_dir, command_matches)?;
+            cmd_list_profiles(&data.path)?;
         }
-        Commands::Lut { command } => lut::run(command)?,
+        Commands::Lut { command } => lut::run(command, command_matches)?,
         Commands::ExportLut {
             film,
             paper,
@@ -367,20 +445,15 @@ fn main() -> Result<()> {
                 paper.as_deref(),
                 size,
                 &output,
-                &resolve_data_dir(data_dir),
+                &select_data_dir(data_dir, command_matches)?.path,
             )?;
         }
-        Commands::Describe { format, module } => {
-            if format != "json" {
-                bail!("unsupported describe format {format}; use json");
-            }
-            let value = if let Some(module) = module {
-                spektrafilm_core::params::sources::describe_module(&module)
-                    .map_err(anyhow::Error::msg)?
-            } else {
-                contract::describe()
-            };
-            println!("{}", serde_json::to_string_pretty(&value)?);
+        Commands::Describe {
+            format,
+            module,
+            field,
+        } => {
+            cmd_describe(format, module.as_deref(), field.as_deref())?;
         }
         Commands::Render {
             input,
@@ -396,6 +469,7 @@ fn main() -> Result<()> {
             &data_dir,
             diagnostics.as_deref(),
             gpu_timings,
+            command_matches,
         )?,
         Commands::Inspect { input, format } => {
             if format != "json" {
@@ -403,12 +477,16 @@ fn main() -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&inspect(&input)?)?);
         }
-        Commands::Preset { command } => preset::run(command)?,
+        Commands::Preset { command } => preset::run(command, command_matches)?,
         Commands::Parity {
             corpus,
             report,
             data_dir,
-        } => runner::cmd_parity(&corpus, &report, &data_dir)?,
+        } => runner::cmd_parity(
+            &corpus,
+            &report,
+            &select_data_dir(data_dir, command_matches)?.path,
+        )?,
     }
     Ok(())
 }
@@ -433,10 +511,11 @@ fn cmd_process(
     dry_run: bool,
     raw_out: Option<&Path>,
     iters: usize,
-    data_dir: &Path,
+    data: &DataSelection,
     backend_choice: Option<Backend>,
     invocation: &mut telemetry::Invocation,
 ) -> Result<()> {
+    let data_dir = &data.path;
     let total_start = Instant::now();
     use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
     let context = invocation.operation.context();
@@ -504,9 +583,8 @@ fn cmd_process(
         image_io::ImageFormat::detect(input)
             .with_context(|| format!("unsupported input format: {}", input.display()))?;
     }
+    let raw_options = raw_options(workflow);
     if input_is_raw {
-        // Validate RAW option consistency without decoding pixels.
-        let raw_options = raw_options(&workflow);
         validate_raw_options(&raw_options)?;
     }
     invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
@@ -601,6 +679,16 @@ fn cmd_process(
                 "film_profile": resolved.film_name,
                 "print_profile": resolved.print_name,
                 "parameters": params,
+                "data": {"path": data.path, "source": data.source},
+                "input": {
+                    "kind": if input_is_raw { "raw" } else { "raster" },
+                    "raw_loading": input_is_raw.then(|| json!({
+                        "white_balance": workflow.raw_white_balance,
+                        "temperature": raw_options.temperature,
+                        "tint": raw_options.tint,
+                        "lens_correction": raw_options.lens_correction
+                    }))
+                },
                 "output": {
                     "path": output,
                     "format": output_format.name(),
@@ -649,19 +737,9 @@ fn cmd_process(
         &context,
         |_| {
             let (image, metadata) = if input_is_raw {
-                let options = spektrafilm_raw::RawOptions {
-                    white_balance: match workflow.raw_white_balance.as_str() {
-                        "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                        "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                        "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                        _ => spektrafilm_raw::WhiteBalance::AsShot,
-                    },
-                    temperature: workflow.raw_temperature,
-                    tint: workflow.raw_tint,
-                    lens_correction: workflow.lens_correction,
-                };
+                let options = &raw_options;
                 (
-                    spektrafilm_raw::load(input, &options)
+                    spektrafilm_raw::load(input, options)
                         .map_err(anyhow::Error::msg)?
                         .image,
                     image_io::read_metadata(input),
@@ -933,52 +1011,146 @@ fn bytemuck_cast_f64_to_bytes(v: &[f64]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }
 }
 
-fn cmd_list_profiles(data_dir: &Path) {
+fn cmd_list_profiles(data_dir: &Path) -> Result<()> {
     let profiles_dir = data_dir.join("profiles");
     let mut names = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&profiles_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy().to_string();
-            if name.ends_with(".json") {
-                names.push(name.trim_end_matches(".json").to_string());
-            }
+    for entry in fs::read_dir(&profiles_dir)
+        .with_context(|| format!("reading profile directory: {}", profiles_dir.display()))?
+    {
+        let path = entry?.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            names.push(
+                path.file_stem()
+                    .context("profile has no filename")?
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
-    } else {
-        eprintln!("Profile directory not found: {}", profiles_dir.display());
-        return;
     }
     names.sort();
     for name in &names {
-        // Try to load and show the human-readable name
-        if let Ok(p) = profile::load_profile_by_name(data_dir, name) {
-            let display_name = p.info.name.as_deref().unwrap_or(name);
-            let film_type = &p.info.film_type;
-            let support = &p.info.support;
-            println!("{name:<40} {display_name:<30} ({film_type}, {support})");
-        } else {
-            println!("{name}");
-        }
+        let p = profile::load_profile_by_name(data_dir, name).with_context(|| {
+            format!(
+                "loading profile: {}",
+                profiles_dir.join(format!("{name}.json")).display()
+            )
+        })?;
+        let display_name = p.info.name.as_deref().unwrap_or(name);
+        let film_type = &p.info.film_type;
+        let support = &p.info.support;
+        println!("{name:<40} {display_name:<30} ({film_type}, {support})");
     }
+    Ok(())
 }
 
-pub(crate) fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
-    let mut candidates = vec![explicit.clone()];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("data"));
-            candidates.push(dir.join("..").join("share").join("data"));
-            candidates.push(dir.join("..").join("Resources").join("data"));
+pub(crate) struct DataSelection {
+    path: PathBuf,
+    source: &'static str,
+}
+
+pub(crate) fn explicit_data_selection(matches: &ArgMatches) -> bool {
+    matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine)
+        || std::env::var_os("SPEKTRAFILM_DATA_DIR").is_some()
+}
+
+pub(crate) fn select_data_dir(argument: PathBuf, matches: &ArgMatches) -> Result<DataSelection> {
+    let selection = if matches.value_source("data_dir")
+        == Some(clap::parser::ValueSource::CommandLine)
+    {
+        Some((argument, "argument", "--data-dir"))
+    } else if let Some(value) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
+        if value.is_empty() {
+            bail!("SPEKTRAFILM_DATA_DIR is empty; set it to a data directory or supply --data-dir");
+        }
+        Some((PathBuf::from(value), "environment", "SPEKTRAFILM_DATA_DIR"))
+    } else {
+        None
+    };
+    if let Some((path, source, option)) = selection {
+        if !path.is_dir() {
+            bail!(
+                "{option} selected {} which is not an existing directory; supply a valid data directory",
+                path.display()
+            );
+        }
+        return Ok(DataSelection {
+            path: fs::canonicalize(&path)
+                .with_context(|| format!("resolving data directory: {}", path.display()))?,
+            source,
+        });
+    }
+    let executable = std::env::current_exe().context("locating executable for data discovery")?;
+    let directory = executable
+        .parent()
+        .context("executable has no parent directory")?;
+    let candidates = [
+        directory.join("data"),
+        directory.join("../share/data"),
+        directory.join("../Resources/data"),
+        std::env::current_dir()?.join("data"),
+    ];
+    for path in &candidates {
+        if path.is_dir() {
+            return Ok(DataSelection {
+                path: fs::canonicalize(path)
+                    .with_context(|| format!("resolving data directory: {}", path.display()))?,
+                source: "automatic",
+            });
         }
     }
-    candidates.push(PathBuf::from("data"));
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        candidates.push(PathBuf::from(manifest).join("..").join("..").join("data"));
+    bail!(
+        "no data directory found; tried {}; set --data-dir or SPEKTRAFILM_DATA_DIR",
+        candidates
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+fn cmd_describe(format: DiscoveryFormat, module: Option<&str>, field: Option<&str>) -> Result<()> {
+    use spektrafilm_core::params::sources::{describe_field, describe_groups, describe_module};
+    if matches!(format, DiscoveryFormat::Text) && module.is_none() && field.is_none() {
+        for group in describe_groups() {
+            println!("{group}");
+        }
+        return Ok(());
     }
-    candidates
-        .into_iter()
-        .find(|path| path.is_dir())
-        .unwrap_or(explicit)
+    let value = if let Some(field) = field {
+        describe_field(field).map_err(anyhow::Error::msg)?
+    } else if let Some(module) = module {
+        describe_module(module).map_err(anyhow::Error::msg)?
+    } else {
+        contract::describe()
+    };
+    match format {
+        DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&value)?),
+        DiscoveryFormat::Text => {
+            if field.is_some() {
+                print_metadata_record(&value);
+            } else {
+                let mut fields = value["fields"]
+                    .as_array()
+                    .context("module description has no fields")?
+                    .iter()
+                    .collect::<Vec<_>>();
+                fields.sort_by_key(|record| record["path"].as_str().unwrap_or(""));
+                for record in fields {
+                    print_metadata_record(record);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_metadata_record(record: &Value) {
+    if let Some(fields) = record.as_object() {
+        for (key, value) in fields {
+            println!("{key}: {value}");
+        }
+        println!();
+    }
 }
 
 fn raw_options(workflow: &WorkflowOptions) -> spektrafilm_raw::RawOptions {
