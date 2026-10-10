@@ -232,25 +232,13 @@ impl OutputGamutCompress {
                 ));
             }
         };
-        let validate = |name: &str, values: [f32; 3]| -> Result<(f64, f64, f64), String> {
-            let [t, l, p] = values.map(f64::from);
-            if !t.is_finite() || !(0.0..1.0).contains(&t) {
-                return Err(format!(
-                    "{name} threshold must be finite and in [0, 1), got {t}"
-                ));
-            }
-            if !l.is_finite() || l <= 0.0 {
-                return Err(format!("{name} limit must be finite and positive, got {l}"));
-            }
-            if !p.is_finite() || p <= 0.0 {
-                return Err(format!("{name} power must be finite and positive, got {p}"));
-            }
-            Ok((t, l, p))
-        };
-        let knee = validate("output gamut knee", params.knee)?;
+        let knee =
+            crate::params::validation::validate_gamut_triplet("output gamut knee", params.knee)?;
         let lightness = params
             .lightness_compression
-            .map(|v| validate("output lightness compression", v))
+            .map(|v| {
+                crate::params::validation::validate_gamut_triplet("output lightness compression", v)
+            })
             .transpose()?;
         let cam = Cam16Viewing::new(destination.whitepoint_xyz());
         let mut result = Self {

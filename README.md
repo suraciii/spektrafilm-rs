@@ -156,6 +156,30 @@ executable.
 
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. `--format` must match the output extension when supplied; otherwise the extension selects JPEG/PNG/TIFF/EXR. Bit depth defaults to 8 for JPEG/PNG and 16 for TIFF/EXR; JPEG/PNG require 8-bit, EXR requires 16- or 32-bit. JPEG defaults to quality 95 and 4:4:4; `--compression zip|none` applies to TIFF/EXR, while JPEG/PNG reject compression options. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
+`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=JSON_VALUE` assignments in order. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
+
+```bash
+# Discover portable looks and editable grain controls
+./target/release/spektrafilm preset list --data-dir data
+./target/release/spektrafilm preset show classic-kodak-portra-400 --data-dir data
+./target/release/spektrafilm describe --module film_render.grain --format json
+
+# Inspect the effective configuration without decoding pixels or creating output
+./target/release/spektrafilm process input.png -o output.tif \
+    --preset classic-kodak-portra-400 \
+    --set 'camera.exposure_compensation_ev=0.5,film_render.grain.v2_amount=25' \
+    --dry-run --data-dir data
+
+# Apply a sparse file, then an inline edit, with independent writer settings
+./target/release/spektrafilm-f64 process input.png -o output.tif \
+    --preset classic-kodak-portra-400 --set adjustments.toml \
+    --set 'enlarger.print_exposure=1.2' --backend cpu \
+    --format tiff --bit-depth 16 --compression zip \
+    --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
+```
+
+`--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy. It checks the input path and supported file kind. Image decoding and compute-adapter availability remain unchecked. Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.
+
 Working geometry follows Python 0.3.4 (`3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`). In JSON, set `io.crop`, `io.crop_center: [x, y]`, `io.crop_size: [width, height]`, and `io.upscale_factor`. Center coordinates are normalized to the source axes; both size components are fractions of the source's long edge. Bounds and rounding follow the upstream NumPy slice convention, including negative-index slicing when a crop exceeds the short edge. Empty crops and nonpositive/nonfinite resize factors return errors before output is written.
 
 Auto-exposure meters an antialiased nearest-neighbour preview of the complete source before crop and resize. Encoded preview samples are decoded for f64 luminance measurement; the resulting exposure scales source samples before geometry and filming decode, matching Python's order. Cropping preserves the source film pixel pitch; resizing divides it by the requested factor. Lens blur, halation, and DIR consume that retained pitch on CPU and supported resident GPU paths; grain and faithful optical diffusion remain on the CPU per-stage path. Resize uses cubic B-spline interpolation with half-pixel coordinates, mirror boundaries, Gaussian antialiasing for downscale, ties-to-even dimensions, and source-range clipping. Interpolation computes in f64 before the configured image precision boundary.

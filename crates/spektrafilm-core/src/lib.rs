@@ -20,6 +20,7 @@ pub mod pipeline;
 mod pipeline_calibration;
 pub mod presets;
 pub mod print_morph;
+pub mod process_params;
 pub mod profile;
 pub mod resizing;
 pub mod runtime;

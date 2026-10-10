@@ -9,6 +9,7 @@ pub mod diffusion;
 pub mod glare;
 pub mod grain;
 pub mod halation;
+pub mod sources;
 
 pub(crate) mod validation;
 use couplers::DirCouplersParams;
@@ -683,6 +684,10 @@ pub struct RuntimeParams {
     /// it does not become part of the user parameter schema or digest.
     #[serde(skip)]
     pub random_seed: u64,
+    /// CMY axes owned by a resolved look or explicit parameter edits.
+    /// Calibration uses database precision only for unprotected axes.
+    #[serde(skip)]
+    pub(crate) neutral_print_filters_protected: [bool; 3],
     #[serde(default)]
     pub camera: CameraParams,
     #[serde(default)]
@@ -709,6 +714,7 @@ impl Default for RuntimeParams {
     fn default() -> Self {
         Self {
             random_seed: 0,
+            neutral_print_filters_protected: [false; 3],
             camera: CameraParams::default(),
             enlarger: EnlargerParams::default(),
             scanner: ScannerParams::default(),
