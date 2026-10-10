@@ -97,15 +97,15 @@ pub fn load_npy_f32<R: Read>(mut reader: R) -> Result<(Vec<usize>, Vec<f32>), Np
 }
 
 /// Extract a field value from a Python dict-like header string.
-fn extract_field<'a>(header: &'a str, key: &str) -> Option<String> {
+fn extract_field(header: &str, key: &str) -> Option<String> {
     let pattern = format!("'{key}':");
     let start = header.find(&pattern)?;
     let rest = &header[start + pattern.len()..];
     let rest = rest.trim_start();
 
     // Handle string values: 'value'
-    if rest.starts_with('\'') {
-        let end = rest[1..].find('\'')?;
+    if let Some(stripped) = rest.strip_prefix('\'') {
+        let end = stripped.find('\'')?;
         return Some(rest[..end + 2].to_string());
     }
 
@@ -116,9 +116,7 @@ fn extract_field<'a>(header: &'a str, key: &str) -> Option<String> {
     }
 
     // Handle bare values: True, False, etc.
-    let end = rest
-        .find(|c: char| c == ',' || c == '}')
-        .unwrap_or(rest.len());
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
     Some(rest[..end].trim().to_string())
 }
 

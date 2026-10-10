@@ -1,10 +1,10 @@
-/// Precision type alias for the pixel pipeline.
-///
-/// Default: f32 for GPU speed and memory efficiency.
-/// With `--features precision-f64`: f64 for 1:1 parity with Python.
-///
-/// The calibration chain (Hanatos2025 tc/b, CAT02 adaptation, exposure factor)
-/// always uses f64 regardless of this flag.
+//! Precision type alias for the pixel pipeline.
+//!
+//! Default: f32 for GPU speed and memory efficiency.
+//! With `--features precision-f64`: f64 for 1:1 parity with Python.
+//!
+//! The calibration chain (Hanatos2025 tc/b, CAT02 adaptation, exposure factor)
+//! always uses f64 regardless of this flag.
 
 #[cfg(feature = "precision-f64")]
 pub type Scalar = f64;
@@ -30,7 +30,11 @@ pub fn from_f32(v: f32) -> Scalar {
 }
 
 /// Convert Scalar to f32.
+///
+/// The cast is redundant with the default `Scalar = f32` and required with
+/// `--features precision-f64` (`Scalar = f64`), so it must stay.
 #[inline(always)]
+#[allow(clippy::unnecessary_cast)]
 pub fn to_f32(v: Scalar) -> f32 {
     v as f32
 }

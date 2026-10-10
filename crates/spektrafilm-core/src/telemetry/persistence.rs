@@ -104,10 +104,10 @@ pub fn validate_report_destination(
     if !parent.is_dir() {
         return Err(PersistenceError::MissingParent);
     }
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-            return Err(PersistenceError::InvalidDestination);
-        }
+    if let Ok(metadata) = fs::symlink_metadata(path)
+        && (!metadata.file_type().is_file() || metadata.file_type().is_symlink())
+    {
+        return Err(PersistenceError::InvalidDestination);
     }
     let destination_identity = path_identity(path)?;
     for protected_path in protected {

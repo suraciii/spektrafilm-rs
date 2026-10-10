@@ -1036,8 +1036,8 @@ fn run_print(
                 let mut p = [pin; 3];
                 p[a] = x;
                 let y = lut.sample(p);
-                for c in 0..3 {
-                    pts.push([x, 1. + y[c].clamp(1e-4, 1.).log10() / 4.]);
+                for (c, value) in y.iter().enumerate() {
+                    pts.push([x, 1. + value.clamp(1e-4, 1.).log10() / 4.]);
                     colors.push(match c {
                         0 => [1., 0.2, 0.2],
                         1 => [0.2, 1., 0.2],
@@ -1197,12 +1197,12 @@ fn fft_ratios(lut: &Lut) -> [f64; 3] {
         for u in 0..n {
             for v in 0..n {
                 for c in 0..3 {
-                    for i in 0..n {
+                    for (i, value) in line.iter_mut().enumerate() {
                         let mut p = [0; 3];
                         p[a] = i;
                         p[(a + 1) % 3] = u;
                         p[(a + 2) % 3] = v;
-                        line[i] = Complex::new(lut.at(p[0], p[1], p[2])[c], 0.);
+                        *value = Complex::new(lut.at(p[0], p[1], p[2])[c], 0.);
                     }
                     fft.process(&mut line);
                     for (i, x) in line[..n / 2 + 1].iter().enumerate() {
@@ -1273,8 +1273,7 @@ fn dynamic_range(
 ) -> Result<QaResult, String> {
     let ceiling = (0..3201)
         .map(|i| -12. + 0.01 * i as f64)
-        .filter(|&s| input.encode(input.midgray_linear * s.exp2()) <= 1.)
-        .last()
+        .rfind(|&s| input.encode(input.midgray_linear * s.exp2()) <= 1.)
         .ok_or("input encoding clips every dynamic-range probe")?;
     let hi = ceiling + 0.5;
     let step = (hi + 8.) / 256.;
@@ -1657,96 +1656,6 @@ fn picture(
     Ok(results)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn magazine_roles_follow_provenance_on_any_route() {
-        let mut bundle: Bundle = serde_json::from_value(json!({
-            "spec": {"film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","topology":"1lut"},
-            "luts": [["magazine.cube", {"resolution":2,"title":"magazine","table":grid(2)}]],
-            "meta": {"schema_version":1,"name":"magazine","topology":"1lut","resolution":2,"provenance":{},"stocks":{"film":"kodak_portra_400","prints":["kodak_portra_endura"]},"color_spaces":{"input":{"name":"sRGB","cctf":true},"output":{"name":"sRGB","cctf":true}},"wires":{},"luts":[{"role":"magazine_combined","path":"magazine.cube","domain":"input_rgb","range":"output_rgb","print_profile":"kodak_portra_endura"}],"input_exposure":null,"params_snapshot":{}}
-        }))
-        .unwrap();
-        for route in [
-            "input",
-            "input > film > scan",
-            "input > film > print > scan",
-        ] {
-            bundle.meta.workflow_route = route.into();
-            bundle
-                .meta
-                .provenance
-                .insert("magazine_print_color".into(), "included".into());
-            assert_eq!(
-                effective_lut(&bundle, "kodak_portra_endura").unwrap().table,
-                grid(2)
-            );
-            bundle.meta.provenance.remove("magazine_print_color");
-            assert!(
-                effective_lut(&bundle, "kodak_portra_endura")
-                    .unwrap_err()
-                    .contains("expected one canonical LUT combined")
-            );
-        }
-    }
-    #[test]
-    fn perceptual_difference_matches_cie_reference() {
-        assert!(
-            (delta_e_2000([50., 2.6772, -79.7751], [50., 0., -82.7485]) - 2.0424596801565764).abs()
-                < 1e-12
-        );
-        assert!(
-            (delta_e_2000([50., 3.1571, -77.2803], [50., 0., -82.7485]) - 2.861510174747494).abs()
-                < 1e-12
-        );
-    }
-    #[test]
-    fn early_figure_failure_preserves_later_measurements_and_reports() {
-        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
-        let spec=serde_json::from_value(json!({"name":"scenario_isolation","film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","resolution":3})).unwrap();
-        let bundle = crate::lut_baker::BundleBuilder::new(spec)
-            .build(&data, &backend)
-            .unwrap();
-        let root = std::env::temp_dir().join(format!(
-            "spektrafilm-qa-isolation-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let folder = format!(
-            "{}_{}",
-            crate::lut_baker::normalize_stock(&bundle.spec.film_profile),
-            crate::lut_baker::normalize_stock(&bundle.spec.print_profiles[0])
-        );
-        let figures = root.join(folder).join("figures");
-        std::fs::create_dir_all(figures.join("off_grid_identity.png")).unwrap();
-        let report = run(&bundle, &data, &backend, &root).unwrap();
-        let rows = &report.prints[0].results;
-        assert_eq!(rows[0].name, "off_grid_identity");
-        assert_eq!(rows[0].passed, Some(false));
-        assert!(rows[0].summary.contains_key("error"));
-        let later = rows
-            .iter()
-            .find(|r| r.name == "dynamic_range_usage")
-            .unwrap();
-        assert!(later.summary["encoded_range_stops"].as_f64().unwrap() > 0.);
-        assert!(
-            root.join(&report.prints[0].folder)
-                .join(later.figure_path.as_ref().unwrap())
-                .is_file()
-        );
-        let delivered: QaReport =
-            serde_json::from_slice(&std::fs::read(root.join("report.json")).unwrap()).unwrap();
-        assert_eq!(delivered.prints[0].results.len(), 16);
-        assert!(!delivered.passed);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
 /// Central-difference Jacobian of encoded-input RGB → output OkLab at `p`:
 /// ±0.005 probes on the encoded input, divided by the 0.01 span, through the
 /// printed LUT and the output space's decode. The noise-sensitivity metric and
@@ -1883,4 +1792,94 @@ fn noise_figure(
         }
     }
     png(root, "noise_sensitivity", width, size, &pixels)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn magazine_roles_follow_provenance_on_any_route() {
+        let mut bundle: Bundle = serde_json::from_value(json!({
+            "spec": {"film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","topology":"1lut"},
+            "luts": [["magazine.cube", {"resolution":2,"title":"magazine","table":grid(2)}]],
+            "meta": {"schema_version":1,"name":"magazine","topology":"1lut","resolution":2,"provenance":{},"stocks":{"film":"kodak_portra_400","prints":["kodak_portra_endura"]},"color_spaces":{"input":{"name":"sRGB","cctf":true},"output":{"name":"sRGB","cctf":true}},"wires":{},"luts":[{"role":"magazine_combined","path":"magazine.cube","domain":"input_rgb","range":"output_rgb","print_profile":"kodak_portra_endura"}],"input_exposure":null,"params_snapshot":{}}
+        }))
+        .unwrap();
+        for route in [
+            "input",
+            "input > film > scan",
+            "input > film > print > scan",
+        ] {
+            bundle.meta.workflow_route = route.into();
+            bundle
+                .meta
+                .provenance
+                .insert("magazine_print_color".into(), "included".into());
+            assert_eq!(
+                effective_lut(&bundle, "kodak_portra_endura").unwrap().table,
+                grid(2)
+            );
+            bundle.meta.provenance.remove("magazine_print_color");
+            assert!(
+                effective_lut(&bundle, "kodak_portra_endura")
+                    .unwrap_err()
+                    .contains("expected one canonical LUT combined")
+            );
+        }
+    }
+    #[test]
+    fn perceptual_difference_matches_cie_reference() {
+        assert!(
+            (delta_e_2000([50., 2.6772, -79.7751], [50., 0., -82.7485]) - 2.0424596801565764).abs()
+                < 1e-12
+        );
+        assert!(
+            (delta_e_2000([50., 3.1571, -77.2803], [50., 0., -82.7485]) - 2.861510174747494).abs()
+                < 1e-12
+        );
+    }
+    #[test]
+    fn early_figure_failure_preserves_later_measurements_and_reports() {
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let spec=serde_json::from_value(json!({"name":"scenario_isolation","film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","resolution":3})).unwrap();
+        let bundle = crate::lut_baker::BundleBuilder::new(spec)
+            .build(&data, &backend)
+            .unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "spektrafilm-qa-isolation-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let folder = format!(
+            "{}_{}",
+            crate::lut_baker::normalize_stock(&bundle.spec.film_profile),
+            crate::lut_baker::normalize_stock(&bundle.spec.print_profiles[0])
+        );
+        let figures = root.join(folder).join("figures");
+        std::fs::create_dir_all(figures.join("off_grid_identity.png")).unwrap();
+        let report = run(&bundle, &data, &backend, &root).unwrap();
+        let rows = &report.prints[0].results;
+        assert_eq!(rows[0].name, "off_grid_identity");
+        assert_eq!(rows[0].passed, Some(false));
+        assert!(rows[0].summary.contains_key("error"));
+        let later = rows
+            .iter()
+            .find(|r| r.name == "dynamic_range_usage")
+            .unwrap();
+        assert!(later.summary["encoded_range_stops"].as_f64().unwrap() > 0.);
+        assert!(
+            root.join(&report.prints[0].folder)
+                .join(later.figure_path.as_ref().unwrap())
+                .is_file()
+        );
+        let delivered: QaReport =
+            serde_json::from_slice(&std::fs::read(root.join("report.json")).unwrap()).unwrap();
+        assert_eq!(delivered.prints[0].results.len(), 16);
+        assert!(!delivered.passed);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

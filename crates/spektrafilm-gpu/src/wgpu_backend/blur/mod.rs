@@ -24,6 +24,7 @@ pub(super) struct SimpleBlurState {
 }
 
 #[cfg(feature = "wgpu-backend")]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_simple_blur_state(
     device: &ObservedDevice,
     sigma: f32,

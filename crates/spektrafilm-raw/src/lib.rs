@@ -198,8 +198,9 @@ impl RawOptions {
         let t = mv(CAT02, target);
         let mut scaled = CAT02;
         for r in 0..3 {
-            for c in 0..3 {
-                scaled[r][c] *= t[r] / s[r];
+            let factor = t[r] / s[r];
+            for value in &mut scaled[r] {
+                *value *= factor;
             }
         }
         Ok(Some(mm(inverse(CAT02), scaled)))

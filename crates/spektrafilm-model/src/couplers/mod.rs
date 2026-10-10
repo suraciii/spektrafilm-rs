@@ -114,16 +114,18 @@ pub fn compute_exposure_correction(
         let one = from_f64(1.0);
         let mut blended_channels: [Vec<spektrafilm_math::precision::Scalar>; 3] =
             [vec![one; n_pix], vec![one; n_pix], vec![one; n_pix]];
-        for c in 0..3 {
+        for (c, blended_channel) in blended_channels.iter_mut().enumerate() {
             let ch = correction.extract_channel(c);
             let g = gaussian_blur_channel(&ch, w_img, h_img, diffusion_size_pixel);
             let t = exponential_filter_channel(&ch, w_img, h_img, diffusion_tail_pixel);
+            // Pixel indices align the output with both filtered channels.
+            #[allow(clippy::needless_range_loop)]
             for i in 0..n_pix {
-                blended_channels[c][i] = (one - w) * g[i] + w * t[i];
+                blended_channel[i] = (one - w) * g[i] + w * t[i];
             }
         }
-        for c in 0..3 {
-            correction.write_channel(c, &blended_channels[c]);
+        for (c, blended_channel) in blended_channels.iter().enumerate() {
+            correction.write_channel(c, blended_channel);
         }
     }
 
@@ -295,6 +297,7 @@ fn curves_before_dir_langmuir(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_density_correction(
     density_cmy: &ImageBuf,
     log_raw: &ImageBuf,

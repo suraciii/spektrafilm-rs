@@ -446,10 +446,10 @@ pub fn apply_diffusion_filter_um(
     let psf = diffusion_filter_psf(k, &cfg, df.spatial_scale, pixel_size_um, df.halo_warmth);
 
     let mut out = ImageBuf::new(image.width, image.height);
-    for c in 0..3 {
+    for (c, channel_psf) in psf.iter().enumerate() {
         let chan_s = image.extract_channel(c);
         let chan: Vec<f64> = chan_s.iter().map(|&v| v as f64).collect();
-        let blurred = convolve2d_reflect(&chan, h, w, &psf[c], k);
+        let blurred = convolve2d_reflect(&chan, h, w, channel_psf, k);
         let mixed: Vec<Scalar> = (0..h * w)
             .map(|i| from_f64((1.0 - p_s) * chan[i] + p_s * blurred[i]))
             .collect();

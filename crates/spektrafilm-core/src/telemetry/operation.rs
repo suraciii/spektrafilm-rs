@@ -459,6 +459,8 @@ impl Report {
 }
 
 impl SourceRender {
+    // Source render metadata is supplied as independent fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         operation_id: u64,
         input_revision: Option<u64>,

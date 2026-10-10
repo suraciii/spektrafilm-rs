@@ -227,11 +227,11 @@ mod integration_tests {
         assert_eq!(result.width, 8);
         assert_eq!(result.height, 8);
         let px = result.get(4, 4);
-        for c in 0..3 {
+        for (c, value) in px.iter().enumerate() {
             assert!(
-                px[c] >= from_f64(0.0) && px[c] <= from_f64(1.0),
+                *value >= from_f64(0.0) && *value <= from_f64(1.0),
                 "channel {c} out of range: {}",
-                px[c]
+                value
             );
         }
         let mean: Scalar =

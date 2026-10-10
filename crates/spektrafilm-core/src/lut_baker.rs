@@ -237,6 +237,8 @@ fn make_pipeline(
     Runtime::new(film, print, params, data_dir)
 }
 
+// The bake context keeps the existing parameter contract.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bake_params(
     spec: &BundleSpec,
     input: &ColorSpaceEntry,
@@ -277,6 +279,8 @@ pub(crate) fn bake_params(
     ))
 }
 
+// The snapshot uses the same complete bake context.
+#[allow(clippy::too_many_arguments)]
 fn bake_snapshot(
     spec: &BundleSpec,
     print_stock: &str,
