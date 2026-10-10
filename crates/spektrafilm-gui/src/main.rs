@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use parking_lot::{Condvar, Mutex};
-use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
+use spektrafilm_core::image_io::{
+    self, BitDepth, Compression, ImageMetadata, LoadedImage, SaveOptions,
+};
 use spektrafilm_core::params::RuntimeParams;
 use spektrafilm_core::presets::{LookPreset, builtin_look_presets, workflow_default};
 use spektrafilm_core::profile;
@@ -31,12 +33,20 @@ mod diagnostics;
 mod display;
 mod export;
 mod numeric;
+mod panels;
 mod profiles;
 mod state;
-use export::{ExportBackend, ExportDialog, ExportOptions};
+use export::{ExportBackend, ExportCompression, ExportDialog, ExportFormat, ExportOptions};
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
+const IMAGE_FILE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "tif", "tiff", "exr",
+    // Keep this list in lockstep with image_io::is_raw.
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "srw",
+    "x3f", "iiq", "3fr", "crw", "rwl", "mrw", "mef", "kdc", "ari", "bay", "dcr", "drf", "erf",
+    "fff", "k25", "mos", "ptx",
+];
 
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt()
@@ -234,6 +244,17 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
     }
 }
 
+/// Effective backend label for Scan and Export reports. An active V3 field
+/// resolves on the CPU and never enters the resident chain, so the selected
+/// backend name alone would misreport the executed path.
+fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
+    if spektrafilm_core::stages::grain_v3::active(params) {
+        format!("{selected} · grain V3 on CPU")
+    } else {
+        selected.to_owned()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum GuiTab {
     #[default]
@@ -269,8 +290,8 @@ struct App {
     data_dir: PathBuf,
     /// Profiles where `info.support == "film"`.
     films: Vec<ProfileEntry>,
-    /// Print stocks usable as the print stage (`Profile::is_print_stock`:
-    /// paper/printing or film/printing).
+    /// Profiles where `info.support == "paper"` (or other print-stage
+    /// supports).
     papers: Vec<ProfileEntry>,
     builtins: Vec<LookPreset>,
     film_name: String,
@@ -736,22 +757,15 @@ impl App {
 
         let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
-        let mut startup_error = None;
-        let gui_state = match initial_state {
+        let startup = match initial_state {
             Some(path) => state::GuiState::load(&path),
             None => state::startup(),
-        }
-        .and_then(|state| {
-            // A startup state the runtime cannot accept (a removed workflow
-            // route, an unsupported combination) must fall back to the factory
-            // state with a visible reason instead of failing at construction.
-            state.runtime_params()?;
-            Ok(state)
-        })
-        .unwrap_or_else(|error| {
-            startup_error = Some(format!("Startup state error: {error:#}"));
-            state::GuiState::factory()
-        });
+        };
+        let startup_error = startup
+            .as_ref()
+            .err()
+            .map(|e| format!("Startup state error: {e:#}"));
+        let gui_state = startup.unwrap_or_else(|_| state::GuiState::factory());
         let film_name = gui_state.film().to_owned();
         let print_name = gui_state.paper().to_owned();
         let film_profile = profile::load_profile_by_name(&data_dir, &film_name).ok();
@@ -904,47 +918,50 @@ impl App {
             .as_ref()
             .map(|job| ("Export", job.operation.mode()));
         let save_report = self.diagnostics.show(ui, render, queued, export);
-        if save_report
-            && let Some(path) = rfd::FileDialog::new()
+        if save_report {
+            if let Some(path) = rfd::FileDialog::new()
                 .add_filter("JSON report", &["json"])
                 .set_file_name("spektrafilm-report.json")
                 .save_file()
-        {
-            self.status = match self.diagnostics.save_selected(&path) {
-                Ok(()) => "Saved diagnostic report.".into(),
-                Err(error) => format!("Diagnostic report save error: {error}"),
-            };
+            {
+                self.status = match self.diagnostics.save_selected(&path) {
+                    Ok(()) => "Saved diagnostic report.".into(),
+                    Err(error) => format!("Diagnostic report save error: {error}"),
+                };
+            }
         }
     }
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked()
-                && let Some(path) = self
+            if ui.button("Save current to file").clicked() {
+                if let Some(path) = self
                     .file_dialog("state")
                     .set_file_name("gui_state.json")
                     .add_filter("JSON", &["json"])
                     .save_file()
-            {
-                self.remember_dialog("state", &path);
-                let result = self.current_state().and_then(|s| s.save(&path));
-                self.status = match result {
-                    Ok(()) => format!("Saved GUI state to {}", path.display()),
-                    Err(e) => format!("State save error: {e:#}"),
-                };
+                {
+                    self.remember_dialog("state", &path);
+                    let result = self.current_state().and_then(|s| s.save(&path));
+                    self.status = match result {
+                        Ok(()) => format!("Saved GUI state to {}", path.display()),
+                        Err(e) => format!("State save error: {e:#}"),
+                    };
+                }
             }
-            if ui.button("Load from file").clicked()
-                && let Some(path) = self
+            if ui.button("Load from file").clicked() {
+                if let Some(path) = self
                     .file_dialog("state")
                     .add_filter("JSON", &["json"])
                     .pick_file()
-            {
-                self.remember_dialog("state", &path);
-                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-                self.status = match result {
-                    Ok(()) => format!("Loaded GUI state from {}", path.display()),
-                    Err(e) => format!("State load error: {e:#}"),
-                };
+                {
+                    self.remember_dialog("state", &path);
+                    let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
+                    self.status = match result {
+                        Ok(()) => format!("Loaded GUI state from {}", path.display()),
+                        Err(e) => format!("State load error: {e:#}"),
+                    };
+                }
             }
             if ui.button("Save current as default").clicked() {
                 let result = self
@@ -994,31 +1011,20 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice_tip_labeled(
+            if controls::choice_tip(
                 ui,
                 "workflow",
                 &mut self.params.workflow.route,
                 &[
-                    ("input", "Finished RGB"),
-                    ("input > film > scan", "input > film > scan"),
-                    (
-                        "input > film > print > scan",
-                        "input > film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > print > scan",
-                        "input > convert-film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > scan-minus-base",
-                        "input > convert-film > scan-minus-base",
-                    ),
-                    (
-                        "input > convert-film > scan",
-                        "input > convert-film > scan",
-                    ),
+                    "input",
+                    "input > film > scan",
+                    "input > film > print > scan",
+                    "input > film > scan > magazine",
+                    "input > convert-film > print > scan",
+                    "input > convert-film > scan-minus-base",
+                    "input > convert-film > scan",
                 ],
-                "Which path the image takes through the pipeline: Finished RGB (colour-manage an already rendered RGB image to the output space), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base). Magazine print can be enabled independently for every workflow.",
+                "Which path the image takes through the pipeline: input (passthrough: just colour-manage the input to the output space for viewing), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base).",
             ) {
                 let direct_film_scan = self.params.workflow.route == "input > film > scan";
                 self.params.io.scan_film = direct_film_scan;
@@ -1027,14 +1033,6 @@ impl App {
                 }
                 self.dirty = true;
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
-            }
-            if ui
-                .checkbox(&mut self.params.magazine_print_color.active, "Magazine print")
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
-                .changed()
-            {
-                self.dirty = true;
                 self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
         });
@@ -1155,7 +1153,7 @@ impl App {
 
     fn select_print_profile(&mut self, selected: String) {
         let print = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_print_stock() => profile,
+            Ok(profile) if profile.is_paper() && profile.is_printing() => profile,
             Ok(_) => {
                 self.status =
                     format!("Profile selection error: '{selected}' is not a print profile");
@@ -1232,7 +1230,31 @@ impl App {
                 self.input_epoch = self.input_epoch.wrapping_add(1);
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
-                self.refresh_input_viewer();
+                match display::input_display_raster(
+                    self.image.as_ref().unwrap(),
+                    &self.params.io.input_color_space,
+                    self.params.io.input_cctf_decoding,
+                    self.params.settings.preview_max_size as usize,
+                ) {
+                    Ok(raster) => {
+                        self.viewer.set_input(
+                            raster,
+                            [
+                                self.image.as_ref().unwrap().width as usize,
+                                self.image.as_ref().unwrap().height as usize,
+                            ],
+                        );
+                        self.viewer.set_input_display_source(
+                            &self.params.io.input_color_space,
+                            self.params.io.input_cctf_decoding,
+                        );
+                        self.viewer.seed_prepared_input(
+                            self.image.as_ref().unwrap().clone(),
+                            self.params.settings.preview_max_size,
+                        );
+                    }
+                    Err(e) => self.status = format!("Viewer input error: {e}"),
+                }
                 self.image_path = Some(path.to_path_buf());
                 self.output_image = None;
                 self.output_metadata = None;
@@ -1260,38 +1282,29 @@ impl App {
         self.output_image = None;
         self.output_metadata = None;
         self.source_render = None;
-        self.refresh_input_viewer();
+        if let Some(image) = self.image.as_ref() {
+            match display::input_display_raster(
+                image,
+                &self.params.io.input_color_space,
+                self.params.io.input_cctf_decoding,
+                self.params.settings.preview_max_size as usize,
+            ) {
+                Ok(raster) => {
+                    self.viewer
+                        .set_input(raster, [image.width as usize, image.height as usize]);
+                    self.viewer.set_input_display_source(
+                        &self.params.io.input_color_space,
+                        self.params.io.input_cctf_decoding,
+                    );
+                    self.viewer
+                        .seed_prepared_input(image.clone(), self.params.settings.preview_max_size);
+                }
+                Err(e) => self.status = format!("Viewer input error: {e}"),
+            }
+        }
         self.dirty = true;
         self.force_preview = true;
-        self.status = format!("Rotated input {}°", self.input_rotation * 90);
-    }
-
-    /// Hand the current input image to the viewer: capped input raster, its
-    /// display source, and the full-resolution source the viewer later prepares
-    /// display rasters from. Every path that replaces `image` ends here, so a
-    /// new handoff step cannot land in only one of them.
-    fn refresh_input_viewer(&mut self) {
-        let Some(image) = self.image.as_ref() else {
-            return;
-        };
-        match display::input_display_raster(
-            image,
-            &self.params.io.input_color_space,
-            self.params.io.input_cctf_decoding,
-            self.params.settings.preview_max_size as usize,
-        ) {
-            Ok(raster) => {
-                self.viewer
-                    .set_input(raster, [image.width as usize, image.height as usize]);
-                self.viewer.set_input_display_source(
-                    &self.params.io.input_color_space,
-                    self.params.io.input_cctf_decoding,
-                );
-                self.viewer
-                    .seed_prepared_input(image.clone(), self.params.settings.preview_max_size);
-            }
-            Err(e) => self.status = format!("Viewer input error: {e}"),
-        }
+        self.status = format!("Rotated input {}°", self.input_rotation as i32 * 90);
     }
 
     fn rotate_input_image_clockwise(&mut self) {
@@ -1325,7 +1338,6 @@ impl App {
         operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
         operation.set_backend_requested(diagnostics::preview_backend_requested());
-        let backend_name = self.backend.name().to_owned();
         let mut params = match self
             .current_state()
             .and_then(|state| state.runtime_params())
@@ -1338,6 +1350,9 @@ impl App {
                 return;
             }
         };
+        // An active V3 field resolves its film-coordinate field on the CPU,
+        // so report the effective backend next to the selected one.
+        let backend_name = effective_backend_name(self.backend.name(), &params);
         if self.look_neutral_filters_pinned {
             params.settings.neutral_print_filters_from_database = false;
         }
@@ -1660,10 +1675,35 @@ impl App {
             ExportBackend::Gpu => diagnostics::BackendRequested::Wgpu,
         });
         if operation.enabled() {
+            let format = match options.format {
+                ExportFormat::Jpeg => image_io::ImageFormat::Jpeg,
+                ExportFormat::Png => image_io::ImageFormat::Png,
+                ExportFormat::Tiff => image_io::ImageFormat::Tiff,
+                ExportFormat::Exr => image_io::ImageFormat::Exr,
+            };
             operation.set_saving_configuration(
                 spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
-                    options.image_format(),
-                    &options.save_options(),
+                    format,
+                    &SaveOptions {
+                        depth: options.depth,
+                        color_space: &options.saving_color_space,
+                        cctf_encoding: options.saving_cctf_encoding,
+                        jpeg_quality: (options.format == ExportFormat::Jpeg)
+                            .then_some(options.jpeg_quality),
+                        jpeg_subsampling: (options.format == ExportFormat::Jpeg)
+                            .then_some(options.jpeg_subsampling),
+                        compression: matches!(
+                            options.format,
+                            ExportFormat::Tiff | ExportFormat::Exr
+                        )
+                        .then_some(
+                            if options.compression == ExportCompression::Zip {
+                                Compression::Zip
+                            } else {
+                                Compression::None
+                            },
+                        ),
+                    },
                 ),
             );
         }
@@ -1806,7 +1846,26 @@ impl App {
                         let report = image_io::save_observed(
                             &staged.0,
                             &converted,
-                            options.save_options(),
+                            SaveOptions {
+                                depth: options.depth,
+                                color_space: &options.saving_color_space,
+                                cctf_encoding: options.saving_cctf_encoding,
+                                jpeg_quality: (options.format == ExportFormat::Jpeg)
+                                    .then_some(options.jpeg_quality),
+                                jpeg_subsampling: (options.format == ExportFormat::Jpeg)
+                                    .then_some(options.jpeg_subsampling),
+                                compression: matches!(
+                                    options.format,
+                                    ExportFormat::Tiff | ExportFormat::Exr
+                                )
+                                .then_some(
+                                    if options.compression == ExportCompression::Zip {
+                                        Compression::Zip
+                                    } else {
+                                        Compression::None
+                                    },
+                                ),
+                            },
                             metadata.as_ref(),
                             file_write.context(),
                         );
@@ -1826,7 +1885,7 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            backend_name: backend.name().to_owned(),
+                            backend_name: effective_backend_name(backend.name(), pipeline.params()),
                             size: [output.width, output.height],
                             metadata_warning: report.metadata_warning,
                             staged,
@@ -2138,10 +2197,10 @@ impl App {
             self.dirty = true;
             self.force_preview = true;
         }
-        if changes.raw_reload
-            && let Some(path) = self.image_path.clone()
-        {
-            self.load_image_from_path(&path);
+        if changes.raw_reload {
+            if let Some(path) = self.image_path.clone() {
+                self.load_image_from_path(&path);
+            }
         }
     }
 
@@ -2151,11 +2210,12 @@ impl App {
                 "Load and process a raw file with the selected white balance and lens correction settings."
             } else {
                 "Select an input image"
-            }).clicked()
-                && let Some(path) = self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()).pick_file() {
+            }).clicked() {
+                if let Some(path) = self.file_dialog("load").add_filter("Image", IMAGE_FILE_EXTENSIONS).pick_file() {
                     self.remember_dialog("load", &path);
                     self.load_image_from_path(&path);
                 }
+            }
             if raw {
                 self.parameter_section(ui, "Import Raw");
             }
@@ -2238,12 +2298,6 @@ impl App {
                     self.parameter_section(ui, section);
                 }
                 ui.collapsing("Profiles", |ui| {
-                    if self.params.workflow.route == "input" {
-                        ui.weak(
-                            "Finished RGB ignores these profiles: it only colour-manages the \
-                             input to the output space.",
-                        );
-                    }
                     if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
                         let selected = self.film_name.clone();
                         self.params.film_render.development_time = None;
@@ -2492,10 +2546,10 @@ impl eframe::App for App {
             operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
             self.diagnostics.finish(operation, Outcome::Cancelled);
         }
-        if let Some(mut job) = self.calibration_job.take()
-            && let Some(handle) = job.handle.take()
-        {
-            let _ = handle.join();
+        if let Some(mut job) = self.calibration_job.take() {
+            if let Some(handle) = job.handle.take() {
+                let _ = handle.join();
+            }
         }
         self.diagnostics.clear();
     }
