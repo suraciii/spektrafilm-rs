@@ -414,9 +414,10 @@ pub fn scan_with_options(
             params.film_render.grain.engine,
             crate::params::grain::GrainEngine::V2
         );
-    let magazine_active = params.magazine_print_color.active
-        && params.magazine_print_color.strength > 0.0
-        && params.workflow.route == "input > film > scan > magazine";
+    // Magazine appearance is optional finishing, not a route: it applies to
+    // any scanned base workflow after the scanner-domain effects.
+    let magazine_active =
+        params.magazine_print_color.active && params.magazine_print_color.strength > 0.0;
     let encoded_domain = params.io.output_cctf_encoding || grain_v2_active;
     if encoded_domain {
         let _encoding = super::StageObservation::cpu(
