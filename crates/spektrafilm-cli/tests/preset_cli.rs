@@ -844,6 +844,33 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
 }
 
 #[test]
+fn positive_scan_rejects_paper_without_sparse_parameter_edits() {
+    let f = Fixture::new();
+    for dry_run in [false, true] {
+        let mut args = vec![
+            "--film",
+            "kodak_portra_endura",
+            "--scan-film",
+            "--scan-output",
+            "positive_scan",
+            "--backend",
+            "cpu",
+        ];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let result = f.process(&args);
+        assert!(!result.status.success());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            error.contains("requires a negative film profile"),
+            "{error}"
+        );
+        assert!(!f.root.join("output.tif").exists());
+    }
+}
+
+#[test]
 fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
     let f = Fixture::new();
     let report = f.report(&[

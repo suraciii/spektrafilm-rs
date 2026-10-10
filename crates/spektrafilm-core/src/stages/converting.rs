@@ -525,6 +525,7 @@ pub fn neutralize_filters(
     let mut p = params.clone();
     p.workflow.route = "input > film > print > scan".into();
     p.io.scan_film = false;
+    p.scanner.scan_output = "direct_scan".into();
     p.io.output_cctf_encoding = false;
     p.io.output_gamut_compress.algorithm = "off".into();
     p.settings.use_enlarger_lut = false;
@@ -565,6 +566,28 @@ pub fn neutralize_filters(
 #[cfg(test)]
 mod action_tests {
     use super::*;
+    #[test]
+    fn print_neutralization_is_independent_of_positive_scan_mode() {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.camera.auto_exposure = false;
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.print_render.glare.active = false;
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let direct = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
+        params.scanner.scan_output = "positive_scan".into();
+        let positive = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
+        assert_eq!(positive, direct);
+        assert_eq!(params.workflow.route, "input > film > scan");
+        assert_eq!(params.scanner.scan_output, "positive_scan");
+    }
+
     #[test]
     fn bright_sample_ignores_nonfinite_pixels_and_uses_clear_tail() {
         let image = ImageBuf::from_data(

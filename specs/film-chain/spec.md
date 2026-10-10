@@ -18,9 +18,10 @@
 - `scanner.scan_output` is `direct_scan` by default. It preserves the
   selected medium's native scan polarity.
 - `positive_scan` is valid only for the exact `input > film > scan` route with
-  a negative film profile. It interprets the linear scanner capture as a
-  positive image using clear-film and dense-film endpoint references derived
-  from the selected profile.
+  a negative film profile in the filming stage. Paper profiles are not eligible.
+  It interprets the linear scanner capture as a positive image using clear-film
+  and dense-film endpoint references derived from the selected profile.
+  Endpoint interpretation must preserve values outside the reference interval.
 - Positive interpretation runs after scanner spectral capture and scanner lens
   blur, then output gamut compression, unsharp mask, transfer encoding, and
   output handoff.

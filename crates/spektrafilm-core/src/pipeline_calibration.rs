@@ -108,7 +108,7 @@ pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Re
                 .into(),
         );
     }
-    if !film.is_negative() {
+    if !film.is_negative() || !film.is_film() || !film.is_filming() {
         return Err(
             "scanner.scan_output=positive_scan requires a negative film profile; \
              positive film and paper scans use direct_scan"
@@ -507,6 +507,9 @@ mod tests {
         params.io.scan_film = true;
         params.scanner.scan_output = "positive_scan".into();
         assert!(validate_scan_output(&params, &film).is_err());
+
+        let paper = profile::load_profile_by_name(&data_dir(), "kodak_portra_endura").unwrap();
+        assert!(validate_scan_output(&params, &paper).is_err());
 
         let film = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
         params.scanner.white_correction = true;
