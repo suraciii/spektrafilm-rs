@@ -323,22 +323,10 @@ impl InputGamutCompress {
                 params.hull_detail
             ));
         }
-        let [t, l, p] = params.knee;
-        if !t.is_finite() || !(0.0..1.0).contains(&t) {
-            return Err(format!(
-                "input gamut compression knee threshold must be in [0, 1), got {t}"
-            ));
-        }
-        if !l.is_finite() || l <= 0.0 {
-            return Err(format!(
-                "input gamut compression knee limit must be > 0, got {l}"
-            ));
-        }
-        if !p.is_finite() || p <= 0.0 {
-            return Err(format!(
-                "input gamut compression knee power must be > 0, got {p}"
-            ));
-        }
+        let knee = crate::params::validation::validate_gamut_triplet(
+            "input gamut compression knee",
+            params.knee,
+        )?;
         let locus = spectral_locus_xy();
         let active = params.active && !inactive;
         let c_max = match (active, algorithm) {
@@ -350,7 +338,7 @@ impl InputGamutCompress {
             algorithm,
             boundary,
             hull_detail: params.hull_detail,
-            knee: (t as f64, l as f64, p as f64),
+            knee,
             locus,
             c_max,
         })

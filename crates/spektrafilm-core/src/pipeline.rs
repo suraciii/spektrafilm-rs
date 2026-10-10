@@ -289,13 +289,10 @@ impl Pipeline {
     /// instead of retaining stale calibration.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
         let mut params = params;
-        if params.workflow.route == "input > film > scan" {
-            params.io.scan_film = true;
-        }
+        crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
         params.validate()?;
         params.validate_color()?;
         crate::pipeline_calibration::validate_scan_output(&params, &self.film)?;
-        crate::params_builder::broadcast_monochrome_layout(&self.film, &mut params);
         if let Some(model) = self.print.data.density_curves_model.as_ref() {
             crate::print_morph::morph_density_curves(
                 &self.print.log_exposure_f64(),
@@ -357,12 +354,9 @@ impl Pipeline {
         let mut film =
             crate::profile::resolve_for_render(film, params.film_render.development_time);
         let mut params = params;
-        if params.workflow.route == "input > film > scan" {
-            params.io.scan_film = true;
-        }
+        crate::params_builder::normalize_runtime_topology(&film, &mut params);
         crate::pipeline_calibration::validate_scan_output(&params, &film)
             .expect("invalid scan output mode");
-        crate::params_builder::broadcast_monochrome_layout(&film, &mut params);
         let mut print =
             crate::profile::resolve_for_render(print, params.print_render.development_time);
         apply_base_tuning(&mut film, &params.film_render.base, None);

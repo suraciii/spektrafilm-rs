@@ -47,6 +47,10 @@ impl BundleBuilder {
     pub fn build(&self, data_dir: &Path, backend: &dyn ComputeBackend) -> Result<Bundle, String> {
         let mut spec = self.spec.clone();
         spec.normalize()?;
+        if let Some(params) = self.base_params.as_ref() {
+            validate_route_topology(spec.topology, params.workflow.route.as_str())?;
+        }
+
         let input = lut_transport::resolve(&spec.input_color_space)?;
         let output = lut_transport::resolve(&spec.output_color_space)?;
         let neutral = NeutralFilters::load(data_dir)?;
@@ -120,29 +124,40 @@ impl BundleBuilder {
                 metas.push(meta);
             }
         }
+        let magazine_print_active = first.params().magazine_print_color.active
+            && first.params().magazine_print_color.strength > 0.0
+            && first.params().workflow.route == "input > film > scan > magazine";
+        let mut provenance = BTreeMap::from([
+            ("spektrafilm_version".into(), "0.3.4".into()),
+            ("lut_creator_version".into(), "0.3.4".into()),
+            ("reference_commit".into(), REFERENCE_COMMIT.into()),
+            (
+                "project_url".into(),
+                "https://github.com/andreavolpato/spektrafilm".into(),
+            ),
+            (
+                "license".into(),
+                "spektrafilm LUT by Andrea Volpato, licensed under CC BY-SA 4.0.".into(),
+            ),
+            (
+                "citation".into(),
+                "Please cite the spektrafilm project and CITATION.cff.".into(),
+            ),
+        ]);
+        if magazine_print_active {
+            provenance.insert(
+                "magazine_print_color".into(),
+                "included in the baked RGB final stage".into(),
+            );
+        }
         let meta = BundleMeta {
             schema_version: 3,
             name: spec.name.clone(),
             topology: spec.topology,
             resolution: spec.resolution,
             target: spec.target.clone(),
-            provenance: BTreeMap::from([
-                ("spektrafilm_version".into(), "0.3.4".into()),
-                ("lut_creator_version".into(), "0.3.4".into()),
-                ("reference_commit".into(), REFERENCE_COMMIT.into()),
-                (
-                    "project_url".into(),
-                    "https://github.com/andreavolpato/spektrafilm".into(),
-                ),
-                (
-                    "license".into(),
-                    "spektrafilm LUT by Andrea Volpato, licensed under CC BY-SA 4.0.".into(),
-                ),
-                (
-                    "citation".into(),
-                    "Please cite the spektrafilm project and CITATION.cff.".into(),
-                ),
-            ]),
+            workflow_route: first.params().workflow.route.clone(),
+            provenance,
             stocks: StocksMeta {
                 film: spec.film_profile.clone(),
                 prints: spec.print_profiles.clone(),
@@ -181,6 +196,26 @@ impl BundleBuilder {
             baked_params,
         })
     }
+}
+fn validate_route_topology(topology: Topology, route: &str) -> Result<(), String> {
+    if topology == Topology::Four
+        && matches!(
+            route,
+            "input > film > scan" | "input > film > scan > magazine"
+        )
+    {
+        return Err(
+            "4lut is not supported with direct film-scan routes: the topology has no print taps"
+                .into(),
+        );
+    }
+    if topology != Topology::One && route.starts_with("input > convert-film >") {
+        return Err(
+            "convert-film routes require 1lut because split LUT topologies do not expose conversion taps"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn make_pipeline(
@@ -228,8 +263,13 @@ pub(crate) fn bake_params(
     params.io.output_color_space = output.primaries.into();
     params.io.input_cctf_decoding = false;
     params.io.output_cctf_encoding = false;
-    params.io.scan_film = false;
-    params.workflow.route = "input > film > print > scan".into();
+    if params.workflow.route == "input" {
+        params.workflow.route = "input > film > print > scan".into();
+    }
+    params.io.scan_film = matches!(
+        params.workflow.route.as_str(),
+        "input > film > scan" | "input > film > scan > magazine"
+    );
     params.taps.inject = None;
     params.taps.collect = None;
     params.settings.preview_mode = false;
@@ -458,6 +498,14 @@ fn bake_recipe(
     output: &ColorSpaceEntry,
     backend: &dyn ComputeBackend,
 ) -> Result<(String, Lut, LutFileMeta), String> {
+    let magazine_active = pipeline.params().magazine_print_color.active
+        && pipeline.params().magazine_print_color.strength > 0.0
+        && pipeline.params().workflow.route == "input > film > scan > magazine";
+    let role = if magazine_active && recipe.collect == Tap::RgbOut {
+        format!("magazine_{}", recipe.role)
+    } else {
+        recipe.role.clone()
+    };
     let image = lattice_image(spec.resolution, recipe.inject, spec, wires, input)?;
     let raw =
         pipeline.process_with_taps(image, backend, Some(recipe.inject), Some(recipe.collect))?;
@@ -470,7 +518,7 @@ fn bake_recipe(
             wires.encode(recipe.collect, physical)?
         };
         if code.iter().any(|v| !v.is_finite()) {
-            return Err(format!("nonfinite {} LUT sample", recipe.role));
+            return Err(format!("nonfinite {role} LUT sample"));
         }
         table.push(code.map(|v| v.clamp(0.0, 1.0)));
     }
@@ -503,7 +551,7 @@ fn bake_recipe(
         recipe.collect.name()
     };
     let meta = LutFileMeta {
-        role: recipe.role.clone(),
+        role,
         path: path.clone(),
         domain: domain.into(),
         range: range.into(),
@@ -530,6 +578,19 @@ mod tests {
             "input_color_space":input, "output_color_space":output
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn lut_topology_rejects_routes_without_matching_taps() {
+        let error =
+            validate_route_topology(Topology::Four, "input > film > scan > magazine").unwrap_err();
+        assert!(error.contains("no print taps"));
+
+        let error = validate_route_topology(Topology::Three, "input > convert-film > print > scan")
+            .unwrap_err();
+        assert!(error.contains("require 1lut"));
+
+        assert!(validate_route_topology(Topology::Three, "input > film > scan").is_ok());
     }
 
     #[test]
@@ -738,6 +799,44 @@ mod tests {
         assert_eq!(base.enlarger.y_filter_shift, 12.0);
     }
 
+    #[test]
+    fn magazine_params_use_scan_final_route_and_remain_in_snapshot_input() {
+        let film: profile::Profile =
+            serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
+        let print = film.clone();
+        let neutral = NeutralFilters::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let s = spec("srgb", "srgb");
+        let input = lut_transport::resolve("srgb").unwrap();
+        let mut base = RuntimeParams::default();
+        base.magazine_print_color.active = true;
+        base.magazine_print_color.strength = 0.75;
+        base.workflow.route = "input > film > scan > magazine".into();
+        let baked =
+            bake_params(&s, input, input, &film, &print, &neutral, Some(&base), true).unwrap();
+        assert_eq!(baked.workflow.route, "input > film > scan > magazine");
+        assert!(baked.io.scan_film);
+        assert_eq!(baked.magazine_print_color.strength, 0.75);
+        let json = serde_json::to_value(&baked).unwrap();
+        assert_eq!(json["magazine_print_color"]["active"], true);
+        assert_eq!(json["magazine_print_color"]["strength"], 0.75);
+    }
+
+    #[test]
+    fn active_magazine_does_not_rewrite_photographic_route() {
+        let film: profile::Profile =
+            serde_json::from_str(r#"{"metadata":{},"info":{},"data":{}}"#).unwrap();
+        let print = film.clone();
+        let neutral = NeutralFilters::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let s = spec("srgb", "srgb");
+        let input = lut_transport::resolve("srgb").unwrap();
+        let mut base = RuntimeParams::default();
+        base.magazine_print_color.active = true;
+        base.magazine_print_color.strength = 0.75;
+        let baked =
+            bake_params(&s, input, input, &film, &print, &neutral, Some(&base), true).unwrap();
+        assert_eq!(baked.workflow.route, "input > film > print > scan");
+        assert!(!baked.io.scan_film);
+    }
     #[test]
     fn interpolation_preserves_channel_axis_and_clamps_domain_edges() {
         let mut table = Vec::new();

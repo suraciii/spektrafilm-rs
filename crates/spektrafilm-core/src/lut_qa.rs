@@ -18,16 +18,15 @@ use spektrafilm_math::{
     image::ImageBuf,
     precision::{from_f64, to_f64},
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
 mod color;
+mod convex_hull;
 mod report;
 mod stimulus;
 use color::{Color, color};
+use convex_hull::volume;
 pub use report::write_report;
-use stimulus::Pcg;
+use stimulus::{Pcg, hull_indices};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QaResult {
@@ -227,16 +226,25 @@ fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
             ("printing_develop_scan", Some(print)),
         ],
     };
+    let magazine = bundle.meta.workflow_route == "input > film > scan > magazine"
+        && bundle.meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
     for &(role, stock) in roles {
+        let expected_role = if magazine && stock.is_some() {
+            format!("magazine_{role}")
+        } else {
+            role.to_owned()
+        };
         let candidates: Vec<_> = bundle
             .meta
             .luts
             .iter()
-            .filter(|m| m.role == role && m.print_profile.as_deref() == stock)
+            .filter(|m| m.role == expected_role && m.print_profile.as_deref() == stock)
             .collect();
         if candidates.len() != 1 {
-            return Err(format!("expected one canonical LUT {role} for {stock:?}"));
+            return Err(format!(
+                "expected one canonical LUT {expected_role} for {stock:?}"
+            ));
         }
         let m = candidates[0];
         let lut = bundle
@@ -692,133 +700,8 @@ fn plot(
     png(root, name, n, n, &pixels)
 }
 
-fn hull_indices(pop: usize) -> Vec<usize> {
-    let size = pop.min(8000);
-    let mut rng = Pcg::seeded(0);
-    let mut ids;
-    if pop > 10000 && size > pop / 50 {
-        ids = (0..pop).collect::<Vec<_>>();
-        for i in (std::cmp::max(pop - size, 1)..pop).rev() {
-            let j = rng.bounded(i);
-            ids.swap(i, j);
-        }
-        ids = ids.split_off(pop - size);
-    } else {
-        ids = Vec::with_capacity(size);
-        let mut set = BTreeSet::new();
-        for j in pop - size..pop {
-            let val = rng.bounded(j);
-            let value = if set.contains(&val) { j } else { val };
-            set.insert(value);
-            ids.push(value);
-        }
-        for i in (1..size).rev() {
-            let j = rng.bounded(i);
-            ids.swap(i, j);
-        }
-    }
-    ids
-}
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
 fn diff(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| a[i] - b[i])
-}
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    (0..3).map(|i| a[i] * b[i]).sum()
-}
-fn volume(points: &[[f64; 3]]) -> Result<f64, String> {
-    if points.len() < 4 {
-        return Err("gamut hull needs four noncoplanar points".into());
-    }
-    let a = 0;
-    let b = (1..points.len())
-        .max_by(|&i, &j| distance(points[i], points[a]).total_cmp(&distance(points[j], points[a])))
-        .unwrap();
-    let c = (0..points.len())
-        .max_by(|&i, &j| {
-            dot(
-                cross(diff(points[b], points[a]), diff(points[i], points[a])),
-                cross(diff(points[b], points[a]), diff(points[i], points[a])),
-            )
-            .total_cmp(&dot(
-                cross(diff(points[b], points[a]), diff(points[j], points[a])),
-                cross(diff(points[b], points[a]), diff(points[j], points[a])),
-            ))
-        })
-        .unwrap();
-    let normal = cross(diff(points[b], points[a]), diff(points[c], points[a]));
-    let d = (0..points.len())
-        .max_by(|&i, &j| {
-            dot(normal, diff(points[i], points[a]))
-                .abs()
-                .total_cmp(&dot(normal, diff(points[j], points[a])).abs())
-        })
-        .unwrap();
-    if dot(normal, diff(points[d], points[a])).abs() < 1e-14 {
-        return Err("degenerate gamut hull (collapsed output)".into());
-    }
-    let center =
-        std::array::from_fn(|i| (points[a][i] + points[b][i] + points[c][i] + points[d][i]) / 4.);
-    let orient = |mut f: [usize; 3]| {
-        if dot(
-            cross(
-                diff(points[f[1]], points[f[0]]),
-                diff(points[f[2]], points[f[0]]),
-            ),
-            diff(center, points[f[0]]),
-        ) > 0.
-        {
-            f.swap(1, 2);
-        }
-        f
-    };
-    let mut faces = vec![
-        orient([a, b, c]),
-        orient([a, d, b]),
-        orient([a, c, d]),
-        orient([b, d, c]),
-    ];
-    for (i, p) in points.iter().enumerate() {
-        if [a, b, c, d].contains(&i) {
-            continue;
-        }
-        let mut edges: BTreeMap<(usize, usize), (usize, usize)> = BTreeMap::new();
-        faces.retain(|f| {
-            let n = cross(
-                diff(points[f[1]], points[f[0]]),
-                diff(points[f[2]], points[f[0]]),
-            );
-            let visible = dot(n, diff(*p, points[f[0]])) > 1e-12 * dot(n, n).sqrt();
-            if visible {
-                for (u, v) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
-                    let k = (u.min(v), u.max(v));
-                    if edges.remove(&k).is_none() {
-                        edges.insert(k, (u, v));
-                    }
-                }
-            }
-            !visible
-        });
-        for (_, (u, v)) in edges {
-            faces.push(orient([u, v, i]));
-        }
-    }
-    Ok(faces
-        .iter()
-        .map(|f| {
-            dot(
-                diff(points[f[0]], center),
-                cross(diff(points[f[1]], center), diff(points[f[2]], center)),
-            ) / 6.
-        })
-        .sum::<f64>()
-        .abs())
 }
 fn locus() -> Vec<[f64; 2]> {
     crate::input_gamut::spectral_locus_xy()
@@ -1847,23 +1730,6 @@ mod tests {
         assert_eq!(delivered.prints[0].results.len(), 16);
         assert!(!delivered.passed);
         std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn hull_rejects_collapsed_gamut() {
-        assert!(volume(&[[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [1., 1., 0.]]).is_err());
-        assert!(
-            (volume(&[
-                [0., 0., 0.],
-                [1., 0., 0.],
-                [0., 1., 0.],
-                [0., 0., 1.],
-                [1., 1., 1.]
-            ])
-            .unwrap()
-                - 0.5)
-                .abs()
-                < 1e-12
-        );
     }
 }
 
