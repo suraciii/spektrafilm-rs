@@ -455,6 +455,22 @@ struct RenderSnapshot {
     data_dir: PathBuf,
     special: serde_json::Value,
 }
+#[derive(Clone, PartialEq)]
+struct RuntimeCacheKey {
+    data_dir: PathBuf,
+    film_name: String,
+    digest_print_name: String,
+    runtime_print_name: String,
+    special: serde_json::Value,
+}
+
+struct RuntimeCache {
+    key: RuntimeCacheKey,
+    film: spektrafilm_core::profile::Profile,
+    digest_print: spektrafilm_core::profile::Profile,
+    neutral: spektrafilm_core::neutral_filters::NeutralFilters,
+    runtime: Option<Runtime>,
+}
 
 impl RenderWorker {
     fn new() -> Self {
@@ -468,6 +484,7 @@ impl RenderWorker {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-render".into())
             .spawn(move || {
+                let mut runtime_cache: Option<RuntimeCache> = None;
                 loop {
                     let request = {
                         let (lock, wake) = &*state_for_worker;
@@ -499,7 +516,8 @@ impl RenderWorker {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let t_total = Instant::now();
                         let t_pipeline = Instant::now();
-                        let pipeline_template = build_runtime_observed(
+                        let pipeline_template = prepare_runtime_observed(
+                            &mut runtime_cache,
                             &request.snapshot,
                             request.kind == RenderKind::Preview,
                             &observation,
@@ -637,6 +655,137 @@ impl Drop for RenderWorker {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+fn prepare_runtime_observed<'a>(
+    cache: &'a mut Option<RuntimeCache>,
+    snapshot: &RenderSnapshot,
+    preview: bool,
+    context: &ObservationContext,
+) -> Result<&'a mut Runtime, String> {
+    let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
+    let result = prepare_runtime_cached(cache, snapshot, preview, prepare.context());
+    observed_result(
+        prepare,
+        result,
+        IssueCategory::Configuration,
+        IssueBoundary::RuntimePrepare,
+    )
+}
+
+fn prepare_runtime_cached<'a>(
+    cache: &'a mut Option<RuntimeCache>,
+    snapshot: &RenderSnapshot,
+    preview: bool,
+    context: &ObservationContext,
+) -> Result<&'a mut Runtime, String> {
+    let mut params = snapshot.params.clone();
+    params.settings.preview_mode = preview;
+
+    if let Some(mut cached) = cache.take() {
+        let digested = spektrafilm_core::runtime::digest_params_with_neutral(
+            params.clone(),
+            &cached.film,
+            &cached.digest_print,
+            &cached.neutral,
+            DigestMode::PreserveUserEdits,
+        );
+        let runtime_print_name = if digested.io.scan_film {
+            snapshot.film_name.as_str()
+        } else {
+            snapshot.print_name.as_str()
+        };
+        let key = RuntimeCacheKey {
+            data_dir: snapshot.data_dir.clone(),
+            film_name: snapshot.film_name.clone(),
+            digest_print_name: snapshot.print_name.clone(),
+            runtime_print_name: runtime_print_name.to_owned(),
+            special: snapshot.special.clone(),
+        };
+        if cached.key == key {
+            let runtime = cached
+                .runtime
+                .take()
+                .expect("runtime cache entry without runtime");
+            let runtime = runtime.with_params(digested)?;
+            cached.runtime = Some(runtime);
+            *cache = Some(cached);
+            return Ok(cache
+                .as_mut()
+                .expect("runtime cache restored")
+                .runtime
+                .as_mut()
+                .expect("runtime cache runtime restored"));
+        }
+        *cache = Some(cached);
+    }
+
+    let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
+        .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+    let digest_print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
+        .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
+    let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
+        .map_err(|e| format!("neutral filters: {e}"))?;
+    let digested = spektrafilm_core::runtime::digest_params_with_neutral(
+        params,
+        &film,
+        &digest_print,
+        &neutral,
+        DigestMode::PreserveUserEdits,
+    );
+    let runtime_print_name = if digested.io.scan_film {
+        snapshot.film_name.as_str()
+    } else {
+        snapshot.print_name.as_str()
+    };
+    let mut runtime_film = film.clone();
+    let mut runtime_print = if digested.io.scan_film {
+        film.clone()
+    } else {
+        digest_print.clone()
+    };
+    for (profile, key) in [
+        (&mut runtime_film, "film_channel_swap"),
+        (&mut runtime_print, "print_channel_swap"),
+    ] {
+        if let Some(order) = snapshot.special[key].as_array() {
+            for row in &mut profile.data.channel_density {
+                if row.len() >= 3 {
+                    let original = [row[0], row[1], row[2]];
+                    for ch in 0..3 {
+                        row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
+                    }
+                }
+            }
+        }
+    }
+    let runtime = Runtime::new_observed(
+        runtime_film,
+        runtime_print,
+        digested,
+        &snapshot.data_dir,
+        context,
+    )
+    .map_err(|e| format!("runtime build: {e}"))?;
+    *cache = Some(RuntimeCache {
+        key: RuntimeCacheKey {
+            data_dir: snapshot.data_dir.clone(),
+            film_name: snapshot.film_name.clone(),
+            digest_print_name: snapshot.print_name.clone(),
+            runtime_print_name: runtime_print_name.to_owned(),
+            special: snapshot.special.clone(),
+        },
+        film,
+        digest_print,
+        neutral,
+        runtime: Some(runtime),
+    });
+    Ok(cache
+        .as_mut()
+        .expect("runtime cache inserted")
+        .runtime
+        .as_mut()
+        .expect("runtime cache runtime inserted"))
 }
 
 fn build_runtime_observed(

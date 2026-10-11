@@ -84,12 +84,14 @@ pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
 
 fn apply_preview_constraints(params: &mut RuntimeParams) {
     if params.settings.preview_mode {
-        // Upstream preview: kill the spatially-variant and stochastic
-        // cost centres but keep the (cheap, per-pixel) colour chain.
-        // Scatter/halation kernel sigmas are preserved in preview mode.
+        // Preview keeps the per-pixel V2 scanner grain path. V1 remains a
+        // density-domain stochastic effect and V3 owns an explicit grain-free
+        // preview contract.
+        if params.film_render.grain.engine != crate::params::GrainEngine::V2 {
+            params.film_render.grain.active = false;
+        }
         params.enlarger.lens_blur = 0.0;
         params.film_render.dir_couplers.diffusion_size_um = 0.0;
-        params.film_render.grain.active = false;
         params.film_render.grain.particle_area_um2 = 0.0;
         params.film_render.grain.rms_granularity = [0.0; 3];
         params.film_render.grain.blur = 0.0;
@@ -542,6 +544,20 @@ mod tests {
         assert!(d.film_render.halation.active);
         assert!(d.print_render.glare.active);
         assert!(d.film_render.dir_couplers.active);
+    }
+
+    #[test]
+    fn preview_mode_keeps_v2_grain_active() {
+        let film = film_profile("kodak_portra_400", "negative", "still", "strong");
+        let print = blank_profile();
+        let mut params = RuntimeParams::default();
+        params.settings.preview_mode = true;
+        params.film_render.grain.engine = crate::params::GrainEngine::V2;
+        params.film_render.grain.active = true;
+
+        let digested = digest_params(params, &film, &print, None, true);
+
+        assert!(digested.film_render.grain.active);
     }
 
     #[test]
