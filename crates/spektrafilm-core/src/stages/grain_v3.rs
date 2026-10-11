@@ -17,8 +17,6 @@ use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
 
-/// Film chemistry of the supported condition (spec §Supported condition).
-const SUPPORTED_FILM_TYPE: &str = "negative";
 /// Film usage of the supported condition: still photography.
 const SUPPORTED_USAGE: &str = "still";
 /// Granularity preset of the reference stock `kodak_portra_800`. A channel
@@ -68,7 +66,8 @@ pub fn active(params: &RuntimeParams) -> bool {
 }
 
 /// Fail before any work when V3 is selected outside its supported
-/// condition. The restriction is this implementation's support, not a
+/// condition: still color-negative filming stocks (spec §Supported
+/// condition). The restriction is this implementation's support, not a
 /// permanent exclusion: expanding it requires the same validation for the
 /// additional condition.
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
@@ -82,18 +81,24 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
         _ => false,
     };
     let info = &film.info;
-    if info.film_type == SUPPORTED_FILM_TYPE && info.usage == SUPPORTED_USAGE && route_supported {
+    let stock_supported =
+        film.is_negative() && film.is_filming() && film.is_color() && info.usage == SUPPORTED_USAGE;
+    if stock_supported && route_supported {
         return Ok(());
     }
     Err(format!(
         "film grain V3: unsupported condition — this implementation supports {SUPPORTED_USAGE} \
-         {SUPPORTED_FILM_TYPE} stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
+         color-negative filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
          or the `{FILM_SCAN_ROUTE}` route with io.scan_film = true, but got stock {:?} \
-         (type {:?}, use {:?}), workflow.route {route:?}, io.scan_film {}; \
-         select a supported film and route, or set film_render.grain.engine to v1/v2",
+         (type {:?}, use {:?}, support {:?}, stage {:?}, channel model {:?}), \
+         workflow.route {route:?}, io.scan_film {}; select a supported film and route, or set \
+         film_render.grain.engine to v1/v2",
         info.stock.as_deref().unwrap_or(""),
         info.film_type,
         info.usage,
+        info.support,
+        info.stage,
+        info.channel_model,
         params.io.scan_film
     ))
 }
@@ -372,6 +377,28 @@ mod tests {
             );
         }
 
+        // Print stocks share `type = "negative"` and `use = "still"` but are
+        // not filming emulsions.
+        for stock in ["kodak_portra_endura", "fujifilm_crystal_archive_typeii"] {
+            let paper = load(stock);
+            let error = validate_supported(&paper, &params).unwrap_err();
+            assert!(
+                error.contains("unsupported condition")
+                    && error.contains(stock)
+                    && error.contains("printing"),
+                "{error}"
+            );
+        }
+
+        // A monochrome filming stock has no three-record color chemistry.
+        let mut monochrome = load("kodak_portra_800");
+        monochrome.info.channel_model = "bw".into();
+        let error = validate_supported(&monochrome, &params).unwrap_err();
+        assert!(
+            error.contains("unsupported condition") && error.contains("bw"),
+            "{error}"
+        );
+
         for mm in [8.0, 16.0, 24.0, 35.0, 36.0, 56.0, 65.0, 120.0, 35.5, 150.25] {
             let mut format = supported_params();
             format.camera.film_format_mm = mm;
@@ -607,28 +634,37 @@ mod tests {
 
     #[test]
     fn format_scales_geometry_without_resizing_the_raster() {
-        let source = ImageBuf::new(600, 400);
-        let mut params = supported_params();
-        params.io.crop = true;
-        params.io.crop_center = [0.6, 0.4];
-        params.io.crop_size = [0.2, 0.3];
-        params.io.upscale_factor = 1.25;
-        let reference = geometry(&source, &params, 60.0).unwrap();
-        for mm in [8.0, 24.0, 35.0, 35.5, 65.0, 120.0] {
-            params.camera.film_format_mm = mm;
-            let pitch = crate::resizing::pixel_size_um(mm, 600, 400);
-            let actual = geometry(&source, &params, pitch).unwrap();
-            assert_eq!(actual.width, reference.width);
-            assert_eq!(actual.height, reference.height);
-            assert_eq!(actual.rect.x, reference.rect.x);
-            assert_eq!(actual.rect.y, reference.rect.y);
-            for axis in 0..2 {
+        for (width, height) in [(600, 400), (400, 400), (400, 600)] {
+            let source = ImageBuf::new(width, height);
+            let mut params = supported_params();
+            params.io.crop = true;
+            params.io.crop_center = [0.6, 0.4];
+            params.io.crop_size = [0.2, 0.3];
+            params.io.upscale_factor = 1.25;
+            let reference_pitch = crate::resizing::pixel_size_um(36.0, width, height);
+            let reference = geometry(&source, &params, reference_pitch).unwrap();
+            for mm in [8.0, 24.0, 35.0, 35.5, 65.0, 120.0] {
+                params.camera.film_format_mm = mm;
+                let pitch = crate::resizing::pixel_size_um(mm, width, height);
+                // The source long edge owns the format long edge; a square
+                // source ties on width.
                 assert!(
-                    (actual.output_pitch_um[axis] / reference.output_pitch_um[axis]
-                        - mm as f64 / 36.0)
-                        .abs()
-                        < 1e-12
+                    (pitch - mm as f64 * 1000.0 / width.max(height) as f64).abs() < 1e-12,
+                    "{width}x{height} at {mm} mm resolved pitch {pitch}"
                 );
+                let actual = geometry(&source, &params, pitch).unwrap();
+                assert_eq!(actual.width, reference.width);
+                assert_eq!(actual.height, reference.height);
+                assert_eq!(actual.rect.x, reference.rect.x);
+                assert_eq!(actual.rect.y, reference.rect.y);
+                for axis in 0..2 {
+                    assert!(
+                        (actual.output_pitch_um[axis] / reference.output_pitch_um[axis]
+                            - mm as f64 / 36.0)
+                            .abs()
+                            < 1e-12
+                    );
+                }
             }
         }
     }

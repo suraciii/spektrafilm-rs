@@ -91,8 +91,8 @@ def control_boundaries(driver, root, factory):
     require(actual['input_image']['upscale_factor'] == 1.5, 'Saved upscale was rewritten')
     scenarios = [
         ('MAIN', 'Camera', 'Exposure compensation', -20, 'camera', 'exposure_compensation_ev', -20),
-        ('MAIN', 'Camera', 'Film format', 1, 'camera', 'film_format_mm', 8),
-        ('MAIN', 'Camera', 'Film format', 200, 'camera', 'film_format_mm', 120),
+        ('MAIN', 'Camera', 'Film format', 0, 'camera', 'film_format_mm', 1),
+        ('MAIN', 'Camera', 'Film format', 2000, 'camera', 'film_format_mm', 1000),
         ('FILM', 'Convert', 'Exposure compensation', -20, 'convert', 'exposure_compensation_ev', -20),
         ('FILM', 'Chemistry', 'Gamma factor', 0, 'film_chemistry', 'gamma_factor', .25),
         ('FILM', 'Chemistry', 'Developer exhaustion', 2, 'film_chemistry', 'developer_exhaustion', 1),

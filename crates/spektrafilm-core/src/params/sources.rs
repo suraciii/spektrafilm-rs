@@ -328,7 +328,13 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
         }
     }
     if path == "camera.film_format_mm" {
-        super::validation::validate_film_format_mm(value.as_f64().unwrap() as f32 as f64)?;
+        let wire = value.as_f64().unwrap();
+        super::validation::validate_film_format_mm(wire)?;
+        if (wire as f32) <= 0.0 {
+            return Err(format!(
+                "{path}: {wire} is below the smallest positive value the stored f32 field can hold"
+            ));
+        }
     }
     enum_check(path, value)?;
     range_check(path, value)?;
@@ -771,6 +777,8 @@ mod tests {
         ] {
             assert!(ParameterEdits::parse(text).is_err(), "{text}");
         }
+        let error = ParameterEdits::parse("camera.film_format_mm=1e-46").unwrap_err();
+        assert!(error.contains("smallest positive value"), "{error}");
         for mm in [35.0, 35.5, 120.0, 150.25] {
             let source = ParameterEdits::parse(&format!("camera.film_format_mm={mm}")).unwrap();
             let mut params = RuntimeParams::default();
