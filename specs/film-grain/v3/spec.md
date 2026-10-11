@@ -24,7 +24,7 @@ The output pixel is a readout sample. It is not a grain-generation unit. At a vi
 
 ## Supported condition
 
-V3 supports still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`) at the resolved global `camera.film_format_mm` film long edge. V3 must consume this parameter as the only film-format source and must not impose a second format whitelist.
+V3 supports still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`, `info.support = "film"`, `info.stage = "filming"`, `info.channel_model = "color"`) at the resolved global `camera.film_format_mm` film long edge. V3 must consume this parameter as the only film-format source and must not impose a second format whitelist.
 
 Changing film format must keep the requested output raster dimensions. It may change visible grain through the physical sampling defined in the [film geometry](design.md#film-geometry). V3 must not compensate this change with an automatic grain-size or strength adjustment.
 
