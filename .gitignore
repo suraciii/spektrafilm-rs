@@ -2,6 +2,10 @@ target/
 .DS_Store
 **/.DS_Store
 
+# Python interpreter caches are generated locally.
+__pycache__/
+*.py[cod]
+
 # Local task tracking (Beads) — data lives in the Dolt server, config is
 # machine-local and not shared through git.
 .beads/
