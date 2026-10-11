@@ -80,6 +80,8 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
             Some((0.0, None))
         }
+        // Discovery range only; `validate` and the sparse-source leaf check
+        // own the strict positivity.
         "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),

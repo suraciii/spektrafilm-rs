@@ -687,6 +687,14 @@ mod tests {
             params.validate().unwrap();
             assert_eq!(params.camera.film_format_mm, mm);
         }
+        let record = describe_field("camera.film_format_mm").unwrap();
+        let conditions = record["conditions"].as_array().unwrap();
+        assert!(
+            conditions
+                .iter()
+                .any(|c| c.as_str().is_some_and(|t| t.contains("strictly positive"))),
+            "discovery must state the strict-positivity refinement: {record}"
+        );
     }
 
     #[test]
