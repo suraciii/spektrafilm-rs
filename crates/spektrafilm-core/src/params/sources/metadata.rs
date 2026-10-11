@@ -334,6 +334,9 @@ fn unit(path: &str) -> Option<&'static str> {
 }
 fn conditions(path: &str) -> Vec<String> {
     let mut out = Vec::new();
+    if path == "camera.film_format_mm" {
+        out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
+    }
     if matches!(path, "film_render.grain.micro_sublayers") || path.starts_with("film_render.glare.")
     {
         out.push("preserved upstream no-op".into());
