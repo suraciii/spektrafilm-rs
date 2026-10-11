@@ -18,25 +18,16 @@
 - The selected route determines the scanned medium. A film-scan route scans the
   film; a print route scans the photographic paper.
 - The scanned medium determines the scanner controls that apply.
-- A print route carries its positive image on the photographic paper, and its
-  scan reads that paper. A negative film-scan route carries the negative image
-  on the film; `positive_scan` produces the positive image by positive-film
-  interpretation.
-- Scanner capture corrections are scanner lens blur, scanner white and black
-  correction with its white and black levels, and scanner unsharp mask.
-- A photographic-paper scan exposes the scanner capture corrections only. It
-  must not expose the scan light or the scan polarity.
-- A film scan exposes the scan light, the scanner capture corrections, and the
-  scan polarity. A slide film scan and a negative film scan expose the same
-  scanner controls.
-- The scan light is the spectrum that reads the film. `scanner.illuminant`
-  selects it and accepts the same illuminant names as `enlarger.illuminant`. An
-  unset `scanner.illuminant` follows the film profile viewing illuminant.
-- Scanner white and black correction applies to a photographic-paper scan and
-  to a slide film scan. It must not change a negative film scan.
-- Positive-film interpretation belongs to a negative film profile with
-  `positive_scan`. A photographic-paper scan and a slide film scan must not
-  expose it. See
+- A photographic-paper scan and a slide film scan read a positive image. A
+  negative film scan reads the negative image on the film; `positive_scan`
+  produces the positive image by positive interpretation.
+- Every scan exposes scanner lens blur and scanner unsharp mask.
+- Scanner white and black correction, with its white and black levels, applies
+  to a photographic-paper scan and a slide film scan. It does not change a
+  negative film scan.
+- A negative film scan exposes the scan output mode. Positive interpretation
+  and its controls belong to `positive_scan`. A photographic-paper scan and a
+  slide film scan must not expose them. See
   [Direct negative-film scan output](#direct-negative-film-scan-output).
 - Look that must apply to both a photographic-paper scan and a film scan
   belongs to the finishing treatment, not to the scanner controls. See
@@ -59,18 +50,16 @@
   density brightness, RGB balance, contrast, and maximum-density controls,
   then emits output-space linear RGB.
 - `scanner.black_point` and `scanner.white_point` are three-channel positions
-  inside the density window that the derived inverse covers. `0.0` is the
-  channel's minimum interpreted density and `1.0` its maximum. Their defaults
-  are the unclipped window: `0.0` and `1.0`.
-- Every channel must keep its black point below its white point, with both
-  points inside the window. A capture at or below the black point maps to
-  output black, and a capture at or above the white point maps to output white.
-- A point pair acts on its own channel only. Points that stay equal across the
-  three channels must not introduce a color cast on a neutral ramp. The points
-  act on the estimated relative log exposure before the density brightness, RGB
-  balance, and contrast controls.
-- The built-in preset library must ship one scanner section preset that
-  provides starting values for the interpretation points.
+  on the relative log-exposure range that the derived inverse covers in all
+  three channels. `0.0` is the lowest exposure of that range and `1.0` the
+  highest. The defaults `0.0` and `1.0` leave the interpretation unchanged.
+- Each channel must satisfy `0.0 <= black_point < white_point <= 1.0`.
+- Each channel linearly maps its black point to the start of the range and its
+  white point to the end, before the density brightness, RGB balance, and
+  contrast controls. Exposures outside the points continue the same linear map;
+  the points do not clip.
+- A point pair acts on its own channel only. Points that are equal across the
+  three channels must not introduce a color cast on a neutral ramp.
 - Calibration captures outside the profile range use finite endpoint tangent
   extrapolation. Negative and above-clear scanner RGB remains representable
   until the normal writer; no log-of-clipped-RGB operation is permitted.

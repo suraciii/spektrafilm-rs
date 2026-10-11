@@ -3,18 +3,14 @@
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and stage state.
 - Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
 - `ComputeBackend` separates stage orchestration from CPU and WGPU execution. The CPU backend preserves f64 reference order; WGPU owns f32 conversion, resources, and dispatch.
-- For a positive film scan, stage preparation derives one private calibrated scanner response from the selected profile density curves and the actual scan color context. The response stores per-channel monotone capture-to-log-exposure knots and finite endpoint slopes; image pixels reuse that response without rebuilding spectral calibration per pixel.
+- For `positive_scan`, stage preparation derives one private calibrated scanner response from the selected profile density curves and the actual scan color context. The response stores per-channel monotone capture-to-log-exposure knots and finite endpoint slopes; image pixels reuse that response without rebuilding spectral calibration per pixel.
 - Scanner calibration uses least-squares isotonic regression on the scanned neutral density samples to regularize measurement reversals. Pooled plateaus use their mean log exposure. The forward film curves remain unchanged.
 - Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`. The convert-film scan passes its selected scan illuminant into the same preparation path. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
-- The selected route determines the scanned medium. The medium determines the stage topology, the scanner calibration references, and the scanner controls that apply.
+- The scanned medium determines the stage topology and the scanner calibration references.
 - Scanner white and black correction derives its references from the scanned medium: film zero and maximum dye density for a slide scan, and the print exposure of the film density range for a photographic-paper scan.
-- The film-scan light is a runtime control, not a device profile. An unset value follows the film profile viewing illuminant, so the profile-derived capture stays the default.
-- The effective scan light supplies the film-scan capture context and the scanner white and black correction references together. The correction must not use a different light.
-- Positive interpretation derives its response from the profile density curves and the scan color context. It must not estimate its endpoints from image content.
+- Positive interpretation must not estimate its response or its points from image content.
 - Interpretation controls parameterize the inverse response only. They must not modify the film curves or the printing exposure.
-- `scanner.black_point` and `scanner.white_point` name the black and white points of the interpreted image and take their positions in the same per-channel density window that the derived inverse covers. They must not introduce a second density model, an unset point pair must stay the identity map, and they are distinct from the scanner white and black correction levels.
-- Look reaches a film-scan image through the scan capture, positive interpretation, or the finishing treatment. The finishing treatment is the only look stage shared by a photographic-paper scan and a film scan.
-- Scanner behavior must not depend on a scanner device model, a measured sensor response, or device-specific artifacts.
+- The black and white points remap the relative log-exposure axis that the derived inverse already produces. They must not introduce a second density model, and they are distinct from the scanner white and black correction levels.
 - A resident WGPU chain is an optimization, not a second product contract. `ResidentDecision` records capability and fallback reasons. Unsupported stages use the faithful per-stage route.
 - The private resident module owns capability decisions, backend parameter preparation, and output transfer finalization. The parent pipeline owns input preparation and per-stage fallback ordering.
 - The WGPU film-chain module owns resident command encoding and its resource lifetimes. Device setup and shared dispatch infrastructure remain in the backend.
