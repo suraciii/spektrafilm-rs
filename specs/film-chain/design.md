@@ -3,9 +3,15 @@
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and stage state.
 - Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
 - `ComputeBackend` separates stage orchestration from CPU and WGPU execution. The CPU backend preserves f64 reference order; WGPU owns f32 conversion, resources, and dispatch.
-- For a positive film scan, stage preparation derives one private calibrated scanner response from the selected profile density curves and the actual scan color context. The response stores per-channel monotone capture-to-log-exposure knots and finite endpoint slopes; image pixels reuse that response without rebuilding spectral calibration per pixel.
+- For `positive_scan`, stage preparation derives one private calibrated scanner response from the selected profile density curves and the actual scan color context. The response stores per-channel monotone capture-to-log-exposure knots and finite endpoint slopes; image pixels reuse that response without rebuilding spectral calibration per pixel.
 - Scanner calibration uses least-squares isotonic regression on the scanned neutral density samples to regularize measurement reversals. Pooled plateaus use their mean log exposure. The forward film curves remain unchanged.
 - Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`. The convert-film scan passes its selected scan illuminant into the same preparation path. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
+- The scanned medium determines the stage topology and the scanner calibration references.
+- Scanner white and black correction derives its references from the scanned medium: film zero and maximum dye density for a slide scan, and the print exposure of the film density range for a photographic-paper scan.
+- Positive interpretation and the film-scan black and white points must not estimate their response or their points from image content.
+- Interpretation controls parameterize the inverse response only. They must not modify the film curves or the printing exposure.
+- The black and white points reuse references that the chain already derives: the relative log-exposure axis of the derived inverse for a negative scan, and the zero and maximum dye density references of scanner white and black correction for a slide scan. They must not introduce a second density model.
+- The black and white points and scanner white and black correction are separate controls. The points must not modify the film exposure, and adding them must not change the correction.
 - A resident WGPU chain is an optimization, not a second product contract. `ResidentDecision` records capability and fallback reasons. Unsupported stages use the faithful per-stage route.
 - The private resident module owns capability decisions, backend parameter preparation, and output transfer finalization. The parent pipeline owns input preparation and per-stage fallback ordering.
 - The WGPU film-chain module owns resident command encoding and its resource lifetimes. Device setup and shared dispatch infrastructure remain in the backend.

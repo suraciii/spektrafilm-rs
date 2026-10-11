@@ -6,6 +6,7 @@ use spektrafilm_math::image::ImageBuf;
 enum ResidentFallbackReason {
     WorkflowRoute,
     PositiveScanOutput,
+    ScannerFilmPoints,
     LangmuirChemistry,
     InputTransferDecoding,
     RequestedSpectralLut,
@@ -54,6 +55,13 @@ impl Pipeline {
         }
         if self.params.scanner.scan_output == "positive_scan" {
             reasons.push(ResidentFallbackReason::PositiveScanOutput);
+        }
+        if self.params.io.scan_film
+            && self.film.is_positive()
+            && (self.params.scanner.black_point != [0.0; 3]
+                || self.params.scanner.white_point != [1.0; 3])
+        {
+            reasons.push(ResidentFallbackReason::ScannerFilmPoints);
         }
         let dir = &self.params.film_render.dir_couplers;
         let coefficients = if self.film.is_positive() {
@@ -187,6 +195,7 @@ impl Pipeline {
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
                             ResidentFallbackReason::PositiveScanOutput => R::PositiveScanOutput,
+                            ResidentFallbackReason::ScannerFilmPoints => R::ScannerFilmPoints,
                             ResidentFallbackReason::LangmuirChemistry => R::LangmuirChemistry,
                             ResidentFallbackReason::InputTransferDecoding => {
                                 R::InputTransferDecoding
@@ -596,5 +605,38 @@ mod tests {
                 .iter()
                 .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainV3FieldCpu))
         );
+    }
+
+    #[test]
+    fn active_slide_points_decline_resident_but_defaults_do_not() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+        let mut pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        pipeline.params.scanner.black_point[0] = 0.1;
+        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
+            panic!("active slide points must use the faithful per-stage route");
+        };
+        assert!(
+            reasons
+                .iter()
+                .any(|r| matches!(r, ResidentFallbackReason::ScannerFilmPoints))
+        );
+        pipeline.params.io.scan_film = false;
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
     }
 }

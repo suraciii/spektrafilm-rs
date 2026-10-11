@@ -689,6 +689,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scanner_point_sources_reject_bad_channels_and_validate_composed_pairs() {
+        for source in [
+            "scanner.black_point=[-0.1,0,0]",
+            "scanner.white_point=[1,1.1,1]",
+            "scanner.black_point=[0,0]",
+            "scanner.white_point=[1,null,1]",
+        ] {
+            assert!(ParameterEdits::parse(source).is_err(), "{source}");
+        }
+        let mut params = RuntimeParams::default();
+        ParameterEdits::parse("scanner.black_point=[0.1,0.2,0.3],scanner.white_point=[0.8,0.9,1]")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        params.validate().unwrap();
+        ParameterEdits::parse("scanner.white_point=[0.8,0.2,1]")
+            .unwrap()
+            .apply(&mut params)
+            .unwrap();
+        assert!(params.validate().is_err());
+    }
+
+    #[test]
     fn format_sources_reject_invalid_and_preserve_fractional_values() {
         for text in [
             "camera.film_format_mm=0",
