@@ -257,6 +257,8 @@ pub fn show(
                         flags.runtime_changed |= optional_numeric(ui, "Film Resolution", &mut grain.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0, 1.0, 1, "Film resolution factor.");
                         flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, 0.0, 100.0, 1.0, 1, "Chromatic grain amount.");
                     }
+                    flags.runtime_changed |= numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, 0.0, 1.0, 1.0, 0, "Film resolution implementation: 0 = Optical Resolution; 1 = Fast Blur.");
+                    flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain V2 phase timer; 0 uses the seed-derived phase.");
                     let resolved = grain.resolved_grain_v2();
                     flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
                 } else if grain.engine == GrainEngine::V3 {
