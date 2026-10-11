@@ -138,6 +138,14 @@ pub struct ScannerParams {
     pub black_level: f32,
     #[serde(default = "default_unsharp")]
     pub unsharp_mask: [f64; 2],
+    #[serde(default = "default_positive_density_ev")]
+    pub positive_density_ev: f64,
+    #[serde(default)]
+    pub positive_balance_ev: [f64; 3],
+    #[serde(default = "default_positive_contrast")]
+    pub positive_contrast: f64,
+    #[serde(default = "default_positive_dmax")]
+    pub positive_dmax: f64,
 }
 
 impl Default for ScannerParams {
@@ -150,8 +158,22 @@ impl Default for ScannerParams {
             white_level: 0.98,
             black_level: 0.01,
             unsharp_mask: [0.7, 0.7],
+            positive_density_ev: default_positive_density_ev(),
+            positive_balance_ev: [0.0; 3],
+            positive_contrast: default_positive_contrast(),
+            positive_dmax: default_positive_dmax(),
         }
     }
+}
+
+fn default_positive_density_ev() -> f64 {
+    0.8781766618
+}
+fn default_positive_contrast() -> f64 {
+    0.73551400058216643
+}
+fn default_positive_dmax() -> f64 {
+    1.5625841465572565
 }
 
 fn default_one_f64() -> f64 {
@@ -1015,5 +1037,32 @@ mod tests {
         params.film_render.grain.engine = super::grain::GrainEngine::V1;
         params.film_render.grain.v3_event_area_um2 = -1.0;
         assert!(params.validate().is_err());
+    }
+
+    #[test]
+    fn film_format_validation_and_persistence() {
+        let mut params = super::RuntimeParams::default();
+        assert_eq!(params.camera.film_format_mm, 35.0);
+        for engine in [
+            super::GrainEngine::V1,
+            super::GrainEngine::V2,
+            super::GrainEngine::V3,
+        ] {
+            params.film_render.grain.engine = engine;
+            for mm in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                params.camera.film_format_mm = mm;
+                let error = params.validate().unwrap_err();
+                assert!(error.contains("camera.film_format_mm"), "{error}");
+            }
+            for mm in [8.0, 35.0, 35.5, 120.0, 150.25] {
+                params.camera.film_format_mm = mm;
+                params.validate().unwrap();
+                let saved = serde_json::to_vec(&params).unwrap();
+                let restored: super::RuntimeParams = serde_json::from_slice(&saved).unwrap();
+                restored.validate().unwrap();
+                assert_eq!(restored.camera.film_format_mm, mm);
+                assert_eq!(restored.film_render.grain.engine, engine);
+            }
+        }
     }
 }

@@ -128,7 +128,7 @@ fn apply_with_budget(
         || !(src_w as f64 * pitch_um).is_finite()
         || !(src_h as f64 * pitch_um).is_finite()
     {
-        return Err("film grain V3: film coordinates and support halo exceed the signed 32-bit cell address range; reduce the film extent or increase the field pitch".to_owned());
+        return Err("film grain V3: film coordinates and support halo exceed the signed 32-bit cell address range; reduce camera.film_format_mm or move the requested region closer to the film origin".to_owned());
     }
     let inner_i0 = (x0 / h).floor() as i64;
     let inner_i1 = (x1 / h).ceil() as i64 - 1;

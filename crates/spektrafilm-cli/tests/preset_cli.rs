@@ -844,13 +844,7 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
             "kodak_portra_400",
             "input > film > print > scan",
             "camera.auto_exposure=false",
-            "direct input",
-        ),
-        (
-            "kodak_portra_400",
-            "input > convert-film > scan",
-            "camera.auto_exposure=false",
-            "direct input",
+            "direct film scan route",
         ),
         (
             "kodak_portra_400",
@@ -895,7 +889,7 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
                 "accepted {film}, {route}, {edits}"
             );
             let error = String::from_utf8_lossy(&result.stderr);
-            assert!(error.contains(message), "{error}");
+            assert!(error.contains(message), "{film} {route} {edits}: {error}");
             assert_eq!(
                 std::fs::read(f.root.join("output.tif")).unwrap(),
                 b"retained output"
@@ -924,7 +918,7 @@ fn positive_scan_rejects_paper_without_sparse_parameter_edits() {
         assert!(!result.status.success());
         let error = String::from_utf8_lossy(&result.stderr);
         assert!(
-            error.contains("requires a negative film profile"),
+            error.contains("requires a negative filming-stage film profile"),
             "{error}"
         );
         assert!(!f.root.join("output.tif").exists());
@@ -1625,7 +1619,7 @@ fn invalid_scanner_section_rejects_without_printing_effective_configuration() {
     let error = String::from_utf8_lossy(&rejected.stderr);
     assert!(
         error.contains("scanner.scan_output=positive_scan")
-            && error.contains("requires the direct input > film > scan route"),
+            && error.contains("requires a direct film scan route"),
         "{error}"
     );
     assert!(rejected.stdout.is_empty());
