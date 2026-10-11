@@ -76,12 +76,13 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.v2_resolution_factor" => Some((0.0, Some(100.0))),
         "film_render.grain.v2_resolution_type" => Some((0.0, Some(1.0))),
         "film_render.grain.v2_timer" => Some((0.0, Some(1.0))),
-        // Discovery range only; `validate` owns the strict positivity.
         "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
             Some((0.0, None))
         }
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
+        "scanner.positive_density_ev" | "scanner.positive_balance_ev" => Some((-16.0, Some(16.0))),
+        "scanner.positive_contrast" | "scanner.positive_dmax" => Some((0.0, Some(16.0))),
         _ => None,
     }
 }
@@ -447,6 +448,29 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         ));
     }
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
+    let scanner = &params.scanner;
+    if !scanner.positive_density_ev.is_finite()
+        || !(-16.0..=16.0).contains(&scanner.positive_density_ev)
+    {
+        return Err("scanner.positive_density_ev: must be finite and in -16..=16".into());
+    }
+    for (channel, value) in scanner.positive_balance_ev.iter().enumerate() {
+        if !value.is_finite() || !(-16.0..=16.0).contains(value) {
+            return Err(format!(
+                "scanner.positive_balance_ev[{channel}]: must be finite and in -16..=16"
+            ));
+        }
+    }
+    for (name, value) in [
+        ("scanner.positive_contrast", scanner.positive_contrast),
+        ("scanner.positive_dmax", scanner.positive_dmax),
+    ] {
+        if !value.is_finite() || value <= 0.0 || value > 16.0 {
+            return Err(format!(
+                "{name}: must be finite, strictly positive, and <= 16"
+            ));
+        }
+    }
     RgbToRawMethod::parse(&params.settings.rgb_to_raw_method)?;
     if !crate::spectral_service::is_supported_illuminant(&params.enlarger.illuminant) {
         let supported = crate::spectral_service::available_illuminants().join(", ");

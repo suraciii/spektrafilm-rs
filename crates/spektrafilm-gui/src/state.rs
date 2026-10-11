@@ -583,6 +583,17 @@ mod tests {
             "magazine print color factory defaults",
         );
         shared.as_object_mut().unwrap().remove("rust");
+        // These controls belong to the Rust scanner extension, not the
+        // independently generated Python factory-state oracle.
+        let scanner = shared["scanner"].as_object_mut().unwrap();
+        for key in [
+            "positive_density_ev",
+            "positive_balance_ev",
+            "positive_contrast",
+            "positive_dmax",
+        ] {
+            scanner.remove(key);
+        }
         assert_eq!(compare(&shared, &expected, "factory"), 187);
         let params = factory.runtime_params().unwrap();
         assert_eq!(params.film_render.grain.rms_granularity, [5.0; 3]);
@@ -1015,6 +1026,24 @@ mod tests {
             "input > film > scan"
         );
         Ok::<(), anyhow::Error>(())
+    }
+    #[test]
+    fn positive_scan_convert_route_roundtrip() -> anyhow::Result<()> {
+        let factory = GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        params.workflow.route = "input > convert-film > scan".into();
+        params.scanner.scan_output = "positive_scan".into();
+        let saved =
+            GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)?;
+        assert_eq!(
+            saved.sections["simulation"]["route"],
+            "input > convert-film > scan"
+        );
+        let loaded = GuiState::from_value(saved.sections)?;
+        let restored = loaded.runtime_params()?;
+        assert_eq!(restored.workflow.route, "input > convert-film > scan");
+        assert_eq!(restored.scanner.scan_output, "positive_scan");
+        Ok(())
     }
     #[test]
     fn factory_enlarger_neutral_filters_survive_state_conversion() {

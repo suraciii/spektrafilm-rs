@@ -186,51 +186,205 @@ fn scan_spectral_rgb(
     }
 }
 
-/// One-pixel scan reference through [`scan_spectral_rgb`] — used for the
-/// positive-scan clear/dense endpoints.
-// Reference samples use the same context as the bulk scan.
-#[allow(clippy::too_many_arguments)]
-fn scan_reference_rgb(
-    density_cmy: [f64; 3],
-    profile: &Profile,
-    params: &RuntimeParams,
-    backend: &dyn ComputeBackend,
-    color_ref: &crate::color_reference::ColorReference,
-    channel_density: &[[f64; 3]],
-    base_density: &[f64],
-    color: &crate::chain_prep::ScanColorContext,
-) -> [f64; 3] {
-    let sample = ImageBuf::from_data(1, 1, density_cmy.into_iter().map(from_f64).collect());
-    let captured = scan_spectral_rgb(
-        &sample,
-        profile,
-        params,
-        backend,
-        color_ref,
-        channel_density,
-        base_density,
-        color,
-    );
-    [
-        to_f64(captured.data[0]),
-        to_f64(captured.data[1]),
-        to_f64(captured.data[2]),
-    ]
-}
-
 fn positive_scan_requested(params: &RuntimeParams) -> bool {
     params.scanner.scan_output == "positive_scan"
 }
 
+struct PositiveChannel {
+    density: Vec<f64>,
+    log_exposure: Vec<f64>,
+    clear: f64,
+}
+
+struct PositiveCalibration {
+    channels: [PositiveChannel; 3],
+}
+
+impl PositiveCalibration {
+    #[allow(clippy::too_many_arguments)]
+    fn from_profile(
+        profile: &Profile,
+        params: &RuntimeParams,
+        backend: &dyn ComputeBackend,
+        color_ref: &crate::color_reference::ColorReference,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
+        color: &crate::chain_prep::ScanColorContext,
+    ) -> Result<Self, String> {
+        let axis = &profile.data.log_exposure;
+        if axis.len() < 2 || profile.data.density_curves.len() != axis.len() {
+            return Err("positive_scan requires matching profile calibration curves with at least two samples".into());
+        }
+        let rows = ImageBuf::from_data(
+            axis.len() as u32,
+            1,
+            profile
+                .data
+                .density_curves
+                .iter()
+                .flat_map(|row| row.iter().copied().map(from_f64))
+                .collect(),
+        );
+        let captured = scan_spectral_rgb(
+            &rows,
+            profile,
+            params,
+            backend,
+            color_ref,
+            channel_density,
+            base_density,
+            color,
+        );
+        let mut channels = Vec::with_capacity(3);
+        for channel in 0..3 {
+            let mut density: Vec<f64> = Vec::with_capacity(axis.len());
+            let mut exposure = Vec::with_capacity(axis.len());
+            let mut clear = None;
+            let mut ended = false;
+            for (i, &log_e) in axis.iter().enumerate() {
+                let value = to_f64(captured.data[i * 3 + channel]);
+                if !log_e.is_finite() || !value.is_finite() || value <= 0.0 {
+                    ended |= !density.is_empty();
+                    continue;
+                }
+                if ended {
+                    return Err(format!(
+                        "positive_scan calibration has an invalid interior sample in channel {channel}"
+                    ));
+                }
+                let reference = *clear.get_or_insert(value);
+                let d = -(value / reference).log10();
+                density.push(d);
+                exposure.push(log_e);
+            }
+            // Pool adjacent violations to regularize measurement noise in the
+            // inverse calibration without changing the forward film curves.
+            let mut blocks: Vec<(f64, f64, usize)> = Vec::with_capacity(density.len());
+            for (&d, &e) in density.iter().zip(&exposure) {
+                blocks.push((d, e, 1));
+                while blocks.len() >= 2 {
+                    let last = blocks.len() - 1;
+                    let (left_sum, _, left_count) = blocks[last - 1];
+                    let (right_sum, _, right_count) = blocks[last];
+                    if left_sum / (left_count as f64) < right_sum / (right_count as f64) {
+                        break;
+                    }
+                    let right = blocks.pop().unwrap();
+                    let left = blocks.last_mut().unwrap();
+                    left.0 += right.0;
+                    left.1 += right.1;
+                    left.2 += right.2;
+                }
+            }
+            density.clear();
+            exposure.clear();
+            let tolerance = if std::mem::size_of::<Scalar>() == 4 {
+                2e-6
+            } else {
+                1e-12
+            };
+            for (density_sum, exposure_sum, count) in blocks {
+                let d = density_sum / count as f64;
+                if density.last().is_some_and(|last| d - *last <= tolerance) {
+                    continue;
+                }
+                density.push(d);
+                exposure.push(exposure_sum / count as f64);
+            }
+            if density.len() < 2 {
+                return Err(format!(
+                    "positive_scan calibration has fewer than two positive distinct samples in channel {channel}"
+                ));
+            }
+            channels.push(PositiveChannel {
+                density,
+                log_exposure: exposure,
+                clear: clear.unwrap(),
+            });
+        }
+        Ok(Self {
+            channels: channels
+                .try_into()
+                .map_err(|_| "positive_scan calibration requires three channels")?,
+        })
+    }
+}
+
+impl PositiveChannel {
+    fn estimate(&self, value: f64) -> f64 {
+        let d = -(value / self.clear).log10();
+        let upper = self
+            .density
+            .partition_point(|x| *x < d)
+            .clamp(1, self.density.len() - 1);
+        let lower = upper - 1;
+        let fraction = (d - self.density[lower]) / (self.density[upper] - self.density[lower]);
+        self.log_exposure[lower] + fraction * (self.log_exposure[upper] - self.log_exposure[lower])
+    }
+}
+
 fn interpret_negative_capture(
     mut rgb: ImageBuf,
-    clear_rgb: [f64; 3],
-    dense_rgb: [f64; 3],
+    calibration: &PositiveCalibration,
+    params: &RuntimeParams,
 ) -> ImageBuf {
+    let contrast = params.scanner.positive_contrast;
+    let dmax = params.scanner.positive_dmax;
+    let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
+    let camera_ev = if params.workflow.route == "input > film > scan" {
+        params.camera.exposure_compensation_ev as f64
+    } else {
+        0.0
+    };
+    let tone = |log_e: f64, channel: usize| {
+        let e = log_e / std::f64::consts::LOG10_2 - camera_ev
+            + params.scanner.positive_density_ev
+            + params.scanner.positive_balance_ev[channel];
+        let z = contrast * e;
+        let t = if z >= 0.0 {
+            1.0 / (1.0 + (-z).exp())
+        } else {
+            let a = z.exp();
+            a / (1.0 + a)
+        };
+        let density = dmax * (1.0 - t);
+        let positive = (-std::f64::consts::LN_10 * density).exp_m1();
+        let output = (positive + denominator) / denominator;
+        let derivative = std::f64::consts::LN_10
+            * dmax
+            * contrast
+            * t
+            * (1.0 - t)
+            * (-std::f64::consts::LN_10 * density).exp()
+            / (denominator * std::f64::consts::LOG10_2);
+        (output, derivative)
+    };
+    let endpoints: [[(f64, f64, f64); 2]; 3] = std::array::from_fn(|c| {
+        let k = &calibration.channels[c];
+        let last = k.density.len() - 1;
+        std::array::from_fn(|side| {
+            let i = if side == 0 { 0 } else { last };
+            let (a, b) = if side == 0 { (0, 1) } else { (last - 1, last) };
+            let capture = k.clear * 10.0f64.powf(-k.density[i]);
+            let (output, derivative) = tone(k.log_exposure[i], c);
+            let slope = -derivative * (k.log_exposure[b] - k.log_exposure[a])
+                / ((k.density[b] - k.density[a]) * std::f64::consts::LN_10 * capture);
+            (capture, output, slope)
+        })
+    });
     rgb.data.par_chunks_exact_mut(3).for_each(|px| {
         for channel in 0..3 {
-            let span = (clear_rgb[channel] - dense_rgb[channel]).max(1e-12);
-            px[channel] = from_f64((clear_rgb[channel] - to_f64(px[channel])) / span);
+            let value = to_f64(px[channel]);
+            let (clear, low, low_slope) = endpoints[channel][0];
+            let (dense, high, high_slope) = endpoints[channel][1];
+            let output = if value >= clear {
+                low + (value - clear) * low_slope
+            } else if value <= dense {
+                high + (value - dense) * high_slope
+            } else {
+                tone(calibration.channels[channel].estimate(value), channel).0
+            };
+            px[channel] = from_f64(output);
         }
     });
     rgb
@@ -247,7 +401,7 @@ pub fn scan_with_options(
     gamut: &crate::gamut_compression::OutputGamutCompress,
     scan_illuminant: Option<&str>,
     include_base: bool,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let positive_scan = positive_scan_requested(params);
     let _positive_scan = positive_scan.then(|| {
         super::StageObservation::cpu(
@@ -357,31 +511,19 @@ pub fn scan_with_options(
     // Positive interpretation is scanner-domain: optical capture and lens
     // blur happen before the calibrated negative endpoint inversion.
     if positive_scan {
-        let clear_rgb = scan_reference_rgb(
-            [0.0; 3],
-            profile,
-            params,
-            backend,
-            color_ref,
-            &channel_density,
-            base_density,
-            scan_context,
-        );
-        let (_, dense_density) = scanner_lut_bounds(profile, params);
-        let dense_rgb = scan_reference_rgb(
-            dense_density,
-            profile,
-            params,
-            backend,
-            color_ref,
-            &channel_density,
-            base_density,
-            scan_context,
-        );
         if params.scanner.lens_blur > 0.0 {
             rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
         }
-        rgb = interpret_negative_capture(rgb, clear_rgb, dense_rgb);
+        let calibration = PositiveCalibration::from_profile(
+            profile,
+            params,
+            backend,
+            color_ref,
+            &channel_density,
+            base_density,
+            scan_context,
+        )?;
+        rgb = interpret_negative_capture(rgb, &calibration, params);
     }
 
     // Output gamut compression — direct scans preserve the historical
@@ -489,7 +631,7 @@ pub fn scan_with_options(
         });
     }
 
-    rgb
+    Ok(rgb)
 }
 
 /// Scan with the profile's own viewing illuminant and the film base included
@@ -501,7 +643,7 @@ pub fn process(
     backend: &dyn ComputeBackend,
     color_ref: &crate::color_reference::ColorReference,
     gamut: &crate::gamut_compression::OutputGamutCompress,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     scan_with_options(
         density_cmy,
         profile,
@@ -518,21 +660,63 @@ pub fn process(
 mod tests {
     use super::*;
 
+    fn calibration() -> PositiveCalibration {
+        PositiveCalibration {
+            channels: std::array::from_fn(|_| PositiveChannel {
+                density: vec![0.0, 1.0, 2.0],
+                log_exposure: vec![-1.0, 0.0, 1.0],
+                clear: 1.0,
+            }),
+        }
+    }
+
     #[test]
-    fn positive_scan_preserves_samples_beyond_capture_endpoints() {
-        let capture = ImageBuf::from_data(
+    fn calibrated_response_preserves_polarity_and_unbounded_headroom() {
+        let params = RuntimeParams::default();
+        let input = ImageBuf::from_data(
             5,
             1,
-            [1.0, 0.75, 0.5, 0.25, 0.0]
+            [100.0, 1.0, 0.1, 0.01, -100.0]
                 .into_iter()
-                .flat_map(|value| [from_f64(value); 3])
+                .flat_map(|v| [from_f64(v); 3])
                 .collect(),
         );
-        let positive = interpret_negative_capture(capture, [0.75; 3], [0.25; 3]);
-        let expected: Vec<_> = [-0.5, 0.0, 0.5, 1.0, 1.5]
-            .into_iter()
-            .flat_map(|value| [from_f64(value); 3])
-            .collect();
-        assert_eq!(positive.data, expected);
+        let output = interpret_negative_capture(input, &calibration(), &params);
+        let values: Vec<f64> = output.data.iter().step_by(3).map(|v| to_f64(*v)).collect();
+        assert!(values.windows(2).all(|w| w[1] > w[0]));
+        assert!(values[0] < 0.0 && values[4] > 1.0);
+    }
+
+    #[test]
+    fn density_and_balance_controls_change_only_requested_channels() {
+        let input = ImageBuf::from_data(1, 1, vec![from_f64(0.1); 3]);
+        let mut params = RuntimeParams::default();
+        let baseline = interpret_negative_capture(input.clone(), &calibration(), &params);
+        params.scanner.positive_density_ev += 1.0;
+        let brighter = interpret_negative_capture(input.clone(), &calibration(), &params);
+        assert!(brighter.data.iter().zip(&baseline.data).all(|(a, b)| a > b));
+        params.scanner.positive_density_ev -= 1.0;
+        params.scanner.positive_balance_ev = [1.0, 0.0, -1.0];
+        let balanced = interpret_negative_capture(input, &calibration(), &params);
+        assert!(balanced.data[0] > baseline.data[0]);
+        assert_eq!(balanced.data[1], baseline.data[1]);
+        assert!(balanced.data[2] < baseline.data[2]);
+    }
+
+    #[test]
+    fn very_small_output_density_stays_finite_and_ordered() {
+        let mut params = RuntimeParams::default();
+        params.scanner.positive_dmax = 1e-18;
+        let input = ImageBuf::from_data(
+            2,
+            1,
+            [0.5, 0.5, 0.5, 0.1, 0.1, 0.1]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let output = interpret_negative_capture(input, &calibration(), &params);
+        assert!(output.data.iter().all(|v| v.is_finite()));
+        assert!(output.data[3] > output.data[0]);
     }
 }

@@ -532,7 +532,8 @@ mod debug_tests {
             &backend,
             &crate::color_reference::ColorReference::identity(),
             &crate::gamut_compression::OutputGamutCompress::identity(),
-        );
+        )
+        .unwrap();
         eprintln!("rgb_out: {:?}", rgb_out.get(0, 0));
     }
 }

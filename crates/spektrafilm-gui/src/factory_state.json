@@ -248,7 +248,15 @@
     "unsharp_mask": [
       0.7,
       0.7
-    ]
+    ],
+    "positive_density_ev": 0.8781766618,
+    "positive_balance_ev": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "positive_contrast": 0.7355140005821664,
+    "positive_dmax": 1.5625841465572565
   },
   "input_gamut_compress": {
     "active": true,
