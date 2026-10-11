@@ -477,6 +477,8 @@ locates the primary action beside Cancel in the window's bottom button row.
 It does not treat the Open files read-only checkbox as an Open action.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
+Action-button discovery parks the pointer in the viewer's layer-tab bar.
+Residual sidebar scroll must not change canvas zoom or pan during discovery.
 
 Desktop acceptance requires NumPy, OpenImageIO, Exiv2 Python bindings, Pillow,
 mss, pytesseract, psutil, and the Tesseract engine. Linux additionally requires

@@ -420,7 +420,7 @@ class X11:
         return text
 
     def main_ready(self):
-        self.xd('mousemove', '--window', self.window, 1010, 40)
+        self.xd('mousemove', '--window', self.window, 1010, 16 + (30 if sys.platform == 'darwin' else 0))
         _, _, lines = self.read()
         return self.match(lines, 'MAIN', True) and self.match(lines, 'Preview', True) and self.match(lines, 'Scan', True)
 
@@ -428,8 +428,9 @@ class X11:
         self.drain_reports()
         if label.lower() in ('preview', 'scan', 'save'):
             # A hovered label may disappear into the highlight during OCR.
-            # Park the pointer outside the action bar before locating it.
-            self.xd('mousemove', '--window', self.window, 1010, 40)
+            # Park in the layer-tab bar so residual sidebar scroll cannot zoom the canvas.
+            self.xd('mousemove', '--window', self.window, 1010,
+                    16 + (30 if sys.platform == 'darwin' else 0))
         # Import actions live inside the collapsible Import RGB/Raw section.
         # Locate actions from their rendered labels after opening that section.
         fixed = {
