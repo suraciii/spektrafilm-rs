@@ -46,11 +46,15 @@
 - On a negative film scan with `positive_scan`, the point range is the relative
   log-exposure range that the derived inverse covers in all three channels.
   `0.0` is the lowest exposure of that range and `1.0` the highest.
-- On a slide film scan, the point range is the scanned density range shared by
-  the three channels. `0.0` is the highest scanned density of the film's
-  maximum dye density, and `1.0` is zero dye density.
+- On a slide film scan, each channel's scanned density is the negative base-10
+  logarithm of its capture divided by its zero-dye capture. The shared range
+  runs from zero to the largest channel density of the maximum-dye reference.
+  `0.0` is that shared maximum density, and `1.0` is zero density.
 - The defaults `0.0` and `1.0` leave the scan unchanged.
 - Each channel must satisfy `0.0 <= black_point < white_point <= 1.0`.
+- Point-map scales, mapped endpoint captures, and endpoint tangents must be
+  representable in the selected computation precision. An unrepresentable
+  active window must fail with an error before output publication.
 - Each channel linearly maps its black point to the start of the range and its
   white point to the end. Values outside the points continue the same linear
   map; the points do not clip.
@@ -60,9 +64,12 @@
   exposure before the density brightness, RGB balance, and contrast controls.
   Points that are equal across the three channels must not introduce a color
   cast on a neutral ramp.
-- On a slide film scan, the points act on the scanner capture after scanner
-  spectral capture and scanner lens blur, and before scanner white and black
-  correction. The correction keeps its references and its levels.
+- On a slide film scan, non-default points act on the scanner capture after
+  scanner spectral capture and scanner lens blur, and before scanner white
+  and black correction. The correction keeps its references and its levels.
+  Default points retain the existing capture, correction, and blur order.
+  Captures outside the reference range use finite endpoint tangent
+  extrapolation without taking a logarithm of clipped or nonpositive values.
 
 ## Direct negative-film scan output
 

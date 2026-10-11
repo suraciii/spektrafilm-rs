@@ -84,6 +84,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
+        "scanner.black_point" | "scanner.white_point" => Some((0.0, Some(1.0))),
         "scanner.positive_density_ev" | "scanner.positive_balance_ev" => Some((-16.0, Some(16.0))),
         "scanner.positive_contrast" | "scanner.positive_dmax" => Some((0.0, Some(16.0))),
         _ => None,
@@ -461,6 +462,20 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     }
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     let scanner = &params.scanner;
+    for channel in 0..3 {
+        let black = scanner.black_point[channel];
+        let white = scanner.white_point[channel];
+        if !black.is_finite()
+            || !white.is_finite()
+            || !(0.0..=1.0).contains(&black)
+            || !(0.0..=1.0).contains(&white)
+            || black >= white
+        {
+            return Err(format!(
+                "scanner.black_point[{channel}] and scanner.white_point[{channel}]: must be finite and satisfy 0 <= black_point < white_point <= 1"
+            ));
+        }
+    }
     if !scanner.positive_density_ev.is_finite()
         || !(-16.0..=16.0).contains(&scanner.positive_density_ev)
     {

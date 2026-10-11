@@ -240,11 +240,14 @@
     "blur": 0.5
   },
   "scanner": {
+    "scan_output": "direct_scan",
     "lens_blur": 0.0,
     "white_correction": false,
     "black_correction": false,
     "white_level": 0.98,
     "black_level": 0.01,
+    "black_point": [0.0, 0.0, 0.0],
+    "white_point": [1.0, 1.0, 1.0],
     "unsharp_mask": [
       0.7,
       0.7

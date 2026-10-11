@@ -418,6 +418,9 @@ fn conditions(path: &str) -> Vec<String> {
     } else if path == "debug.print_timings" {
     } else if path == "scanner.scan_output" {
         out.push("positive_scan requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain V2 are unsupported".into());
+    } else if matches!(path, "scanner.black_point" | "scanner.white_point") {
+        out.push("applies to slide film scans or negative film scans with scanner.scan_output = positive_scan; ignored for paper and direct negative scans".into());
+        out.push("each channel requires 0 <= black_point < white_point <= 1; points remap without clipping".into());
     } else if path.starts_with("scanner.positive_") {
         out.push("applies when scanner.scan_output = positive_scan".into());
     } else if path.starts_with("magazine_print_color.") {

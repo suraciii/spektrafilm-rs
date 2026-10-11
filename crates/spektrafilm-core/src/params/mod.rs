@@ -138,6 +138,10 @@ pub struct ScannerParams {
     pub black_level: f32,
     #[serde(default = "default_unsharp")]
     pub unsharp_mask: [f64; 2],
+    #[serde(default)]
+    pub black_point: [f64; 3],
+    #[serde(default = "default_scanner_white_point")]
+    pub white_point: [f64; 3],
     #[serde(default = "default_positive_density_ev")]
     pub positive_density_ev: f64,
     #[serde(default)]
@@ -158,12 +162,18 @@ impl Default for ScannerParams {
             white_level: 0.98,
             black_level: 0.01,
             unsharp_mask: [0.7, 0.7],
+            black_point: [0.0; 3],
+            white_point: default_scanner_white_point(),
             positive_density_ev: default_positive_density_ev(),
             positive_balance_ev: [0.0; 3],
             positive_contrast: default_positive_contrast(),
             positive_dmax: default_positive_dmax(),
         }
     }
+}
+
+fn default_scanner_white_point() -> [f64; 3] {
+    [1.0; 3]
 }
 
 fn default_positive_density_ev() -> f64 {
@@ -900,6 +910,30 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.scanner.scan_output = "unknown".into();
         assert!(params.validate().is_err());
+    }
+
+    #[test]
+    fn scanner_points_validate_each_channel_without_partial_pairs() {
+        let mut params = RuntimeParams::default();
+        params.scanner.black_point = [0.0, 0.2, 0.4];
+        params.scanner.white_point = [0.5, 0.7, 1.0];
+        params.validate().unwrap();
+        for channel in 0..3 {
+            let valid = params.scanner.clone();
+            for value in [-0.01, 1.01, f64::NAN, f64::INFINITY] {
+                params.scanner.black_point[channel] = value;
+                assert!(params.validate().is_err());
+                params.scanner = valid.clone();
+                params.scanner.white_point[channel] = value;
+                assert!(params.validate().is_err());
+                params.scanner = valid.clone();
+            }
+            params.scanner.black_point[channel] = params.scanner.white_point[channel];
+            assert!(params.validate().is_err());
+            params.scanner.black_point[channel] += 0.1;
+            assert!(params.validate().is_err());
+            params.scanner = valid;
+        }
     }
     #[test]
     fn grain_v2_profile_inheritance_and_overrides() {
