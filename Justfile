@@ -43,6 +43,10 @@ test:
 # Full local gate. PR CI runs this same command.
 ci: fmt check check-f64 clippy test
 
+# Run the full gate and retain source provenance, output, and exit status.
+verify evidence_dir:
+    python3 scripts/verify.py {{quote(evidence_dir)}}
+
 # Create a self-contained portable directory and archive under dist/.
 [unix]
 package: build
