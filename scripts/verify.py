@@ -89,6 +89,7 @@ def run(root, evidence):
             exit_code = 1
         report['status'] = 'pass' if exit_code == 0 else 'fail'
     except BaseException as error:
+        exit_code = 130 if isinstance(error, KeyboardInterrupt) else 1
         report['status'] = 'error'
         report['error'] = f'{type(error).__name__}: {error}'
         if process is not None and process.poll() is None:
