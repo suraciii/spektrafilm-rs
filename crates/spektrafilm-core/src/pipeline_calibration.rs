@@ -4,7 +4,6 @@ use spektrafilm_math::spectral::TcLut;
 
 use crate::enlarger;
 use crate::params::RuntimeParams;
-use crate::pipeline::{apply_base_tuning, apply_film_chemistry};
 use crate::profile::Profile;
 use crate::spectral_service::{self, select_illuminant, select_illuminant_f64};
 
@@ -96,22 +95,196 @@ pub(crate) struct CalibrationResult {
     pub output_gamut: crate::gamut_compression::OutputGamutCompress,
     pub data_dir: Option<std::path::PathBuf>,
 }
-pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
+fn interpolate(values: &[f64], wavelengths: &[f64], wavelength: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    if values.len() < 2 || wavelengths.len() < 2 {
+        return values[0];
+    }
+    if wavelength <= wavelengths[0] {
+        return values[0];
+    }
+    if wavelength >= wavelengths[wavelengths.len() - 1] {
+        return values[values.len() - 1];
+    }
+    let upper = wavelengths
+        .partition_point(|&x| x < wavelength)
+        .min(values.len() - 1);
+    let lower = upper - 1;
+    let fraction = (wavelength - wavelengths[lower]) / (wavelengths[upper] - wavelengths[lower]);
+    values[lower] + (values[upper] - values[lower]) * fraction
+}
+
+fn gaussian_smooth(values: &[f64], sigma_points: f64) -> Vec<f64> {
+    if values.is_empty() || sigma_points <= 0.0 {
+        return values.to_vec();
+    }
+    let radius = (sigma_points * 4.0).ceil() as isize;
+    let mut out = vec![0.0; values.len()];
+    for (index, value) in out.iter_mut().enumerate() {
+        let mut sum = 0.0;
+        let mut weight_sum = 0.0;
+        for offset in -radius..=radius {
+            let sample = (index as isize + offset).clamp(0, values.len() as isize - 1) as usize;
+            let weight = (-0.5 * (offset as f64 / sigma_points).powi(2)).exp();
+            sum += values[sample] * weight;
+            weight_sum += weight;
+        }
+        *value = sum / weight_sum;
+    }
+    out
+}
+
+pub(crate) fn apply_base_tuning(
+    profile: &mut Profile,
+    film_base: &crate::params::FilmBaseParams,
+    print_base: Option<&crate::params::PrintBaseParams>,
+) {
+    let (active, scale, channels, tilt, sigma_points, peaks) = if let Some(base) = print_base {
+        (
+            base.active,
+            base.scale,
+            [base.yellow, base.magenta, base.cyan],
+            0.0,
+            20.0 / 5.0,
+            [445.0, 530.0, 610.0],
+        )
+    } else {
+        (
+            film_base.active,
+            film_base.scale,
+            [film_base.yellow, film_base.magenta, film_base.cyan],
+            film_base.tilt,
+            35.0 / 5.0,
+            [460.0, 555.0, 650.0],
+        )
+    };
+    if !active || profile.data.base_density.is_empty() {
+        return;
+    }
+    let neutral = channels == [1.0, 1.0, 1.0] && tilt == 0.0;
+    if neutral {
+        for value in &mut profile.data.base_density {
+            if value.is_finite() {
+                *value *= scale;
+            }
+        }
+        return;
+    }
+    let base = &profile.data.base_density;
+    let wavelengths = if profile.data.wavelengths.len() == base.len() {
+        profile.data.wavelengths.as_slice()
+    } else {
+        &[]
+    };
+    let wavelength_at = |index: usize| {
+        wavelengths
+            .get(index)
+            .copied()
+            .unwrap_or(380.0 + 5.0 * index as f64)
+    };
+    let tuned = if print_base.is_some() {
+        let channel_density = [
+            interpolate(base, wavelengths, peaks[0]) * channels[0],
+            interpolate(base, wavelengths, peaks[1]) * channels[1],
+            interpolate(base, wavelengths, peaks[2]) * channels[2],
+        ];
+        let mut spectral = Vec::with_capacity(base.len());
+        for i in 0..base.len() {
+            let wavelength = wavelength_at(i);
+            let value = if wavelength <= peaks[1] {
+                let p = ((wavelength - peaks[0]) / (peaks[1] - peaks[0])).clamp(0.0, 1.0);
+                channel_density[0] * (1.0 - p) + channel_density[1] * p
+            } else {
+                let p = ((wavelength - peaks[1]) / (peaks[2] - peaks[1])).clamp(0.0, 1.0);
+                channel_density[1] * (1.0 - p) + channel_density[2] * p
+            };
+            spectral.push(value);
+        }
+        gaussian_smooth(&spectral, sigma_points)
+    } else {
+        let mut channel_scale = Vec::with_capacity(base.len());
+        for i in 0..base.len() {
+            let wavelength = wavelength_at(i);
+            let value = if wavelength <= peaks[1] {
+                let p = ((wavelength - peaks[0]) / (peaks[1] - peaks[0])).clamp(0.0, 1.0);
+                channels[0] * (1.0 - p) + channels[1] * p
+            } else {
+                let p = ((wavelength - peaks[1]) / (peaks[2] - peaks[1])).clamp(0.0, 1.0);
+                channels[1] * (1.0 - p) + channels[2] * p
+            };
+            channel_scale.push(value);
+        }
+        let density_scale = gaussian_smooth(&channel_scale, sigma_points);
+        let tilt_scale: Vec<f64> = (0..base.len())
+            .map(|i| {
+                let wavelength = wavelength_at(i);
+                (1.0 + tilt / 95.0 * (wavelength - 555.0)).max(0.0)
+            })
+            .collect();
+        let density_tilt = gaussian_smooth(&tilt_scale, sigma_points);
+        base.iter()
+            .zip(density_scale.iter().zip(density_tilt.iter()))
+            .map(|(&value, (&channel, &tilt_value))| value * channel * tilt_value)
+            .collect()
+    };
+    for (value, replacement) in profile.data.base_density.iter_mut().zip(tuned) {
+        if value.is_finite() {
+            *value = replacement * scale;
+        }
+    }
+}
+
+pub(crate) fn apply_film_chemistry(
+    profile: &mut Profile,
+    chemistry: &crate::params::PrintCurvesMorphParams,
+) -> Result<(), String> {
+    let Some(model) = profile.data.density_curves_model.as_ref() else {
+        return Ok(());
+    };
+    let (curves, layers) = crate::print_morph::morph_density_curves_with_layers(
+        &profile.log_exposure_f64(),
+        model,
+        chemistry,
+        profile.is_positive(),
+    )?;
+    profile.data.density_curves = curves.iter().map(|row| row.to_vec()).collect();
+    profile.data.density_curves_layers = layers;
+    Ok(())
+}
+pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), String> {
     if params.scanner.scan_output != "positive_scan" {
         return Ok(());
     }
-    if params.workflow.route != "input > film > scan" || !params.io.scan_film {
+    let direct_film_scan = params.workflow.route == "input > film > scan";
+    let convert_scan = params.workflow.route == "input > convert-film > scan";
+    if !direct_film_scan && !convert_scan {
         return Err(
-            "scanner.scan_output=positive_scan requires the direct input > film > scan route"
-                .into(),
+            "scanner.scan_output=positive_scan requires a direct film scan route (input > film > scan or input > convert-film > scan)".into(),
         );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
+    validate_scan_output_route(params)?;
+    if params.scanner.scan_output != "positive_scan" {
+        return Ok(());
     }
     if !film.is_negative() || !film.is_film() || !film.is_filming() {
         return Err(
-            "scanner.scan_output=positive_scan requires a negative film profile; \
-             positive film and paper scans use direct_scan"
-                .into(),
+            "scanner.scan_output=positive_scan requires a negative filming-stage film profile; positive film and paper scans use direct_scan".into(),
         );
+    }
+    for channel in 0..3 {
+        for row in &film.data.density_curves {
+            if !row[channel].is_finite() {
+                return Err(format!(
+                    "scanner.scan_output=positive_scan requires finite density curves (channel {channel})"
+                ));
+            }
+        }
     }
     if params.scanner.white_correction || params.scanner.black_correction {
         return Err(
@@ -447,7 +620,7 @@ pub(crate) fn build(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_scan_output;
+    use super::{validate_scan_output, validate_scan_output_route};
     use crate::params::{RuntimeParams, grain::GrainEngine};
     use crate::profile;
     use std::path::Path;
@@ -462,6 +635,19 @@ mod tests {
     }
 
     #[test]
+    fn positive_scan_route_rejects_print_and_accepts_direct_film_scan() {
+        let mut params = RuntimeParams::default();
+        params.scanner.scan_output = "positive_scan".into();
+        params.io.scan_film = true;
+        params.workflow.route = "input > film > print > scan".into();
+        let error = validate_scan_output_route(&params).unwrap_err();
+        assert!(error.contains("scanner.scan_output=positive_scan"));
+        assert!(error.contains("direct film scan route"));
+        params.workflow.route = "input > film > scan".into();
+        assert!(validate_scan_output_route(&params).is_ok());
+    }
+
+    #[test]
     fn positive_scan_accepts_only_a_direct_negative_film_route() {
         let film = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
         let mut params = RuntimeParams::default();
@@ -469,9 +655,6 @@ mod tests {
         params.io.scan_film = true;
         params.scanner.scan_output = "positive_scan".into();
         assert!(validate_scan_output(&params, &film).is_ok());
-
-        params.io.scan_film = false;
-        assert!(validate_scan_output(&params, &film).is_err());
     }
 
     #[test]

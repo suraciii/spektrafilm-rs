@@ -1063,7 +1063,12 @@ impl App {
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
-        if film.is_positive() || params.workflow.route != "input > film > scan" {
+        if film.is_positive()
+            || !matches!(
+                params.workflow.route.as_str(),
+                "input > film > scan" | "input > convert-film > scan"
+            )
+        {
             params.scanner.scan_output = "direct_scan".into();
         }
         self.film_name = state.film().to_owned();
@@ -1237,8 +1242,12 @@ impl App {
                 routes::tooltip(),
             ) {
                 let direct_film_scan = self.params.workflow.route == "input > film > scan";
+                let positive_scan_route = matches!(
+                    self.params.workflow.route.as_str(),
+                    "input > film > scan" | "input > convert-film > scan"
+                );
                 self.params.io.scan_film = direct_film_scan;
-                if !direct_film_scan {
+                if !positive_scan_route {
                     self.params.scanner.scan_output = "direct_scan".into();
                 }
                 self.dirty = true;

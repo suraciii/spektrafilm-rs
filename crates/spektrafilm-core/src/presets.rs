@@ -253,7 +253,12 @@ impl Preset {
         let default_route = workflow_default(&film);
         params.workflow.route = default_route.clone();
         params.io.scan_film = film.is_positive();
-        if film.is_positive() || params.workflow.route != "input > film > scan" {
+        if film.is_positive()
+            || !matches!(
+                params.workflow.route.as_str(),
+                "input > film > scan" | "input > convert-film > scan"
+            )
+        {
             params.scanner.scan_output = "direct_scan".into();
         }
         crate::pipeline_calibration::validate_scan_output_route(&params)?;

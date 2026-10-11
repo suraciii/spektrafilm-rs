@@ -50,6 +50,10 @@ unsharp_mask = [
     0.0,
     0.0,
 ]
+positive_density_ev = 0.8781766618
+positive_balance_ev = [-0.5476896833, 0.0, 0.1039080055]
+positive_contrast = 0.73551400058216643
+positive_dmax = 1.5625841465572565
 
 [parameters.film_render]
 density_curve_gamma = 1.0

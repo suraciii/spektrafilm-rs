@@ -510,7 +510,7 @@ fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() 
     current.workflow.route = "input > film > print > scan".into();
     let error = preset.apply_section(&current, &test_film()).unwrap_err();
     assert!(error.contains("scanner.scan_output=positive_scan"));
-    assert!(error.contains("input > film > scan route"));
+    assert!(error.contains("direct film scan route"));
     current.scanner.scan_output = "positive_scan".into();
     assert_eq!(
         preset
