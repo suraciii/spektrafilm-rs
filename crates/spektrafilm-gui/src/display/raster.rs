@@ -116,33 +116,6 @@ impl DisplayRaster {
             rgb: rgb.into(),
         })
     }
-    pub fn from_rgba(size: [usize; 2], rgba: &[u8]) -> Result<Self, String> {
-        if size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
-            return Err("Invalid viewer RGBA dimensions".into());
-        }
-        Self::new(
-            size,
-            rgba.chunks_exact(4)
-                .map(|p| {
-                    [
-                        p[0] as f32 / 255.0,
-                        p[1] as f32 / 255.0,
-                        p[2] as f32 / 255.0,
-                    ]
-                })
-                .collect(),
-        )
-    }
-    pub fn from_float(image: &ImageBuf) -> Result<Self, String> {
-        Self::new(
-            [image.width as usize, image.height as usize],
-            image
-                .data
-                .chunks_exact(3)
-                .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
-                .collect(),
-        )
-    }
     pub fn sample(&self, x: f32, y: f32, mode: Interpolation) -> [f32; 3] {
         sample_f32(x, y, mode, |x, y| {
             self.rgb[y.clamp(0, self.size[1] as i32 - 1) as usize * self.size[0]
@@ -211,7 +184,8 @@ pub(super) fn sample_image_with(
                     x.clamp(0, image.width as i32 - 1) as u32,
                     y.clamp(0, image.height as i32 - 1) as u32,
                 )
-                .map(|v| v as f32),
+                // `Scalar` is f64 under `precision-f64`.
+                .map(spektrafilm_math::precision::to_f32),
         )
     })
 }
@@ -255,16 +229,6 @@ pub(super) fn capped_raster(image: &ImageBuf, max_edge: usize) -> Result<Display
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn raster_constructors_preserve_dimensions_and_rgb_values() {
-        let rgba = DisplayRaster::from_rgba([1, 1], &[64, 128, 255, 7]).unwrap();
-        assert_eq!(rgba.size, [1, 1]);
-        assert_eq!(rgba.rgb[0], [64.0 / 255.0, 128.0 / 255.0, 1.0]);
-        let image = ImageBuf::from_data(1, 1, vec![0.25 as _, 0.5 as _, 0.75 as _]);
-        let raster = DisplayRaster::from_float(&image).unwrap();
-        assert_eq!(raster.size, [1, 1]);
-        assert_eq!(raster.rgb[0], [0.25, 0.5, 0.75]);
-    }
     #[test]
     fn fractional_kernel_weights_and_boundary_sampling_are_stable() {
         let modes = [

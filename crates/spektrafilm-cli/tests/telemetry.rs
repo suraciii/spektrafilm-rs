@@ -3,6 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 struct Fixture {
@@ -10,15 +11,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let directory = std::env::temp_dir().join(format!(
-            "spektrafilm-cli-telemetry-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&directory).unwrap();
+        let directory = fixture_directory();
         image::save_buffer(
             directory.join("input.png"),
             &[40, 90, 170].repeat(16),
@@ -65,6 +58,24 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+/// Returns a fresh per-test directory. Parallel tests can read the same clock
+/// value on platforms with coarse timestamps, so the name uses a counter.
+fn fixture_directory() -> PathBuf {
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let candidate = std::env::temp_dir().join(format!(
+            "spektrafilm-cli-telemetry-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return candidate,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("cannot create {}: {error}", candidate.display()),
+        }
     }
 }
 fn success(output: &Output) {
@@ -218,19 +229,22 @@ fn protected_destinations_and_invalid_options_are_rejected_before_image_work() {
     assert!(!output.status.success());
 }
 
-#[cfg(unix)]
 #[test]
-fn hardlink_symlink_and_nonregular_report_paths_are_rejected() {
+fn alias_and_nonregular_report_paths_are_rejected() {
     let fixture = Fixture::new();
     fs::hard_link(fixture.path("input.png"), fixture.path("hard.json")).unwrap();
-    std::os::unix::fs::symlink(fixture.path("params.json"), fixture.path("sym.json")).unwrap();
-    for path in [
+    let mut paths = vec![
         fixture.path("hard.json"),
-        fixture.path("sym.json"),
         fixture.directory.clone(),
-        PathBuf::from("/dev/null"),
         PathBuf::from("-"),
-    ] {
+    ];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(fixture.path("params.json"), fixture.path("sym.json")).unwrap();
+        paths.push(fixture.path("sym.json"));
+        paths.push(PathBuf::from("/dev/null"));
+    }
+    for path in paths {
         let output = fixture
             .process("output.png")
             .arg("--diagnostics")

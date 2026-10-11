@@ -66,6 +66,23 @@ mod tests {
     }
 
     #[test]
+    fn print_stocks_cover_papers_and_print_films() {
+        let Some(paper) = data_profile("kodak_portra_endura") else {
+            return;
+        };
+        let Some(print_film) = data_profile("kodak_2393") else {
+            return;
+        };
+        let Some(film) = data_profile("kodak_portra_400") else {
+            return;
+        };
+        // Papers and print films are both print stocks; a filming stock is not.
+        assert!(paper.is_paper() && paper.is_printing() && paper.is_print_stock());
+        assert!(print_film.is_film() && print_film.is_printing() && print_film.is_print_stock());
+        assert!(film.is_film() && film.is_filming() && !film.is_print_stock());
+    }
+
+    #[test]
     fn rejects_invalid_metadata_and_shape() {
         let Some(mut profile) = data_profile("kodak_portra_400") else {
             return;
@@ -136,9 +153,9 @@ mod tests {
         assert_eq!(layers.len(), p.data.density_curves_layers.len());
         assert_eq!(layers.len(), 256);
         for k in [0usize, 100, 255] {
-            for sl in 0..3 {
-                for ch in 0..3 {
-                    assert_eq!(layers[k][sl][ch], p.data.density_curves_layers[k][sl][ch]);
+            for (sl, layer) in layers[k].iter().enumerate() {
+                for (ch, value) in layer.iter().enumerate() {
+                    assert_eq!(*value, p.data.density_curves_layers[k][sl][ch]);
                 }
             }
         }

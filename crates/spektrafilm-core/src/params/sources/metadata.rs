@@ -334,10 +334,6 @@ fn unit(path: &str) -> Option<&'static str> {
 }
 fn conditions(path: &str) -> Vec<String> {
     let mut out = Vec::new();
-    if path == "film_render.grain.rms_granularity" {
-        out.push("upstream V1 no-op; grain V3 resolves the stock's event area from it".into());
-        return out;
-    }
     if matches!(path, "film_render.grain.micro_sublayers") || path.starts_with("film_render.glare.")
     {
         out.push("preserved upstream no-op".into());
@@ -365,12 +361,24 @@ fn conditions(path: &str) -> Vec<String> {
         } else if path.contains(".v3_") {
             out.push("film_render.grain.engine = v3".into());
             out.push("film grain V3 selected under its supported stock, format and route".into());
+        } else if path.ends_with(".rms_granularity") {
+            out.push("film_render.grain.engine = v3".into());
+            out.push("film grain V3 selected under its supported stock, format and route".into());
+            out.push("V3 scales per-channel event area relative to the reference stock (6); preserved upstream V1 no-op".into());
+        } else if ["density_min", "uniformity", "particle_scale_sublayers"]
+            .iter()
+            .any(|field| path.ends_with(field))
+        {
+            out.push("film_render.grain.engine = v1 or v3".into());
+            out.push("when engine = v3: film grain V3 selected under its supported stock, format and route".into());
+            if path.ends_with(".particle_scale_sublayers") {
+                out.push("when engine = v1: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves".into());
+            }
         } else if !path.ends_with(".active") && !path.ends_with(".engine") {
             out.push("film_render.grain.engine = v1".into());
             if path.ends_with(".n_sub_layers") {
                 out.push("film_render.grain.sublayers_active = false".into());
             } else if [
-                "particle_scale_sublayers",
                 "blur_dye_clouds_um",
                 "micro_structure",
                 "mult_usm_sigma",
@@ -409,7 +417,6 @@ fn conditions(path: &str) -> Vec<String> {
     } else if path == "scanner.scan_output" {
         out.push("positive_scan requires a negative film and workflow.route = input > film > scan; scanner white/black correction and active Grain V2 are unsupported".into());
     } else if path.starts_with("magazine_print_color.") {
-        out.push("workflow.route = input > film > scan > magazine".into());
         if path.ends_with(".strength") {
             out.push("magazine_print_color.active = true".into());
         } else {

@@ -160,8 +160,10 @@ fn detail_truncation_keeps_exact_totals_and_valid_ancestry() {
     operation.set_backend_requested(spektrafilm_core::telemetry::BackendRequested::Cpu);
     for _ in 0..1100 {
         let scope = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-        let mut work = spektrafilm_core::telemetry::WorkCounters::default();
-        work.dispatch_count = Some(1);
+        let work = spektrafilm_core::telemetry::WorkCounters {
+            dispatch_count: Some(1),
+            ..Default::default()
+        };
         scope.context().record_work(&work);
         scope.finish(Outcome::Succeeded);
     }
@@ -230,8 +232,10 @@ fn counter_overflow_uses_stable_field_identity_without_wrapping() {
 fn checked_counter_sum_overflow_is_reported_without_wrapping() {
     let operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-    let mut work = spektrafilm_core::telemetry::WorkCounters::default();
-    work.dispatch_count = Some(u64::MAX);
+    let work = spektrafilm_core::telemetry::WorkCounters {
+        dispatch_count: Some(u64::MAX),
+        ..Default::default()
+    };
     phase.context().record_work(&work);
     phase.context().record_work(&work);
     phase.finish(Outcome::Succeeded);
@@ -558,7 +562,7 @@ fn report_destination_rejects_protected_symlink_and_hardlink_aliases() {
             PersistenceError::InvalidDestination
         ));
     }
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[cfg(unix)]
@@ -594,7 +598,7 @@ fn report_destination_rejects_dangling_protected_raw_output_symlinks() {
             .path(),
         report.as_path()
     );
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[cfg(unix)]
@@ -611,7 +615,7 @@ fn report_destination_rejects_protected_symlink_cycles() {
         Err(PersistenceError::Io(_))
     ));
     assert!(!report.exists());
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -648,7 +652,7 @@ fn report_publication_is_atomic_no_clobber_and_confirmed_overwrite_is_explicit()
     let second = fs::read_to_string(&destination_path).unwrap();
     assert_ne!(first, second);
     assert!(second.contains("\"id\": 999"));
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -777,7 +781,7 @@ fn report_destination_preserves_symlink_parent_traversal_before_canonicalizing()
         validate_report_destination(&destination, &[&protected]),
         Err(PersistenceError::ProtectedAlias)
     ));
-    fs::remove_dir_all(directory).unwrap();
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]

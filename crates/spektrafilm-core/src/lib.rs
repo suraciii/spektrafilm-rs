@@ -1,5 +1,6 @@
 pub mod chain_prep;
 pub mod color_reference;
+pub mod config;
 pub mod data;
 pub mod enlarger;
 pub mod gamut_compression;
@@ -27,4 +28,5 @@ pub mod resizing;
 pub mod runtime;
 pub mod spectral_service;
 pub mod stages;
+mod suggest;
 pub mod telemetry;

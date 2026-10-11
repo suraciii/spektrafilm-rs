@@ -24,7 +24,7 @@ The output pixel is a readout sample. It is not a grain-generation unit. At a vi
 
 ## Supported condition
 
-V3 supports still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`) at a 35 mm full-film long edge.
+V3 supports still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`) on a 35 mm film frame with a 36 mm long edge (`camera.film_format_mm = 36.0`).
 
 The reference condition is the print route `input > film > print > scan` with `io.scan_film = false`. The film forms the grain. The existing enlarger, print paper, and print scan read it. The reference stock and the default controls are validated on this route.
 

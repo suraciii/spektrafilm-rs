@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use spektrafilm_core::image_io::{self, BitDepth, Compression, JpegSubsampling, SaveOptions};
@@ -32,79 +32,93 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Process an image through the film simulation pipeline.
+    #[command(
+        after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400'\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --preset 'Soft grain'\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision."
+    )]
     Process {
-        /// Compute backend (cpu or gpu). If omitted, uses SPEKTRAFILM_BACKEND/default selection.
-        #[arg(long, value_enum)]
+        /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
+        #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
         backend: Option<Backend>,
-        /// Input image (TIFF, EXR, PNG, JPEG, or camera RAW).
+        /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
+        #[arg(help_heading = "Input and RAW loading")]
         input: PathBuf,
-        /// Output image path (TIFF, EXR, PNG, or JPEG).
-        #[arg(short, long)]
+        /// Destination TIFF, EXR, PNG, or JPEG image.
+        #[arg(short, long, help_heading = "Output")]
         output: PathBuf,
-        /// Output format. If omitted, inferred from the output extension.
-        #[arg(long, value_enum)]
+        /// Output container; otherwise inferred from the destination extension.
+        #[arg(long, value_enum, help_heading = "Output")]
         format: Option<OutputFormat>,
-        /// Output bit depth: 8, 16, or 32.
-        #[arg(long)]
+        /// Output sample depth: 8, 16, or 32 bits (JPEG/PNG require 8).
+        #[arg(long, help_heading = "Output")]
         bit_depth: Option<u8>,
-        /// JPEG quality (1..=100).
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100))]
+        /// JPEG quality from 1 to 100; applies only to JPEG.
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100), help_heading = "Output")]
         jpeg_quality: Option<u8>,
-        /// JPEG chroma subsampling (444 or 420).
-        #[arg(long, value_enum)]
+        /// JPEG chroma subsampling; applies only to JPEG.
+        #[arg(long, value_enum, help_heading = "Output")]
         jpeg_subsampling: Option<JpegSubsamplingArg>,
-        /// TIFF/EXR compression.
-        #[arg(long, value_enum)]
+        /// TIFF/EXR compression (EXR requires zip).
+        #[arg(long, value_enum, help_heading = "Output")]
         compression: Option<CompressionArg>,
         #[command(flatten)]
         workflow: WorkflowOptions,
-        /// Film stock name (e.g. kodak_portra_400). Required unless --preset is used.
-        #[arg(long, required_unless_present = "preset", conflicts_with = "preset")]
+        /// Film stock ID; discover with list-profiles. Required without --preset.
+        #[arg(
+            long,
+            required_unless_present = "preset",
+            help_heading = "Look and workflow"
+        )]
         film: Option<String>,
-        /// Paper stock name (e.g. fujifilm_crystal_archive_typeii).
-        /// If omitted for --scan-film or a direct scan route, uses the film as
-        /// the scan profile; otherwise it uses the film's target_print.
-        #[arg(long, conflicts_with = "preset")]
+        /// Print stock ID; otherwise uses film for direct scans or its target_print.
+        #[arg(long, help_heading = "Look and workflow")]
         paper: Option<String>,
-        /// A built-in preset ID or .toml/.json preset file.
-        #[arg(long, conflicts_with_all = ["film", "paper", "params"])]
-        preset: Option<String>,
-        /// Scan film directly (skip printing stage).
-        #[arg(long)]
+        /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
+        #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
+        preset: Vec<String>,
+        /// Scan film directly, skipping printing unless --route overrides it.
+        #[arg(long, help_heading = "Look and workflow")]
         scan_film: bool,
-        /// Print per-stage timing information.
-        #[arg(long)]
+        /// Print per-stage timing information to stderr.
+        #[arg(long, help_heading = "Execution and diagnostics")]
         timings: bool,
-        /// Save one local JSON diagnostics report without replacing an existing file.
-        #[arg(long)]
+        /// Save a local JSON diagnostics report without replacing an existing file.
+        #[arg(long, help_heading = "Execution and diagnostics")]
         diagnostics: Option<PathBuf>,
-        /// Collect GPU pass timings when available; unsupported devices retain summary.
-        #[arg(long, requires = "diagnostics")]
+        /// Collect available GPU pass timings; requires --diagnostics.
+        #[arg(
+            long,
+            requires = "diagnostics",
+            help_heading = "Execution and diagnostics"
+        )]
         gpu_timings: bool,
-        /// Path to JSON params file for overrides.
-        #[arg(long, conflicts_with = "preset")]
+        /// Legacy RuntimeParams JSON snapshot used as the parameter baseline.
+        #[arg(long, help_heading = "Look and workflow")]
         params: Option<PathBuf>,
-        /// Sparse parameter source (a .toml/.json file or comma-separated assignments).
-        #[arg(long = "set", action = clap::ArgAction::Append)]
+        /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
+        /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
+        #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
         sources: Vec<String>,
-        /// Resolve and validate without decoding or rendering.
-        #[arg(long)]
+        /// Validate and print effective configuration without decoding or rendering.
+        #[arg(long, help_heading = "Execution and diagnostics")]
         dry_run: bool,
-        /// Dump the raw f64 output buffer (HxWx3, row-major, channel-interleaved)
-        /// before sRGB encoding/clipping. Used for bit-exact parity comparison.
-        #[arg(long)]
+        /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
+        #[arg(long, help_heading = "Output")]
         raw_out: Option<PathBuf>,
-        /// Run the pipeline N times in the same process.
-        #[arg(long, default_value = "1")]
+        /// Run the pipeline this many times in one process (at least 1).
+        #[arg(long, default_value = "1", help_heading = "Execution and diagnostics")]
         iters: usize,
-        /// Path to the data directory.
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(
+            long,
+            default_value = "data",
+            help_heading = "Execution and diagnostics"
+        )]
         data_dir: PathBuf,
     },
     /// List available film and paper profiles.
     ListProfiles {
-        /// Path to the data directory.
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
     },
     /// Build LUT bundles or list stocks and transport color spaces.
@@ -114,65 +128,79 @@ enum Commands {
     },
     /// Export a canonical 1-LUT cube (encoded ProPhoto RGB to sRGB, native headroom).
     ExportLut {
-        /// Film stock name.
+        /// Film stock ID; discover with list-profiles.
         #[arg(long)]
         film: String,
-        /// Paper stock name.
+        /// Print stock ID; otherwise use the film's target_print.
         #[arg(long)]
         paper: Option<String>,
-        /// LUT cube size (e.g. 33, 65).
+        /// LUT cube edge resolution (for example 33 or 65).
         #[arg(long, default_value = "33")]
         size: u32,
-        /// Output .cube file path.
+        /// Destination .cube file.
         #[arg(short, long)]
         output: PathBuf,
-        /// Path to the data directory.
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
     },
-    /// Describe the machine-readable runtime and admitted contract.
+    /// Describe runtime fields or the machine-readable render contract.
     Describe {
-        #[arg(long, default_value = "json")]
-        format: String,
-        #[arg(long)]
+        /// Discovery output format.
+        #[arg(long, default_value = "json", value_enum)]
+        format: DiscoveryFormat,
+        /// Canonical parameter group; discover groups with --format text.
+        #[arg(long, conflicts_with = "field")]
         module: Option<String>,
+        /// One canonical editable parameter leaf.
+        #[arg(long, conflicts_with = "module")]
+        field: Option<String>,
     },
     /// Render one structured recipe under the fork runner contract.
     Render {
+        /// Input image path.
         #[arg(long)]
         input: PathBuf,
+        /// RenderRecipe JSON file.
         #[arg(long)]
         recipe: PathBuf,
+        /// Destination image path.
         #[arg(long)]
         output: PathBuf,
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
         /// Save one local JSON diagnostics report without replacing an existing file.
         #[arg(long)]
         diagnostics: Option<PathBuf>,
-        /// Collect GPU pass timings when available; unsupported devices retain summary.
+        /// Collect GPU pass timings when available; requires --diagnostics.
         #[arg(long, requires = "diagnostics")]
         gpu_timings: bool,
     },
     /// Inspect an output without processing or modifying it.
     Inspect {
+        /// Existing image to inspect.
         #[arg(long)]
         input: PathBuf,
+        /// Inspection format (json).
         #[arg(long, default_value = "json")]
         format: String,
     },
-    /// Inspect immutable built-in look presets.
+    /// Inspect presets from the built-in group and user library.
     Preset {
         #[command(subcommand)]
         command: preset::PresetCommand,
     },
     /// Run the declared corpus and write a structured parity report.
     Parity {
+        /// Declared parity corpus JSON file.
         #[arg(long)]
         corpus: PathBuf,
+        /// Destination parity report JSON file.
         #[arg(long)]
         report: PathBuf,
-        #[arg(long, default_value = "data", env = "SPEKTRAFILM_DATA_DIR")]
+        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+        #[arg(long, default_value = "data")]
         data_dir: PathBuf,
     },
 }
@@ -241,27 +269,194 @@ impl CompressionArg {
     }
 }
 
+/// Validated writer decision for one `process` invocation: container, depth,
+/// codec options, and the saving space/transfer the writer describes. The
+/// dry-run report, the saving telemetry and the writer all consume this one
+/// decision, so a rule added for a container cannot land in only one of them.
+struct OutputPlan {
+    format: OutputFormat,
+    depth: BitDepth,
+    jpeg_quality: Option<u8>,
+    jpeg_subsampling: Option<JpegSubsampling>,
+    compression: Option<Compression>,
+    saving_space: String,
+    saving_encoded: bool,
+}
+
+impl OutputPlan {
+    /// Resolve the container from the flag/extension pair and reject codec
+    /// options the selected container does not carry.
+    fn from_flags(
+        output: &Path,
+        format: Option<OutputFormat>,
+        bit_depth: Option<u8>,
+        jpeg_quality: Option<u8>,
+        jpeg_subsampling: Option<JpegSubsamplingArg>,
+        compression: Option<CompressionArg>,
+    ) -> Result<Self> {
+        let extension_format = image_io::ImageFormat::detect(output)
+            .with_context(|| format!("detecting output format: {}", output.display()))?;
+        let format = format.unwrap_or(match extension_format {
+            image_io::ImageFormat::Jpeg => OutputFormat::Jpeg,
+            image_io::ImageFormat::Png => OutputFormat::Png,
+            image_io::ImageFormat::Tiff => OutputFormat::Tiff,
+            image_io::ImageFormat::Exr => OutputFormat::Exr,
+        });
+        if format.image_format() != extension_format {
+            bail!(
+                "--format {} disagrees with output extension ({})",
+                format.name(),
+                format_name(extension_format)
+            );
+        }
+        let default_depth = match format {
+            OutputFormat::Jpeg | OutputFormat::Png => 8,
+            OutputFormat::Tiff | OutputFormat::Exr => 16,
+        };
+        let depth = BitDepth::try_from(bit_depth.unwrap_or(default_depth))?;
+        if matches!(format, OutputFormat::Jpeg | OutputFormat::Png) && depth != BitDepth::Eight {
+            bail!("{} output requires 8-bit depth", format.name());
+        }
+        if matches!(format, OutputFormat::Exr) && depth == BitDepth::Eight {
+            bail!("EXR output requires 16-bit or 32-bit depth");
+        }
+        if matches!(format, OutputFormat::Jpeg) {
+            if let Some(quality) = jpeg_quality
+                && !(1..=100).contains(&quality)
+            {
+                bail!("JPEG quality must be in 1..=100");
+            }
+        } else if jpeg_quality.is_some() {
+            bail!("--jpeg-quality is only valid for JPEG output");
+        }
+        if !matches!(format, OutputFormat::Jpeg) && jpeg_subsampling.is_some() {
+            bail!("--jpeg-subsampling is only valid for JPEG output");
+        }
+        if matches!(format, OutputFormat::Jpeg | OutputFormat::Png) && compression.is_some() {
+            bail!("--compression is only valid for TIFF or EXR output");
+        }
+        Ok(Self {
+            format,
+            depth,
+            jpeg_quality: matches!(format, OutputFormat::Jpeg).then(|| jpeg_quality.unwrap_or(95)),
+            jpeg_subsampling: matches!(format, OutputFormat::Jpeg).then(|| {
+                jpeg_subsampling
+                    .unwrap_or(JpegSubsamplingArg::Yuv444)
+                    .core()
+            }),
+            compression: matches!(format, OutputFormat::Tiff | OutputFormat::Exr)
+                .then(|| compression.unwrap_or(CompressionArg::Zip).core()),
+            saving_space: String::new(),
+            saving_encoded: false,
+        })
+    }
+
+    /// Adopt the saving color space/transfer this container writes. Kept
+    /// separate from [`Self::validate_saving`] so the color spaces resolve —
+    /// and fail — in the same order every writer flag was checked before.
+    fn with_saving(
+        mut self,
+        workflow: &WorkflowOptions,
+        output_color_space: &str,
+        output_cctf_encoding: bool,
+    ) -> Self {
+        self.saving_space = workflow.saving_color_space.clone().unwrap_or_else(|| {
+            if self.format == OutputFormat::Exr {
+                "ACES2065-1".into()
+            } else {
+                output_color_space.to_owned()
+            }
+        });
+        self.saving_encoded = workflow
+            .saving_cctf_encoding
+            .unwrap_or(self.format != OutputFormat::Exr && output_cctf_encoding);
+        self
+    }
+
+    /// Reject the saving/container combinations the selected container cannot
+    /// represent.
+    fn validate_saving(&self) -> Result<()> {
+        if matches!(self.format, OutputFormat::Jpeg | OutputFormat::Png) && !self.saving_encoded {
+            bail!(
+                "{} output requires encoded saving output",
+                self.format.name()
+            );
+        }
+        if self.format == OutputFormat::Exr {
+            if self.saving_encoded {
+                bail!("EXR output requires linear saving output");
+            }
+            if !matches!(self.saving_space.as_str(), "sRGB" | "ACES2065-1") {
+                bail!("EXR color space must be sRGB or ACES2065-1");
+            }
+            if matches!(self.compression, Some(Compression::None)) {
+                bail!("EXR compression is always zip");
+            }
+        }
+        Ok(())
+    }
+
+    /// Writer options describing the pixels the saving conversion produces.
+    fn save_options(&self) -> SaveOptions<'_> {
+        SaveOptions {
+            depth: self.depth,
+            color_space: &self.saving_space,
+            cctf_encoding: self.saving_encoded,
+            jpeg_quality: self.jpeg_quality,
+            jpeg_subsampling: self.jpeg_subsampling,
+            compression: self.compression,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DiscoveryFormat {
+    Json,
+    Text,
+}
+
 #[derive(clap::Args)]
 struct WorkflowOptions {
-    #[arg(long)]
+    /// Writer-stage color conversion; defaults to the scanner color space and
+    /// ACES2065-1 for EXR. Names are shared with the scanner registry: discover
+    /// them with `describe --field io.output_color_space`.
+    #[arg(long, help_heading = "Output")]
     saving_color_space: Option<String>,
-    #[arg(long, action = clap::ArgAction::Set)]
+    /// Writer-stage transfer-function encoding; EXR requires false, JPEG/PNG true.
+    #[arg(long, action = clap::ArgAction::Set, help_heading = "Output")]
     saving_cctf_encoding: Option<bool>,
-    #[arg(long, default_value = "as-shot", value_parser = ["as-shot", "daylight", "tungsten", "custom"])]
+    /// RAW loading white balance; custom requires --raw-temperature.
+    #[arg(long, default_value = "as-shot", value_parser = ["as-shot", "daylight", "tungsten", "custom"], help_heading = "Input and RAW loading")]
     raw_white_balance: String,
-    #[arg(long)]
+    /// Custom RAW white-balance temperature in Kelvin.
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help_heading = "Input and RAW loading"
+    )]
     raw_temperature: Option<f64>,
-    #[arg(long)]
+    /// Green-channel tint multiplier for custom RAW white balance; 1 is neutral.
+    /// Requires --raw-white-balance custom.
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help_heading = "Input and RAW loading"
+    )]
     raw_tint: Option<f64>,
-    #[arg(long)]
+    /// Apply lens correction while loading RAW input.
+    #[arg(long, help_heading = "Input and RAW loading")]
     lens_correction: bool,
-    #[arg(long)]
+    /// Workflow route; this help lists the supported values.
+    #[arg(long, help_heading = "Look and workflow")]
     route: Option<String>,
-    #[arg(long, value_parser = ["direct_scan", "positive_scan"])]
+    /// Film scanner output mode; applied after parameter sources.
+    #[arg(long, value_parser = ["direct_scan", "positive_scan"], help_heading = "Look and workflow")]
     scan_output: Option<String>,
-    #[arg(long, default_value = "none")]
+    /// Film density channel order: none or three comma-separated indices in 0..2.
+    #[arg(long, default_value = "none", help_heading = "Look and workflow")]
     film_channel_swap: String,
-    #[arg(long, default_value = "none")]
+    /// Print density channel order: none or three comma-separated indices in 0..2.
+    #[arg(long, default_value = "none", help_heading = "Look and workflow")]
     print_channel_swap: String,
 }
 
@@ -274,7 +469,41 @@ fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    let cli = Cli::parse();
+    static IDENTITY: std::sync::LazyLock<(String, String)> = std::sync::LazyLock::new(|| {
+        let name = std::env::current_exe()
+            .ok()
+            .and_then(|path| {
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "spektrafilm".into());
+        let precision = if cfg!(feature = "precision-f64") {
+            "f64"
+        } else {
+            "f32"
+        };
+        (
+            name,
+            format!("{} (native CPU {})", env!("CARGO_PKG_VERSION"), precision),
+        )
+    });
+    let (name, version) = &*IDENTITY;
+    let route_help = format!(
+        "Workflow route; supported values: {}",
+        spektrafilm_core::params::sources::supported_routes().join(", ")
+    );
+    let matches = Cli::command()
+        .name(name.as_str())
+        .version(version.as_str())
+        .mut_subcommand("process", |command| {
+            command.mut_arg("route", |arg| {
+                arg.help(route_help.clone()).long_help(route_help.clone())
+            })
+        })
+        .get_matches();
+    let cli = Cli::from_arg_matches(&matches)?;
+    let (_, command_matches) = matches.subcommand().expect("required subcommand");
 
     match cli.command {
         Commands::Process {
@@ -301,13 +530,12 @@ fn main() -> Result<()> {
             diagnostics,
             gpu_timings,
         } => {
-            let data_dir = resolve_data_dir(data_dir);
             let mut protected = vec![input.as_path(), output.as_path()];
             protected.extend(params_file.as_deref());
             protected.extend(raw_out.as_deref());
             protected.extend(
                 preset
-                    .as_deref()
+                    .iter()
                     .filter(|selector| selector.ends_with(".toml") || selector.ends_with(".json"))
                     .map(Path::new),
             );
@@ -324,6 +552,7 @@ fn main() -> Result<()> {
                 &protected,
                 telemetry::requested_backend(backend),
                 |invocation| {
+                    let data = select_data_dir(data_dir, command_matches)?;
                     cmd_process(
                         &input,
                         &output,
@@ -335,7 +564,7 @@ fn main() -> Result<()> {
                         &workflow,
                         film.as_deref(),
                         paper.as_deref(),
-                        preset.as_deref(),
+                        &preset,
                         scan_film,
                         timings,
                         params_file.as_deref(),
@@ -343,7 +572,7 @@ fn main() -> Result<()> {
                         dry_run,
                         raw_out.as_deref(),
                         iters,
-                        &data_dir,
+                        &data,
                         backend,
                         invocation,
                     )
@@ -351,10 +580,10 @@ fn main() -> Result<()> {
             )?;
         }
         Commands::ListProfiles { data_dir } => {
-            let data_dir = resolve_data_dir(data_dir);
-            cmd_list_profiles(&data_dir);
+            let data = select_data_dir(data_dir, command_matches)?;
+            cmd_list_profiles(&data.path)?;
         }
-        Commands::Lut { command } => lut::run(command)?,
+        Commands::Lut { command } => lut::run(command, command_matches)?,
         Commands::ExportLut {
             film,
             paper,
@@ -367,20 +596,15 @@ fn main() -> Result<()> {
                 paper.as_deref(),
                 size,
                 &output,
-                &resolve_data_dir(data_dir),
+                &select_data_dir(data_dir, command_matches)?.path,
             )?;
         }
-        Commands::Describe { format, module } => {
-            if format != "json" {
-                bail!("unsupported describe format {format}; use json");
-            }
-            let value = if let Some(module) = module {
-                spektrafilm_core::params::sources::describe_module(&module)
-                    .map_err(anyhow::Error::msg)?
-            } else {
-                contract::describe()
-            };
-            println!("{}", serde_json::to_string_pretty(&value)?);
+        Commands::Describe {
+            format,
+            module,
+            field,
+        } => {
+            cmd_describe(format, module.as_deref(), field.as_deref())?;
         }
         Commands::Render {
             input,
@@ -396,6 +620,7 @@ fn main() -> Result<()> {
             &data_dir,
             diagnostics.as_deref(),
             gpu_timings,
+            command_matches,
         )?,
         Commands::Inspect { input, format } => {
             if format != "json" {
@@ -403,12 +628,16 @@ fn main() -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&inspect(&input)?)?);
         }
-        Commands::Preset { command } => preset::run(command)?,
+        Commands::Preset { command } => preset::run(command, command_matches)?,
         Commands::Parity {
             corpus,
             report,
             data_dir,
-        } => runner::cmd_parity(&corpus, &report, &data_dir)?,
+        } => runner::cmd_parity(
+            &corpus,
+            &report,
+            &select_data_dir(data_dir, command_matches)?.path,
+        )?,
     }
     Ok(())
 }
@@ -425,7 +654,7 @@ fn cmd_process(
     workflow: &WorkflowOptions,
     film_name: Option<&str>,
     paper_name: Option<&str>,
-    preset: Option<&str>,
+    selectors: &[String],
     scan_film: bool,
     show_timings: bool,
     params_file: Option<&Path>,
@@ -433,66 +662,25 @@ fn cmd_process(
     dry_run: bool,
     raw_out: Option<&Path>,
     iters: usize,
-    data_dir: &Path,
+    data: &DataSelection,
     backend_choice: Option<Backend>,
     invocation: &mut telemetry::Invocation,
 ) -> Result<()> {
+    let data_dir = &data.path;
     let total_start = Instant::now();
     use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
     let context = invocation.operation.context();
     if iters == 0 {
         bail!("--iters must be at least 1");
     }
-    let extension_format = image_io::ImageFormat::detect(output)
-        .with_context(|| format!("detecting output format: {}", output.display()))?;
-    let output_format = format.unwrap_or_else(|| match extension_format {
-        image_io::ImageFormat::Jpeg => OutputFormat::Jpeg,
-        image_io::ImageFormat::Png => OutputFormat::Png,
-        image_io::ImageFormat::Tiff => OutputFormat::Tiff,
-        image_io::ImageFormat::Exr => OutputFormat::Exr,
-    });
-    if output_format.image_format() != extension_format {
-        bail!(
-            "--format {} disagrees with output extension ({})",
-            output_format.name(),
-            format_name(extension_format)
-        );
-    }
-    let default_depth = match output_format {
-        OutputFormat::Jpeg | OutputFormat::Png => 8,
-        OutputFormat::Tiff | OutputFormat::Exr => 16,
-    };
-    let depth = BitDepth::try_from(bit_depth.unwrap_or(default_depth))?;
-    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && depth != BitDepth::Eight {
-        bail!("{} output requires 8-bit depth", output_format.name());
-    }
-    if matches!(output_format, OutputFormat::Exr) && depth == BitDepth::Eight {
-        bail!("EXR output requires 16-bit or 32-bit depth");
-    }
-    if matches!(output_format, OutputFormat::Jpeg) {
-        if let Some(quality) = jpeg_quality {
-            if !(1..=100).contains(&quality) {
-                bail!("JPEG quality must be in 1..=100");
-            }
-        }
-    } else if jpeg_quality.is_some() {
-        bail!("--jpeg-quality is only valid for JPEG output");
-    }
-    if !matches!(output_format, OutputFormat::Jpeg) && jpeg_subsampling.is_some() {
-        bail!("--jpeg-subsampling is only valid for JPEG output");
-    }
-    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && compression.is_some() {
-        bail!("--compression is only valid for TIFF or EXR output");
-    }
-    let jpeg_quality =
-        matches!(output_format, OutputFormat::Jpeg).then(|| jpeg_quality.unwrap_or(95));
-    let jpeg_subsampling = matches!(output_format, OutputFormat::Jpeg).then(|| {
-        jpeg_subsampling
-            .unwrap_or(JpegSubsamplingArg::Yuv444)
-            .core()
-    });
-    let compression = matches!(output_format, OutputFormat::Tiff | OutputFormat::Exr)
-        .then(|| compression.unwrap_or(CompressionArg::Zip).core());
+    let plan = OutputPlan::from_flags(
+        output,
+        format,
+        bit_depth,
+        jpeg_quality,
+        jpeg_subsampling,
+        compression,
+    )?;
     invocation.boundary(IssueCategory::Input, IssueBoundary::InputLoad);
     if !input.is_file() {
         bail!("input is not a regular file: {}", input.display());
@@ -504,17 +692,21 @@ fn cmd_process(
         image_io::ImageFormat::detect(input)
             .with_context(|| format!("unsupported input format: {}", input.display()))?;
     }
+    let raw_options = raw_options(workflow);
     if input_is_raw {
-        // Validate RAW option consistency without decoding pixels.
-        let raw_options = raw_options(&workflow);
         validate_raw_options(&raw_options)?;
     }
     invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
+    let library = spektrafilm_core::presets::PresetLibrary::default();
+    let presets = selectors
+        .iter()
+        .map(|selector| preset::select(&library, selector).map(|selected| selected.preset))
+        .collect::<Result<Vec<_>>>()?;
     let resolved = spektrafilm_core::process_params::resolve(
         spektrafilm_core::process_params::ProcessParamsRequest {
             film: film_name,
             paper: paper_name,
-            preset,
+            presets: &presets,
             params_file,
             sources,
             route: workflow.route.as_deref(),
@@ -556,15 +748,14 @@ fn cmd_process(
 
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let saving_space = workflow.saving_color_space.clone().unwrap_or_else(|| {
-        if output_format == OutputFormat::Exr {
-            "ACES2065-1".into()
-        } else {
-            output_color_space.clone()
-        }
-    });
-    let saving_space_resolved = spektrafilm_math::colorspace::resolve(&saving_space)
-        .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
+    let plan = plan.with_saving(workflow, &output_color_space, output_cctf_encoding);
+    let saving_space_resolved =
+        spektrafilm_math::colorspace::resolve(&plan.saving_space).map_err(|e| {
+            anyhow::anyhow!(
+                "unsupported saving color space {:?}: {e}",
+                plan.saving_space
+            )
+        })?;
     let output_space_resolved = spektrafilm_math::colorspace::resolve(&output_color_space)
         .map_err(|e| {
             anyhow::anyhow!("unsupported output color space {output_color_space:?}: {e}")
@@ -573,26 +764,7 @@ fn cmd_process(
         output_space_resolved,
         saving_space_resolved,
     );
-    let saving_encoded = workflow
-        .saving_cctf_encoding
-        .unwrap_or(output_format != OutputFormat::Exr && output_cctf_encoding);
-    if matches!(output_format, OutputFormat::Jpeg | OutputFormat::Png) && !saving_encoded {
-        bail!(
-            "{} output requires encoded saving output",
-            output_format.name()
-        );
-    }
-    if output_format == OutputFormat::Exr && saving_encoded {
-        bail!("EXR output requires linear saving output");
-    }
-    if output_format == OutputFormat::Exr {
-        if !matches!(saving_space.as_str(), "sRGB" | "ACES2065-1") {
-            bail!("EXR color space must be sRGB or ACES2065-1");
-        }
-        if matches!(compression, Some(Compression::None)) {
-            bail!("EXR compression is always zip");
-        }
-    }
+    plan.validate_saving()?;
     // Active V3 resolves its field on the CPU and never enters the resident
     // WGPU chain, whatever backend the surrounding stages use. Its supported
     // condition is validated here so the dry run reports and rejects exactly
@@ -628,15 +800,25 @@ fn cmd_process(
                 "print_profile": resolved.print_name,
                 "parameters": params,
                 "film_grain_v3": grain_v3,
+                "data": {"path": data.path, "source": data.source},
+                "input": {
+                    "kind": if input_is_raw { "raw" } else { "raster" },
+                    "raw_loading": input_is_raw.then(|| json!({
+                        "white_balance": workflow.raw_white_balance,
+                        "temperature": raw_options.temperature,
+                        "tint": raw_options.tint,
+                        "lens_correction": raw_options.lens_correction
+                    }))
+                },
                 "output": {
                     "path": output,
-                    "format": output_format.name(),
-                    "bit_depth": depth.bits(),
-                    "color_space": saving_space,
-                    "cctf_encoding": saving_encoded,
-                    "compression": compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
-                    "jpeg_quality": jpeg_quality,
-                    "jpeg_subsampling": jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
+                    "format": plan.format.name(),
+                    "bit_depth": plan.depth.bits(),
+                    "color_space": plan.saving_space,
+                    "cctf_encoding": plan.saving_encoded,
+                    "compression": plan.compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
+                    "jpeg_quality": plan.jpeg_quality,
+                    "jpeg_subsampling": plan.jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
                 },
                 "backend": {
                     "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
@@ -676,19 +858,9 @@ fn cmd_process(
         &context,
         |_| {
             let (image, metadata) = if input_is_raw {
-                let options = spektrafilm_raw::RawOptions {
-                    white_balance: match workflow.raw_white_balance.as_str() {
-                        "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                        "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                        "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                        _ => spektrafilm_raw::WhiteBalance::AsShot,
-                    },
-                    temperature: workflow.raw_temperature,
-                    tint: workflow.raw_tint,
-                    lens_correction: workflow.lens_correction,
-                };
+                let options = &raw_options;
                 (
-                    spektrafilm_raw::load(input, &options)
+                    spektrafilm_raw::load(input, options)
                         .map_err(anyhow::Error::msg)?
                         .image,
                     image_io::read_metadata(input),
@@ -703,7 +875,7 @@ fn cmd_process(
     )?;
     invocation
         .operation
-        .set_input_dimensions(image.width as u32, image.height as u32);
+        .set_input_dimensions(image.width, image.height);
     // Preview mode: bound the long edge before processing (upstream
     // `simulate_preview` + `resize_for_preview`).
     let image = invocation.phase(
@@ -762,14 +934,8 @@ fn cmd_process(
     }
     let output_attempt = std::cell::Cell::new(0);
     let run_once = |image: ImageBuf, index: u64| -> Result<ImageBuf> {
-        let attempt = invocation.operation.attempt(index);
-        let attempt_id = attempt.context().id();
-        let result = invocation.phase(
-            "simulation",
-            IssueCategory::Simulation,
-            IssueBoundary::Simulation,
-            attempt.context(),
-            |simulation_context| {
+        let (attempt_id, result) =
+            telemetry::simulation_attempt(invocation, index, |simulation_context| {
                 let out = if inject.is_none() && collect.is_none() {
                     runtime
                         .process_observed(image, backend.as_ref(), simulation_context)
@@ -786,13 +952,7 @@ fn cmd_process(
                         .map_err(|e| anyhow::anyhow!("pipeline taps: {e}"))?
                 };
                 Ok(out)
-            },
-        );
-        attempt.finish(if result.is_ok() {
-            spektrafilm_gpu::telemetry::Outcome::Succeeded
-        } else {
-            spektrafilm_gpu::telemetry::Outcome::Failed
-        });
+            });
         if result.is_ok() {
             output_attempt.set(attempt_id);
         }
@@ -824,17 +984,10 @@ fn cmd_process(
     // Save output
     let t = Instant::now();
     invocation.operation.set_saved_attempt(output_attempt.get());
-    let options = SaveOptions {
-        depth,
-        color_space: &saving_space,
-        cctf_encoding: saving_encoded,
-        jpeg_quality,
-        jpeg_subsampling,
-        compression,
-    };
+    let options = plan.save_options();
     invocation.operation.set_saving_configuration(
         spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
-            output_format.image_format(),
+            plan.format.image_format(),
             &options,
         ),
     );
@@ -848,8 +1001,8 @@ fn cmd_process(
                 &result,
                 &output_color_space,
                 output_cctf_encoding,
-                &saving_space,
-                saving_encoded,
+                &plan.saving_space,
+                plan.saving_encoded,
             )
             .map_err(anyhow::Error::from)
         },
@@ -960,52 +1113,148 @@ fn bytemuck_cast_f64_to_bytes(v: &[f64]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }
 }
 
-fn cmd_list_profiles(data_dir: &Path) {
+fn cmd_list_profiles(data_dir: &Path) -> Result<()> {
     let profiles_dir = data_dir.join("profiles");
     let mut names = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&profiles_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy().to_string();
-            if name.ends_with(".json") {
-                names.push(name.trim_end_matches(".json").to_string());
-            }
+    for entry in fs::read_dir(&profiles_dir)
+        .with_context(|| format!("reading profile directory: {}", profiles_dir.display()))?
+    {
+        let path = entry?.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            names.push(
+                path.file_stem()
+                    .context("profile has no filename")?
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
-    } else {
-        eprintln!("Profile directory not found: {}", profiles_dir.display());
-        return;
     }
     names.sort();
     for name in &names {
-        // Try to load and show the human-readable name
-        if let Ok(p) = profile::load_profile_by_name(data_dir, name) {
-            let display_name = p.info.name.as_deref().unwrap_or(name);
-            let film_type = &p.info.film_type;
-            let support = &p.info.support;
-            println!("{name:<40} {display_name:<30} ({film_type}, {support})");
-        } else {
-            println!("{name}");
-        }
+        let p = profile::load_profile_by_name(data_dir, name).with_context(|| {
+            format!(
+                "loading profile: {}",
+                profiles_dir.join(format!("{name}.json")).display()
+            )
+        })?;
+        let display_name = p.info.name.as_deref().unwrap_or(name);
+        let film_type = &p.info.film_type;
+        let support = &p.info.support;
+        println!("{name:<40} {display_name:<30} ({film_type}, {support})");
     }
+    Ok(())
 }
 
-pub(crate) fn resolve_data_dir(explicit: PathBuf) -> PathBuf {
-    let mut candidates = vec![explicit.clone()];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("data"));
-            candidates.push(dir.join("..").join("share").join("data"));
-            candidates.push(dir.join("..").join("Resources").join("data"));
+pub(crate) struct DataSelection {
+    path: PathBuf,
+    source: &'static str,
+}
+
+pub(crate) fn explicit_data_selection(matches: &ArgMatches) -> bool {
+    matches.value_source("data_dir") == Some(clap::parser::ValueSource::CommandLine)
+        || std::env::var_os("SPEKTRAFILM_DATA_DIR").is_some()
+}
+
+pub(crate) fn select_data_dir(argument: PathBuf, matches: &ArgMatches) -> Result<DataSelection> {
+    let selection = if matches.value_source("data_dir")
+        == Some(clap::parser::ValueSource::CommandLine)
+    {
+        Some((argument, "argument", "--data-dir"))
+    } else if let Some(value) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
+        if value.is_empty() {
+            bail!("SPEKTRAFILM_DATA_DIR is empty; set it to a data directory or supply --data-dir");
+        }
+        Some((PathBuf::from(value), "environment", "SPEKTRAFILM_DATA_DIR"))
+    } else {
+        None
+    };
+    if let Some((path, source, option)) = selection {
+        if !path.is_dir() {
+            bail!(
+                "{option} selected {} which is not an existing directory; supply a valid data directory",
+                path.display()
+            );
+        }
+        return Ok(DataSelection {
+            path: fs::canonicalize(&path)
+                .with_context(|| format!("resolving data directory: {}", path.display()))?,
+            source,
+        });
+    }
+    let executable = std::env::current_exe().context("locating executable for data discovery")?;
+    let directory = executable
+        .parent()
+        .context("executable has no parent directory")?;
+    let candidates = [
+        directory.join("data"),
+        directory.join("../share/data"),
+        directory.join("../Resources/data"),
+        std::env::current_dir()?.join("data"),
+    ];
+    for path in &candidates {
+        if path.is_dir() {
+            return Ok(DataSelection {
+                path: fs::canonicalize(path)
+                    .with_context(|| format!("resolving data directory: {}", path.display()))?,
+                source: "automatic",
+            });
         }
     }
-    candidates.push(PathBuf::from("data"));
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        candidates.push(PathBuf::from(manifest).join("..").join("..").join("data"));
+    bail!(
+        "no data directory found; tried {}; set --data-dir or SPEKTRAFILM_DATA_DIR",
+        candidates
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+fn cmd_describe(format: DiscoveryFormat, module: Option<&str>, field: Option<&str>) -> Result<()> {
+    use spektrafilm_core::params::sources::{
+        describe_field, describe_module, describe_root_groups,
+    };
+    if matches!(format, DiscoveryFormat::Text) && module.is_none() && field.is_none() {
+        for group in describe_root_groups() {
+            println!("{group}");
+        }
+        return Ok(());
     }
-    candidates
-        .into_iter()
-        .find(|path| path.is_dir())
-        .unwrap_or(explicit)
+    let value = if let Some(field) = field {
+        describe_field(field).map_err(anyhow::Error::msg)?
+    } else if let Some(module) = module {
+        describe_module(module).map_err(anyhow::Error::msg)?
+    } else {
+        contract::describe()
+    };
+    match format {
+        DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&value)?),
+        DiscoveryFormat::Text => {
+            if field.is_some() {
+                print_metadata_record(&value);
+            } else {
+                let mut fields = value["fields"]
+                    .as_array()
+                    .context("module description has no fields")?
+                    .iter()
+                    .collect::<Vec<_>>();
+                fields.sort_by_key(|record| record["path"].as_str().unwrap_or(""));
+                for record in fields {
+                    print_metadata_record(record);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_metadata_record(record: &Value) {
+    if let Some(fields) = record.as_object() {
+        for (key, value) in fields {
+            println!("{key}: {value}");
+        }
+        println!();
+    }
 }
 
 fn raw_options(workflow: &WorkflowOptions) -> spektrafilm_raw::RawOptions {

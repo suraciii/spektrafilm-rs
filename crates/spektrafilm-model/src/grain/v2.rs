@@ -185,6 +185,10 @@ fn snoise(timer: f32, v: [f32; 4]) -> [f32; 4] {
 // The small-range products are exact before cancellation; neither backend
 // needs fused multiply-add for that reduction. Large finite inputs use the
 // binary expansion of mathematical 2/pi instead of a rounded f32 period.
+// The 2/pi and pi/2 literals below are deliberately spelled at f64 precision:
+// they round to the same f32 the std constants would, but they stay exact if
+// the reduction is ever evaluated in f64.
+#[allow(clippy::approx_constant)]
 fn trig_reduce(value: f32) -> (f32, u32) {
     let x = value.abs();
     if x <= std::f32::consts::FRAC_PI_4 {
@@ -281,6 +285,8 @@ fn pnoise(p: [f32; 3], timer: f32, texel: f32) -> f32 {
     let pi = p.map(|v| texel * v.floor() + 0.5 * texel);
     let pf = p.map(fract);
     let mut n = [[[0.; 2]; 2]; 2];
+    // Lattice indices feed gradient arithmetic and nested permutations.
+    #[allow(clippy::needless_range_loop)]
     for x in 0..2 {
         for y in 0..2 {
             let perm = rnm([pi[0] + x as f32 * texel, pi[1] + y as f32 * texel], timer)[3];
@@ -777,8 +783,10 @@ mod tests {
     #[test]
     fn zero_amount_still_runs_pipeline() {
         let i = ImageBuf::from_data(2, 2, vec![0.4; 12]);
-        let mut p = GrainV2Params::default();
-        p.amount = 0.;
+        let p = GrainV2Params {
+            amount: 0.,
+            ..Default::default()
+        };
         let out = apply_cpu(&i, p);
         assert!(out.data.iter().all(|v| to_f32(*v).is_finite()));
         assert_ne!(out.data, i.data);
@@ -798,12 +806,14 @@ mod tests {
                 .collect(),
         );
 
-        let mut analogue = GrainV2Params::default();
-        analogue.mode = GrainV2Mode::Analogue;
-        analogue.size = 48.;
-        analogue.amount = 1.;
-        analogue.resolution_factor = 0.;
-        analogue.resolution_type = 0;
+        let mut analogue = GrainV2Params {
+            mode: GrainV2Mode::Analogue,
+            size: 48.,
+            amount: 1.,
+            resolution_factor: 0.,
+            resolution_type: 0,
+            ..Default::default()
+        };
         let optical = apply_cpu(&image, analogue);
         analogue.resolution_type = 1;
         let fast = apply_cpu(&image, analogue);
@@ -860,8 +870,10 @@ mod tests {
 
     #[test]
     fn noise_scale_preserves_relative_grain_size() {
-        let mut p = GrainV2Params::default();
-        p.mode = GrainV2Mode::Noise;
+        let p = GrainV2Params {
+            mode: GrainV2Mode::Noise,
+            ..Default::default()
+        };
         let phase = spektrafilm_math::grain::seeded_phase(p.seed);
         let a = generator([0.37, 0.61], [1920., 1080.], 0.5, [0.5; 3], p, true, phase);
         let b = generator([0.37, 0.61], [3840., 2160.], 0.5, [0.5; 3], p, true, phase);
@@ -870,11 +882,13 @@ mod tests {
     #[test]
     fn middle_gray_responds_to_midtones_not_shadows() {
         let image = ImageBuf::from_data(64, 32, vec![from_f32(0.5); 64 * 32 * 3]);
-        let mut params = GrainV2Params::default();
-        params.resolution_factor = 100.;
-        params.highlights = 0.;
-        params.shadows = 0.;
-        params.midtones = 1.;
+        let mut params = GrainV2Params {
+            resolution_factor: 100.,
+            highlights: 0.,
+            shadows: 0.,
+            midtones: 1.,
+            ..Default::default()
+        };
         let mid = apply_cpu(&image, params);
         params.shadows = 1.;
         params.midtones = 0.;
@@ -902,12 +916,16 @@ mod tests {
                 data.extend([from_f32(0.25 + 0.55 * y as f32 / (h - 1) as f32); 3]);
             }
         }
-        let mut p = GrainV2Params::default();
-        p.seed = 42;
+        let p = GrainV2Params {
+            seed: 42,
+            ..Default::default()
+        };
         let out = apply_cpu(&ImageBuf::from_data(w, h, data), p);
         let mut r: Vec<f32> = out
             .data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|v| (to_f32(v[0]) + to_f32(v[1]) + to_f32(v[2])) / 3.)
             .collect();
         for row in r.chunks_exact_mut(w as usize) {

@@ -205,8 +205,7 @@ fn chain_for_print<'a>(
             ("printing_develop_scan", "log_e_print", "output_rgb", false),
         ],
     };
-    let magazine = meta.workflow_route == "input > film > scan > magazine"
-        && meta.provenance.contains_key("magazine_print_color");
+    let magazine = meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
     for &(role, domain, range, shared) in stages {
         let expected_role = if magazine && range == "output_rgb" {
@@ -434,6 +433,37 @@ mod tests {
             "luts": [],
             "meta": {"schema_version":1,"name":"boundary","topology":"2lut","resolution":2,"target":null,"provenance":{},"stocks":{"film":"kodak_portra_400","prints":["kodak_portra_endura"]},"color_spaces":{"input":{"name":"sRGB","cctf":true},"output":{"name":"sRGB","cctf":true}},"wires":{"cmy_film":{"d_min":[-0.2,-0.2,-0.2],"d_max":[1,2,3]}},"luts":[{"role":"film","path":"film.cube","domain":"input_rgb","range":"cmy_film","print_profile":null},{"role":"print","path":"print.cube","domain":"cmy_film","range":"output_rgb","print_profile":"kodak_portra_endura"}],"input_exposure":null,"params_snapshot":{}}
         })).unwrap()
+    }
+    #[test]
+    fn magazine_roles_follow_provenance_on_any_route() {
+        let mut meta = fixture().meta;
+        meta.topology = Topology::One;
+        meta.luts.remove(0);
+        meta.luts[0].role = "magazine_combined".into();
+        meta.luts[0].domain = "wrong".into();
+        let root = Path::new(".");
+        for route in [
+            "input",
+            "input > film > scan",
+            "input > film > print > scan",
+        ] {
+            meta.workflow_route = route.into();
+            meta.provenance
+                .insert("magazine_print_color".into(), "included".into());
+            assert!(
+                chain_for_print(root, &meta, "kodak_portra_endura")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("malformed combined wire")
+            );
+            meta.provenance.remove("magazine_print_color");
+            assert!(
+                chain_for_print(root, &meta, "kodak_portra_endura")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("for combined; found 0")
+            );
+        }
     }
     #[test]
     fn rejects_degenerate_and_nonfinite_density_and_exposure_wires() {

@@ -16,7 +16,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Independent GUI export.** **Export…** opens its own settings dialog, then a file chooser, and renders an immutable snapshot of the full input and simulation parameters through the GUI's Runtime worker. CPU uses the GUI build's native precision; GPU uses WGPU f32 and faithful CPU stages where required. GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Cancellation discards work at the next boundary before atomic publication and may wait for an active computation.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
 - **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|positive_scan`; `positive_scan` uses the CPU per-stage scanner-domain interpretation and is rejected for paper, positive-film, convert-film, white/black-corrected, or active-Grain-V2 routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
-- **Magazine print color.** The optional post-scan `input > film > scan > magazine` route applies a bundled RGB appearance: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. It remains RGB-only and exposes one appearance strength; it does not generate CMYK or halftone output.
+- **Magazine print color.** The optional finishing treatment applies a bundled RGB appearance to any supported base workflow — a scanned negative or a finished RGB input — after the base workflow and its scanner-domain effects: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. `magazine_print_color.active` and one appearance Strength from 0 to 1 enable it independently of the base workflow; there is no magazine route. It remains RGB-only and does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 - **Selectable grain engines.** V1 remains the default emulsion model. V2 provides procedural Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls. V3 conditions a film-coordinate dye field controlled by its film-space support `v3_dye_support_um` and event area `v3_event_area_um2`.
 
@@ -24,7 +24,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 
 Requires Rust stable (≥ 1.88), a C++17 compiler, pkg-config, OpenImageIO and Exiv2 development libraries. The locked `image` dependency requires Rust 1.88. Image I/O uses the same native libraries as Python 0.3.4, preserving float samples and EXIF/IPTC/XMP. On Debian/Ubuntu install `libopenimageio-dev libexiv2-dev libopenblas-dev`; Linux links the installed OpenBLAS library. On macOS use `brew install openimageio exiv2 pkg-config`. Windows packaging uses a matching MSYS2 UCRT64 native toolchain and pkg-config dependencies. The package scripts collect native runtime libraries; the build fails explicitly when required development libraries are absent.
 
-The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI checks all workspace targets with default and `precision-f64` features and runs the math unit tests, without release builds, Python parity or packaging. Pushes to `main-0.3.4` run the full three-platform release workflow: workspace tests, native builds and package smoke, plus the existing Linux Python parity and LUT acceptance checks. Version tags and manual dispatch also retain the full workflow.
+The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI runs the full `just ci` gate through `just verify`: formatting, all-target checks with default and `precision-f64` features, first-party Clippy, and workspace tests. It retains verification evidence without release builds, Python parity or packaging. Pushes to `main-0.3.4` run the full three-platform release workflow: workspace tests, native builds and package smoke, plus the existing Linux Python parity and LUT acceptance checks. Version tags and manual dispatch also retain the full workflow. Release runs use one concurrency group per ref. A commit pushed while a release run is active waits as the single pending run, and a later commit replaces that pending run, so only the newest commit is built. An active run is never canceled for a newer commit.
 
 ```bash
 git clone <this-repo> && cd spektrafilm-rs
@@ -80,7 +80,8 @@ The public Canon EOS 40D sRAW CR2 fixture also matches all four modes at zero ma
 
 The rebuilt f64 CLI and its relocated Linux archive also passed eight fresh RAW comparisons against the pinned Python loader: all four white-balance modes on Kodak 768×512 with missing-lens correction, and Canon 1944×1296 with injected known-lens EXIF. The unbounded `rgb_in` boundary matched exactly (maximum and mean absolute error zero). The relocated RAW helper independently matched Kodak pixels exactly under a clean environment. The earlier packaged GUI launched under Xvfb and its prepared-image export preserved EXIF/IPTC/XMP and ICC bytes; this is historical evidence for the earlier export implementation.
 
-WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference.
+WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference. Linux GPU acceptance requires the Mesa software Vulkan adapter (`mesa-vulkan-drivers`).
+
 The `just` command surface also covers packaging and per-user installation:
 
 ```bash
@@ -91,6 +92,10 @@ just ci
 just package
 just install
 ```
+
+Run `just verify /absolute/path/outside/the/repo/new-directory` to retain gate evidence. The directory must not exist. The runner displays and saves combined output in `gate.log`, preserves the gate's failure exit status, and writes `report.json` on success or failure. The report records commit and tree IDs, tracked changes in `before.diff` and `after.diff`, hashes of untracked files, tool versions, timestamps, and exit status. A source change during verification fails the run. The evidence covers `just ci`; native GUI, image, CLI, and package smoke evidence remains separate. Call this entry point directly so an outer shell pipeline cannot mask its exit status.
+
+`just ci` first runs `just check-python-cache`. This check rejects Git-index paths with a `__pycache__` component or a `.pyc` or `.pyo` suffix, including files added with `git add -f`. Python caches remain ignored local outputs.
 
 `just package` creates a self-contained directory and archive under `dist/`.
 `just install` installs without administrator privileges. On Unix-like systems
@@ -114,7 +119,7 @@ executable.
 ./target/release/spektrafilm-gui [optional/path/to/image.orf]
 ```
 
-- **Magazine print color** — in **ADVANCED**, enable the bundled appearance and set Strength from 0 to 1. Strength 0 is a no-op. Photographic print controls remain separate.
+- **Magazine print** — the checkbox next to the workflow selector applies the bundled appearance to the selected workflow; **ADVANCED** → **Magazine print color** sets Strength from 0 to 1. Strength 0 is a no-op. Photographic print controls remain separate. The `Finished RGB` workflow colour-manages an already rendered image to the output space; the film and print profile selections do not affect it.
 - **Open…** — load standard images or camera RAW. RAW processing uses LibRaw and exposes as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction; RAW enters the runtime as linear ACES2065-1.
 - **Input image / Profiles** — choose input/output color workflow, film stock and print paper. Picking a film auto-selects its paired paper (`target_print` in the profile).
 - **Numeric fields** — click to type exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger and output values. The fields use the text cursor. Scrolling over a field changes its value by the control's step; scrolling elsewhere moves the sidebar. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value and resets when focus leaves the field.
@@ -171,23 +176,28 @@ executable.
 ```
 
 See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
-`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=JSON_VALUE` assignments in order. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
+
+`process` accepts an exact preset name or a TOML/JSON preset file through `--preset`. Repeat `--preset` to apply documents in appearance order: a look selects profiles and replaces look controls, then a section edits only its supplied controls. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments after the presets. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths and composition.
+
+Preset names are their portable identities. Core reads schema v1 documents by discarding their old `id` and exports schema v2. Built-ins are compiled from `crates/spektrafilm-core/assets/presets`; user documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in; `user:` and `built-in:` select one group. Section documents contain sparse editable leaves from exactly one look section and retain omitted controls on application. Explicit JSON null edits require JSON export; TOML cannot represent those edits.
 
 ```bash
-# Discover portable looks and editable grain controls
-./target/release/spektrafilm preset list --data-dir data
-./target/release/spektrafilm preset show classic-kodak-portra-400 --data-dir data
+# Discover portable presets and editable grain controls
+./target/release/spektrafilm preset list --source all --format text
+./target/release/spektrafilm preset show 'Kodak Portra 400' --data-dir data
 ./target/release/spektrafilm describe --module film_render.grain --format json
 
 # Inspect the effective configuration without decoding pixels or creating output
 ./target/release/spektrafilm process input.png -o output.tif \
-    --preset classic-kodak-portra-400 \
+    --preset 'Kodak Portra 400' \
+    --preset 'Soft grain' \
+    --set film_render.grain.engine=v2 \
     --set 'camera.exposure_compensation_ev=0.5,film_render.grain.v2_amount=25' \
     --dry-run --data-dir data
 
 # Apply a sparse file, then an inline edit, with independent writer settings
 ./target/release/spektrafilm-f64 process input.png -o output.tif \
-    --preset classic-kodak-portra-400 --set adjustments.toml \
+    --preset 'Kodak Portra 400' --set adjustments.toml \
     --set 'enlarger.print_exposure=1.2' --backend cpu \
     --format tiff --bit-depth 16 --compression zip \
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
@@ -246,17 +256,20 @@ per-layer median-preserving skew parameters.
 ```bash
 ./target/release/spektrafilm lut list input
 ./target/release/spektrafilm lut list output
-SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build \
+SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build build/lut_bundles \
     --film kodak_portra_400 --print kodak_portra_endura \
     --input vlog --output srgb --topology 4lut --resolution 33 \
-    --combinations --out build/lut_bundles --data-dir data
-./target/release/spektrafilm lut build --from bundle.toml \
-    --resolution 65 --out build/lut_bundles --data-dir data
+    --combinations --data-dir data
+./target/release/spektrafilm lut build build/lut_bundles --from bundle.toml \
+    --resolution 65 --data-dir data
 ```
-The CLI also resolves the packaged `../share/data` directory for `lut` and
-`export-lut` when invoked outside the package directory. Profile metadata and
-array dimensions are validated before construction; present but malformed
-neutral-filter JSON is an error rather than an empty-database fallback.
+Data-consuming commands select `--data-dir`, then `SPEKTRAFILM_DATA_DIR`, then
+automatic executable-relative or working-directory data. Explicit selections
+must exist and never fall back. Help, version, field discovery, and preset
+listing without an explicit selection need no data. See the
+[CLI workflow contract](specs/cli-workflow/spec.md#data-directory-selection).
+Profile metadata and array dimensions are validated before construction;
+present but malformed neutral-filter JSON is an error.
 
 TOML fields match the typed `spektrafilm_core::lut_baker::BundleSpec`; supplied
 CLI flags override file values. A minimal spec is:
@@ -414,7 +427,6 @@ Feature ownership stays inside the existing crates:
 - `spektrafilm-model/src/`: `grain/{v1,v2}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests; `optics/` owns shared physical blur, unsharp masking, and highlight boost.
 - `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate; serialized JSON fields are unchanged.
 - `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. Shared blur infrastructure stays in `blur/`; `film_chain.rs` owns resident orchestration and its resource lifetimes, while `mod.rs` retains device setup and shared dispatch.
-- `spektrafilm-gui/src/panels/`: effect panels edit typed parameters and return whether controls changed; the application retains preview scheduling and persistence.
 
 Canonical Rust paths include `spektrafilm_model::grain::v1`, `spektrafilm_model::grain::v2`, and `spektrafilm_core::params::grain::GrainParams`; the former flat module paths have been removed.
 

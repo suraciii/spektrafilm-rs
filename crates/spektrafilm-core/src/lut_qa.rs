@@ -226,11 +226,10 @@ fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
             ("printing_develop_scan", Some(print)),
         ],
     };
-    let magazine = bundle.meta.workflow_route == "input > film > scan > magazine"
-        && bundle.meta.provenance.contains_key("magazine_print_color");
+    let magazine = bundle.meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
-    for &(role, stock) in roles {
-        let expected_role = if magazine && stock.is_some() {
+    for (stage, &(role, stock)) in roles.iter().enumerate() {
+        let expected_role = if magazine && stage + 1 == roles.len() {
             format!("magazine_{role}")
         } else {
             role.to_owned()
@@ -260,7 +259,6 @@ fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
             return Err(format!("malformed QA LUT {}", m.path));
         }
         let taps = bundle.meta.topology.taps();
-        let stage = chain.len();
         let domain = if stage == 0 {
             "input_rgb"
         } else {
@@ -410,7 +408,9 @@ fn process_linear(
     )?;
     let rows: Vec<_> = out
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| [to_f64(p[0]), to_f64(p[1]), to_f64(p[2])])
         .collect();
     if rows.iter().flatten().any(|x| !x.is_finite()) {
@@ -880,7 +880,7 @@ fn run_print(
             }
         }
     }
-    let mut r = result(
+    let r = result(
         "jacobian_condition",
         json!({"max_log10_cond":max(&cond),"p99_log10_cond":percentile(&cond,0.99),"p50_log10_cond":percentile(&cond,0.5)}),
         None,
@@ -897,7 +897,7 @@ fn run_print(
         tv[a] /= counts[a] as f64;
     }
     let fft = fft_ratios(lut);
-    let mut r = result(
+    let r = result(
         "total_variation",
         json!({"tv":tv.iter().sum::<f64>(),"tv_r":tv[0],"tv_g":tv[1],"tv_b":tv[2],"axial_highband_ratio_r":fft[2],"axial_highband_ratio_g":fft[1],"axial_highband_ratio_b":fft[0],"axial_highband_ratio_mean":mean(&fft)}),
         None,
@@ -1012,7 +1012,7 @@ fn run_print(
     let gamma = (mean(&neutral[mid + 1]).clamp(1e-4, 1.).log10()
         - mean(&neutral[mid - 1]).clamp(1e-4, 1.).log10())
         / (axis(mid + 1).log10() - axis(mid - 1).log10());
-    let mut r = result(
+    let r = result(
         "characteristic_curve",
         json!({"system_gamma_at_mid":gamma,"max_channel_density_spread":spread}),
         None,
@@ -1038,8 +1038,8 @@ fn run_print(
                 let mut p = [pin; 3];
                 p[a] = x;
                 let y = lut.sample(p);
-                for c in 0..3 {
-                    pts.push([x, 1. + y[c].clamp(1e-4, 1.).log10() / 4.]);
+                for (c, value) in y.iter().enumerate() {
+                    pts.push([x, 1. + value.clamp(1e-4, 1.).log10() / 4.]);
                     colors.push(match c {
                         0 => [1., 0.2, 0.2],
                         1 => [0.2, 1., 0.2],
@@ -1132,7 +1132,7 @@ fn run_print(
     summary.insert("max_hue_rotation_deg".into(), json!(worst));
     summary.insert("samples_in_locus".into(), json!(input_lab.len()));
     summary.insert("samples_filtered_out_of_locus".into(), json!(filtered));
-    let mut r = result(
+    let r = result(
         "hue_twist_oklab",
         serde_json::to_value(summary).unwrap(),
         None,
@@ -1170,7 +1170,7 @@ fn run_print(
         }
     }
     let valid = valid_xy.len();
-    let mut r = result(
+    let r = result(
         "spectral_locus_envelope",
         json!({"cube_resolution":n,"cube_cells":n.pow(3),"valid_cells":valid,"inside_output_gamut_fraction":in_gamut as f64/valid.max(1) as f64,"near_locus_fraction":near as f64/valid.max(1) as f64}),
         None,
@@ -1199,12 +1199,12 @@ fn fft_ratios(lut: &Lut) -> [f64; 3] {
         for u in 0..n {
             for v in 0..n {
                 for c in 0..3 {
-                    for i in 0..n {
+                    for (i, value) in line.iter_mut().enumerate() {
                         let mut p = [0; 3];
                         p[a] = i;
                         p[(a + 1) % 3] = u;
                         p[(a + 2) % 3] = v;
-                        line[i] = Complex::new(lut.at(p[0], p[1], p[2])[c], 0.);
+                        *value = Complex::new(lut.at(p[0], p[1], p[2])[c], 0.);
                     }
                     fft.process(&mut line);
                     for (i, x) in line[..n / 2 + 1].iter().enumerate() {
@@ -1275,8 +1275,7 @@ fn dynamic_range(
 ) -> Result<QaResult, String> {
     let ceiling = (0..3201)
         .map(|i| -12. + 0.01 * i as f64)
-        .filter(|&s| input.encode(input.midgray_linear * s.exp2()) <= 1.)
-        .last()
+        .rfind(|&s| input.encode(input.midgray_linear * s.exp2()) <= 1.)
         .ok_or("input encoding clips every dynamic-range probe")?;
     let hi = ceiling + 0.5;
     let step = (hi + 8.) / 256.;
@@ -1414,7 +1413,7 @@ fn input_compression(
             }
         }
     }
-    let mut r = result(
+    let r = result(
         "input_gamut_compression_preview",
         json!({"active":active,"algorithm":spec.algorithm,"knee_threshold":spec.knee[0],"knee_limit":spec.knee[1],"knee_power":spec.knee[2],"oog_fraction":oog as f64/valid.max(1) as f64,"n_oog_samples":oog,"n_oog_bright":bright,"reference_illuminant":illuminant}),
         None,
@@ -1437,7 +1436,7 @@ fn input_compression(
         .map(|p| (p[1][0] - p[0][0]).hypot(p[1][1] - p[0][1]))
         .collect();
     let med = percentile(&lengths, 0.5);
-    let mut smooth = result(
+    let smooth = result(
         "input_gamut_compression_smoothness",
         json!({"active":active,"algorithm":spec.algorithm,"knee_threshold":spec.knee[0],"knee_limit":spec.knee[1],"knee_power":spec.knee[2],"probe_radius":0.30,"probe_samples":720,"worst_step":max(&lengths),"median_step":med,"worst_over_median_step":max(&lengths)/med.max(1e-9),"reference_illuminant":illuminant}),
         None,
@@ -1507,21 +1506,7 @@ fn picture(
         let mut worst_hue = 0.;
         let mut rotation = 0.;
         for &p in &samples {
-            let mut j = [[0.; 3]; 3];
-            for a in 0..3 {
-                let mut plus = p;
-                let mut minus = p;
-                plus[a] += 0.005;
-                minus[a] -= 0.005;
-                let d = diff(
-                    oklab(xyz(output, lut.sample(plus))),
-                    oklab(xyz(output, lut.sample(minus))),
-                );
-                for c in 0..3 {
-                    j[c][a] = d[c] / 0.01;
-                }
-            }
-            let s = singular(j);
+            let s = singular(encoded_to_oklab_jacobian(lut, output, p));
             sigma.push(s[0]);
             anisotropy.push(s[0] / s[2].max(1e-9));
             let a = oklab(xyz(input, p));
@@ -1580,7 +1565,7 @@ fn picture(
         panels[row * side * 2 + col] = display(a, output);
         panels[row * side * 2 + side + col] = display(b, output);
     }
-    let mut r = result(
+    let r = result(
         "noise_gradient",
         json!({"image_side":side,"sigma_in_encoded":0.02,"mid_L":l,"rim_scale":0.96,"input_in_gamut_fraction":in_gamut as f64/clean.len() as f64,"mean_abs_output_delta":mean(&differences),"p99_abs_output_delta":percentile(&differences,0.99)}),
         None,
@@ -1638,7 +1623,7 @@ fn picture(
                 json!(oog as f64 / band_count as f64),
             );
         }
-        let mut r = result(
+        let r = result(
             "output_gamut_edge_stress",
             serde_json::to_value(summary).unwrap(),
             None,
@@ -1661,7 +1646,7 @@ fn picture(
             }
         }
     }
-    let mut r = result(
+    let r = result(
         "rg_plane_slices",
         json!({"n_slices":count,"cube_resolution":n}),
         None,
@@ -1673,9 +1658,177 @@ fn picture(
     Ok(results)
 }
 
+/// Central-difference Jacobian of encoded-input RGB → output OkLab at `p`:
+/// ±0.005 probes on the encoded input, divided by the 0.01 span, through the
+/// printed LUT and the output space's decode. The noise-sensitivity metric and
+/// its ellipse figure share this derivative.
+fn encoded_to_oklab_jacobian(lut: &Lut, output: &ColorSpaceEntry, p: [f64; 3]) -> [[f64; 3]; 3] {
+    let mut j = [[0.; 3]; 3];
+    for a in 0..3 {
+        let mut plus = p;
+        let mut minus = p;
+        plus[a] += 0.005;
+        minus[a] -= 0.005;
+        let d = diff(
+            oklab(xyz(output, lut.sample(plus))),
+            oklab(xyz(output, lut.sample(minus))),
+        );
+        for c in 0..3 {
+            j[c][a] = d[c] / 0.01;
+        }
+    }
+    j
+}
+
+fn noise_figure(
+    root: &Path,
+    lut: &Lut,
+    input: &ColorSpaceEntry,
+    output: &ColorSpaceEntry,
+    samples: &[[f64; 3]],
+    gain: f64,
+    l: f64,
+) -> Result<String, String> {
+    let mut extent = 0.30f64;
+    for cs in [input, output] {
+        for i in 0..181 {
+            let h = std::f64::consts::TAU * i as f64 / 181.;
+            let c = gamut_chroma(cs, l, h);
+            extent = extent
+                .max((c * h.cos()).abs() * 1.15)
+                .max((c * h.sin()).abs() * 1.15);
+        }
+    }
+    let size = 480;
+    let width = size * 3;
+    let mut pixels = vec![[0.04; 3]; width * size];
+    let put = |pixels: &mut Vec<[f64; 3]>, panel: usize, a: f64, b: f64, c: [f64; 3]| {
+        let x = ((a + extent) / (2. * extent) * (size - 1) as f64).round() as isize;
+        let y = ((extent - b) / (2. * extent) * (size - 1) as f64).round() as isize;
+        if x >= 0 && y >= 0 && x < size as isize && y < size as isize {
+            pixels[y as usize * width + panel * size + x as usize] = c;
+        }
+    };
+    for &p in samples {
+        let out = lut.sample(p);
+        let lab = oklab(xyz(output, out));
+        let j = encoded_to_oklab_jacobian(lut, output, p);
+        let cov = |r: usize, c: usize| {
+            (0..3)
+                .map(|k| j[r][k] * j[c][k] * 0.005f64.powi(2))
+                .sum::<f64>()
+        };
+        let a = cov(1, 1);
+        let b = cov(1, 2);
+        let d = cov(2, 2);
+        let theta = 0.5 * (2. * b).atan2(a - d);
+        let disc = ((a - d).powi(2) + 4. * b * b).sqrt();
+        let major = ((a + d + disc) / 2.).max(0.).sqrt() * 3.;
+        let minor = ((a + d - disc) / 2.).max(0.).sqrt() * 3.;
+        for i in 0..360 {
+            let angle = std::f64::consts::TAU * i as f64 / 360.;
+            let u = major * angle.cos();
+            let v = minor * angle.sin();
+            put(
+                &mut pixels,
+                0,
+                lab[1] + u * theta.cos() - v * theta.sin(),
+                lab[2] + u * theta.sin() + v * theta.cos(),
+                display(out, output),
+            );
+        }
+    }
+    let grid = 96;
+    let mut heat = Vec::with_capacity(grid * grid);
+    let mut maximum = 0f64;
+    for row in 0..grid {
+        for col in 0..grid {
+            let a = -extent + 2. * extent * col as f64 / (grid - 1) as f64;
+            let b = -extent + 2. * extent * row as f64 / (grid - 1) as f64;
+            let rgb = mul(color(input).inv, okxyz([l, a, b]));
+            if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
+                let p = input
+                    .encode_rgb(rgb.map(|v| v / gain))
+                    .map(|v| v.clamp(0.006, 0.994));
+                let s = singular(encoded_to_oklab_jacobian(lut, output, p))[0];
+                maximum = maximum.max(s);
+                heat.push(Some(s));
+            } else {
+                heat.push(None);
+            }
+        }
+    }
+    for row in 0..size {
+        for col in 0..size {
+            if let Some(s) = heat[(grid - 1 - row * grid / size) * grid + col * grid / size] {
+                let t = (s / maximum.max(1e-12)).clamp(0., 1.);
+                pixels[row * width + size + col] = [t, 0.2, 1. - t];
+            }
+        }
+    }
+    // The middle chroma ring's marginal luminance/chroma standard deviations,
+    // in polar coordinates, show directional noise response around hue.
+    let mut rosette = Vec::new();
+    let mut scale = 0f64;
+    for i in 0..16 {
+        let h = std::f64::consts::TAU * i as f64 / 16.;
+        let rgb = mul(color(input).inv, okxyz([l, 0.14 * h.cos(), 0.14 * h.sin()]));
+        if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
+            let p = input.encode_rgb(rgb.map(|v| v / gain));
+            if p.iter().all(|v| *v > 0.006 && *v < 0.994) {
+                let j = encoded_to_oklab_jacobian(lut, output, p);
+                let sl = (j[0].iter().map(|v| v * v).sum::<f64>()).sqrt() * 0.005;
+                let sab = (j[1].iter().chain(&j[2]).map(|v| v * v).sum::<f64>()).sqrt() * 0.005;
+                scale = scale.max(sl).max(sab);
+                rosette.push((h, sl, sab));
+            }
+        }
+    }
+    for (h, sl, sab) in rosette {
+        for (s, c) in [(sl, [1., 0.8, 0.2]), (sab, [0.3, 0.8, 1.])] {
+            let r = s / scale.max(1e-12) * extent * 0.9;
+            for i in 0..300 {
+                let t = i as f64 / 299.;
+                put(&mut pixels, 2, r * t * h.cos(), r * t * h.sin(), c);
+            }
+        }
+    }
+    png(root, "noise_sensitivity", width, size, &pixels)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn magazine_roles_follow_provenance_on_any_route() {
+        let mut bundle: Bundle = serde_json::from_value(json!({
+            "spec": {"film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","topology":"1lut"},
+            "luts": [["magazine.cube", {"resolution":2,"title":"magazine","table":grid(2)}]],
+            "meta": {"schema_version":1,"name":"magazine","topology":"1lut","resolution":2,"provenance":{},"stocks":{"film":"kodak_portra_400","prints":["kodak_portra_endura"]},"color_spaces":{"input":{"name":"sRGB","cctf":true},"output":{"name":"sRGB","cctf":true}},"wires":{},"luts":[{"role":"magazine_combined","path":"magazine.cube","domain":"input_rgb","range":"output_rgb","print_profile":"kodak_portra_endura"}],"input_exposure":null,"params_snapshot":{}}
+        }))
+        .unwrap();
+        for route in [
+            "input",
+            "input > film > scan",
+            "input > film > print > scan",
+        ] {
+            bundle.meta.workflow_route = route.into();
+            bundle
+                .meta
+                .provenance
+                .insert("magazine_print_color".into(), "included".into());
+            assert_eq!(
+                effective_lut(&bundle, "kodak_portra_endura").unwrap().table,
+                grid(2)
+            );
+            bundle.meta.provenance.remove("magazine_print_color");
+            assert!(
+                effective_lut(&bundle, "kodak_portra_endura")
+                    .unwrap_err()
+                    .contains("expected one canonical LUT combined")
+            );
+        }
+    }
     #[test]
     fn perceptual_difference_matches_cie_reference() {
         assert!(
@@ -1731,137 +1884,4 @@ mod tests {
         assert!(!delivered.passed);
         std::fs::remove_dir_all(root).unwrap();
     }
-}
-
-fn noise_figure(
-    root: &Path,
-    lut: &Lut,
-    input: &ColorSpaceEntry,
-    output: &ColorSpaceEntry,
-    samples: &[[f64; 3]],
-    gain: f64,
-    l: f64,
-) -> Result<String, String> {
-    let mut extent = 0.30f64;
-    for cs in [input, output] {
-        for i in 0..181 {
-            let h = std::f64::consts::TAU * i as f64 / 181.;
-            let c = gamut_chroma(cs, l, h);
-            extent = extent
-                .max((c * h.cos()).abs() * 1.15)
-                .max((c * h.sin()).abs() * 1.15);
-        }
-    }
-    let size = 480;
-    let width = size * 3;
-    let mut pixels = vec![[0.04; 3]; width * size];
-    let jacobian = |p: [f64; 3]| {
-        let mut j = [[0.; 3]; 3];
-        for a in 0..3 {
-            let mut plus = p;
-            let mut minus = p;
-            plus[a] += 0.005;
-            minus[a] -= 0.005;
-            let d = diff(
-                oklab(xyz(output, lut.sample(plus))),
-                oklab(xyz(output, lut.sample(minus))),
-            );
-            for c in 0..3 {
-                j[c][a] = d[c] / 0.01;
-            }
-        }
-        j
-    };
-    let put = |pixels: &mut Vec<[f64; 3]>, panel: usize, a: f64, b: f64, c: [f64; 3]| {
-        let x = ((a + extent) / (2. * extent) * (size - 1) as f64).round() as isize;
-        let y = ((extent - b) / (2. * extent) * (size - 1) as f64).round() as isize;
-        if x >= 0 && y >= 0 && x < size as isize && y < size as isize {
-            pixels[y as usize * width + panel * size + x as usize] = c;
-        }
-    };
-    for &p in samples {
-        let out = lut.sample(p);
-        let lab = oklab(xyz(output, out));
-        let j = jacobian(p);
-        let cov = |r: usize, c: usize| {
-            (0..3)
-                .map(|k| j[r][k] * j[c][k] * 0.005f64.powi(2))
-                .sum::<f64>()
-        };
-        let a = cov(1, 1);
-        let b = cov(1, 2);
-        let d = cov(2, 2);
-        let theta = 0.5 * (2. * b).atan2(a - d);
-        let disc = ((a - d).powi(2) + 4. * b * b).sqrt();
-        let major = ((a + d + disc) / 2.).max(0.).sqrt() * 3.;
-        let minor = ((a + d - disc) / 2.).max(0.).sqrt() * 3.;
-        for i in 0..360 {
-            let angle = std::f64::consts::TAU * i as f64 / 360.;
-            let u = major * angle.cos();
-            let v = minor * angle.sin();
-            put(
-                &mut pixels,
-                0,
-                lab[1] + u * theta.cos() - v * theta.sin(),
-                lab[2] + u * theta.sin() + v * theta.cos(),
-                display(out, output),
-            );
-        }
-    }
-    let grid = 96;
-    let mut heat = Vec::with_capacity(grid * grid);
-    let mut maximum = 0f64;
-    for row in 0..grid {
-        for col in 0..grid {
-            let a = -extent + 2. * extent * col as f64 / (grid - 1) as f64;
-            let b = -extent + 2. * extent * row as f64 / (grid - 1) as f64;
-            let rgb = mul(color(input).inv, okxyz([l, a, b]));
-            if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
-                let p = input
-                    .encode_rgb(rgb.map(|v| v / gain))
-                    .map(|v| v.clamp(0.006, 0.994));
-                let s = singular(jacobian(p))[0];
-                maximum = maximum.max(s);
-                heat.push(Some(s));
-            } else {
-                heat.push(None);
-            }
-        }
-    }
-    for row in 0..size {
-        for col in 0..size {
-            if let Some(s) = heat[(grid - 1 - row * grid / size) * grid + col * grid / size] {
-                let t = (s / maximum.max(1e-12)).clamp(0., 1.);
-                pixels[row * width + size + col] = [t, 0.2, 1. - t];
-            }
-        }
-    }
-    // The middle chroma ring's marginal luminance/chroma standard deviations,
-    // in polar coordinates, show directional noise response around hue.
-    let mut rosette = Vec::new();
-    let mut scale = 0f64;
-    for i in 0..16 {
-        let h = std::f64::consts::TAU * i as f64 / 16.;
-        let rgb = mul(color(input).inv, okxyz([l, 0.14 * h.cos(), 0.14 * h.sin()]));
-        if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
-            let p = input.encode_rgb(rgb.map(|v| v / gain));
-            if p.iter().all(|v| *v > 0.006 && *v < 0.994) {
-                let j = jacobian(p);
-                let sl = (j[0].iter().map(|v| v * v).sum::<f64>()).sqrt() * 0.005;
-                let sab = (j[1].iter().chain(&j[2]).map(|v| v * v).sum::<f64>()).sqrt() * 0.005;
-                scale = scale.max(sl).max(sab);
-                rosette.push((h, sl, sab));
-            }
-        }
-    }
-    for (h, sl, sab) in rosette {
-        for (s, c) in [(sl, [1., 0.8, 0.2]), (sab, [0.3, 0.8, 1.])] {
-            let r = s / scale.max(1e-12) * extent * 0.9;
-            for i in 0..300 {
-                let t = i as f64 / 299.;
-                put(&mut pixels, 2, r * t * h.cos(), r * t * h.sin(), c);
-            }
-        }
-    }
-    png(root, "noise_sensitivity", width, size, &pixels)
 }

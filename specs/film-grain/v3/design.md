@@ -6,7 +6,7 @@ V3 must retain the developed film-density boundary and the profile's three-subla
 
 V3 uses one Gaussian dye-support width shared by the layers and channels. Statistical event area controls count variance independently of this width. The CMY realizations are independent. The common width does not imply neutral grain or correlated channel samples. A raw, unprocessed negative scan shows weak inter-record grain correlation, consistent with this choice; see [evidence and limits](#evidence-and-limits).
 
-The microscopic V1-derived support formula is a diagnostic alternative, not the production default. With resolved Portra 800 default controls it gives sigma about 0.38–1.15 micrometers. Resolving its narrowest support at half-sigma requires about 23 billion field cells for a 35 mm long-edge 3:2 frame. Tiling reduces memory but does not remove this sampling cost. This alternative must not determine the full-frame allocation policy.
+The microscopic V1-derived support formula is a diagnostic alternative, not the production default. With resolved Portra 800 default controls it gives sigma about 0.38–1.15 micrometers. Resolving its narrowest support at half-sigma requires about 23 billion field cells for a 36 mm long-edge 3:2 frame. Tiling reduces memory but does not remove this sampling cost. This alternative must not determine the full-frame allocation policy.
 
 The finite-resolution canvas must pass certification on small regions before full-frame integration. Direct Gaussian/box integration defines its independent mathematical oracle. A spatial grid is a numerical representation, not a population of visible square grains. Full-frame performance and photographic acceptance are required before the release is offered as validated.
 
@@ -45,6 +45,10 @@ Use the existing convention that `camera.film_format_mm` gives the full-film lon
 Reuse existing crop rounding and slice normalization. Carry its resolved source rectangle `(x0,y0,w,h)` into V3. The requested region is `[x0*q,(x0+w)*q] × [y0*q,(y0+h)*q]`.
 
 Use existing output dimension rounding. For actual output dimensions `Wo,Ho`, partition the requested region into rectangular output footprints. Derive each axis pitch from the region extent divided by its actual output dimension. Do not use nominal upscale after rounding.
+
+When downstream spatial processing is active, extend the requested output lattice by the minimum whole output pixels that cover the full film. For source-axis length `N`, source crop `[a,a+b)`, and rounded output length `M`, retain pitch `p=b*q/M`. Prepend `ceil(a*M/b)` samples and append `ceil((N-a-b)*M/b)` samples, using integer ceiling division. The enclosing grid may extend less than one output footprint beyond each film edge. Extend source targets constantly there, while retaining independently addressed field cells. Apply downstream boundary rules at this enclosing grid's edges. Extract the requested integer output rectangle only after those stages. Aligned grids have the same boundary as an ordinary full-frame render; unaligned grids retain their requested pitch and phase.
+
+After V3 readout, scalar physical optical controls use the actual output pitch on the original source's long axis, with the horizontal axis selected for a square source. Scanner blur and unsharp-mask radii remain pixel controls. If rounded output pitches differ between axes, this scalar optical approximation is not isotropic in film space. Equal-film-scale comparisons require equal pitches or disabled downstream spatial effects.
 
 Treat the developed source target as piecewise constant on its source rectangles. Allocate sublayer targets on that grid first. Transfer each absolute sublayer target to a field cell by exact area-weighted overlap with source rectangles. This conservative remapping must preserve constants and integrated target mass. It must not add source-center bilinear reconstruction followed by a second box average. The source rectangle is a declared reconstruction assumption, not a new dye-support filter.
 
@@ -108,6 +112,8 @@ The local expectation is `t_lc`. Unformed cell variance is `M_lc*M_lc*a_lc*p_lc*
 
 Address streams by the full 64-bit seed, fixed V3 channel/layer tags, and global signed cell coordinates. Output indices, crop dimensions, tile size, traversal order, and thread scheduling must not enter the address. Keep rejection state local to a cell. Reuse the tagged RNG boundary where possible; do not allocate a full MT19937 state per cell to reproduce V1 order.
 
+Production packs the two signed 32-bit cell coordinates into one 64-bit address and applies a bijective integer mixer. Both coordinates, including formation halos, must fit this domain. This address mapping replaces the prototype mapping, so the same prototype seed produces a different realization. Counts remain conditionally independent with the same model parameters and probability law.
+
 ## Dye formation
 
 The continuum reference is piecewise constant cell mass density formed by a separable Gaussian of sigma `v3_dye_support_um`. Truncate each axis to exactly `[-4*sigma,4*sigma]` and normalize it to unit integral. Production and independent oracles must use this same declared truncation. It must not vary with field pitch.
@@ -123,6 +129,8 @@ Uniform expected readout is `D_c`. Nonuniform detail follows source reconstructi
 Tiles must include field-support and output-footprint halos. Halo values use global coordinates and full-film targets. Tile edges must not reflect, clamp, or truncate the field. Process layers into one channel accumulator and process channels sequentially where practical. A materialized full-film field is not required.
 
 Production partitions the output into horizontal bands of at most 128 output rows. Each band holds at most 2^24 field cells, including halos, and at most 2^24 source pixels. A coarse output pitch reads many cells per output row, so a band that would exceed the budget halves its row count until it fits. Band height only partitions storage; it must not change any cell, count, or readout value. Only a single output row above the budget fails, with an actionable error.
+
+Validate the coordinate domain, output storage arithmetic, stencil counts, and a conservative one-row resource bound before allocating stencils. Validate finite positive effective event areas and representable conditional mass and rates before generating counts. The maximum conditional rate is `2^52`; a proposed count outside the exact f64 integer range below `2^53` must fail explicitly instead of saturating. These resource limits must not change the count law or silently coarsen the field.
 
 ## Readout and detail
 
@@ -152,7 +160,7 @@ At native output dimensions, measure reconstruction-only response with support d
 
 The production field pitch is `h = sigma/2`, anchored to the full film. Do not additionally refine it from source dimensions or output sampling. Source-to-cell transfer integrates source rectangles; source resolution is not a hidden field-grid control. A finer globally fixed pitch is admissible when the full-frame workload allows it.
 
-With the default sigma of 3.5 micrometers, the pitch is 1.75 micrometers. A 35 mm long-edge 3:2 frame has about 282 million cells and 2.5 billion layer counts, before halos. A single f32 plane is about 1.1 GB. These estimates are workload bounds, not a timing measurement or a promise of interactive operation.
+With the default sigma of 3.5 micrometers, the pitch is 1.75 micrometers. A 36 mm long-edge 3:2 frame has about 282 million cells and 2.5 billion layer counts, before halos. A single f32 plane is about 1.1 GB. These estimates are workload bounds, not a timing measurement or a promise of interactive operation.
 
 Run `h,h/2,h/4` checks on small representative film regions, not three full-frame microscopic canvases. Hold target surface, model parameters, and output footprints fixed. Cover low/middle/high targets, slanted edges, narrow lines, fractional translations, subcell boxes, noninteger ratios, and film boundaries.
 

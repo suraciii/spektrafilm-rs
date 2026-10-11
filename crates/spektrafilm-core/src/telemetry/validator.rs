@@ -105,10 +105,10 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
     if report.operation.kind == OperationKind::Save && !report.attempts.is_empty() {
         return Err(ValidationError::UnexpectedAttempts);
     }
-    if let Some(source) = &report.source_render {
-        if source.operation_id == 0 || source.dimensions.contains(&0) {
-            return Err(ValidationError::NonFinite("source_render"));
-        }
+    if let Some(source) = &report.source_render
+        && (source.operation_id == 0 || source.dimensions.contains(&0))
+    {
+        return Err(ValidationError::NonFinite("source_render"));
     }
     validate_unavailable(&report.configuration.unavailable_fields)?;
     validate_unavailable(&report.execution.unavailable_fields)?;

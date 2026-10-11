@@ -63,7 +63,7 @@ fn integer_boundary_truncates_and_float_formats_preserve_headroom() {
         Err(image_io::ImageIoError::ExrDepth(8))
     ));
     assert!(!unsupported.exists());
-    std::fs::remove_dir_all(directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn jpeg_quality_controls_decoded_detail() {
         errors[1] < errors[0] * 0.1,
         "quality 100 must retain more texture: {errors:?}"
     );
-    std::fs::remove_dir_all(directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[cfg(feature = "precision-f64")]
@@ -228,7 +228,7 @@ fn exr_half_rounds_directly_from_f64_and_float32_exports_keep_their_precision() 
             }
         }
     }
-    std::fs::remove_dir_all(directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn export_settings_reject_format_mismatches() {
     assert!(!png.exists());
     assert!(!png_quality.exists());
     assert!(!exr.exists());
-    std::fs::remove_dir_all(directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn rendered_output_preserves_selected_encoding_and_float_samples() {
             assert!((to_f64(actual) - expected).abs() < 1e-7);
         }
     }
-    std::fs::remove_dir_all(directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[test]
@@ -411,5 +411,5 @@ fn concurrent_metadata_round_trips_initialize_xmp_once() {
             });
         }
     });
-    std::fs::remove_dir_all(directory).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
 }

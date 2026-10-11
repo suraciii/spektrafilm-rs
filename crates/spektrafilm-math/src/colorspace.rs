@@ -1,7 +1,7 @@
-/// Color space conversion matrices and utilities.
-///
-/// All matrices are row-major: output[i] = dot(matrix[i], input).
-/// Source: IEC 61966-2-1 (sRGB), ICC profiles, CIE standards.
+//! Color space conversion matrices and utilities.
+//!
+//! All matrices are row-major: output[i] = dot(matrix[i], input).
+//! Source: IEC 61966-2-1 (sRGB), ICC profiles, CIE standards.
 
 /// sRGB → CIE XYZ (D65), assuming linear input.
 /// Matches Python colour-science 4-digit precision for exact parity.
@@ -147,6 +147,8 @@ pub const CAT02_INVERSE: [[f32; 3]; 3] = [
 
 /// CIE D50 white point (XYZ, Y=1).
 pub const D50_XYZ: [f32; 3] = [0.96422, 1.0, 0.82521];
+/// CIE D50 white point (XYZ, Y=1) in f64 — the ICC PCS illuminant.
+pub const D50_XYZ_F64: [f64; 3] = [0.96422, 1.0, 0.82521];
 /// CIE D55 white point (XYZ, Y=1).
 pub const D55_XYZ: [f32; 3] = [0.95682, 1.0, 0.92149];
 /// CIE D65 white point (XYZ, Y=1).
@@ -279,6 +281,26 @@ pub fn chromatic_adaptation_matrix_cat16_f64(
     von_kries(src_white, dst_white, &FWD, &INV)
 }
 
+/// Bradford (Lam 1985) von Kries chromatic adaptation — the ICC/LittleCMS
+/// default adaptation transform. The magazine print appearance reference
+/// converts through LittleCMS, so its Lab round-trip uses Bradford.
+pub fn chromatic_adaptation_matrix_bradford_f64(
+    src_white: [f64; 3],
+    dst_white: [f64; 3],
+) -> [[f64; 3]; 3] {
+    const FWD: [[f64; 3]; 3] = [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
+    ];
+    const INV: [[f64; 3]; 3] = [
+        [0.9869929, -0.1470543, 0.1599627],
+        [0.4323053, 0.5183603, 0.0492912],
+        [-0.0085287, 0.0400428, 0.9684867],
+    ];
+    von_kries(src_white, dst_white, &FWD, &INV)
+}
+
 /// Shared von Kries adaptation: `inv · diag(dst_lms/src_lms) · fwd`, where
 /// `fwd`/`inv` are the cone matrix and its inverse for the chosen transform.
 fn von_kries(
@@ -401,6 +423,8 @@ impl RgbColorSpace {
     /// reproduces for Python parity.
     pub fn rgb_to_rgb_identity(&self) -> [[f64; 3]; 3] {
         let mut m = [[0.0f64; 3]; 3];
+        // Keep reference matrix products in index form.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             for j in 0..3 {
                 m[i][j] = self.matrix_xyz_to_rgb[i][0] * self.matrix_rgb_to_xyz[0][j]
@@ -678,6 +702,8 @@ pub fn conversion_matrix(source: &RgbColorSpace, destination: &RgbColorSpace) ->
         chromatic_adaptation_matrix_f64(source.whitepoint_xyz(), destination.whitepoint_xyz());
     let mut adapted = [[0.0; 3]; 3];
     let mut result = [[0.0; 3]; 3];
+    // Keep reference CAT02 matrix products in index form.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..3 {
         for j in 0..3 {
             for k in 0..3 {
@@ -685,6 +711,8 @@ pub fn conversion_matrix(source: &RgbColorSpace, destination: &RgbColorSpace) ->
             }
         }
     }
+    // Keep reference CAT02 matrix products in index form.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..3 {
         for j in 0..3 {
             for k in 0..3 {
@@ -1359,8 +1387,8 @@ mod tests {
         };
         for (name, white, expected) in references {
             let space = resolve(name).unwrap();
-            for channel in 0..3 {
-                assert_reference(space.whitepoint_xyz()[channel], white[channel], name);
+            for (channel, &expected_white) in white.iter().enumerate() {
+                assert_reference(space.whitepoint_xyz()[channel], expected_white, name);
             }
             for (index, probe) in probes.iter().copied().enumerate() {
                 let multiply = |matrix: &[[f64; 3]; 3]| {
@@ -1442,6 +1470,8 @@ mod tests {
     #[test]
     fn test_identity_adaptation() {
         let m = chromatic_adaptation_matrix(D65_XYZ, D65_XYZ);
+        // Keep reference matrix indices for the identity comparison.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };

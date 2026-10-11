@@ -6,30 +6,22 @@ use serde::{Deserialize, Serialize};
 /// V3 is the mixed film-coordinate dye field (`specs/film-grain/v3/`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum GrainEngine {
+    #[default]
     V1,
     V2,
     V3,
 }
 
-impl Default for GrainEngine {
-    fn default() -> Self {
-        Self::V1
-    }
-}
-
 /// Procedural Grain V2 generation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum GrainV2Mode {
+    #[default]
     Analogue,
     Noise,
-}
-
-impl Default for GrainV2Mode {
-    fn default() -> Self {
-        Self::Analogue
-    }
 }
 
 fn default_grain_v2_profile() -> String {
@@ -44,7 +36,7 @@ pub enum GrainV2FilmType {
     Positive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrainParams {
     #[serde(default = "default_true")]

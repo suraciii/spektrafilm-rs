@@ -97,7 +97,8 @@ fn positive_scan_cpu_override_preserves_stage_reports() {
             .collect(),
     );
     let expected = runtime.process(image.clone(), &CpuBackend).unwrap();
-    for backend in [&CpuBackend as &dyn spektrafilm_gpu::ComputeBackend] {
+    {
+        let backend = &CpuBackend as &dyn spektrafilm_gpu::ComputeBackend;
         let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
         operation.set_render_configuration(runtime.telemetry_configuration());
         operation.set_input_dimensions(image.width, image.height);

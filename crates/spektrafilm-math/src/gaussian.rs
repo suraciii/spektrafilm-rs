@@ -80,8 +80,8 @@ pub fn gaussian_blur(img: &ImageBuf, sigma: impl Into<f64>) -> ImageBuf {
     });
 
     let mut out = ImageBuf::new(img.width, img.height);
-    for c in 0..3 {
-        out.write_channel(c, &channels[c]);
+    for (c, channel) in channels.iter().enumerate() {
+        out.write_channel(c, channel);
     }
     out
 }
@@ -130,6 +130,8 @@ fn fir_blur_1d(
             .enumerate()
             .for_each(|(y, row_dst)| {
                 let row_src = &src[y * w..(y + 1) * w];
+                // The index supplies reflected sample coordinates.
+                #[allow(clippy::needless_range_loop)]
                 for x in 0..w {
                     let mut sum = ZERO;
                     for (ki, &kv) in kernel.iter().enumerate() {

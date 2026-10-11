@@ -19,13 +19,37 @@ build-f64:
 decode-raw:
     cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui
 
-check:
-    cargo check --locked --workspace
+# Check formatting without modifying files.
+fmt:
+    cargo fmt --all -- --check
 
+# Type-check every workspace target with default features.
+check:
+    cargo check --locked --workspace --all-targets
+
+# Type-check every workspace target with f64 precision.
+check-f64:
+    cargo check --locked --workspace --all-targets --features precision-f64
+
+# Lint the workspace; any first-party warning fails. The vendored wgpu-hal patch
+# under vendor/ is a local path dependency and keeps its own warnings.
+clippy:
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+
+# Run the workspace test suite in the f64 reference configuration.
 test:
     cargo test --locked --workspace --features precision-f64
 
-ci: check test
+# Reject Python bytecode and cache directories in the Git index.
+check-python-cache:
+    python3 scripts/check_python_cache.py
+
+# Full local gate. PR CI runs this same command.
+ci: check-python-cache fmt check check-f64 clippy test
+
+# Run the full gate and retain source provenance, output, and exit status.
+verify evidence_dir:
+    python3 scripts/verify.py {{quote(evidence_dir)}}
 
 # Create a self-contained portable directory and archive under dist/.
 [unix]

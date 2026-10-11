@@ -78,22 +78,6 @@ pub(crate) fn channel_density(profile: &Profile) -> Vec<[f64; 3]> {
         .collect()
 }
 
-pub(crate) fn print_sensitivity(print: &Profile) -> Vec<[f64; 3]> {
-    print
-        .data
-        .log_sensitivity
-        .iter()
-        .map(|row| {
-            let mut sensitivity = [0.0; 3];
-            for c in 0..3 {
-                let value = 10.0f64.powf(row.get(c).copied().unwrap_or(0.0));
-                sensitivity[c] = if value.is_nan() { 0.0 } else { value };
-            }
-            sensitivity
-        })
-        .collect()
-}
-
 pub(crate) fn dir_matrix(dir: &crate::params::couplers::DirCouplersParams) -> [[f64; 3]; 3] {
     spektrafilm_model::couplers::compute_dir_couplers_matrix(
         dir.gamma_samelayer_rgb,
@@ -149,13 +133,15 @@ impl ScanColorContext {
         // Python's integrate/contract chain, including the division by
         // `normalization` before the xy roundtrip below.
         let mut illu_xyz = [0.0f64; 3];
+        // The wavelength index aligns illuminant and color-matching samples.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n_wl {
             illu_xyz[0] += illuminant[i] * spectral::CMF_X_F64[i];
             illu_xyz[1] += illuminant[i] * spectral::CMF_Y_F64[i];
             illu_xyz[2] += illuminant[i] * spectral::CMF_Z_F64[i];
         }
-        for c in 0..3 {
-            illu_xyz[c] /= normalization;
+        for value in &mut illu_xyz {
+            *value /= normalization;
         }
 
         // XYZ_to_xy then xy_to_xyz roundtrip (renormalizes Y to exactly 1).
@@ -211,6 +197,8 @@ impl PreparedChain {
             &params.io.output_color_space,
         );
         let mut scan_xyz_to_rgb = [[0.0f64; 3]; 3];
+        // Matrix multiplication indexes both operands by row and column.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             for j in 0..3 {
                 scan_xyz_to_rgb[i][j] = scan.base_xyz_to_rgb[i][0] * scan.adapt[0][j]

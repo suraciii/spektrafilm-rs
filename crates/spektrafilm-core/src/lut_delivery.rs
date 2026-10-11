@@ -134,10 +134,10 @@ pub fn write_bundle(bundle: &Bundle, path: &Path, options: &DeliveryOptions) -> 
     let (root, expected_archive) = bundle_paths(path, zip);
     let meta = write_bundle_files(bundle, &root, options)?;
     let written = finalize_bundle(&root, &meta, zip)?;
-    if let Some(expected) = expected_archive {
-        if expected != written {
-            fs::rename(written, expected)?;
-        }
+    if let Some(expected) = expected_archive
+        && expected != written
+    {
+        fs::rename(written, expected)?;
     }
     Ok(meta)
 }
@@ -357,10 +357,8 @@ pub fn bundle_readme_text(meta: &BundleMeta) -> String {
         }
     }
     s.push_str("\n## Apply order\n\n");
-    if meta.workflow_route == "input > film > scan > magazine"
-        && meta.provenance.contains_key("magazine_print_color")
-    {
-        s.push_str("Apply the film-scan stages in the declared topology; the final `magazine_*` RGB LUT includes the bundled magazine print color appearance. This is a magazine appearance route, not a photographic print transform.\n");
+    if meta.provenance.contains_key("magazine_print_color") {
+        s.push_str("Apply the stages in the declared topology; the final `magazine_*` RGB LUT includes the bundled magazine print color appearance.\n");
     } else {
         s.push_str(match meta.topology {
             Topology::One => "Apply the combined LUT for the chosen print in the declared input and output encodings.\n",
@@ -437,11 +435,11 @@ pub fn finalize_bundle(root: &Path, meta: &BundleMeta, zip: bool) -> Result<Path
     fs::write(root.join("bundle.json"), metadata)?;
     let old_readme = fs::read_to_string(root.join("README.md")).ok();
     let mut readme = bundle_readme_text(meta);
-    if let Some(old) = old_readme {
-        if let Some(quality) = old.split_once("\n## Quality\n").map(|(_, section)| section) {
-            readme.push_str("\n## Quality\n");
-            readme.push_str(quality);
-        }
+    if let Some(old) = old_readme
+        && let Some(quality) = old.split_once("\n## Quality\n").map(|(_, section)| section)
+    {
+        readme.push_str("\n## Quality\n");
+        readme.push_str(quality);
     }
     fs::write(root.join("README.md"), readme)?;
     if !zip {
@@ -512,6 +510,22 @@ mod tests {
         ))
     }
     #[test]
+    fn magazine_instructions_follow_provenance_on_any_route() {
+        let mut meta = fixture(None).meta;
+        for route in [
+            "input",
+            "input > film > scan",
+            "input > film > print > scan",
+        ] {
+            meta.workflow_route = route.into();
+            meta.provenance
+                .insert("magazine_print_color".into(), "included".into());
+            assert!(bundle_readme_text(&meta).contains("final `magazine_*` RGB LUT"));
+            meta.provenance.remove("magazine_print_color");
+            assert!(!bundle_readme_text(&meta).contains("final `magazine_*` RGB LUT"));
+        }
+    }
+    #[test]
     fn formats_license_and_archive_have_resolvable_artifacts() {
         let root = temp_root("formats");
         let bundle = fixture(None);
@@ -540,7 +554,7 @@ mod tests {
             } else {
                 LutFormat::HaldPng
             };
-            let read = crate::lut_formats::read_lut(format, &root.join(&file.path)).unwrap();
+            let read = crate::lut_formats::read_lut(format, root.join(&file.path)).unwrap();
             for (a, b) in read.table.iter().zip(&bundle.luts[0].1.table) {
                 for c in 0..3 {
                     assert!((a[c] - b[c]).abs() <= 0.5 / 255.0 + 1e-10);

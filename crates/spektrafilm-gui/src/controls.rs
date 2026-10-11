@@ -66,7 +66,7 @@ pub fn show(
             });
         }
         if section == "Enlarger" {
-            egui::CollapsingHeader::new("Enlarger").default_open(true).show(ui, |ui| {
+            ui.scope(|ui| {
                 flags.runtime_changed |= numeric(ui, "print exposure", &mut params.enlarger.print_exposure, 0.0, 1000000.0, 0.02, 2, "Changes the exposure time set in the virtual enlarger");
                 flags.runtime_changed |= toggle(ui, "print auto compensation", &mut params.enlarger.print_exposure_compensation, "Auto adjust the print exposure for the camera exposure compensation ev");
                 flags.runtime_changed |= numeric(ui, "print y filter shift", &mut params.enlarger.y_filter_shift, -200.0, 1000000.0, 1.0, 2, "Y filter shift of the color enlarger from a neutral position, in Kodak CC units");
@@ -74,7 +74,7 @@ pub fn show(
             });
         }
         if section == "Scanner" {
-            egui::CollapsingHeader::new("Scanner").default_open(false).show(ui, |ui| {
+            ui.scope(|ui| {
                 if params.workflow.route == "input > film > scan" {
                     flags.runtime_changed |= choice_tip(
                         ui,
@@ -132,7 +132,6 @@ pub fn show(
         if section == "Magazine print color" {
             ui.collapsing(section, |ui| {
                 let magazine = &mut params.magazine_print_color;
-                flags.runtime_changed |= ui.checkbox(&mut magazine.active, "Active").changed();
                 flags.runtime_changed |= numeric(
                     ui,
                     "strength",
@@ -168,7 +167,7 @@ pub fn show(
             });
         }
         if section == "Film base" {
-            egui::CollapsingHeader::new("Base").default_open(false).show(ui, |ui| {
+            ui.scope(|ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.base.active, "Enable film base-density (film base + fog / orange mask) tuning.");
                 flags.runtime_changed |= numeric(ui, "scale", &mut params.film_render.base.scale, 0.0, 1000000.0, 0.05, 2, "Overall multiplier on the film base density.");
                 flags.runtime_changed |= numeric(ui, "tilt", &mut params.film_render.base.tilt, -1000000.0, 1000000.0, 0.05, 2, "Spectral tilt of the film base, pivoting at 555 nm (1.0 = +0.1 density at 650 nm; negative tilts the other way).");
@@ -187,7 +186,7 @@ pub fn show(
             });
         }
         if section == "Convert" {
-            egui::CollapsingHeader::new("Convert").default_open(false).show(ui, |ui| {
+            ui.scope(|ui| {
                 flags.runtime_changed |= choice_tip(ui, "scan illuminant", &mut params.film_render.convert.scan_illuminant, &["D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Light source of the scanning / capture rig used to digitize the negative. Set it to match your rig (a physical input); the film Base is the creative lever. Only used by the 'convert-film' workflow routes.");
                 flags.runtime_changed |= numeric(ui, "exposure compensation ev", &mut params.film_render.convert.exposure_compensation_ev, -100.0, 100.0, 0.25, 2, "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density.");
                 flags.runtime_changed |= numeric(ui, "base percentile", &mut params.film_render.convert.base_percentile, 50.0, 100.0, 0.5, 2, "Brightest-pixels percentile used by 'Detect base' to sample the clear / unexposed film (99 = brightest 1%). Detect base fits the film Base so that clear film maps to density 0 (unexposed -> neutral).");
@@ -217,7 +216,7 @@ pub fn show(
             });
         }
         if section == "Grain" {
-            egui::CollapsingHeader::new("Grain").default_open(true).show(ui, |ui| {
+            ui.scope(|ui| {
                 let grain = &mut params.film_render.grain;
                 flags.runtime_changed |= toggle(ui, "active", &mut grain.active, "Add grain to the negative");
                 egui::ComboBox::from_label("Engine")
@@ -264,7 +263,7 @@ pub fn show(
                     flags.runtime_changed |= numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, 1.0, 32.0, 0.5, 1, "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
                     flags.runtime_changed |= numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, 0.1, 8.0, 0.05, 2, "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
                     flags.runtime_changed |= tuple(ui, "rms granularity", &mut grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
-                    flags.runtime_changed |= tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, 0.0, 1000000.0, 0.25, 2, "Relative particle scale per emulsion sublayer.");
+                    flags.runtime_changed |= tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, 0.01, 1000000.0, 0.25, 2, "Positive relative particle scale per emulsion sublayer.");
                     flags.runtime_changed |= tuple(ui, "density min", &mut grain.density_min, 0.0, 1000000.0, 1.0, 2, "Minimum grain density.");
                     flags.runtime_changed |= tuple(ui, "uniformity", &mut grain.uniformity, 0.0, 1.0, 0.01, 2, "Per-channel grain uniformity.");
                 } else {
@@ -281,7 +280,7 @@ pub fn show(
             });
         }
         if section == "Halation" {
-            egui::CollapsingHeader::new("Halation").default_open(false).show(ui, |ui| {
+            ui.scope(|ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.halation.active, "Enable halation and in-emulsion scatter.");
                 flags.runtime_changed |= numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, 0.0, 1000000.0, 0.05, 2, "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering.");
                 flags.runtime_changed |= numeric(ui, "scatter spatial scale", &mut params.film_render.halation.scatter_spatial_scale, 0.0, 1000000.0, 0.1, 2, "High-level scatter size multiplier (1.0 = physical defaults). Scales both core and tail sigmas.");
@@ -301,7 +300,7 @@ pub fn show(
             });
         }
         if section == "Couplers" {
-            egui::CollapsingHeader::new("Couplers").default_open(false).show(ui, |ui| {
+            ui.scope(|ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.dir_couplers.active, "Enable DIR coupler inhibition.");
                 flags.runtime_changed |= numeric(ui, "amount", &mut params.film_render.dir_couplers.amount, 0.0, 1000000.0, 0.05, 2, "Global multiplier on the DIR coupler inhibition matrix. 1.0 leaves the per-channel gammas as-is.");
                 flags.runtime_changed |= numeric(ui, "inhibition samelayer", &mut params.film_render.dir_couplers.inhibition_samelayer, 0.0, 1000000.0, 0.05, 2, "Multiplier on the same-layer (diagonal) inhibition. Controls overall contrast / gamma reduction within each RGB layer.");
@@ -318,7 +317,7 @@ pub fn show(
             });
         }
         if section == "Camera diffusion" || section == "Enlarger diffusion" {
-            ui.collapsing("Diffusion", |ui| {
+            ui.scope(|ui| {
                 let filter = if section == "Camera diffusion" { &mut params.camera.diffusion_filter } else { &mut params.enlarger.diffusion_filter };
                 flags.runtime_changed |= diffusion(ui, filter);
             });
@@ -460,6 +459,8 @@ fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams) -> bool {
     changed
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn optional_numeric(
     ui: &mut Ui,
     label: &str,
@@ -479,6 +480,8 @@ fn optional_numeric(
     changed
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn tuple<T: egui::emath::Numeric, const N: usize>(
     ui: &mut Ui,
     label: &str,
@@ -516,14 +519,45 @@ pub fn choice_tip(
     choices: &[&str],
     tooltip: &str,
 ) -> bool {
+    choice_tip_options(
+        ui,
+        label,
+        value,
+        choices.iter().map(|&option| (option, option)),
+        tooltip,
+    )
+}
+
+pub fn choice_tip_labeled(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: &[(&str, &str)],
+    tooltip: &str,
+) -> bool {
+    choice_tip_options(ui, label, value, choices.iter().copied(), tooltip)
+}
+
+fn choice_tip_options<'a>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut String,
+    choices: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    tooltip: &str,
+) -> bool {
+    let selected_label = choices
+        .clone()
+        .find(|&(option, _)| option == value.as_str())
+        .map(|(_, display_label)| display_label)
+        .unwrap_or(value.as_str());
     let mut changed = false;
     egui::ComboBox::from_label(label)
-        .selected_text(value.as_str())
+        .selected_text(selected_label)
         .show_ui(ui, |ui| {
-            for &option in choices {
+            for (option, display_label) in choices {
                 // Allocate only when a selection changes, not for every option each frame.
                 if ui
-                    .selectable_label(value.as_str() == option, option)
+                    .selectable_label(value.as_str() == option, display_label)
                     .on_hover_text(tooltip)
                     .clicked()
                     && value.as_str() != option
@@ -538,6 +572,8 @@ pub fn choice_tip(
     changed
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn extra_choice(
     ui: &mut Ui,
     extras: &mut Value,
@@ -592,6 +628,8 @@ pub fn extra_bool_tip(
     }
 }
 
+// UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn extra_number(
     ui: &mut Ui,
     extras: &mut Value,

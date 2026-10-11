@@ -24,16 +24,14 @@ const BAND_OUTPUT_ROWS: usize = 128;
 /// row above the budget fails with an actionable error.
 const MAX_BAND_CELLS: u64 = 1 << 24;
 
-/// Source-pixel rectangle of the requested film region.
-///
-/// The rectangle selects the readout region only: field cells keep their
-/// global film coordinates, so a crop never restarts texture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceRect {
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub height: usize,
+/// Rectangular readout footprints in global film coordinates. Cropping
+/// changes the origin and dimensions, while retaining the full-frame pitch.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReadoutGrid {
+    pub origin_um: [f64; 2],
+    pub pitch_um: [f64; 2],
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Resolved V3 inputs. Plain data — no profile or runtime types.
@@ -70,8 +68,7 @@ pub struct GrainV3Params {
     pub expectation: bool,
 }
 
-/// Realize the conditional dye field over `rect` and read it at
-/// `out_width x out_height`.
+/// Realize the conditional dye field and read the global film `grid`.
 ///
 /// `target` is the full-source developed CMY density and `pitch_um` its pixel
 /// pitch on the full film. The returned image holds the readout density with
@@ -79,22 +76,34 @@ pub struct GrainV3Params {
 pub fn apply(
     target: &ImageBuf,
     pitch_um: f64,
-    rect: SourceRect,
-    out_width: u32,
-    out_height: u32,
+    grid: ReadoutGrid,
     params: &GrainV3Params,
+) -> Result<ImageBuf, String> {
+    apply_with_budget(target, pitch_um, grid, params, MAX_BAND_CELLS)
+}
+
+fn apply_with_budget(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &GrainV3Params,
+    max_band_cells: u64,
 ) -> Result<ImageBuf, String> {
     let model = Model::new(params, pitch_um)?;
     let src_w = target.width as usize;
     let src_h = target.height as usize;
-    if rect.width == 0 || rect.height == 0 {
-        return Err("film grain V3: the requested film rectangle is empty".to_owned());
+    if src_w == 0 || src_h == 0 {
+        return Err("film grain V3: source dimensions must be positive".to_owned());
     }
-    if rect.x + rect.width > src_w || rect.y + rect.height > src_h {
-        return Err(format!(
-            "film grain V3: film rectangle {}x{}+({},{}) exceeds the {}x{} source",
-            rect.width, rect.height, rect.x, rect.y, src_w, src_h
-        ));
+    let out_width = grid.width;
+    let out_height = grid.height;
+    if grid.origin_um.iter().any(|v| !v.is_finite())
+        || grid.pitch_um.iter().any(|v| !v.is_finite() || *v <= 0.0)
+    {
+        return Err(
+            "film grain V3: readout origin must be finite and readout pitch finite and positive"
+                .to_owned(),
+        );
     }
     if out_width == 0 || out_height == 0 {
         return Err("film grain V3: output dimensions must be positive".to_owned());
@@ -103,21 +112,64 @@ pub fn apply(
 
     let h = model.cell_um;
     // Requested region in film coordinates.
-    let x0 = rect.x as f64 * pitch_um;
-    let x1 = (rect.x + rect.width) as f64 * pitch_um;
-    let y0 = rect.y as f64 * pitch_um;
-    let y1 = (rect.y + rect.height) as f64 * pitch_um;
+    let [x0, y0] = grid.origin_um;
+    let x1 = x0 + out_width as f64 * grid.pitch_um[0];
+    let y1 = y0 + out_height as f64 * grid.pitch_um[1];
 
     let d = model.radius;
     let dr = d as usize;
     // Cells the readout footprints can touch, in global cell indices.
+    // Packing two signed 32-bit coordinates gives every supported cell a
+    // distinct 64-bit stream address, including the formation halo.
+    let address_limit = i32::MAX as f64 - d as f64 - 1.0;
+    if [x0, x1, y0, y1]
+        .iter()
+        .any(|v| !v.is_finite() || (*v / h).abs() > address_limit)
+        || !(src_w as f64 * pitch_um).is_finite()
+        || !(src_h as f64 * pitch_um).is_finite()
+    {
+        return Err("film grain V3: film coordinates and support halo exceed the signed 32-bit cell address range; reduce the film extent or increase the field pitch".to_owned());
+    }
     let inner_i0 = (x0 / h).floor() as i64;
     let inner_i1 = (x1 / h).ceil() as i64 - 1;
     let cols = (inner_i1 - inner_i0 + 1) as usize;
     let ext_cols = cols + 2 * d as usize;
-    let col_w = (x1 - x0) / out_width as f64;
-    let row_w = (y1 - y0) / out_height as f64;
+    let [col_w, row_w] = grid.pitch_um;
 
+    if col_w <= 0.0
+        || row_w <= 0.0
+        || x0 + col_w == x0
+        || y0 + row_w == y0
+        || x1 - col_w == x1
+        || y1 - row_w == y1
+    {
+        return Err("film grain V3: output footprints are below film-coordinate precision; reduce the output dimensions".to_owned());
+    }
+    // Every output row must fit before any readout/source stencils or output
+    // storage are built. Ceil(width/h)+1 bounds cell coverage at any phase.
+    let row_cells = (row_w / h).ceil() as u64 + 1 + 2 * d as u64;
+    let band_cells = row_cells.checked_mul(ext_cols as u64).unwrap_or(u64::MAX);
+    let source_cols =
+        (src_w as u64).min(((ext_cols as f64 * h / pitch_um).ceil() as u64).saturating_add(1));
+    let source_rows =
+        (src_h as u64).min(((row_cells as f64 * h / pitch_um).ceil() as u64).saturating_add(1));
+    let band_pixels = source_cols * source_rows;
+    if band_cells > max_band_cells || band_pixels > max_band_cells {
+        return Err(format!(
+            "film grain V3: one output row needs up to {band_cells} field cells and {band_pixels} source pixels, above the {max_band_cells} limit; reduce the requested film region or increase the output size"
+        ));
+    }
+    let output_bytes = (out_width as u64)
+        .checked_mul(out_height as u64)
+        .and_then(|n| {
+            n.checked_mul(3 * std::mem::size_of::<spektrafilm_math::precision::Scalar>() as u64)
+        });
+    if output_bytes.is_none_or(|bytes| bytes > isize::MAX as u64) {
+        return Err("film grain V3: output storage exceeds the addressable allocation size; reduce the output dimensions".to_owned());
+    }
+    if out_width as u64 + out_height as u64 > MAX_BAND_CELLS {
+        return Err("film grain V3: output-axis stencil storage exceeds the allocation budget; reduce the output dimensions".to_owned());
+    }
     // Readout stencils repeat along the other axis, so build each once.
     let x_read: Vec<Vec<(i64, f64)>> = (0..out_width)
         .map(|px| readout_stencil(x0 + px as f64 * col_w, x0 + (px + 1) as f64 * col_w, h))
@@ -134,7 +186,7 @@ pub fn apply(
     // outside the film bounds, so this range stays inside the source.
     let sx_lo = edge(((inner_i0 - d) as f64 * h / pitch_um).floor() as i64, src_w);
     let sx_hi = edge(
-        (((inner_i1 + d + 1) as f64 * h) / pitch_um).ceil() as i64 - 1,
+        ((((inner_i1 + d + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
         src_w,
     );
 
@@ -156,18 +208,20 @@ pub fn apply(
             let ext_j1 = j_hi + d;
             let sy_lo = edge((ext_j0 as f64 * h / pitch_um).floor() as i64, src_h);
             let sy_hi = edge(
-                (((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64 - 1,
+                ((((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
                 src_h,
             );
-            let band_cells = ((ext_j1 - ext_j0 + 1) as u64) * (ext_cols as u64);
+            let band_cells = ((ext_j1 - ext_j0 + 1) as u64)
+                .checked_mul(ext_cols as u64)
+                .unwrap_or(u64::MAX);
             let band_pixels = ((sy_hi - sy_lo + 1) as u64) * ((sx_hi - sx_lo + 1) as u64);
-            if band_cells <= MAX_BAND_CELLS && band_pixels <= MAX_BAND_CELLS {
+            if band_cells <= max_band_cells && band_pixels <= max_band_cells {
                 break (band_end, j_lo, j_hi, ext_j0, ext_j1, sy_lo, sy_hi);
             }
             if band_rows == 1 {
                 return Err(format!(
                     "film grain V3: one output row needs {band_cells} field cells and \
-                     {band_pixels} source pixels, above the {MAX_BAND_CELLS} limit; reduce the \
+                     {band_pixels} source pixels, above the {max_band_cells} limit; reduce the \
                      requested film region or increase the output size"
                 ));
             }
@@ -223,19 +277,20 @@ pub fn apply(
                 .zip(s1.par_chunks_mut(ext_cols))
                 .zip(s2.par_chunks_mut(ext_cols))
                 .enumerate()
-                .for_each(|(r, ((row0, row1), row2))| {
+                .try_for_each(|(r, ((row0, row1), row2))| -> Result<(), String> {
                     let j = ext_j0 + r as i64;
                     let yst = &y_stencils[r];
                     for ci in 0..ext_cols {
                         let i = inner_i0 - d + ci as i64;
                         let cell =
                             remap_layers(&planes, &x_stencils[ci], yst, (sx_lo, sy_lo), px_cols);
-                        let add = model.accumulate(i, j, cell, cell_area);
+                        let add = model.accumulate(i, j, cell, cell_area)?;
                         row0[ci] = add[0];
                         row1[ci] = add[1];
                         row2[ci] = add[2];
                     }
-                });
+                    Ok(())
+                })?;
         }
 
         hbuf.resize(ext_rows * cols, 0.0);
@@ -339,6 +394,15 @@ impl Model {
                 production_cell
             ));
         }
+        let radius_value = (SUPPORT_SIGMAS * (params.support_um / cell_um)).ceil() + 1.0;
+        // Even the smallest output footprint needs the full square halo.
+        if !radius_value.is_finite() || (2.0 * radius_value + 1.0).powi(2) > MAX_BAND_CELLS as f64 {
+            return Err("film grain V3: support halo exceeds the single-row field-cell budget; increase the field pitch".to_owned());
+        }
+        let cell_area = cell_um * cell_um;
+        if !cell_area.is_finite() || cell_area <= 0.0 {
+            return Err("film grain V3: squared field pitch must be finite and > 0; reduce the dye support or increase the field pitch".to_owned());
+        }
         let mut channels = Vec::with_capacity(3);
         for c in 0..3 {
             channels.push(Channel::new(
@@ -349,9 +413,12 @@ impl Model {
                 std::array::from_fn(|l| params.layer_curves.iter().map(|row| row[l][c]).collect()),
             )?);
         }
+        for (c, channel) in channels.iter().enumerate() {
+            channel.check_sampling_bounds(c, cell_area)?;
+        }
         Ok(Self {
             taps: support_taps(params.support_um, cell_um),
-            radius: ((SUPPORT_SIGMAS * params.support_um / cell_um).ceil() as i64) + 1,
+            radius: radius_value as i64,
             cell_um,
             channels: channels
                 .try_into()
@@ -389,7 +456,13 @@ impl Model {
     /// `i`/`j` are global signed cell coordinates: they alone select the
     /// random stream, so a crop or a tile boundary cannot change a cell's
     /// counts.
-    fn accumulate(&self, i: i64, j: i64, layers: [[f64; 3]; 3], cell_area: f64) -> [f64; 3] {
+    fn accumulate(
+        &self,
+        i: i64,
+        j: i64,
+        layers: [[f64; 3]; 3],
+        cell_area: f64,
+    ) -> Result<[f64; 3], String> {
         let mut out = [0.0f64; 3];
         let index = cell_stream_index(i, j);
         for (c, ch) in self.channels.iter().enumerate() {
@@ -407,13 +480,13 @@ impl Model {
                     lambda
                 } else {
                     let mut rng = FastStatsRng::stream(self.seed, (c * 3 + l) as u64, index);
-                    poisson_exact(&mut rng, lambda) as f64
+                    poisson_exact(&mut rng, lambda)? as f64
                 };
                 density += mass * count / cell_area;
             }
             out[c] = density;
         }
-        out
+        Ok(out)
     }
 }
 
@@ -447,7 +520,7 @@ impl Channel {
             ));
         }
         let range = knots[knots.len() - 1] - knots[0];
-        if range <= 0.0 {
+        if !range.is_finite() || range <= 0.0 {
             return Err(format!(
                 "film grain V3: channel {c} composite density axis must have positive range \
                  (got {range})"
@@ -488,7 +561,7 @@ impl Channel {
             }
             max_total += value;
         }
-        if max_total <= 0.0 {
+        if !max_total.is_finite() || max_total <= 0.0 {
             return Err(format!(
                 "film grain V3: channel {c} has no positive layer capacity; the resolved profile \
                  must provide nonnegative sublayer curves with a positive sum"
@@ -501,10 +574,13 @@ impl Channel {
             frac[l] = maxima[l] / max_total;
             capacity[l] = maxima[l] + frac[l] * min;
             let scale = params.channel_scale[c] * params.particle_scale_sublayers[l];
+            let effective_area = params.event_area_um2 * scale;
             if !params.event_area_um2.is_finite()
                 || params.event_area_um2 <= 0.0
                 || !scale.is_finite()
                 || scale <= 0.0
+                || !effective_area.is_finite()
+                || effective_area <= 0.0
             {
                 return Err(format!(
                     "film grain V3: event_area_um2 * channel_scale[{c}] * \
@@ -512,7 +588,7 @@ impl Channel {
                     params.event_area_um2
                 ));
             }
-            area[l] = params.event_area_um2 * scale;
+            area[l] = effective_area;
         }
         let inv_dx = (0..knots.len() - 1)
             .map(|i| {
@@ -531,6 +607,49 @@ impl Channel {
             inv_dx,
             layers,
         })
+    }
+    /// Bound every occupancy before rendering. PTRS represents counts in
+    /// f64, so rates above half its consecutive-integer range are unsupported.
+    fn check_sampling_bounds(&self, c: usize, cell_area: f64) -> Result<(), String> {
+        if !self.cap_total.is_finite() || self.cap_total <= 0.0 {
+            return Err(format!(
+                "film grain V3: channel {c} total capacity must be finite and positive"
+            ));
+        }
+        let s_min = 1.0 - self.uniformity * (1.0 - 1e-6);
+        for l in 0..3 {
+            if self.cap[l] == 0.0 {
+                continue;
+            }
+            let numerator = cell_area * self.frac[l];
+            let denominator = self.area[l] * s_min;
+            let max_rate = numerator / denominator;
+            let mass_product = self.cap[l] * self.area[l];
+            let max_mass = mass_product / self.frac[l];
+            let max_density = max_mass * ((1u64 << 53) as f64) / cell_area;
+            if !self.cap[l].is_finite()
+                || self.frac[l] <= 0.0
+                || !numerator.is_finite()
+                || numerator <= 0.0
+                || !denominator.is_finite()
+                || denominator <= 0.0
+                || !max_rate.is_finite()
+                || max_rate <= 0.0
+                || max_rate > (1u64 << 52) as f64
+                || !mass_product.is_finite()
+                || mass_product <= 0.0
+                || !max_mass.is_finite()
+                || mass_product * s_min <= 0.0
+                || !max_density.is_finite()
+                || max_density > spektrafilm_math::precision::Scalar::MAX as f64 / 3.0
+            {
+                return Err(format!(
+                    "film grain V3: channel {c} layer {l} event area, capacity and field pitch produce an unrepresentable rate or dye mass (maximum rate {max_rate}, mass {max_mass}); adjust event area or field pitch; maximum supported rate is {}",
+                    1u64 << 52
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -813,9 +932,9 @@ fn allocate(target: f64, capacity: &[f64; 3], weights: &[f64; 3]) -> [f64; 3] {
 
 /// Exact Poisson variate: Knuth's multiplication below 30, Hörmann's PTRS
 /// above. Rounded normal approximations must not replace it.
-fn poisson_exact(rng: &mut FastStatsRng, lambda: f64) -> u64 {
+fn poisson_exact(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
     if lambda <= 0.0 {
-        return 0;
+        return Ok(0);
     }
     if lambda < 30.0 {
         let limit = (-lambda).exp();
@@ -824,7 +943,7 @@ fn poisson_exact(rng: &mut FastStatsRng, lambda: f64) -> u64 {
         loop {
             product *= rng.rand();
             if product <= limit {
-                return count;
+                return Ok(count);
             }
             count += 1;
         }
@@ -834,7 +953,7 @@ fn poisson_exact(rng: &mut FastStatsRng, lambda: f64) -> u64 {
 
 /// Hörmann 1993 transformed rejection with squeeze (PTRS), the same
 /// algorithm numpy uses for large rates.
-fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> u64 {
+fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
     let slam = lambda.sqrt();
     let loglam = lambda.ln();
     let b = 0.931 + 2.53 * slam;
@@ -845,17 +964,26 @@ fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> u64 {
         let u = rng.rand() - 0.5;
         let v = rng.rand();
         let us = 0.5 - u.abs();
-        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();
-        if us >= 0.07 && v <= vr {
-            return k as u64;
-        }
-        if k < 0.0 || (us < 0.013 && v > us) {
+        if us == 0.0 {
             continue;
+        }
+        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();
+        if k < 0.0 {
+            continue;
+        }
+        if us < 0.013 && v > us {
+            continue;
+        }
+        if !k.is_finite() || k >= (1u64 << 53) as f64 {
+            return Err("film grain V3: Poisson proposal exceeds the exact f64 integer range; increase event area or reduce field pitch".to_owned());
+        }
+        if us >= 0.07 && v <= vr {
+            return Ok(k as u64);
         }
         let lhs = v.ln() + inv_alpha.ln() - (a / (us * us) + b).ln();
         let rhs = -lambda + k * loglam - libm::lgamma(k + 1.0);
         if lhs <= rhs {
-            return k as u64;
+            return Ok(k as u64);
         }
     }
 }
@@ -863,9 +991,13 @@ fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> u64 {
 /// Global-cell address of one `(channel, layer)` stream. Crop bounds, tile
 /// size, traversal order and thread scheduling must not enter the address.
 fn cell_stream_index(i: i64, j: i64) -> u64 {
-    let x = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    let y = (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    (x ^ y).rotate_left(31)
+    debug_assert!(i32::try_from(i).is_ok() && i32::try_from(j).is_ok());
+    let mut address = ((i as u32 as u64) << 32) | j as u32 as u64;
+    // SplitMix64's finalizer is a permutation: odd multipliers and xor
+    // shifts preserve the packed address's uniqueness.
+    address = (address ^ (address >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    address = (address ^ (address >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    address ^ (address >> 31)
 }
 
 #[cfg(test)]
@@ -910,6 +1042,37 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct SourceRect {
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+    }
+
+    fn grid(rect: SourceRect, out: (u32, u32), pitch: f64) -> ReadoutGrid {
+        ReadoutGrid {
+            origin_um: [rect.x as f64 * pitch, rect.y as f64 * pitch],
+            pitch_um: [
+                rect.width as f64 * pitch / out.0 as f64,
+                rect.height as f64 * pitch / out.1 as f64,
+            ],
+            width: out.0,
+            height: out.1,
+        }
+    }
+
+    fn apply_region(
+        target: &ImageBuf,
+        pitch: f64,
+        rect: SourceRect,
+        width: u32,
+        height: u32,
+        p: &GrainV3Params,
+    ) -> Result<ImageBuf, String> {
+        apply(target, pitch, grid(rect, (width, height), pitch), p)
+    }
+
     fn region(width: u32, height: u32) -> SourceRect {
         SourceRect {
             x: 0,
@@ -950,7 +1113,7 @@ mod tests {
     }
 
     fn render(p: &GrainV3Params, image: &ImageBuf, rect: SourceRect, out: (u32, u32)) -> ImageBuf {
-        apply(image, PITCH, rect, out.0, out.1, p).expect("V3 render")
+        apply_region(image, PITCH, rect, out.0, out.1, p).expect("V3 render")
     }
 
     fn pixel(image: &ImageBuf, px: usize, py: usize) -> [f64; 3] {
@@ -1126,7 +1289,7 @@ mod tests {
             let counts: Vec<u64> = (0..samples)
                 .map(|index| {
                     let mut rng = FastStatsRng::stream(0x5EED_1234, 0, index);
-                    poisson_exact(&mut rng, lambda)
+                    poisson_exact(&mut rng, lambda).unwrap()
                 })
                 .collect();
             let mean = counts.iter().sum::<u64>() as f64 / samples as f64;
@@ -1659,79 +1822,247 @@ mod tests {
     }
 
     #[test]
+    fn stochastic_corner_readout_matches_independent_cell_variance() {
+        let mut model = Model::new(&params(None, false, 0, 1.0), PITCH).unwrap();
+        let layers = model.layer_targets([0.12; 3]);
+        let h = model.cell_um;
+        let stencil = readout_stencil(0.0, PITCH, h);
+        let lo = stencil[0].0 - model.radius;
+        let hi = stencil.last().unwrap().0 + model.radius;
+        let weights: Vec<f64> = (lo..=hi)
+            .map(|n| readout_weight(&model.taps, model.radius, &stencil, n))
+            .collect();
+        let ch = &model.channels[0];
+        let mut cell_variance = 0.0;
+        for l in 0..3 {
+            let occupancy = layers[0][l] / ch.cap[l];
+            let s = 1.0 - ch.uniformity * (1.0 - 1e-6) * occupancy;
+            let mass = ch.cap[l] * ch.area[l] * s / ch.frac[l];
+            let rate = h * h * ch.frac[l] * occupancy / (ch.area[l] * s);
+            cell_variance += rate * (mass / (h * h)).powi(2);
+        }
+        let expected_variance = cell_variance * weights.iter().map(|w| w * w).sum::<f64>().powi(2);
+        let mut sum = 0.0;
+        let mut sum2 = 0.0;
+        let samples = 4096;
+        for seed in 0..samples {
+            model.seed = seed;
+            let mut value = 0.0;
+            for (y, &wy) in weights.iter().enumerate() {
+                for (x, &wx) in weights.iter().enumerate() {
+                    value += wx
+                        * wy
+                        * model
+                            .accumulate(lo + x as i64, lo + y as i64, layers, h * h)
+                            .unwrap()[0];
+                }
+            }
+            sum += value;
+            sum2 += value * value;
+        }
+        let mean = sum / samples as f64;
+        let variance = (sum2 - sum * mean) / (samples - 1) as f64;
+        assert!((mean - 0.15).abs() < 5.0 * (expected_variance / samples as f64).sqrt());
+        assert!(
+            (variance / expected_variance - 1.0).abs() < 0.1,
+            "corner variance {variance}, independent-field variance {expected_variance}"
+        );
+    }
+
+    #[test]
+    fn signed_halo_cells_have_independent_streams_and_counts() {
+        let mut addresses = std::collections::HashSet::new();
+        for j in -32..=32 {
+            for i in -32..=32 {
+                assert!(
+                    addresses.insert(cell_stream_index(i, j)),
+                    "aliased cell ({i},{j})"
+                );
+            }
+        }
+        let samples = 8192;
+        let mut sums = [0.0; 5];
+        for seed in 0..samples {
+            let model = Model::new(&params(None, false, seed, 1.0), PITCH).unwrap();
+            let layers = model.layer_targets([0.12; 3]);
+            let a = model
+                .accumulate(1, 1, layers, model.cell_um.powi(2))
+                .unwrap()[0];
+            let b = model
+                .accumulate(-1, -1, layers, model.cell_um.powi(2))
+                .unwrap()[0];
+            sums[0] += a;
+            sums[1] += b;
+            sums[2] += a * a;
+            sums[3] += b * b;
+            sums[4] += a * b;
+        }
+        let n = samples as f64;
+        let covariance = sums[4] / n - sums[0] * sums[1] / (n * n);
+        let variance_a = sums[2] / n - (sums[0] / n).powi(2);
+        let variance_b = sums[3] / n - (sums[1] / n).powi(2);
+        let correlation = covariance / (variance_a * variance_b).sqrt();
+        assert!(
+            correlation.abs() < 0.05,
+            "mirrored halo count correlation {correlation}"
+        );
+    }
+
+    #[test]
+    fn rounded_crop_keeps_global_readout_footprints() {
+        let target = patterned(17, 13);
+        let p = params(None, false, 0x1234, 1.0);
+        let full_grid = ReadoutGrid {
+            origin_um: [-0.7, -0.3],
+            pitch_um: [17.0 * PITCH / 11.0, 13.0 * PITCH / 9.0],
+            width: 11,
+            height: 9,
+        };
+        let full = apply(&target, PITCH, full_grid, &p).unwrap();
+        let crop_grid = ReadoutGrid {
+            origin_um: [
+                full_grid.origin_um[0] + 3.0 * full_grid.pitch_um[0],
+                full_grid.origin_um[1] + 2.0 * full_grid.pitch_um[1],
+            ],
+            width: 5,
+            height: 4,
+            ..full_grid
+        };
+        let crop = apply(&target, PITCH, crop_grid, &p).unwrap();
+        for y in 0..4 {
+            for x in 0..5 {
+                let a = pixel(&crop, x, y);
+                let b = pixel(&full, x + 3, y + 2);
+                for c in 0..3 {
+                    assert!((a[c] - b[c]).abs() < precision_tol());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shrinking_the_cell_budget_preserves_every_output_value() {
+        let target = patterned(16, 40);
+        let p = params(None, false, 0x99, 1.0);
+        let full = apply_region(&target, PITCH, region(16, 40), 16, 40, &p).unwrap();
+        let small = apply_with_budget(
+            &target,
+            PITCH,
+            grid(region(16, 40), (16, 40), PITCH),
+            &p,
+            2000,
+        )
+        .unwrap();
+        assert_eq!(full.data, small.data);
+    }
+
+    #[test]
+    fn extreme_parameters_fail_before_stencils_or_sampling() {
+        let target = flat(1, 1, 0.12);
+        let good = params(None, false, 1, 1.0);
+        for area in [f64::MIN_POSITIVE, f64::MAX] {
+            let mut p = good.clone();
+            p.event_area_um2 = area;
+            assert!(apply_region(&target, PITCH, region(1, 1), 1, 1, &p).is_err());
+        }
+        let mut p = good.clone();
+        p.event_area_um2 = f64::MAX;
+        p.channel_scale = [2.0; 3];
+        assert!(
+            apply_region(&target, PITCH, region(1, 1), 1, 1, &p)
+                .unwrap_err()
+                .contains("event_area_um2")
+        );
+        let mut p = good.clone();
+        p.cell_um = Some(f64::MIN_POSITIVE);
+        assert!(
+            apply_region(&target, PITCH, region(1, 1), 1, 1, &p)
+                .unwrap_err()
+                .contains("support halo")
+        );
+        let mut p = good.clone();
+        p.support_um = f64::MAX;
+        assert!(
+            apply_region(&target, PITCH, region(1, 1), 1, 1, &p)
+                .unwrap_err()
+                .contains("squared field pitch")
+        );
+        assert!(
+            apply_region(&target, 1e12, region(1, 1), 1, 1, &good)
+                .unwrap_err()
+                .contains("cell address")
+        );
+        assert!(
+            apply_region(&target, 10000.0, region(1, 1), 1, 1, &good)
+                .unwrap_err()
+                .contains("one output row")
+        );
+        let mut p = good.clone();
+        p.event_area_um2 = f64::MIN_POSITIVE;
+        p.channel_scale = [f64::MIN_POSITIVE; 3];
+        assert!(
+            apply_region(&target, PITCH, region(1, 1), 1, 1, &p)
+                .unwrap_err()
+                .contains("event_area_um2")
+        );
+        assert!(
+            apply_region(&target, PITCH, region(1, 1), u32::MAX, 1, &good)
+                .unwrap_err()
+                .contains("output-axis")
+        );
+    }
+
+    #[test]
     fn invalid_inputs_fail_before_rendering() {
         let good = params(None, true, 1, 1.0);
         // Developed target outside the capacity envelope.
-        let err = apply(&flat(8, 8, 0.4), PITCH, region(8, 8), 8, 8, &good).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.4), PITCH, region(8, 8), 8, 8, &good).unwrap_err();
         assert!(err.contains("outside the supported"), "{err}");
-        let err = apply(&flat(8, 8, -0.05), PITCH, region(8, 8), 8, 8, &good).unwrap_err();
+        let err = apply_region(&flat(8, 8, -0.05), PITCH, region(8, 8), 8, 8, &good).unwrap_err();
         assert!(err.contains("outside the supported"), "{err}");
-        // Region outside the source.
-        let err = apply(
-            &flat(8, 8, 0.1),
-            PITCH,
-            SourceRect {
-                x: 4,
-                y: 0,
-                width: 8,
-                height: 8,
-            },
-            8,
-            8,
-            &good,
-        )
-        .unwrap_err();
-        assert!(err.contains("exceeds"), "{err}");
-        let err = apply(
-            &flat(8, 8, 0.1),
-            PITCH,
-            SourceRect {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 8,
-            },
-            8,
-            8,
-            &good,
-        )
-        .unwrap_err();
-        assert!(err.contains("empty"), "{err}");
+        let mut bad_grid = grid(region(8, 8), (8, 8), PITCH);
+        bad_grid.origin_um[0] = f64::NAN;
+        let err = apply(&flat(8, 8, 0.1), PITCH, bad_grid, &good).unwrap_err();
+        assert!(err.contains("readout origin"), "{err}");
+        bad_grid.origin_um = [0.0; 2];
+        bad_grid.width = 0;
+        let err = apply(&flat(8, 8, 0.1), PITCH, bad_grid, &good).unwrap_err();
+        assert!(err.contains("dimensions"), "{err}");
         // Support, pitch, and field pitch validation.
         let mut bad = good.clone();
         bad.support_um = 0.0;
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("v3_dye_support_um"), "{err}");
-        let err = apply(&flat(8, 8, 0.1), 0.0, region(8, 8), 8, 8, &good).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), 0.0, region(8, 8), 8, 8, &good).unwrap_err();
         assert!(err.contains("pitch"), "{err}");
         let mut bad = good.clone();
         bad.cell_um = Some(SIGMA);
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("field pitch"), "{err}");
         // Curve and control validation.
         let mut bad = good.clone();
         bad.composite_curves[3][1] = -1.0;
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("nondecreasing"), "{err}");
         let mut bad = good.clone();
         bad.layer_curves[2][1][0] = -1.0;
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("nonnegative"), "{err}");
         let mut bad = good.clone();
         bad.uniformity = [1.5, 0.0, 0.0];
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("uniformity"), "{err}");
         let mut bad = good.clone();
         bad.density_min = [-0.1, 0.0, 0.0];
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("density_min"), "{err}");
         let mut bad = good.clone();
         bad.event_area_um2 = 0.0;
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("event_area_um2"), "{err}");
         let mut bad = good.clone();
         bad.layer_max = [[0.0; 3]; 3];
-        let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
+        let err = apply_region(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("capacity"), "{err}");
     }
 

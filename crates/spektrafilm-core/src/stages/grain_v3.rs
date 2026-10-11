@@ -11,7 +11,7 @@
 //! and overlapping reads agree.
 
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_model::grain::v3::{self, GrainV3Params, SourceRect};
+use spektrafilm_model::grain::v3::{self, GrainV3Params, ReadoutGrid};
 
 use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
@@ -40,6 +40,15 @@ const CELL_UM_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_UM";
 /// conditional mean. It never changes the recipe.
 const EXPECTATION_ENV: &str = "SPEKTRAFILM_GRAIN_V3_EXPECTATION";
 
+/// Integer rectangle, in source pixels or in the extended output grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRect {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
 /// Readout geometry of the requested output grid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Geometry {
@@ -54,6 +63,72 @@ pub struct Geometry {
     /// Film pitch of the output samples: region extent over the actual
     /// output dimension, per axis (a rounded grid makes the axes differ).
     pub output_pitch_um: [f64; 2],
+}
+
+impl Geometry {
+    pub fn grid(&self) -> ReadoutGrid {
+        ReadoutGrid {
+            origin_um: [
+                self.rect.x as f64 * self.source_pitch_um,
+                self.rect.y as f64 * self.source_pitch_um,
+            ],
+            pitch_um: self.output_pitch_um,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    /// Extend the requested output lattice to cover the full film. The crop
+    /// retains its exact footprints even when output rounding changes pitch.
+    pub fn full_film_grid(&self, source: &ImageBuf) -> Result<(ReadoutGrid, SourceRect), String> {
+        let mut grid = self.grid();
+        let mut offset = [0usize; 2];
+        let mut dimensions = [0u32; 2];
+        let axes = [
+            (source.width, self.rect.x, self.rect.width, self.width),
+            (source.height, self.rect.y, self.rect.height, self.height),
+        ];
+        for (axis, (extent, start, length, samples)) in axes.into_iter().enumerate() {
+            // Source and output dimensions are u32, so each product fits u64.
+            let before = (start as u64 * samples as u64).div_ceil(length as u64);
+            let after = ((extent as usize - start - length) as u64 * samples as u64)
+                .div_ceil(length as u64);
+            let count = before + samples as u64 + after;
+            if count > u32::MAX as u64 {
+                return Err("film grain V3: full-film output grid exceeds addressable dimensions; reduce the output size".into());
+            }
+            offset[axis] = before as usize;
+            dimensions[axis] = count as u32;
+            grid.origin_um[axis] -= before as f64 * grid.pitch_um[axis];
+        }
+        grid.width = dimensions[0];
+        grid.height = dimensions[1];
+        Ok((
+            grid,
+            SourceRect {
+                x: offset[0],
+                y: offset[1],
+                width: self.width as usize,
+                height: self.height as usize,
+            },
+        ))
+    }
+}
+
+/// Extract the delivered region after every downstream spatial operation.
+pub fn crop_output(image: ImageBuf, rect: SourceRect) -> ImageBuf {
+    if rect.x == 0
+        && rect.y == 0
+        && rect.width == image.width as usize
+        && rect.height == image.height as usize
+    {
+        return image;
+    }
+    let mut data = Vec::with_capacity(rect.width * rect.height * 3);
+    for row in image.rows().skip(rect.y).take(rect.height) {
+        data.extend_from_slice(&row[rect.x * 3..(rect.x + rect.width) * 3]);
+    }
+    ImageBuf::from_data(rect.width as u32, rect.height as u32, data)
 }
 
 /// Whether an active V3 field must run.
@@ -218,9 +293,9 @@ pub fn readout(
     film: &Profile,
     params: &RuntimeParams,
     source_pitch_um: f64,
+    grid: ReadoutGrid,
     backend: &dyn spektrafilm_gpu::ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let readout_geometry = geometry(source, params, source_pitch_um)?;
     let resolved = resolve(film, params)?;
     // The field resolves on the CPU whatever backend the surrounding stages
     // use; the observation records that executor and its reason.
@@ -232,14 +307,9 @@ pub fn readout(
     tracing::info!(
         stock = film.info.stock.as_deref().unwrap_or(""),
         source = format_args!("{}x{}", source.width, source.height),
-        region = format_args!(
-            "{}x{}+({},{})",
-            readout_geometry.rect.width,
-            readout_geometry.rect.height,
-            readout_geometry.rect.x,
-            readout_geometry.rect.y
-        ),
-        output = format_args!("{}x{}", readout_geometry.width, readout_geometry.height),
+        origin_um = ?grid.origin_um,
+        output_pitch_um = ?grid.pitch_um,
+        output = format_args!("{}x{}", grid.width, grid.height),
         support_um = resolved.support_um,
         event_area_um2 = resolved.event_area_um2,
         channel_scale = format_args!(
@@ -250,14 +320,7 @@ pub fn readout(
         expectation = resolved.expectation,
         "film grain V3: field readout on CPU"
     );
-    v3::apply(
-        source,
-        readout_geometry.source_pitch_um,
-        readout_geometry.rect,
-        readout_geometry.width,
-        readout_geometry.height,
-        &resolved,
-    )
+    v3::apply(source, source_pitch_um, grid, &resolved)
 }
 
 /// Effective-backend note for user-visible backend/capability output.
@@ -525,39 +588,59 @@ mod tests {
     }
 
     #[test]
+    fn fractional_crop_keeps_its_rounded_footprints_on_the_full_grid() {
+        let source = density_target(7, 7);
+        let mut params = supported_params();
+        params.io.crop = true;
+        params.io.crop_size = [5.0 / 7.0; 2];
+        params.io.crop_center = [3.0 / 7.0; 2];
+        params.io.upscale_factor = 1.5;
+        // Explicitly exercise [1,6) even though source crop centering uses ties-to-even.
+        let mut requested = geometry(&source, &params, 2.0).unwrap();
+        requested.rect.x = 1;
+        requested.rect.y = 1;
+        assert_eq!((requested.width, requested.height), (8, 8));
+        let (grid, keep) = requested.full_film_grid(&source).unwrap();
+        assert_eq!((grid.width, grid.height), (12, 12));
+        assert_eq!(grid.origin_um, [-0.5; 2]);
+        assert_eq!(grid.pitch_um, [1.25; 2]);
+        assert_eq!((keep.x, keep.y, keep.width, keep.height), (2, 2, 8, 8));
+        let film = load("kodak_portra_800");
+        let resolved = resolve(&film, &params).unwrap();
+        let full = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+        let crop = v3::apply(&source, 2.0, requested.grid(), &resolved).unwrap();
+        assert!(max_abs_diff_at(&full, &crop, keep.x, keep.y) <= read_tolerance());
+    }
+
+    #[test]
     fn crop_read_agrees_with_the_full_frame() {
         let film = load("kodak_portra_800");
         let params = supported_params();
         let resolved = resolve(&film, &params).unwrap();
-        // 3.5 µm source pitch against a 4 µm field pitch: fractional
-        // footprints, and the 160-row frame spans two output bands.
-        let pitch = 3.5;
+        // Fractional source-to-field footprints, across two output bands.
+        let pitch = 3.1;
         let source = density_target(96, 160);
         let full = v3::apply(
             &source,
             pitch,
-            SourceRect {
-                x: 0,
-                y: 0,
+            ReadoutGrid {
+                origin_um: [0.0; 2],
+                pitch_um: [pitch; 2],
                 width: 96,
                 height: 160,
             },
-            96,
-            160,
             &resolved,
         )
         .unwrap();
         let crop = v3::apply(
             &source,
             pitch,
-            SourceRect {
-                x: 16,
-                y: 40,
+            ReadoutGrid {
+                origin_um: [16.0 * pitch, 40.0 * pitch],
+                pitch_um: [pitch; 2],
                 width: 32,
                 height: 48,
             },
-            32,
-            48,
             &resolved,
         )
         .unwrap();
@@ -572,13 +655,13 @@ mod tests {
     fn dye_support_is_independent_of_the_event_area() {
         let film = load("kodak_portra_800");
         let params = supported_params();
-        let rect = SourceRect {
-            x: 0,
-            y: 0,
+        let pitch = 3.5;
+        let grid = ReadoutGrid {
+            origin_um: [0.0; 2],
+            pitch_um: [pitch; 2],
             width: 64,
             height: 48,
         };
-        let pitch = 3.5;
         let source = density_target(64, 48);
         let coarser = resolve(&film, &params).unwrap();
 
@@ -588,8 +671,8 @@ mod tests {
         expected_a.expectation = true;
         let mut expected_b = expected_a.clone();
         expected_b.event_area_um2 = expected_a.event_area_um2 * 10.0;
-        let a = v3::apply(&source, pitch, rect, 64, 48, &expected_a).unwrap();
-        let b = v3::apply(&source, pitch, rect, 64, 48, &expected_b).unwrap();
+        let a = v3::apply(&source, pitch, grid, &expected_a).unwrap();
+        let b = v3::apply(&source, pitch, grid, &expected_b).unwrap();
         let mean_diff = max_abs_diff(&a, &b);
         assert!(
             mean_diff <= 1e-5,
@@ -599,8 +682,8 @@ mod tests {
         // Realized field: the same support, different statistical strength.
         let mut realized_b = coarser.clone();
         realized_b.event_area_um2 *= 10.0;
-        let ra = v3::apply(&source, pitch, rect, 64, 48, &coarser).unwrap();
-        let rb = v3::apply(&source, pitch, rect, 64, 48, &realized_b).unwrap();
+        let ra = v3::apply(&source, pitch, grid, &coarser).unwrap();
+        let rb = v3::apply(&source, pitch, grid, &realized_b).unwrap();
         let noise_diff = max_abs_diff(&ra, &rb);
         assert!(
             noise_diff > 1e-4,

@@ -43,6 +43,7 @@ impl Fixture {
             .args(args)
             .env("RUST_LOG", "off")
             .env("SPEKTRAFILM_DATA_DIR", &self.data)
+            .env("SPEKTRAFILM_CONFIG_DIR", self.root.join("config"))
             .env_remove("SPEKTRAFILM_BACKEND")
             .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
             .output()
@@ -85,7 +86,7 @@ fn sources_compose_in_order_and_dry_run_preserves_existing_outputs() {
     std::fs::write(&raw, b"existing-buffer").unwrap();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         "camera.exposure_compensation_ev=-1",
         "--set",
@@ -138,19 +139,13 @@ fn preset_discovery_exports_both_carriers_and_reloads_same_parameters() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|entry| entry["id"] == "classic-kodak-portra-400")
+        .find(|entry| entry["name"] == "Kodak Portra 400")
         .unwrap();
     assert_eq!(portra["film_profile"]["stock"], "kodak_portra_400");
     assert_eq!(portra["print_profile"]["stock"], "kodak_portra_endura");
     let mut reports = Vec::new();
     for format in ["json", "toml"] {
-        let shown = f.run(&[
-            "preset",
-            "show",
-            "classic-kodak-portra-400",
-            "--format",
-            format,
-        ]);
+        let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", format]);
         assert!(
             shown.status.success(),
             "{}",
@@ -291,7 +286,7 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
     ] {
         let result = f.process(&[
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--set",
             source,
             "--set",
@@ -323,7 +318,7 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
         std::fs::write(&path, contents).unwrap();
         let result = f.process(&[
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--set",
             path.to_str().unwrap(),
             "--dry-run",
@@ -336,14 +331,14 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
             .success()
     );
     assert!(
-        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
+        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
             .status
             .success()
     );
     assert!(
         !f.process(&[
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--film",
             "kodak_portra_400",
             "--dry-run"
@@ -358,7 +353,7 @@ fn final_workflow_and_runtime_constraints_resolve_after_edits() {
     let f = Fixture::new();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--scan-film",
         "--route",
         "input",
@@ -374,7 +369,7 @@ fn final_workflow_and_runtime_constraints_resolve_after_edits() {
     assert_eq!(report["print_profile"], "kodak_portra_endura");
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         "settings.preview_mode=true,film_render.grain.active=true",
         "--dry-run",
@@ -393,7 +388,7 @@ fn report_and_render_use_identical_resolved_controls() {
     let edits = "camera.auto_exposure=false,camera.exposure_compensation_ev=0.5,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true,enlarger.y_filter_neutral=12";
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         edits,
         "--backend",
@@ -403,7 +398,7 @@ fn report_and_render_use_identical_resolved_controls() {
     let raw = f.root.join("render.raw");
     let output = f.process(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         edits,
         "--backend",
@@ -440,8 +435,10 @@ fn report_and_render_use_identical_resolved_controls() {
         .unwrap();
     let rendered: Vec<f64> = std::fs::read(raw)
         .unwrap()
-        .chunks_exact(8)
-        .map(|bytes| f64::from_ne_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| f64::from_ne_bytes(*bytes))
         .collect();
     let expected: Vec<f64> = expected.data.iter().map(|&v| v as f64).collect();
     assert_eq!(rendered, expected);
@@ -454,7 +451,7 @@ fn writer_options_validate_before_decoding_and_keep_scanner_color_independent() 
     std::fs::write(&f.input, b"invalid-pixels").unwrap();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--set",
         "io.output_color_space=\"sRGB\"",
         "--saving-color-space",
@@ -478,7 +475,7 @@ fn writer_options_validate_before_decoding_and_keep_scanner_color_independent() 
         vec!["--jpeg-quality", "95"],
         vec!["--format", "png"],
     ] {
-        let mut args = vec!["--preset", "classic-kodak-portra-400", "--backend", "gpu"];
+        let mut args = vec!["--preset", "Kodak Portra 400", "--backend", "gpu"];
         args.extend(extra);
         let result = f.process(&args);
         assert!(!result.status.success());
@@ -496,7 +493,7 @@ fn raw_dry_run_enforces_linear_aces_without_decoding() {
     let mut f = Fixture::new();
     f.input = f.root.join("input.CR2");
     std::fs::write(&f.input, b"raw-placeholder").unwrap();
-    let report = f.report(&["--preset", "classic-kodak-portra-400", "--dry-run"]);
+    let report = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
     assert_eq!(
         report["parameters"]["io"]["input_color_space"],
         "ACES2065-1"
@@ -507,33 +504,30 @@ fn raw_dry_run_enforces_linear_aces_without_decoding() {
         "io.input_cctf_decoding=true",
     ] {
         assert!(
-            !f.process(&[
-                "--preset",
-                "classic-kodak-portra-400",
-                "--set",
-                edits,
-                "--dry-run"
-            ])
-            .status
-            .success()
+            !f.process(&["--preset", "Kodak Portra 400", "--set", edits, "--dry-run"])
+                .status
+                .success()
         );
     }
 }
 
 #[test]
-fn dry_run_rejects_missing_inputs_and_duplicate_selectors() {
+fn dry_run_rejects_missing_inputs_unknown_presets_and_duplicate_single_selectors() {
     let mut f = Fixture::new();
+    let unknown = f.process(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Definitely nonexistent preset",
+        "--dry-run",
+    ]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("Definitely nonexistent preset"));
     for options in [
-        vec![
-            "--preset",
-            "classic-kodak-portra-400",
-            "--preset",
-            "classic-kodak-gold-200",
-        ],
         vec!["--film", "kodak_portra_400", "--film", "kodak_gold_200"],
         vec![
             "--preset",
-            "classic-kodak-portra-400",
+            "Kodak Portra 400",
             "--route",
             "input",
             "--route",
@@ -546,20 +540,20 @@ fn dry_run_rejects_missing_inputs_and_duplicate_selectors() {
     }
     f.input = f.root.join("missing.png");
     assert!(
-        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
+        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
             .status
             .success()
     );
     f.input = f.root.join("unsupported.txt");
     std::fs::write(&f.input, b"text").unwrap();
     assert!(
-        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
+        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
             .status
             .success()
     );
     f.input = f.root.clone();
     assert!(
-        !f.process(&["--preset", "classic-kodak-portra-400", "--dry-run"])
+        !f.process(&["--preset", "Kodak Portra 400", "--dry-run"])
             .status
             .success()
     );
@@ -603,7 +597,7 @@ fn exr_writer_constraints_fail_before_decoding_or_device_selection() {
                 "-o",
                 output.to_str().unwrap(),
                 "--preset",
-                "classic-kodak-portra-400",
+                "Kodak Portra 400",
                 "--backend",
                 "gpu",
             ];
@@ -668,7 +662,7 @@ fn every_gamut_array_source_validates_before_later_overrides() {
 }
 
 #[test]
-fn edits_reject_optional_overflow_in_legacy_baseline() {
+fn legacy_json_decoder_rejects_optional_f32_overflow_before_finite_validation() {
     let f = Fixture::new();
     let path = f.root.join("legacy.json");
     std::fs::write(&path, r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#).unwrap();
@@ -682,7 +676,9 @@ fn edits_reject_optional_overflow_in_legacy_baseline() {
         "--dry-run",
     ]);
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("v2_amount"));
+    // The workspace's correctly rounded JSON decoder rejects overflow of the declared
+    // f32 type before finite validation; this diagnostic belongs to the decoder.
+    assert!(String::from_utf8_lossy(&result.stderr).contains("number out of range"));
     assert!(!f.root.join("output.tif").exists());
 }
 
@@ -718,17 +714,17 @@ fn dry_run_reports_runtime_route_and_monochrome_normalization() {
 }
 
 #[test]
-fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_preset() {
+fn magazine_enabled_preserves_preset_profiles_and_selects_direct_scan_without_preset() {
     let f = Fixture::new();
     for selector in [
         ["--film", "kodak_portra_400"],
-        ["--preset", "classic-kodak-portra-400"],
+        ["--preset", "Kodak Portra 400"],
     ] {
         let report = f.report(&[
             selector[0],
             selector[1],
             "--route",
-            "input > film > scan > magazine",
+            "input > film > scan",
             "--set",
             "magazine_print_color.active=true,magazine_print_color.strength=0.75",
             "--dry-run",
@@ -751,7 +747,7 @@ fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_pres
         "--film",
         "kodak_portra_400",
         "--route",
-        "input > film > scan > magazine",
+        "input > film > scan",
         "--set",
         "magazine_print_color.strength=1.1",
         "--set",
@@ -761,6 +757,77 @@ fn magazine_route_preserves_preset_profiles_and_selects_direct_scan_without_pres
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("magazine_print_color.strength"));
     assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn finished_input_dry_run_preserves_profiles_with_independent_magazine() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input",
+        "--set",
+        "magazine_print_color.active=true,magazine_print_color.strength=0.75",
+        "--dry-run",
+    ]);
+    assert_eq!(report["film_profile"], "kodak_portra_400");
+    assert_eq!(report["print_profile"], "kodak_portra_endura");
+    assert_eq!(report["parameters"]["workflow"]["route"], "input");
+    assert_eq!(report["parameters"]["magazine_print_color"]["active"], true);
+    assert_eq!(
+        report["parameters"]["magazine_print_color"]["strength"],
+        0.75
+    );
+}
+
+#[test]
+fn removed_magazine_route_reports_migration_before_profiles_load() {
+    let f = Fixture::new();
+    let result = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input > film > scan > magazine",
+        "--dry-run",
+    ]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("input > film > scan"), "{error}");
+    assert!(
+        error.contains("magazine_print_color.active = true"),
+        "{error}"
+    );
+}
+
+#[test]
+fn saved_magazine_route_requires_migration_even_with_route_override() {
+    let f = Fixture::new();
+    let params = f.root.join("obsolete-route.json");
+    std::fs::write(
+        &params,
+        serde_json::to_vec(&json!({
+            "workflow": {"route": "input > film > scan > magazine"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let result = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--params",
+        params.to_str().unwrap(),
+        "--route",
+        "input > film > scan",
+        "--dry-run",
+    ]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("input > film > scan"), "{error}");
+    assert!(
+        error.contains("magazine_print_color.active = true"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -776,12 +843,6 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
         (
             "kodak_portra_400",
             "input > film > print > scan",
-            "camera.auto_exposure=false",
-            "direct input",
-        ),
-        (
-            "kodak_portra_400",
-            "input > film > scan > magazine",
             "camera.auto_exposure=false",
             "direct input",
         ),
@@ -875,7 +936,7 @@ fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
     let f = Fixture::new();
     let report = f.report(&[
         "--preset",
-        "classic-kodak-portra-400",
+        "Kodak Portra 400",
         "--scan-film",
         "--set",
         "scanner.scan_output=\"positive_scan\",scanner.white_correction=true",
@@ -901,4 +962,727 @@ fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("scanner.scan_output"));
     assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn inline_strings_and_enums_accept_normal_cli_values() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--set",
+        "film_render.grain.engine=v2,film_render.grain.v2_profile=custom",
+        "--set",
+        "io.output_color_space=ProPhoto RGB",
+        "--set",
+        "camera.auto_exposure=false,camera.exposure_compensation_ev=+.5",
+        "--set",
+        "film_render.grain.v2_amount=25",
+        "--set",
+        "film_render.grain.v2_amount=null",
+        "--dry-run",
+    ]);
+    assert_eq!(report["parameters"]["film_render"]["grain"]["engine"], "v2");
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["v2_profile"],
+        "custom"
+    );
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["v2_amount"],
+        Value::Null
+    );
+    assert_eq!(
+        report["parameters"]["io"]["output_color_space"],
+        "ProPhoto RGB"
+    );
+    assert_eq!(report["parameters"]["camera"]["auto_exposure"], false);
+    assert_eq!(
+        report["parameters"]["camera"]["exposure_compensation_ev"],
+        0.5
+    );
+    assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn invalid_plain_values_report_the_field_requirement() {
+    let f = Fixture::new();
+    for (source, requirement) in [
+        ("camera.auto_exposure=yes", "true or false"),
+        ("camera.exposure_compensation_ev=bright", "finite number"),
+        ("film_render.grain.engine=unknown", "v1"),
+    ] {
+        let output = f.process(&["--preset", "Kodak Portra 400", "--set", source, "--dry-run"]);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(source.split_once('=').unwrap().0), "{error}");
+        assert!(error.contains(requirement), "{error}");
+    }
+    assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn discovery_formats_preserve_metadata_and_reject_invalid_syntax() {
+    let f = Fixture::new();
+    let module = f.run(&["describe", "--module", "film_render.grain"]);
+    assert!(module.status.success());
+    let module: Value = serde_json::from_slice(&module.stdout).unwrap();
+    for record in module["fields"].as_array().unwrap() {
+        let path = record["path"].as_str().unwrap();
+        let field = f.run(&["describe", "--field", path]);
+        assert!(
+            field.status.success(),
+            "{}",
+            String::from_utf8_lossy(&field.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&field.stdout).unwrap(),
+            *record
+        );
+        let text = f.run(&["describe", "--field", path, "--format", "text"]);
+        assert!(text.status.success());
+        let text = String::from_utf8(text.stdout).unwrap();
+        for (key, value) in record.as_object().unwrap() {
+            assert!(text.contains(&format!("{key}: {value}")), "{text}");
+        }
+    }
+    let json = f.run(&["preset", "list"]);
+    let entries: Value = serde_json::from_slice(&json.stdout).unwrap();
+    let text = f.run(&["preset", "list", "--format", "text"]);
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).unwrap();
+    for entry in entries.as_array().unwrap() {
+        for (key, value) in entry.as_object().unwrap() {
+            assert!(text.contains(&format!("{key}: {value}")), "{text}");
+        }
+    }
+    for args in [
+        vec!["describe", "--format", "toml"],
+        vec![
+            "describe",
+            "--field",
+            "camera.auto_exposure",
+            "--module",
+            "camera",
+        ],
+        vec!["preset", "list", "--format", "toml"],
+        vec!["preset", "show", "Kodak Portra 400", "--format", "text"],
+    ] {
+        assert_eq!(f.run(&args).status.code(), Some(2));
+    }
+}
+
+#[test]
+fn data_selection_retains_source_and_never_falls_back() {
+    let f = Fixture::new();
+    let report = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
+    assert_eq!(
+        report["data"]["path"],
+        std::fs::canonicalize(&f.data).unwrap().to_str().unwrap()
+    );
+    assert_eq!(report["data"]["source"], "environment");
+    assert_eq!(
+        report["input"],
+        json!({"kind":"raster", "raw_loading":null})
+    );
+    let selected = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--dry-run",
+        "--data-dir",
+        f.data.to_str().unwrap(),
+    ]);
+    assert_eq!(selected["data"]["source"], "argument");
+    let missing = f.root.join("missing");
+    let error = f.run(&["list-profiles", "--data-dir", missing.to_str().unwrap()]);
+    assert_eq!(error.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&error.stderr).contains(missing.to_str().unwrap()));
+    let error = f.run(&["list-profiles", "--data-dir", f.root.to_str().unwrap()]);
+    assert_eq!(error.status.code(), Some(1));
+    std::fs::create_dir(f.root.join("profiles")).unwrap();
+    let empty = f.run(&["list-profiles", "--data-dir", f.root.to_str().unwrap()]);
+    assert!(empty.status.success());
+    assert!(empty.stdout.is_empty());
+    std::fs::write(f.root.join("profiles/broken.json"), b"{}").unwrap();
+    assert_eq!(
+        f.run(&["list-profiles", "--data-dir", f.root.to_str().unwrap()])
+            .status
+            .code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn raw_dry_run_reports_validated_signed_loading_options() {
+    let f = Fixture::new();
+    let input = f.root.join("input.dng");
+    // Dry run checks file kind and readability without decoding RAW pixels.
+    std::fs::write(&input, b"readable-raw-placeholder").unwrap();
+    let output = f.root.join("raw-output.tif");
+    let base = [
+        "process",
+        input.to_str().unwrap(),
+        "-o",
+        output.to_str().unwrap(),
+        "--preset",
+        "Kodak Portra 400",
+        "--dry-run",
+    ];
+    let run = |extra: &[&str]| {
+        let mut args = base.to_vec();
+        args.extend_from_slice(extra);
+        let output = f.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let shot = run(&[]);
+    let custom = run(&[
+        "--raw-white-balance",
+        "custom",
+        "--raw-temperature",
+        "6500",
+        "--raw-tint",
+        "-5",
+    ]);
+    assert_eq!(
+        custom,
+        run(&[
+            "--raw-white-balance",
+            "custom",
+            "--raw-temperature=6500",
+            "--raw-tint=-5"
+        ])
+    );
+    assert_eq!(
+        custom["input"],
+        json!({"kind":"raw", "raw_loading":{"white_balance":"custom", "temperature":6500.0, "tint":-5.0, "lens_correction":false}})
+    );
+    assert_ne!(shot["input"], custom["input"]);
+    assert_eq!(shot["input"]["raw_loading"]["temperature"], Value::Null);
+    assert!(!custom["parameters"].to_string().contains("raw_loading"));
+    assert!(!output.exists());
+}
+
+#[test]
+fn text_discovery_lists_root_groups_and_keeps_nested_modules() {
+    let f = Fixture::new();
+    let text = f.run(&["describe", "--format", "text"]);
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let text = String::from_utf8(text.stdout).unwrap();
+    let groups: Vec<&str> = text.lines().collect();
+    assert!(groups.contains(&"film_render") && groups.contains(&"camera"));
+    assert!(groups.iter().all(|group| !group.contains('.')));
+    let nested = f.run(&[
+        "describe",
+        "--module",
+        "film_render.grain",
+        "--format",
+        "text",
+    ]);
+    assert!(
+        nested.status.success(),
+        "{}",
+        String::from_utf8_lossy(&nested.stderr)
+    );
+    assert!(
+        String::from_utf8(nested.stdout)
+            .unwrap()
+            .contains("film_render.grain.engine")
+    );
+}
+
+#[test]
+fn route_help_lists_every_validated_route() {
+    let f = Fixture::new();
+    for args in [["process", "--help"], ["process", "-h"]] {
+        let help = f.run(&args);
+        assert!(help.status.success());
+        let help = String::from_utf8(help.stdout).unwrap();
+        for route in spektrafilm_core::params::sources::supported_routes() {
+            assert!(help.contains(route), "missing route {route}");
+        }
+        assert!(!help.contains("describe --module workflow"), "{help}");
+    }
+}
+
+#[test]
+fn signed_input_exposure_stops_accept_separate_arguments() {
+    let f = Fixture::new();
+    let build = |suffix: &str, exposure: &[&str]| {
+        let out = f.root.join(format!("lut-{suffix}"));
+        let mut args = vec![
+            "lut",
+            "build",
+            out.to_str().unwrap(),
+            "--name",
+            "signed-stops",
+            "--film",
+            "kodak_portra_400",
+            "--print",
+            "kodak_portra_endura",
+            "--input",
+            "srgb",
+            "--output",
+            "srgb",
+            "--resolution",
+            "2",
+        ];
+        args.extend_from_slice(exposure);
+        let output = f.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let metadata: Value =
+            serde_json::from_slice(&std::fs::read(out.join("signed-stops/bundle.json")).unwrap())
+                .unwrap();
+        metadata["input_exposure"].clone()
+    };
+    let equal = build("equal", &["--stops-above-midgray=-1"]);
+    let separate = build("separate", &["--stops-above-midgray", "-1"]);
+    assert_eq!(equal, separate);
+    assert_eq!(separate["stops_above_midgray"], -1.0);
+    for invalid in ["-1e309", "inf", "nan"] {
+        let out = f.root.join("lut-invalid");
+        let output = f.run(&[
+            "lut",
+            "build",
+            out.to_str().unwrap(),
+            "--name",
+            "signed-stops",
+            "--film",
+            "kodak_portra_400",
+            "--print",
+            "kodak_portra_endura",
+            "--input",
+            "srgb",
+            "--output",
+            "srgb",
+            "--resolution",
+            "2",
+            &format!("--stops-above-midgray={invalid}"),
+        ]);
+        assert_eq!(output.status.code(), Some(1), "{invalid}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("finite number"),
+            "{invalid}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!out.exists());
+    }
+}
+
+fn library_document(f: &Fixture, name: &str, parameters: Value) -> PathBuf {
+    let library = f.root.join("config/presets");
+    std::fs::create_dir_all(&library).unwrap();
+    let path = library.join(format!("{name}.json"));
+    let document = json!({"schema_version": 2, "name": name,
+        "parameters": parameters,
+        "provenance": {"implementation_version": "test", "model_version": "test"}});
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    path
+}
+
+#[test]
+fn user_library_listing_keeps_valid_entries_and_reports_document_faults() {
+    let f = Fixture::new();
+    let valid = library_document(
+        &f,
+        "Soft grain",
+        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
+    );
+    let fault = library_document(
+        &f,
+        "Wrong filename",
+        json!({"film_render":{"grain":{"v2_amount":5.0}}}),
+    );
+    let renamed = fault.with_file_name("Misnamed.json");
+    std::fs::rename(&fault, &renamed).unwrap();
+    for source in ["user", "all"] {
+        let result = f.run(&["preset", "list", "--source", source]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let rows: Value = serde_json::from_slice(&result.stdout).unwrap();
+        let rows = rows.as_array().unwrap();
+        let grain = rows.iter().find(|row| row["name"] == "Soft grain").unwrap();
+        assert_eq!(grain["group"], "My Presets");
+        assert_eq!(grain["kind"], "section");
+        assert_eq!(grain["section"], "grain");
+        assert_eq!(grain["path"], valid.to_str().unwrap());
+        assert!(String::from_utf8_lossy(&result.stderr).contains(renamed.to_str().unwrap()));
+        assert_eq!(
+            rows.iter().any(|row| row["group"] == "Built-in"),
+            source == "all"
+        );
+    }
+    let result = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .args(["preset", "list", "--source", "all"])
+        .current_dir(&f.root)
+        .env("SPEKTRAFILM_CONFIG_DIR", f.root.join("config"))
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn names_resolve_user_first_and_explicit_groups_reach_shadowed_builtins() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Kodak Portra 400",
+        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
+    );
+    let selected = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    let document: Value = serde_json::from_slice(&selected.stdout).unwrap();
+    assert_eq!(
+        document["parameters"]["film_render"]["grain"]["v2_amount"],
+        12.0
+    );
+    let stderr = String::from_utf8_lossy(&selected.stderr);
+    assert!(
+        stderr.contains("My Presets")
+            && stderr.contains("shadows Built-in")
+            && stderr.contains("Kodak Portra 400")
+    );
+    let builtin = f.run(&[
+        "preset",
+        "show",
+        "built-in:Kodak Portra 400",
+        "--format",
+        "json",
+    ]);
+    assert!(builtin.status.success());
+    let document: Value = serde_json::from_slice(&builtin.stdout).unwrap();
+    assert_eq!(document["film_profile"]["stock"], "kodak_portra_400");
+    assert!(!String::from_utf8_lossy(&builtin.stderr).contains("shadows"));
+    library_document(
+        &f,
+        "Soft grain",
+        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
+    );
+    let unknown = f.run(&["preset", "show", "Soft grani"]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("Soft grain"));
+    let missing = f.run(&["preset", "show", "Soft grain.toml"]);
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("Soft grain.toml"));
+    assert!(!stderr.contains("did you mean"));
+}
+
+#[test]
+fn repeated_presets_compose_look_then_section_and_keep_profile_workflow() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Soft grain",
+        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
+    );
+    let report = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Soft grain",
+        "--dry-run",
+    ]);
+    assert_eq!(report["film_profile"], "kodak_portra_400");
+    assert_eq!(report["print_profile"], "kodak_portra_endura");
+    assert_eq!(
+        report["parameters"]["workflow"]["route"],
+        "input > film > print > scan"
+    );
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["v2_amount"],
+        12.0
+    );
+    let section = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--preset",
+        "Soft grain",
+        "--dry-run",
+    ]);
+    let baseline = f.report(&["--film", "kodak_portra_400", "--dry-run"]);
+    assert_eq!(
+        section["parameters"]["workflow"],
+        baseline["parameters"]["workflow"]
+    );
+    assert_eq!(section["film_profile"], baseline["film_profile"]);
+    assert_eq!(section["print_profile"], baseline["print_profile"]);
+    assert_eq!(
+        section["parameters"]["film_render"]["grain"]["v2_amount"],
+        12.0
+    );
+    let direct = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Soft grain",
+        "--scan-film",
+        "--dry-run",
+    ]);
+    assert_eq!(direct["print_profile"], "kodak_portra_endura");
+    assert_eq!(direct["parameters"]["io"]["scan_film"], true);
+    assert!(
+        !f.process(&["--preset", "Soft grain", "--dry-run"])
+            .status
+            .success()
+    );
+    for extra in [
+        ["--film", "kodak_portra_400"],
+        ["--paper", "kodak_portra_endura"],
+    ] {
+        let result = f.process(&[
+            "--preset",
+            "Kodak Portra 400",
+            extra[0],
+            extra[1],
+            "--dry-run",
+        ]);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("conflicts"));
+    }
+    let params = f.root.join("baseline.json");
+    std::fs::write(&params, "{}").unwrap();
+    assert!(
+        !f.process(&[
+            "--preset",
+            "Kodak Portra 400",
+            "--params",
+            params.to_str().unwrap(),
+            "--dry-run"
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        f.process(&[
+            "--film",
+            "kodak_portra_400",
+            "--paper",
+            "kodak_portra_endura",
+            "--params",
+            params.to_str().unwrap(),
+            "--preset",
+            "Soft grain",
+            "--dry-run"
+        ])
+        .status
+        .success()
+    );
+}
+
+#[test]
+fn section_show_preserves_null_and_refuses_lossy_toml_export() {
+    let f = Fixture::new();
+    let path = library_document(
+        &f,
+        "Clear amount",
+        json!({"film_render":{"grain":{"v2_amount":null}}}),
+    );
+    let before = std::fs::read(&path).unwrap();
+    let json = f.run(&["preset", "show", "Clear amount", "--format", "json"]);
+    assert!(json.status.success());
+    let document: Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(document["name"], "Clear amount");
+    assert!(
+        document["parameters"]["film_render"]["grain"]
+            .as_object()
+            .unwrap()
+            .contains_key("v2_amount")
+    );
+    assert_eq!(
+        document["parameters"]["film_render"]["grain"]["v2_amount"],
+        Value::Null
+    );
+    let toml = f.run(&["preset", "show", "Clear amount"]);
+    assert!(!toml.status.success());
+    assert!(toml.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&toml.stderr).contains("film_render.grain.v2_amount"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn later_look_replaces_earlier_section_and_section_only_keeps_static_route() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Soft grain",
+        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
+    );
+    let baseline = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
+    let replaced = f.report(&[
+        "--preset",
+        "Soft grain",
+        "--preset",
+        "Kodak Portra 400",
+        "--dry-run",
+    ]);
+    assert_eq!(replaced, baseline);
+    let sections = f.report(&[
+        "--film",
+        "fujifilm_provia_100f",
+        "--paper",
+        "fujifilm_crystal_archive_typeii",
+        "--preset",
+        "Soft grain",
+        "--dry-run",
+    ]);
+    let baseline = f.report(&[
+        "--film",
+        "fujifilm_provia_100f",
+        "--paper",
+        "fujifilm_crystal_archive_typeii",
+        "--dry-run",
+    ]);
+    assert_eq!(
+        sections["parameters"]["workflow"],
+        baseline["parameters"]["workflow"]
+    );
+    let explicit = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--scan-film",
+        "--route",
+        "input > film > print > scan",
+        "--dry-run",
+    ]);
+    assert_eq!(explicit["parameters"]["io"]["scan_film"], false);
+    assert_eq!(explicit["print_profile"], "kodak_portra_endura");
+    let section = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--preset",
+        "Soft grain",
+        "--scan-film",
+        "--route",
+        "input > film > print > scan",
+        "--dry-run",
+    ]);
+    assert_eq!(section["parameters"]["io"]["scan_film"], false);
+    assert_eq!(section["print_profile"], "kodak_portra_endura");
+}
+
+#[test]
+fn look_preset_normalizes_inapplicable_positive_scan_to_direct_scan() {
+    let f = Fixture::new();
+    let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
+    assert!(shown.status.success());
+    let mut document: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    document["parameters"]["scanner"]["scan_output"] = json!("positive_scan");
+    let path = f.root.join("positive-output-look.json");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+
+    let report = f.report(&["--preset", path.to_str().unwrap(), "--dry-run"]);
+    assert_eq!(
+        report["parameters"]["workflow"]["route"],
+        "input > film > print > scan"
+    );
+    assert_eq!(
+        report["parameters"]["scanner"]["scan_output"],
+        "direct_scan"
+    );
+}
+
+#[test]
+fn invalid_scanner_section_rejects_without_printing_effective_configuration() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Positive scanner",
+        json!({"scanner":{"scan_output":"positive_scan"}}),
+    );
+    let baseline = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
+    let rejected = f.process(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Positive scanner",
+        "--dry-run",
+    ]);
+    assert!(!rejected.status.success());
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        error.contains("scanner.scan_output=positive_scan")
+            && error.contains("requires the direct input > film > scan route"),
+        "{error}"
+    );
+    assert!(rejected.stdout.is_empty());
+    assert_eq!(
+        f.report(&["--preset", "Kodak Portra 400", "--dry-run"]),
+        baseline
+    );
+}
+
+#[test]
+fn json_section_export_reload_preserves_optional_grain_clearing_edit() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Clear amount",
+        json!({"film_render":{"grain":{"v2_amount":null}}}),
+    );
+    library_document(
+        &f,
+        "Amount twelve",
+        json!({"film_render":{"grain":{"v2_amount":12.0}}}),
+    );
+    // `preset show` exports documents; selecting the exported path reloads them.
+    let exported = f.run(&["preset", "show", "Clear amount", "--format", "json"]);
+    assert!(exported.status.success());
+    let document: Value = serde_json::from_slice(&exported.stdout).unwrap();
+    assert_eq!(
+        document["parameters"]["film_render"]["grain"]
+            .as_object()
+            .unwrap()
+            .get("v2_amount"),
+        Some(&Value::Null)
+    );
+    let path = f.root.join("exported-clear-amount.json");
+    std::fs::write(&path, exported.stdout).unwrap();
+    let baseline = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Amount twelve",
+        "--dry-run",
+    ]);
+    assert_eq!(
+        baseline["parameters"]["film_render"]["grain"]["v2_amount"],
+        12.0
+    );
+    let cleared = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Amount twelve",
+        "--preset",
+        path.to_str().unwrap(),
+        "--dry-run",
+    ]);
+    assert_eq!(
+        cleared["parameters"]["film_render"]["grain"]["v2_amount"],
+        Value::Null
+    );
 }

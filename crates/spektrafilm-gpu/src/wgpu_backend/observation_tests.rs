@@ -15,7 +15,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 // Each invocation requests a fresh adapter, which receives exactly one device request.
 // Linux acceptance requires the installed software Vulkan adapter; other platforms
 // follow the existing convention of skipping when no compatible adapter is present.
-fn fresh_backend(features: wgpu::Features) -> Option<WgpuBackend> {
+//
+// The software Vulkan driver (llvmpipe) is not safe under concurrent device use
+// in one process: parallel test threads crash with SIGSEGV (observed in ~4 of 10
+// runs at four threads, 0 of 12 serial). The guard is returned first so that
+// pattern bindings (dropped in reverse declaration order) destroy the backend
+// before releasing DEVICE_IN_USE; every caller holds it for the whole test.
+static DEVICE_IN_USE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn fresh_backend(
+    features: wgpu::Features,
+) -> Option<(std::sync::MutexGuard<'static, ()>, WgpuBackend)> {
+    let device_guard = DEVICE_IN_USE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
             wgpu::Backends::VULKAN
@@ -84,21 +97,24 @@ fn fresh_backend(features: wgpu::Features) -> Option<WgpuBackend> {
         },
         timestamp_reason: reason,
     };
-    Some(WgpuBackend {
-        device: ObservedDevice {
-            raw: device,
-            context: ObservationContext::default(),
-            batch: None,
+    Some((
+        device_guard,
+        WgpuBackend {
+            device: ObservedDevice {
+                raw: device,
+                context: ObservationContext::default(),
+                batch: None,
+            },
+            queue: ObservedQueue {
+                raw: queue,
+                context: ObservationContext::default(),
+                batch: None,
+            },
+            pipeline_cache: Arc::new(PipelineCache::default()),
+            name: "telemetry_test".into(),
+            adapter: description,
         },
-        queue: ObservedQueue {
-            raw: queue,
-            context: ObservationContext::default(),
-            batch: None,
-        },
-        pipeline_cache: Arc::new(PipelineCache::default()),
-        name: "telemetry_test".into(),
-        adapter: description,
-    })
+    ))
 }
 
 struct Workload {
@@ -246,7 +262,7 @@ fn seconds(measurement: &Measurement) -> f64 {
 
 #[test]
 fn timestamps_match_pass_sum_and_preserve_real_compute_pixels() {
-    let Some(mut backend) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
     let off = Workload::new(&backend, false, &INPUT);
@@ -308,7 +324,7 @@ fn staging_and_direct_mapping_count_the_same_logical_result_once() {
         } else {
             wgpu::Features::empty()
         };
-        let Some(mut backend) = fresh_backend(features) else {
+        let Some((_device, mut backend)) = fresh_backend(features) else {
             continue;
         };
         let (context, stage) = observed(&mut backend, CollectionMode::Summary);
@@ -342,7 +358,7 @@ fn staging_and_direct_mapping_count_the_same_logical_result_once() {
 
 #[test]
 fn fresh_baseline_device_reports_disabled_timestamps_without_changing_image_work() {
-    let Some(mut backend) = fresh_backend(wgpu::Features::empty()) else {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::empty()) else {
         return;
     };
     assert!(
@@ -389,7 +405,7 @@ fn failed_and_pending_query_callbacks_preserve_completed_image() {
         AvailabilityReason::QueryFailed,
         AvailabilityReason::NotReady,
     ] {
-        let Some(mut backend) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+        let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
             return;
         };
         let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
@@ -457,7 +473,7 @@ fn failed_and_pending_query_callbacks_preserve_completed_image() {
 
 #[test]
 fn discarded_and_finished_unsubmitted_commands_contribute_no_executed_work() {
-    let Some(mut backend) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
     let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
@@ -509,7 +525,7 @@ fn discarded_and_finished_unsubmitted_commands_contribute_no_executed_work() {
 
 #[test]
 fn discarded_detail_reservations_leave_submitted_passes_and_pixels_intact() {
-    let Some(mut backend) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
     let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
@@ -553,7 +569,7 @@ fn discarded_detail_reservations_leave_submitted_passes_and_pixels_intact() {
 
 #[test]
 fn exhausted_details_report_detail_limit_on_timestamp_enabled_device() {
-    let Some(mut backend) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
     let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
@@ -588,7 +604,7 @@ fn exhausted_details_report_detail_limit_on_timestamp_enabled_device() {
 
 #[test]
 fn one_submission_of_multiple_command_buffers_has_exact_work_sum() {
-    let Some(mut backend) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
     let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
@@ -647,7 +663,7 @@ fn one_submission_of_multiple_command_buffers_has_exact_work_sum() {
 #[test]
 fn more_than_1024_submitted_passes_bound_detail_and_keep_exact_counters() {
     const PASSES: usize = 1030;
-    let Some(mut backend) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
+    let Some((_device, mut backend)) = fresh_backend(wgpu::Features::TIMESTAMP_QUERY) else {
         return;
     };
     let (context, stage) = observed(&mut backend, CollectionMode::GpuTiming);
