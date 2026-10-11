@@ -1,7 +1,7 @@
 schema_version = 2
 name = "CineStill 800T Cs41 (experimental)"
 author = "SpektraFilm"
-description = "Experimental Cs41 negative curve fit with borrowed Vision3 spectra, verified before printing. Halation uses PIXLS #778 RGB strengths with a narrower 65 micrometer first sigma and three bounces to reduce shadow spill; this is an appearance approximation, not a measured CineStill PSF. Grain and highlight boost are disabled. Optional Portra Endura settings balance synthetic midgray; they do not calibrate the film. Select workflow separately."
+description = "Experimental Cs41 negative curve fit with borrowed Vision3 spectra, verified before printing. Halation and Grain V3 controls are fitted to public lab scans of CineStill 800T (PhotonFolly): halation radial profile around lamps; grain RMS level, channel ratio and tonal trend on tone-matched flat windows. Neither is a measured CineStill PSF or granularity. Grain is off by default because V3 requires camera.film_format_mm = 36; enable it there. Neutral input means white lit by the film's tungsten reference (T, about 2800 K): balance inputs to that light (RAW: custom 2812 K), not as-shot. Highlight boost is disabled. Optional Portra Endura settings balance synthetic midgray; they do not calibrate the film. Select workflow separately."
 
 [film_profile]
 stock = "cinestill_800t_cs41_approx"
@@ -66,16 +66,16 @@ developer_exhaustion = 0.0
 
 [parameters.film_render.grain]
 active = false
-engine = "v1"
+engine = "v3"
 v2_profile = "35mm250"
 v2_film_type = "negative"
 v2_mode = "analogue"
 v2_resolution_type = 1
 v2_timer = 0.0
 particle_scale_sublayers = [
-    1.0,
-    0.4,
-    0.25,
+    4.0,
+    0.15,
+    0.03,
 ]
 mult_usm_sigma = 0.699999988079071
 mult_usm_amount = 1.5
@@ -88,9 +88,9 @@ particle_scale = [
     3.2,
 ]
 rms_granularity = [
-    0.0,
-    0.0,
-    0.0,
+    13.1,
+    19.2,
+    24.4,
 ]
 density_min = [
     0.03,
@@ -136,14 +136,14 @@ boost_ev = 0.0
 boost_range = 0.699999988079071
 protect_ev = 4.0
 halation_strength = [
-    0.3,
-    0.01,
+    0.15,
+    0.045,
     0.005,
 ]
 halation_first_sigma_um = [
-    65.0,
-    65.0,
-    65.0,
+    160.0,
+    160.0,
+    160.0,
 ]
 halation_n_bounces = 3
 halation_bounce_decay = 0.5
