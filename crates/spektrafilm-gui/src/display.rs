@@ -281,6 +281,11 @@ struct PreparedDisplay {
     max_size: usize,
     raster: DisplayRaster,
 }
+impl PreparedDisplay {
+    fn matches(&self, source: &Arc<ImageBuf>, metadata: &DisplaySource, max_size: usize) -> bool {
+        Arc::ptr_eq(&self.source, source) && self.metadata == *metadata && self.max_size == max_size
+    }
+}
 
 #[derive(Clone)]
 struct DisplayRequest {
@@ -315,13 +320,10 @@ struct DisplaySource {
     profile: Option<PathBuf>,
 }
 
-type FitCacheEntry = (
-    Arc<ImageBuf>,
-    DisplaySource,
-    usize,
-    DisplayRaster,
-    Option<String>,
-);
+struct FitCacheEntry {
+    prepared: PreparedDisplay,
+    status: Option<String>,
+}
 
 #[derive(Default)]
 struct CompositionCache {
@@ -1166,27 +1168,20 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
         && let (Some(source), Some(space)) = (source.as_ref(), metadata.space.as_deref())
     {
         let fit = &mut cache.fit[usize::from(layer == ViewLayer::Output)];
-        let cached = fit.as_ref().is_some_and(|(image, settings, size, _, _)| {
-            Arc::ptr_eq(image, source) && settings == &metadata && *size == max_size
-        });
+        let cached = fit
+            .as_ref()
+            .is_some_and(|entry| entry.prepared.matches(source, &metadata, max_size));
         if !cached
-            && let Some(seed) = prepared.as_ref().filter(|seed| {
-                Arc::ptr_eq(&seed.source, source)
-                    && seed.metadata == metadata
-                    && seed.max_size == max_size
-            })
+            && let Some(seed) = prepared.filter(|seed| seed.matches(source, &metadata, max_size))
         {
-            *fit = Some((
-                Arc::clone(source),
-                metadata.clone(),
-                max_size,
-                seed.raster.clone(),
-                None,
-            ));
+            *fit = Some(FitCacheEntry {
+                prepared: seed,
+                status: None,
+            });
         }
-        let cached = fit.as_ref().is_some_and(|(image, settings, size, _, _)| {
-            Arc::ptr_eq(image, source) && settings == &metadata && *size == max_size
-        });
+        let cached = fit
+            .as_ref()
+            .is_some_and(|entry| entry.prepared.matches(source, &metadata, max_size));
         if !cached {
             let result = if layer == ViewLayer::Input {
                 input_display_raster(source, space, metadata.encoded, max_size)
@@ -1204,30 +1199,25 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
             };
             match result {
                 Ok((prepared, message)) => {
-                    *fit = Some((
-                        Arc::clone(source),
-                        metadata.clone(),
-                        max_size,
-                        prepared,
-                        message,
-                    ))
+                    *fit = Some(FitCacheEntry {
+                        prepared: PreparedDisplay {
+                            source: Arc::clone(source),
+                            metadata: metadata.clone(),
+                            max_size,
+                            raster: prepared,
+                        },
+                        status: message,
+                    })
                 }
                 Err(error) => status = Some(format!("Display transform: {error}")),
             }
         }
-        if let Some((image, settings, size, prepared, message)) = fit.as_ref()
-            && Arc::ptr_eq(image, source)
-            && settings == &metadata
-            && *size == max_size
+        if let Some(entry) = fit.as_ref()
+            && entry.prepared.matches(source, &metadata, max_size)
         {
-            raster = Some(prepared.clone());
-            status = message.clone();
-            current_prepared = Some(PreparedDisplay {
-                source: Arc::clone(source),
-                metadata: metadata.clone(),
-                max_size,
-                raster: prepared.clone(),
-            });
+            raster = Some(entry.prepared.raster.clone());
+            status = entry.status.clone();
+            current_prepared = Some(entry.prepared.clone());
         }
     }
     if layer == ViewLayer::PaperBack {
@@ -2005,12 +1995,49 @@ mod tests {
                 Color32::WHITE
             ]
         );
-        let pixels = Arc::clone(&cache.fit[1].as_ref().unwrap().3.rgb);
+        let pixels = Arc::clone(&cache.fit[1].as_ref().unwrap().prepared.raster.rgb);
         assert!(Arc::ptr_eq(&pixels, &seed.rgb));
         fit.generation = 2;
         fit.image_rect = fit.image_rect.translate(Vec2::new(1.0, 0.0));
         compose_display(fit, &mut cache);
-        assert!(Arc::ptr_eq(&pixels, &cache.fit[1].as_ref().unwrap().3.rgb));
+        assert!(Arc::ptr_eq(
+            &pixels,
+            &cache.fit[1].as_ref().unwrap().prepared.raster.rgb
+        ));
+    }
+
+    #[test]
+    fn fit_composition_rejects_stale_cache_and_seed() {
+        let mut original = request(1);
+        original.full_source = false;
+        original.max_size = 4;
+        for change in 0..3 {
+            let mut cache = CompositionCache::default();
+            let seed = compose_display(original.clone(), &mut cache)
+                .prepared
+                .unwrap();
+            let mut changed = original.clone();
+            changed.generation = 2;
+            changed.prepared = Some(seed.clone());
+            match change {
+                0 => changed.source = request(2).source,
+                1 => changed.metadata.encoded = false,
+                _ => changed.max_size = 2,
+            }
+            let response = compose_display(changed.clone(), &mut cache);
+            let prepared = response.prepared.unwrap();
+            assert!(Arc::ptr_eq(
+                &prepared.source,
+                changed.source.as_ref().unwrap()
+            ));
+            assert!(prepared.metadata == changed.metadata);
+            assert_eq!(prepared.max_size, changed.max_size);
+            assert!(!Arc::ptr_eq(&prepared.raster.rgb, &seed.raster.rgb));
+            assert!(Arc::ptr_eq(
+                &prepared.raster.rgb,
+                &cache.fit[1].as_ref().unwrap().prepared.raster.rgb
+            ));
+        }
     }
 
     #[cfg(not(windows))]

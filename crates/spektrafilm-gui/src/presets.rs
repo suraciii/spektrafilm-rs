@@ -98,16 +98,25 @@ pub fn name_error(
     })
 }
 pub fn reveal_command(path: &Path) -> std::process::Command {
-    let program = if cfg!(target_os = "macos") {
-        "open"
+    if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        command.arg("-R").arg(path);
+        command
     } else if cfg!(windows) {
-        "explorer"
+        let mut argument = std::ffi::OsString::from("/select,");
+        argument.push(path);
+        let mut command = std::process::Command::new("explorer");
+        command.arg(argument);
+        command
     } else {
-        "xdg-open"
-    };
-    let mut command = std::process::Command::new(program);
-    command.arg(path);
-    command
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(
+            path.parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        );
+        command
+    }
 }
 fn reveal(path: &Path) -> Result<(), String> {
     let status = reveal_command(path)
@@ -124,6 +133,16 @@ fn provenance() -> Provenance {
         implementation_version: env!("CARGO_PKG_VERSION").into(),
         model_version: "spektrafilm".into(),
     }
+}
+
+enum PresetAction {
+    Load,
+    Update,
+    Rename,
+    Duplicate,
+    Export,
+    Reveal,
+    Delete,
 }
 
 enum NameAction {
@@ -180,174 +199,177 @@ impl App {
         } else {
             panel.exact_width(38.0)
         };
-        let response =
-            panel.show(ctx, |ui| {
-                ui.horizontal(|ui| {
+        let response = panel.show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .button(if expanded { "◀" } else { "▶" })
+                    .on_hover_text("Collapse or expand Presets")
+                    .clicked()
+                {
+                    self.presets.state.expanded = !expanded;
+                }
+                if expanded {
+                    ui.heading("Presets");
                     if ui
-                        .button(if expanded { "◀" } else { "▶" })
-                        .on_hover_text("Collapse or expand Presets")
+                        .button("+")
+                        .on_hover_text("Save current look as a preset")
                         .clicked()
                     {
-                        self.presets.state.expanded = !expanded;
+                        self.save_preset_as(None);
                     }
-                    if expanded {
-                        ui.heading("Presets");
-                        if ui
-                            .button("+")
-                            .on_hover_text("Save current look as a preset")
-                            .clicked()
-                        {
-                            self.save_preset_as(None);
-                        }
-                    }
-                });
-                if !expanded {
-                    return;
                 }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for group in [PresetGroup::BuiltIn, PresetGroup::User] {
-                        ui.separator();
-                        ui.heading(if group == PresetGroup::BuiltIn {
-                            "Built-in"
-                        } else {
-                            "My Presets"
-                        });
-                        if group == PresetGroup::User {
-                            let directory = self.presets.library.directory().to_path_buf();
-                            ui.small(directory.display().to_string());
-                            ui.horizontal(|ui| {
-                                if ui.button("Show directory").clicked()
-                                    && let Err(e) = reveal(&directory)
-                                {
-                                    self.status = e;
-                                }
-                                if ui.button("Refresh").clicked() {
-                                    self.presets.refresh();
-                                    self.status = "Refreshed preset library".into();
-                                }
-                                if ui.button("Import").clicked() {
-                                    self.import_preset();
-                                }
-                            });
-                        }
-                        let entries: Vec<_> = self
-                            .presets
-                            .entries
-                            .iter()
-                            .filter(|e| {
-                                e.group == group
-                                    && e.kind == Some(PresetKind::Look)
-                                    && e.fault.is_none()
-                            })
-                            .cloned()
-                            .collect();
-                        if entries.is_empty() && group == PresetGroup::User {
-                            ui.weak("Use + to save the current look.");
-                        }
-                        for entry in entries {
-                            let active =
-                                self.presets.state.applied.as_ref().is_some_and(|a| {
-                                    a.group == entry.group && a.name == entry.name
-                                });
-                            let suffix = if active {
-                                match marker(
-                                    self.presets.state.applied.as_ref().unwrap(),
-                                    &self.presets.entries,
-                                    &self.params,
-                                    &self.film_name,
-                                    &self.print_name,
-                                ) {
-                                    Marker::Modified => " • modified",
-                                    Marker::Missing => " • missing",
-                                    Marker::Applied => " • applied",
-                                }
-                            } else {
-                                ""
-                            };
-                            let response =
-                                ui.selectable_label(active, format!("{}{suffix}", entry.name));
-                            if response.clicked() {
-                                self.load_preset(&entry);
+            });
+            if !expanded {
+                return;
+            }
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for group in [PresetGroup::BuiltIn, PresetGroup::User] {
+                    ui.separator();
+                    ui.heading(if group == PresetGroup::BuiltIn {
+                        "Built-in"
+                    } else {
+                        "My Presets"
+                    });
+                    if group == PresetGroup::User {
+                        let directory = self.presets.library.directory().to_path_buf();
+                        ui.small(directory.display().to_string());
+                        ui.horizontal(|ui| {
+                            if ui.button("Show directory").clicked()
+                                && let Err(e) = reveal(&directory)
+                            {
+                                self.status = e;
                             }
-                            response.context_menu(|ui| self.preset_actions(ui, &entry, true));
-                            ui.small(format!(
-                                "{} → {}",
-                                entry
-                                    .film_profile
-                                    .as_ref()
-                                    .map(|p| p.stock.as_str())
-                                    .unwrap_or("?"),
-                                entry
-                                    .print_profile
-                                    .as_ref()
-                                    .map(|p| p.stock.as_str())
-                                    .unwrap_or("?")
-                            ));
-                        }
+                            if ui.button("Refresh").clicked() {
+                                self.presets.refresh();
+                                self.status = "Refreshed preset library".into();
+                            }
+                            if ui.button("Import").clicked() {
+                                self.import_preset();
+                            }
+                        });
                     }
-                    if let Some(applied) = &self.presets.state.applied
-                        && marker(
-                            applied,
-                            &self.presets.entries,
-                            &self.params,
-                            &self.film_name,
-                            &self.print_name,
-                        ) == Marker::Missing
-                    {
-                        ui.label(format!("{} • missing", applied.name));
-                    }
-                    if let Some(error) = &self.presets.scan_error {
-                        ui.colored_label(egui::Color32::LIGHT_RED, error);
-                    }
-                    let faults: Vec<_> = self
+                    let mut action = None;
+                    let mut entries = self
                         .presets
                         .entries
                         .iter()
-                        .filter(|e| e.fault.is_some())
-                        .cloned()
-                        .collect();
-                    if !faults.is_empty() {
-                        ui.collapsing("Issues", |ui| {
-                            for entry in faults {
-                                show_fault(ui, &entry);
+                        .enumerate()
+                        .filter(|(_, e)| {
+                            e.group == group
+                                && e.kind == Some(PresetKind::Look)
+                                && e.fault.is_none()
+                        })
+                        .peekable();
+                    if entries.peek().is_none() && group == PresetGroup::User {
+                        ui.weak("Use + to save the current look.");
+                    }
+                    for (index, entry) in entries {
+                        let active = self
+                            .presets
+                            .state
+                            .applied
+                            .as_ref()
+                            .is_some_and(|a| a.group == entry.group && a.name == entry.name);
+                        let suffix = if active {
+                            match marker(
+                                self.presets.state.applied.as_ref().unwrap(),
+                                &self.presets.entries,
+                                &self.params,
+                                &self.film_name,
+                                &self.print_name,
+                            ) {
+                                Marker::Modified => " • modified",
+                                Marker::Missing => " • missing",
+                                Marker::Applied => " • applied",
+                            }
+                        } else {
+                            ""
+                        };
+                        let response =
+                            ui.selectable_label(active, format!("{}{suffix}", entry.name));
+                        if response.clicked() {
+                            action = Some((index, PresetAction::Load));
+                        }
+                        response.context_menu(|ui| {
+                            if let Some(selected) = self.preset_actions(ui, entry, true) {
+                                action = Some((index, selected));
                             }
                         });
+                        ui.small(format!(
+                            "{} → {}",
+                            entry
+                                .film_profile
+                                .as_ref()
+                                .map(|p| p.stock.as_str())
+                                .unwrap_or("?"),
+                            entry
+                                .print_profile
+                                .as_ref()
+                                .map(|p| p.stock.as_str())
+                                .unwrap_or("?")
+                        ));
                     }
-                });
+                    if let Some((index, action)) = action {
+                        self.apply_preset_action(index, action);
+                    }
+                }
+                if let Some(applied) = &self.presets.state.applied
+                    && marker(
+                        applied,
+                        &self.presets.entries,
+                        &self.params,
+                        &self.film_name,
+                        &self.print_name,
+                    ) == Marker::Missing
+                {
+                    ui.label(format!("{} • missing", applied.name));
+                }
+                if let Some(error) = &self.presets.scan_error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+                if self.presets.entries.iter().any(|e| e.fault.is_some()) {
+                    egui::CollapsingHeader::new("Issues")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            for entry in self.presets.entries.iter().filter(|e| e.fault.is_some()) {
+                                show_fault(ui, entry);
+                            }
+                        });
+                }
             });
+        });
         if expanded {
             self.presets.state.width = response.response.rect.width();
         }
         self.preset_dialogs(ctx);
     }
-    fn load_preset(&mut self, entry: &LibraryEntry) {
-        let result = self
-            .presets
-            .library
-            .load(entry.group, &entry.name)
-            .and_then(|selected| {
-                match selected.preset.kind()? {
-                    PresetKind::Look => {
-                        let resolved = selected.preset.resolve(&self.data_dir, &self.params)?;
-                        self.film_name = resolved.film_name;
-                        self.print_name = resolved.print_name;
-                        self.params = resolved.params;
-                        self.film_dev_times = resolved.film.data.development_time;
-                        self.print_dev_times = resolved.print.data.development_time;
-                        self.presets.state.applied = Some(AppliedPreset {
-                            group: entry.group,
-                            name: entry.name.clone(),
-                        });
-                    }
-                    PresetKind::Section(_) => {
-                        self.params = selected.preset.apply_section(&self.params)?;
-                    }
+    fn load_preset(&mut self, group: PresetGroup, name: &str) {
+        let result = self.presets.library.load(group, name).and_then(|selected| {
+            if self.scan_for_print_snapshot.is_some() {
+                self.toggle_scan_for_print();
+            }
+            match selected.preset.kind()? {
+                PresetKind::Look => {
+                    let resolved = selected.preset.resolve(&self.data_dir, &self.params)?;
+                    self.film_name = resolved.film_name;
+                    self.print_name = resolved.print_name;
+                    self.params = resolved.params;
+                    self.film_dev_times = resolved.film.data.development_time;
+                    self.print_dev_times = resolved.print.data.development_time;
+                    self.presets.state.applied = Some(AppliedPreset {
+                        group,
+                        name: name.to_owned(),
+                    });
                 }
-                self.invalidate_look_render();
-                Ok(())
-            });
+                PresetKind::Section(_) => {
+                    self.params = selected.preset.apply_section(&self.params)?;
+                }
+            }
+            self.invalidate_look_render();
+            Ok(())
+        });
         self.status = match result {
-            Ok(()) => format!("Applied preset '{}'", entry.name),
+            Ok(()) => format!("Applied preset '{name}'"),
             Err(e) => format!("Preset error: {e}"),
         };
     }
@@ -386,14 +408,13 @@ impl App {
                 self.save_preset_as(Some(section));
                 ui.close_menu();
             }
-            let entries: Vec<_> = self
+            let mut action = None;
+            if !self
                 .presets
                 .entries
                 .iter()
-                .filter(|e| e.kind == Some(PresetKind::Section(section)))
-                .cloned()
-                .collect();
-            if entries.is_empty() {
+                .any(|e| e.kind == Some(PresetKind::Section(section)))
+            {
                 ui.weak("No presets. Save as, or place a preset file in the library.");
             }
             for group in [PresetGroup::BuiltIn, PresetGroup::User] {
@@ -402,18 +423,27 @@ impl App {
                 } else {
                     "My Presets"
                 });
-                for entry in entries.iter().filter(|e| e.group == group) {
+                for (index, entry) in self.presets.entries.iter().enumerate().filter(|(_, e)| {
+                    e.group == group && e.kind == Some(PresetKind::Section(section))
+                }) {
                     if entry.fault.is_some() {
                         show_fault(ui, entry);
                         continue;
                     }
                     ui.horizontal(|ui| {
                         if ui.button(&entry.name).clicked() {
-                            self.load_preset(entry);
+                            action = Some((index, PresetAction::Load));
                             ui.close_menu();
                         }
-                        ui.menu_button("…", |ui| self.preset_actions(ui, entry, false));
+                        ui.menu_button("…", |ui| {
+                            if let Some(selected) = self.preset_actions(ui, entry, false) {
+                                action = Some((index, selected));
+                            }
+                        });
                     });
+                }
+                if let Some((index, selected)) = action.take() {
+                    self.apply_preset_action(index, selected);
                 }
             }
             // Unclassified parse faults cannot be assigned a section; make them visible here too.
@@ -427,10 +457,14 @@ impl App {
             }
         });
     }
-    fn preset_actions(&mut self, ui: &mut egui::Ui, entry: &LibraryEntry, look: bool) {
-        let Some(preset) = &entry.preset else {
-            return;
-        };
+    fn preset_actions(
+        &self,
+        ui: &mut egui::Ui,
+        entry: &LibraryEntry,
+        look: bool,
+    ) -> Option<PresetAction> {
+        entry.preset.as_ref()?;
+        let mut action = None;
         if entry.group == PresetGroup::User {
             let active = self
                 .presets
@@ -443,6 +477,53 @@ impl App {
                     .add_enabled(active, egui::Button::new("Update"))
                     .clicked()
             {
+                action = Some(PresetAction::Update);
+                ui.close_menu();
+            }
+            if look && ui.button("Revert").clicked() {
+                action = Some(PresetAction::Load);
+                ui.close_menu();
+            }
+            if ui.button("Rename…").clicked() {
+                action = Some(PresetAction::Rename);
+                ui.close_menu();
+            }
+        }
+        if ui
+            .button(if entry.group == PresetGroup::BuiltIn {
+                "Duplicate to My Presets…"
+            } else {
+                "Duplicate…"
+            })
+            .clicked()
+        {
+            action = Some(PresetAction::Duplicate);
+            ui.close_menu();
+        }
+        if ui.button("Export…").clicked() {
+            action = Some(PresetAction::Export);
+            ui.close_menu();
+        }
+        if entry.path.is_some() && ui.button("Show file").clicked() {
+            action = Some(PresetAction::Reveal);
+            ui.close_menu();
+        }
+        if entry.group == PresetGroup::User && ui.button("Delete…").clicked() {
+            action = Some(PresetAction::Delete);
+            ui.close_menu();
+        }
+        action
+    }
+    fn apply_preset_action(&mut self, index: usize, action: PresetAction) {
+        let entry = &self.presets.entries[index];
+        match action {
+            PresetAction::Load => {
+                let group = entry.group;
+                let name = entry.name.clone();
+                self.load_preset(group, &name);
+            }
+            PresetAction::Update => {
+                let preset = entry.preset.as_ref().unwrap();
                 let mut captured = Preset::capture(
                     &entry.name,
                     &self.film_name,
@@ -457,62 +538,42 @@ impl App {
                     Err(e) => e,
                 };
                 self.presets.refresh();
-                ui.close_menu();
             }
-            if look && ui.button("Revert").clicked() {
-                self.load_preset(entry);
-                ui.close_menu();
-            }
-            if ui.button("Rename…").clicked() {
+            PresetAction::Rename => {
                 self.presets.name_dialog = Some(NameDialog {
                     action: NameAction::Rename(entry.name.clone()),
                     name: entry.name.clone(),
                     error: None,
                 });
-                ui.close_menu();
             }
-        }
-        if ui
-            .button(if entry.group == PresetGroup::BuiltIn {
-                "Duplicate to My Presets…"
-            } else {
-                "Duplicate…"
-            })
-            .clicked()
-        {
-            self.presets.name_dialog = Some(NameDialog {
-                action: NameAction::Duplicate(preset.clone()),
-                name: format!("{} copy", entry.name),
-                error: None,
-            });
-            ui.close_menu();
-        }
-        if ui.button("Export…").clicked() {
-            if let Some(path) = self
-                .file_dialog("preset")
-                .set_file_name(format!("{}.toml", entry.name))
-                .add_filter("Preset", &["toml", "json"])
-                .save_file()
-            {
-                self.remember_dialog("preset", &path);
-                self.status = match self.presets.library.export(preset, &path, &self.data_dir) {
-                    Ok(path) => format!("Exported preset to {}", path.display()),
-                    Err(e) => e,
-                };
+            PresetAction::Duplicate => {
+                self.presets.name_dialog = Some(NameDialog {
+                    action: NameAction::Duplicate(entry.preset.as_ref().unwrap().clone()),
+                    name: format!("{} copy", entry.name),
+                    error: None,
+                });
             }
-            ui.close_menu();
-        }
-        if let Some(path) = &entry.path
-            && ui.button("Show file").clicked()
-        {
-            if let Err(e) = reveal(path) {
-                self.status = e;
+            PresetAction::Export => {
+                if let Some(path) = self
+                    .file_dialog("preset")
+                    .set_file_name(format!("{}.toml", entry.name))
+                    .add_filter("Preset", &["toml", "json"])
+                    .save_file()
+                {
+                    self.remember_dialog("preset", &path);
+                    let preset = self.presets.entries[index].preset.as_ref().unwrap();
+                    self.status = match self.presets.library.export(preset, &path, &self.data_dir) {
+                        Ok(path) => format!("Exported preset to {}", path.display()),
+                        Err(e) => e,
+                    };
+                }
             }
-            ui.close_menu();
-        }
-        if entry.group == PresetGroup::User && ui.button("Delete…").clicked() {
-            self.presets.delete = Some(entry.name.clone());
-            ui.close_menu();
+            PresetAction::Reveal => {
+                if let Err(e) = reveal(entry.path.as_ref().unwrap()) {
+                    self.status = e;
+                }
+            }
+            PresetAction::Delete => self.presets.delete = Some(entry.name.clone()),
         }
     }
     fn import_preset(&mut self) {
@@ -661,6 +722,132 @@ fn show_fault(ui: &mut egui::Ui, entry: &LibraryEntry) {
 mod tests {
     use super::*;
     use crate::state;
+    fn test_app(label: &str) -> (App, PathBuf) {
+        let directory =
+            std::env::temp_dir().join(format!("spektrafilm-gui-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let state_path = directory.join("state.json");
+        state::GuiState::factory().save(&state_path).unwrap();
+        let mut app = App::new(
+            std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            None,
+            Some(state_path),
+        );
+        app.presets.library = PresetLibrary::new(directory.join("presets"));
+        app.presets.refresh();
+        (app, directory)
+    }
+
+    #[test]
+    fn section_application_restores_transient_scan_controls() {
+        let (mut app, directory) = test_app("scan-section");
+        app.params.scanner.white_correction = false;
+        app.params.scanner.black_correction = false;
+        app.params.print_render.glare.active = true;
+        for section in [Section::Grain, Section::Base] {
+            let preset =
+                Preset::capture_section("Section", section, &app.params, provenance()).unwrap();
+            app.presets
+                .library
+                .save_new(&preset, &app.data_dir)
+                .unwrap();
+            app.presets.refresh();
+            let entry = app
+                .presets
+                .entries
+                .iter()
+                .find(|entry| entry.name == "Section")
+                .unwrap()
+                .clone();
+            app.toggle_scan_for_print();
+            assert_eq!(app.scan_for_print_snapshot, Some((false, false, true)));
+            app.load_preset(entry.group, &entry.name);
+            assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+            assert!(app.scan_for_print_snapshot.is_none());
+            let restored = app.current_state().unwrap().runtime_params().unwrap();
+            assert!(!restored.scanner.white_correction);
+            assert!(!restored.scanner.black_correction);
+            assert!(restored.print_render.glare.active);
+            app.presets.library.delete("Section").unwrap();
+        }
+        let entry = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.group == PresetGroup::BuiltIn)
+            .unwrap()
+            .clone();
+        app.toggle_scan_for_print();
+        app.load_preset(entry.group, &entry.name);
+        assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+        assert!(app.scan_for_print_snapshot.is_none());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unusable_library_path_keeps_builtins_and_renders_fault() {
+        let (mut app, directory) = test_app("library-fault");
+        let path = directory.join("presets");
+        std::fs::write(&path, "not a directory").unwrap();
+        app.presets.refresh();
+        assert!(app.presets.scan_error.is_none());
+        assert_eq!(
+            app.presets
+                .entries
+                .iter()
+                .filter(|entry| entry.group == PresetGroup::BuiltIn)
+                .count(),
+            builtin_presets().len()
+        );
+        let fault = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.fault.is_some())
+            .unwrap();
+        assert_eq!(fault.path.as_ref(), Some(&path));
+        let fault_text = format!("{}: {}", path.display(), fault.fault.as_ref().unwrap());
+        let builtin_name = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.group == PresetGroup::BuiltIn)
+            .unwrap()
+            .name
+            .clone();
+        let context = egui::Context::default();
+        let output = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1460.0, 2000.0),
+                )),
+                ..Default::default()
+            },
+            |context| app.preset_panel(context),
+        );
+        fn texts(shape: &egui::epaint::Shape, output: &mut Vec<String>) {
+            match shape {
+                egui::epaint::Shape::Text(text) => output.push(text.galley.text().to_owned()),
+                egui::epaint::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        texts(shape, output);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut rendered = vec![];
+        for shape in output.shapes {
+            texts(&shape.shape, &mut rendered);
+        }
+        assert!(rendered.contains(&fault_text), "{rendered:?}");
+        assert!(
+            rendered.iter().any(|text| text.contains(&builtin_name)),
+            "{rendered:?}"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
     use spektrafilm_core::presets::builtin_presets;
     #[test]
     fn marker_transitions_and_capture_roundtrip() {
@@ -739,12 +926,28 @@ mod tests {
         assert!(name_error("alpha", &entries, Some("alpha")).is_none());
     }
     #[test]
-    fn reveal_preserves_path_argument() {
+    fn reveal_uses_platform_file_selection_arguments() {
+        use std::ffi::OsString;
+
         let path = Path::new("/tmp/My Presets/a look.toml");
-        assert_eq!(
-            reveal_command(path).get_args().collect::<Vec<_>>(),
-            vec![path.as_os_str()]
-        );
+        let command = reveal_command(path);
+        let (program, args) = if cfg!(target_os = "macos") {
+            (
+                "open",
+                vec![OsString::from("-R"), path.as_os_str().to_owned()],
+            )
+        } else if cfg!(windows) {
+            let mut argument = OsString::from("/select,");
+            argument.push(path);
+            ("explorer", vec![argument])
+        } else {
+            (
+                "xdg-open",
+                vec![path.parent().unwrap().as_os_str().to_owned()],
+            )
+        };
+        assert_eq!(command.get_program(), program);
+        assert_eq!(command.get_args().collect::<Vec<_>>(), args);
     }
     #[test]
     fn browser_extension_preserves_existing_fields() {

@@ -252,9 +252,7 @@ fn build(args: BuildArgs) -> Result<()> {
         let report =
             spektrafilm_core::lut_qa::run(&bundle, &args.data_dir, backend.as_ref(), &qa_root)
                 .map_err(anyhow::Error::msg)?;
-        for path in
-            spektrafilm_core::lut_qa::write_report(&report, &qa_root).map_err(anyhow::Error::msg)?
-        {
+        for path in report.artifact_paths() {
             lut_delivery::append_artifact(
                 &mut meta,
                 lut_delivery::ArtifactReference {
