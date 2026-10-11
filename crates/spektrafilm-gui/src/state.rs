@@ -173,17 +173,6 @@ impl GuiState {
             }
         }
         normalize_grain_section(&mut normalized["grain"]);
-        if let Some(grain) = normalized
-            .get_mut("rust")
-            .and_then(Value::as_object_mut)
-            .and_then(|rust| rust.get_mut("runtime"))
-            .and_then(Value::as_object_mut)
-            .and_then(|runtime| runtime.get_mut("film_render"))
-            .and_then(Value::as_object_mut)
-            .and_then(|film_render| film_render.get_mut("grain"))
-        {
-            normalize_grain_section(grain);
-        }
         for section in ["input_image", "simulation", "grain"] {
             if value.get(section).is_none() {
                 normalized
@@ -309,8 +298,13 @@ impl GuiState {
         ] {
             runtime["settings"][key] = value;
         }
-        let params: RuntimeParams =
+        let mut params: RuntimeParams =
             serde_json::from_value(runtime).context("Invalid GUI control value")?;
+        if let Some(preparation) = s["rust"].get("render_preparation") {
+            let preparation = serde_json::from_value(preparation.clone())
+                .context("Invalid render preparation ownership")?;
+            params.restore_render_preparation_state(&preparation);
+        }
         params.validate().map_err(anyhow::Error::msg)?;
         for name in ["film_channel_swap", "print_channel_swap"] {
             let order = s["special"][name]
@@ -482,6 +476,7 @@ impl GuiState {
             }
         }
         s["rust"]["version"] = json!(1);
+        s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         // Route owns the derived scan decision; do not persist the legacy
         // `scan_film` flag or a second workflow owner in the Rust snapshot.
         runtime["io"]
@@ -492,13 +487,6 @@ impl GuiState {
             .and_then(|root| root.get_mut("workflow"))
             .and_then(Value::as_object_mut)
             .map(|workflow| workflow.remove("route"));
-        if let Some(grain) = runtime
-            .get_mut("film_render")
-            .and_then(Value::as_object_mut)
-            .and_then(|film_render| film_render.get_mut("grain"))
-        {
-            normalize_grain_section(grain);
-        }
         if let Some(grain) = s.get_mut("grain") {
             canonicalize_grain_state(grain);
         }
@@ -507,37 +495,18 @@ impl GuiState {
     }
 }
 
-pub fn config_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("SPEKTRAFILM_CONFIG_DIR") {
-        return path.into();
-    }
-    #[cfg(target_os = "windows")]
-    if let Some(path) = std::env::var_os("APPDATA") {
-        return PathBuf::from(path).join("spektrafilm");
-    }
-    #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join("Library/Application Support/spektrafilm");
-    }
-    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(path).join("spektrafilm");
-    }
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config/spektrafilm")
-}
+pub use spektrafilm_core::config::config_dir;
 pub fn default_path() -> PathBuf {
     config_dir().join("gui_default_state.json")
 }
-pub fn startup() -> Result<GuiState> {
-    let path = default_path();
+pub fn startup(directory: &Path) -> Result<GuiState> {
+    let path = directory.join("gui_default_state.json");
     let mut state = if path.exists() {
         GuiState::load(&path)?
     } else {
         GuiState::factory()
     };
-    let directories = config_dir().join("dialog_dirs.json");
+    let directories = directory.join("dialog_dirs.json");
     if directories.exists() {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(directories)?)?;
         if !value.is_object() {
@@ -647,6 +616,67 @@ mod tests {
         let restored = restored.unwrap().runtime_params().unwrap();
         assert_eq!(restored.film_render.grain.rms_granularity, [0.0; 3]);
         assert_eq!(restored.io.upscale_factor, 2.5);
+    }
+
+    #[test]
+    fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
+        use spektrafilm_core::presets::{Preset, Provenance, Section};
+
+        let factory = GuiState::factory();
+        let baseline = GuiState::from_runtime(
+            &factory.runtime_params().unwrap(),
+            factory.film(),
+            factory.paper(),
+            &factory.sections,
+        )
+        .unwrap();
+        let mut source = factory.runtime_params().unwrap();
+        source.film_render.grain.particle_area_um2 = 9.0;
+        source.film_render.grain.sublayers_active = false;
+        source.film_render.grain.monochrome = true;
+        let preset = Preset::capture_section(
+            "Rust grain controls",
+            Section::Grain,
+            &source,
+            Provenance {
+                implementation_version: "test".into(),
+                model_version: "test".into(),
+            },
+        )
+        .unwrap();
+        // Monochrome is derived from the film, so sections preserve the target's value.
+        let mut target = factory.runtime_params().unwrap();
+        target.film_render.grain.monochrome = true;
+        let film = spektrafilm_core::profile::load_profile_by_name(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            factory.film(),
+        )
+        .unwrap();
+        let applied = preset.apply_section(&target, &film).unwrap();
+        let saved =
+            GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
+                .unwrap();
+        let mut before = baseline.sections;
+        let mut after = saved.sections.clone();
+        before.as_object_mut().unwrap().remove("rust");
+        after.as_object_mut().unwrap().remove("rust");
+        assert_eq!(
+            serde_json::to_vec(&before).unwrap(),
+            serde_json::to_vec(&after).unwrap()
+        );
+
+        let serialized = serde_json::to_vec(&saved.sections).unwrap();
+        let loaded = GuiState::from_value(serde_json::from_slice(&serialized).unwrap()).unwrap();
+        for state in [saved, loaded] {
+            let restored = state.runtime_params().unwrap();
+            assert_eq!(restored.film_render.grain.particle_area_um2, 9.0);
+            assert!(!restored.film_render.grain.sublayers_active);
+            assert!(restored.film_render.grain.monochrome);
+            assert_eq!(
+                restored.render_preparation_state(),
+                applied.render_preparation_state()
+            );
+        }
     }
 
     #[test]

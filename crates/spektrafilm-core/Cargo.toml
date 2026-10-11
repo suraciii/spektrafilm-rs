@@ -25,6 +25,8 @@ libm.workspace = true
 image.workspace = true
 anyhow.workspace = true
 sha2 = "0.10"
+fs2 = "0.4.3"
+tempfile = "3.27"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 time = { version = "=0.3.36", features = ["formatting"] }
 nalgebra = { version = "0.33", default-features = false, features = ["std"] }

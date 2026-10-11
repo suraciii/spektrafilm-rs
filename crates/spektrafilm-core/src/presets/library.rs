@@ -1,5 +1,6 @@
 use super::*;
 use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PresetGroup {
@@ -87,15 +88,41 @@ fn carrier(path: &Path) -> Result<bool, String> {
     }
 }
 pub fn load_file(path: &Path) -> Result<Preset, String> {
+    load_document(path).map_err(|error| format!("{}: {error}", path.display()))
+}
+fn load_document(path: &Path) -> Result<Preset, String> {
     let is_toml = carrier(path)?;
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     if is_toml {
         Preset::from_toml_str(&text)
     } else {
         Preset::from_json_str(&text)
     }
-    .map_err(|e| format!("{}: {e}", path.display()))
 }
+fn user_scope_fault(directory: &Path, error: std::io::Error) -> LibraryEntry {
+    LibraryEntry {
+        group: PresetGroup::User,
+        name: "My Presets".into(),
+        kind: None,
+        film_profile: None,
+        print_profile: None,
+        path: Some(directory.to_owned()),
+        fault: Some(format!("reading My Presets directory: {error}")),
+        preset: None,
+    }
+}
+fn name_conflict(name: &str) -> String {
+    format!("My Presets name {name:?} already exists; choose a name for a renamed copy")
+}
+fn should_remove_old_path(old: &Path, new: &Path) -> Result<bool, String> {
+    let Ok(old_entry) = std::fs::canonicalize(old) else {
+        return Ok(false);
+    };
+    let new_entry = std::fs::canonicalize(new)
+        .map_err(|error| format!("resolving {}: {error}", new.display()))?;
+    Ok(old_entry != new_entry)
+}
+
 impl PresetLibrary {
     pub fn new(directory: PathBuf) -> Self {
         Self { directory }
@@ -111,10 +138,20 @@ impl PresetLibrary {
         let listing = match std::fs::read_dir(&self.directory) {
             Ok(listing) => listing,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
-            Err(e) => return Err(format!("{}: {e}", self.directory.display())),
+            Err(e) => {
+                entries.push(user_scope_fault(&self.directory, e));
+                entries.sort_by(|a, b| name_order(&a.name, &b.name));
+                return Ok(entries);
+            }
         };
         for item in listing {
-            let item = item.map_err(|e| format!("{}: {e}", self.directory.display()))?;
+            let item = match item {
+                Ok(item) => item,
+                Err(e) => {
+                    entries.push(user_scope_fault(&self.directory, e));
+                    break;
+                }
+            };
             let path = item.path();
             if carrier(&path).is_err() {
                 continue;
@@ -124,7 +161,7 @@ impl PresetLibrary {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_owned();
-            match load_file(&path).and_then(|p| {
+            match load_document(&path).and_then(|p| {
                 if p.name == stem {
                     Ok(p)
                 } else {
@@ -191,7 +228,14 @@ impl PresetLibrary {
             (None, selector)
         };
         validate_name(name)?;
-        let entries = self.scan()?;
+        let entries = if group == Some(PresetGroup::BuiltIn) {
+            builtin_presets()
+                .into_iter()
+                .map(|preset| document_entry(PresetGroup::BuiltIn, None, preset))
+                .collect()
+        } else {
+            self.scan()?
+        };
         let builtin = entries
             .iter()
             .any(|e| e.group == PresetGroup::BuiltIn && e.name.eq_ignore_ascii_case(name));
@@ -217,10 +261,19 @@ impl PresetLibrary {
                 });
             }
         }
+        let suggestions = if group == Some(PresetGroup::BuiltIn) {
+            crate::suggest::closest(
+                name,
+                entries.into_iter().map(|entry| entry.name),
+                crate::suggest::MAX_SUGGESTIONS,
+            )
+        } else {
+            self.suggest(name)
+        };
         Err(format!(
             "unknown preset name {selector:?}; {}",
             crate::suggest::error_suffix(
-                &self.suggest(name),
+                &suggestions,
                 "use spektrafilm preset list to list presets"
             )
         ))
@@ -237,13 +290,8 @@ impl PresetLibrary {
     }
     fn validate_write(preset: &Preset, data_dir: &Path) -> Result<(), String> {
         preset.validate()?;
-        match preset.kind()? {
-            PresetKind::Look => {
-                preset.resolve(data_dir, &RuntimeParams::default())?;
-            }
-            PresetKind::Section(_) => {
-                preset.apply_section(&RuntimeParams::default())?;
-            }
+        if preset.kind()? == PresetKind::Look {
+            preset.resolve(data_dir, &RuntimeParams::default())?;
         }
         Ok(())
     }
@@ -252,6 +300,23 @@ impl PresetLibrary {
             .path
             .ok_or_else(|| "user document has no path".into())
     }
+    // Keep this file in place: unlinking it could split concurrent lock owners.
+    fn lock_mutations(&self, create_directory: bool) -> Result<std::fs::File, String> {
+        if create_directory {
+            std::fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
+        }
+        let path = self.directory.join(".preset-library.lock");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| format!("opening library lock {}: {e}", path.display()))?;
+        fs2::FileExt::lock_exclusive(&file)
+            .map_err(|e| format!("locking My Presets {}: {e}", self.directory.display()))?;
+        Ok(file)
+    }
     fn ensure_new(&self, name: &str) -> Result<(), String> {
         validate_name(name)?;
         if self
@@ -259,16 +324,14 @@ impl PresetLibrary {
             .iter()
             .any(|e| e.group == PresetGroup::User && e.name.to_lowercase() == name.to_lowercase())
         {
-            return Err(format!(
-                "My Presets name {name:?} already exists; choose a name for a renamed copy"
-            ));
+            return Err(name_conflict(name));
         }
         Ok(())
     }
     pub fn save_new(&self, preset: &Preset, data_dir: &Path) -> Result<PathBuf, String> {
         self.save_new_format(preset, data_dir, true)
     }
-    /// Explicit carrier choice for JSON-only sections carrying null edits.
+    /// Prefer the requested carrier, falling back to JSON for JSON-only sections.
     pub fn save_new_format(
         &self,
         preset: &Preset,
@@ -276,23 +339,27 @@ impl PresetLibrary {
         toml: bool,
     ) -> Result<PathBuf, String> {
         Self::validate_write(preset, data_dir)?;
+        let _lock = self.lock_mutations(true)?;
         self.ensure_new(&preset.name)?;
-        let text = if toml {
-            preset.to_toml()?
+        let (toml, text) = if toml {
+            match preset.to_toml() {
+                Ok(text) => (true, text),
+                Err(_) => (false, preset.to_json()?),
+            }
         } else {
-            preset.to_json()?
+            (false, preset.to_json()?)
         };
-        std::fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
         let path = self.directory.join(format!(
             "{}.{}",
             preset.name,
             if toml { "toml" } else { "json" }
         ));
-        atomic_write(&path, &text)?;
+        atomic_write_new(&path, &text)?;
         Ok(path)
     }
     pub fn update(&self, preset: &Preset, data_dir: &Path) -> Result<PathBuf, String> {
         Self::validate_write(preset, data_dir)?;
+        let _lock = self.lock_mutations(false)?;
         let path = self.user_path(&preset.name)?;
         let text = if carrier(&path)? {
             preset.to_toml()?
@@ -304,6 +371,7 @@ impl PresetLibrary {
     }
     pub fn rename(&self, name: &str, new_name: &str, data_dir: &Path) -> Result<PathBuf, String> {
         validate_name(new_name)?;
+        let _lock = self.lock_mutations(false)?;
         let old = self.user_path(name)?;
         let mut preset = load_file(&old)?;
         preset.name = new_name.into();
@@ -320,8 +388,17 @@ impl PresetLibrary {
         } else {
             preset.to_json()?
         };
-        atomic_write(&new, &text)?;
-        if new != old
+        let same_entry = old == new
+            || std::fs::canonicalize(&old)
+                .ok()
+                .zip(std::fs::canonicalize(&new).ok())
+                .is_some_and(|(old, new)| old == new);
+        if same_entry {
+            atomic_write(&new, &text)?;
+        } else {
+            atomic_write_new(&new, &text)?;
+        }
+        if should_remove_old_path(&old, &new)?
             && let Err(e) = std::fs::remove_file(&old)
         {
             let _ = std::fs::remove_file(&new);
@@ -335,11 +412,22 @@ impl PresetLibrary {
         new_name: &str,
         data_dir: &Path,
     ) -> Result<PathBuf, String> {
+        let source_path = self
+            .scan()?
+            .into_iter()
+            .find(|entry| entry.preset.as_ref() == Some(preset) && entry.path.is_some())
+            .and_then(|entry| entry.path);
+        let toml = source_path
+            .as_deref()
+            .map(carrier)
+            .transpose()?
+            .unwrap_or(true);
         let mut copy = preset.clone();
         copy.name = new_name.into();
-        self.save_new(&copy, data_dir)
+        self.save_new_format(&copy, data_dir, toml)
     }
     pub fn delete(&self, name: &str) -> Result<(), String> {
+        let _lock = self.lock_mutations(false)?;
         let path = self.user_path(name)?;
         std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))
     }
@@ -362,36 +450,563 @@ impl PresetLibrary {
         } else {
             path.to_owned()
         };
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("creating {}: {error}", parent.display()))?;
+        let destination_directory = std::fs::canonicalize(parent)
+            .map_err(|error| format!("resolving {}: {error}", parent.display()))?;
+        let in_library = std::fs::canonicalize(&self.directory)
+            .is_ok_and(|directory| directory == destination_directory);
+        let _lock = if in_library {
+            let lock = self.lock_mutations(true)?;
+            if path.file_stem().and_then(|stem| stem.to_str()) != Some(preset.name.as_str()) {
+                return Err("library export filename must match the preset name".into());
+            }
+            self.ensure_new(&preset.name)?;
+            Some(lock)
+        } else {
+            None
+        };
         let text = if carrier(&path)? {
             preset.to_toml()?
         } else {
             preset.to_json()?
         };
-        atomic_write(&path, &text)?;
+        if in_library {
+            atomic_write_new(&path, &text)?;
+        } else {
+            atomic_write(&path, &text)?;
+        }
         Ok(path)
     }
 }
 pub(super) fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
+    write_document(path, text, true)
+}
+fn atomic_write_new(path: &Path, text: &str) -> Result<(), String> {
+    write_document(path, text, false)
+}
+fn write_document(path: &Path, text: &str, replace: bool) -> Result<(), String> {
     use std::io::Write;
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let parent = path.parent().unwrap_or(Path::new("."));
-    let temp = parent.join(format!(
-        ".preset-{}-{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = tempfile::Builder::new()
+            .prefix(".preset-")
+            .suffix(".tmp")
+            .tempfile_in(parent)?;
         file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        std::fs::rename(&temp, path)
-    })()
-    .map_err(|e| format!("writing {}: {e}", path.display()));
-    if result.is_err() {
-        let _ = std::fs::remove_file(temp);
+        file.as_file().sync_all()?;
+        if replace {
+            file.persist(path)
+        } else {
+            file.persist_noclobber(path)
+        }
+        .map_err(|error| error.error)?;
+        Ok(())
+    })();
+    result.map_err(|error| format!("writing {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_export_does_not_require_a_usable_library() {
+        let temp = Temp::new();
+        let blocked = temp.0.join("config-file");
+        std::fs::write(&blocked, "not a directory").unwrap();
+        let library = PresetLibrary::new(blocked.join("presets"));
+        let preset = grain("Exported", Value::from(0.5));
+        let destination = temp.0.join("Exported.json");
+        library.export(&preset, &destination, &data()).unwrap();
+        assert_eq!(load_file(&destination).unwrap(), preset);
     }
-    result
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn export_to_missing_case_alias_obeys_library_name_rules() {
+        let temp = Temp::new();
+        std::fs::write(temp.0.join("CaseProbe"), "probe").unwrap();
+        if !temp.0.join("caseprobe").exists() {
+            return;
+        }
+        let library = PresetLibrary::new(temp.0.join("Presets"));
+        let preset = grain("Original", Value::from(0.5));
+        let destination = temp.0.join("presets/Different.json");
+        assert!(library.export(&preset, &destination, &data()).is_err());
+        assert!(!destination.exists());
+        library
+            .export(&preset, &temp.0.join("presets/Original.json"), &data())
+            .unwrap();
+        assert_eq!(
+            library.load(PresetGroup::User, "Original").unwrap().preset,
+            preset
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_through_missing_library_alias_uses_name_ownership() {
+        let temp = Temp::new();
+        let real = temp.0.join("real");
+        let alias = temp.0.join("alias");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let library = PresetLibrary::new(real.join("library"));
+        let original = grain("Original", Value::from(0.5));
+        let destination = alias.join("library/Original.json");
+        library.export(&original, &destination, &data()).unwrap();
+        assert_eq!(
+            library.load(PresetGroup::User, "Original").unwrap().preset,
+            original
+        );
+        assert!(
+            library
+                .export(
+                    &grain("original", Value::from(0.7)),
+                    &alias.join("library/original.toml"),
+                    &data()
+                )
+                .is_err()
+        );
+        assert_eq!(load_file(&destination).unwrap(), original);
+    }
+    #[test]
+    fn creator_ignoring_lock_cannot_be_overwritten_after_identity_check() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.clone());
+        let _lock = library.lock_mutations(false).unwrap();
+        let candidate = grain("Late", Value::from(0.3));
+        let other = grain("Late", Value::from(0.7));
+        let destination = temp.0.join("Late.json");
+        library.ensure_new("Late").unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                // Deliberately bypass the library lock after the identity check.
+                std::fs::write(&destination, other.to_json().unwrap()).unwrap();
+                barrier.wait();
+            });
+            barrier.wait();
+            assert!(atomic_write_new(&destination, &candidate.to_json().unwrap()).is_err());
+        });
+        assert_eq!(load_file(&destination).unwrap(), other);
+        assert_eq!(
+            library.load(PresetGroup::User, "Late").unwrap().preset,
+            other
+        );
+        assert!(
+            library
+                .scan()
+                .unwrap()
+                .iter()
+                .all(|entry| entry.fault.is_none())
+        );
+    }
+
+    struct Temp(PathBuf);
+    impl Temp {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "spektrafilm-library-writes-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn data() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
+    }
+    fn grain(name: &str, amount: Value) -> Preset {
+        Preset::from_json_str(
+            &serde_json::json!({
+                "schema_version": 2,
+                "name": name,
+                "parameters": {"film_render": {"grain": {"v2_amount": amount}}},
+                "provenance": {"implementation_version": "test", "model_version": "test"}
+            })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn document_fault_stores_cause_and_selector_prefixes_path_once() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.clone());
+        let path = temp.0.join("Native Grain Check.json");
+        std::fs::write(
+            &path,
+            r#"{"schema_version":2,"name":"Native Grain Check","parameters":{"film_render":{"grain":{"v2_amount":null}}}}"#,
+        )
+        .unwrap();
+        let entries = library.scan().unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.path.as_ref() == Some(&path))
+            .unwrap();
+        let cause = "invalid preset: missing field `provenance`";
+        assert_eq!(entry.fault.as_deref(), Some(cause));
+        let diagnostic = format!("{}: {cause}", path.display());
+        assert_eq!(load_file(&path).unwrap_err(), diagnostic);
+        assert_eq!(
+            library
+                .resolve_selector("user:Native Grain Check")
+                .unwrap_err(),
+            diagnostic
+        );
+    }
+
+    #[test]
+    fn scope_fault_stores_directory_in_path_and_cause_in_message() {
+        let temp = Temp::new();
+        let directory = temp.0.join("presets");
+        std::fs::write(&directory, "not a directory").unwrap();
+        let error = std::fs::read_dir(&directory).unwrap_err();
+        let expected = format!("reading My Presets directory: {error}");
+        let entries = PresetLibrary::new(directory.clone()).scan().unwrap();
+        let fault = entries.iter().find(|entry| entry.fault.is_some()).unwrap();
+        assert_eq!(fault.path.as_ref(), Some(&directory));
+        assert_eq!(fault.fault.as_deref(), Some(expected.as_str()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_removal_skips_alias_of_same_entry() {
+        let temp = Temp::new();
+        let old = temp.0.join("Grain.json");
+        let alias = temp.0.join("grain.json");
+        std::fs::write(&old, "document").unwrap();
+        std::os::unix::fs::symlink(&old, &alias).unwrap();
+        assert!(!should_remove_old_path(&old, &alias).unwrap());
+        assert!(!should_remove_old_path(&temp.0.join("missing.json"), &alias).unwrap());
+    }
+
+    #[test]
+    fn normal_rename_removes_old_document() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.clone());
+        let old = library
+            .save_new(&grain("Original", Value::from(0.5)), &data())
+            .unwrap();
+        let new = library.rename("Original", "Renamed", &data()).unwrap();
+        assert!(!old.exists());
+        assert_eq!(load_file(&new).unwrap().name, "Renamed");
+    }
+
+    // Separate test processes exercise OS locking, rather than a shared Rust mutex.
+    #[test]
+    fn mutation_process() {
+        let Ok(directory) = std::env::var("SPEKTRAFILM_MUTATION_DIRECTORY") else {
+            return;
+        };
+        use std::io::{BufRead, Write};
+        println!("MUTATION_READY");
+        std::io::stdout().flush().unwrap();
+        let mut start = String::new();
+        std::io::stdin().lock().read_line(&mut start).unwrap();
+        let library = PresetLibrary::new(PathBuf::from(directory));
+        let operation = std::env::var("SPEKTRAFILM_MUTATION_OPERATION").unwrap();
+        let result = match operation.as_str() {
+            "create-toml" => {
+                library.save_new_format(&grain("Contended", Value::from(0.3)), &data(), true)
+            }
+            "create-json" => {
+                library.save_new_format(&grain("contended", Value::from(0.7)), &data(), false)
+            }
+            "rename" => library.rename("Original", "Contended", &data()),
+            _ => panic!("unknown mutation operation"),
+        };
+        std::fs::write(
+            std::env::var("SPEKTRAFILM_MUTATION_RESULT").unwrap(),
+            if result.is_ok() {
+                "success"
+            } else {
+                "conflict"
+            },
+        )
+        .unwrap();
+        if let Err(error) = result {
+            assert!(error.contains("already exists"), "{error}");
+        }
+    }
+
+    fn competing_mutations(first: &str, second: &str, rename: bool) {
+        use std::io::{BufRead, Write};
+        use std::process::{Command, Stdio};
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.join("library"));
+        let original = grain("Original", Value::from(0.5));
+        if rename {
+            library.save_new(&original, &data()).unwrap();
+        }
+        let lock = library.lock_mutations(true).unwrap();
+        let mut children = Vec::new();
+        for (index, operation) in [first, second].into_iter().enumerate() {
+            let result = temp.0.join(format!("result-{index}"));
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "presets::library::tests::mutation_process",
+                    "--nocapture",
+                ])
+                .env("SPEKTRAFILM_MUTATION_DIRECTORY", library.directory())
+                .env("SPEKTRAFILM_MUTATION_OPERATION", operation)
+                .env("SPEKTRAFILM_MUTATION_RESULT", &result)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+            let mut line = String::new();
+            loop {
+                assert_ne!(
+                    output.read_line(&mut line).unwrap(),
+                    0,
+                    "child exited before barrier"
+                );
+                if line.contains("MUTATION_READY") {
+                    break;
+                }
+                line.clear();
+            }
+            children.push((child, output, result));
+        }
+        // Both independent processes are ready before either mutation is released.
+        for (child, _, _) in &mut children {
+            child.stdin.take().unwrap().write_all(b"start\n").unwrap();
+        }
+        drop(lock);
+        let mut successes = Vec::new();
+        for (mut child, mut output, result) in children {
+            let mut remaining = String::new();
+            std::io::Read::read_to_string(&mut output, &mut remaining).unwrap();
+            assert!(child.wait().unwrap().success(), "{remaining}");
+            successes.push(std::fs::read_to_string(result).unwrap() == "success");
+        }
+        assert_eq!(successes.iter().filter(|success| **success).count(), 1);
+        let survivor = library.load(PresetGroup::User, "CONTENDED").unwrap().preset;
+        let expected = if successes[0] {
+            grain("Contended", Value::from(if rename { 0.5 } else { 0.3 }))
+        } else {
+            grain("contended", Value::from(0.7))
+        };
+        assert_eq!(survivor, expected);
+        let entries = library.scan().unwrap();
+        assert!(entries.iter().all(|entry| entry.fault.is_none()));
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry.group == PresetGroup::User)
+                .count(),
+            if rename && !successes[0] { 2 } else { 1 }
+        );
+        if rename && !successes[0] {
+            assert_eq!(
+                library.load(PresetGroup::User, "Original").unwrap().preset,
+                original
+            );
+        }
+    }
+
+    #[test]
+    fn competing_create_has_one_owner_across_case_and_carriers() {
+        competing_mutations("create-toml", "create-json", false);
+    }
+
+    #[test]
+    fn competing_rename_and_create_preserve_the_winner_and_failed_source() {
+        competing_mutations("rename", "create-json", true);
+    }
+
+    #[test]
+    fn positive_scan_section_save_and_export_need_no_runtime_or_profiles() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.join("library"));
+        let preset = Preset::from_json_str(
+            r#"{"schema_version":2,"name":"Positive scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#,
+        )
+        .unwrap();
+        let missing_data = temp.0.join("no-profiles");
+        let saved = library.save_new(&preset, &missing_data).unwrap();
+        let exported = library
+            .export(&preset, &temp.0.join("export.json"), &missing_data)
+            .unwrap();
+        assert_eq!(load_file(&saved).unwrap(), preset);
+        assert_eq!(load_file(&exported).unwrap(), preset);
+    }
+
+    #[test]
+    fn failed_update_and_rename_retain_existing_documents() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.clone());
+        let original = grain("Original", Value::from(0.5));
+        let path = library.save_new(&original, &data()).unwrap();
+        let old_bytes = std::fs::read(&path).unwrap();
+        // Null is valid JSON but cannot replace this TOML document.
+        assert!(
+            library
+                .update(&grain("Original", Value::Null), &data())
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), old_bytes);
+        std::fs::create_dir(temp.0.join("Blocked.toml")).unwrap();
+        assert!(library.rename("Original", "Blocked", &data()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), old_bytes);
+        let renamed = library.rename("Original", "original", &data()).unwrap();
+        assert_eq!(
+            load_file(&renamed).unwrap(),
+            grain("original", Value::from(0.5))
+        );
+        assert_eq!(
+            library
+                .scan()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.name.eq_ignore_ascii_case("original"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn export_to_library_obeys_name_identity_and_keeps_old_document() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.join("library"));
+        let original = grain("Original", Value::from(0.5));
+        let path = library.save_new(&original, &data()).unwrap();
+        assert!(
+            library
+                .export(
+                    &grain("original", Value::from(0.7)),
+                    &library.directory().join("original.json"),
+                    &data()
+                )
+                .is_err()
+        );
+        assert_eq!(load_file(&path).unwrap(), original);
+        let exported = grain("Exported", Value::from(0.3));
+        library
+            .export(
+                &exported,
+                &library.directory().join("Exported.json"),
+                &data(),
+            )
+            .unwrap();
+        let null = grain("Unpublished", Value::Null);
+        let failed = library.directory().join("Unpublished.toml");
+        assert!(library.export(&null, &failed, &data()).is_err());
+        assert!(!failed.exists());
+        assert!(
+            library
+                .scan()
+                .unwrap()
+                .iter()
+                .all(|entry| entry.fault.is_none())
+        );
+        assert_eq!(
+            library.load(PresetGroup::User, "Exported").unwrap().preset,
+            exported
+        );
+    }
+
+    #[test]
+    fn discovery_does_not_create_missing_library_directory() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.join("missing"));
+        assert!(
+            library
+                .scan()
+                .unwrap()
+                .iter()
+                .all(|entry| entry.group == PresetGroup::BuiltIn)
+        );
+        assert!(!library.directory().exists());
+    }
+
+    #[test]
+    fn json_null_survives_duplicate_and_rename() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.join("library"));
+        let source = temp.0.join("Clear amount.json");
+        let preset = grain("Clear amount", Value::Null);
+        std::fs::write(&source, preset.to_json().unwrap()).unwrap();
+        let imported = library.import(&source, None, &data()).unwrap();
+        assert_eq!(imported.extension().unwrap(), "json");
+        let copy = library
+            .duplicate(&load_file(&imported).unwrap(), "Copy", &data())
+            .unwrap();
+        assert_eq!(copy.extension().unwrap(), "json");
+        let renamed = library.rename("Copy", "Renamed", &data()).unwrap();
+        assert_eq!(renamed.extension().unwrap(), "json");
+        let mut expected = preset;
+        expected.name = "Renamed".into();
+        assert_eq!(load_file(&renamed).unwrap(), expected);
+        assert!(!copy.exists());
+    }
+
+    #[test]
+    fn new_null_document_uses_json_and_json_source_keeps_carrier() {
+        let temp = Temp::new();
+        let library = PresetLibrary::new(temp.0.clone());
+        let null = grain("Null", Value::Null);
+        let saved = library.save_new(&null, &data()).unwrap();
+        assert_eq!(saved.extension().unwrap(), "json");
+        assert_eq!(load_file(&saved).unwrap(), null);
+        let finite = grain("Finite", Value::from(0.5));
+        library.save_new_format(&finite, &data(), false).unwrap();
+        let copied = library.duplicate(&finite, "Finite copy", &data()).unwrap();
+        assert_eq!(copied.extension().unwrap(), "json");
+        let default = library
+            .save_new(&grain("Default", Value::from(0.5)), &data())
+            .unwrap();
+        assert_eq!(default.extension().unwrap(), "toml");
+    }
+
+    #[test]
+    fn unusable_user_library_keeps_builtins_and_one_scope_fault() {
+        let temp = Temp::new();
+        let directory = temp.0.join("presets");
+        std::fs::write(&directory, "not a directory").unwrap();
+        let library = PresetLibrary::new(directory.clone());
+        let entries = library.scan().unwrap();
+        assert_eq!(entries.len(), 6);
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry.group == PresetGroup::BuiltIn && entry.fault.is_none())
+                .count(),
+            5
+        );
+        let faults: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.fault.is_some())
+            .collect();
+        assert_eq!(faults.len(), 1);
+        assert_eq!(faults[0].group, PresetGroup::User);
+        assert_eq!(faults[0].path.as_ref(), Some(&directory));
+        assert_eq!(
+            library
+                .resolve_selector("built-in:Kodak Portra 400")
+                .unwrap()
+                .preset
+                .name,
+            "Kodak Portra 400"
+        );
+    }
 }

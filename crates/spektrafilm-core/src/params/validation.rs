@@ -308,11 +308,50 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
     }
 }
 
+impl super::PrintCurvesMorphParams {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !self.active {
+            return Ok(());
+        }
+        for (name, value) in [
+            ("gamma_factor", self.gamma_factor),
+            ("gamma_factor_fast", self.gamma_factor_fast),
+            ("gamma_factor_slow", self.gamma_factor_slow),
+            ("gamma_factor_red", self.gamma_factor_red),
+            ("gamma_factor_green", self.gamma_factor_green),
+            ("gamma_factor_blue", self.gamma_factor_blue),
+        ] {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(format!(
+                    "{name} must be finite and strictly positive (got {value})"
+                ));
+            }
+        }
+        if !(0.0..=1.0).contains(&self.developer_exhaustion) {
+            return Err(format!(
+                "developer_exhaustion must be in [0, 1] (got {})",
+                self.developer_exhaustion
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Validate wire-level enum values and cross-field constraints before any
 /// pipeline artifact is produced. The schema module owns data/defaults;
 /// this module owns the accepted runtime vocabulary.
 pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     params.validate_color()?;
+    params
+        .film_render
+        .chemistry
+        .validate()
+        .map_err(|error| format!("film_render.chemistry.{error}"))?;
+    params
+        .print_render
+        .density_curves_morph
+        .validate()
+        .map_err(|error| format!("print_render.density_curves_morph.{error}"))?;
     let grain = &params.film_render.grain;
     if grain.v2_profile != "custom"
         && spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none()

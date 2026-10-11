@@ -195,6 +195,10 @@ See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs
 
 Preset names are their portable identities. Core reads schema v1 documents by discarding their old `id` and exports schema v2. Built-ins are compiled from `crates/spektrafilm-core/assets/presets`; user documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in; `user:` and `built-in:` select one group. Section documents contain sparse editable leaves from exactly one look section and retain omitted controls on application. Explicit JSON null edits require JSON export; TOML cannot represent those edits.
 
+The GUI remembers the preset browser selection and layout independently of startup controls. An ordinary restart restores that metadata and recomputes the applied, modified, or missing marker; it does not apply the preset again. Loading an explicit GUI state uses that file's browser metadata. Use **Save current as default** to change startup controls. A failed preset application preserves the current controls and temporary black/white correction state.
+
+Section files can be saved and exported without an active workflow. Their application validates the current scan configuration; CLI composition validates after explicit workflow choices. Library writes reject names already owned by another document, including concurrent writes with different letter case or carriers. Export into My Presets creates a new name; use Update to replace an existing document.
+
 ```bash
 # Discover portable presets and editable grain controls
 ./target/release/spektrafilm preset list --source all --format text
