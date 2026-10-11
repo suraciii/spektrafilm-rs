@@ -6,6 +6,12 @@
 - For a positive film scan, stage preparation derives one private calibrated scanner response from the selected profile density curves and the actual scan color context. The response stores per-channel monotone capture-to-log-exposure knots and finite endpoint slopes; image pixels reuse that response without rebuilding spectral calibration per pixel.
 - Scanner calibration uses least-squares isotonic regression on the scanned neutral density samples to regularize measurement reversals. Pooled plateaus use their mean log exposure. The forward film curves remain unchanged.
 - Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`. The convert-film scan passes its selected scan illuminant into the same preparation path. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
+- The selected route determines the scanned medium. The medium determines the stage topology, the scanner calibration references, and the scanner controls that apply.
+- Scanner white and black correction derives its references from the scanned medium: film zero and maximum dye density for a slide scan, and the print exposure of the film density range for a photographic-paper scan.
+- Positive interpretation derives its response from the profile density curves and the scan color context. It must not estimate its endpoints from image content.
+- Interpretation controls parameterize the inverse response only. They must not modify the film curves or the printing exposure.
+- Look reaches a film-scan image through the scan capture, positive interpretation, or the finishing treatment. The finishing treatment is the only look stage shared by a photographic-paper scan and a film scan.
+- Scanner behavior must not depend on a scanner device model, a measured sensor response, or device-specific artifacts.
 - A resident WGPU chain is an optimization, not a second product contract. `ResidentDecision` records capability and fallback reasons. Unsupported stages use the faithful per-stage route.
 - The private resident module owns capability decisions, backend parameter preparation, and output transfer finalization. The parent pipeline owns input preparation and per-stage fallback ordering.
 - The WGPU film-chain module owns resident command encoding and its resource lifetimes. Device setup and shared dispatch infrastructure remain in the backend.

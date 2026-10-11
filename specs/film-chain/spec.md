@@ -13,6 +13,27 @@
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
+## Scan medium and scanner controls
+
+- The selected route determines the scanned medium. A film-scan route scans the
+  film; a print route scans the photographic paper.
+- The scanned medium determines the scanner controls that apply.
+- A print route carries its positive image on the photographic paper, and the
+  scan reads that paper. A negative film-scan route carries the negative image
+  on the film, and positive-film interpretation produces the positive image.
+- A photographic-paper scan exposes the scanner capture controls only: scanner
+  lens blur, scanner white and black correction with its white and black
+  levels, scanner unsharp mask, and the output color transform.
+- A film scan exposes the scanner capture controls and the scan polarity.
+- Positive-film interpretation belongs to a negative film scan. A photographic
+  paper scan and a slide film scan must not expose it. See
+  [Direct negative-film scan output](#direct-negative-film-scan-output).
+- Look that must apply to both a photographic-paper scan and a film scan
+  belongs to the finishing treatment, not to the scanner controls. See
+  [Magazine print color](../magazine-print-color/spec.md).
+- The product must not model a physical scanner device. It must not expose a
+  measured sensor response, transport artifacts, or dust controls.
+
 ## Direct negative-film scan output
 
 - `scanner.scan_output` is `direct_scan` by default. It preserves the
