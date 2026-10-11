@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from gui_acceptance import viewer_canvas_bounds
+from gui_acceptance import viewer_canvas_bounds, wait_for
 
 
 def _require(value, message):
@@ -41,6 +41,16 @@ def _load_state(driver, path: Path, label: str):
 
 def _text(lines):
     return "\n".join(" ".join(word[0] for word in line) for line in lines)
+
+
+def _viewer_status_text(image, lines):
+    # The selected layer is in the viewer overlay below the layer tabs.
+    # Use the native driver's word coordinates, independent of OCR line order.
+    left, _, right, _ = viewer_canvas_bounds(image)
+    return _text([[word for word in line
+                   if left <= word[1] + word[3] / 2 < right
+                   and 35 <= word[2] + word[4] / 2 < 63]
+                  for line in lines])
 
 
 def _viewer_crop(image):
@@ -270,10 +280,19 @@ def accept_viewer(driver, root, state, pixels, exporter):
 
     driver.tab("CONFIG")
     driver.click("Paper back", False)
-    driver.wait_text(r"PaperBack\s*[·.]?\s*zoom", "paper-back-selected", timeout=20)
+    def paper_back_ready():
+        image, _, lines = driver.read()
+        text = _text(lines)
+        _require(not re.search(r'(?:Render|Load|Save|Export|Startup state|Preview state)\s*(?:error|failed)', text, re.I),
+                 f'GUI failure on paper-back-selected: {text}')
+        if re.search(r"\bPaper\s*Back\b", _viewer_status_text(image, lines), re.I):
+            driver.snap("paper-back-selected", image, lines)
+            return True
+
+    wait_for(paper_back_ready, "paper-back-selected", timeout=20)
     image, lines = _record_snap(driver, records, "viewer-paper-back")
-    paper_text = _text(lines)
-    _require(re.search(r"PaperBack\s*[·.]?\s*(?:zoom|\()", paper_text, re.I),
+    paper_text = _viewer_status_text(image, lines)
+    _require(re.search(r"\bPaper\s*Back\b", paper_text, re.I),
              "Paper back viewer status was not selected in the real window")
     paper = np.asarray(_viewer_crop(image), dtype=np.float32)
     left, top, right, bottom = viewer_canvas_bounds(image)
