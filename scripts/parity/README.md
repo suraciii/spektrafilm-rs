@@ -456,7 +456,7 @@ Paper-back readiness uses the selected layer in the viewer status overlay;
 OCR ordering of the layer name and zoom text does not determine readiness.
 Zoom and rotation geometry use the known colored Input raster, selected after
 the render completes. Measurement waits for visible chroma, the requested pixel
-dimensions or orientation, and stable pixels. Repeated Paper-back or earlier
+width or orientation, and stable pixels. Repeated Paper-back or earlier
 geometry frames do not establish readiness. Processed Output can be nearly
 neutral; its dimensions and metadata are checked separately through render
 reports and decoded Export.

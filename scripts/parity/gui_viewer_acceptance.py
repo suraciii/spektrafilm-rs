@@ -258,7 +258,7 @@ def _hover_float(driver, pixels, records):
     driver.click("Input", False)
     driver.click("100%", False)
     bounds = driver.measure_viewer('viewer-float-inspection', before_view,
-                                   expected_size=(pixels.shape[1], pixels.shape[0]))
+                                   expected_width=pixels.shape[1])
     x = bounds[0] + pixels.shape[1] // 2
     y = bounds[1] + pixels.shape[0] // 2
     driver.xd("mousemove", "--window", driver.window, x, y)

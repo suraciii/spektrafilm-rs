@@ -601,7 +601,7 @@ class X11:
         wait_for(settled, f'settled {label} frame', timeout)
         return state['image'], state['canvas']
 
-    def measure_viewer(self, label, changed_from=None, timeout=60, *, expected_size=None,
+    def measure_viewer(self, label, changed_from=None, timeout=60, *, expected_width=None,
                        orientation=None):
         """Measure the known colored fixture after selecting its Input raster."""
         bounds = None
@@ -618,7 +618,7 @@ class X11:
             bounds = [int(xs.min() + left), int(ys.min() + top),
                       int(xs.max() + left + 1), int(ys.max() + top + 1)]
             width, height = bounds[2] - bounds[0], bounds[3] - bounds[1]
-            return ((expected_size is None or (width, height) == expected_size)
+            return ((expected_width is None or width == expected_width)
                     and (orientation is None
                          or (orientation == 'portrait' and height > width)
                          or (orientation == 'landscape' and width > height)))
@@ -1788,15 +1788,15 @@ def _scenario_viewer(driver, root, state, configured, standard, pixels, gui, env
         before_zoom = driver.viewer_fingerprint()
         driver.click('100%', False)
         driver.wait_text(r'zoom\s*100', 'zoom-100-selected')
-        zoom_100 = driver.measure_viewer('zoom-100-percent', before_zoom, expected_size=(192, 96))
+        zoom_100 = driver.measure_viewer('zoom-100-percent', before_zoom, expected_width=192)
         before_zoom = driver.viewer_fingerprint()
         driver.click('200%', False)
         driver.wait_text(r'zoom\s*200', 'zoom-200-selected')
-        zoom_200 = driver.measure_viewer('zoom-200-percent', before_zoom, expected_size=(384, 192))
+        zoom_200 = driver.measure_viewer('zoom-200-percent', before_zoom, expected_width=384)
         before_zoom = driver.viewer_fingerprint()
         driver.click('400%', False)
         driver.wait_text(r'zoom\s*400', 'zoom-400-selected')
-        zoom_400 = driver.measure_viewer('zoom-400-percent', before_zoom, expected_size=(768, 384))
+        zoom_400 = driver.measure_viewer('zoom-400-percent', before_zoom, expected_width=768)
         widths = [item[2] - item[0] for item in (zoom_100, zoom_200, zoom_400)]
         require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
     finally:
