@@ -493,13 +493,23 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
     tooltip: &str,
 ) -> bool {
     ui.push_id(label, |ui| {
-        ui.label(label).on_hover_text(tooltip);
+        let label_response = ui.label(label).on_hover_text(tooltip);
         ui.horizontal(|ui| {
             values
                 .iter_mut()
                 .enumerate()
                 .map(|(index, value)| {
-                    numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip)
+                    numeric_field(
+                        ui,
+                        (label, index),
+                        value,
+                        min,
+                        max,
+                        step,
+                        decimals,
+                        tooltip,
+                        Some(label_response.id),
+                    )
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })
