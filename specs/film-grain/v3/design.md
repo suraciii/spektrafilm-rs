@@ -40,7 +40,13 @@ The [product specification](spec.md#supported-condition) owns the supported cond
 
 ## Film geometry
 
+`camera.film_format_mm` owns the full-source film long edge. The runtime parameter contract must validate it as finite and strictly positive. V3 must consume its resolved value without another format range or whitelist. The long edge is the exposed image dimension, not a roll-width designation such as 35 mm or the stock name 120. The source aspect ratio determines the other film dimension. Supporting a numerical long edge does not expand film chemistry or usage support.
+
 Use the existing convention that `camera.film_format_mm` gives the full-film long edge. For source dimensions `W,H`, define pitch `q = 1000 * film_format_mm / max(W,H)` in micrometers. Film bounds are `[0,W*q] × [0,H*q]`. Source pixels occupy rectangles of width and height `q` with centers at `((x+0.5)*q,(y+0.5)*q)`.
+
+Changing `camera.film_format_mm` changes the physical film extent, source-pixel pitch, and output-footprint size in film units. The requested crop and resize continue to determine raster dimensions. Format changes must keep dye support, event area, field pitch, stock resolution, and random-stream addressing unchanged. At fixed output dimensions, a larger format reads larger film footprints. The model must integrate those footprints without a format-dependent strength correction.
+
+At fixed aspect ratio and field pitch, the full-film cell count grows approximately as the square of the long edge. Band partitioning bounds working storage but does not remove this workload. Resource checks must use the resolved geometry and the existing allocation and coordinate limits. A resource error must identify the exceeded limit and an applicable remedy before output publication. The implementation must not silently coarsen the field or change the model to fit a larger format.
 
 Reuse existing crop rounding and slice normalization. Carry its resolved source rectangle `(x0,y0,w,h)` into V3. The requested region is `[x0*q,(x0+w)*q] × [y0*q,(y0+h)*q]`.
 
@@ -162,6 +168,8 @@ With the default sigma of 3.5 micrometers, the pitch is 1.75 micrometers. A 36 m
 
 Run `h,h/2,h/4` checks on small representative film regions, not three full-frame microscopic canvases. Hold target surface, model parameters, and output footprints fixed. Cover low/middle/high targets, slanted edges, narrow lines, fractional translations, subcell boxes, noninteger ratios, and film boundaries.
 
+Format coverage and full-frame evidence must follow the [film-format acceptance procedure](spec.md#film-format-acceptance). The numerical tolerances in this section apply at the physical footprints used by each probe.
+
 Check implementation self-consistency with count moments and its discrete operator. For `H_jli`, the readout density weight of one cell's mass:
 
 ```text
@@ -202,6 +210,12 @@ First prove layer allocation, reconstruction, count law, independent formation/r
 Before declaring the reference condition supported, render the actual full frame through CLI and GUI Scan/Export. Record machine, source/output dimensions, pitch, peak resident memory, stage times, and cancellation behavior. Tile or cache optimizations must keep certified output. If the full-frame workload is unacceptable, revise execution and re-certify before release; do not silently fall back to another model or reduce the promised frame scope.
 
 Permanent tests must cover allocation including zero weights, bypass precedence, support independence from event area, global crop/tile identity, fractional boxes, supported routes, the unsupported cine usage, and state round trips. The covariance certification test must use the default support and the zero-lag-variance error measure. Numerical and photographic evidence must identify the real entry point and precision. Synthetic proof alone must not be reported as visual acceptance.
+
+The format change must retain the existing 36 mm realization for the same source, seed, recipe, precision, and implementation. Permanent regression tests must cover the default 35 mm recipe, an arbitrary positive non-36 mm long edge, format persistence, invalid format values, unchanged output dimensions, and crop/tile identity at both smaller and larger formats. Resource-limit checks must exercise an exceeded limit without allocating the oversized canvas.
+
+## Current implementation gap
+
+The existing V3 support gate requires `camera.film_format_mm = 36.0`, and its regression test rejects `24.0`. Runtime parameter validation does not yet enforce finite positive `camera.film_format_mm` values. The geometry path already derives pitch from the global parameter. Implementation of this contract must remove the equality gate, replace the format-rejection regression with behavior tests, and add the shared finite-positive validation. It must preserve the geometry and model rules above.
 
 ## Evidence and limits
 
