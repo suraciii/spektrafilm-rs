@@ -2,7 +2,7 @@
 
 ## Status
 
-V3 is an opt-in engine. This specification is the release contract for its reference condition. It does not record evidence; acceptance evidence belongs to the delivering pull request.
+V3 is an opt-in engine. This specification defines its target support and the reference validation condition. Implementation gaps are recorded in the [design](design.md#current-implementation-gap). Acceptance evidence belongs to the delivering pull request.
 
 ## Goal
 
@@ -24,21 +24,25 @@ The output pixel is a readout sample. It is not a grain-generation unit. At a vi
 
 ## Supported condition
 
-V3 supports still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`) at a 35 mm full-film long edge.
+V3 supports still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`) at the resolved global `camera.film_format_mm` film long edge. V3 must consume this parameter as the only film-format source and must not impose a second format whitelist.
 
-The reference condition is the print route `input > film > print > scan` with `io.scan_film = false`. The film forms the grain. The existing enlarger, print paper, and print scan read it. The reference stock and the default controls are validated on this route.
+Changing film format must keep the requested output raster dimensions. It may change visible grain through the physical sampling defined in the [film geometry](design.md#film-geometry). V3 must not compensate this change with an automatic grain-size or strength adjustment.
+
+The reference validation condition is a 36 mm long edge on the print route `input > film > print > scan` with `io.scan_film = false`. The film forms the grain. The existing enlarger, print paper, and print scan read it. The reference stock and the default controls are validated on this route. The 36 mm value is a validation reference, not a V3 format restriction.
 
 V3 must also run on the film-scan route `input > film > scan` with `io.scan_film = true`, for `scanner.scan_output = positive_scan` and `direct_scan`. This route is a diagnostic condition. It must not be described as photographically accepted until it passes the [spectral readout gate](design.md#readout-and-detail) and the acceptance procedure below. A negative capture must not be compared with a positive reference without recording the interpretation.
 
 Each stock must resolve its grain through its granularity preset, so that a coarser stock renders stronger grain than a finer one at the same density. The reference stock `kodak_portra_800` keeps the absolute event area validated for it. Other stocks move relative to that anchor.
 
-Active V3 on another film chemistry, another usage (including `cine`), another format, the convert-film route, or the passthrough route must fail with an actionable unsupported-condition error. These restrictions define this release's support, not permanent exclusions. Each expansion requires the same validation for the added condition.
+Active V3 on another film chemistry, another usage (including `cine`), the convert-film route, or the passthrough route must fail with an actionable unsupported-condition error. A different `camera.film_format_mm` value must not fail only because it differs from 36 mm. Each additional format requires numerical, resource, and photographic evidence before it is described as validated support.
 
-The acceptance record must identify exposure where known, development, scanner or scan source, processing, output dimensions, film area, and viewing size. Unknown conditions must remain explicit. Incomplete references may guide appearance. They must not establish stock-specific physical calibration.
+The acceptance record must identify exposure where known, development, scanner or scan source, processing, output dimensions, film format, film area, film pitch, field pitch, and viewing size. Unknown conditions must remain explicit. Incomplete references may guide appearance. They must not establish stock-specific physical calibration.
 
 ## Controls and compatibility
 
 `film_render.grain.engine = v3` must select V3 explicitly. V1 must remain the default for existing recipes. V1 and V2 must keep their existing behavior and defaults.
+
+V3 must use the current `camera.film_format_mm` value without replacing it when the engine changes. Its existing default of `35.0` must remain unchanged. A saved value of `35.0` must not be normalized to `36.0`. CLI parameter edits, presets, recipes, and GUI state must preserve the format through their existing parameter ownership and serialization rules. This change must not add a grain-specific format field or require a state-schema migration.
 
 V3 owns the film-space dye support `v3_dye_support_um`, with default `3.5`, and the base statistical event area `v3_event_area_um2`, with default `1.28`. Its [design](design.md#parameters) defines both controls.
 
@@ -100,6 +104,19 @@ V3 must pass the numerical certification and the following image-forming procedu
 Both outcomes are required. The real-scan comparison must support the claimed behavior within its known conditions. User review must find V3 more convincing than the V1 baseline, without a compensating loss of grain visibility or subject quality.
 
 Measurements must answer a specific discrepancy. RMS, covariance, spatial spectra, and edge response are diagnostic tools. Numerical certification verifies the specified algorithm. It does not establish Portra equivalence. Stock-specific thresholds require an appropriate reference and measurement protocol.
+
+### Film-format acceptance
+
+The format extension must pass this procedure in addition to the reference-condition acceptance:
+
+1. Exercise long-edge values `8`, `16`, `24`, `35`, `36`, `56`, `65`, and `120` mm through the existing global parameter. These are numerical long-edge probes, not a format whitelist or names of calibrated emulsions. Include a fractional value, a square source, and a portrait source.
+2. At fixed source dimensions, crop, and resize, confirm that changing the format preserves output dimensions and scales source pitch and output footprints by the long-edge ratio. Confirm that resolved stock controls, support, event area, and field pitch stay unchanged.
+3. At smaller and larger formats, exercise uniform patches, edges, narrow lines, repeated seeds, and overlapping crop and tile reads. Apply the existing numerical tolerances at identical physical footprints. Use translated crops with full-film halos to bound the comparison workload.
+4. Compare a uniform film region at the same physical source pitch and output footprints across two canvas extents. The overlapping CMY reads must agree within the existing crop tolerance when target conditions, global positions, support, seed, and boundary context agree. Changing only canvas extent must not change the local count law or grain covariance.
+5. Render the complete photographic set at `24`, `36`, and `65` mm through the actual CLI and GUI Scan/Export paths. Inspect fixed output dimensions and a separate comparison with equal physical output pitch. Record runtime, peak memory, grain visibility, color, detail, and sampling differences. A cropped render must not substitute for this full-frame gate.
+6. Exercise zero, negative, and non-finite format values through the shared parameter validator. Exercise a request that exceeds an existing coordinate or allocation limit. Each must fail with the parameter or exceeded limit identified before publication. Preview and the named bypass modes must retain their existing precedence and must not allocate a V3 field.
+
+The record must distinguish exercised geometry, full-frame execution, and photographic validation. The `120` mm probe is a long-edge stress case; it does not designate 120 roll film. Evidence for one format must not be described as calibration for every film stock or format.
 
 ## Exclusions
 
