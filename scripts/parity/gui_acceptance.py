@@ -214,7 +214,13 @@ class X11:
             ids = self.xd('search', '--onlyvisible', '--pid', self.proc.pid, '--name', '^spektrafilm$', check=False)
             return ids.splitlines()[-1] if ids else None
         self.window = wait_for(window, 'installed native window', 45)
-        self.xd('windowactivate', '--sync', self.window)
+        # The window manager can still be mapping the client when the
+        # activation request arrives; xdotool exits non-zero until it lands.
+        def activated():
+            result = subprocess.run(['xdotool', 'windowactivate', '--sync', self.window],
+                                    capture_output=True, text=True, timeout=15)
+            return result.returncode == 0 or None
+        wait_for(activated, 'window activation', 30)
         with self.mss.mss() as screen:
             desktop = screen.monitors[0]
         require(desktop['height'] >= 1000, 'Native GUI probe requires a desktop at least 1000px high')

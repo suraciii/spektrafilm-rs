@@ -337,6 +337,15 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
             return Err(format!("{path}: value exceeds finite f32 range"));
         }
     }
+    if path == "camera.film_format_mm" {
+        let wire = value.as_f64().unwrap();
+        super::validation::validate_film_format_mm(wire)?;
+        if (wire as f32) <= 0.0 {
+            return Err(format!(
+                "{path}: {wire} is below the smallest positive value the stored f32 field can hold"
+            ));
+        }
+    }
     enum_check(path, value)?;
     range_check(path, value)?;
     // Deserialize the sparse one-leaf overlay against serde defaults to catch
@@ -665,6 +674,36 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_sources_reject_invalid_and_preserve_fractional_values() {
+        for text in [
+            "camera.film_format_mm=0",
+            "camera.film_format_mm=-1",
+            "camera.film_format_mm=nan",
+            "camera.film_format_mm=inf",
+            "camera.film_format_mm=1e-100",
+        ] {
+            assert!(ParameterEdits::parse(text).is_err(), "{text}");
+        }
+        let error = ParameterEdits::parse("camera.film_format_mm=1e-46").unwrap_err();
+        assert!(error.contains("smallest positive value"), "{error}");
+        for mm in [35.0, 35.5, 120.0, 150.25] {
+            let source = ParameterEdits::parse(&format!("camera.film_format_mm={mm}")).unwrap();
+            let mut params = RuntimeParams::default();
+            source.apply(&mut params).unwrap();
+            params.validate().unwrap();
+            assert_eq!(params.camera.film_format_mm, mm);
+        }
+        let record = describe_field("camera.film_format_mm").unwrap();
+        let conditions = record["conditions"].as_array().unwrap();
+        assert!(
+            conditions
+                .iter()
+                .any(|c| c.as_str().is_some_and(|t| t.contains("strictly positive"))),
+            "discovery must state the strict-positivity refinement: {record}"
+        );
+    }
 
     #[test]
     fn single_field_discovery_reuses_module_records() {

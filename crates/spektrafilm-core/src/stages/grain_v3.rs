@@ -17,16 +17,12 @@ use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
 
-/// Film chemistry of the supported condition (spec §Supported condition).
-const SUPPORTED_FILM_TYPE: &str = "negative";
 /// Film usage of the supported condition: still photography.
 const SUPPORTED_USAGE: &str = "still";
 /// Granularity preset of the reference stock `kodak_portra_800`. A channel
 /// with this preset keeps the validated `v3_event_area_um2`; every other
 /// channel and stock is resolved against it.
 const GRANULARITY_REFERENCE: f64 = 6.0;
-/// Supported camera long edge, in millimetres (35 mm full-film area).
-const SUPPORTED_FILM_FORMAT_MM: f32 = 36.0;
 /// Reference route: the film exposes the print paper, which is scanned.
 const PRINT_ROUTE: &str = "input > film > print > scan";
 /// Diagnostic route: the developed film is scanned directly.
@@ -145,14 +141,14 @@ pub fn active(params: &RuntimeParams) -> bool {
 }
 
 /// Fail before any work when V3 is selected outside its supported
-/// condition. The restriction is this implementation's support, not a
+/// condition: still color-negative filming stocks (spec §Supported
+/// condition). The restriction is this implementation's support, not a
 /// permanent exclusion: expanding it requires the same validation for the
 /// additional condition.
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
     if !active(params) {
         return Ok(());
     }
-    let format_mm = params.camera.film_format_mm;
     let route = params.workflow.route.as_str();
     let route_supported = match route {
         PRINT_ROUTE => !params.io.scan_film,
@@ -160,24 +156,24 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
         _ => false,
     };
     let info = &film.info;
-    if info.film_type == SUPPORTED_FILM_TYPE
-        && info.usage == SUPPORTED_USAGE
-        && format_mm == SUPPORTED_FILM_FORMAT_MM
-        && route_supported
-    {
+    let stock_supported =
+        film.is_negative() && film.is_filming() && film.is_color() && info.usage == SUPPORTED_USAGE;
+    if stock_supported && route_supported {
         return Ok(());
     }
     Err(format!(
         "film grain V3: unsupported condition — this implementation supports {SUPPORTED_USAGE} \
-         {SUPPORTED_FILM_TYPE} stocks at a {SUPPORTED_FILM_FORMAT_MM} mm long edge on the \
-         `{PRINT_ROUTE}` route with io.scan_film = false or the `{FILM_SCAN_ROUTE}` route with \
-         io.scan_film = true, but got stock {:?} (type {:?}, use {:?}), \
-         camera.film_format_mm {format_mm}, workflow.route {route:?}, io.scan_film {}; \
-         select a supported film, format and route, or set \
+         color-negative filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
+         or the `{FILM_SCAN_ROUTE}` route with io.scan_film = true, but got stock {:?} \
+         (type {:?}, use {:?}, support {:?}, stage {:?}, channel model {:?}), \
+         workflow.route {route:?}, io.scan_film {}; select a supported film and route, or set \
          film_render.grain.engine to v1/v2",
         info.stock.as_deref().unwrap_or(""),
         info.film_type,
         info.usage,
+        info.support,
+        info.stage,
+        info.channel_model,
         params.io.scan_film
     ))
 }
@@ -444,10 +440,38 @@ mod tests {
             );
         }
 
-        let mut format = supported_params();
-        format.camera.film_format_mm = 24.0;
-        let error = validate_supported(&film, &format).unwrap_err();
-        assert!(error.contains("film_format_mm 24"), "{error}");
+        // Print stocks share `type = "negative"` and `use = "still"` but are
+        // not filming emulsions.
+        for stock in ["kodak_portra_endura", "fujifilm_crystal_archive_typeii"] {
+            let paper = load(stock);
+            let error = validate_supported(&paper, &params).unwrap_err();
+            assert!(
+                error.contains("unsupported condition")
+                    && error.contains(stock)
+                    && error.contains("printing"),
+                "{error}"
+            );
+        }
+
+        // A monochrome filming stock has no three-record color chemistry.
+        let mut monochrome = load("kodak_portra_800");
+        monochrome.info.channel_model = "bw".into();
+        let error = validate_supported(&monochrome, &params).unwrap_err();
+        assert!(
+            error.contains("unsupported condition") && error.contains("bw"),
+            "{error}"
+        );
+
+        for mm in [8.0, 16.0, 24.0, 35.0, 36.0, 56.0, 65.0, 120.0, 35.5, 150.25] {
+            let mut format = supported_params();
+            format.camera.film_format_mm = mm;
+            format.validate().unwrap();
+            validate_supported(&film, &format).unwrap();
+            let resolved = resolve(&film, &format).unwrap();
+            assert_eq!(resolved.support_um, 3.5);
+            assert_eq!(resolved.event_area_um2, 1.28);
+            assert_eq!(resolved.cell_um, None);
+        }
 
         // The diagnostic film-scan route runs for both scan outputs.
         for scan_output in ["positive_scan", "direct_scan"] {
@@ -689,5 +713,79 @@ mod tests {
             noise_diff > 1e-4,
             "event area must control statistical strength (diff {noise_diff})"
         );
+    }
+
+    #[test]
+    fn format_scales_geometry_without_resizing_the_raster() {
+        for (width, height) in [(600, 400), (400, 400), (400, 600)] {
+            let source = ImageBuf::new(width, height);
+            let mut params = supported_params();
+            params.io.crop = true;
+            params.io.crop_center = [0.6, 0.4];
+            params.io.crop_size = [0.2, 0.3];
+            params.io.upscale_factor = 1.25;
+            let reference_pitch = crate::resizing::pixel_size_um(36.0, width, height);
+            let reference = geometry(&source, &params, reference_pitch).unwrap();
+            for mm in [8.0, 24.0, 35.0, 35.5, 65.0, 120.0] {
+                params.camera.film_format_mm = mm;
+                let pitch = crate::resizing::pixel_size_um(mm, width, height);
+                // The source long edge owns the format long edge; a square
+                // source ties on width.
+                assert!(
+                    (pitch - mm as f64 * 1000.0 / width.max(height) as f64).abs() < 1e-12,
+                    "{width}x{height} at {mm} mm resolved pitch {pitch}"
+                );
+                let actual = geometry(&source, &params, pitch).unwrap();
+                assert_eq!(actual.width, reference.width);
+                assert_eq!(actual.height, reference.height);
+                assert_eq!(actual.rect.x, reference.rect.x);
+                assert_eq!(actual.rect.y, reference.rect.y);
+                for axis in 0..2 {
+                    assert!(
+                        (actual.output_pitch_um[axis] / reference.output_pitch_um[axis]
+                            - mm as f64 / 36.0)
+                            .abs()
+                            < 1e-12
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn formats_keep_global_crop_and_tile_reads() {
+        let film = load("kodak_portra_800");
+        let target = density_target(32, 24);
+        for mm in [24.0, 65.0, 120.0] {
+            let mut params = supported_params();
+            params.camera.film_format_mm = mm;
+            let model = resolve(&film, &params).unwrap();
+            // A bounded film window of a larger source, with a nonzero origin.
+            let q = crate::resizing::pixel_size_um(mm, 12000, 8000);
+            let full = ReadoutGrid {
+                origin_um: [10.0 * q, 8.0 * q],
+                pitch_um: [q; 2],
+                width: 16,
+                height: 8,
+            };
+            let all = v3::apply(&target, q, full, &model).unwrap();
+            for x in [0, 8] {
+                let tile = ReadoutGrid {
+                    origin_um: [(10 + x) as f64 * q, 8.0 * q],
+                    width: 8,
+                    ..full
+                };
+                let part = v3::apply(&target, q, tile, &model).unwrap();
+                assert!(max_abs_diff_at(&all, &part, x, 0) <= read_tolerance());
+            }
+            let crop = ReadoutGrid {
+                origin_um: [13.0 * q, 10.0 * q],
+                width: 6,
+                height: 4,
+                ..full
+            };
+            let part = v3::apply(&target, q, crop, &model).unwrap();
+            assert!(max_abs_diff_at(&all, &part, 3, 2) <= read_tolerance());
+        }
     }
 }

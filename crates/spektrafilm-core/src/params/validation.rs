@@ -79,6 +79,9 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
             Some((0.0, None))
         }
+        // Discovery range only; `validate` and the sparse-source leaf check
+        // own the strict positivity.
+        "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         "scanner.positive_density_ev" | "scanner.positive_balance_ev" => Some((-16.0, Some(16.0))),
@@ -342,10 +345,19 @@ impl super::PrintCurvesMorphParams {
     }
 }
 
-/// Validate wire-level enum values and cross-field constraints before any
-/// pipeline artifact is produced. The schema module owns data/defaults;
-/// this module owns the accepted runtime vocabulary.
+/// Validate the global exposed-image long edge in millimeters.
+pub(crate) fn validate_film_format_mm(value: f64) -> Result<(), String> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(
+            "camera.film_format_mm: must be finite and strictly positive (millimeters)".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate cross-field runtime vocabulary before producing a pipeline artifact.
 pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
+    validate_film_format_mm(f64::from(params.camera.film_format_mm))?;
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
         return Err(
             "workflow.route: the magazine route was removed; use input > film > scan and set \

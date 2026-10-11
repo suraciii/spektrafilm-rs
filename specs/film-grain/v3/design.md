@@ -40,7 +40,13 @@ The [product specification](spec.md#supported-condition) owns the supported cond
 
 ## Film geometry
 
+`camera.film_format_mm` owns the full-source film long edge. The runtime parameter contract must validate it as finite and strictly positive. V3 must consume its resolved value without another format range or whitelist. The long edge is the exposed image dimension, not a roll-width designation such as 35 mm or the stock name 120. The source aspect ratio determines the other film dimension. Supporting a numerical long edge does not expand film chemistry or usage support. The GUI numeric editor holds a 1-1000 mm editing range and clamps typed values to it; recipes, presets, CLI parameters, and saved state carry any strictly positive value unchanged.
+
 Use the existing convention that `camera.film_format_mm` gives the full-film long edge. For source dimensions `W,H`, define pitch `q = 1000 * film_format_mm / max(W,H)` in micrometers. Film bounds are `[0,W*q] × [0,H*q]`. Source pixels occupy rectangles of width and height `q` with centers at `((x+0.5)*q,(y+0.5)*q)`.
+
+Changing `camera.film_format_mm` changes the physical film extent, source-pixel pitch, and output-footprint size in film units. The requested crop and resize continue to determine raster dimensions. Format changes must keep dye support, event area, field pitch, stock resolution, and random-stream addressing unchanged. At fixed output dimensions, a larger format reads larger film footprints. The model must integrate those footprints without a format-dependent strength correction.
+
+At fixed aspect ratio and field pitch, the full-film cell count grows approximately as the square of the long edge. Band partitioning bounds working storage but does not remove this workload. Resource checks must use the resolved geometry and the existing allocation and coordinate limits. A resource error must identify the exceeded limit and an applicable remedy before output publication. The implementation must not silently coarsen the field or change the model to fit a larger format.
 
 Reuse existing crop rounding and slice normalization. Carry its resolved source rectangle `(x0,y0,w,h)` into V3. The requested region is `[x0*q,(x0+w)*q] × [y0*q,(y0+h)*q]`.
 
@@ -158,9 +164,11 @@ At native output dimensions, measure reconstruction-only response with support d
 
 The production field pitch is `h = sigma/2`, anchored to the full film. Do not additionally refine it from source dimensions or output sampling. Source-to-cell transfer integrates source rectangles; source resolution is not a hidden field-grid control. A finer globally fixed pitch is admissible when the full-frame workload allows it.
 
-With the default sigma of 3.5 micrometers, the pitch is 1.75 micrometers. A 36 mm long-edge 3:2 frame has about 282 million cells and 2.5 billion layer counts, before halos. A single f32 plane is about 1.1 GB. These estimates are workload bounds, not a timing measurement or a promise of interactive operation.
+With the default sigma of 3.5 micrometers, the pitch is 1.75 micrometers. A 36 mm long-edge 3:2 frame has about 282 million cells and 2.5 billion layer counts, before halos. A single f32 plane is about 1.1 GB. These estimates are workload bounds, not a timing measurement or a promise of interactive operation. The realization holds one output row's stencil at a time, so its field-cell budget is (cells across the requested row) times (cells inside one output footprint). A large format read at a very coarse output pitch exceeds that budget and is refused before allocation; raising the output resolution shrinks the footprint and returns the request inside the budget.
 
 Run `h,h/2,h/4` checks on small representative film regions, not three full-frame microscopic canvases. Hold target surface, model parameters, and output footprints fixed. Cover low/middle/high targets, slanted edges, narrow lines, fractional translations, subcell boxes, noninteger ratios, and film boundaries.
+
+Format coverage and full-frame evidence must follow the [film-format acceptance procedure](spec.md#film-format-acceptance). The numerical tolerances in this section apply at the physical footprints used by each probe.
 
 Check implementation self-consistency with count moments and its discrete operator. For `H_jli`, the readout density weight of one cell's mass:
 
@@ -180,6 +188,8 @@ With sigma 3.5 micrometers and a 6-micrometer output footprint, the production p
 Validate exact Poisson sampling with probability/CDF checks at representative zero, small, transition, and large intensities, in addition to mean and variance. Use declared statistical intervals and sufficient samples. At least 32 seeds are required for field checks; increase samples when uncertainty cannot distinguish an error. Same-moment non-Poisson counts must fail. A single-seed difference under grid refinement does not establish drift.
 
 At fixed pitch, seed, target surface, and precision, overlapping CMY full-frame/crop and single-tile/multi-tile reads must agree within `1e-5` for f32 and `1e-10` for f64. Require identical output footprints for this equality. Crop dimension rounding can change footprints; such comparisons must instead declare the distinct sampling. Repeated identical execution must be deterministic.
+
+Two canvases at an equal physical pitch differ in film extent, so their conditioning agrees only to pipeline float precision. A cell whose Poisson threshold falls inside that noise can still move by one count. The 512-squared 24 mm against 1024-squared 48 mm probe measured a conditioning difference of `1.8e-7`, 99% of overlapping samples within `1e-5`, a 0.17% tail of at most one count quantum (`3.6e-4` in density), and high-passed grain sigma within `0.1%` between canvases. Cross-canvas comparison therefore checks the count law and the covariance, not sample identity; sample identity belongs to reads of one canvas.
 
 ## Runtime integration
 
@@ -202,6 +212,9 @@ First prove layer allocation, reconstruction, count law, independent formation/r
 Before declaring the reference condition supported, render the actual full frame through CLI and GUI Scan/Export. Record machine, source/output dimensions, pitch, peak resident memory, stage times, and cancellation behavior. Tile or cache optimizations must keep certified output. If the full-frame workload is unacceptable, revise execution and re-certify before release; do not silently fall back to another model or reduce the promised frame scope.
 
 Permanent tests must cover allocation including zero weights, bypass precedence, support independence from event area, global crop/tile identity, fractional boxes, supported routes, the unsupported cine usage, and state round trips. The covariance certification test must use the default support and the zero-lag-variance error measure. Numerical and photographic evidence must identify the real entry point and precision. Synthetic proof alone must not be reported as visual acceptance.
+
+The format change must retain the existing 36 mm realization for the same source, seed, recipe, precision, and implementation. Permanent regression tests must cover the default 35 mm recipe, an arbitrary positive non-36 mm long edge, format persistence, invalid format values, unchanged output dimensions, and crop/tile identity at both smaller and larger formats. Resource-limit checks must exercise an exceeded limit without allocating the oversized canvas.
+
 
 ## Evidence and limits
 
