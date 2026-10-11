@@ -455,16 +455,20 @@ Exact zoom verification temporarily widens the window to 1560 pixels so the
 Paper-back readiness uses the selected layer in the viewer status overlay;
 OCR ordering of the layer name and zoom text does not determine readiness.
 Zoom and rotation geometry use the known colored Input raster, selected after
-the render completes. Measurement waits for visible chroma and stable pixels;
-repeated Paper-back frames do not establish Input readiness. Processed Output
-can be nearly neutral; its dimensions and metadata are checked separately
-through render reports and decoded Export.
+the render completes. Measurement waits for visible chroma, the requested pixel
+dimensions or orientation, and stable pixels. Repeated Paper-back or earlier
+geometry frames do not establish readiness. Processed Output can be nearly
+neutral; its dimensions and metadata are checked separately through render
+reports and decoded Export.
 White-padding verification waits for the requested white border before
 measuring pixel differences; an unrelated changed frame is not completion.
-Crossfade verification disables automatic preview while changing exposure,
-then clicks Preview and captures frames through render completion. At least
-two distinct intermediate blends must differ from both endpoints. Repeating
-the action with Crossfade disabled must fail the same animation criterion.
+Animation references are prepared with fixed exposure settings. A native display
+transform toggle and restoration clears setup animation; visible colored Input
+then acts as a presentation barrier before capturing the direct Output reference.
+Reveal and Crossfade capture through their new successful Preview report and the
+independently prepared final raster. Crossfade requires two distinct intermediate
+blends; Reveal requires two distinct nonlinear intermediates. Both repeat the
+action with animation disabled, which must fail the same animation criterion.
 The Linux file chooser driver tracks its native window through closure and
 locates the primary action beside Cancel in the window's bottom button row.
 It does not treat the Open files read-only checkbox as an Open action.

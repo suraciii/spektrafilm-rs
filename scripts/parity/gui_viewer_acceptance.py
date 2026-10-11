@@ -39,6 +39,33 @@ def transition_evidence(before, frames, after, threshold=1.0):
     return {'passed': delta > threshold and len(intermediate) >= 2 and distinct,
             'endpoint_mean_delta': delta, 'intermediate_frames': intermediate}
 
+def reveal_evidence(before, frames, after, threshold=1.0):
+    """Require distinct nonlinear reveal frames outside both endpoint rasters."""
+    _require(bool(before) and len(before) == len(after), 'Reveal endpoints differ in size')
+    intermediate = []
+    distinct = []
+    for index, frame in enumerate(frames):
+        _require(len(frame) == len(before), 'Reveal frame differs in size')
+        if min(_sample_distance(frame, before), _sample_distance(frame, after)) <= threshold:
+            continue
+        if all(_sample_distance(frame, other) > threshold for other in distinct):
+            distinct.append(frame)
+            intermediate.append(index)
+    delta = _sample_distance(before, after)
+    return {'passed': delta > threshold and len(distinct) >= 2,
+            'endpoint_mean_delta': delta, 'intermediate_frames': intermediate}
+
+
+def _sample_distance(left, right):
+    _require(bool(left) and len(left) == len(right), 'Viewer samples differ in size')
+    return sum(abs(a - b) for a, b in zip(left, right)) / len(left)
+
+
+def _sample(image):
+    return tuple(value for pixel in _viewer_crop(image).convert('RGB').resize((96, 64)).getdata()
+                 for value in pixel)
+
+
 from gui_acceptance import viewer_canvas_bounds, wait_for
 
 
@@ -104,71 +131,36 @@ def _record_frame(driver, records, label):
     return image
 
 
-def _transition_frames(driver, records, label, count=24, interval=0.05):
-    frames = []
-    for index in range(count):
-        image = _record_frame(driver, records, f"{label}-frame-{index}")
-        frames.append(np.asarray(_viewer_crop(image), dtype=np.float32))
-        time.sleep(interval)
-    return frames
+def _present_output(driver, records, label):
+    """Clear setup animation through the native display-transform control.
 
-
-def _capture_transition(driver, records, label, before_sample, interval=0.025, timeout=120):
-    """Sample through render completion and observed asynchronous presentation."""
-    frames = []
-    deadline = time.monotonic() + timeout
-    endpoint = None
-    report = None
-    presentation_done = None
-    while time.monotonic() < deadline:
-        image = _record_frame(driver, records, f'{label}-frame-{len(frames)}')
-        crop = _viewer_crop(image).convert('RGB').resize((96, 64))
-        frames.append(tuple(value for pixel in crop.getdata() for value in pixel))
-        if report is None:
-            for path in driver.report_directory.glob('operation-*.json'):
-                try:
-                    operation = json.loads(path.read_text())['operation']
-                except (OSError, ValueError, KeyError):
-                    continue
-                if (operation['id'] > driver.last_report_id and operation['kind'] == 'preview'
-                        and operation['outcome'] != 'superseded'):
-                    report = operation
-        if report is not None:
-            # Render completion only means the output worker finished; the
-            # asynchronous presentation may still show the old endpoint. Only
-            # a stable repeated sample that differs from the pre-transition
-            # raster is the observed presented endpoint.
-            changed = sum(abs(v - b) for v, b in zip(frames[-1], before_sample)) / len(frames[-1])
-            if changed <= 1.0:
-                endpoint = None
-            elif endpoint is None:
-                endpoint = frames[-1]
-            elif frames[-1] == endpoint:
-                presentation_done = time.monotonic()
-                break
-            else:
-                endpoint = frames[-1]
-        time.sleep(interval)
-    if report is None or presentation_done is None:
-        raise RuntimeError(f'Timed out waiting for presented {label} preview ({timeout}s)')
-    return frames, endpoint
+    The colored Input sentinel proves that pending setup compositions have
+    completed before selecting the direct Output reference.
+    """
+    driver.tab('CONFIG')
+    _display_control(driver, 'use display transform')
+    driver.reclick_last_control()
+    driver.click('Input', False)
+    driver.measure_viewer(label + '-input-sentinel')
+    fingerprint = driver.viewer_fingerprint()
+    driver.click('Output', False)
+    image, _ = driver.await_viewer(fingerprint, label=label + '-output')
+    driver.snap(label + '-output', image)
+    records.append({'scenario': label, 'screenshot': driver.records[-1]['screenshot']})
+    return _sample(image)
 
 
 def _capture_to_target(driver, records, label, target, interval=0.025, timeout=120):
-    """Sample an animated preview until the observed raster reaches the known
-    final target obtained from the direct-replacement negative control.
+    """Capture through the new render report and independently prepared endpoint.
 
-    Display intermediates persist >=32ms and may repeat across 25ms samples,
-    so stability cannot identify completion; only matching the known endpoint
-    (after the terminal preview report) proves presentation finished.
+    Repeated intermediate frames never establish animation completion.
     """
     frames = []
     deadline = time.monotonic() + timeout
     report = None
     while time.monotonic() < deadline:
         image = _record_frame(driver, records, f'{label}-frame-{len(frames)}')
-        crop = _viewer_crop(image).convert('RGB').resize((96, 64))
-        frames.append(tuple(value for pixel in crop.getdata() for value in pixel))
+        frames.append(_sample(image))
         if report is None:
             for path in driver.report_directory.glob('operation-*.json'):
                 try:
@@ -177,9 +169,11 @@ def _capture_to_target(driver, records, label, target, interval=0.025, timeout=1
                     continue
                 if (operation['id'] > driver.last_report_id and operation['kind'] == 'preview'
                         and operation['outcome'] != 'superseded'):
+                    _require(operation['outcome'] == 'succeeded',
+                             f'Animation preview failed: {operation}')
                     report = operation
         if report is not None:
-            distance = sum(abs(v - t) for v, t in zip(frames[-1], target)) / len(frames[-1])
+            distance = _sample_distance(frames[-1], target)
             if distance <= 1.0:
                 return frames, target
         time.sleep(interval)
@@ -263,7 +257,8 @@ def _hover_float(driver, pixels, records):
     before_view = driver.viewer_fingerprint()
     driver.click("Input", False)
     driver.click("100%", False)
-    bounds = driver.measure_viewer("viewer-float-inspection", before_view)
+    bounds = driver.measure_viewer('viewer-float-inspection', before_view,
+                                   expected_size=(pixels.shape[1], pixels.shape[0]))
     x = bounds[0] + pixels.shape[1] // 2
     y = bounds[1] + pixels.shape[0] // 2
     driver.xd("mousemove", "--window", driver.window, x, y)
@@ -513,48 +508,65 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "nonzero_screenshot": records[-1]["screenshot"]})
     _require(border_delta > 0.1, "White-padding field did not alter the real viewer")
 
-    animation_state = copy.deepcopy(state)
-    animation_state.setdefault("display", {}).update({"viewer_layer": "paper_back", "reveal": True})
-    animation_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "paper_back", "reveal": True})
-    animation_path = _state_path(root, "viewer-animation.json", animation_state)
-    _load_state(driver, animation_path, "viewer-animation-baseline")
-    driver.tab("MAIN")
-    driver.click('Paper back', False)
-    driver.click("Preview")
-    reveal_frames = _transition_frames(driver, records, "viewer-reveal", count=32, interval=0.05)
-    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-reveal-rendered")
-    reveal_delta = float(max(np.max(np.abs(reveal_frames[0] - frame)) for frame in reveal_frames[1:]))
-    records.append({"parity_action": "polaroid_animation",
-                    "scenario": "reveal", "action": "preview with Paper back and Reveal",
-                    "assertion": "raw transition frames differ in the viewer region",
-                    "frames": len(reveal_frames), "max_frame_delta": reveal_delta})
-    _require(reveal_delta > 1.0, "Reveal did not produce observable transition frames")
+    # Prepare fixed endpoints through a display change that clears animation,
+    # independent of whether either animation setting actually works.
+    reference_state = copy.deepcopy(state)
+    reference_state.setdefault('simulation', {})['auto_preview'] = False
+    settings = {'viewer_layer': 'output', 'reveal': False, 'crossfade': False}
+    reference_state.setdefault('display', {}).update(settings)
+    reference_state.setdefault('rust', {}).setdefault('viewer', {}).setdefault('settings', {}).update(settings)
+    references = {}
+    for auto_exposure in (False, True):
+        reference_state['camera']['auto_exposure'] = auto_exposure
+        label = 'viewer-reference-' + ('auto' if auto_exposure else 'manual')
+        _load_state(driver, _state_path(root, label + '.json', reference_state), label + '-rendered')
+        references[auto_exposure] = _present_output(driver, records, label)
+    _require(_sample_distance(references[False], references[True]) > 1.0,
+             'Animation exposure endpoints are indistinguishable')
 
-    # Disabled direct replacement runs first with identical input/settings: its
-    # settled raster is the known final target the enabled Crossfade must reach.
-    final_target = None
+    for enabled in (False, True):
+        label = 'viewer-reveal' if enabled else 'viewer-reveal-disabled'
+        animation_state = copy.deepcopy(reference_state)
+        animation_state['camera']['auto_exposure'] = False
+        settings = {'viewer_layer': 'output', 'reveal': enabled, 'crossfade': False}
+        animation_state['display'].update(settings)
+        animation_state['rust']['viewer']['settings'].update(settings)
+        _load_state(driver, _state_path(root, label + '.json', animation_state), label + '-baseline')
+        presented = _present_output(driver, records, label + '-baseline')
+        _require(_sample_distance(presented, references[False]) <= 1.0,
+                 'Reveal baseline differs from independently prepared Output')
+        fingerprint = driver.viewer_fingerprint()
+        driver.click('Paper back', False)
+        paper_image, _ = driver.await_viewer(fingerprint, label=label + '-paper')
+        before_sample = _sample(paper_image)
+        driver.snap(label + '-before', paper_image)
+        driver.tab('MAIN')
+        driver.click('Preview', settle=False)
+        frames, endpoint = _capture_to_target(driver, records, label, references[False])
+        driver.wait_report(label + '-rendered', action='Preview')
+        evidence = reveal_evidence(before_sample, frames, endpoint)
+        records.append({'parity_action': 'polaroid_animation',
+                        'scenario': 'reveal' if enabled else 'reveal_negative_control',
+                        'action': 'explicit Preview with Reveal ' + ('enabled' if enabled else 'disabled'),
+                        'frames': len(frames), **evidence})
+        _require(evidence['passed'] == enabled,
+                 'Reveal criterion failed' if enabled else 'Disabled Reveal passed animation criterion')
+
     for enabled in (False, True):
         label = 'viewer-crossfade' if enabled else 'viewer-crossfade-disabled'
-        crossfade_state = copy.deepcopy(state)
-        crossfade_state.setdefault('simulation', {})['auto_preview'] = False
+        crossfade_state = copy.deepcopy(reference_state)
+        crossfade_state['camera']['auto_exposure'] = False
         settings = {'viewer_layer': 'output', 'reveal': False, 'crossfade': enabled}
-        crossfade_state.setdefault('display', {}).update(settings)
-        crossfade_state.setdefault('rust', {}).setdefault('viewer', {}).setdefault('settings', {}).update(settings)
+        crossfade_state['display'].update(settings)
+        crossfade_state['rust']['viewer']['settings'].update(settings)
         _load_state(driver, _state_path(root, label + '.json', crossfade_state), label + '-baseline')
+        before_sample = _present_output(driver, records, label + '-baseline')
+        _require(_sample_distance(before_sample, references[False]) <= 1.0,
+                 'Crossfade baseline differs from independently prepared Output')
         driver.tab('MAIN')
-        driver.click('Output', False)
-        before, _ = _record_snap(driver, records, label + '-before')
-        def samples(image):
-            return tuple(value for pixel in _viewer_crop(image).convert('RGB').resize((96, 64)).getdata()
-                         for value in pixel)
-        before_sample = samples(before)
         driver.click('Auto exposure')
         driver.click('Preview', settle=False)
-        if enabled:
-            frames, endpoint = _capture_to_target(driver, records, label, final_target)
-        else:
-            frames, endpoint = _capture_transition(driver, records, label, before_sample)
-            final_target = endpoint
+        frames, endpoint = _capture_to_target(driver, records, label, references[True])
         driver.wait_report(label + '-rendered', action='Preview')
         driver.snap(label + '-after')
         evidence = transition_evidence(before_sample, frames, endpoint)
@@ -562,7 +574,6 @@ def accept_viewer(driver, root, state, pixels, exporter):
                         'action': 'explicit Preview with Crossfade ' + ('enabled' if enabled else 'disabled'),
                         'assertion': 'intermediate blend frames required only when enabled',
                         'frames': len(frames), **evidence})
-        _require(evidence['endpoint_mean_delta'] > 1.0, 'Crossfade trigger did not change output endpoints')
         _require(evidence['passed'] == enabled,
                  'Crossfade criterion failed' if enabled else 'Disabled Crossfade passed animation criterion')
 

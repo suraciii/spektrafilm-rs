@@ -601,7 +601,8 @@ class X11:
         wait_for(settled, f'settled {label} frame', timeout)
         return state['image'], state['canvas']
 
-    def measure_viewer(self, label, changed_from=None, timeout=60):
+    def measure_viewer(self, label, changed_from=None, timeout=60, *, expected_size=None,
+                       orientation=None):
         """Measure the known colored fixture after selecting its Input raster."""
         bounds = None
 
@@ -616,7 +617,11 @@ class X11:
             left, top, _, _ = viewer_canvas_bounds(image)
             bounds = [int(xs.min() + left), int(ys.min() + top),
                       int(xs.max() + left + 1), int(ys.max() + top + 1)]
-            return True
+            width, height = bounds[2] - bounds[0], bounds[3] - bounds[1]
+            return ((expected_size is None or (width, height) == expected_size)
+                    and (orientation is None
+                         or (orientation == 'portrait' and height > width)
+                         or (orientation == 'landscape' and width > height)))
 
         image, _ = self.await_viewer(changed_from, timeout, label, colored_raster)
         screenshot = f'{len(self.records):02d}-{label}.png'
@@ -1783,15 +1788,15 @@ def _scenario_viewer(driver, root, state, configured, standard, pixels, gui, env
         before_zoom = driver.viewer_fingerprint()
         driver.click('100%', False)
         driver.wait_text(r'zoom\s*100', 'zoom-100-selected')
-        zoom_100 = driver.measure_viewer('zoom-100-percent', before_zoom)
+        zoom_100 = driver.measure_viewer('zoom-100-percent', before_zoom, expected_size=(192, 96))
         before_zoom = driver.viewer_fingerprint()
         driver.click('200%', False)
         driver.wait_text(r'zoom\s*200', 'zoom-200-selected')
-        zoom_200 = driver.measure_viewer('zoom-200-percent', before_zoom)
+        zoom_200 = driver.measure_viewer('zoom-200-percent', before_zoom, expected_size=(384, 192))
         before_zoom = driver.viewer_fingerprint()
         driver.click('400%', False)
         driver.wait_text(r'zoom\s*400', 'zoom-400-selected')
-        zoom_400 = driver.measure_viewer('zoom-400-percent', before_zoom)
+        zoom_400 = driver.measure_viewer('zoom-400-percent', before_zoom, expected_size=(768, 384))
         widths = [item[2] - item[0] for item in (zoom_100, zoom_200, zoom_400)]
         require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
     finally:
@@ -1806,7 +1811,7 @@ def _scenario_viewer(driver, root, state, configured, standard, pixels, gui, env
             f"Clockwise rotation did not re-render portrait: "
             f"{clockwise['configuration']['working_dimensions']}")
     driver.click('Input', False)
-    cw_bounds = driver.measure_viewer('clockwise-rotation', before_rotate)
+    cw_bounds = driver.measure_viewer('clockwise-rotation', before_rotate, orientation='portrait')
     driver.tab('MAIN')
     rotated_export = root / 'rotated-export.tif'
     driver.file_action('Export', rotated_export, True)
@@ -1838,7 +1843,7 @@ def _scenario_viewer(driver, root, state, configured, standard, pixels, gui, env
             f"Counterclockwise rotation did not restore landscape: "
             f"{counterclockwise['configuration']['working_dimensions']}")
     driver.click('Input', False)
-    ccw_bounds = driver.measure_viewer('counterclockwise-rotation', before_ccw)
+    ccw_bounds = driver.measure_viewer('counterclockwise-rotation', before_ccw, orientation='landscape')
     require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
             f'Clockwise rotation did not produce portrait Input pixels: {cw_bounds}')
     require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
@@ -1963,7 +1968,8 @@ def _scenario_viewer(driver, root, state, configured, standard, pixels, gui, env
 def _scenario_export(driver, root, state, configured, standard, pixels, gui, env, exporter, raw):
     changed = json.loads(configured.read_text())
     changed['camera']['auto_exposure'] = True
-    changed.setdefault('rust', {}).update(export_format='exr', save_bit_depth=32)
+    changed.setdefault('rust', {}).update(export_format='exr', save_bit_depth=32,
+                                         export_saving_cctf_encoding=False)
     saved_state = root / 'scenario-state.json'
     saved_state.write_text(json.dumps(changed))
     driver.state_action('Load from file', saved_state)
@@ -1998,12 +2004,10 @@ def _scenario_export(driver, root, state, configured, standard, pixels, gui, env
                 f'Export format/depth differs: {name}: {actual}')
         driver.records.append({'scenario': 'export_format_transition', 'file': name,
                                'decoded_dimensions': list(actual[:2]), 'depth': actual[2]})
-    raw_input = root / ('raw-input' + raw.suffix.lower())
-    shutil.copyfile(raw, raw_input)
     # Auto preview replaces the status line with the render result before
     # the driver can read the lens correction report, so pause it.
     driver.click('auto preview')
-    driver.file_action('Open', raw_input)
+    driver.file_action('Open', raw)
     driver.tab('CONFIG')
     driver.wait_text(r'Lens\s+correction\s+(?:not\s+applied|applied)',
                      'raw-lens-correction-status', timeout=60)
