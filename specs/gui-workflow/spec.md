@@ -11,7 +11,8 @@
 - For the direct `input > film > scan` route and the real negative-capture
   `input > convert-film > scan` route, the Scanner controls expose
   `direct_scan` and `positive_scan`. Positive scan additionally exposes
-  density brightness, three-channel balance, contrast, and maximum density.
+  density brightness, three-channel balance, contrast, maximum density, and the
+  per-channel black and white points.
   Print-paper and scan-minus-base routes keep `direct_scan`; route changes to
   an ineligible mode reset the output mode to `direct_scan`.
 - A film-scan route also exposes the scan light, with one entry that restores
