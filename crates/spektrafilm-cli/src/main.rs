@@ -1173,11 +1173,14 @@ pub(crate) fn select_data_dir(argument: PathBuf, matches: &ArgMatches) -> Result
 
 fn cmd_describe(format: DiscoveryFormat, module: Option<&str>, field: Option<&str>) -> Result<()> {
     use spektrafilm_core::params::sources::{
-        describe_field, describe_module, describe_root_groups,
+        describe_field, describe_module, describe_root_groups, non_settable_leaves,
     };
     if matches!(format, DiscoveryFormat::Text) && module.is_none() && field.is_none() {
         for group in describe_root_groups() {
             println!("{group}");
+        }
+        for (path, reason) in non_settable_leaves() {
+            println!("{path} (runtime field outside settable parameter surface: {reason})");
         }
         return Ok(());
     }

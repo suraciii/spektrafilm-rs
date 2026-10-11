@@ -690,7 +690,7 @@ mod tests {
     fn rename_removal_skips_alias_of_same_entry() {
         let temp = Temp::new();
         let old = temp.0.join("Grain.json");
-        let alias = temp.0.join("grain.json");
+        let alias = temp.0.join("grain-alias.json");
         std::fs::write(&old, "document").unwrap();
         std::os::unix::fs::symlink(&old, &alias).unwrap();
         assert!(!should_remove_old_path(&old, &alias).unwrap());

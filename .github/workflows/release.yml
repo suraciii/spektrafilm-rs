@@ -87,7 +87,7 @@ jobs:
           $env:SPEKTRAFILM_RELEASE_SUBDIR = "x86_64-pc-windows-gnu\release"
           & $env:PKG_CONFIG --atleast-version=0.22.0 libraw
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
-          cargo test --workspace --features precision-f64
+          cargo test --workspace --features precision-f64 --no-fail-fast
           if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
           & "$env:pythonLocation\python.exe" scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --package-root dist/spektrafilm-windows-x64 --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
@@ -205,7 +205,7 @@ jobs:
           cargo build --release -p spektrafilm-gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
-          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64
+          LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64 --no-fail-fast
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" \
             cargo build --manifest-path "$SPEKTRAFILM_RUNTIME_REPO/Cargo.toml" \
             --target-dir "$SPEKTRAFILM_RUNTIME_REPO/target" \
@@ -306,7 +306,7 @@ jobs:
       - name: Package app bundle
         shell: bash
         run: |
-          cargo test --workspace --features precision-f64
+          cargo test --workspace --features precision-f64 --no-fail-fast
           bash scripts/package_macos_app.sh
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
