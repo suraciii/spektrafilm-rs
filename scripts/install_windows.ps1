@@ -1,11 +1,13 @@
 param(
-    [string]$InstallRoot = $env:SPEKTRAFILM_INSTALL_ROOT
+    [string]$InstallRoot = $env:SPEKTRAFILM_INSTALL_ROOT,
+    [string]$BuildManifest = $env:BUILD_MANIFEST
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $repoRoot
+. "$PSScriptRoot/package_evidence.ps1"
 
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -17,7 +19,7 @@ if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 
 foreach ($binary in @('spektrafilm-gui.exe', 'spektrafilm.exe', 'spektrafilm-f64.exe', 'decode_raw_gui.exe')) {
-    $source = Join-Path $repoRoot "target\release\$binary"
+    $source = Get-BinarySource $binary
     if (-not (Test-Path -LiteralPath $source)) {
         throw "Missing release binary: $source"
     }
@@ -29,6 +31,8 @@ if (Test-Path -LiteralPath $dataRoot) {
     Remove-Item -LiteralPath $dataRoot -Recurse -Force
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'data') -Destination $dataRoot -Recurse
+& python scripts/build_evidence.py --manifest $BuildManifest --package-root $InstallRoot
+if ($LASTEXITCODE -ne 0) { throw "Installation provenance failed" }
 
 Write-Host "Installed Spektrafilm to: $InstallRoot"
 Write-Host "Launch: $InstallRoot\spektrafilm-gui.exe"

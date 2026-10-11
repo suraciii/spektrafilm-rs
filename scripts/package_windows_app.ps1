@@ -1,6 +1,6 @@
 param(
     [string]$IconSource = "assets\spektrafilm-icon.jpg",
-    [string]$BuildTargetDir = "target\windows-app",
+    [string]$BuildManifest = $env:BUILD_MANIFEST,
     [string]$DistDir = "dist\spektrafilm-windows",
     [switch]$Aio,
     [string]$NativePrefix = $env:SPEKTRAFILM_NATIVE_PREFIX,
@@ -358,24 +358,20 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Native development package missing: $package" }
     }
     New-AppIcon -Source $IconSource -Destination $iconPath
-    foreach ($binary in @("spektrafilm", "decode_raw_gui")) {
-        cargo build --release -p spektrafilm-cli --bin $binary --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building $binary" }
-    }
+    . "$PSScriptRoot/package_evidence.ps1"
 
     if ($Aio) {
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
-
-        $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
-        $manifestPath = Join-Path $repo "target\packaging\embedded_bundle.rs"
-        New-EmbedManifest -DataDir "data" -F64Exe (Join-Path $releaseDir "spektrafilm-f64.exe") -Destination $manifestPath
+        $manifestPath = Join-Path ([System.IO.Path]::GetTempPath()) ("spektrafilm-embed-" + [guid]::NewGuid() + ".rs")
+        New-EmbedManifest -DataDir "data" -F64Exe (Get-BinarySource "spektrafilm-f64") -Destination $manifestPath
 
         $oldEmbed = $env:SPEKTRAFILM_EMBED_MANIFEST
         try {
             $env:SPEKTRAFILM_EMBED_MANIFEST = (Resolve-Path -LiteralPath $manifestPath).Path
-            cargo build --release -p spektrafilm-gui --target-dir $BuildTargetDir
-            if ($LASTEXITCODE -ne 0) { throw "Failed building embedded GUI" }
+            $embeddedEvidence = Join-Path ([System.IO.Path]::GetTempPath()) ("spektrafilm-aio-build-" + [guid]::NewGuid())
+            & python scripts/build_evidence.py --out-dir $embeddedEvidence --profile release
+            if ($LASTEXITCODE -ne 0) { throw "Failed building embedded GUI evidence" }
+            $BuildManifest = Join-Path $embeddedEvidence 'manifest.json'
+            $build = Get-Content -LiteralPath $BuildManifest -Raw | ConvertFrom-Json
         } finally {
             if ($null -eq $oldEmbed) {
                 Remove-Item Env:\SPEKTRAFILM_EMBED_MANIFEST -ErrorAction SilentlyContinue
@@ -384,8 +380,7 @@ try {
             }
         }
 
-        $guiExe = Join-Path $releaseDir "spektrafilm-gui.exe"
-        Set-ExeIcon -ExePath $guiExe -IconPath $iconPath
+        $guiExe = Get-BinarySource "spektrafilm-gui"
 
         if (Test-Path -LiteralPath $DistDir) {
             Remove-Item -LiteralPath $DistDir -Recurse -Force
@@ -415,21 +410,14 @@ Backends:
         Write-Host "Packaged AIO: $(Resolve-Path -LiteralPath $aioExe)"
         Write-Host "Icon:         $(Resolve-Path -LiteralPath $iconPath)"
     } else {
-        cargo build --release -p spektrafilm-gui --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building GUI" }
-        cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
-
-        $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
-        $guiExe = Join-Path $releaseDir "spektrafilm-gui.exe"
-        Set-ExeIcon -ExePath $guiExe -IconPath $iconPath
+        $guiExe = Get-BinarySource "spektrafilm-gui"
 
         if (Test-Path -LiteralPath $DistDir) {
             Remove-Item -LiteralPath $DistDir -Recurse -Force
         }
         New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
         Copy-Item -LiteralPath $guiExe -Destination (Join-Path $DistDir "spektrafilm-gui.exe")
-        Copy-Item -LiteralPath (Join-Path $releaseDir "spektrafilm-f64.exe") -Destination (Join-Path $DistDir "spektrafilm-f64.exe")
+        Copy-Item -LiteralPath (Get-BinarySource "spektrafilm-f64") -Destination (Join-Path $DistDir "spektrafilm-f64.exe")
         Copy-Item -LiteralPath "data" -Destination (Join-Path $DistDir "data") -Recurse
 
         Set-ExeIcon -ExePath (Join-Path $DistDir "spektrafilm-gui.exe") -IconPath $iconPath
@@ -438,13 +426,19 @@ Backends:
         Write-Host "Icon:     $(Resolve-Path -LiteralPath $iconPath)"
     }
     foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui")) {
-        Copy-Item -LiteralPath (Join-Path $releaseDir "$binary.exe") -Destination (Join-Path $DistDir "$binary.exe") -Force
+        Copy-Item -LiteralPath (Get-BinarySource $binary) -Destination (Join-Path $DistDir "$binary.exe") -Force
     }
     Copy-NativeBundle $DistDir
     if (-not $Aio) {
         "Run spektrafilm-gui.exe. Keep all executables, native DLLs, licenses, data and lensfun together. RAW requires the bundled LibRaw >= 0.22.0. The decode_raw_gui helper writes linear ACES float TIFF." |
             Set-Content -Encoding UTF8 (Join-Path $DistDir "README.txt")
     }
+    if ($Aio) {
+        Copy-Item -LiteralPath $aioExe -Destination (Join-Path $DistDir "spektrafilm-gui.exe")
+        Copy-Item -LiteralPath "data" -Destination (Join-Path $DistDir "data") -Recurse
+    }
+    & python scripts/build_evidence.py --manifest $BuildManifest --package-root $DistDir --transformation windows-icon-resource
+    if ($LASTEXITCODE -ne 0) { throw "Package provenance failed" }
     Compress-Archive -Path (Join-Path $DistDir "*") -DestinationPath "$DistDir.zip" -Force
 } finally {
     Pop-Location

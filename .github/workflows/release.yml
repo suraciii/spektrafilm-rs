@@ -84,12 +84,13 @@ jobs:
           $env:PKG_CONFIG = Join-Path $ucrtPrefix 'bin\pkgconf.exe'
           $env:PKG_CONFIG_ALLOW_CROSS = "1"
           $env:SPEKTRAFILM_NATIVE_PREFIX = $nativePrefix
-          $env:SPEKTRAFILM_RELEASE_SUBDIR = "x86_64-pc-windows-gnu\release"
           & $env:PKG_CONFIG --atleast-version=0.22.0 libraw
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
           cargo test --workspace --features precision-f64
           if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }
-          ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
+          python scripts/build_evidence.py --out-dir "$env:RUNNER_TEMP/build-evidence" --profile release --require-clean
+          if ($LASTEXITCODE -ne 0) { throw "Build evidence failed" }
+          ./scripts/package_windows_app.ps1 -BuildManifest "$env:RUNNER_TEMP/build-evidence/manifest.json" -DistDir "dist\spektrafilm-windows-x64"
           & "$env:pythonLocation\python.exe" scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --package-root dist/spektrafilm-windows-x64 --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
           if ($LASTEXITCODE -ne 0) { throw "Package smoke failed" }
 
@@ -99,6 +100,16 @@ jobs:
         with:
           name: package-smoke-windows-x64
           path: ${{ runner.temp }}/package-smoke
+      - name: Preserve build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-evidence-windows-x64
+          path: |
+            ${{ runner.temp }}/build-evidence/*.json
+            ${{ runner.temp }}/build-evidence/*.jsonl
+            ${{ runner.temp }}/build-evidence/*.diff
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -175,6 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           prefix="$RUNNER_TEMP/libraw-022"
+          cd "$RUNNER_TEMP"
           curl -fsSL --retry 3 -o LibRaw-0.22.0.tar.gz \
             https://www.libraw.org/data/LibRaw-0.22.0.tar.gz
           echo "1071e6e8011593c366ffdadc3d3513f57c90202d526e133174945ec1dd53f2a1  LibRaw-0.22.0.tar.gz" | sha256sum -c -
@@ -202,9 +214,7 @@ jobs:
         run: |
           set -euo pipefail
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          cargo build --release -p spektrafilm-gui
-          cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
-          cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
+          python scripts/build_evidence.py --out-dir "$RUNNER_TEMP/build-evidence" --profile release --require-clean
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" \
             cargo build --manifest-path "$SPEKTRAFILM_RUNTIME_REPO/Cargo.toml" \
@@ -230,11 +240,11 @@ jobs:
           SPEKTRAFILM_PY_HISTORICAL_REPO: ${{ runner.temp }}/spektrafilm-python
           PYTHONPATH: ${{ runner.temp }}/spektrafilm-python-experimental/src
           SPEKTRAFILM_PY: ${{ steps.reference-python.outputs.python-path }}
-          SPEKTRAFILM_RS_BIN: ${{ github.workspace }}/target/release/spektrafilm-f64
         run: |
           set -euo pipefail
           export LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}"
-          python scripts/parity/lut_acceptance.py --cli target/release/spektrafilm-f64 --data-dir data --evidence-dir "$RUNNER_TEMP/lut-acceptance"
+          exporter="$(python scripts/build_evidence.py --manifest "$RUNNER_TEMP/build-evidence/manifest.json" --binary exporter)"
+          SPEKTRAFILM_RS_BIN="$exporter" python scripts/parity/lut_acceptance.py --cli "$exporter" --data-dir data --evidence-dir "$RUNNER_TEMP/lut-acceptance"
 
       - name: Preserve runtime parity evidence
         if: always()
@@ -255,8 +265,7 @@ jobs:
         run: |
           set -euo pipefail
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          BUILD_TARGET_DIR=target RELEASE_SUBDIR=release \
-            bash scripts/package_linux_app.sh
+          BUILD_MANIFEST="$RUNNER_TEMP/build-evidence/manifest.json" bash scripts/package_linux_app.sh
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --package-root dist/spektrafilm-linux-x64 --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
@@ -265,6 +274,16 @@ jobs:
         with:
           name: package-smoke-linux-x64
           path: ${{ runner.temp }}/package-smoke
+      - name: Preserve build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-evidence-linux-x64
+          path: |
+            ${{ runner.temp }}/build-evidence/*.json
+            ${{ runner.temp }}/build-evidence/*.jsonl
+            ${{ runner.temp }}/build-evidence/*.diff
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -307,7 +326,8 @@ jobs:
         shell: bash
         run: |
           cargo test --workspace --features precision-f64
-          bash scripts/package_macos_app.sh
+          python scripts/build_evidence.py --out-dir "$RUNNER_TEMP/build-evidence" --profile release --require-clean
+          BUILD_MANIFEST="$RUNNER_TEMP/build-evidence/manifest.json" bash scripts/package_macos_app.sh
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
@@ -316,6 +336,16 @@ jobs:
         with:
           name: package-smoke-macos
           path: ${{ runner.temp }}/package-smoke
+      - name: Preserve build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-evidence-macos
+          path: |
+            ${{ runner.temp }}/build-evidence/*.json
+            ${{ runner.temp }}/build-evidence/*.jsonl
+            ${{ runner.temp }}/build-evidence/*.diff
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

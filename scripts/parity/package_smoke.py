@@ -8,6 +8,9 @@ from pathlib import Path
 import platform
 import subprocess
 from lut_acceptance import check_artifacts, local_file
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from build_evidence import load_manifest, verify_manifest, freeze_run, finalize_run, executable_path
 import urllib.request
 
 import exiv2
@@ -31,23 +34,19 @@ def _package_tree_sha256(root):
     return digest.hexdigest()
 
 
-def _rust_provenance():
-    repo = Path(__file__).resolve().parents[2]
-    commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
-                            capture_output=True, text=True, check=True).stdout.strip()
-    dirty = bool(subprocess.run(['git', 'diff', '--name-only', 'HEAD'], cwd=repo,
-                                capture_output=True, text=True, check=True).stdout.strip())
-    return commit, dirty
-
-
-def _write_provenance(evidence, package_root, binaries, observations):
-    commit, dirty = _rust_provenance()
+def _write_provenance(evidence, package_root, binaries, observations, manifest):
+    verify_manifest(manifest)
+    commit = manifest['source']['commit']
+    dirty = bool(manifest['source']['status'])
     (evidence / 'observations.json').write_text(
         json.dumps(observations, indent=2) + '\n')
     report = {
         'status': 'pass',
         'rust_commit': commit,
         'rust_worktree_dirty': dirty,
+        'source': manifest['source'],
+        'source_revision': manifest['source_revision'],
+        'build': manifest,
         'reference_commit': REFERENCE_COMMIT,
         'platform': platform.platform(),
         'package_root': str(package_root),
@@ -60,13 +59,15 @@ def _write_provenance(evidence, package_root, binaries, observations):
     (evidence / 'package_report.json').write_text(
         json.dumps(report, indent=2) + '\n')
 
-def main():
+def _run_smoke(record_identity):
     parser = argparse.ArgumentParser()
     parser.add_argument('--cli', type=Path, required=True)
     parser.add_argument('--exporter', type=Path, required=True)
     parser.add_argument('--raw-helper', type=Path, required=True)
     parser.add_argument('--gui', type=Path)
     parser.add_argument('--package-root', type=Path, required=True)
+    parser.add_argument('--build-manifest', type=Path,
+                        help='Packaged build-manifest.json; defaults to package root')
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--raw-fixture', type=Path, help='Existing pinned KDC fixture; SHA256 is still required')
@@ -78,8 +79,19 @@ def main():
     if not package_root.is_dir():
         raise SystemExit(f'package root not found: {package_root}')
     evidence.mkdir(parents=True, exist_ok=True)
+    manifest_path = args.build_manifest or package_root / 'build-manifest.json'
+    if not manifest_path.exists() and package_root.suffix == '.app' and not args.build_manifest:
+        manifest_path = package_root.parent / 'build-manifest.json'
+    manifest = load_manifest(manifest_path)
+    for label, path in {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
+                        **({'gui': args.gui.resolve()} if args.gui else {})}.items():
+        if path != executable_path(manifest, label):
+            raise ValueError(f'Executable does not belong to package manifest: {label}: {path}')
+    if data != Path(manifest['data_dir']):
+        raise ValueError('Data directory does not belong to package manifest')
     environment = dict(os.environ, SPEKTRAFILM_BACKEND='cpu')
     environment.pop('LD_LIBRARY_PATH', None)
+    record_identity(manifest, evidence)
     source = evidence / 'source.tif'
     pixels = np.array([[[-0.25, 0.5, 1.25], [0.1, 0.499, 0.01]]], dtype=np.float32)
     # The pinned Python save guard skips the transform when the saving space and
@@ -108,10 +120,15 @@ def main():
                    '--film', 'kodak_portra_400', '--scan-film', '--params', str(params),
                    '--data-dir', str(data), '--bit-depth', str(depth),
                    '--saving-color-space', 'sRGB', '--saving-cctf-encoding', 'false']
+        diagnostics = evidence / (output.name + '.diagnostics.json')
+        command += ['--diagnostics', str(diagnostics)]
         result = subprocess.run(command, cwd=evidence, env=environment, capture_output=True,
                                 text=True, timeout=120)
         (evidence / (output.name + '.log')).write_text(result.stdout + result.stderr)
         assert (result.returncode == 0) == succeeds, result.stderr
+        if succeeds:
+            native_report = json.loads(diagnostics.read_text())
+            assert native_report['build']['source_revision'] == manifest['source_revision']
         if not succeeds:
             assert not output.exists()
             return
@@ -164,10 +181,12 @@ def main():
         str(exporter), 'process', str(spectral_source), '--output', str(spectral_output),
         '--film', 'kodak_portra_400', '--paper', 'kodak_portra_endura',
         '--params', str(spectral_params), '--data-dir', str(data), '--bit-depth', '32',
-        '--saving-color-space', 'sRGB', '--saving-cctf-encoding', 'false'],
+        '--saving-color-space', 'sRGB', '--saving-cctf-encoding', 'false',
+        '--diagnostics', str(evidence / 'spectral.diagnostics.json')],
         cwd=evidence, env=environment, capture_output=True, text=True, timeout=120)
     (evidence / 'spectral-export.log').write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr
+    assert json.loads((evidence / 'spectral.diagnostics.json').read_text())['build']['source_revision'] == manifest['source_revision']
     reader = oiio.ImageInput.open(str(spectral_output))
     assert reader
     spectral_pixels = np.array(reader.read_image(oiio.FLOAT))
@@ -240,15 +259,37 @@ def main():
                          'bundle': str(bundle), 'artifacts': artifact_evidence,
                          'ocio_processors': processor_count, 'qa_report_passed': qa['passed']})
     if args.gui:
-        from gui_acceptance import accept_gui
-        observations.append(accept_gui(args.gui.resolve(), exporter, source, raw,
-                                       evidence, environment))
-    _write_provenance(
-        evidence, package_root,
-        {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
-         **({'gui': args.gui.resolve()} if args.gui else {})},
-        observations)
-    gui_suffix = ' and native GUI acceptance' if args.gui else ''
+        from gui_acceptance import run_acceptance
+        gui_report = run_acceptance(manifest_path, 'full', evidence / 'gui', raw)
+        observations.append(gui_report)
+        if gui_report['status'] != 'passed':
+            raise RuntimeError(f'Native GUI acceptance failed; evidence: {evidence / "gui"}')
+    binaries = {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
+                **({'gui': args.gui.resolve()} if args.gui else {})}
+    return evidence, package_root, binaries, observations, manifest
+
+
+def main():
+    identities = []
+    evidence_dirs = []
+
+    def record_identity(manifest, evidence):
+        evidence_dirs.append(evidence)
+        identities.append(freeze_run(manifest, evidence, driver_paths=[Path(__file__)]))
+
+    try:
+        try:
+            result = _run_smoke(record_identity)
+        finally:
+            for identity in identities:
+                finalize_run(identity)
+        _write_provenance(*result)
+    except BaseException as error:
+        for directory in evidence_dirs:
+            (directory / 'package_report.json').write_text(json.dumps({
+                'status': 'failed', 'error': f'{type(error).__name__}: {error}'}, indent=2) + '\n')
+        raise
+    gui_suffix = ' and native GUI acceptance' if 'gui' in result[2] else ''
     print(f'PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA{gui_suffix}')
 
 

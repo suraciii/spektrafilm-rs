@@ -23,6 +23,7 @@ import json
 import platform
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,6 +32,7 @@ REPO_ROOT = HERE.parent.parent
 RUNTIME_REPO = Path(os.environ.get(
     "SPEKTRAFILM_RUNTIME_REPO", str(REPO_ROOT)
 )).resolve()
+PY_REPO = Path(os.environ.get("SPEKTRAFILM_PY_REPO", "/home/szf/repos/spektrafilm"))
 PY_COMMIT = "3bb2c2d2801ff68b92019cf1dbcbb133d60832bc"
 RS_COMMIT = "9dd59b0380194b93686aaa230a8bb9680aa270a4"
 EXPECTED_RUST_COMMIT = "a1910231fbd2c049c5177b539b6e7963c97f4e90"

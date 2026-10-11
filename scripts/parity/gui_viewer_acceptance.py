@@ -9,7 +9,35 @@ import re
 import sys
 import time
 
-import numpy as np
+def transition_evidence(before, frames, after, threshold=1.0):
+    """Require two distinct blend frames, excluding both endpoint rasters.
+
+    Flat RGB samples keep this criterion usable without desktop dependencies.
+    Projection onto the endpoint difference rejects unrelated repaint noise.
+    """
+    before, after = tuple(before), tuple(after)
+    _require(len(before) == len(after) and bool(before), 'Animation endpoints differ in size')
+    direction = tuple(b - a for a, b in zip(before, after))
+    energy = sum(d * d for d in direction)
+    delta = sum(abs(d) for d in direction) / len(direction)
+    intermediate = []
+    for index, frame in enumerate(frames):
+        frame = tuple(frame)
+        _require(len(frame) == len(before), 'Animation frame differs in size')
+        if not energy:
+            continue
+        alpha = sum((v - a) * d for v, a, d in zip(frame, before, direction)) / energy
+        start_distance = sum(abs(v - a) for v, a in zip(frame, before)) / len(before)
+        end_distance = sum(abs(v - b) for v, b in zip(frame, after)) / len(before)
+        residual = sum(abs(v - (a + alpha * d))
+                       for v, a, d in zip(frame, before, direction)) / len(before)
+        if (0.05 < alpha < 0.95 and min(start_distance, end_distance) > threshold
+                and residual <= max(threshold, delta * 0.15)):
+            intermediate.append({'frame': index, 'alpha': alpha, 'residual': residual})
+    distinct = any(abs(a['alpha'] - b['alpha']) >= 0.05
+                   for a in intermediate for b in intermediate)
+    return {'passed': delta > threshold and len(intermediate) >= 2 and distinct,
+            'endpoint_mean_delta': delta, 'intermediate_frames': intermediate}
 
 from gui_acceptance import viewer_canvas_bounds, wait_for
 
@@ -85,6 +113,80 @@ def _transition_frames(driver, records, label, count=24, interval=0.05):
     return frames
 
 
+def _capture_transition(driver, records, label, before_sample, interval=0.025, timeout=120):
+    """Sample through render completion and observed asynchronous presentation."""
+    frames = []
+    deadline = time.monotonic() + timeout
+    endpoint = None
+    report = None
+    presentation_done = None
+    while time.monotonic() < deadline:
+        image = _record_frame(driver, records, f'{label}-frame-{len(frames)}')
+        crop = _viewer_crop(image).convert('RGB').resize((96, 64))
+        frames.append(tuple(value for pixel in crop.getdata() for value in pixel))
+        if report is None:
+            for path in driver.report_directory.glob('operation-*.json'):
+                try:
+                    operation = json.loads(path.read_text())['operation']
+                except (OSError, ValueError, KeyError):
+                    continue
+                if (operation['id'] > driver.last_report_id and operation['kind'] == 'preview'
+                        and operation['outcome'] != 'superseded'):
+                    report = operation
+        if report is not None:
+            # Render completion only means the output worker finished; the
+            # asynchronous presentation may still show the old endpoint. Only
+            # a stable repeated sample that differs from the pre-transition
+            # raster is the observed presented endpoint.
+            changed = sum(abs(v - b) for v, b in zip(frames[-1], before_sample)) / len(frames[-1])
+            if changed <= 1.0:
+                endpoint = None
+            elif endpoint is None:
+                endpoint = frames[-1]
+            elif frames[-1] == endpoint:
+                presentation_done = time.monotonic()
+                break
+            else:
+                endpoint = frames[-1]
+        time.sleep(interval)
+    if report is None or presentation_done is None:
+        raise RuntimeError(f'Timed out waiting for presented {label} preview ({timeout}s)')
+    return frames, endpoint
+
+
+def _capture_to_target(driver, records, label, target, interval=0.025, timeout=120):
+    """Sample an animated preview until the observed raster reaches the known
+    final target obtained from the direct-replacement negative control.
+
+    Display intermediates persist >=32ms and may repeat across 25ms samples,
+    so stability cannot identify completion; only matching the known endpoint
+    (after the terminal preview report) proves presentation finished.
+    """
+    frames = []
+    deadline = time.monotonic() + timeout
+    report = None
+    while time.monotonic() < deadline:
+        image = _record_frame(driver, records, f'{label}-frame-{len(frames)}')
+        crop = _viewer_crop(image).convert('RGB').resize((96, 64))
+        frames.append(tuple(value for pixel in crop.getdata() for value in pixel))
+        if report is None:
+            for path in driver.report_directory.glob('operation-*.json'):
+                try:
+                    operation = json.loads(path.read_text())['operation']
+                except (OSError, ValueError, KeyError):
+                    continue
+                if (operation['id'] > driver.last_report_id and operation['kind'] == 'preview'
+                        and operation['outcome'] != 'superseded'):
+                    report = operation
+        if report is not None:
+            distance = sum(abs(v - t) for v, t in zip(frames[-1], target)) / len(frames[-1])
+            if distance <= 1.0:
+                return frames, target
+        time.sleep(interval)
+    raise RuntimeError(f'Timed out waiting for presented {label} preview ({timeout}s)')
+
+
+
 def _display_line(driver, words, section=None):
     wanted = [word.lower() for word in words]
     for attempt in range(3):
@@ -157,6 +259,7 @@ def _select_profile(driver, label, option):
 
 
 def _hover_float(driver, pixels, records):
+    import numpy as np
     before_view = driver.viewer_fingerprint()
     driver.click("Input", False)
     driver.click("100%", False)
@@ -245,6 +348,8 @@ def _save(driver, root, name):
 
 def accept_viewer(driver, root, state, pixels, exporter):
     """Run required viewer scenarios and return assertion records."""
+    global np
+    import numpy as np
     root = Path(root)
     state = copy.deepcopy(state)
     source = root / "standard.tif"
@@ -425,32 +530,41 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "frames": len(reveal_frames), "max_frame_delta": reveal_delta})
     _require(reveal_delta > 1.0, "Reveal did not produce observable transition frames")
 
-    crossfade_state = copy.deepcopy(state)
-    crossfade_state.setdefault("simulation", {})["auto_preview"] = False
-    crossfade_state.setdefault("display", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
-    crossfade_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
-    crossfade_path = _state_path(root, "viewer-crossfade.json", crossfade_state)
-    _load_state(driver, crossfade_path, "viewer-crossfade-baseline")
-    driver.tab("MAIN")
-    driver.click("Output", False)
-    _, _, lines = driver.read()
-    if not driver.match(lines, 'Auto exposure', True):
-        driver.xd('mousemove', '--window', driver.window, 1090, 331)
-        driver.xd('click', 1)
-        time.sleep(.8)
-    _, _, lines = driver.read()
-    matches = driver.match(lines, 'Auto exposure', True)
-    _require(matches, 'Crossfade trigger requires visible Auto exposure')
-    driver.xd('mousemove', '--window', driver.window, 1073, int(matches[0][1]))
-    driver.xd('click', 1)
-    driver.click("Preview")
-    crossfade_frames = _transition_frames(driver, records, "viewer-crossfade", count=32, interval=0.05)
-    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-crossfade-rendered")
-    crossfade_delta = float(max(np.max(np.abs(crossfade_frames[0] - frame)) for frame in crossfade_frames[1:]))
-    records.append({"scenario": "crossfade", "action": "preview Output with Crossfade",
-                    "assertion": "raw transition frames differ in the viewer region",
-                    "frames": len(crossfade_frames), "max_frame_delta": crossfade_delta})
-    _require(crossfade_delta > 1.0, "Crossfade did not produce observable transition frames")
+    # Disabled direct replacement runs first with identical input/settings: its
+    # settled raster is the known final target the enabled Crossfade must reach.
+    final_target = None
+    for enabled in (False, True):
+        label = 'viewer-crossfade' if enabled else 'viewer-crossfade-disabled'
+        crossfade_state = copy.deepcopy(state)
+        crossfade_state.setdefault('simulation', {})['auto_preview'] = False
+        settings = {'viewer_layer': 'output', 'reveal': False, 'crossfade': enabled}
+        crossfade_state.setdefault('display', {}).update(settings)
+        crossfade_state.setdefault('rust', {}).setdefault('viewer', {}).setdefault('settings', {}).update(settings)
+        _load_state(driver, _state_path(root, label + '.json', crossfade_state), label + '-baseline')
+        driver.tab('MAIN')
+        driver.click('Output', False)
+        before, _ = _record_snap(driver, records, label + '-before')
+        def samples(image):
+            return tuple(value for pixel in _viewer_crop(image).convert('RGB').resize((96, 64)).getdata()
+                         for value in pixel)
+        before_sample = samples(before)
+        driver.click('Auto exposure')
+        driver.click('Preview', settle=False)
+        if enabled:
+            frames, endpoint = _capture_to_target(driver, records, label, final_target)
+        else:
+            frames, endpoint = _capture_transition(driver, records, label, before_sample)
+            final_target = endpoint
+        driver.wait_report(label + '-rendered', action='Preview')
+        driver.snap(label + '-after')
+        evidence = transition_evidence(before_sample, frames, endpoint)
+        records.append({'scenario': 'crossfade' if enabled else 'crossfade_negative_control',
+                        'action': 'explicit Preview with Crossfade ' + ('enabled' if enabled else 'disabled'),
+                        'assertion': 'intermediate blend frames required only when enabled',
+                        'frames': len(frames), **evidence})
+        _require(evidence['endpoint_mean_delta'] > 1.0, 'Crossfade trigger did not change output endpoints')
+        _require(evidence['passed'] == enabled,
+                 'Crossfade criterion failed' if enabled else 'Disabled Crossfade passed animation criterion')
 
     _load_state(driver, baseline, "viewer-float-baseline")
     driver.tab("CONFIG")

@@ -94,7 +94,7 @@ package_native_dependencies() {
     bundled_sources=()
     mkdir -p "$frameworks"
     for name in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
-        source="$(canonical_file "$BUILD_TARGET_DIR/release/$name")" || fail "missing executable $name"
+        source="$(canonical_file "$(binary_source "$name")")" || fail "missing executable $name"
         sources+=("$source")
         destinations+=("$APP_BUNDLE/Contents/MacOS/$name")
         executables+=("$source")
@@ -246,14 +246,12 @@ bundle_native_licenses() {
     done
 }
 
-cargo build --release -p spektrafilm-gui --target-dir "$BUILD_TARGET_DIR"
-cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui --target-dir "$BUILD_TARGET_DIR"
-cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
+source scripts/package_evidence.sh
 
 rm -rf "$DIST_DIR"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
-    cp "$BUILD_TARGET_DIR/release/$executable" "$APP_BUNDLE/Contents/MacOS/$executable"
+    cp "$(binary_source "$executable")" "$APP_BUNDLE/Contents/MacOS/$executable"
     chmod +x "$APP_BUNDLE/Contents/MacOS/$executable"
 done
 cp -R data "$APP_BUNDLE/Contents/Resources/data"
@@ -328,7 +326,7 @@ Native image support:
 
 f64 export:
 - spektrafilm-f64 is bundled inside Spektrafilm.app/Contents/MacOS.
-- The GUI uses it for CPU f64 Export.
+- This separate CLI exporter supplies the CPU f64 reference path.
 
 Gatekeeper:
 - This package is ad-hoc signed for local testing. It is not Apple-notarized.
@@ -337,7 +335,10 @@ README
 
 if command -v codesign >/dev/null 2>&1; then
     codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
+    codesign --verify --deep --strict "$APP_BUNDLE"
 fi
+
+python3 scripts/build_evidence.py --manifest "$BUILD_MANIFEST" --package-root "$APP_BUNDLE" --layout macos --transformation install-name-tool --transformation codesign
 
 zip_path="$DIST_DIR.zip"
 rm -f "$zip_path"

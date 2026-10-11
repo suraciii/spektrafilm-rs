@@ -7,6 +7,7 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 - Read [README.md](README.md) for build, usage, and crate layout.
 - `specs/` is the source of truth for target product behavior and design.
 - `docs/` contains user-facing guidance; it does not define product contracts.
+- For code and acceptance-driver reviews, read [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 ## Engineering
 
