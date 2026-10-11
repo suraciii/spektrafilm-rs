@@ -851,9 +851,24 @@ class X11:
                     return None
                 box = modal_box
             else:
-                # This provisional strip is only for finding the closed
-                # button row. Only the resulting tight crop supplies controls.
-                provisional = modal_lines(image, (left, top, right, image.height), 3)
+                # Follow the uncluttered inner right edge from the title bar
+                # into the body, then stop at its bottom border. A full-height
+                # strip can lose Cancel when viewer/preset pixels join the body.
+                edge_x = max(left, right - 4)
+                body_top = int(max(word[2] + word[4] for word in title)) + 1
+                while body_top < image.height and not np.all(
+                        pixels[body_top, edge_x] < background - 3):
+                    body_top += 1
+                if body_top == image.height:
+                    return None
+                body = pixels[body_top, edge_x]
+                bottom = body_top + 1
+                while bottom < image.height and np.max(
+                        np.abs(pixels[bottom, edge_x] - body)) <= 3:
+                    bottom += 1
+                if bottom <= body_top + 1 or bottom <= top or right <= left:
+                    return None
+                provisional = modal_lines(image, (left, top, right, min(image.height, bottom + 2)), 3)
                 cancels = [span for line in provisional
                            if (span := matched_span(line, 'Cancel'))
                            and span[0][2] > title_top]
@@ -862,7 +877,7 @@ class X11:
                 cancel = min(cancels, key=lambda span: span[0][2])
                 button_bottom = max(word[2] + word[4] for word in cancel)
                 padding = max(word[4] for word in cancel) * .75 + 2
-                box = (left, top, right, min(image.height, int(button_bottom + padding)))
+                box = (left, top, right, min(bottom, int(button_bottom + padding)))
                 modal_box = box
             return image, box, modal_lines(image, box, 3)
         wait_for(modal_read, 'visible export modal controls', 20)

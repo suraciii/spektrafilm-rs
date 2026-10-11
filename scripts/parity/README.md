@@ -147,9 +147,10 @@ The driver normalizes initially expanded sections before topology checks and
 reads tab labels in the dedicated header region. Before selecting a footer
 action it moves the pointer away so hover highlighting does not hide the text.
 Export recognition uses the rendered title bar's contiguous background to bound
-the dialog horizontally and the closed button row to bound its bottom; that
-frame is retained while a combo menu covers the buttons. Only the tight dialog
-crop supplies controls. Contrast passes remain independent observations, with
+the dialog horizontally. The inner right edge bounds closed button discovery,
+and the button row sets the final bottom; that frame is retained while a combo
+menu covers the buttons. Only the tight dialog crop supplies controls. Contrast
+passes remain independent observations, with
 each selected value checked against its own label span and row before opening
 the native combo menu; the same crop normalization reads the requested option.
 
@@ -400,6 +401,8 @@ every tab.
 Viewer comparisons exclude both the preset browser and the controls sidebar.
 Exact zoom verification temporarily widens the window to 1560 pixels so the
 400% raster fits with the preset browser visible, then restores its dimensions.
+Paper-back readiness uses the selected layer in the viewer status overlay;
+OCR ordering of the layer name and zoom text does not determine readiness.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
 

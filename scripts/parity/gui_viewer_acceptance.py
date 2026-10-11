@@ -11,6 +11,8 @@ import time
 
 import numpy as np
 
+from gui_acceptance import viewer_canvas_bounds, wait_for
+
 
 def _require(value, message):
     if not value:
@@ -41,8 +43,18 @@ def _text(lines):
     return "\n".join(" ".join(word[0] for word in line) for line in lines)
 
 
+def _viewer_status_text(image, lines):
+    # The selected layer is in the viewer overlay below the layer tabs.
+    # Use the native driver's word coordinates, independent of OCR line order.
+    left, _, right, _ = viewer_canvas_bounds(image)
+    return _text([[word for word in line
+                   if left <= word[1] + word[3] / 2 < right
+                   and 35 <= word[2] + word[4] / 2 < 63]
+                  for line in lines])
+
+
 def _viewer_crop(image):
-    return image.crop((0, 80, min(1060, image.width), max(81, image.height - 80)))
+    return image.crop(viewer_canvas_bounds(image))
 
 
 def _record_snap(driver, records, label):
@@ -155,7 +167,9 @@ def _hover_float(driver, pixels, records):
     def read_rgb():
         image, _, lines = driver.read()
         text = _text(lines)
-        status = image.crop((15, 35, 650, 63)).resize((2540, 112))
+        left, _, right, _ = viewer_canvas_bounds(image)
+        status = image.crop((left + 15, 35, right, 63))
+        status = status.resize((status.width * 4, status.height * 4))
         data = driver.ocr.image_to_data(status, config='--psm 7', output_type=driver.ocr.Output.DICT)
         text += '\n' + ' '.join(data['text'])
         match = re.search(r"Input\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*RGB\s+([-+0-9.]+)\s*,\s*([-+0-9.]+)\s*,\s*([-+0-9.]+)", text, re.IGNORECASE)
@@ -266,13 +280,25 @@ def accept_viewer(driver, root, state, pixels, exporter):
 
     driver.tab("CONFIG")
     driver.click("Paper back", False)
-    driver.wait_text(r"PaperBack\s*[·.]?\s*zoom", "paper-back-selected", timeout=20)
+    def paper_back_ready():
+        image, _, lines = driver.read()
+        text = _text(lines)
+        _require(not re.search(r'(?:Render|Load|Save|Export|Startup state|Preview state)\s*(?:error|failed)', text, re.I),
+                 f'GUI failure on paper-back-selected: {text}')
+        if re.search(r"\bPaper\s*Back\b", _viewer_status_text(image, lines), re.I):
+            driver.snap("paper-back-selected", image, lines)
+            return True
+
+    wait_for(paper_back_ready, "paper-back-selected", timeout=20)
     image, lines = _record_snap(driver, records, "viewer-paper-back")
-    paper_text = _text(lines)
-    _require(re.search(r"PaperBack\s*[·.]?\s*(?:zoom|\()", paper_text, re.I),
+    paper_text = _viewer_status_text(image, lines)
+    _require(re.search(r"\bPaper\s*Back\b", paper_text, re.I),
              "Paper back viewer status was not selected in the real window")
     paper = np.asarray(_viewer_crop(image), dtype=np.float32)
-    watermark_region = image.crop((320, 300, 700, 600))
+    left, top, right, bottom = viewer_canvas_bounds(image)
+    center_x, center_y = (left + right) // 2, (top + bottom) // 2
+    watermark_bounds = (center_x - 190, center_y - 150, center_x + 190, center_y + 150)
+    watermark_region = image.crop(watermark_bounds)
     watermark_path = root / "viewer-paper-watermark-region.png"
     watermark_region.save(watermark_path)
     watermark = np.asarray(watermark_region, dtype=np.float32)
@@ -283,7 +309,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "paper_view_screenshot": records[-1]["screenshot"],
                     "watermark_region": watermark_path.name,
                     "watermark_region_std": float(watermark.std()),
-                    "watermark_region_bounds": [320, 300, 700, 600]})
+                    "watermark_region_bounds": list(watermark_bounds)})
     _require(float(paper.std()) > 1.0 and float(watermark.std()) > 0.1,
              "Paper back screenshot has no visible presentation raster/watermark region")
 
