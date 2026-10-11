@@ -1,0 +1,79 @@
+name: Diag windows telemetry
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: Windows telemetry diagnostic
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Windows native toolchain and dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-pkgconf
+            make
+            curl
+            tar
+            mingw-w64-ucrt-x86_64-libjpeg-turbo
+            mingw-w64-ucrt-x86_64-lcms2
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-lensfun
+            mingw-w64-ucrt-x86_64-exiv2
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-openimageio
+
+      - name: Configure Windows UCRT prefix
+        shell: msys2 {0}
+        run: printf 'SPEKTRAFILM_UCRT_PREFIX=%s\n' "$(cygpath -m /ucrt64)" >> "$GITHUB_ENV"
+
+      - name: Cache pinned Windows LibRaw
+        id: libraw
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/libraw-022
+          key: libraw-0.22.0-windows-latest-${{ runner.arch }}-v1
+
+      - name: Build pinned Windows LibRaw 0.22.0
+        if: steps.libraw.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: bash scripts/build_windows_libraw.sh "$RUNNER_TEMP/libraw-022"
+
+      - name: Configure Windows native environment
+        shell: pwsh
+        run: |
+          $nativePrefix = Join-Path $env:RUNNER_TEMP 'libraw-022'
+          $ucrtPrefix = $env:SPEKTRAFILM_UCRT_PREFIX
+          "SPEKTRAFILM_UCRT_PREFIX=$ucrtPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PATH=$nativePrefix\bin;$ucrtPrefix\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CC=gcc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CXX=g++" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=gcc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PKG_CONFIG_PATH=$nativePrefix\lib\pkgconfig;$ucrtPrefix\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PKG_CONFIG=$ucrtPrefix\bin\pkgconf.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PKG_CONFIG_ALLOW_CROSS=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SPEKTRAFILM_NATIVE_PREFIX=$nativePrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install matching Windows Rust target
+        shell: pwsh
+        run: rustup target add x86_64-pc-windows-gnu
+
+      - name: Run the telemetry test with diagnostics
+        shell: pwsh
+        run: |
+          cargo test -p spektrafilm-core --test runtime_telemetry --features precision-f64 --no-fail-fast -- --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { Write-Host "test failed as expected for diagnostics"; exit 0 }

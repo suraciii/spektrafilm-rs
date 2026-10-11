@@ -186,6 +186,7 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
                     observation.start_offset + observation.duration > duration + 1e-9
                 })
             {
+                dump_scope_excursion(&observations, report, "root", observation);
                 return Err(ValidationError::OutsideParentScope(observation.id));
             }
             continue;
@@ -216,6 +217,7 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
                 || observation.start_offset + observation.duration
                     > parent.start_offset + parent.duration + 1e-9)
         {
+            dump_scope_excursion(&observations, report, "nested", observation);
             return Err(ValidationError::OutsideParentScope(observation.id));
         }
     }
@@ -435,5 +437,44 @@ fn validate_text(value: &str) -> Result<(), ValidationError> {
         Ok(())
     } else {
         Err(ValidationError::TextLimitExceeded)
+    }
+}
+
+// TEMPORARY DIAGNOSTIC (issue #93): prints the offsets that triggered a
+// scope-containment failure so the platform behaviour can be reproduced.
+fn dump_scope_excursion(
+    observations: &[&Observation],
+    report: &Report,
+    case: &str,
+    observation: &Observation,
+) {
+    eprintln!("== telemetry scope excursion ({case}) ==");
+    eprintln!(
+        "offender id={} parent={} kind={:?} name={} start={:.12} dur={:.12} end={:.12} complete={}",
+        observation.id,
+        observation.parent_id,
+        observation.kind,
+        observation.name,
+        observation.start_offset,
+        observation.duration,
+        observation.start_offset + observation.duration,
+        observation.complete,
+    );
+    eprintln!(
+        "operation duration={:?} root_id={}",
+        report.operation.duration, report.operation.observation_root_id
+    );
+    for o in observations {
+        eprintln!(
+            "  id={} parent={} kind={:?} name={} start={:.12} dur={:.12} end={:.12} complete={}",
+            o.id,
+            o.parent_id,
+            o.kind,
+            o.name,
+            o.start_offset,
+            o.duration,
+            o.start_offset + o.duration,
+            o.complete,
+        );
     }
 }
