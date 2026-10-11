@@ -288,7 +288,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut value = 1.0_f64;
         let field_rect = std::cell::Cell::new(egui::Rect::NOTHING);
-        ctx.run(
+        let _ = ctx.run(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -305,7 +305,7 @@ mod tests {
             },
         );
         let position = field_rect.get().center();
-        ctx.run(
+        let _ = ctx.run(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
