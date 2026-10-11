@@ -1,8 +1,15 @@
+mod discovery;
 mod metadata;
 
+use discovery::schema_value;
+pub use discovery::{
+    describe_field, describe_groups, describe_module, describe_root_groups, suggest_groups,
+    suggest_parameter_paths, supported_routes,
+};
+
 use super::RuntimeParams;
-use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
-use metadata::{metadata, nullable, rust_type};
+use crate::suggest::error_suffix;
+use metadata::{nullable, rust_type};
 use serde_json::{Map, Value};
 
 /// Ordered sparse edits to runtime parameter leaves.
@@ -579,135 +586,6 @@ fn group_rejected(path: &str) -> String {
     )
 }
 
-/// Describe one editable leaf using the module discovery metadata.
-pub fn describe_field(path: &str) -> Result<Value, String> {
-    let default = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
-    if default.is_object() {
-        return Err(format!(
-            "parameter field is a group: {path}; use spektrafilm describe --module {path}"
-        ));
-    }
-    Ok(metadata(path, default))
-}
-
-fn collect_groups(prefix: &str, value: &Value, groups: &mut Vec<String>) -> bool {
-    let Some(map) = value.as_object() else {
-        return true;
-    };
-    let mut has_leaves = false;
-    for (key, child) in map {
-        let path = if prefix.is_empty() {
-            key.clone()
-        } else {
-            format!("{prefix}.{key}")
-        };
-        has_leaves |= collect_groups(&path, child, groups);
-    }
-    if has_leaves && !prefix.is_empty() {
-        groups.push(prefix.to_owned());
-    }
-    has_leaves
-}
-
-/// Canonical group prefixes with editable leaves, including nested groups.
-pub fn describe_groups() -> Vec<String> {
-    let mut groups = Vec::new();
-    collect_groups("", schema_value(), &mut groups);
-    groups.sort();
-    groups
-}
-
-/// Top-level groups that contain editable leaves.
-pub fn describe_root_groups() -> Vec<String> {
-    let mut roots = Vec::new();
-    if let Some(map) = schema_value().as_object() {
-        for (key, child) in map {
-            let mut nested = Vec::new();
-            if collect_groups(key, child, &mut nested) {
-                roots.push(key.clone());
-            }
-        }
-    }
-    roots.sort();
-    roots
-}
-
-/// Workflow routes accepted by parameter validation.
-pub fn supported_routes() -> &'static [&'static str] {
-    &super::validation::SUPPORTED_ROUTES
-}
-
-pub fn suggest_parameter_paths(input: &str) -> Vec<String> {
-    fn collect(prefix: &str, value: &Value, paths: &mut Vec<String>) {
-        if let Some(map) = value.as_object() {
-            for (key, child) in map {
-                let path = if prefix.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{prefix}.{key}")
-                };
-                collect(&path, child, paths);
-            }
-        } else {
-            paths.push(prefix.to_owned());
-        }
-    }
-    let mut paths = Vec::new();
-    collect("", schema_value(), &mut paths);
-    closest(input, paths.into_iter(), MAX_SUGGESTIONS)
-}
-
-pub fn suggest_groups(input: &str) -> Vec<String> {
-    closest(input, describe_groups().into_iter(), MAX_SUGGESTIONS)
-}
-
-pub fn describe_module(prefix: &str) -> Result<Value, String> {
-    let schema = schema_value();
-    let group = lookup(schema, prefix).ok_or_else(|| {
-        format!(
-            "unknown parameter module: {prefix}; {}",
-            error_suffix(
-                &suggest_groups(prefix),
-                "use spektrafilm describe --format text to list modules"
-            )
-        )
-    })?;
-    if !group.is_object() {
-        return Err(format!(
-            "parameter module is not a group: {prefix}; use spektrafilm describe --field {prefix}"
-        ));
-    }
-    let mut fields = Vec::new();
-    collect_metadata(prefix, group, &mut fields);
-    Ok(serde_json::json!({"module": prefix, "fields": fields}))
-}
-fn collect_metadata(prefix: &str, value: &Value, out: &mut Vec<Value>) {
-    if let Some(map) = value.as_object() {
-        for (key, default) in map {
-            let path = format!("{prefix}.{key}");
-            if default.is_object() {
-                collect_metadata(&path, default, out);
-            } else {
-                out.push(metadata(&path, default));
-            }
-        }
-    }
-}
-fn schema_value() -> &'static Value {
-    static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
-    SCHEMA.get_or_init(|| {
-        let mut value =
-            serde_json::to_value(RuntimeParams::default()).expect("RuntimeParams serializes");
-        value.as_object_mut().unwrap().remove("workflow");
-        value["io"].as_object_mut().unwrap().remove("scan_film");
-        value["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("monochrome");
-        value
-    })
-}
-
 pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
     let value = serde_json::to_value(params).map_err(|e| e.to_string())?;
     fn check(path: &str, value: &Value) -> Result<(), String> {
@@ -1111,104 +989,6 @@ mod tests {
                 assert_eq!(domain["minimum_exclusive"], true);
                 assert!(domain["maximum"].is_null());
             }
-        }
-    }
-
-    #[test]
-    fn discovery_matches_stock_initialization_and_consumer_conditions() {
-        for path in [
-            "film_render.grain.rms_granularity",
-            "film_render.grain.density_min",
-            "film_render.grain.uniformity",
-            "film_render.grain.particle_scale_sublayers",
-            "film_render.dir_couplers.gamma_samelayer_rgb",
-            "film_render.dir_couplers.gamma_interlayer_r_to_gb",
-            "film_render.dir_couplers.gamma_interlayer_g_to_rb",
-            "film_render.dir_couplers.gamma_interlayer_b_to_rg",
-            "film_render.halation.halation_first_sigma_um",
-            "film_render.halation.halation_strength",
-        ] {
-            assert!(
-                described_field(path)["default_source"]
-                    .as_str()
-                    .unwrap()
-                    .contains("derived from stock profile"),
-                "{path}"
-            );
-        }
-        assert_eq!(
-            described_field("film_render.dir_couplers.diffusion_size_um")["default_source"],
-            "static"
-        );
-        for module in ["film_render.glare", "film_render.grain"] {
-            let fields = describe_module(module).unwrap();
-            for field in fields["fields"].as_array().unwrap() {
-                let path = field["path"].as_str().unwrap();
-                if module == "film_render.glare"
-                    || path.ends_with("rms_granularity")
-                    || path.ends_with("micro_sublayers")
-                {
-                    assert_eq!(
-                        field["conditions"],
-                        serde_json::json!(["preserved upstream no-op"])
-                    );
-                }
-            }
-        }
-        for field in describe_module("print_render.glare").unwrap()["fields"]
-            .as_array()
-            .unwrap()
-        {
-            let condition = field["conditions"][0].as_str().unwrap();
-            for required in [
-                "io.scan_film = false",
-                "print_render.glare.active",
-                "print_render.glare.percent > 0",
-                "stochastic effects enabled",
-            ] {
-                assert!(condition.contains(required), "{condition}");
-            }
-        }
-        for name in ["boost_ev", "boost_range", "protect_ev"] {
-            assert_eq!(
-                described_field(&format!("film_render.halation.{name}"))["conditions"],
-                serde_json::json!(["film_render.halation.boost_ev != 0; LUT mode disabled"])
-            );
-        }
-        let composite = described_field("film_render.grain.n_sub_layers");
-        assert!(
-            composite["conditions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|c| c == "film_render.grain.sublayers_active = false")
-        );
-        for name in [
-            "particle_scale_sublayers",
-            "blur_dye_clouds_um",
-            "micro_structure",
-            "mult_usm_sigma",
-            "mult_usm_amount",
-        ] {
-            let field = described_field(&format!("film_render.grain.{name}"));
-            assert!(
-                field["conditions"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|c| c.as_str().unwrap().contains("sublayers_active = true")),
-                "{name}"
-            );
-        }
-        for (path, unit) in [
-            ("settings.spectral_gaussian_blur", "nm"),
-            ("scanner.lens_blur", "px (sigma)"),
-            (
-                "scanner.unsharp_mask",
-                "[px (sigma), dimensionless (amount)]",
-            ),
-        ] {
-            assert_eq!(described_field(path)["unit"], unit);
         }
     }
 }

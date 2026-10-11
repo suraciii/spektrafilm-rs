@@ -499,14 +499,14 @@ pub use spektrafilm_core::config::config_dir;
 pub fn default_path() -> PathBuf {
     config_dir().join("gui_default_state.json")
 }
-pub fn startup() -> Result<GuiState> {
-    let path = default_path();
+pub fn startup(directory: &Path) -> Result<GuiState> {
+    let path = directory.join("gui_default_state.json");
     let mut state = if path.exists() {
         GuiState::load(&path)?
     } else {
         GuiState::factory()
     };
-    let directories = config_dir().join("dialog_dirs.json");
+    let directories = directory.join("dialog_dirs.json");
     if directories.exists() {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(directories)?)?;
         if !value.is_object() {
@@ -647,7 +647,12 @@ mod tests {
         // Monochrome is derived from the film, so sections preserve the target's value.
         let mut target = factory.runtime_params().unwrap();
         target.film_render.grain.monochrome = true;
-        let applied = preset.apply_section(&target).unwrap();
+        let film = spektrafilm_core::profile::load_profile_by_name(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            factory.film(),
+        )
+        .unwrap();
+        let applied = preset.apply_section(&target, &film).unwrap();
         let saved =
             GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
                 .unwrap();
@@ -770,7 +775,9 @@ mod tests {
         let mut params = factory.runtime_params().unwrap();
         params.io.output_cctf_encoding = false;
         params.film_render.development_time = Some(9.0);
-        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V2;
+        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
+        params.film_render.grain.v3_dye_support_um = 4.5;
+        params.film_render.grain.v3_event_area_um2 = 0.6;
         params.film_render.grain.v2_profile = "8mm500".into();
         params.film_render.grain.v2_amount = Some(0.0);
         let mut extras = factory.sections.clone();
@@ -778,18 +785,41 @@ mod tests {
         let saved =
             GuiState::from_runtime(&params, "kodak_gold_200", "kodak_supra_endura", &extras)
                 .unwrap();
-        let loaded = GuiState::from_value(saved.sections.clone()).unwrap();
+        assert_eq!(
+            saved.sections["rust"]["runtime"]["film_render"]["grain"]["engine"],
+            "v3"
+        );
+        assert_eq!(
+            saved.sections["rust"]["runtime"]["film_render"]["grain"]["v3_dye_support_um"],
+            4.5
+        );
+        let recipe = serde_json::from_slice(&serde_json::to_vec(&saved.sections).unwrap()).unwrap();
+        let loaded = GuiState::from_value(recipe).unwrap();
         let restored = loaded.runtime_params().unwrap();
         assert!(!restored.io.output_cctf_encoding);
         assert_eq!(restored.film_render.development_time, Some(9.0));
         assert_eq!(
             restored.film_render.grain.engine,
-            spektrafilm_core::params::GrainEngine::V2
+            spektrafilm_core::params::GrainEngine::V3
         );
+        assert_eq!(restored.film_render.grain.v3_dye_support_um, 4.5);
+        assert_eq!(restored.film_render.grain.v3_event_area_um2, 0.6);
         assert_eq!(restored.film_render.grain.v2_profile, "8mm500");
         assert_eq!(restored.film_render.grain.resolved_grain_v2().amount, 0.0);
         assert_eq!(loaded.sections["rust"]["viewer"]["zoom"], 3.0);
-        assert_eq!(loaded.sections, saved.sections);
+        let serialized_saved: Value =
+            serde_json::from_slice(&serde_json::to_vec(&saved.sections).unwrap()).unwrap();
+        assert_eq!(loaded.sections, serialized_saved);
+    }
+    #[test]
+    fn unknown_grain_engine_fails_state_validation() {
+        let error = GuiState::from_value(json!({
+            "rust": {"version": 1, "runtime": {
+                "film_render": {"grain": {"engine": "unknown"}}
+            }}
+        }))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("unknown variant `unknown`"));
     }
     #[test]
     fn grain_v2_migration_strips_runtime_only_fields() {

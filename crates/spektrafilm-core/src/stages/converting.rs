@@ -441,7 +441,7 @@ pub fn detect_base(
         base.magenta = x[1];
         base.yellow = x[2];
         let mut profile = native.clone();
-        crate::pipeline::apply_base_tuning(&mut profile, &base, None);
+        crate::pipeline_calibration::apply_base_tuning(&mut profile, &base, None);
         Converter::new(&profile, params)
             .expect("validated conversion parameters")
             .forward_jacobian([0.0; 3])

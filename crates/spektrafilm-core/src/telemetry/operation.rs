@@ -345,59 +345,20 @@ impl Operation {
 }
 
 fn merge_counter_overflow_fields(snapshot: &mut spektrafilm_gpu::telemetry::ObservationSnapshot) {
-    macro_rules! merge_fields {
-        ($($field:ident),* $(,)?) => {{
-            $(
-                if snapshot.totals.$field.is_none()
-                    && !snapshot
-                        .coverage
-                        .counter_overflow_fields
-                        .iter()
-                        .any(|field| field == stringify!($field))
-                {
-                    snapshot
-                        .coverage
-                        .counter_overflow_fields
-                        .push(stringify!($field).to_owned());
-                }
-            )*
-        }};
+    for (name, value) in snapshot.totals.named_fields() {
+        if value.is_none()
+            && !snapshot
+                .coverage
+                .counter_overflow_fields
+                .iter()
+                .any(|field| field == name)
+        {
+            snapshot
+                .coverage
+                .counter_overflow_fields
+                .push(name.to_owned());
+        }
     }
-    merge_fields!(
-        dispatch_count,
-        submit_count,
-        command_buffer_count,
-        host_wait_count,
-        upload_count,
-        upload_bytes,
-        image_upload_count,
-        image_upload_bytes,
-        spectral_lut_upload_count,
-        spectral_lut_upload_bytes,
-        uniform_upload_count,
-        uniform_upload_bytes,
-        scratch_upload_count,
-        scratch_upload_bytes,
-        readback_count,
-        readback_bytes,
-        staging_copy_count,
-        staging_copy_bytes,
-        device_copy_count,
-        device_copy_bytes,
-        buffer_create_count,
-        buffer_create_bytes,
-        pipeline_cache_hit_count,
-        pipeline_cache_miss_count,
-        telemetry_buffer_create_count,
-        telemetry_buffer_create_bytes,
-        telemetry_resolve_count,
-        telemetry_copy_count,
-        telemetry_copy_bytes,
-        executed_pass_count,
-        timed_pass_count,
-        valid_pass_count,
-        omitted_pass_count,
-    );
 }
 
 fn bounded_report_text(value: &str) -> (String, bool) {

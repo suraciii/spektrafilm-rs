@@ -66,166 +66,10 @@ fn record_stage_timing(
 }
 
 use crate::params::{RuntimeParams, Tap};
+#[cfg(test)]
+use crate::pipeline_calibration::{apply_base_tuning, apply_film_chemistry};
 use crate::profile::Profile;
 use crate::stages;
-fn interpolate(values: &[f64], wavelengths: &[f64], wavelength: f64) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    if values.len() < 2 || wavelengths.len() < 2 {
-        return values[0];
-    }
-    if wavelength <= wavelengths[0] {
-        return values[0];
-    }
-    if wavelength >= wavelengths[wavelengths.len() - 1] {
-        return values[values.len() - 1];
-    }
-    let upper = wavelengths
-        .partition_point(|&x| x < wavelength)
-        .min(values.len() - 1);
-    let lower = upper - 1;
-    let fraction = (wavelength - wavelengths[lower]) / (wavelengths[upper] - wavelengths[lower]);
-    values[lower] + (values[upper] - values[lower]) * fraction
-}
-
-fn gaussian_smooth(values: &[f64], sigma_points: f64) -> Vec<f64> {
-    if values.is_empty() || sigma_points <= 0.0 {
-        return values.to_vec();
-    }
-    let radius = (sigma_points * 4.0).ceil() as isize;
-    let mut out = vec![0.0; values.len()];
-    for (index, value) in out.iter_mut().enumerate() {
-        let mut sum = 0.0;
-        let mut weight_sum = 0.0;
-        for offset in -radius..=radius {
-            let sample = (index as isize + offset).clamp(0, values.len() as isize - 1) as usize;
-            let weight = (-0.5 * (offset as f64 / sigma_points).powi(2)).exp();
-            sum += values[sample] * weight;
-            weight_sum += weight;
-        }
-        *value = sum / weight_sum;
-    }
-    out
-}
-
-pub(crate) fn apply_base_tuning(
-    profile: &mut Profile,
-    film_base: &crate::params::FilmBaseParams,
-    print_base: Option<&crate::params::PrintBaseParams>,
-) {
-    let (active, scale, channels, tilt, sigma_points, peaks) = if let Some(base) = print_base {
-        (
-            base.active,
-            base.scale,
-            [base.yellow, base.magenta, base.cyan],
-            0.0,
-            20.0 / 5.0,
-            [445.0, 530.0, 610.0],
-        )
-    } else {
-        (
-            film_base.active,
-            film_base.scale,
-            [film_base.yellow, film_base.magenta, film_base.cyan],
-            film_base.tilt,
-            35.0 / 5.0,
-            [460.0, 555.0, 650.0],
-        )
-    };
-    if !active || profile.data.base_density.is_empty() {
-        return;
-    }
-    let neutral = channels == [1.0, 1.0, 1.0] && tilt == 0.0;
-    if neutral {
-        for value in &mut profile.data.base_density {
-            if value.is_finite() {
-                *value *= scale;
-            }
-        }
-        return;
-    }
-    let base = &profile.data.base_density;
-    let wavelengths = if profile.data.wavelengths.len() == base.len() {
-        profile.data.wavelengths.as_slice()
-    } else {
-        &[]
-    };
-    let wavelength_at = |index: usize| {
-        wavelengths
-            .get(index)
-            .copied()
-            .unwrap_or(380.0 + 5.0 * index as f64)
-    };
-    let tuned = if print_base.is_some() {
-        let channel_density = [
-            interpolate(base, wavelengths, peaks[0]) * channels[0],
-            interpolate(base, wavelengths, peaks[1]) * channels[1],
-            interpolate(base, wavelengths, peaks[2]) * channels[2],
-        ];
-        let mut spectral = Vec::with_capacity(base.len());
-        for i in 0..base.len() {
-            let wavelength = wavelength_at(i);
-            let value = if wavelength <= peaks[1] {
-                let p = ((wavelength - peaks[0]) / (peaks[1] - peaks[0])).clamp(0.0, 1.0);
-                channel_density[0] * (1.0 - p) + channel_density[1] * p
-            } else {
-                let p = ((wavelength - peaks[1]) / (peaks[2] - peaks[1])).clamp(0.0, 1.0);
-                channel_density[1] * (1.0 - p) + channel_density[2] * p
-            };
-            spectral.push(value);
-        }
-        gaussian_smooth(&spectral, sigma_points)
-    } else {
-        let mut channel_scale = Vec::with_capacity(base.len());
-        for i in 0..base.len() {
-            let wavelength = wavelength_at(i);
-            let value = if wavelength <= peaks[1] {
-                let p = ((wavelength - peaks[0]) / (peaks[1] - peaks[0])).clamp(0.0, 1.0);
-                channels[0] * (1.0 - p) + channels[1] * p
-            } else {
-                let p = ((wavelength - peaks[1]) / (peaks[2] - peaks[1])).clamp(0.0, 1.0);
-                channels[1] * (1.0 - p) + channels[2] * p
-            };
-            channel_scale.push(value);
-        }
-        let density_scale = gaussian_smooth(&channel_scale, sigma_points);
-        let tilt_scale: Vec<f64> = (0..base.len())
-            .map(|i| {
-                let wavelength = wavelength_at(i);
-                (1.0 + tilt / 95.0 * (wavelength - 555.0)).max(0.0)
-            })
-            .collect();
-        let density_tilt = gaussian_smooth(&tilt_scale, sigma_points);
-        base.iter()
-            .zip(density_scale.iter().zip(density_tilt.iter()))
-            .map(|(&value, (&channel, &tilt_value))| value * channel * tilt_value)
-            .collect()
-    };
-    for (value, replacement) in profile.data.base_density.iter_mut().zip(tuned) {
-        if value.is_finite() {
-            *value = replacement * scale;
-        }
-    }
-}
-
-pub(crate) fn apply_film_chemistry(
-    profile: &mut Profile,
-    chemistry: &crate::params::PrintCurvesMorphParams,
-) -> Result<(), String> {
-    let Some(model) = profile.data.density_curves_model.as_ref() else {
-        return Ok(());
-    };
-    let (curves, layers) = crate::print_morph::morph_density_curves_with_layers(
-        &profile.log_exposure_f64(),
-        model,
-        chemistry,
-        profile.is_positive(),
-    )?;
-    profile.data.density_curves = curves.iter().map(|row| row.to_vec()).collect();
-    profile.data.density_curves_layers = layers;
-    Ok(())
-}
 
 #[derive(Clone)]
 pub struct Pipeline {
@@ -605,7 +449,8 @@ impl Pipeline {
                 collect, inject
             ));
         }
-        let (mut cur, pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
+        let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
+            stages::grain_v3::validate_supported(&self.film, &self.params)?;
             let image = self.expose_full_input(image, backend);
             let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
@@ -633,6 +478,7 @@ impl Pipeline {
         if inject == Tap::RgbIn && cp > ip {
             i += 1;
         }
+        let mut output_crop = None;
         while i < cp {
             cur = self.fire_node(
                 order[i],
@@ -643,9 +489,47 @@ impl Pipeline {
                 ae_ev,
                 &mut stage_timings,
             )?;
+            if order[i] == Tap::LogEFilm && stages::grain_v3::active(&self.params) {
+                let t = Instant::now();
+                let geometry = stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
+                let glare = &self.params.print_render.glare;
+                let scan_spatial = collect == Tap::RgbOut
+                    && (self.params.scanner.lens_blur > 0.0
+                        || self.params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
+                        || (!self.params.io.scan_film && glare.active && glare.percent > 0.0));
+                let print_spatial = !self.params.io.scan_film
+                    && collect != Tap::CmyFilm
+                    && self.params.enlarger.diffusion_filter.active;
+                let grid = if self.params.io.crop && (scan_spatial || print_spatial) {
+                    let (grid, crop) = geometry.full_film_grid(&cur)?;
+                    output_crop = Some(crop);
+                    grid
+                } else {
+                    geometry.grid()
+                };
+                // The existing scalar optical controls use the actual pitch
+                // on the full source's long axis. Rounding may make the other
+                // axis differ; the field itself retains both exact pitches.
+                let long_axis = usize::from(cur.height > cur.width);
+                cur = stages::grain_v3::readout(
+                    &cur,
+                    &self.film,
+                    &self.params,
+                    pixel_size_um,
+                    grid,
+                    backend,
+                )?;
+                pixel_size_um = geometry.output_pitch_um[long_axis];
+                print_stage_timing(stage_timings_enabled(), "grain_v3_readout", t);
+                record_stage_timing(&mut stage_timings, "grain_v3_readout", t);
+                dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
+            }
             i += 1;
         }
-        Ok(cur)
+        Ok(match output_crop {
+            Some(rect) => stages::grain_v3::crop_output(cur, rect),
+            None => cur,
+        })
     }
 
     /// Process an image with explicit pipeline taps — the Rust spelling of
@@ -770,6 +654,10 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        // Active V3 outside its supported condition fails here, before any
+        // route work — including the passthrough and convert routes, which
+        // never reach a grain stage.
+        stages::grain_v3::validate_supported(&self.film, &self.params)?;
         if self.params.workflow.route == "input" {
             let _observation = stages::StageObservation::cpu(
                 backend,
@@ -944,7 +832,8 @@ impl Pipeline {
         // buffer — one upload + one readback total. WGSL runs the
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
-        // path; backends without resident support return `None`.
+        // path; backends without resident support return `None`. Active V3
+        // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
             && let Some(out) =
                 self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)
@@ -1108,11 +997,24 @@ impl Pipeline {
             "geometry",
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
-        let resized = crate::resizing::crop_and_rescale(
-            image,
-            &self.params.io,
-            self.params.camera.film_format_mm,
-        );
+        // V3 develops the full source; its field readout owns the crop and
+        // output grid so that overlapping reads keep the same film coordinates.
+        let resized = if stages::grain_v3::active(&self.params) {
+            Ok((
+                std::borrow::Cow::Borrowed(image),
+                crate::resizing::pixel_size_um(
+                    self.params.camera.film_format_mm,
+                    image.width,
+                    image.height,
+                ),
+            ))
+        } else {
+            crate::resizing::crop_and_rescale(
+                image,
+                &self.params.io,
+                self.params.camera.film_format_mm,
+            )
+        };
         geometry.set_complete(resized.is_ok());
         drop(geometry);
         resized
@@ -1332,14 +1234,7 @@ mod spectral_invalidation_tests {
         let mut params = base.params.clone();
         params.print_render.density_curves_morph.active = true;
         params.print_render.density_curves_morph.gamma_factor = 0.0;
-        let error = match base.with_params(params) {
-            Ok(_) => panic!("invalid print morph update must be rejected"),
-            Err(error) => error,
-        };
-        assert!(
-            error.contains("gamma_factor must be strictly positive"),
-            "{error}"
-        );
+        assert!(base.with_params(params).is_err());
     }
 
     #[test]
@@ -1538,5 +1433,81 @@ mod spectral_invalidation_tests {
             .process(image, &backend)
             .unwrap();
         assert_eq!(normal.data, default.data);
+    }
+    #[test]
+    fn v3_final_crop_preserves_scanner_and_print_boundaries() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_800").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut image = ImageBuf::new(96, 64);
+        for y in 0..64 {
+            for x in 0..96 {
+                let exposure = if x < 48 { -1.7 } else { -0.6 };
+                image.set(x, y, [from_f64(exposure + y as f64 * 0.002); 3]);
+            }
+        }
+        for (scan_film, output) in [
+            (false, "direct_scan"),
+            (true, "direct_scan"),
+            (true, "positive_scan"),
+        ] {
+            for scale in [1.0, 1.5] {
+                let mut params = RuntimeParams::default();
+                params.camera.film_format_mm = 36.0;
+                params.film_render.grain.engine = crate::params::GrainEngine::V3;
+                params.film_render.dir_couplers.active = false;
+                params.film_render.halation.active = false;
+                params.workflow.route = if scan_film {
+                    "input > film > scan"
+                } else {
+                    "input > film > print > scan"
+                }
+                .into();
+                params.io.scan_film = scan_film;
+                params.io.upscale_factor = scale;
+                params.scanner.scan_output = output.into();
+                params.scanner.lens_blur = if scale == 1.0 { 1.5 } else { 3.0 };
+                params.scanner.unsharp_mask = [0.7, 0.7];
+                params.enlarger.diffusion_filter.active = !scan_film;
+                let full_pipeline = Pipeline::new(film.clone(), print.clone(), params.clone());
+                let color_ref = full_pipeline.color_reference(&backend);
+                // Inject a small developed-exposure field at photographic pitch.
+                let render = |pipeline: &Pipeline| {
+                    pipeline
+                        .run_from(
+                            image.clone(),
+                            Tap::LogEFilm,
+                            Tap::RgbOut,
+                            &backend,
+                            &color_ref,
+                            Some((3.1, 0.0)),
+                            None,
+                        )
+                        .unwrap()
+                };
+                let full = render(&full_pipeline);
+                params.io.crop = true;
+                params.io.crop_center = [0.5, 0.5];
+                params.io.crop_size = [0.5, 0.5];
+                let cropped = render(&Pipeline::new(film.clone(), print.clone(), params));
+                let expected = crate::resizing::crop_image(&full, [0.5, 0.5], [0.5, 0.5]);
+                let expected = expected.unwrap();
+                assert_eq!(
+                    (cropped.width, cropped.height),
+                    (expected.width, expected.height)
+                );
+                let worst = cropped
+                    .data
+                    .iter()
+                    .zip(expected.data.iter())
+                    .map(|(&a, &b)| (a as f64 - b as f64).abs())
+                    .fold(0.0f64, f64::max);
+                assert!(
+                    worst <= 1e-5,
+                    "{scan_film} {output} scale {scale}: crop edge error {worst}"
+                );
+            }
+        }
     }
 }

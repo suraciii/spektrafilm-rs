@@ -2,7 +2,8 @@ use super::{default_one, default_true};
 use serde::{Deserialize, Serialize};
 
 /// Selects the film-grain implementation. V1 remains the default for
-/// backwards-compatible recipes; V2 is procedural grain in linear scanner RGB.
+/// backwards-compatible recipes; V2 is procedural grain in linear scanner RGB;
+/// V3 is the mixed film-coordinate dye field (`specs/film-grain/v3/`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -10,6 +11,7 @@ pub enum GrainEngine {
     #[default]
     V1,
     V2,
+    V3,
 }
 
 /// Procedural Grain V2 generation mode.
@@ -71,6 +73,16 @@ pub struct GrainParams {
     pub v2_timer: f32,
     #[serde(default = "default_particle_scale_sublayers_f64")]
     pub particle_scale_sublayers: [f64; 3],
+    /// Film-space Gaussian sigma of the V3 dye support, in micrometers. It
+    /// conditions the field: the resolved field-cell pitch is `support / 2`.
+    /// V3-only; V1 and V2 never read it.
+    #[serde(default = "default_v3_dye_support_um")]
+    pub v3_dye_support_um: f32,
+    /// Base statistical event area of V3, in square film micrometers. The
+    /// stock granularity preset scales it per channel; it never changes the
+    /// dye support. V3-only; V1 reads `particle_area_um2` instead.
+    #[serde(default = "default_v3_event_area_um2")]
+    pub v3_event_area_um2: f64,
     #[serde(default = "default_07")]
     pub mult_usm_sigma: f32,
     #[serde(default = "default_15")]
@@ -126,6 +138,16 @@ fn default_particle_scale_layers_f64() -> [f64; 3] {
 fn default_particle_scale_sublayers_f64() -> [f64; 3] {
     [1.0, 0.4, 0.25]
 }
+/// Default dye support selected with the default event area on the reference
+/// condition (`specs/film-grain/v3/design.md` §Parameters).
+fn default_v3_dye_support_um() -> f32 {
+    3.5
+}
+/// Validated event area of the reference stock `kodak_portra_800`
+/// (`specs/film-grain/v3/design.md` §Parameters).
+fn default_v3_event_area_um2() -> f64 {
+    1.28
+}
 fn default_grain_v2_resolution_type() -> u32 {
     1
 }
@@ -175,6 +197,8 @@ impl Default for GrainParams {
             density_min: [0.03, 0.03, 0.03],
             uniformity: [0.97, 0.97, 0.97],
             particle_scale_sublayers: [1.0, 0.4, 0.25],
+            v3_dye_support_um: default_v3_dye_support_um(),
+            v3_event_area_um2: default_v3_event_area_um2(),
             blur: 0.89,
             mult_usm_sigma: 0.7,
             mult_usm_amount: 1.5,

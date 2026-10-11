@@ -33,6 +33,7 @@ mod export;
 mod numeric;
 mod presets;
 mod profiles;
+mod routes;
 mod state;
 use export::{ExportBackend, ExportDialog, ExportOptions};
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
@@ -64,6 +65,10 @@ fn main() -> eframe::Result<()> {
             }
             "--help" | "-h" => {
                 println!("Usage: spektrafilm-gui [IMAGE] [--state GUI_STATE.json]");
+                println!(
+                    "SPEKTRAFILM_GUI_DIAGNOSTICS_DIR publishes each completed operation's report \
+                     as operation-<id>.json in that existing directory."
+                );
                 return Ok(());
             }
             _ if arg.starts_with('-') => {
@@ -76,6 +81,16 @@ fn main() -> eframe::Result<()> {
         }
     }
     let backend = gui_backend();
+    let diagnostics_dir = std::env::var_os("SPEKTRAFILM_GUI_DIAGNOSTICS_DIR").map(PathBuf::from);
+    if let Some(directory) = diagnostics_dir.as_deref()
+        && !directory.is_dir()
+    {
+        eprintln!(
+            "SPEKTRAFILM_GUI_DIAGNOSTICS_DIR must name an existing directory: {}",
+            directory.display()
+        );
+        std::process::exit(2);
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1460.0, 980.0]),
@@ -119,7 +134,14 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "spektrafilm",
         options,
-        Box::new(|_cc| Ok(Box::new(App::new(backend, initial_image, initial_state)))),
+        Box::new(|_cc| {
+            Ok(Box::new(App::new(
+                backend,
+                initial_image,
+                initial_state,
+                diagnostics_dir,
+            )))
+        }),
     )
 }
 
@@ -228,6 +250,17 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
     }
 }
 
+/// Effective backend label for Scan and Export reports. An active V3 field
+/// resolves on the CPU and never enters the resident chain, so the selected
+/// backend name alone would misreport the executed path.
+fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
+    if spektrafilm_core::stages::grain_v3::active(params) {
+        format!("{selected} · grain V3 on CPU")
+    } else {
+        selected.to_owned()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum GuiTab {
     #[default]
@@ -267,6 +300,9 @@ struct App {
     /// paper/printing or film/printing).
     papers: Vec<ProfileEntry>,
     presets: presets::Browser,
+    browser_state_path: PathBuf,
+    observed_browser_state: presets::BrowserState,
+    browser_state_changed_at: Option<Instant>,
     film_name: String,
     print_name: String,
     /// Development-time family (minutes) of the selected film / paper —
@@ -344,6 +380,7 @@ impl RenderKind {
     }
 }
 
+#[derive(Clone)]
 struct RenderJob {
     input_epoch: u64,
     parameter_revision: u64,
@@ -368,12 +405,7 @@ impl RenderJob {
 }
 
 struct RenderRequest {
-    input_epoch: u64,
-    parameter_revision: u64,
-    request_id: u64,
-    kind: RenderKind,
-    animate: bool,
-    backend_name: String,
+    job: RenderJob,
     image: Arc<ImageBuf>,
     input_clone_ms: f32,
     snapshot: RenderSnapshot,
@@ -448,15 +480,7 @@ impl RenderWorker {
                     let mut operation = request.operation;
                     let attempt = operation.attempt(1);
                     let observation = attempt.context().clone();
-                    let job = RenderJob {
-                        input_epoch: request.input_epoch,
-                        parameter_revision: request.parameter_revision,
-                        request_id: request.request_id,
-                        kind: request.kind,
-                        animate: request.animate,
-                        backend_name: request.backend_name.clone(),
-                        collection_mode: observation.mode(),
-                    };
+                    let job = request.job;
                     *active_for_worker.lock() =
                         Some((job.request_id, job.kind, job.collection_mode));
                     let ctx = request.ctx.clone();
@@ -465,7 +489,7 @@ impl RenderWorker {
                         let t_pipeline = Instant::now();
                         let pipeline_template = build_runtime_observed(
                             &request.snapshot,
-                            request.kind == RenderKind::Preview,
+                            job.kind == RenderKind::Preview,
                             &observation,
                         )?;
                         if operation.enabled() {
@@ -566,16 +590,17 @@ impl RenderWorker {
         }
     }
 
-    fn submit(&mut self, mut request: RenderRequest) -> (u64, Option<Operation>) {
+    fn submit(&mut self, mut request: RenderRequest) -> (RenderJob, Option<Operation>) {
         self.next_request_id = self.next_request_id.wrapping_add(1);
-        request.request_id = self.next_request_id;
+        request.job.request_id = self.next_request_id;
+        let job = request.job.clone();
         let (lock, wake) = &*self.state;
         let replaced = lock.lock().replace(request).map(|request| {
             drop(request.worker_wait);
             request.operation
         });
         wake.notify_one();
-        (self.next_request_id, replaced)
+        (job, replaced)
     }
 
     fn shutdown(&mut self) -> Option<Operation> {
@@ -721,13 +746,31 @@ impl App {
         backend: Arc<dyn ComputeBackend>,
         initial_image: Option<PathBuf>,
         initial_state: Option<PathBuf>,
+        diagnostics_dir: Option<PathBuf>,
     ) -> Self {
+        Self::new_with_browser_path(
+            backend,
+            initial_image,
+            initial_state,
+            diagnostics_dir,
+            state::config_dir().join("preset_browser_state.json"),
+        )
+    }
+
+    fn new_with_browser_path(
+        backend: Arc<dyn ComputeBackend>,
+        initial_image: Option<PathBuf>,
+        initial_state: Option<PathBuf>,
+        diagnostics_dir: Option<PathBuf>,
+        browser_state_path: PathBuf,
+    ) -> Self {
+        let explicit_state = initial_state.is_some();
         let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
         let gui_state = match initial_state {
             Some(path) => state::GuiState::load(&path),
-            None => state::startup(),
+            None => state::startup(browser_state_path.parent().unwrap_or(Path::new("."))),
         }
         .and_then(|state| {
             // A startup state the runtime cannot accept (a removed workflow
@@ -752,13 +795,31 @@ impl App {
             .unwrap_or_default();
         let print_dev_times = profile_dev_times(&data_dir, &print_name);
         let export_options = ExportOptions::from_state(&gui_state.sections);
+        let mut presets = presets::Browser::new(&gui_state.sections);
+        match presets::BrowserState::restore(
+            &gui_state.sections,
+            explicit_state,
+            &browser_state_path,
+        ) {
+            Ok(browser_state) => presets.state = browser_state,
+            Err(error) => {
+                let message = format!("Browser state load error: {error:#}");
+                startup_error = Some(match startup_error {
+                    Some(previous) => format!("{previous}; {message}"),
+                    None => message,
+                });
+            }
+        }
 
         let mut app = Self {
             backend,
             data_dir,
             films,
             papers,
-            presets: presets::Browser::new(&gui_state.sections),
+            observed_browser_state: presets.state.clone(),
+            browser_state_changed_at: explicit_state.then(Instant::now),
+            browser_state_path,
+            presets,
             film_name,
             print_name,
             film_dev_times,
@@ -804,6 +865,12 @@ impl App {
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
+        if let Some(directory) = diagnostics_dir {
+            // Requesting reports selects summary collection for the session, as the
+            // CLI's report request does; the panel can still change the mode.
+            app.diagnostics.mode = CollectionMode::Summary;
+            app.diagnostics.publish_completed_to(directory);
+        }
         if let Some(p) = initial_image {
             app.load_image_from_path(&p);
         }
@@ -850,6 +917,7 @@ impl App {
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();
         self.presets = presets::Browser::new(&state.sections);
+        self.browser_state_changed_at = Some(Instant::now());
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
         self.raw_lens_info = None;
@@ -861,6 +929,25 @@ impl App {
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
         Ok(())
+    }
+
+    fn persist_browser_state(&mut self, closing: bool) {
+        if self.presets.state != self.observed_browser_state {
+            self.observed_browser_state = self.presets.state.clone();
+            self.browser_state_changed_at = Some(Instant::now());
+        }
+        if self
+            .browser_state_changed_at
+            .is_some_and(|changed| closing || changed.elapsed() >= Duration::from_millis(300))
+        {
+            self.browser_state_changed_at = None;
+            if let Err(error) = self.presets.state.save(&self.browser_state_path) {
+                self.status = format!("Browser state save error: {error:#}");
+                if closing {
+                    eprintln!("{}", self.status);
+                }
+            }
+        }
     }
 
     fn refresh_viewing_artifacts(&mut self) {
@@ -982,31 +1069,12 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if controls::choice_tip_labeled(
+            if controls::choice_tip_entries(
                 ui,
                 "workflow",
                 &mut self.params.workflow.route,
-                &[
-                    ("input", "Finished RGB"),
-                    ("input > film > scan", "input > film > scan"),
-                    (
-                        "input > film > print > scan",
-                        "input > film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > print > scan",
-                        "input > convert-film > print > scan",
-                    ),
-                    (
-                        "input > convert-film > scan-minus-base",
-                        "input > convert-film > scan-minus-base",
-                    ),
-                    (
-                        "input > convert-film > scan",
-                        "input > convert-film > scan",
-                    ),
-                ],
-                "Which path the image takes through the pipeline: Finished RGB (colour-manage an already rendered RGB image to the output space), input > film > scan (scan the negative directly), input > film > print > scan (full chain), input > convert-film > print > scan (print a scene-referred input and scan it), input > convert-film > scan-minus-base (convert input and scan with base removed), input > convert-film > scan (convert input, then scan the film with its base). Magazine print can be enabled independently for every workflow.",
+                routes::entries(),
+                routes::tooltip(),
             ) {
                 let direct_film_scan = self.params.workflow.route == "input > film > scan";
                 self.params.io.scan_film = direct_film_scan;
@@ -1018,7 +1086,10 @@ impl App {
                 self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
             if ui
-                .checkbox(&mut self.params.magazine_print_color.active, "Magazine print")
+                .checkbox(
+                    &mut self.params.magazine_print_color.active,
+                    "Magazine print",
+                )
                 .on_hover_text("Apply a magazine print appearance after the selected workflow.")
                 .changed()
             {
@@ -1286,7 +1357,6 @@ impl App {
         operation.set_revisions(Some(input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
         operation.set_backend_requested(diagnostics::preview_backend_requested());
-        let backend_name = self.backend.name().to_owned();
         let params = match self
             .current_state()
             .and_then(|state| state.runtime_params())
@@ -1299,14 +1369,21 @@ impl App {
                 return;
             }
         };
+        // Report the V3 field's effective CPU route next to the selected backend.
+        let backend_name = effective_backend_name(self.backend.name(), &params);
         let parameter_revision = self.parameter_revision;
         let request = RenderRequest {
-            input_epoch,
-            parameter_revision,
-            request_id: 0,
-            kind,
-            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
-            backend_name: backend_name.clone(),
+            job: RenderJob {
+                input_epoch,
+                parameter_revision,
+                request_id: 0,
+                kind,
+                animate: self.force_preview
+                    || self.full_scan_requested
+                    || self.output_image.is_none(),
+                backend_name,
+                collection_mode: operation.mode(),
+            },
             image,
             input_clone_ms,
             snapshot: RenderSnapshot {
@@ -1326,19 +1403,11 @@ impl App {
             worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
         };
-        let (request_id, replaced) = self.render_worker.submit(request);
+        let (job, replaced) = self.render_worker.submit(request);
         if let Some(operation) = replaced {
             self.diagnostics.finish(operation, Outcome::Superseded);
         }
-        self.render_job = Some(RenderJob {
-            input_epoch,
-            parameter_revision,
-            request_id,
-            kind,
-            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
-            backend_name,
-            collection_mode: self.diagnostics.mode,
-        });
+        self.render_job = Some(job);
         self.full_scan_requested = false;
     }
 
@@ -1784,7 +1853,7 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            backend_name: backend.name().to_owned(),
+                            backend_name: effective_backend_name(backend.name(), pipeline.params()),
                             size: [output.width, output.height],
                             metadata_warning: report.metadata_warning,
                             staged,
@@ -2407,6 +2476,13 @@ impl eframe::App for App {
                 ui.separator();
                 self.simulation_action_bar(ui);
             });
+        self.persist_browser_state(false);
+        if self.browser_state_changed_at.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(300));
+        }
+        if let Some(error) = self.diagnostics.take_publication_error() {
+            self.status = format!("Diagnostic report publication error: {error}");
+        }
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -2457,6 +2533,7 @@ impl eframe::App for App {
 
     /// Cancel pending export publication and drain its worker before exiting.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.persist_browser_state(true);
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);
             if let Some(h) = job.handle.take() {
