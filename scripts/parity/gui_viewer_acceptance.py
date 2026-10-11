@@ -380,7 +380,23 @@ def accept_viewer(driver, root, state, pixels, exporter):
     driver.await_viewer(fingerprint, label='white padding zero')
     before_border, _ = _record_snap(driver, records, "viewer-border-zero")
     fingerprint = driver.viewer_fingerprint()
+    before_border_pixels = np.asarray(_viewer_crop(before_border).convert("RGB"))
+    before_white = np.all(before_border_pixels >= 250, axis=2)
     _set_white_padding(driver)
+
+    def white_padding_visible():
+        # A late frame from loading the zero-padding state can change the
+        # fingerprint before the padding composition finishes. Wait for the
+        # requested white border itself before measuring the settled frame.
+        _, canvas = driver.viewer_canvas()
+        new_white = np.all(canvas >= 250, axis=2) & ~before_white
+        return float(np.mean(new_white)) > 0.01
+
+    try:
+        wait_for(white_padding_visible, "visible nonzero white padding", timeout=60)
+    except RuntimeError:
+        _record_snap(driver, records, "viewer-border-nonzero-timeout")
+        raise
     driver.await_viewer(fingerprint, label='white padding nonzero')
     after_border, _ = _record_snap(driver, records, "viewer-border-nonzero")
     border_delta = float(np.mean(np.abs(np.asarray(_viewer_crop(before_border), dtype=np.float32) -
@@ -410,6 +426,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _require(reveal_delta > 1.0, "Reveal did not produce observable transition frames")
 
     crossfade_state = copy.deepcopy(state)
+    crossfade_state.setdefault("simulation", {})["auto_preview"] = False
     crossfade_state.setdefault("display", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
     crossfade_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
     crossfade_path = _state_path(root, "viewer-crossfade.json", crossfade_state)
@@ -426,6 +443,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
     _require(matches, 'Crossfade trigger requires visible Auto exposure')
     driver.xd('mousemove', '--window', driver.window, 1073, int(matches[0][1]))
     driver.xd('click', 1)
+    driver.click("Preview")
     crossfade_frames = _transition_frames(driver, records, "viewer-crossfade", count=32, interval=0.05)
     driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-crossfade-rendered")
     crossfade_delta = float(max(np.max(np.abs(crossfade_frames[0] - frame)) for frame in crossfade_frames[1:]))

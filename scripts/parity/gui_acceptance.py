@@ -610,13 +610,38 @@ class X11:
 
     def dialog(self, path, save=False):
         dialog_classes = ('zenity', 'yad', 'xdg-desktop-portal-gtk')
+        def visible_choosers():
+            windows = []
+            for dialog_class in dialog_classes:
+                found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
+                windows.extend(found.splitlines())
+            return windows
+
         def find():
             for dialog_class in dialog_classes:
                 found = self.xd('search', '--onlyvisible', '--class', dialog_class, check=False)
                 if found:
                     return found.splitlines()[-1]
             return None
+
         dialog = wait_for(find, 'native file chooser (zenity/yad/portal)', 25)
+
+        def visible():
+            return dialog in visible_choosers()
+
+        def key(*keys):
+            if not visible():
+                return False
+            self.xd('key', *keys)
+            return True
+
+        def geometry():
+            try:
+                return self.window_geometry(dialog)
+            except subprocess.CalledProcessError:
+                if not visible():
+                    return None
+                raise
         for child in self.psutil.Process(self.proc.pid).children(recursive=True):
             try:
                 if 'zenity' in child.name():
@@ -633,11 +658,15 @@ class X11:
         chooser.save(chooser_path)
         self.records.append({'surface': 'native-file-chooser', 'screenshot': chooser_path.name,
                              'requested_path': str(path), 'save': save})
+        if not visible():
+            return
         self.xd('windowactivate', '--sync', dialog)
         time.sleep(.6)
-        self.xd('key', 'ctrl+l')
+        if not key('ctrl+l'):
+            return
         time.sleep(.2)
-        self.xd('key', 'ctrl+a')
+        if not key('ctrl+a'):
+            return
         text = str(path if save else path.parent) + ('' if save else '/')
         # GTK completion consumes synthetic per-character input; paste the
         # complete path atomically through the real desktop clipboard.
@@ -646,43 +675,95 @@ class X11:
         subprocess.run(['xclip', '-selection', 'clipboard'], input=text,
                        text=True, check=True, timeout=10,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.xd('key', 'ctrl+v')
+        if not key('ctrl+v'):
+            return
         time.sleep(.3)
-        self.xd('key', 'Return')
+        if not key('Return'):
+            return
         if not save:
             time.sleep(.6)
-            self.xd('key', 'ctrl+l')
-            self.xd('key', 'ctrl+a')
+            if not key('ctrl+l') or not key('ctrl+a'):
+                return
             subprocess.run(['xclip', '-selection', 'clipboard'], input=str(path),
                            text=True, check=True, timeout=10,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.xd('key', 'ctrl+v')
+            if not key('ctrl+v'):
+                return
             time.sleep(.3)
-            self.xd('key', 'Return')
+            if not key('Return'):
+                return
         # Save choosers may first navigate the entered full path, then require
         # a final action button. Open dialogs likewise expose Select/Open on
         # portal backends instead of silently accepting Return.
         deadline = time.monotonic() + 15
+        primary_clicked = False
+        expected = {'save', 'ok'} if save else {'open', 'select', 'ok'}
         while time.monotonic() < deadline:
-            if not find():
+            if not visible():
                 return
+            if primary_clicked:
+                time.sleep(.25)
+                continue
+            bounds = geometry()
+            if bounds is None:
+                return
+            strip = dict(left=bounds['left'] + bounds['width'] - 320,
+                         top=bounds['top'] + bounds['height'] - 60,
+                         width=320, height=60)
             with self.mss.mss() as screen:
-                shot = screen.grab(screen.monitors[0])
-            surface = self.Image.frombytes('RGB', shot.size, shot.rgb)
-            buttons = self.ocr.image_to_data(surface, config='--psm 11', output_type=self.ocr.Output.DICT)
-            # A chooser may close while OCR runs. Never let a stale click or
-            # Return reach the main window and reopen its focused Save button.
-            if find() != dialog:
+                action_shot = screen.grab(strip)
+            actions = self.Image.frombytes('RGB', action_shot.size, action_shot.rgb)
+            actions = actions.convert('L').resize((320 * 3, 60 * 3))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                buttons = self.ocr.image_to_data(actions, config='--psm 6',
+                                                 output_type=self.ocr.Output.DICT,
+                                                 timeout=remaining)
+            except subprocess.TimeoutExpired:
+                break
+            except RuntimeError as error:
+                if str(error) != 'Tesseract process timeout':
+                    raise
+                break
+            cancels = [i for i, word in enumerate(buttons['text'])
+                       if word.strip().casefold() == 'cancel']
+            candidates = []
+            if len(cancels) == 1:
+                cancel = cancels[0]
+                cancel_y = buttons['top'][cancel] + buttons['height'][cancel] / 2
+                cancel_right = buttons['left'][cancel] + buttons['width'][cancel]
+                for i, word in enumerate(buttons['text']):
+                    center_y = buttons['top'][i] + buttons['height'][i] / 2
+                    same_row = abs(center_y - cancel_y) <= max(
+                        buttons['height'][i], buttons['height'][cancel]) / 2
+                    if (word.strip().casefold() in expected and same_row
+                            and buttons['left'][i] > cancel_right):
+                        candidates.append(i)
+            # OCR can outlive a chooser or a move. Discard that frame rather
+            # than sending a stale click to another desktop surface.
+            if not visible():
                 return
-            for i, word in enumerate(buttons['text']):
-                if (word.strip() in ('OK', 'Open', 'Select', 'Save')
-                        and 100 <= buttons['left'][i] <= 1000
-                        and 100 <= buttons['top'][i] <= 750):
-                    self.xd('mousemove', buttons['left'][i] + buttons['width'][i] // 2,
-                            buttons['top'][i] + buttons['height'][i] // 2)
+            if (len(candidates) == 1 and time.monotonic() < deadline
+                    and self.xd('getactivewindow', check=False) == dialog
+                    and geometry() == bounds):
+                i = candidates[0]
+                x = strip['left'] + (buttons['left'][i] + buttons['width'][i] / 2) / 3
+                y = strip['top'] + (buttons['top'][i] + buttons['height'][i] / 2) / 3
+                self.xd('mousemove', int(x), int(y))
+                if not visible():
+                    return
+                if (self.xd('getactivewindow', check=False) == dialog
+                        and geometry() == bounds and time.monotonic() < deadline):
                     self.xd('click', 1)
-                    break
+                    primary_clicked = True
             time.sleep(.25)
+        if not visible():
+            return
+        with self.mss.mss() as screen:
+            shot = screen.grab(screen.monitors[0])
+        surface = self.Image.frombytes('RGB', shot.size, shot.rgb)
         surface.save(self.root / 'native-chooser-timeout.png')
         raise RuntimeError(f'Native chooser did not accept {path}')
 
@@ -706,16 +787,55 @@ class X11:
         self.dialog(path, save)
 
     def click_export_button(self):
-        """Click the Output-section Export button, not its section header.
+        """Click the button below the rendered Export options section header."""
+        from PIL import ImageOps, ImageStat
 
-        The header shares the label prefix, so match the single-token row.
-        """
+        def prepare(region):
+            grayscale = ImageOps.grayscale(region)
+            background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
+            if ImageStat.Stat(background).median[0] < 128:
+                grayscale = ImageOps.invert(grayscale)
+            return grayscale.resize((region.width * 3, region.height * 3))
+
         def locate():
-            image, _, lines = self.read()
-            for line in lines:
-                tokens = [re.sub(r'[^a-z0-9]', '', word[0].lower()) for word in line]
-                if tokens == ['export'] and line[0][1] > self.right_control_x:
-                    return (line[0][1] + line[0][3] / 2, line[0][2] + line[0][4] / 2)
+            image, _ = self.image()
+            # Read the label half of the existing 420px sidebar independently;
+            # long Saved GUI state paths otherwise corrupt the adjacent labels.
+            left = image.width - 420
+            region = image.crop((left, 0, left + 210, image.height - 100))
+            data = self.ocr.image_to_data(prepare(region), config='--psm 11',
+                                          output_type=self.ocr.Output.DICT, timeout=15)
+            grouped = {}
+            for i, text in enumerate(data['text']):
+                if text.strip():
+                    key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                    grouped.setdefault(key, []).append((text, left + data['left'][i] / 3,
+                        data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
+            for line in grouped.values():
+                header = [word for word in line
+                          if re.sub(r'[^a-z0-9]', '', word[0].lower())
+                          in ('export', 'options', 'exportoptions')]
+                if ''.join(re.sub(r'[^a-z0-9]', '', word[0].lower())
+                           for word in header) != 'exportoptions':
+                    continue
+                height = max(word[4] for word in header)
+                bottom = max(word[2] + word[4] for word in header)
+                # Bound the next row by the rendered header's font height,
+                # excluding both the section header and the status below it.
+                x0 = int(min(word[1] for word in header) - height)
+                y0 = int(bottom + height / 4)
+                x1 = int(max(word[1] + word[3] for word in header) + height)
+                y1 = min(image.height - 100, int(bottom + height * 2))
+                if y1 <= y0:
+                    continue
+                button = image.crop((x0, y0, x1, y1))
+                data = self.ocr.image_to_data(prepare(button), config='--psm 7',
+                                              output_type=self.ocr.Output.DICT, timeout=15)
+                words = [i for i, text in enumerate(data['text']) if text.strip()]
+                if len(words) == 1 and re.sub(r'[^a-z0-9]', '', data['text'][words[0]].lower()) == 'export':
+                    i = words[0]
+                    return (x0 + (data['left'][i] + data['width'][i] / 2) / 3,
+                            y0 + (data['top'][i] + data['height'][i] / 2) / 3)
             return None
         x, y = None, None
         try:

@@ -406,6 +406,13 @@ OCR ordering of the layer name and zoom text does not determine readiness.
 Zoom and rotation geometry use the known colored Input raster, selected after
 the render completes. Processed Output can be nearly neutral; its dimensions
 and metadata are checked separately through render reports and decoded Export.
+White-padding verification waits for the requested white border before
+measuring pixel differences; an unrelated changed frame is not completion.
+Crossfade verification disables automatic preview while changing exposure,
+then clicks Preview to request the animated render.
+The Linux file chooser driver tracks its native window through closure and
+locates the primary action beside Cancel in the window's bottom button row.
+It does not treat the Open files read-only checkbox as an Open action.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
 
