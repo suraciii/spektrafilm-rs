@@ -3,6 +3,9 @@
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and stage state.
 - Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
 - `ComputeBackend` separates stage orchestration from CPU and WGPU execution. The CPU backend preserves f64 reference order; WGPU owns f32 conversion, resources, and dispatch.
+- For a positive film scan, stage preparation derives one private calibrated scanner response from the selected profile density curves and the actual scan color context. The response stores per-channel monotone capture-to-log-exposure knots and finite endpoint slopes; image pixels reuse that response without rebuilding spectral calibration per pixel.
+- Scanner calibration uses least-squares isotonic regression on the scanned neutral density samples to regularize measurement reversals. Pooled plateaus use their mean log exposure. The forward film curves remain unchanged.
+- Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`. The convert-film scan passes its selected scan illuminant into the same preparation path. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
 - A resident WGPU chain is an optimization, not a second product contract. `ResidentDecision` records capability and fallback reasons. Unsupported stages use the faithful per-stage route.
 - The private resident module owns capability decisions, backend parameter preparation, and output transfer finalization. The parent pipeline owns input preparation and per-stage fallback ordering.
 - The WGPU film-chain module owns resident command encoding and its resource lifetimes. Device setup and shared dispatch infrastructure remain in the backend.

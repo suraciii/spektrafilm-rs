@@ -75,14 +75,27 @@ pub fn show(
         }
         if section == "Scanner" {
             ui.scope(|ui| {
-                if params.workflow.route == "input > film > scan" {
+                let positive_route = matches!(
+                    params.workflow.route.as_str(),
+                    "input > film > scan" | "input > convert-film > scan"
+                );
+                if positive_route {
                     flags.runtime_changed |= choice_tip(
                         ui,
                         "scan output",
                         &mut params.scanner.scan_output,
                         &["direct_scan", "positive_scan"],
-                        "direct_scan preserves the negative scanner capture; positive_scan interprets a direct negative-film scan as a positive image.",
+                        "direct_scan preserves the scanner capture; positive_scan applies calibrated density interpretation and print-like tone.",
                     );
+                }
+                if positive_route && params.scanner.scan_output == "positive_scan" {
+                    flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Positive scan brightness offset in stops.");
+                    flags.runtime_changed |= tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, -16.0, 16.0, 0.05, 3, "Independent red, green, and blue positive scan exposure offsets in stops.");
+                    flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Positive scan logistic contrast; strictly positive.");
+                    flags.runtime_changed |= numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, 0.0001, 16.0, 0.02, 3, "Positive scan maximum density; strictly positive.");
+                }
+                if !positive_route {
+                    params.scanner.scan_output = "direct_scan".into();
                 }
                 flags.runtime_changed |= numeric(ui, "lens blur", &mut params.scanner.lens_blur, 0.0, 1000000.0, 0.05, 2, "Sigma of gaussian filter in pixel for the scanner lens blur.");
                 flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable white point correction applied to the scanner output.");

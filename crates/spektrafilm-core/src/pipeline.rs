@@ -361,7 +361,7 @@ impl Pipeline {
                         backend,
                         color_ref,
                         &self.output_gamut,
-                    );
+                    )?;
                     print_stage_timing(print_timings, "scanning", t);
                     record_stage_timing(stage_timings, "scanning", t);
                     tracing::info!("pipeline: scanning complete (film scan)");
@@ -405,7 +405,7 @@ impl Pipeline {
                     backend,
                     color_ref,
                     &self.output_gamut,
-                );
+                )?;
                 print_stage_timing(print_timings, "scanning", t);
                 record_stage_timing(stage_timings, "scanning", t);
                 tracing::info!("pipeline: printing complete");
@@ -785,7 +785,7 @@ impl Pipeline {
                 backend,
                 &color_ref,
                 &self.output_gamut,
-            ))
+            )?)
         } else {
             let mut scan_params = self.params.clone();
             scan_params.io.scan_film = true;
@@ -800,7 +800,7 @@ impl Pipeline {
                 &self.output_gamut,
                 Some(&self.params.film_render.convert.scan_illuminant),
                 !scan_minus_base,
-            ))
+            )?)
         }
     }
 
