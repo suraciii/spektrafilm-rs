@@ -3,8 +3,8 @@
 ## Contract
 
 - Grain is optional. `active = false` is an exact bypass.
-- The grain engine is selected explicitly. V1 is the default for existing recipes; V2 is opt-in. V3 is a planned opt-in engine.
-- V1 operates in film-density space and uses film-profile chemistry. V2 operates on native scanner RGB after the scanner color encoding. V3's planned processing boundary is defined in its [design](v3/design.md#processing-boundary).
+- The grain engine is selected explicitly. V1 is the default for existing recipes; V2 and V3 are opt-in.
+- V1 operates in film-density space and uses film-profile chemistry. V2 operates on native scanner RGB after the scanner color encoding. V3's processing boundary is defined in its [design](v3/design.md#processing-boundary).
 - A grain seed makes a realization repeatable for the same input, parameters, and implementation. CPU and WGPU realizations must share semantics, not bit identity.
 - V1, V2, and V3 are separate engines. Their controls, processing domains, and backend requirements must not be conflated.
 - V2 provides `Analogue` and `Noise` modes, Negative and Positive film types, named format/speed profiles, and a `custom` profile with explicit controls.

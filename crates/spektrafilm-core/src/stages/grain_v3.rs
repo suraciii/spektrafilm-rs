@@ -21,15 +21,16 @@ use crate::profile::Profile;
 const SUPPORTED_FILM_TYPE: &str = "negative";
 /// Film usage of the supported condition: still photography.
 const SUPPORTED_USAGE: &str = "still";
-/// Stock granularity that keeps the certified absolute event area. Kodak
-/// Portra 800 is the first supported condition, so its resolved event area
-/// (runtime `particle_area_um2` times `particle_scale`) is the anchor every
-/// other stock is resolved against.
+/// Granularity preset of the reference stock `kodak_portra_800`. A channel
+/// with this preset keeps the validated `v3_event_area_um2`; every other
+/// channel and stock is resolved against it.
 const GRANULARITY_REFERENCE: f64 = 6.0;
 /// Supported camera long edge, in millimetres (35 mm full-film area).
 const SUPPORTED_FILM_FORMAT_MM: f32 = 36.0;
-/// Supported route: develop the film and scan it directly.
-const SUPPORTED_ROUTE: &str = "input > film > scan";
+/// Reference route: the film exposes the print paper, which is scanned.
+const PRINT_ROUTE: &str = "input > film > print > scan";
+/// Diagnostic route: the developed film is scanned directly.
+const FILM_SCAN_ROUTE: &str = "input > film > scan";
 /// Diagnostic pitch override, in micrometers. Production uses
 /// `support_um / 2`; numerical certification may ask for a finer globally
 /// fixed pitch (the model rejects a coarser one). It never changes the
@@ -78,20 +79,25 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
     }
     let format_mm = params.camera.film_format_mm;
     let route = params.workflow.route.as_str();
+    let route_supported = match route {
+        PRINT_ROUTE => !params.io.scan_film,
+        FILM_SCAN_ROUTE => params.io.scan_film,
+        _ => false,
+    };
     let info = &film.info;
     if info.film_type == SUPPORTED_FILM_TYPE
         && info.usage == SUPPORTED_USAGE
         && format_mm == SUPPORTED_FILM_FORMAT_MM
-        && route == SUPPORTED_ROUTE
-        && params.io.scan_film
+        && route_supported
     {
         return Ok(());
     }
     Err(format!(
         "film grain V3: unsupported condition — this implementation supports {SUPPORTED_USAGE} \
          {SUPPORTED_FILM_TYPE} stocks at a {SUPPORTED_FILM_FORMAT_MM} mm long edge on the \
-         `{SUPPORTED_ROUTE}` route with io.scan_film = true, but got stock {:?} (type {:?}, use \
-         {:?}), camera.film_format_mm {format_mm}, workflow.route {route:?}, io.scan_film {}; \
+         `{PRINT_ROUTE}` route with io.scan_film = false or the `{FILM_SCAN_ROUTE}` route with \
+         io.scan_film = true, but got stock {:?} (type {:?}, use {:?}), \
+         camera.film_format_mm {format_mm}, workflow.route {route:?}, io.scan_film {}; \
          select a supported film, format and route, or set \
          film_render.grain.engine to v1/v2",
         info.stock.as_deref().unwrap_or(""),
@@ -137,23 +143,22 @@ pub fn geometry(
     })
 }
 
-/// Per-channel event-area scale resolved for the profile's stock.
+/// Per-channel event-area scale `k_c` resolved from the stock granularity
+/// preset (design §Parameters).
 ///
-/// The datasheet granularity reaches the model only through this stock
-/// resolution: its square is proportional to the event area that fixes the
-/// readout variance at a given aperture (design §Parameters), and
-/// [`GRANULARITY_REFERENCE`] keeps the reference stock's certified absolute
-/// event area. The repository granularity presets are not verified Kodak
-/// density-RMS values, so they are used as stock-to-stock ratios, never as
-/// absolute calibration. The sampler itself still sees only event areas.
-fn stock_event_scale(particle_scale: [f64; 3], rms_granularity: [f64; 3]) -> [f64; 3] {
-    std::array::from_fn(|channel| {
-        let granularity = rms_granularity[channel];
+/// Readout variance is proportional to event area, so `(G_c / 6)^2` makes
+/// the readout RMS proportional to the preset at fixed density and support.
+/// The presets are not verified Kodak density-RMS values: they act only as
+/// channel and stock ratios against [`GRANULARITY_REFERENCE`]. This is the
+/// only per-channel strength input; V1's `particle_scale` would count a
+/// coarser blue record a second time.
+fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
+    rms_granularity.map(|granularity| {
         if !granularity.is_finite() || granularity <= 0.0 {
-            return particle_scale[channel];
+            return 1.0;
         }
         let ratio = granularity / GRANULARITY_REFERENCE;
-        particle_scale[channel] * ratio * ratio
+        ratio * ratio
     })
 }
 
@@ -185,12 +190,11 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
         ));
     }
     let support_um = grain.v3_dye_support_um as f64;
-    let particle_scale = stock_event_scale(grain.particle_scale, grain.rms_granularity);
     Ok(GrainV3Params {
         support_um,
         cell_um: cell_um_override(),
-        particle_area_um2: grain.particle_area_um2,
-        particle_scale,
+        event_area_um2: grain.v3_event_area_um2,
+        channel_scale: channel_event_scale(grain.rms_granularity),
         particle_scale_sublayers: grain.particle_scale_sublayers,
         density_min: grain.density_min,
         uniformity: grain.uniformity,
@@ -237,9 +241,10 @@ pub fn readout(
         ),
         output = format_args!("{}x{}", readout_geometry.width, readout_geometry.height),
         support_um = resolved.support_um,
-        event_area_scale = format_args!(
+        event_area_um2 = resolved.event_area_um2,
+        channel_scale = format_args!(
             "{:.4}/{:.4}/{:.4}",
-            resolved.particle_scale[0], resolved.particle_scale[1], resolved.particle_scale[2]
+            resolved.channel_scale[0], resolved.channel_scale[1], resolved.channel_scale[2]
         ),
         cell_um = resolved.cell_um.unwrap_or(resolved.support_um / 2.0),
         expectation = resolved.expectation,
@@ -292,8 +297,8 @@ mod tests {
 
     fn supported_params() -> RuntimeParams {
         let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        params.io.scan_film = true;
+        params.workflow.route = "input > film > print > scan".into();
+        params.io.scan_film = false;
         params.camera.film_format_mm = 36.0;
         params.film_render.grain.engine = GrainEngine::V3;
         params.film_render.grain.active = true;
@@ -355,16 +360,19 @@ mod tests {
         validate_supported(&film, &params).unwrap();
         resolve(&film, &params).unwrap();
 
-        // Expanded scope (spec §Supported condition): still color-negative
-        // stocks share the validated boundary.
+        // Still color-negative stocks share the validated boundary.
         for stock in ["kodak_portra_400", "kodak_ultramax_400"] {
             let other = load(stock);
             validate_supported(&other, &params).unwrap();
             resolve(&other, &params).unwrap();
         }
 
-        // Other chemistry and motion stocks stay outside the support.
-        for stock in ["kodak_ektachrome_100", "kodak_doublex"] {
+        // Other chemistry and cine stocks stay outside the support.
+        for stock in [
+            "kodak_ektachrome_100",
+            "kodak_doublex",
+            "kodak_vision3_500t",
+        ] {
             let other = load(stock);
             let error = validate_supported(&other, &params).unwrap_err();
             assert!(
@@ -378,15 +386,25 @@ mod tests {
         let error = validate_supported(&film, &format).unwrap_err();
         assert!(error.contains("film_format_mm 24"), "{error}");
 
-        for route in [
-            "input > film > print > scan",
-            "input > convert-film > scan",
-            "input > convert-film > scan-minus-base",
-            "input",
+        // The diagnostic film-scan route runs for both scan outputs.
+        for scan_output in ["positive_scan", "direct_scan"] {
+            let mut scanned = supported_params();
+            scanned.workflow.route = "input > film > scan".into();
+            scanned.io.scan_film = true;
+            scanned.scanner.scan_output = scan_output.into();
+            validate_supported(&film, &scanned).unwrap();
+        }
+
+        for (route, scan_film) in [
+            ("input > film > print > scan", true),
+            ("input > film > scan", false),
+            ("input > convert-film > scan", true),
+            ("input > convert-film > scan-minus-base", true),
+            ("input", false),
         ] {
             let mut routed = supported_params();
             routed.workflow.route = route.into();
-            routed.io.scan_film = route == "input > film > scan";
+            routed.io.scan_film = scan_film;
             let error = validate_supported(&film, &routed).unwrap_err();
             assert!(error.contains(route), "route {route} not named in {error}");
             assert!(
@@ -395,37 +413,38 @@ mod tests {
             );
         }
 
-        // The print chain may not run under a scan route either.
-        let mut no_scan = supported_params();
-        no_scan.io.scan_film = false;
-        assert!(validate_supported(&film, &no_scan).is_err());
-
         // Inactive V3 is not gated: it never renders, so nothing to reject.
         let mut inactive = supported_params();
         inactive.film_render.grain.active = false;
-        inactive.workflow.route = "input > film > print > scan".into();
+        inactive.workflow.route = "input".into();
         assert!(validate_supported(&film, &inactive).is_ok());
     }
 
     #[test]
-    fn stock_granularity_scales_the_event_area() {
-        let base = [1.0, 1.0, 1.0];
-        // The reference stock keeps the certified absolute event area.
-        assert_eq!(stock_event_scale(base, [6.0; 3]), base);
+    fn stock_granularity_alone_sets_the_channel_scale() {
+        // The reference preset keeps the validated event area.
+        assert_eq!(channel_event_scale([6.0; 3]), [1.0; 3]);
         // Square law: a quarter of the granularity is a sixteenth of the area.
-        assert_eq!(
-            stock_event_scale(base, [1.5, 3.0, 12.0]),
-            [0.0625, 0.25, 4.0]
-        );
-        // Portra 400 sits at 0.75 of the reference granularity.
-        assert_eq!(stock_event_scale(base, [4.5; 3])[0], 0.5625);
-        // Ultramax 400 resolves to the reference area.
-        assert_eq!(stock_event_scale(base, [6.0; 3]), base);
-        // Unset granularity leaves the resolved runtime scale untouched.
-        assert_eq!(
-            stock_event_scale([0.4, 0.5, 0.6], [0.0, f64::NAN, 6.0]),
-            [0.4, 0.5, 0.6]
-        );
+        assert_eq!(channel_event_scale([1.5, 3.0, 12.0]), [0.0625, 0.25, 4.0]);
+        // Unset granularity resolves to the reference scale.
+        assert_eq!(channel_event_scale([0.0, f64::NAN, 6.0]), [1.0; 3]);
+
+        // V1's blue-heavy `particle_scale` must not double a coarser blue
+        // record: only the granularity preset separates the channels.
+        let film = load("kodak_portra_800");
+        let mut params = supported_params();
+        params.film_render.grain.rms_granularity = [6.0, 6.0, 12.0];
+        params.film_render.grain.particle_scale = [1.6, 1.6, 3.2];
+        params.film_render.grain.particle_area_um2 = 0.2;
+        params.film_render.grain.v3_event_area_um2 = 1.28;
+        let resolved = resolve(&film, &params).unwrap();
+        assert_eq!(resolved.channel_scale, [1.0, 1.0, 4.0]);
+        assert_eq!(resolved.event_area_um2, 1.28);
+        params.film_render.grain.particle_scale = [9.0; 3];
+        params.film_render.grain.particle_area_um2 = 0.9;
+        let ignored = resolve(&film, &params).unwrap();
+        assert_eq!(ignored.channel_scale, resolved.channel_scale);
+        assert_eq!(ignored.event_area_um2, resolved.event_area_um2);
     }
 
     #[test]
@@ -568,7 +587,7 @@ mod tests {
         let mut expected_a = coarser.clone();
         expected_a.expectation = true;
         let mut expected_b = expected_a.clone();
-        expected_b.particle_area_um2 = expected_a.particle_area_um2 * 10.0;
+        expected_b.event_area_um2 = expected_a.event_area_um2 * 10.0;
         let a = v3::apply(&source, pitch, rect, 64, 48, &expected_a).unwrap();
         let b = v3::apply(&source, pitch, rect, 64, 48, &expected_b).unwrap();
         let mean_diff = max_abs_diff(&a, &b);
@@ -579,7 +598,7 @@ mod tests {
 
         // Realized field: the same support, different statistical strength.
         let mut realized_b = coarser.clone();
-        realized_b.particle_area_um2 *= 10.0;
+        realized_b.event_area_um2 *= 10.0;
         let ra = v3::apply(&source, pitch, rect, 64, 48, &coarser).unwrap();
         let rb = v3::apply(&source, pitch, rect, 64, 48, &realized_b).unwrap();
         let noise_diff = max_abs_diff(&ra, &rb);

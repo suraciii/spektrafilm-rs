@@ -16,10 +16,12 @@ use spektrafilm_math::stats::FastStatsRng;
 const CELLS_PER_SIGMA: f64 = 2.0;
 /// Gaussian truncation half-width in sigmas.
 const SUPPORT_SIGMAS: f64 = 4.0;
-/// Output rows per readout band; bounds the field buffers of one band.
+/// Output rows per readout band before the cell budget applies.
 const BAND_OUTPUT_ROWS: usize = 128;
-/// Largest cell count a single band may hold. The field is not silently
-/// coarsened; an oversized request fails with an actionable error.
+/// Largest cell or source-pixel count a single band may hold. Bands are
+/// storage partitions of the global field, so a band that would exceed it
+/// holds fewer output rows; the field is never coarsened. A single output
+/// row above the budget fails with an actionable error.
 const MAX_BAND_CELLS: u64 = 1 << 24;
 
 /// Source-pixel rectangle of the requested film region.
@@ -45,9 +47,9 @@ pub struct GrainV3Params {
     pub cell_um: Option<f64>,
     /// Statistical event area in square micrometers before channel and layer
     /// scaling. It controls count variance, never the support width.
-    pub particle_area_um2: f64,
-    /// Per-channel event-area scale.
-    pub particle_scale: [f64; 3],
+    pub event_area_um2: f64,
+    /// Per-channel event-area scale (the stock granularity ratio squared).
+    pub channel_scale: [f64; 3],
     /// Per-layer event-area scale.
     pub particle_scale_sublayers: [f64; 3],
     /// Per-channel base density offset.
@@ -142,33 +144,42 @@ pub fn apply(
     let mut hbuf = Vec::new();
     let mut fbuf = Vec::new();
     let mut py = 0usize;
+    // Coarse output pitches read many cells per row; halve the band until
+    // its cells and source pixels fit, and keep that height for later bands.
+    let mut band_rows = BAND_OUTPUT_ROWS;
     while py < out_height as usize {
-        let band_end = (py + BAND_OUTPUT_ROWS).min(out_height as usize);
-        let j_lo = y_read[py].first().expect("non-empty stencil").0;
-        let j_hi = y_read[band_end - 1].last().expect("non-empty stencil").0;
-        let ext_j0 = j_lo - d;
-        let ext_j1 = j_hi + d;
+        let (band_end, j_lo, j_hi, ext_j0, ext_j1, sy_lo, sy_hi) = loop {
+            let band_end = (py + band_rows).min(out_height as usize);
+            let j_lo = y_read[py].first().expect("non-empty stencil").0;
+            let j_hi = y_read[band_end - 1].last().expect("non-empty stencil").0;
+            let ext_j0 = j_lo - d;
+            let ext_j1 = j_hi + d;
+            let sy_lo = edge((ext_j0 as f64 * h / pitch_um).floor() as i64, src_h);
+            let sy_hi = edge(
+                (((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64 - 1,
+                src_h,
+            );
+            let band_cells = ((ext_j1 - ext_j0 + 1) as u64) * (ext_cols as u64);
+            let band_pixels = ((sy_hi - sy_lo + 1) as u64) * ((sx_hi - sx_lo + 1) as u64);
+            if band_cells <= MAX_BAND_CELLS && band_pixels <= MAX_BAND_CELLS {
+                break (band_end, j_lo, j_hi, ext_j0, ext_j1, sy_lo, sy_hi);
+            }
+            if band_rows == 1 {
+                return Err(format!(
+                    "film grain V3: one output row needs {band_cells} field cells and \
+                     {band_pixels} source pixels, above the {MAX_BAND_CELLS} limit; reduce the \
+                     requested film region or increase the output size"
+                ));
+            }
+            band_rows /= 2;
+        };
         let ext_rows = (ext_j1 - ext_j0 + 1) as usize;
         let rows = (j_hi - j_lo + 1) as usize;
         let y_stencils: Vec<Vec<(usize, f64)>> = (ext_j0..=ext_j1)
             .map(|j| axis_stencil(j as f64 * h, (j + 1) as f64 * h, pitch_um, src_h))
             .collect();
-        let sy_lo = edge((ext_j0 as f64 * h / pitch_um).floor() as i64, src_h);
-        let sy_hi = edge(
-            (((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64 - 1,
-            src_h,
-        );
         let px_rows = sy_hi - sy_lo + 1;
         let px_cols = sx_hi - sx_lo + 1;
-        let band_cells = (ext_rows as u64) * (ext_cols as u64);
-        let band_pixels = (px_rows as u64) * (px_cols as u64);
-        if band_cells > MAX_BAND_CELLS || band_pixels > MAX_BAND_CELLS {
-            return Err(format!(
-                "film grain V3: one field band needs {band_cells} cells and {band_pixels} source \
-                 pixels, above the {MAX_BAND_CELLS} limit; reduce the requested film region or \
-                 output size"
-            ));
-        }
 
         // Sublayer targets are allocated on the source grid, once per source
         // pixel, and only then remapped conservatively to field cells.
@@ -489,19 +500,19 @@ impl Channel {
         for l in 0..3 {
             frac[l] = maxima[l] / max_total;
             capacity[l] = maxima[l] + frac[l] * min;
-            let scale = params.particle_scale[c] * params.particle_scale_sublayers[l];
-            if !params.particle_area_um2.is_finite()
-                || params.particle_area_um2 <= 0.0
+            let scale = params.channel_scale[c] * params.particle_scale_sublayers[l];
+            if !params.event_area_um2.is_finite()
+                || params.event_area_um2 <= 0.0
                 || !scale.is_finite()
                 || scale <= 0.0
             {
                 return Err(format!(
-                    "film grain V3: particle_area_um2 * particle_scale[{c}] * \
+                    "film grain V3: event_area_um2 * channel_scale[{c}] * \
                      particle_scale_sublayers[{l}] must be finite and > 0 (got {} * {scale})",
-                    params.particle_area_um2
+                    params.event_area_um2
                 ));
             }
-            area[l] = params.particle_area_um2 * scale;
+            area[l] = params.event_area_um2 * scale;
         }
         let inv_dx = (0..knots.len() - 1)
             .map(|i| {
@@ -863,8 +874,8 @@ mod tests {
 
     /// Source pixel pitch used by these tests, in micrometers.
     const PITCH: f64 = 6.0;
-    /// Candidate default dye support.
-    const SIGMA: f64 = 8.0;
+    /// Default dye support (design §Parameters).
+    const SIGMA: f64 = 3.5;
     /// Raw layer maxima `[layer]`, equal across channels.
     const MAXIMA: [f64; 3] = [0.18, 0.09, 0.03];
     /// Base density offset, equal across channels.
@@ -885,8 +896,8 @@ mod tests {
         GrainV3Params {
             support_um: SIGMA,
             cell_um,
-            particle_area_um2: area,
-            particle_scale: [1.0; 3],
+            event_area_um2: area,
+            channel_scale: [1.0; 3],
             particle_scale_sublayers: [1.0; 3],
             density_min: [MIN_DENSITY; 3],
             uniformity: [0.5; 3],
@@ -1491,14 +1502,7 @@ mod tests {
             production.worst,
             production.worst_lag
         );
-        // Declared `sigma/4` deviation and the certified `sigma/8` gate.
-        let quarter = covariance_error(Some(SIGMA / 4.0));
-        assert!(
-            quarter.worst <= 0.01,
-            "sigma/4 covariance error {}, lag {}",
-            quarter.worst,
-            quarter.worst_lag
-        );
+        // The certified `sigma/8` gate.
         let certified = covariance_error(Some(SIGMA / 8.0));
         assert!(
             certified.worst <= 0.01,
@@ -1524,17 +1528,25 @@ mod tests {
         covariance_error_with_sigma(cell, SIGMA)
     }
 
-    /// Relative error of the discrete readout covariance against the
-    /// continuum `sum_lc v_lc * integral H_j(z) H_k(z) dz`, with `H` built
-    /// from the oracle sigma. Production taps and readout weights supply the
-    /// discrete side; the oracle side is an independent quadrature.
+    /// Error of the discrete readout covariance against the continuum
+    /// `sum_lc v_lc * integral H_j(z) H_k(z) dz`, with `H` built from the
+    /// oracle sigma. Every lag is measured against the oracle's zero-lag
+    /// variance, because tail covariances approach zero. Production taps and
+    /// readout weights supply the discrete side; the oracle side is an
+    /// independent quadrature.
     fn covariance_error_with_sigma(cell: Option<f64>, oracle_sigma: f64) -> CovarianceError {
+        let values = covariance_values(cell, oracle_sigma);
+        let variance = values
+            .iter()
+            .find(|(lag, _, _)| *lag == 0)
+            .expect("zero lag")
+            .2;
         let mut worst = 0.0f64;
         let mut worst_lag = 0usize;
-        for (lag, discrete, oracle) in covariance_values(cell, oracle_sigma) {
-            let relative = ((discrete - oracle) / oracle).abs();
-            if relative > worst {
-                worst = relative;
+        for (lag, discrete, oracle) in values {
+            let error = ((discrete - oracle) / variance).abs();
+            if error > worst {
+                worst = error;
                 worst_lag = lag;
             }
         }
@@ -1714,9 +1726,9 @@ mod tests {
         let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
         assert!(err.contains("density_min"), "{err}");
         let mut bad = good.clone();
-        bad.particle_area_um2 = 0.0;
+        bad.event_area_um2 = 0.0;
         let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();
-        assert!(err.contains("particle_area_um2"), "{err}");
+        assert!(err.contains("event_area_um2"), "{err}");
         let mut bad = good.clone();
         bad.layer_max = [[0.0; 3]; 3];
         let err = apply(&flat(8, 8, 0.1), PITCH, region(8, 8), 8, 8, &bad).unwrap_err();

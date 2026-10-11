@@ -72,16 +72,13 @@ fn normalize_grain_section(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
     };
-    // V3 owns these event-area controls; legacy V1 state drops them.
-    if object.get("engine").and_then(Value::as_str) != Some("v3") {
-        object.remove("particle_area_um2");
-        object.remove("particle_scale");
-    }
     if let Some(value) = object.get("particle_scale_layers").cloned() {
         object.insert("particle_scale_sublayers".to_string(), value);
     }
     for key in [
         "sublayers_active",
+        "particle_area_um2",
+        "particle_scale",
         "particle_scale_layers",
         "n_sub_layers",
         "monochrome",
@@ -756,9 +753,8 @@ mod tests {
         params.io.output_cctf_encoding = false;
         params.film_render.development_time = Some(9.0);
         params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
-        params.film_render.grain.v3_dye_support_um = 8.0;
-        params.film_render.grain.particle_area_um2 = 0.35;
-        params.film_render.grain.particle_scale = [1.0, 2.0, 3.0];
+        params.film_render.grain.v3_dye_support_um = 4.5;
+        params.film_render.grain.v3_event_area_um2 = 0.6;
         params.film_render.grain.v2_profile = "8mm500".into();
         params.film_render.grain.v2_amount = Some(0.0);
         let mut extras = factory.sections.clone();
@@ -772,7 +768,7 @@ mod tests {
         );
         assert_eq!(
             saved.sections["rust"]["runtime"]["film_render"]["grain"]["v3_dye_support_um"],
-            8.0
+            4.5
         );
         let recipe = serde_json::from_slice(&serde_json::to_vec(&saved.sections).unwrap()).unwrap();
         let loaded = GuiState::from_value(recipe).unwrap();
@@ -783,9 +779,8 @@ mod tests {
             restored.film_render.grain.engine,
             spektrafilm_core::params::GrainEngine::V3
         );
-        assert_eq!(restored.film_render.grain.v3_dye_support_um, 8.0);
-        assert_eq!(restored.film_render.grain.particle_area_um2, 0.35);
-        assert_eq!(restored.film_render.grain.particle_scale, [1.0, 2.0, 3.0]);
+        assert_eq!(restored.film_render.grain.v3_dye_support_um, 4.5);
+        assert_eq!(restored.film_render.grain.v3_event_area_um2, 0.6);
         assert_eq!(restored.film_render.grain.v2_profile, "8mm500");
         assert_eq!(restored.film_render.grain.resolved_grain_v2().amount, 0.0);
         assert_eq!(loaded.sections["rust"]["viewer"]["zoom"], 3.0);
