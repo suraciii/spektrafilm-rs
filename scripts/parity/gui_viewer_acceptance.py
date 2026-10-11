@@ -47,9 +47,10 @@ def _viewer_status_text(image, lines):
     # The selected layer is in the viewer overlay below the layer tabs.
     # Use the native driver's word coordinates, independent of OCR line order.
     left, _, right, _ = viewer_canvas_bounds(image)
+    content_top = 30 if sys.platform == 'darwin' else 0
     return _text([[word for word in line
                    if left <= word[1] + word[3] / 2 < right
-                   and 35 <= word[2] + word[4] / 2 < 63]
+                   and content_top + 35 <= word[2] + word[4] / 2 < content_top + 63]
                   for line in lines])
 
 
