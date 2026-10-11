@@ -1686,3 +1686,167 @@ fn json_section_export_reload_preserves_optional_grain_clearing_edit() {
         Value::Null
     );
 }
+
+#[test]
+fn scanner_sections_validate_the_final_cli_workflow() {
+    let f = Fixture::new();
+    library_document(
+        &f,
+        "Positive scanner",
+        json!({"scanner":{"scan_output":"positive_scan"}}),
+    );
+    for base in [
+        vec!["--preset", "Kodak Portra 400"],
+        vec!["--film", "kodak_portra_400"],
+    ] {
+        for workflow in [vec!["--scan-film"], vec!["--route", "input > film > scan"]] {
+            let mut args = base.clone();
+            args.extend_from_slice(&["--preset", "Positive scanner"]);
+            args.extend_from_slice(&workflow);
+            args.push("--dry-run");
+            let report = f.report(&args);
+            assert_eq!(
+                report["parameters"]["workflow"]["route"],
+                "input > film > scan"
+            );
+            assert_eq!(report["parameters"]["io"]["scan_film"], true);
+            assert_eq!(
+                report["parameters"]["scanner"]["scan_output"],
+                "positive_scan"
+            );
+        }
+    }
+    let replaced = f.report(&[
+        "--preset",
+        "Kodak Portra 400",
+        "--preset",
+        "Positive scanner",
+        "--set",
+        "scanner.scan_output=direct_scan",
+        "--dry-run",
+    ]);
+    assert_eq!(
+        replaced["parameters"]["scanner"]["scan_output"],
+        "direct_scan"
+    );
+    assert_eq!(
+        replaced["parameters"]["workflow"]["route"],
+        "input > film > print > scan"
+    );
+    let rejected = f.process(&[
+        "--preset",
+        "Fujifilm Provia 100F",
+        "--preset",
+        "Positive scanner",
+        "--scan-film",
+        "--dry-run",
+    ]);
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+}
+
+#[test]
+fn active_chemistry_domains_fail_before_image_decode_in_dry_run_and_render() {
+    let f = Fixture::new();
+    std::fs::write(&f.input, b"invalid image data").unwrap();
+    for group in ["film_render.chemistry", "print_render.density_curves_morph"] {
+        for field in [
+            "gamma_factor",
+            "gamma_factor_fast",
+            "gamma_factor_slow",
+            "gamma_factor_red",
+            "gamma_factor_green",
+            "gamma_factor_blue",
+            "developer_exhaustion",
+        ] {
+            let value = if field == "developer_exhaustion" {
+                "2"
+            } else {
+                "0"
+            };
+            let edit = format!("{group}.active=true,{group}.{field}={value}");
+            for dry_run in [false, true] {
+                let mut args = vec![
+                    "--preset",
+                    "Kodak Portra 400",
+                    "--backend",
+                    "cpu",
+                    "--set",
+                    &edit,
+                ];
+                if dry_run {
+                    args.push("--dry-run");
+                }
+                let rejected = f.process(&args);
+                assert!(!rejected.status.success());
+                let error = String::from_utf8_lossy(&rejected.stderr);
+                assert!(error.contains(&format!("{group}.{field}")), "{error}");
+                assert!(!f.root.join("output.tif").exists());
+            }
+        }
+        let inactive =
+            format!("{group}.active=false,{group}.gamma_factor=0,{group}.developer_exhaustion=2");
+        let report = f.report(&[
+            "--preset",
+            "Kodak Portra 400",
+            "--set",
+            &inactive,
+            "--dry-run",
+        ]);
+        let pointer = format!("/parameters/{}/active", group.replace('.', "/"));
+        assert_eq!(report.pointer(&pointer), Some(&json!(false)));
+    }
+}
+
+#[test]
+fn chemistry_sections_validate_after_later_sources_and_looks() {
+    let f = Fixture::new();
+    let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
+    assert!(shown.status.success());
+    let mut look: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    look["name"] = json!("Inactive chemistry");
+    look["parameters"]["print_render"]["density_curves_morph"]["active"] = json!(false);
+    look["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"] = json!(0.0);
+    let path = f.root.join("inactive.json");
+    std::fs::write(&path, serde_json::to_vec(&look).unwrap()).unwrap();
+    library_document(
+        &f,
+        "Enable chemistry",
+        json!({"print_render":{"density_curves_morph":{"active":true}}}),
+    );
+    let base = [
+        "--preset",
+        path.to_str().unwrap(),
+        "--preset",
+        "Enable chemistry",
+    ];
+    let mut repaired = base.to_vec();
+    repaired.extend_from_slice(&[
+        "--set",
+        "print_render.density_curves_morph.gamma_factor=1",
+        "--dry-run",
+    ]);
+    let report = f.report(&repaired);
+    assert_eq!(
+        report["parameters"]["print_render"]["density_curves_morph"]["active"],
+        true
+    );
+    assert_eq!(
+        report["parameters"]["print_render"]["density_curves_morph"]["gamma_factor"],
+        1.0
+    );
+    let mut replaced = base.to_vec();
+    replaced.extend_from_slice(&["--preset", "Kodak Portra 400", "--dry-run"]);
+    assert_eq!(
+        f.report(&replaced),
+        f.report(&["--preset", "Kodak Portra 400", "--dry-run"])
+    );
+    let mut invalid = base.to_vec();
+    invalid.push("--dry-run");
+    let rejected = f.process(&invalid);
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("print_render.density_curves_morph.gamma_factor")
+    );
+}

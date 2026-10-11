@@ -73,7 +73,7 @@ pub fn resolve(
                     resolved.print_name,
                 ));
             } else {
-                params = preset.apply_section(&params)?;
+                params = preset.overlay_section(&params)?;
             }
         }
     }
@@ -119,7 +119,7 @@ pub fn resolve(
         }
         for preset in request.presets {
             preset.validate()?;
-            params = preset.apply_section(&params)?;
+            params = preset.overlay_section(&params)?;
         }
         (film, print, name.to_owned(), print_name)
     };

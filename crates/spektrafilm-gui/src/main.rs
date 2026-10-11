@@ -300,6 +300,9 @@ struct App {
     /// paper/printing or film/printing).
     papers: Vec<ProfileEntry>,
     presets: presets::Browser,
+    browser_state_path: PathBuf,
+    observed_browser_state: presets::BrowserState,
+    browser_state_changed_at: Option<Instant>,
     film_name: String,
     print_name: String,
     /// Development-time family (minutes) of the selected film / paper —
@@ -745,12 +748,29 @@ impl App {
         initial_state: Option<PathBuf>,
         diagnostics_dir: Option<PathBuf>,
     ) -> Self {
+        Self::new_with_browser_path(
+            backend,
+            initial_image,
+            initial_state,
+            diagnostics_dir,
+            state::config_dir().join("preset_browser_state.json"),
+        )
+    }
+
+    fn new_with_browser_path(
+        backend: Arc<dyn ComputeBackend>,
+        initial_image: Option<PathBuf>,
+        initial_state: Option<PathBuf>,
+        diagnostics_dir: Option<PathBuf>,
+        browser_state_path: PathBuf,
+    ) -> Self {
+        let explicit_state = initial_state.is_some();
         let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
         let gui_state = match initial_state {
             Some(path) => state::GuiState::load(&path),
-            None => state::startup(),
+            None => state::startup(browser_state_path.parent().unwrap_or(Path::new("."))),
         }
         .and_then(|state| {
             // A startup state the runtime cannot accept (a removed workflow
@@ -775,13 +795,31 @@ impl App {
             .unwrap_or_default();
         let print_dev_times = profile_dev_times(&data_dir, &print_name);
         let export_options = ExportOptions::from_state(&gui_state.sections);
+        let mut presets = presets::Browser::new(&gui_state.sections);
+        match presets::BrowserState::restore(
+            &gui_state.sections,
+            explicit_state,
+            &browser_state_path,
+        ) {
+            Ok(browser_state) => presets.state = browser_state,
+            Err(error) => {
+                let message = format!("Browser state load error: {error:#}");
+                startup_error = Some(match startup_error {
+                    Some(previous) => format!("{previous}; {message}"),
+                    None => message,
+                });
+            }
+        }
 
         let mut app = Self {
             backend,
             data_dir,
             films,
             papers,
-            presets: presets::Browser::new(&gui_state.sections),
+            observed_browser_state: presets.state.clone(),
+            browser_state_changed_at: explicit_state.then(Instant::now),
+            browser_state_path,
+            presets,
             film_name,
             print_name,
             film_dev_times,
@@ -879,6 +917,7 @@ impl App {
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();
         self.presets = presets::Browser::new(&state.sections);
+        self.browser_state_changed_at = Some(Instant::now());
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
         self.raw_lens_info = None;
@@ -890,6 +929,25 @@ impl App {
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);
         Ok(())
+    }
+
+    fn persist_browser_state(&mut self, closing: bool) {
+        if self.presets.state != self.observed_browser_state {
+            self.observed_browser_state = self.presets.state.clone();
+            self.browser_state_changed_at = Some(Instant::now());
+        }
+        if self
+            .browser_state_changed_at
+            .is_some_and(|changed| closing || changed.elapsed() >= Duration::from_millis(300))
+        {
+            self.browser_state_changed_at = None;
+            if let Err(error) = self.presets.state.save(&self.browser_state_path) {
+                self.status = format!("Browser state save error: {error:#}");
+                if closing {
+                    eprintln!("{}", self.status);
+                }
+            }
+        }
     }
 
     fn refresh_viewing_artifacts(&mut self) {
@@ -2418,6 +2476,10 @@ impl eframe::App for App {
                 ui.separator();
                 self.simulation_action_bar(ui);
             });
+        self.persist_browser_state(false);
+        if self.browser_state_changed_at.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(300));
+        }
         if let Some(error) = self.diagnostics.take_publication_error() {
             self.status = format!("Diagnostic report publication error: {error}");
         }
@@ -2471,6 +2533,7 @@ impl eframe::App for App {
 
     /// Cancel pending export publication and drain its worker before exiting.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.persist_browser_state(true);
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);
             if let Some(h) = job.handle.take() {
