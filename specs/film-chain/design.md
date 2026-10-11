@@ -8,9 +8,10 @@
 - Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`. The convert-film scan passes its selected scan illuminant into the same preparation path. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
 - The scanned medium determines the stage topology and the scanner calibration references.
 - Scanner white and black correction derives its references from the scanned medium: film zero and maximum dye density for a slide scan, and the print exposure of the film density range for a photographic-paper scan.
-- Positive interpretation must not estimate its response or its points from image content.
+- Positive interpretation and the film-scan black and white points must not estimate their response or their points from image content.
 - Interpretation controls parameterize the inverse response only. They must not modify the film curves or the printing exposure.
-- The black and white points remap the relative log-exposure axis that the derived inverse already produces. They must not introduce a second density model, and they are distinct from the scanner white and black correction levels.
+- The black and white points reuse references that the chain already derives: the relative log-exposure axis of the derived inverse for a negative scan, and the zero and maximum dye density references of scanner white and black correction for a slide scan. They must not introduce a second density model.
+- The black and white points and scanner white and black correction are separate controls. The points must not modify the film exposure, and adding them must not change the correction.
 - A resident WGPU chain is an optimization, not a second product contract. `ResidentDecision` records capability and fallback reasons. Unsupported stages use the faithful per-stage route.
 - The private resident module owns capability decisions, backend parameter preparation, and output transfer finalization. The parent pipeline owns input preparation and per-stage fallback ordering.
 - The WGPU film-chain module owns resident command encoding and its resource lifetimes. Device setup and shared dispatch infrastructure remain in the backend.

@@ -25,6 +25,9 @@
 - Scanner white and black correction, with its white and black levels, applies
   to a photographic-paper scan and a slide film scan. It does not change a
   negative film scan.
+- Film-scan black and white points apply to a slide film scan and to a
+  negative film scan with `positive_scan`. See
+  [Film-scan black and white points](#film-scan-black-and-white-points).
 - A negative film scan exposes the scan output mode. Positive interpretation
   and its controls belong to `positive_scan`. A photographic-paper scan and a
   slide film scan must not expose them. See
@@ -34,6 +37,32 @@
   [Magazine print color](../magazine-print-color/spec.md).
 - The product must not model a physical scanner device. It must not expose a
   measured sensor response, transport artifacts, or dust controls.
+
+## Film-scan black and white points
+
+- `scanner.black_point` and `scanner.white_point` are three-channel positions
+  on the point range of the scanned film. A photographic-paper scan and a
+  negative film scan with `direct_scan` must not expose them.
+- On a negative film scan with `positive_scan`, the point range is the relative
+  log-exposure range that the derived inverse covers in all three channels.
+  `0.0` is the lowest exposure of that range and `1.0` the highest.
+- On a slide film scan, the point range is the scanned density range shared by
+  the three channels. `0.0` is the highest scanned density of the film's
+  maximum dye density, and `1.0` is zero dye density.
+- The defaults `0.0` and `1.0` leave the scan unchanged.
+- Each channel must satisfy `0.0 <= black_point < white_point <= 1.0`.
+- Each channel linearly maps its black point to the start of the range and its
+  white point to the end. Values outside the points continue the same linear
+  map; the points do not clip.
+- A point pair acts on its own channel only. Points that are equal across the
+  three channels apply the same map to every channel.
+- On a negative film scan, the points act on the estimated relative log
+  exposure before the density brightness, RGB balance, and contrast controls.
+  Points that are equal across the three channels must not introduce a color
+  cast on a neutral ramp.
+- On a slide film scan, the points act on the scanner capture after scanner
+  spectral capture and scanner lens blur, and before scanner white and black
+  correction. The correction keeps its references and its levels.
 
 ## Direct negative-film scan output
 
@@ -49,17 +78,6 @@
   only on the simulated `input > film > scan` route, applies the configured
   density brightness, RGB balance, contrast, and maximum-density controls,
   then emits output-space linear RGB.
-- `scanner.black_point` and `scanner.white_point` are three-channel positions
-  on the relative log-exposure range that the derived inverse covers in all
-  three channels. `0.0` is the lowest exposure of that range and `1.0` the
-  highest. The defaults `0.0` and `1.0` leave the interpretation unchanged.
-- Each channel must satisfy `0.0 <= black_point < white_point <= 1.0`.
-- Each channel linearly maps its black point to the start of the range and its
-  white point to the end, before the density brightness, RGB balance, and
-  contrast controls. Exposures outside the points continue the same linear map;
-  the points do not clip.
-- A point pair acts on its own channel only. Points that are equal across the
-  three channels must not introduce a color cast on a neutral ramp.
 - Calibration captures outside the profile range use finite endpoint tangent
   extrapolation. Negative and above-clear scanner RGB remains representable
   until the normal writer; no log-of-clipped-RGB operation is permitted.
