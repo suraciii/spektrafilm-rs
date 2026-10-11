@@ -74,8 +74,8 @@ jobs:
         shell: pwsh
         run: rustup target add x86_64-pc-windows-gnu
 
-      - name: Run the telemetry test with diagnostics
+      - name: Run the workspace tests with diagnostics
         shell: pwsh
         run: |
-          cargo test -p spektrafilm-core --test runtime_telemetry --features precision-f64 --no-fail-fast -- --nocapture --test-threads=1
-          if ($LASTEXITCODE -ne 0) { Write-Host "test failed as expected for diagnostics"; exit 0 }
+          cargo test --workspace --features precision-f64 --no-fail-fast -- --nocapture
+          Write-Host "workspace-tests-exit=$LASTEXITCODE"
