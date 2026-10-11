@@ -40,8 +40,12 @@ clippy:
 test:
     cargo test --locked --workspace --features precision-f64
 
+# Reject Python bytecode and cache directories in the Git index.
+check-python-cache:
+    python3 scripts/check_python_cache.py
+
 # Full local gate. PR CI runs this same command.
-ci: fmt check check-f64 clippy test
+ci: check-python-cache fmt check check-f64 clippy test
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
