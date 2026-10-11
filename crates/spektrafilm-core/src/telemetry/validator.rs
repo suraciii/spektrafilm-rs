@@ -1,23 +1,7 @@
 use super::report::{OperationKind, Report};
-use spektrafilm_gpu::telemetry::{MeasurementStatus, Observation, ObservationKind};
+use spektrafilm_gpu::telemetry::{MeasurementStatus, Observation, ObservationKind, PHASE_NAMES};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
-
-const PHASE_NAMES: &[&str] = &[
-    "input_load",
-    "backend_init",
-    "input_prepare",
-    "runtime_prepare",
-    "simulation",
-    "display_prepare",
-    "presentation_handoff",
-    "saving_convert",
-    "file_write",
-    "metadata",
-    "publication",
-    "result_prepare",
-    "worker_wait",
-];
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ValidationError {
@@ -299,115 +283,19 @@ fn validate_counter_overflow(report: &Report) -> Result<(), ValidationError> {
     }
     let mut names = HashSet::new();
     for field in &report.coverage.counter_overflow_fields {
-        let Some(is_none) = counter_is_none(&report.measurements.work, field) else {
+        let Some(value) = report.measurements.work.named_value(field) else {
             return Err(ValidationError::PrivacyField);
         };
-        if !is_none || !names.insert(field.as_str()) {
+        if value.is_some() || !names.insert(field.as_str()) {
             return Err(ValidationError::InvalidCoverage);
         }
     }
-    let counters = &report.measurements.work;
-    let fields = [
-        ("dispatch_count", counters.dispatch_count),
-        ("submit_count", counters.submit_count),
-        ("command_buffer_count", counters.command_buffer_count),
-        ("host_wait_count", counters.host_wait_count),
-        ("upload_count", counters.upload_count),
-        ("upload_bytes", counters.upload_bytes),
-        ("image_upload_count", counters.image_upload_count),
-        ("image_upload_bytes", counters.image_upload_bytes),
-        (
-            "spectral_lut_upload_count",
-            counters.spectral_lut_upload_count,
-        ),
-        (
-            "spectral_lut_upload_bytes",
-            counters.spectral_lut_upload_bytes,
-        ),
-        ("uniform_upload_count", counters.uniform_upload_count),
-        ("uniform_upload_bytes", counters.uniform_upload_bytes),
-        ("scratch_upload_count", counters.scratch_upload_count),
-        ("scratch_upload_bytes", counters.scratch_upload_bytes),
-        ("readback_count", counters.readback_count),
-        ("readback_bytes", counters.readback_bytes),
-        ("staging_copy_count", counters.staging_copy_count),
-        ("staging_copy_bytes", counters.staging_copy_bytes),
-        ("device_copy_count", counters.device_copy_count),
-        ("device_copy_bytes", counters.device_copy_bytes),
-        ("buffer_create_count", counters.buffer_create_count),
-        ("buffer_create_bytes", counters.buffer_create_bytes),
-        (
-            "pipeline_cache_hit_count",
-            counters.pipeline_cache_hit_count,
-        ),
-        (
-            "pipeline_cache_miss_count",
-            counters.pipeline_cache_miss_count,
-        ),
-        (
-            "telemetry_buffer_create_count",
-            counters.telemetry_buffer_create_count,
-        ),
-        (
-            "telemetry_buffer_create_bytes",
-            counters.telemetry_buffer_create_bytes,
-        ),
-        ("telemetry_resolve_count", counters.telemetry_resolve_count),
-        ("telemetry_copy_count", counters.telemetry_copy_count),
-        ("telemetry_copy_bytes", counters.telemetry_copy_bytes),
-        ("executed_pass_count", counters.executed_pass_count),
-        ("timed_pass_count", counters.timed_pass_count),
-        ("valid_pass_count", counters.valid_pass_count),
-        ("omitted_pass_count", counters.omitted_pass_count),
-    ];
-    for (field, value) in fields {
+    for (field, value) in report.measurements.work.named_fields() {
         if value.is_none() && !names.contains(field) {
             return Err(ValidationError::InvalidCoverage);
         }
     }
     Ok(())
-}
-
-fn counter_is_none(
-    counters: &spektrafilm_gpu::telemetry::WorkCounters,
-    field: &str,
-) -> Option<bool> {
-    Some(match field {
-        "dispatch_count" => counters.dispatch_count.is_none(),
-        "submit_count" => counters.submit_count.is_none(),
-        "command_buffer_count" => counters.command_buffer_count.is_none(),
-        "host_wait_count" => counters.host_wait_count.is_none(),
-        "upload_count" => counters.upload_count.is_none(),
-        "upload_bytes" => counters.upload_bytes.is_none(),
-        "image_upload_count" => counters.image_upload_count.is_none(),
-        "image_upload_bytes" => counters.image_upload_bytes.is_none(),
-        "spectral_lut_upload_count" => counters.spectral_lut_upload_count.is_none(),
-        "spectral_lut_upload_bytes" => counters.spectral_lut_upload_bytes.is_none(),
-        "uniform_upload_count" => counters.uniform_upload_count.is_none(),
-        "uniform_upload_bytes" => counters.uniform_upload_bytes.is_none(),
-        "scratch_upload_count" => counters.scratch_upload_count.is_none(),
-        "scratch_upload_bytes" => counters.scratch_upload_bytes.is_none(),
-        "readback_count" => counters.readback_count.is_none(),
-        "readback_bytes" => counters.readback_bytes.is_none(),
-        "staging_copy_count" => counters.staging_copy_count.is_none(),
-        "staging_copy_bytes" => counters.staging_copy_bytes.is_none(),
-        "device_copy_count" => counters.device_copy_count.is_none(),
-        "device_copy_bytes" => counters.device_copy_bytes.is_none(),
-        "buffer_create_count" => counters.buffer_create_count.is_none(),
-        "buffer_create_bytes" => counters.buffer_create_bytes.is_none(),
-        "pipeline_cache_hit_count" => counters.pipeline_cache_hit_count.is_none(),
-        "pipeline_cache_miss_count" => counters.pipeline_cache_miss_count.is_none(),
-        "telemetry_buffer_create_count" => counters.telemetry_buffer_create_count.is_none(),
-        "telemetry_buffer_create_bytes" => counters.telemetry_buffer_create_bytes.is_none(),
-        "telemetry_resolve_count" => counters.telemetry_resolve_count.is_none(),
-        "telemetry_copy_count" => counters.telemetry_copy_count.is_none(),
-        "telemetry_copy_bytes" => counters.telemetry_copy_bytes.is_none(),
-        "executed_pass_count" => counters.executed_pass_count.is_none(),
-        "timed_pass_count" => counters.timed_pass_count.is_none(),
-        "valid_pass_count" => counters.valid_pass_count.is_none(),
-        "omitted_pass_count" => counters.omitted_pass_count.is_none(),
-        _ => return None,
-    })
 }
 
 fn validate_observation_name(observation: &Observation) -> Result<(), ValidationError> {

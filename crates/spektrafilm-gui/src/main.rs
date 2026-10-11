@@ -377,6 +377,7 @@ impl RenderKind {
     }
 }
 
+#[derive(Clone)]
 struct RenderJob {
     input_epoch: u64,
     parameter_revision: u64,
@@ -401,12 +402,7 @@ impl RenderJob {
 }
 
 struct RenderRequest {
-    input_epoch: u64,
-    parameter_revision: u64,
-    request_id: u64,
-    kind: RenderKind,
-    animate: bool,
-    backend_name: String,
+    job: RenderJob,
     image: Arc<ImageBuf>,
     input_clone_ms: f32,
     snapshot: RenderSnapshot,
@@ -481,15 +477,7 @@ impl RenderWorker {
                     let mut operation = request.operation;
                     let attempt = operation.attempt(1);
                     let observation = attempt.context().clone();
-                    let job = RenderJob {
-                        input_epoch: request.input_epoch,
-                        parameter_revision: request.parameter_revision,
-                        request_id: request.request_id,
-                        kind: request.kind,
-                        animate: request.animate,
-                        backend_name: request.backend_name.clone(),
-                        collection_mode: observation.mode(),
-                    };
+                    let job = request.job;
                     *active_for_worker.lock() =
                         Some((job.request_id, job.kind, job.collection_mode));
                     let ctx = request.ctx.clone();
@@ -498,7 +486,7 @@ impl RenderWorker {
                         let t_pipeline = Instant::now();
                         let pipeline_template = build_runtime_observed(
                             &request.snapshot,
-                            request.kind == RenderKind::Preview,
+                            job.kind == RenderKind::Preview,
                             &observation,
                         )?;
                         if operation.enabled() {
@@ -599,16 +587,17 @@ impl RenderWorker {
         }
     }
 
-    fn submit(&mut self, mut request: RenderRequest) -> (u64, Option<Operation>) {
+    fn submit(&mut self, mut request: RenderRequest) -> (RenderJob, Option<Operation>) {
         self.next_request_id = self.next_request_id.wrapping_add(1);
-        request.request_id = self.next_request_id;
+        request.job.request_id = self.next_request_id;
+        let job = request.job.clone();
         let (lock, wake) = &*self.state;
         let replaced = lock.lock().replace(request).map(|request| {
             drop(request.worker_wait);
             request.operation
         });
         wake.notify_one();
-        (self.next_request_id, replaced)
+        (job, replaced)
     }
 
     fn shutdown(&mut self) -> Option<Operation> {
@@ -1326,12 +1315,17 @@ impl App {
         let backend_name = effective_backend_name(self.backend.name(), &params);
         let parameter_revision = self.parameter_revision;
         let request = RenderRequest {
-            input_epoch,
-            parameter_revision,
-            request_id: 0,
-            kind,
-            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
-            backend_name: backend_name.clone(),
+            job: RenderJob {
+                input_epoch,
+                parameter_revision,
+                request_id: 0,
+                kind,
+                animate: self.force_preview
+                    || self.full_scan_requested
+                    || self.output_image.is_none(),
+                backend_name,
+                collection_mode: operation.mode(),
+            },
             image,
             input_clone_ms,
             snapshot: RenderSnapshot {
@@ -1351,19 +1345,11 @@ impl App {
             worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
         };
-        let (request_id, replaced) = self.render_worker.submit(request);
+        let (job, replaced) = self.render_worker.submit(request);
         if let Some(operation) = replaced {
             self.diagnostics.finish(operation, Outcome::Superseded);
         }
-        self.render_job = Some(RenderJob {
-            input_epoch,
-            parameter_revision,
-            request_id,
-            kind,
-            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
-            backend_name,
-            collection_mode: self.diagnostics.mode,
-        });
+        self.render_job = Some(job);
         self.full_scan_requested = false;
     }
 

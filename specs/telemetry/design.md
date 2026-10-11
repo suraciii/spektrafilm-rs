@@ -12,6 +12,8 @@ A caller must propagate the operation context across spawned threads and bounded
 
 The shared typed observation vocabulary must live below core in the existing GPU crate so model and backend code do not acquire a dependency on core. Core owns the complete operation report and its serialization; frontends own collection selection and report storage. A scoped backend view may bind an operation sink to the existing `ComputeBackend` interface, but it must share the original device and cache. Default backend implementations must identify the CPU work they actually perform. Instrumentation must not require a second rendering pipeline or a new telemetry crate. Context must be passed explicitly through the operation's borrowed sink or scoped backend view; a thread-local current report is not an attribution boundary.
 
+Counter aggregation, overflow reconciliation, and report validation must use one counter field definition. Phase recording and validation must use one ordered phase vocabulary.
+
 ## Collection and signals
 
 The system must use one operation-local observation source for local reports and `tracing` events. Stable event names and typed numeric fields must represent starts, routing decisions, backend batches, and terminal outcomes. Timing values must not be formatted strings. Span hierarchy must describe operation, phase, stage, and backend batch ownership.

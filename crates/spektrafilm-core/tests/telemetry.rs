@@ -212,20 +212,38 @@ fn truncated_saved_attempt_has_explicit_availability_reason() {
 
 #[test]
 fn counter_overflow_uses_stable_field_identity_without_wrapping() {
+    use spektrafilm_core::telemetry::ValidationError;
+
     let mut report = collected_report();
-    report.measurements.work.dispatch_count = None;
+    report.measurements.work.omitted_pass_count = None;
+    assert_eq!(report.validate(), Err(ValidationError::InvalidCoverage));
     report
         .coverage
         .counter_overflow_fields
-        .push("dispatch_count".to_owned());
+        .push("omitted_pass_count".to_owned());
     report.validate().unwrap();
+
+    report
+        .coverage
+        .counter_overflow_fields
+        .push("omitted_pass_count".to_owned());
+    assert_eq!(report.validate(), Err(ValidationError::InvalidCoverage));
 
     let mut report = collected_report();
     report
         .coverage
         .counter_overflow_fields
         .push("upload_bytes".to_owned());
-    assert!(report.validate().is_err());
+    assert_eq!(report.validate(), Err(ValidationError::InvalidCoverage));
+
+    let mut report = collected_report();
+    report.measurements.work.omitted_pass_count = None;
+    report.coverage.retained_observations = 0;
+    report
+        .coverage
+        .counter_overflow_fields
+        .push("private_counter".to_owned());
+    assert_eq!(report.validate(), Err(ValidationError::PrivacyField));
 }
 
 #[test]
@@ -234,16 +252,59 @@ fn checked_counter_sum_overflow_is_reported_without_wrapping() {
     let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
     let work = spektrafilm_core::telemetry::WorkCounters {
         dispatch_count: Some(u64::MAX),
+        omitted_pass_count: Some(u64::MAX),
         ..Default::default()
     };
     phase.context().record_work(&work);
     phase.context().record_work(&work);
+    phase.context().record_work(&Default::default());
     phase.finish(Outcome::Succeeded);
     let report = operation.finish(Outcome::Succeeded).unwrap();
     assert_eq!(report.measurements.work.dispatch_count, None);
+    assert_eq!(report.measurements.work.omitted_pass_count, None);
+    assert_eq!(report.phases[0].work.omitted_pass_count, None);
     assert_eq!(
         report.coverage.counter_overflow_fields,
-        vec!["dispatch_count".to_owned()]
+        vec!["dispatch_count".to_owned(), "omitted_pass_count".to_owned()]
+    );
+    report.validate().unwrap();
+}
+
+#[test]
+fn root_work_and_retained_descendants_keep_distinct_counter_totals() {
+    use spektrafilm_core::telemetry::WorkCounters;
+
+    let operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.context().record_work(&WorkCounters {
+        telemetry_copy_bytes: Some(u64::MAX),
+        ..Default::default()
+    });
+    let phase = operation.scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let stage = phase
+        .context()
+        .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+    stage.context().record_work(&WorkCounters {
+        telemetry_copy_bytes: Some(1),
+        omitted_pass_count: None,
+        ..Default::default()
+    });
+    stage.context().record_work(&WorkCounters::default());
+    stage.finish(Outcome::Succeeded);
+    phase.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+
+    assert_eq!(report.measurements.work.telemetry_copy_bytes, None);
+    assert_eq!(report.measurements.work.omitted_pass_count, None);
+    assert_eq!(report.phases[0].work.telemetry_copy_bytes, Some(1));
+    assert_eq!(report.stages[0].work.telemetry_copy_bytes, Some(1));
+    assert_eq!(report.phases[0].work.omitted_pass_count, None);
+    assert_eq!(report.stages[0].work.omitted_pass_count, None);
+    assert_eq!(
+        report.coverage.counter_overflow_fields,
+        vec![
+            "telemetry_copy_bytes".to_owned(),
+            "omitted_pass_count".to_owned()
+        ]
     );
     report.validate().unwrap();
 }

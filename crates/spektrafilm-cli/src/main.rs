@@ -35,86 +35,7 @@ enum Commands {
     #[command(
         after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400'\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --preset 'Soft grain'\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --set camera.exposure_compensation_ev=0.5\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nScanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision."
     )]
-    Process {
-        /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
-        #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
-        backend: Option<Backend>,
-        /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
-        #[arg(help_heading = "Input and RAW loading")]
-        input: PathBuf,
-        /// Destination TIFF, EXR, PNG, or JPEG image.
-        #[arg(short, long, help_heading = "Output")]
-        output: PathBuf,
-        /// Output container; otherwise inferred from the destination extension.
-        #[arg(long, value_enum, help_heading = "Output")]
-        format: Option<OutputFormat>,
-        /// Output sample depth: 8, 16, or 32 bits (JPEG/PNG require 8).
-        #[arg(long, help_heading = "Output")]
-        bit_depth: Option<u8>,
-        /// JPEG quality from 1 to 100; applies only to JPEG.
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100), help_heading = "Output")]
-        jpeg_quality: Option<u8>,
-        /// JPEG chroma subsampling; applies only to JPEG.
-        #[arg(long, value_enum, help_heading = "Output")]
-        jpeg_subsampling: Option<JpegSubsamplingArg>,
-        /// TIFF/EXR compression (EXR requires zip).
-        #[arg(long, value_enum, help_heading = "Output")]
-        compression: Option<CompressionArg>,
-        #[command(flatten)]
-        workflow: WorkflowOptions,
-        /// Film stock ID; discover with list-profiles. Required without --preset.
-        #[arg(
-            long,
-            required_unless_present = "preset",
-            help_heading = "Look and workflow"
-        )]
-        film: Option<String>,
-        /// Print stock ID; otherwise uses film for direct scans or its target_print.
-        #[arg(long, help_heading = "Look and workflow")]
-        paper: Option<String>,
-        /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
-        #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
-        preset: Vec<String>,
-        /// Scan film directly, skipping printing unless --route overrides it.
-        #[arg(long, help_heading = "Look and workflow")]
-        scan_film: bool,
-        /// Print per-stage timing information to stderr.
-        #[arg(long, help_heading = "Execution and diagnostics")]
-        timings: bool,
-        /// Save a local JSON diagnostics report without replacing an existing file.
-        #[arg(long, help_heading = "Execution and diagnostics")]
-        diagnostics: Option<PathBuf>,
-        /// Collect available GPU pass timings; requires --diagnostics.
-        #[arg(
-            long,
-            requires = "diagnostics",
-            help_heading = "Execution and diagnostics"
-        )]
-        gpu_timings: bool,
-        /// Legacy RuntimeParams JSON snapshot used as the parameter baseline.
-        #[arg(long, help_heading = "Look and workflow")]
-        params: Option<PathBuf>,
-        /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
-        /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
-        #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
-        sources: Vec<String>,
-        /// Validate and print effective configuration without decoding or rendering.
-        #[arg(long, help_heading = "Execution and diagnostics")]
-        dry_run: bool,
-        /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
-        #[arg(long, help_heading = "Output")]
-        raw_out: Option<PathBuf>,
-        /// Run the pipeline this many times in one process (at least 1).
-        #[arg(long, default_value = "1", help_heading = "Execution and diagnostics")]
-        iters: usize,
-        /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
-        #[arg(
-            long,
-            default_value = "data",
-            help_heading = "Execution and diagnostics"
-        )]
-        data_dir: PathBuf,
-    },
+    Process(ProcessArgs),
     /// List available film and paper profiles.
     ListProfiles {
         /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
@@ -204,6 +125,90 @@ enum Commands {
         data_dir: PathBuf,
     },
 }
+
+#[derive(clap::Args)]
+#[group(id = "Process")]
+struct ProcessArgs {
+    /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
+    #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
+    backend: Option<Backend>,
+    /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
+    #[arg(help_heading = "Input and RAW loading")]
+    input: PathBuf,
+    /// Destination TIFF, EXR, PNG, or JPEG image.
+    #[arg(short, long, help_heading = "Output")]
+    output: PathBuf,
+    /// Output container; otherwise inferred from the destination extension.
+    #[arg(long, value_enum, help_heading = "Output")]
+    format: Option<OutputFormat>,
+    /// Output sample depth: 8, 16, or 32 bits (JPEG/PNG require 8).
+    #[arg(long, help_heading = "Output")]
+    bit_depth: Option<u8>,
+    /// JPEG quality from 1 to 100; applies only to JPEG.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100), help_heading = "Output")]
+    jpeg_quality: Option<u8>,
+    /// JPEG chroma subsampling; applies only to JPEG.
+    #[arg(long, value_enum, help_heading = "Output")]
+    jpeg_subsampling: Option<JpegSubsamplingArg>,
+    /// TIFF/EXR compression (EXR requires zip).
+    #[arg(long, value_enum, help_heading = "Output")]
+    compression: Option<CompressionArg>,
+    #[command(flatten)]
+    workflow: WorkflowOptions,
+    /// Film stock ID; discover with list-profiles. Required without --preset.
+    #[arg(
+        long,
+        required_unless_present = "preset",
+        help_heading = "Look and workflow"
+    )]
+    film: Option<String>,
+    /// Print stock ID; otherwise uses film for direct scans or its target_print.
+    #[arg(long, help_heading = "Look and workflow")]
+    paper: Option<String>,
+    /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
+    #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
+    preset: Vec<String>,
+    /// Scan film directly, skipping printing unless --route overrides it.
+    #[arg(long, help_heading = "Look and workflow")]
+    scan_film: bool,
+    /// Print per-stage timing information to stderr.
+    #[arg(long, help_heading = "Execution and diagnostics")]
+    timings: bool,
+    /// Save a local JSON diagnostics report without replacing an existing file.
+    #[arg(long, help_heading = "Execution and diagnostics")]
+    diagnostics: Option<PathBuf>,
+    /// Collect available GPU pass timings; requires --diagnostics.
+    #[arg(
+        long,
+        requires = "diagnostics",
+        help_heading = "Execution and diagnostics"
+    )]
+    gpu_timings: bool,
+    /// Legacy RuntimeParams JSON snapshot used as the parameter baseline.
+    #[arg(long, help_heading = "Look and workflow")]
+    params: Option<PathBuf>,
+    /// Apply PATH=VALUE assignments or a sparse .toml/.json file in order.
+    /// Strings need no JSON quotes; arrays use [1,2,3]; null clears optional values.
+    #[arg(long = "set", value_name = "PATH=VALUE|FILE", action = clap::ArgAction::Append, help_heading = "Look and workflow")]
+    sources: Vec<String>,
+    /// Validate and print effective configuration without decoding or rendering.
+    #[arg(long, help_heading = "Execution and diagnostics")]
+    dry_run: bool,
+    /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
+    #[arg(long, help_heading = "Output")]
+    raw_out: Option<PathBuf>,
+    /// Run the pipeline this many times in one process (at least 1).
+    #[arg(long, default_value = "1", help_heading = "Execution and diagnostics")]
+    iters: usize,
+    /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
+    #[arg(
+        long,
+        default_value = "data",
+        help_heading = "Execution and diagnostics"
+    )]
+    data_dir: PathBuf,
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Backend {
     Cpu,
@@ -506,76 +511,32 @@ fn main() -> Result<()> {
     let (_, command_matches) = matches.subcommand().expect("required subcommand");
 
     match cli.command {
-        Commands::Process {
-            input,
-            output,
-            format,
-            bit_depth,
-            jpeg_quality,
-            jpeg_subsampling,
-            compression,
-            workflow,
-            film,
-            paper,
-            preset,
-            scan_film,
-            timings,
-            params: params_file,
-            sources,
-            dry_run,
-            raw_out,
-            iters,
-            data_dir,
-            backend,
-            diagnostics,
-            gpu_timings,
-        } => {
-            let mut protected = vec![input.as_path(), output.as_path()];
-            protected.extend(params_file.as_deref());
-            protected.extend(raw_out.as_deref());
+        Commands::Process(mut args) => {
+            let data_dir = std::mem::take(&mut args.data_dir);
+            let mut protected = vec![args.input.as_path(), args.output.as_path()];
+            protected.extend(args.params.as_deref());
+            protected.extend(args.raw_out.as_deref());
             protected.extend(
-                preset
+                args.preset
                     .iter()
                     .filter(|selector| selector.ends_with(".toml") || selector.ends_with(".json"))
                     .map(Path::new),
             );
             protected.extend(
-                sources
+                args.sources
                     .iter()
                     .filter(|source| source.ends_with(".toml") || source.ends_with(".json"))
                     .map(Path::new),
             );
             telemetry::run(
                 spektrafilm_core::telemetry::OperationKind::Process,
-                diagnostics.as_deref(),
-                gpu_timings,
+                args.diagnostics.as_deref(),
+                args.gpu_timings,
                 &protected,
-                telemetry::requested_backend(backend),
+                telemetry::requested_backend(args.backend),
                 |invocation| {
                     let data = select_data_dir(data_dir, command_matches)?;
-                    cmd_process(
-                        &input,
-                        &output,
-                        format,
-                        bit_depth,
-                        jpeg_quality,
-                        jpeg_subsampling,
-                        compression,
-                        &workflow,
-                        film.as_deref(),
-                        paper.as_deref(),
-                        &preset,
-                        scan_film,
-                        timings,
-                        params_file.as_deref(),
-                        &sources,
-                        dry_run,
-                        raw_out.as_deref(),
-                        iters,
-                        &data,
-                        backend,
-                        invocation,
-                    )
+                    cmd_process(&args, &data, invocation)
                 },
             )?;
         }
@@ -642,30 +603,30 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn cmd_process(
-    input: &Path,
-    output: &Path,
-    format: Option<OutputFormat>,
-    bit_depth: Option<u8>,
-    jpeg_quality: Option<u8>,
-    jpeg_subsampling: Option<JpegSubsamplingArg>,
-    compression: Option<CompressionArg>,
-    workflow: &WorkflowOptions,
-    film_name: Option<&str>,
-    paper_name: Option<&str>,
-    selectors: &[String],
-    scan_film: bool,
-    show_timings: bool,
-    params_file: Option<&Path>,
-    sources: &[String],
-    dry_run: bool,
-    raw_out: Option<&Path>,
-    iters: usize,
+    args: &ProcessArgs,
     data: &DataSelection,
-    backend_choice: Option<Backend>,
     invocation: &mut telemetry::Invocation,
 ) -> Result<()> {
+    let input = args.input.as_path();
+    let output = args.output.as_path();
+    let format = args.format;
+    let bit_depth = args.bit_depth;
+    let jpeg_quality = args.jpeg_quality;
+    let jpeg_subsampling = args.jpeg_subsampling;
+    let compression = args.compression;
+    let workflow = &args.workflow;
+    let film_name = args.film.as_deref();
+    let paper_name = args.paper.as_deref();
+    let selectors = &args.preset;
+    let scan_film = args.scan_film;
+    let show_timings = args.timings;
+    let params_file = args.params.as_deref();
+    let sources = &args.sources;
+    let dry_run = args.dry_run;
+    let raw_out = args.raw_out.as_deref();
+    let iters = args.iters;
+    let backend_choice = args.backend;
     let data_dir = &data.path;
     let total_start = Instant::now();
     use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};

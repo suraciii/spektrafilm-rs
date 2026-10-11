@@ -1,6 +1,21 @@
 use super::QaReport;
 use std::path::{Path, PathBuf};
 
+impl QaReport {
+    /// Relative paths of the report documents and successful scenario figures.
+    pub fn artifact_paths(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        std::iter::once(PathBuf::from("report.json")).chain(self.prints.iter().flat_map(|print| {
+            let folder = Path::new(&print.folder);
+            print
+                .results
+                .iter()
+                .filter_map(|result| result.figure_path.as_ref())
+                .map(move |figure| folder.join(figure))
+                .chain([folder.join("report.md"), folder.join("report.html")])
+        }))
+    }
+}
+
 /// Write report documents without rerunning the measurements. Returned paths
 /// include PNG assets, relative to `output_dir`, for delivery artifact registration.
 pub fn write_report(report: &QaReport, output_dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -10,7 +25,6 @@ pub fn write_report(report: &QaReport, output_dir: &Path) -> Result<Vec<PathBuf>
         serde_json::to_vec_pretty(report).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    let mut artifacts = vec![PathBuf::from("report.json")];
     for p in &report.prints {
         let dir = output_dir.join(&p.folder);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -94,16 +108,14 @@ pub fn write_report(report: &QaReport, output_dir: &Path) -> Result<Vec<PathBuf>
                     escape(&r.name),
                     escape(fig)
                 ));
-                artifacts.push(PathBuf::from(&p.folder).join(fig));
             }
         }
         html.push_str("</body></html>");
         for (name, text) in [("report.md", md), ("report.html", html)] {
             std::fs::write(dir.join(name), text).map_err(|e| e.to_string())?;
-            artifacts.push(PathBuf::from(&p.folder).join(name));
         }
     }
-    Ok(artifacts)
+    Ok(report.artifact_paths().collect())
 }
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
