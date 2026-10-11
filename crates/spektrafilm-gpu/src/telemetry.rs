@@ -27,6 +27,23 @@ vocabulary!(ObservationKind {
     Batch,
     Pass
 });
+
+pub const PHASE_NAMES: &[&str] = &[
+    "input_load",
+    "backend_init",
+    "input_prepare",
+    "runtime_prepare",
+    "simulation",
+    "display_prepare",
+    "presentation_handoff",
+    "saving_convert",
+    "file_write",
+    "metadata",
+    "publication",
+    "result_prepare",
+    "worker_wait",
+];
+
 vocabulary!(Purpose {
     Image,
     Calibration,
@@ -191,7 +208,20 @@ pub struct DiagnosticIssue {
 macro_rules! counters { ($($field:ident),* $(,)?) => {
 #[derive(Clone,Debug,PartialEq,Serialize,Deserialize)] pub struct WorkCounters { $(pub $field:Option<u64>,)* }
 impl Default for WorkCounters { fn default()->Self {Self{$($field:Some(0),)*}} }
-impl WorkCounters { pub fn add(&mut self,other:&Self)->Vec<&'static str> {let mut overflow=Vec::new();$(let old=self.$field;self.$field=self.$field.zip(other.$field).and_then(|(a,b)|a.checked_add(b));if old.is_some()&&self.$field.is_none(){overflow.push(stringify!($field));})*overflow} }
+impl WorkCounters {
+    pub fn named_fields(&self) -> impl Iterator<Item = (&'static str, &Option<u64>)> {
+        [$( (stringify!($field), &self.$field), )*].into_iter()
+    }
+
+    pub fn named_value(&self, name: &str) -> Option<Option<u64>> {
+        match name {
+            $( stringify!($field) => Some(self.$field), )*
+            _ => None,
+        }
+    }
+
+    pub fn add(&mut self,other:&Self)->Vec<&'static str> {let mut overflow=Vec::new();$(let old=self.$field;self.$field=self.$field.zip(other.$field).and_then(|(a,b)|a.checked_add(b));if old.is_some()&&self.$field.is_none(){overflow.push(stringify!($field));})*overflow}
+}
 }; }
 counters!(
     dispatch_count,
@@ -897,34 +927,18 @@ impl Drop for ObservationScope {
             let meta = self.context.meta.clone();
             if let Some(meta) = meta
                 && meta.kind == ObservationKind::Phase
+                && let Some(i) = PHASE_NAMES.iter().position(|&n| n == meta.name)
             {
-                const NAMES: &[&str] = &[
-                    "input_load",
-                    "backend_init",
-                    "input_prepare",
-                    "runtime_prepare",
-                    "simulation",
-                    "display_prepare",
-                    "presentation_handoff",
-                    "saving_convert",
-                    "file_write",
-                    "metadata",
-                    "publication",
-                    "result_prepare",
-                    "worker_wait",
-                ];
-                if let Some(i) = NAMES.iter().position(|&n| n == meta.name) {
-                    while s.coverage.phase_totals.len() <= i {
-                        s.coverage.phase_totals.push(PhaseTotal {
-                            name: NAMES[s.coverage.phase_totals.len()].into(),
-                            total_duration: 0.0,
-                            count: 0,
-                        });
-                    }
-                    let t = &mut s.coverage.phase_totals[i];
-                    t.total_duration += duration;
-                    t.count = t.count.saturating_add(1);
+                while s.coverage.phase_totals.len() <= i {
+                    s.coverage.phase_totals.push(PhaseTotal {
+                        name: PHASE_NAMES[s.coverage.phase_totals.len()].into(),
+                        total_duration: 0.0,
+                        count: 0,
+                    });
                 }
+                let t = &mut s.coverage.phase_totals[i];
+                t.total_duration += duration;
+                t.count = t.count.saturating_add(1);
             }
             let Some(o) = s.observations.iter_mut().find(|o| o.id == self.context.id) else {
                 return;
