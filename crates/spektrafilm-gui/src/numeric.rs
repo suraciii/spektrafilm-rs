@@ -50,8 +50,18 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
     tooltip: &str,
 ) -> bool {
     ui.horizontal(|ui| {
-        ui.label(label).on_hover_text(tooltip);
-        numeric_field(ui, label, value, min, max, step, decimals, tooltip)
+        let label_response = ui.label(label).on_hover_text(tooltip);
+        numeric_field(
+            ui,
+            label,
+            value,
+            min,
+            max,
+            step,
+            decimals,
+            tooltip,
+            Some(label_response.id),
+        )
     })
     .inner
 }
@@ -67,6 +77,7 @@ pub(crate) fn numeric_field<T, Id>(
     step: f64,
     decimals: usize,
     tooltip: &str,
+    label_id: Option<egui::Id>,
 ) -> bool
 where
     T: egui::emath::Numeric,
@@ -97,6 +108,11 @@ where
                 .desired_width(72.0),
         )
         .on_hover_text(tooltip);
+    let response = if let Some(label_id) = label_id {
+        response.labelled_by(label_id)
+    } else {
+        response
+    };
 
     let mut changed = false;
     if response.changed()
@@ -220,7 +236,9 @@ mod tests {
                         }) {
                             ctx.memory_mut(|memory| memory.request_focus(id));
                         }
-                        numeric_field(ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure");
+                        numeric_field(
+                            ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure", None,
+                        );
                         field_rect = ctx.read_response(id).unwrap().rect;
                     });
                 },
@@ -283,5 +301,111 @@ mod tests {
         let mut max = 2.0_f64;
         assert!(!apply_wheel_delta(&mut max, 1.0, 0.0, 2.0, 0.25));
         assert_eq!(max, 2.0);
+    }
+}
+
+#[cfg(test)]
+mod semantic_tests {
+    use super::numeric;
+    use egui::accesskit::Role;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn labeled_numeric_field_accepts_keyboard_and_wheel_input() {
+        let mut harness = Harness::new_ui_state(
+            |ui, value| {
+                numeric(ui, "Exposure", value, -5.0, 5.0, 0.1, 2, "Exposure EV");
+            },
+            0.0_f64,
+        );
+
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .simulate_click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .key_combination(&[
+                egui_kittest::kittest::Key::Command,
+                egui_kittest::kittest::Key::A,
+            ]);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .type_text("1.25");
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .press_keys(&[egui_kittest::kittest::Key::Enter]);
+        harness.run();
+
+        assert_eq!(*harness.state(), 1.25);
+
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .hover();
+        harness.run();
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 60.0),
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+
+        assert_eq!(*harness.state(), 1.35);
+        assert_eq!(harness.ctx.input(|input| input.raw_scroll_delta.y), 0.0);
+        assert_eq!(harness.ctx.input(|input| input.smooth_scroll_delta.y), 0.0);
+    }
+
+    #[test]
+    fn labeled_numeric_field_preserves_invalid_input_and_clamps_bounds() {
+        let mut harness = Harness::new_ui_state(
+            |ui, value| {
+                numeric(ui, "Exposure", value, -5.0, 5.0, 0.1, 2, "Exposure EV");
+            },
+            0.0_f64,
+        );
+
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .simulate_click();
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .key_combination(&[
+                egui_kittest::kittest::Key::Command,
+                egui_kittest::kittest::Key::A,
+            ]);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .type_text("invalid");
+        harness.run();
+        assert_eq!(*harness.state(), 0.0);
+
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .press_keys(&[egui_kittest::kittest::Key::Enter]);
+        harness.run();
+        assert_eq!(
+            harness
+                .get_by_role_and_label(Role::TextInput, "Exposure")
+                .value()
+                .as_deref(),
+            Some("0.00")
+        );
+
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .key_combination(&[
+                egui_kittest::kittest::Key::Command,
+                egui_kittest::kittest::Key::A,
+            ]);
+        harness.run();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Exposure")
+            .type_text("999");
+        harness.run();
+        assert_eq!(*harness.state(), 5.0);
     }
 }
