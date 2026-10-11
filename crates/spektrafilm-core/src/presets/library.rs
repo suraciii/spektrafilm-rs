@@ -985,13 +985,16 @@ mod tests {
         std::fs::write(&directory, "not a directory").unwrap();
         let library = PresetLibrary::new(directory.clone());
         let entries = library.scan().unwrap();
-        assert_eq!(entries.len(), 6);
         assert_eq!(
             entries
                 .iter()
                 .filter(|entry| entry.group == PresetGroup::BuiltIn && entry.fault.is_none())
-                .count(),
-            5
+                .map(|entry| entry.name.as_str())
+                .collect::<std::collections::BTreeSet<_>>(),
+            BUILTIN_ASSETS
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<std::collections::BTreeSet<_>>()
         );
         let faults: Vec<_> = entries
             .iter()
