@@ -881,6 +881,10 @@ mod tests {
         let factory = GuiState::factory();
         let mut params = factory.runtime_params().unwrap();
         let grain = &mut params.film_render.grain;
+        grain.engine = spektrafilm_core::params::GrainEngine::V2;
+        grain.v2_profile = "custom".into();
+        grain.v2_resolution_type = 0;
+        grain.v2_timer = 0.375;
         grain.active = false;
         grain.rms_granularity = [11.0, 13.0, 17.0];
         grain.density_min = [0.11, 0.22, 0.33];
@@ -903,6 +907,8 @@ mod tests {
         let restored = loaded.runtime_params().unwrap().film_render.grain;
 
         assert!(!restored.active);
+        assert_eq!(restored.v2_resolution_type, 0);
+        assert_eq!(restored.v2_timer, 0.375);
         assert_eq!(restored.rms_granularity, [11.0, 13.0, 17.0]);
         assert_eq!(restored.density_min, [0.11, 0.22, 0.33]);
         assert_eq!(restored.uniformity, [0.91, 0.92, 0.93]);

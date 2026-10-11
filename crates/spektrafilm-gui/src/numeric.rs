@@ -158,21 +158,20 @@ fn wheel_adjust<T: egui::emath::Numeric>(
     }
     let (raw_delta, smooth_delta) =
         ui.input(|input| (input.raw_scroll_delta.y, input.smooth_scroll_delta.y));
-    if raw_delta == 0.0 {
-        if smooth_delta != 0.0 {
-            ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
-        }
+    let delta = if raw_delta != 0.0 {
+        raw_delta
+    } else {
+        smooth_delta
+    };
+    if delta == 0.0 {
         return false;
     }
-    if apply_wheel_delta(value, raw_delta, min, max, step) {
-        ui.input_mut(|input| {
-            input.raw_scroll_delta.y = 0.0;
-            input.smooth_scroll_delta.y = 0.0;
-        });
-        true
-    } else {
-        false
-    }
+    let changed = apply_wheel_delta(value, delta, min, max, step);
+    ui.input_mut(|input| {
+        input.raw_scroll_delta.y = 0.0;
+        input.smooth_scroll_delta.y = 0.0;
+    });
+    changed
 }
 
 #[cfg(test)]
@@ -283,5 +282,51 @@ mod tests {
         let mut max = 2.0_f64;
         assert!(!apply_wheel_delta(&mut max, 1.0, 0.0, 2.0, 0.25));
         assert_eq!(max, 2.0);
+    }
+    #[test]
+    fn mouse_wheel_event_changes_hovered_text_field() {
+        let ctx = egui::Context::default();
+        let mut value = 1.0_f64;
+        let field_rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(300.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    numeric_field(ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure");
+                    let id = ui.make_persistent_id(("numeric-field", "exposure"));
+                    field_rect.set(ctx.read_response(id).unwrap().rect);
+                });
+            },
+        );
+        let position = field_rect.get().center();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(300.0, 200.0),
+                )),
+                events: vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, 1.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    numeric_field(ui, "exposure", &mut value, -10.0, 10.0, 0.25, 2, "Exposure");
+                });
+            },
+        );
+        assert_eq!(value, 1.25);
     }
 }
