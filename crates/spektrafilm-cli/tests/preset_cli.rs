@@ -1275,7 +1275,7 @@ fn signed_input_exposure_stops_accept_separate_arguments() {
 }
 
 fn library_document(f: &Fixture, name: &str, parameters: Value) -> PathBuf {
-    let library = f.root.join("config/presets");
+    let library = f.root.join("config").join("presets");
     std::fs::create_dir_all(&library).unwrap();
     let path = library.join(format!("{name}.json"));
     let document = json!({"schema_version": 2, "name": name,
@@ -1843,4 +1843,40 @@ fn chemistry_sections_validate_after_later_sources_and_looks() {
         String::from_utf8_lossy(&rejected.stderr)
             .contains("print_render.density_curves_morph.gamma_factor")
     );
+}
+
+#[test]
+fn describe_text_lists_non_settable_runtime_leaves_and_set_rejects_them() {
+    let f = Fixture::new();
+    let description = f.run(&["describe", "--format", "text"]);
+    assert!(
+        description.status.success(),
+        "{}",
+        String::from_utf8_lossy(&description.stderr)
+    );
+    let text = String::from_utf8_lossy(&description.stdout);
+    assert!(
+        text.contains(
+            "random_seed (runtime field outside settable parameter surface: per-render stochastic seed is set by the recipe runner)"
+        ),
+        "{text}"
+    );
+
+    let rejected = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--paper",
+        "kodak_portra_endura",
+        "--set",
+        "random_seed=17",
+        "--dry-run",
+    ]);
+    assert!(!rejected.status.success());
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(error.contains("random_seed"), "{error}");
+    assert!(
+        error.contains("runtime field outside the settable parameter surface"),
+        "{error}"
+    );
+    assert!(error.contains("recipe runner"), "{error}");
 }

@@ -12,6 +12,14 @@ use crate::suggest::error_suffix;
 use metadata::{nullable, rust_type};
 use serde_json::{Map, Value};
 
+/// Runtime leaves intentionally outside the user-settable parameter surface.
+pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
+    &[(
+        "random_seed",
+        "per-render stochastic seed is set by the recipe runner",
+    )]
+}
+
 /// Ordered sparse edits to runtime parameter leaves.
 #[derive(Debug, Clone, Default)]
 pub struct ParameterEdits {
@@ -579,6 +587,11 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
     Ok(out)
 }
 fn unknown_path(path: &str) -> String {
+    if let Some((_, reason)) = non_settable_leaves().iter().find(|(leaf, _)| *leaf == path) {
+        return format!(
+            "{path} is a runtime field outside the settable parameter surface; {reason}"
+        );
+    }
     format!(
         "unknown parameter path: {path}; {}",
         error_suffix(
@@ -763,6 +776,17 @@ mod tests {
                     .is_empty()
             );
         }
+    }
+
+    #[test]
+    fn out_of_band_runtime_leaf_names_field_and_reason() {
+        let error = ParameterEdits::parse("random_seed=17").unwrap_err();
+        assert!(error.contains("random_seed"), "{error}");
+        assert!(
+            error.contains("runtime field outside the settable parameter surface"),
+            "{error}"
+        );
+        assert!(error.contains("recipe runner"), "{error}");
     }
 
     #[test]
