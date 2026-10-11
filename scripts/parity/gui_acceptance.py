@@ -253,16 +253,22 @@ class X11:
         for offset, region in ((0, image.crop((0, 0, image.width - 420, image.height))),
                                (image.width - 420, image.crop((image.width - 420, 0, image.width, image.height)))):
             prepared = normalize(region)
-            # The viewer crop is large; a tight bound trips on a loaded machine.
-            data = self.ocr.image_to_data(prepared.resize((region.width * 3, region.height * 3)),
-                                          config='--psm 11', output_type=self.ocr.Output.DICT, timeout=60)
-            grouped = {}
-            for i, text in enumerate(data['text']):
-                if text.strip():
-                    key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
-                    grouped.setdefault(key, []).append((text, offset + data['left'][i] / 3, data['top'][i] / 3,
-                                                         data['width'][i] / 3, data['height'][i] / 3))
-            lines.extend(grouped.values())
+            # The sidebar is read in bands: a full-height pass loses the small
+            # controls inside its collapsible sections.
+            step = prepared.height // 2 if offset else prepared.height
+            for index in range(2 if offset else 1):
+                top = index * step
+                band = prepared.crop((0, top, prepared.width, min(prepared.height, top + step + 40)))
+                # The crops are large; a tight bound trips on a loaded machine.
+                data = self.ocr.image_to_data(band.resize((band.width * 3, band.height * 3)),
+                                              config='--psm 11', output_type=self.ocr.Output.DICT, timeout=60)
+                grouped = {}
+                for i, text in enumerate(data['text']):
+                    if text.strip():
+                        key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+                        grouped.setdefault(key, []).append((text, offset + data['left'][i] / 3,
+                            top + data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
+                lines.extend(grouped.values())
         # Read the persistent sidebar action bar as complete rows so PREVIEW,
         # SCAN and SAVE are distinguishable from the Scan for print checkbox.
         action_top = self.action_top
@@ -332,6 +338,7 @@ class X11:
             'config': {'config', 'confic'},
         }
         matches = []
+        joined_wanted = ''.join(wanted)
         for line in lines:
             for start in range(len(line)):
                 words = []
@@ -339,17 +346,19 @@ class X11:
                 for word in line[start:]:
                     selected.append(word)
                     words.extend(re.findall(r'[a-z0-9]+', word[0].lower()))
-                    if len(words) >= len(wanted):
+                    # OCR may merge adjacent words, so collect until the
+                    # concatenated tokens cover the label.
+                    if len(''.join(words)) >= len(joined_wanted):
                         break
                 # Toggled controls render their state inside the label, e.g.
                 # "Scan-for-print:ON"; accept that single-token suffix.
                 suffixed = (len(selected) == 1 and len(words) == len(wanted) + 1
                             and words[:-1] == wanted and words[-1] == 'on')
-                equivalent = words == wanted or suffixed or (
-                    len(words) == len(wanted)
-                    and all(word == expected or word in aliases.get(expected, set())
-                            for word, expected in zip(words, wanted))
-                )
+                equivalent = (words == wanted or suffixed
+                              or ''.join(words) == joined_wanted
+                              or (len(words) == len(wanted)
+                                  and all(word == expected or word in aliases.get(expected, set())
+                                          for word, expected in zip(words, wanted))))
                 if equivalent or (label.lower() == 'auto exposure' and words == ['aueo', 'exposure']) or (label.lower() == '16 bit' and words == ['16', 'bir']):
                     x = selected[0][1]
                     if right and x < self.right_control_x:
@@ -416,7 +425,7 @@ class X11:
             self.xd('click', 1)
             time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back') else .15)
             return
-        if label in ('Open', 'Export', 'Cancel'):
+        if label in ('Open', 'Export'):
             self.scroll(True)
             _, _, lines = self.read()
             actual = 'Select file' if label == 'Open' else label
@@ -453,14 +462,14 @@ class X11:
             if not matches and label == 'Cancel':
                 return None
             if matches:
+                if label == 'Cancel':
+                    self.require_export_in_flight('Cancel', (image, lines))
                 self.snap('control-' + label.replace(' ', '-'), image, lines)
                 if label.lower() in ('preview', 'scan', 'save'):
                     self.records[-1]['action'] = label.upper()
                     self.records[-1]['client_point'] = list(matches[0])
                 return matches[0]
         x, y = wait_for(locate, f'visible control {label}', 20)
-        if label == 'Cancel':
-            self.require_export_in_flight('Cancel')
         # Toggled controls can hide their label (checkbox glyph changes OCR);
         # remember the position so the same control can be re-clicked.
         self.last_control = (x, y)
@@ -518,47 +527,52 @@ class X11:
         _, canvas = self.viewer_canvas()
         return hashlib.sha256(canvas.tobytes()).hexdigest()
 
-    def measure_viewer(self, label, changed_from=None, timeout=60):
-        """Record displayed image bounds once the view change has been painted.
+    def await_viewer(self, previous=None, timeout=60, label='viewer'):
+        """Wait for the composition worker to paint a settled viewer frame.
 
         The raster reaches the viewer through an asynchronous composition
-        worker, so the frame right after a view change still shows the previous
-        scale and can stay that way for seconds under load. Wait until the
-        canvas differs from the frame captured before the change, then until
-        two consecutive screenshots agree.
+        worker, so the frame right after a display change still shows the
+        previous settings and can stay that way for seconds under load. Wait
+        until the canvas differs from `previous`, then until two consecutive
+        screenshots agree. Returns the settled screenshot and canvas.
         """
-        state = {'bounds': None, 'image': None, 'digest': None, 'changed': changed_from is None}
+        state = {'image': None, 'canvas': None, 'digest': None, 'changed': previous is None}
 
         def settled():
             image, canvas = self.viewer_canvas()
             digest = hashlib.sha256(canvas.tobytes()).hexdigest()
             if not state['changed']:
-                if digest != changed_from:
+                if digest != previous:
                     state['changed'] = True
                 else:
                     time.sleep(.5)
                     return False
-            channels = [canvas[..., i].astype(np.int16) for i in range(3)]
-            chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
-            mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
-            ys, xs = np.where(mask)
-            bounds = None
-            if xs.size > 100:
-                bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
-            if bounds is not None and digest == state['digest']:
-                state['bounds'] = bounds
+            if digest == state['digest']:
                 state['image'] = image
+                state['canvas'] = canvas
                 return True
             state['digest'] = digest
             time.sleep(.5)
             return False
 
-        wait_for(settled, f'settled viewer frame for {label}', timeout)
+        wait_for(settled, f'settled {label} frame', timeout)
+        return state['image'], state['canvas']
+
+    def measure_viewer(self, label, changed_from=None, timeout=60):
+        """Record displayed image bounds once the view change has been painted."""
+        image, canvas = self.await_viewer(changed_from, timeout, label)
+        channels = [canvas[..., i].astype(np.int16) for i in range(3)]
+        chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
+        mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
+        ys, xs = np.where(mask)
+        bounds = None
+        if xs.size > 100:
+            bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
         screenshot = f'{len(self.records):02d}-{label}.png'
-        state['image'].save(self.root / screenshot)
+        image.save(self.root / screenshot)
         self.records.append({'surface': label, 'screenshot': screenshot,
-                             'pixel_viewer_bounds': state['bounds']})
-        return state['bounds']
+                             'pixel_viewer_bounds': bounds})
+        return bounds
 
     def wait_text(self, pattern, label, timeout=120):
         def ready():
@@ -652,25 +666,55 @@ class X11:
     def state_control(self, control):
         """Click a CONFIG state control, expanding the GUI parameters section.
 
-        The state toolbar lives inside that collapsible section, so a fresh
-        CONFIG tab may not show the control yet.
+        The state toolbar lives inside that collapsible section, below the
+        diagnostics report list, so the sidebar scrolls to the bottom where the
+        toolbar renders instead of the top where the sections start.
         """
         self.tab('CONFIG')
-        self.scroll(False)
+        self.scroll(True)
         _, _, lines = self.read()
         if not self.match(lines, control):
             self.click('GUI parameters')
+            self.scroll(True)
         self.click(control)
 
     def state_action(self, control, path, save=False):
         self.state_control(control)
         self.dialog(path, save)
 
+    def click_export_button(self):
+        """Click the Output-section Export button, not its section header.
+
+        The header shares the label prefix, so match the single-token row.
+        """
+        def locate():
+            image, _, lines = self.read()
+            for line in lines:
+                tokens = [re.sub(r'[^a-z0-9]', '', word[0].lower()) for word in line]
+                if tokens == ['export'] and line[0][1] > self.right_control_x:
+                    return (line[0][1] + line[0][3] / 2, line[0][2] + line[0][4] / 2)
+            return None
+        x, y = None, None
+        try:
+            x, y = wait_for(locate, 'visible Export button', 10)
+        except RuntimeError:
+            # The nested Export options section may be collapsed; open it.
+            self.scroll(True)
+            self.click('Export options')
+            self.scroll(True)
+            x, y = wait_for(locate, 'visible Export button', 20)
+        self.snap('control-Export-button')
+        self.xd('mousemove', '--window', self.window, int(x), int(y))
+        self.xd('click', 1)
+        time.sleep(.15)
+
     def file_action(self, control, path, save=False):
         self.tab('MAIN')
-        self.click(control)
         if control == 'Export':
+            self.click_export_button()
             self.export_options(path)
+        else:
+            self.click(control)
         self.dialog(path, save)
 
     def drain_reports(self):
@@ -732,35 +776,51 @@ class X11:
         return text
 
     def export_options(self, path):
-        def modal_read():
-            from scipy.ndimage import label, find_objects
+        def modal_lines(image, box, scale):
             from PIL import ImageOps
-            image, bbox = self.image()
-            pixels = np.asarray(image)[:, :int(image.width * .65), :3].astype(np.int16)
-            components, _ = label((pixels.max(axis=2) < 60) &
-                                  (pixels.max(axis=2) - pixels.min(axis=2) < 5))
-            for region in find_objects(components):
-                if region is None:
-                    continue
-                ys, xs = region
-                if not (250 < xs.stop - xs.start < 650 and 100 < ys.stop - ys.start < 650):
-                    continue
-                left, top = xs.start, max(0, ys.start - 36)
-                crop = image.crop((left, top, xs.stop, ys.stop))
-                prepared = ImageOps.autocontrast(ImageOps.invert(ImageOps.grayscale(crop)))
-                data = self.ocr.image_to_data(prepared.resize((crop.width * 3, crop.height * 3)),
+            crop = image.crop(box)
+            grouped = {}
+            # Thresholding choices trade off differently: equalized crops keep
+            # the dimmed title and control labels, autocontrasted ones keep
+            # the combo menu items, so read both and merge the results.
+            for pass_index, prepare in enumerate((ImageOps.equalize, ImageOps.autocontrast)):
+                prepared = prepare(ImageOps.invert(ImageOps.grayscale(crop)))
+                data = self.ocr.image_to_data(prepared.resize((crop.width * scale, crop.height * scale)),
                                               config='--psm 6', output_type=self.ocr.Output.DICT)
-                grouped = {}
                 for i, text in enumerate(data['text']):
                     if text.strip():
                         if text.casefold() == 'bitdepth':
                             text = 'Bit depth'
-                        key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
-                        grouped.setdefault(key, []).append((text, left + data['left'][i] / 3,
-                            top + data['top'][i] / 3, data['width'][i] / 3, data['height'][i] / 3))
-                lines = list(grouped.values())
-                if self.match(lines, 'Format') and (self.match(lines, 'Cancel')
-                                                    or self.match(lines, 'Export options')):
+                        key = (pass_index, data['block_num'][i], data['par_num'][i],
+                               data['line_num'][i])
+                        grouped.setdefault(key, []).append((text, box[0] + data['left'][i] / scale,
+                            box[1] + data['top'][i] / scale, data['width'][i] / scale,
+                            data['height'][i] / scale))
+            return list(grouped.values())
+
+        def modal_read():
+            from scipy.ndimage import label, find_objects
+            image, bbox = self.image()
+            # The export dialog is a dark panel over the viewer. Isolate it as
+            # the dark region when the viewer is bright; when dark viewer
+            # content merges with the panel, read the whole left pane instead.
+            pixels = np.asarray(image)[:, :int(image.width * .65), :3].astype(np.int16)
+            components, _ = label((pixels.max(axis=2) < 60) &
+                                  (pixels.max(axis=2) - pixels.min(axis=2) < 5))
+            boxes = []
+            for region in find_objects(components):
+                if region is None:
+                    continue
+                ys, xs = region
+                if 250 < xs.stop - xs.start < 650 and 100 < ys.stop - ys.start < 900:
+                    boxes.append(((max(0, xs.start - 12), max(0, ys.start - 44),
+                                   xs.stop + 12, ys.start + 220), 3))
+            boxes.append(((0, 0, int(image.width * .65), image.height), 2))
+            for box, scale in boxes:
+                lines = modal_lines(image, box, scale)
+                # The dialog's title always shows; an open combo dropdown
+                # covers the button row, so its Cancel label is not enough.
+                if self.match(lines, 'Export options') or self.match(lines, 'Cancel'):
                     return image, bbox, lines
             return None
         wait_for(modal_read, 'visible export modal controls', 20)
@@ -772,6 +832,10 @@ class X11:
             image, _, lines = wait_for(modal_read, 'visible export modal controls', 20)
             self.snap('modal-before-' + label.replace(' ', '-'), image, lines)
             matches = self.match(lines, label)
+            if not matches and len(label.split()) > 1:
+                # OCR can lose the first word of a dimmed label. The final
+                # word still identifies this control within the dialog.
+                matches = self.match(lines, label.split()[-1])
             matches = [(x, y) for x, y in matches if x < self.right_control_x]
             require(matches, f'Export options control is not visible: {label}')
             x, y = matches[0]
@@ -825,21 +889,25 @@ class X11:
             box = (max(0, int(cx) - 140), max(0, int(cy) - 16),
                    min(image.width, int(cx) + 40), int(cy) + 16)
             crop = image.crop(box)
-            prepared = ImageOps.autocontrast(ImageOps.invert(ImageOps.grayscale(crop)))
-            data = self.ocr.image_to_data(prepared.resize((crop.width * 3, crop.height * 3)),
-                                          config='--psm 7', output_type=self.ocr.Output.DICT)
-            for i, text in enumerate(data['text']):
-                if re.findall(r'[a-z0-9]+', text.lower()) == ['export']:
-                    self.snap('export-options-confirmed', image, lines)
-                    return (box[0] + data['left'][i] / 3 + data['width'][i] / 6,
-                            box[1] + data['top'][i] / 3 + data['height'][i] / 6)
+            for prepare in (ImageOps.autocontrast, ImageOps.equalize):
+                prepared = prepare(ImageOps.invert(ImageOps.grayscale(crop)))
+                data = self.ocr.image_to_data(prepared.resize((crop.width * 3, crop.height * 3)),
+                                              config='--psm 7', output_type=self.ocr.Output.DICT)
+                for i, text in enumerate(data['text']):
+                    if re.findall(r'[a-z0-9]+', text.lower()) == ['export']:
+                        self.snap('export-options-confirmed', image, lines)
+                        return (box[0] + data['left'][i] / 3 + data['width'][i] / 6,
+                                box[1] + data['top'][i] / 3 + data['height'][i] / 6)
+            return None
         x, y = wait_for(submit, 'Export options submit', 20)
         self.xd('mousemove', '--window', self.window, int(x), int(y))
         self.xd('click', 1)
 
-    def require_export_in_flight(self, action):
-        self.scroll(True)
-        image, _, lines = self.read()
+    def require_export_in_flight(self, action, observation=None):
+        if observation is None:
+            image, _, lines = self.read()
+        else:
+            image, lines = observation
         text = '\n'.join(' '.join(w[0] for w in line) for line in lines)
         require(re.search(r'Exporting\s+with', text, re.I),
                 f'{action} did not target a GUI-observed in-flight export: {text}')
@@ -1595,10 +1663,16 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'output_pixel_std': output_content_std,
                                'output_rendered_pixel_count': int(output_content.shape[0])})
         driver.tab('CONFIG')
-        driver.scroll(False)
+        driver.scroll(True)
         display_image, _, display_lines = driver.read()
         display_text = '\n'.join(' '.join(word[0] for word in line) for line in display_lines)
-        require(re.search(r'Display\s+transform:', display_text, re.I),
+        if not re.search(r'display\s+transform', display_text, re.I):
+            # The Display section is collapsed until its header is clicked.
+            driver.click('Display')
+            driver.scroll(True)
+            display_image, _, display_lines = driver.read()
+            display_text = '\n'.join(' '.join(word[0] for word in line) for line in display_lines)
+        require(re.search(r'display\s+transform', display_text, re.I),
                 'Native GUI did not report display transform status')
         driver.snap('display-transform-status', display_image, display_lines)
         driver.records.append({'parity_action': 'report_display_transform_status',
@@ -1688,12 +1762,15 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'export_sha256': hashlib.sha256(exported_path.read_bytes()).hexdigest()})
         raw_input = root / ('raw-input' + raw.suffix.lower())
         shutil.copyfile(raw, raw_input)
+        # Auto preview replaces the status line with the render result before
+        # the driver can read the lens correction report, so pause it.
+        driver.click('auto preview')
         driver.file_action('Open', raw_input)
-        driver.rendered('raw-image-preview')
         driver.tab('CONFIG')
-        driver.scroll(False)
-        driver.wait_text(r'Lens correction (?:not applied|applied)',
-                         'raw-lens-correction-status', timeout=20)
+        driver.wait_text(r'Lens\s+correction\s+(?:not\s+applied|applied)',
+                         'raw-lens-correction-status', timeout=60)
+        driver.click('auto preview')
+        driver.rendered('raw-image-preview')
         driver.state_action('Save current to file', root / 'raw-state.json', True)
         wait_for((root / 'raw-state.json').is_file, 'RAW state', 20)
         raw_state = json.loads((root / 'raw-state.json').read_text())
@@ -1717,8 +1794,9 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         driver.file_action('Export', cancelled, True)
         driver.wait_text(r'Exporting\s+with', 'cancel-export-in-flight', timeout=20)
         driver.click('Cancel')
-        driver.scroll(True)
-        driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=240)
+        status = driver.wait_text(r'Export cancel(?:ed|led)', 'cancelled-export', timeout=240)
+        driver.records.append({'parity_action': 'cancel_export', 'status': status,
+                               'output_absent': not cancelled.exists()})
         require(not cancelled.exists(), 'Cancelled export left an output image')
         closed = root / 'closed.exr'
         driver.file_action('Export', closed, True)
