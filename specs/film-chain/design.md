@@ -13,6 +13,7 @@
 - Positive interpretation derives its response from the profile density curves and the scan color context. It must not estimate its endpoints from image content.
 - Interpretation controls parameterize the inverse response only. They must not modify the film curves or the printing exposure.
 - The interpretation points are positions in the same per-channel density window that the derived inverse covers. They must not introduce a second density model, and an unset point pair must stay the identity map.
+- `positive_` parameters belong to positive interpretation and are named for the positive image they produce, including points that select positions on the negative film density axis. Scanner white and black correction keeps its separate level controls.
 - Look reaches a film-scan image through the scan capture, positive interpretation, or the finishing treatment. The finishing treatment is the only look stage shared by a photographic-paper scan and a film scan.
 - Scanner behavior must not depend on a scanner device model, a measured sensor response, or device-specific artifacts.
 - A resident WGPU chain is an optimization, not a second product contract. `ResidentDecision` records capability and fallback reasons. Unsupported stages use the faithful per-stage route.
