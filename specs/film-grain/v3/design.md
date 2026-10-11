@@ -144,8 +144,6 @@ Compare the oracle and the density-average readout on low, middle, and high patc
 
 The density-average readout is acceptable on a route when, at the comparison pitch, the patch mean bias is at most 0.5 of an 8-bit code per channel, the grain RMS changes by at most 2%, and the averaged edge and line profiles differ by at most 2 codes. If the gate fails, reconsider the film-density output boundary with a concrete spectral-readout change. Do not conceal the failure by retuning grain strength. This gate does not certify physical Portra equivalence.
 
-The print route has passed this gate with the default controls on `kodak_portra_800` at 5.36-micrometer output pitch and a 0.89-micrometer oracle pitch. The worst patch bias was 0.10 code, the worst grain RMS change was 0.3%, and the worst edge-profile difference was 0.93 code. The film-scan route has not yet run this gate.
-
 Dye support is formation; the box is sampling; enlarger diffusion and scanner blur are downstream optics. In scale comparisons, adjust existing downstream pixel controls to keep declared film-space widths, or disable them and record that choice. A scalar pixel sigma cannot exactly describe anisotropic film footprints; restrict such equivalence checks to equal pitches or zero downstream blur.
 
 ## Deterministic comparison

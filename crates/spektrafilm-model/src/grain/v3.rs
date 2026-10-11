@@ -148,7 +148,7 @@ fn apply_with_budget(
     // Every output row must fit before any readout/source stencils or output
     // storage are built. Ceil(width/h)+1 bounds cell coverage at any phase.
     let row_cells = (row_w / h).ceil() as u64 + 1 + 2 * d as u64;
-    let band_cells = row_cells.checked_mul(ext_cols as u64).unwrap_or(u64::MAX);
+    let band_cells = row_cells.saturating_mul(ext_cols as u64);
     let source_cols =
         (src_w as u64).min(((ext_cols as f64 * h / pitch_um).ceil() as u64).saturating_add(1));
     let source_rows =
@@ -211,9 +211,7 @@ fn apply_with_budget(
                 ((((ext_j1 + 1) as f64 * h) / pitch_um).ceil() as i64).saturating_sub(1),
                 src_h,
             );
-            let band_cells = ((ext_j1 - ext_j0 + 1) as u64)
-                .checked_mul(ext_cols as u64)
-                .unwrap_or(u64::MAX);
+            let band_cells = ((ext_j1 - ext_j0 + 1) as u64).saturating_mul(ext_cols as u64);
             let band_pixels = ((sy_hi - sy_lo + 1) as u64) * ((sx_hi - sx_lo + 1) as u64);
             if band_cells <= max_band_cells && band_pixels <= max_band_cells {
                 break (band_end, j_lo, j_hi, ext_j0, ext_j1, sy_lo, sy_hi);
@@ -439,12 +437,12 @@ impl Model {
             let total = (target[c] + ch.min).clamp(0.0, ch.cap_total);
             let (low, t) = ch.bracket(target[c]);
             let mut weights = [0.0f64; 3];
-            for l in 0..3 {
+            for (l, weight) in weights.iter_mut().enumerate() {
                 if ch.cap[l] <= 0.0 {
                     continue;
                 }
                 let value = ch.layers[l][low] + t * (ch.layers[l][low + 1] - ch.layers[l][low]);
-                weights[l] = (value + ch.frac[l] * ch.min).max(0.0);
+                *weight = (value + ch.frac[l] * ch.min).max(0.0);
             }
             out[c] = allocate(total, &ch.cap, &weights);
         }
@@ -467,8 +465,7 @@ impl Model {
         let index = cell_stream_index(i, j);
         for (c, ch) in self.channels.iter().enumerate() {
             let mut density = 0.0f64;
-            for l in 0..3 {
-                let target = layers[c][l];
+            for (l, &target) in layers[c].iter().enumerate() {
                 if target <= 0.0 || ch.cap[l] <= 0.0 {
                     continue;
                 }
@@ -1085,9 +1082,7 @@ mod tests {
     fn flat(width: u32, height: u32, value: f64) -> ImageBuf {
         let mut image = ImageBuf::new(width, height);
         for pixel in image.pixels_mut() {
-            for c in 0..3 {
-                pixel[c] = from_f64(value);
-            }
+            pixel.fill(from_f64(value));
         }
         image
     }
@@ -1104,9 +1099,7 @@ mod tests {
                 if x == line || x == line + 1 {
                     value = 0.28;
                 }
-                for c in 0..3 {
-                    pixel[c] = from_f64(value);
-                }
+                pixel.fill(from_f64(value));
             }
         }
         image
@@ -1190,8 +1183,8 @@ mod tests {
                         let column = sx.clamp(0, width as i64 - 1) as usize;
                         let index = (row_index + column) * 3;
                         let weight = wx * wy;
-                        for c in 0..3 {
-                            acc[c] += weight * to_f64(image.data[index + c]);
+                        for (c, value) in acc.iter_mut().enumerate() {
+                            *value += weight * to_f64(image.data[index + c]);
                         }
                     }
                 }
@@ -1454,10 +1447,9 @@ mod tests {
                 Model::new(&params(Some(SIGMA / 4.0), true, 1, area), PITCH).expect("model");
             let layers = model.layer_targets([0.12; 3]);
             let mut variance = 0.0;
-            for c in 0..3 {
+            for (c, targets) in layers.iter().enumerate() {
                 let ch = &model.channels[c];
-                for l in 0..3 {
-                    let t = layers[c][l];
+                for (l, &t) in targets.iter().enumerate() {
                     if t <= 0.0 || ch.cap[l] <= 0.0 {
                         continue;
                     }
@@ -1834,8 +1826,8 @@ mod tests {
             .collect();
         let ch = &model.channels[0];
         let mut cell_variance = 0.0;
-        for l in 0..3 {
-            let occupancy = layers[0][l] / ch.cap[l];
+        for (l, &target) in layers[0].iter().enumerate() {
+            let occupancy = target / ch.cap[l];
             let s = 1.0 - ch.uniformity * (1.0 - 1e-6) * occupancy;
             let mass = ch.cap[l] * ch.area[l] * s / ch.frac[l];
             let rate = h * h * ch.frac[l] * occupancy / (ch.area[l] * s);
