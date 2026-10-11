@@ -205,9 +205,6 @@ Permanent tests must cover allocation including zero weights, bypass precedence,
 
 The format change must retain the existing 36 mm realization for the same source, seed, recipe, precision, and implementation. Permanent regression tests must cover the default 35 mm recipe, an arbitrary positive non-36 mm long edge, format persistence, invalid format values, unchanged output dimensions, and crop/tile identity at both smaller and larger formats. Resource-limit checks must exercise an exceeded limit without allocating the oversized canvas.
 
-## Current implementation gap
-
-The existing V3 support gate requires `camera.film_format_mm = 36.0`, and its regression test rejects `24.0`. Runtime parameter validation does not yet enforce finite positive `camera.film_format_mm` values. The geometry path already derives pitch from the global parameter. Implementation of this contract must remove the equality gate, replace the format-rejection regression with behavior tests, and add the shared finite-positive validation. It must preserve the geometry and model rules above.
 
 ## Evidence and limits
 

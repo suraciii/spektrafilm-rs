@@ -1016,4 +1016,31 @@ mod tests {
         params.film_render.grain.v3_event_area_um2 = -1.0;
         assert!(params.validate().is_err());
     }
+
+    #[test]
+    fn film_format_validation_and_persistence() {
+        let mut params = super::RuntimeParams::default();
+        assert_eq!(params.camera.film_format_mm, 35.0);
+        for engine in [
+            super::GrainEngine::V1,
+            super::GrainEngine::V2,
+            super::GrainEngine::V3,
+        ] {
+            params.film_render.grain.engine = engine;
+            for mm in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                params.camera.film_format_mm = mm;
+                let error = params.validate().unwrap_err();
+                assert!(error.contains("camera.film_format_mm"), "{error}");
+            }
+            for mm in [8.0, 35.0, 35.5, 120.0, 150.25] {
+                params.camera.film_format_mm = mm;
+                params.validate().unwrap();
+                let saved = serde_json::to_vec(&params).unwrap();
+                let restored: super::RuntimeParams = serde_json::from_slice(&saved).unwrap();
+                restored.validate().unwrap();
+                assert_eq!(restored.camera.film_format_mm, mm);
+                assert_eq!(restored.film_render.grain.engine, engine);
+            }
+        }
+    }
 }

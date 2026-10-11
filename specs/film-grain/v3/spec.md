@@ -2,7 +2,7 @@
 
 ## Status
 
-V3 is an opt-in engine. This specification defines its target support and the reference validation condition. Implementation gaps are recorded in the [design](design.md#current-implementation-gap). Acceptance evidence belongs to the delivering pull request.
+V3 is an opt-in engine. This specification defines its support and the reference validation condition. Acceptance evidence belongs to the delivering pull request.
 
 ## Goal
 

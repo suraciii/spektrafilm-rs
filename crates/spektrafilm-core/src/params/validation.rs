@@ -1,15 +1,19 @@
 use super::{RuntimeParams, Tap};
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
-const SUPPORTED_ROUTES: [&str; 7] = [
+pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
     "input",
     "input > film > scan",
     "input > film > print > scan",
-    "input > film > scan > magazine",
     "input > convert-film > print > scan",
     "input > convert-film > scan-minus-base",
     "input > convert-film > scan",
 ];
+
+/// The removed dedicated magazine workflow. Saved configurations that still
+/// name it must be migrated to a base workflow plus
+/// `magazine_print_color.active`; it is not a selectable route.
+pub(crate) const REMOVED_MAGAZINE_ROUTE: &str = "input > film > scan > magazine";
 
 /// Registered RGB-to-raw implementations. Parsing and construction share this
 /// vocabulary so a method cannot validate successfully and fail at dispatch.
@@ -76,6 +80,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
             Some((0.0, None))
         }
+        "camera.film_format_mm" => Some((0.0, None)),
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         _ => None,
@@ -337,10 +342,26 @@ impl super::PrintCurvesMorphParams {
     }
 }
 
-/// Validate wire-level enum values and cross-field constraints before any
-/// pipeline artifact is produced. The schema module owns data/defaults;
-/// this module owns the accepted runtime vocabulary.
+/// Validate the global exposed-image long edge in millimeters.
+pub(crate) fn validate_film_format_mm(value: f64) -> Result<(), String> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(
+            "camera.film_format_mm: must be finite and strictly positive (millimeters)".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate cross-field runtime vocabulary before producing a pipeline artifact.
 pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
+    validate_film_format_mm(f64::from(params.camera.film_format_mm))?;
+    if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
+        return Err(
+            "workflow.route: the magazine route was removed; use input > film > scan and set \
+             magazine_print_color.active = true"
+                .into(),
+        );
+    }
     params.validate_color()?;
     params
         .film_render
