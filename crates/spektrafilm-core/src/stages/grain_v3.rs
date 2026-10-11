@@ -17,8 +17,6 @@ use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
 
-/// Film usage of the supported condition: still photography.
-const SUPPORTED_USAGE: &str = "still";
 /// Granularity preset of the reference stock `kodak_portra_800`. A channel
 /// with this preset keeps the validated `v3_event_area_um2`; every other
 /// channel and stock is resolved against it.
@@ -141,10 +139,8 @@ pub fn active(params: &RuntimeParams) -> bool {
 }
 
 /// Fail before any work when V3 is selected outside its supported
-/// condition: still color-negative filming stocks (spec §Supported
-/// condition). The restriction is this implementation's support, not a
-/// permanent exclusion: expanding it requires the same validation for the
-/// additional condition.
+/// condition: color-negative filming stocks and film-scan or print routes
+/// (spec §Supported condition).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
     if !active(params) {
         return Ok(());
@@ -156,13 +152,12 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
         _ => false,
     };
     let info = &film.info;
-    let stock_supported =
-        film.is_negative() && film.is_filming() && film.is_color() && info.usage == SUPPORTED_USAGE;
+    let stock_supported = film.is_negative() && film.is_filming() && film.is_color();
     if stock_supported && route_supported {
         return Ok(());
     }
     Err(format!(
-        "film grain V3: unsupported condition — this implementation supports {SUPPORTED_USAGE} \
+        "film grain V3: unsupported condition — this implementation supports \
          color-negative filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
          or the `{FILM_SCAN_ROUTE}` route with io.scan_film = true, but got stock {:?} \
          (type {:?}, use {:?}, support {:?}, stage {:?}, channel model {:?}), \
@@ -419,19 +414,38 @@ mod tests {
         validate_supported(&film, &params).unwrap();
         resolve(&film, &params).unwrap();
 
-        // Still color-negative stocks share the validated boundary.
-        for stock in ["kodak_portra_400", "kodak_ultramax_400"] {
-            let other = load(stock);
-            validate_supported(&other, &params).unwrap();
-            resolve(&other, &params).unwrap();
-        }
-
-        // Other chemistry and cine stocks stay outside the support.
+        // Still and cine color-negative stocks share the same model boundary.
         for stock in [
-            "kodak_ektachrome_100",
-            "kodak_doublex",
+            "kodak_portra_400",
+            "kodak_ultramax_400",
+            "kodak_vision3_50d",
+            "kodak_vision3_250d",
+            "kodak_vision3_200t",
             "kodak_vision3_500t",
         ] {
+            let other = load(stock);
+            let mut stock_params = params.clone();
+            crate::params_builder::apply_film_specifics(&mut stock_params, &other);
+            for (route, scan_film, scan_output) in [
+                (PRINT_ROUTE, false, "direct_scan"),
+                (FILM_SCAN_ROUTE, true, "direct_scan"),
+                (FILM_SCAN_ROUTE, true, "positive_scan"),
+            ] {
+                stock_params.workflow.route = route.into();
+                stock_params.io.scan_film = scan_film;
+                stock_params.scanner.scan_output = scan_output.into();
+                let resolved = resolve(&other, &stock_params).unwrap();
+                if stock == "kodak_vision3_500t" {
+                    assert_eq!(
+                        resolved.channel_scale,
+                        [2.25, (13.0_f64 / 6.0).powi(2), 25.0]
+                    );
+                }
+            }
+        }
+
+        // Other chemistry stays outside the support.
+        for stock in ["kodak_ektachrome_100", "kodak_doublex"] {
             let other = load(stock);
             let error = validate_supported(&other, &params).unwrap_err();
             assert!(
