@@ -58,10 +58,10 @@
   only on the simulated `input > film > scan` route, applies the configured
   density brightness, RGB balance, contrast, and maximum-density controls,
   then emits output-space linear RGB.
-- `scanner.positive_black_point` and `scanner.positive_white_point` are
-  three-channel positions inside the density window that the derived inverse
-  covers. `0.0` is the channel's minimum interpreted density and `1.0` its
-  maximum. Their defaults are the unclipped window: `0.0` and `1.0`.
+- `scanner.black_point` and `scanner.white_point` are three-channel positions
+  inside the density window that the derived inverse covers. `0.0` is the
+  channel's minimum interpreted density and `1.0` its maximum. Their defaults
+  are the unclipped window: `0.0` and `1.0`.
 - Every channel must keep its black point below its white point, with both
   points inside the window. A capture at or below the black point maps to
   output black, and a capture at or above the white point maps to output white.
