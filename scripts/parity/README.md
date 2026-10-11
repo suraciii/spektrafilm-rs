@@ -403,6 +403,9 @@ Exact zoom verification temporarily widens the window to 1560 pixels so the
 400% raster fits with the preset browser visible, then restores its dimensions.
 Paper-back readiness uses the selected layer in the viewer status overlay;
 OCR ordering of the layer name and zoom text does not determine readiness.
+Zoom and rotation geometry use the known colored Input raster, selected after
+the render completes. Processed Output can be nearly neutral; its dimensions
+and metadata are checked separately through render reports and decoded Export.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
 

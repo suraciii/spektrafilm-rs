@@ -579,7 +579,7 @@ class X11:
         return state['image'], state['canvas']
 
     def measure_viewer(self, label, changed_from=None, timeout=60):
-        """Record displayed image bounds once the view change has been painted."""
+        """Measure the known colored fixture after selecting its Input raster."""
         image, canvas = self.await_viewer(changed_from, timeout, label)
         channels = [canvas[..., i].astype(np.int16) for i in range(3)]
         chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
@@ -594,6 +594,7 @@ class X11:
         image.save(self.root / screenshot)
         self.records.append({'surface': label, 'screenshot': screenshot,
                              'pixel_viewer_bounds': bounds})
+        require(bounds is not None, f'Colored Input raster is not visible for {label}: {screenshot}')
         return bounds
 
     def wait_text(self, pattern, label, timeout=120):
@@ -1679,6 +1680,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         viewing.write_text(json.dumps(viewing_state))
         driver.state_action('Load from file', viewing)
         driver.rendered('configured-after-factory-reset')
+        driver.click('Input', False)
         # Keep the preset panel visible while leaving room for all 768 pixels
         # of the 400% raster, rather than measuring a clipped zoom at 1460px.
         original_image, _ = driver.image()
@@ -1709,6 +1711,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(clockwise['configuration']['working_dimensions'] == [96, 192],
                 f"Clockwise rotation did not re-render portrait: "
                 f"{clockwise['configuration']['working_dimensions']}")
+        driver.click('Input', False)
         cw_bounds = driver.measure_viewer('clockwise-rotation', before_rotate)
         driver.tab('MAIN')
         rotated_export = root / 'rotated-export.tif'
@@ -1740,13 +1743,14 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         require(counterclockwise['configuration']['working_dimensions'] == [192, 96],
                 f"Counterclockwise rotation did not restore landscape: "
                 f"{counterclockwise['configuration']['working_dimensions']}")
+        driver.click('Input', False)
         ccw_bounds = driver.measure_viewer('counterclockwise-rotation', before_ccw)
         require(cw_bounds[3] - cw_bounds[1] > cw_bounds[2] - cw_bounds[0],
-                f'Clockwise rotation did not produce portrait pixels: {cw_bounds}')
+                f'Clockwise rotation did not produce portrait Input pixels: {cw_bounds}')
         require(ccw_bounds[2] - ccw_bounds[0] > ccw_bounds[3] - ccw_bounds[1],
-                f'Counterclockwise rotation did not restore landscape pixels: {ccw_bounds}')
+                f'Counterclockwise rotation did not restore landscape Input pixels: {ccw_bounds}')
         driver.records.append({'parity_action': 'rotate_input_image_counterclockwise',
-                               'assertion': 'counterclockwise rotation restores landscape viewer bounds',
+                               'assertion': 'counterclockwise rotation restores landscape Input viewer bounds',
                                'zoom_pixel_widths': widths,
                                'rotation_pixel_bounds': {'cw': cw_bounds, 'ccw': ccw_bounds}})
         from gui_viewer_acceptance import accept_viewer
