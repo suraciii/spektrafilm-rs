@@ -259,10 +259,11 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
     if params.scanner.scan_output != "positive_scan" {
         return Ok(());
     }
-    if params.workflow.route != "input > film > scan" || !params.io.scan_film {
+    let direct_film_scan = params.workflow.route == "input > film > scan";
+    let convert_scan = params.workflow.route == "input > convert-film > scan";
+    if !direct_film_scan && !convert_scan {
         return Err(
-            "scanner.scan_output=positive_scan requires the direct input > film > scan route"
-                .into(),
+            "scanner.scan_output=positive_scan requires a direct film scan route (input > film > scan or input > convert-film > scan)".into(),
         );
     }
     Ok(())
@@ -275,10 +276,17 @@ pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Re
     }
     if !film.is_negative() || !film.is_film() || !film.is_filming() {
         return Err(
-            "scanner.scan_output=positive_scan requires a negative film profile; \
-             positive film and paper scans use direct_scan"
-                .into(),
+            "scanner.scan_output=positive_scan requires a negative filming-stage film profile; positive film and paper scans use direct_scan".into(),
         );
+    }
+    for channel in 0..3 {
+        for row in &film.data.density_curves {
+            if !row[channel].is_finite() {
+                return Err(format!(
+                    "scanner.scan_output=positive_scan requires finite density curves (channel {channel})"
+                ));
+            }
+        }
     }
     if params.scanner.white_correction || params.scanner.black_correction {
         return Err(
@@ -637,11 +645,9 @@ mod tests {
         params.workflow.route = "input > film > print > scan".into();
         let error = validate_scan_output_route(&params).unwrap_err();
         assert!(error.contains("scanner.scan_output=positive_scan"));
-        assert!(error.contains("input > film > scan route"));
+        assert!(error.contains("direct film scan route"));
         params.workflow.route = "input > film > scan".into();
         assert!(validate_scan_output_route(&params).is_ok());
-        params.io.scan_film = false;
-        assert!(validate_scan_output_route(&params).is_err());
     }
 
     #[test]
@@ -652,9 +658,6 @@ mod tests {
         params.io.scan_film = true;
         params.scanner.scan_output = "positive_scan".into();
         assert!(validate_scan_output(&params, &film).is_ok());
-
-        params.io.scan_film = false;
-        assert!(validate_scan_output(&params, &film).is_err());
     }
 
     #[test]

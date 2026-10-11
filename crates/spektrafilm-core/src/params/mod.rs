@@ -138,6 +138,14 @@ pub struct ScannerParams {
     pub black_level: f32,
     #[serde(default = "default_unsharp")]
     pub unsharp_mask: [f64; 2],
+    #[serde(default = "default_positive_density_ev")]
+    pub positive_density_ev: f64,
+    #[serde(default)]
+    pub positive_balance_ev: [f64; 3],
+    #[serde(default = "default_positive_contrast")]
+    pub positive_contrast: f64,
+    #[serde(default = "default_positive_dmax")]
+    pub positive_dmax: f64,
 }
 
 impl Default for ScannerParams {
@@ -150,8 +158,22 @@ impl Default for ScannerParams {
             white_level: 0.98,
             black_level: 0.01,
             unsharp_mask: [0.7, 0.7],
+            positive_density_ev: default_positive_density_ev(),
+            positive_balance_ev: [0.0; 3],
+            positive_contrast: default_positive_contrast(),
+            positive_dmax: default_positive_dmax(),
         }
     }
+}
+
+fn default_positive_density_ev() -> f64 {
+    0.8781766618
+}
+fn default_positive_contrast() -> f64 {
+    0.73551400058216643
+}
+fn default_positive_dmax() -> f64 {
+    1.5625841465572565
 }
 
 fn default_one_f64() -> f64 {
