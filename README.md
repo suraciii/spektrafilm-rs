@@ -18,13 +18,13 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|positive_scan`; `positive_scan` uses the CPU per-stage scanner-domain interpretation and is rejected for paper, positive-film, convert-film, white/black-corrected, or active-Grain-V2 routes. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can scan with or without the film base.
 - **Magazine print color.** The optional finishing treatment applies a bundled RGB appearance to any supported base workflow — a scanned negative or a finished RGB input — after the base workflow and its scanner-domain effects: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. `magazine_print_color.active` and one appearance Strength from 0 to 1 enable it independently of the base workflow; there is no magazine route. It remains RGB-only and does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
-- **Selectable grain engines.** V1 remains the default emulsion model. V2 provides procedural Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls. V3 conditions a film-coordinate dye field whose film-space support is exposed as `v3_dye_support_um`.
+- **Selectable grain engines.** V1 remains the default emulsion model. V2 provides procedural Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls. V3 conditions a film-coordinate dye field controlled by its film-space support `v3_dye_support_um` and event area `v3_event_area_um2`.
 
 ## Build
 
 Requires Rust stable (≥ 1.88), a C++17 compiler, pkg-config, OpenImageIO and Exiv2 development libraries. The locked `image` dependency requires Rust 1.88. Image I/O uses the same native libraries as Python 0.3.4, preserving float samples and EXIF/IPTC/XMP. On Debian/Ubuntu install `libopenimageio-dev libexiv2-dev libopenblas-dev`; Linux links the installed OpenBLAS library. On macOS use `brew install openimageio exiv2 pkg-config`. Windows packaging uses a matching MSYS2 UCRT64 native toolchain and pkg-config dependencies. The package scripts collect native runtime libraries; the build fails explicitly when required development libraries are absent.
 
-The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI checks all workspace targets with default and `precision-f64` features and runs the math unit tests, without release builds, Python parity or packaging. Pushes to `main-0.3.4` run the full three-platform release workflow: workspace tests, native builds and package smoke, plus the existing Linux Python parity and LUT acceptance checks. Version tags and manual dispatch also retain the full workflow.
+The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI runs the full `just ci` gate through `just verify`: formatting, all-target checks with default and `precision-f64` features, first-party Clippy, and workspace tests. It retains verification evidence without release builds, Python parity or packaging. Pushes to `main-0.3.4` run the full three-platform release workflow: workspace tests, native builds and package smoke, plus the existing Linux Python parity and LUT acceptance checks. Version tags and manual dispatch also retain the full workflow. Release runs use one concurrency group per ref. A commit pushed while a release run is active waits as the single pending run, and a later commit replaces that pending run, so only the newest commit is built. An active run is never canceled for a newer commit.
 
 ```bash
 git clone <this-repo> && cd spektrafilm-rs
@@ -80,7 +80,8 @@ The public Canon EOS 40D sRAW CR2 fixture also matches all four modes at zero ma
 
 The rebuilt f64 CLI and its relocated Linux archive also passed eight fresh RAW comparisons against the pinned Python loader: all four white-balance modes on Kodak 768×512 with missing-lens correction, and Canon 1944×1296 with injected known-lens EXIF. The unbounded `rgb_in` boundary matched exactly (maximum and mean absolute error zero). The relocated RAW helper independently matched Kodak pixels exactly under a clean environment. The earlier packaged GUI launched under Xvfb and its prepared-image export preserved EXIF/IPTC/XMP and ICC bytes; this is historical evidence for the earlier export implementation.
 
-WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference.
+WGPU/WGSL is the only GPU backend and can be selected explicitly with `SPEKTRAFILM_BACKEND=wgpu`; CPU is the fallback when no usable adapter is available. GUI Preview and Scan prefer GPU execution with faithful CPU stages for unsupported effects. GUI CPU execution uses the build's native precision; the separate `spektrafilm-f64` CLI remains the CPU f64 reference. Linux GPU acceptance requires the Mesa software Vulkan adapter (`mesa-vulkan-drivers`).
+
 The `just` command surface also covers packaging and per-user installation:
 
 ```bash
@@ -91,6 +92,10 @@ just ci
 just package
 just install
 ```
+
+Run `just verify /absolute/path/outside/the/repo/new-directory` to retain gate evidence. The directory must not exist. The runner displays and saves combined output in `gate.log`, preserves the gate's failure exit status, and writes `report.json` on success or failure. The report records commit and tree IDs, tracked changes in `before.diff` and `after.diff`, hashes of untracked files, tool versions, timestamps, and exit status. A source change during verification fails the run. The evidence covers `just ci`; native GUI, image, CLI, and package smoke evidence remains separate. Call this entry point directly so an outer shell pipeline cannot mask its exit status.
+
+`just ci` first runs `just check-python-cache`. This check rejects Git-index paths with a `__pycache__` component or a `.pyc` or `.pyo` suffix, including files added with `git add -f`. Python caches remain ignored local outputs.
 
 `just package` creates a self-contained directory and archive under `dist/`.
 `just install` installs without administrator privileges. On Unix-like systems
@@ -161,6 +166,20 @@ executable.
 ./target/release/spektrafilm list-profiles --data-dir data
 ```
 
+`cinestill_800t_cs41_approx` is an experimental approximation of CineStill 800T in Cs41. It fits the manufacturer's [RGB sensitometry chart](https://cinestillfilm.com/blogs/news/what-makes-800t-the-original-and-only-true-800-speed-tungsten-balanced-film-for-still-photography) through the inherited Vision3 500T dye spectra and a fitted base-density correction. The [official Cs2 page](https://cinestillfilm.com/products/cs2-cine-simplified-ecn-2-bath-kit-low-contrast-motion-picture-color-negatives-for-ecp-scanning) identifies the source experiment as 21-step sensitometry. The chart specifies 3200 K tungsten, 1/50 s and a log-exposure reference of -1.535. Its density measurement standard and actual development time and temperature are unknown; Status M is a fitting assumption.
+
+The material profile computes developed dye amounts and spectral density before printing or scanning. It does not provide measured CineStill spectral sensitivity, dye spectra, grain or halation. Its fitted CDF components are mathematical terms, not measured emulsion layers. Keep grain disabled for material comparisons, and compare halation separately. The chart reference of -1.535 defines the chosen model exposure origin; it does not establish absolute ISO or prove that the manufacturer's reference is an 18% gray exposure. Metadata records the sources, approximations and attribution. The derivative retains Andrea Volpato's CC BY-SA 4.0 asset license.
+
+The built-in `CineStill 800T Cs41 (experimental)` look uses RGB halation strengths `[0.30, 0.01, 0.005]` from [Andrea Volpato's PIXLS airplane example](https://discuss.pixls.us/t/spectral-film-simulations-from-scratch/48209/778), with the first sigma reduced from 200 to 65 micrometers in all channels and the bounce count reduced from five to three. Fixed-input comparisons across a cafe, two night scenes and a portrait showed less shadow spill while retaining bright-edge halation. These are unmeasured appearance parameters, not a calibrated CineStill PSF. Grain, scattering, DIR couplers, glare, sharpening, and highlight boost are disabled. The look preserves the caller's camera exposure and input color interpretation. Its optional Portra Endura settings balance synthetic linear-sRGB midgray; they do not change the film material. Select the workflow separately.
+
+```bash
+./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
+    --preset 'CineStill 800T Cs41 (experimental)' --backend cpu --data-dir data \
+    --route 'input > film > scan' --scan-output positive_scan
+```
+
+This command bypasses printing. `positive_scan` interprets the spectral scan with fixed clear-film and dense-film endpoints from this profile. It is a linear transmittance inversion, not a model of a commercial scanner's tone curve. Its displayed brightness and color must not be treated as a measurement of the film or as a match to a processed reference JPEG. Hold the profile, exposure, white balance and scan settings fixed, then add `--set film_render.halation.active=false` to isolate halation. For optional photographic printing, use `--route 'input > film > print > scan' --scan-output direct_scan`. Photographs with unknown film exposure, development and scanning cannot determine unique material or halation parameters.
+
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. `--format` must match the output extension when supplied; otherwise the extension selects JPEG/PNG/TIFF/EXR. Bit depth defaults to 8 for JPEG/PNG and 16 for TIFF/EXR; JPEG/PNG require 8-bit, EXR requires 16- or 32-bit. JPEG defaults to quality 95 and 4:4:4; `--compression zip|none` applies to TIFF/EXR, while JPEG/PNG reject compression options. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
 `process` and `render` accept `--diagnostics REPORT.json`. Add `--gpu-timings` to collect compute-pass timestamps when the adapter supports them. The report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons. Diagnostics do not change image parameters or machine-readable render output. Report-write errors are reported separately from the image result. CLI reports never replace an existing file. Report paths must not alias input, output, or configuration files.
@@ -172,24 +191,27 @@ executable.
 
 See [the telemetry contract](specs/telemetry/spec.md) and [report metrics](specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
 
-`process` accepts a built-in or TOML/JSON look through `--preset`. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments in order. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths, composition, and validation. Legacy `--params` remains a JSON runtime baseline.
+`process` accepts an exact preset name or a TOML/JSON preset file through `--preset`. Repeat `--preset` to apply documents in appearance order: a look selects profiles and replaces look controls, then a section edits only its supplied controls. Repeat `--set` to apply sparse TOML/JSON files or comma-separated `PATH=VALUE` assignments after the presets. String and enum values need no JSON quotes: use `--set film_render.grain.engine=v2` or `--set 'io.output_color_space=ProPhoto RGB'`. Use `true`/`false` for booleans, numbers for numeric controls, `[1,2,3]` for arrays, and `null` to clear optional controls. The [CLI parameter language](specs/cli-parameters/spec.md) defines editable paths and composition.
+
+Preset names are their portable identities. Core reads schema v1 documents by discarding their old `id` and exports schema v2. Built-ins are compiled from `crates/spektrafilm-core/assets/presets`; user documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in; `user:` and `built-in:` select one group. Section documents contain sparse editable leaves from exactly one look section and retain omitted controls on application. Explicit JSON null edits require JSON export; TOML cannot represent those edits.
 
 ```bash
-# Discover portable looks and editable grain controls
-./target/release/spektrafilm preset list --data-dir data
-./target/release/spektrafilm preset show classic-kodak-portra-400 --data-dir data
+# Discover portable presets and editable grain controls
+./target/release/spektrafilm preset list --source all --format text
+./target/release/spektrafilm preset show 'Kodak Portra 400' --data-dir data
 ./target/release/spektrafilm describe --module film_render.grain --format json
 
 # Inspect the effective configuration without decoding pixels or creating output
 ./target/release/spektrafilm process input.png -o output.tif \
-    --preset classic-kodak-portra-400 \
+    --preset 'Kodak Portra 400' \
+    --preset 'Soft grain' \
     --set film_render.grain.engine=v2 \
     --set 'camera.exposure_compensation_ev=0.5,film_render.grain.v2_amount=25' \
     --dry-run --data-dir data
 
 # Apply a sparse file, then an inline edit, with independent writer settings
 ./target/release/spektrafilm-f64 process input.png -o output.tif \
-    --preset classic-kodak-portra-400 --set adjustments.toml \
+    --preset 'Kodak Portra 400' --set adjustments.toml \
     --set 'enlarger.print_exposure=1.2' --backend cpu \
     --format tiff --bit-depth 16 --compression zip \
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
@@ -257,8 +279,8 @@ SPEKTRAFILM_BACKEND=cpu ./target/release/spektrafilm-f64 lut build build/lut_bun
 ```
 Data-consuming commands select `--data-dir`, then `SPEKTRAFILM_DATA_DIR`, then
 automatic executable-relative or working-directory data. Explicit selections
-must exist and never fall back. Help, version, field discovery, and built-in
-preset listing without an explicit selection need no data. See the
+must exist and never fall back. Help, version, field discovery, and preset
+listing without an explicit selection need no data. See the
 [CLI workflow contract](specs/cli-workflow/spec.md#data-directory-selection).
 Profile metadata and array dimensions are validated before construction;
 present but malformed neutral-filter JSON is an error.
@@ -357,7 +379,7 @@ V1 grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (default, m
 
 Both V1 composite and layered grain use the CPU sampler during preview and export; no resident WGPU V1 grain shader is maintained. Active V1 grain rendering selects the faithful per-stage path. The separate Grain V2 implementation remains available.
 
-Grain V3 is selected with `film_render.grain.engine: "v3"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (micrometers, default `8.0`, finite and strictly positive; the field-cell pitch is `support / 2`) and realizes film-space counts from the resolved `particle_area_um2`, `particle_scale`, `particle_scale_sublayers`, `density_min` and `uniformity` controls, forming every channel from the film's three sublayers. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. The first implementation supports `kodak_portra_800`, a **36 mm** long edge and the `input > film > scan` route; another stock, format, print or convert-film route fails with an actionable unsupported-condition error. V3 resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the V3 specification](specs/film-grain/v3/spec.md).
+Grain V3 is selected with `film_render.grain.engine: "v3"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (Gaussian sigma in micrometers, default `3.5`; the field-cell pitch is `support / 2`) and realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers` (square micrometers, default `1.28`), using the resolved `density_min` and `uniformity` and forming every channel from the film's three sublayers. Both controls must be finite and strictly positive. The channel scale is `k_c = (rms_granularity_c / 6)²`, where `6` is the preset of the reference stock `kodak_portra_800`. It is the only per-channel strength input: V3 does not read V1's `particle_area_um2` or `particle_scale`, whose blue-heavy default would double a coarser blue record. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. V3 supports still color-negative profiles (`info.type = "negative"`, `info.use = "still"`) at a **36 mm** long edge. The reference route is `input > film > print > scan` with `io.scan_film = false`. The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `positive_scan` and `direct_scan`. Another chemistry or usage (including cine), format, or route fails with an actionable unsupported-condition error. V3 resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the V3 specification](specs/film-grain/v3/spec.md).
 
 The LUT path (`use_enlarger_lut` + `use_scanner_lut`) ports Python's PCHIP 3D interpolation (`crates/spektrafilm-math/src/pchip3d.rs` ↔ `spektrafilm/utils/fast_interp_lut.py`). The executed f64 LUT-reduction scenarios passed the **1e-5** maximum absolute-error budget; the 265 delivered LUT stock/topology/transport cases passed independent Python comparisons.
 

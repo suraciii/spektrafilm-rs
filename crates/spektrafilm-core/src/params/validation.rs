@@ -73,7 +73,9 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "film_render.grain.v2_resolution_type" => Some((0.0, Some(1.0))),
         "film_render.grain.v2_timer" => Some((0.0, Some(1.0))),
         // Discovery range only; `validate` owns the strict positivity.
-        "film_render.grain.v3_dye_support_um" => Some((0.0, None)),
+        "film_render.grain.v3_dye_support_um" | "film_render.grain.v3_event_area_um2" => {
+            Some((0.0, None))
+        }
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         _ => None,
@@ -329,6 +331,12 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     if !grain.v3_dye_support_um.is_finite() || grain.v3_dye_support_um <= 0.0 {
         return Err(
             "film_render.grain.v3_dye_support_um: must be finite and strictly positive (micrometers)"
+                .into(),
+        );
+    }
+    if !grain.v3_event_area_um2.is_finite() || grain.v3_event_area_um2 <= 0.0 {
+        return Err(
+            "film_render.grain.v3_event_area_um2: must be finite and strictly positive (square micrometers)"
                 .into(),
         );
     }

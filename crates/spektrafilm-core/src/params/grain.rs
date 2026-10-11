@@ -78,6 +78,11 @@ pub struct GrainParams {
     /// V3-only; V1 and V2 never read it.
     #[serde(default = "default_v3_dye_support_um")]
     pub v3_dye_support_um: f32,
+    /// Base statistical event area of V3, in square film micrometers. The
+    /// stock granularity preset scales it per channel; it never changes the
+    /// dye support. V3-only; V1 reads `particle_area_um2` instead.
+    #[serde(default = "default_v3_event_area_um2")]
+    pub v3_event_area_um2: f64,
     #[serde(default = "default_07")]
     pub mult_usm_sigma: f32,
     #[serde(default = "default_15")]
@@ -133,11 +138,15 @@ fn default_particle_scale_layers_f64() -> [f64; 3] {
 fn default_particle_scale_sublayers_f64() -> [f64; 3] {
     [1.0, 0.4, 0.25]
 }
-/// Candidate default dye support (design §Parameters): an empirical starting
-/// value that must pass photographic and numerical acceptance before it is
-/// described as validated.
+/// Default dye support selected with the default event area on the reference
+/// condition (`specs/film-grain/v3/design.md` §Parameters).
 fn default_v3_dye_support_um() -> f32 {
-    8.0
+    3.5
+}
+/// Validated event area of the reference stock `kodak_portra_800`
+/// (`specs/film-grain/v3/design.md` §Parameters).
+fn default_v3_event_area_um2() -> f64 {
+    1.28
 }
 fn default_grain_v2_resolution_type() -> u32 {
     1
@@ -189,6 +198,7 @@ impl Default for GrainParams {
             uniformity: [0.97, 0.97, 0.97],
             particle_scale_sublayers: [1.0, 0.4, 0.25],
             v3_dye_support_um: default_v3_dye_support_um(),
+            v3_event_area_um2: default_v3_event_area_um2(),
             blur: 0.89,
             mult_usm_sigma: 0.7,
             mult_usm_amount: 1.5,

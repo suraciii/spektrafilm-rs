@@ -261,8 +261,8 @@ pub fn show(
                     flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
                 } else if grain.engine == GrainEngine::V3 {
                     flags.runtime_changed |= numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, 1.0, 32.0, 0.5, 1, "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
-                    flags.runtime_changed |= numeric(ui, "particle area (µm²)", &mut grain.particle_area_um2, 0.05, 1.0, 0.05, 2, "Statistical event area in square film micrometers; controls grain strength independently of dye support.");
-                    flags.runtime_changed |= tuple(ui, "particle scale", &mut grain.particle_scale, 0.0, 1000000.0, 0.25, 2, "Relative particle scale per channel.");
+                    flags.runtime_changed |= numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, 0.1, 8.0, 0.05, 2, "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
+                    flags.runtime_changed |= tuple(ui, "rms granularity", &mut grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
                     flags.runtime_changed |= tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, 0.0, 1000000.0, 0.25, 2, "Relative particle scale per emulsion sublayer.");
                     flags.runtime_changed |= tuple(ui, "density min", &mut grain.density_min, 0.0, 1000000.0, 1.0, 2, "Minimum grain density.");
                     flags.runtime_changed |= tuple(ui, "uniformity", &mut grain.uniformity, 0.0, 1.0, 0.01, 2, "Per-channel grain uniformity.");
