@@ -367,6 +367,57 @@ The same gate compares 32 additional diagnostic results for disabled xy and
 active oklch input compression, separately from the 112 baseline results.
 
 
+## Native GUI acceptance
+
+Build the acceptance executables with source evidence before running a native
+scenario. Keep both output directories outside the repository and use new
+directories for each run:
+
+```bash
+just build-evidence /data/tmp/spektrafilm-build dev
+xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- \
+  python3 -B scripts/parity/gui_acceptance.py \
+  --build-manifest /data/tmp/spektrafilm-build/manifest.json \
+  --scenario chooser --evidence-dir /data/tmp/spektrafilm-chooser
+```
+
+Use the Python environment with the desktop and image dependencies listed below.
+The `Native GUI acceptance` workflow contains the pinned Linux dependency setup.
+It runs on manual dispatch and a weekly schedule, independently of PR checks.
+Manual dispatch selects the scenario; the scheduled run selects `full`.
+
+Each scenario prepares its own state and fixtures:
+
+- `chooser` exercises native file selection and state saving.
+- `export` exercises output formats, depth, and produced image files.
+- `viewer` exercises view selection, geometry, interpolation, animations,
+  display isolation, and profile persistence.
+- `cancel` exercises cancellation and window close while Export is active.
+- `full` runs the complete acceptance flow, including workflow, state, and RAW
+  assertions. A partial scenario does not establish a full acceptance pass.
+
+The build manifest binds Cargo-reported artifact paths and hashes to the source
+snapshot, features, target, profile, data, and tool versions. The f64 reference
+exporter has a separate build directory from native-precision executables.
+Acceptance checks the manifest before launch, records driver and fixture
+identities separately, checks the source revision in operation reports, and
+rechecks inputs at completion. Keep the built checkout and binaries unchanged
+while a run is active. A stale binary or changed input fails provenance checking.
+
+Terminal output reports scenario progress and the final report path. `run.log`
+retains detailed waits and tracebacks. `report.json` records the selected scope,
+stage outcomes, failure, and final identity check. `run_identity.json` records
+the build, drivers, fixtures, and launch environment. Each scenario directory
+retains its observations, operation reports, screenshots, and native process log.
+Control-selection observations include the crop, independent OCR candidates,
+and chosen coordinates. Failures retain the last available window and viewer
+crop; diagnostic capture failures remain explicit in the observations.
+
+For local fixed-input runs, pass `--raw-fixture /absolute/path/input.KDC`.
+Without it, scenarios that use RAW download the pinned Kodak fixture and verify
+its SHA-256. Generated image dimensions belong to those fixtures; they do not
+describe another package-smoke input.
+
 The package smoke command always covers installed image/metadata/RAW paths,
 LUT/OCIO/QA delivery and binary provenance. Native GUI acceptance is optional:
 pass `--gui` only for a real desktop/Xvfb run. The release workflow currently
@@ -404,37 +455,54 @@ Exact zoom verification temporarily widens the window to 1560 pixels so the
 Paper-back readiness uses the selected layer in the viewer status overlay;
 OCR ordering of the layer name and zoom text does not determine readiness.
 Zoom and rotation geometry use the known colored Input raster, selected after
-the render completes. Processed Output can be nearly neutral; its dimensions
-and metadata are checked separately through render reports and decoded Export.
+the render completes. Measurement waits for visible chroma, the requested pixel
+width or orientation, and stable pixels. Repeated Paper-back or earlier
+geometry frames do not establish readiness. Processed Output can be nearly
+neutral; its dimensions and metadata are checked separately through render
+reports and decoded Export.
 White-padding verification waits for the requested white border before
 measuring pixel differences; an unrelated changed frame is not completion.
-Crossfade verification disables automatic preview while changing exposure,
-then clicks Preview to request the animated render.
+Animation references are prepared with fixed exposure settings. A native display
+transform toggle and restoration clears setup animation. Input must present its
+known source width at 100% zoom; Output must then replace it and settle again
+after restoring fit. A colored stale Output cannot satisfy the Input barrier.
+Reveal and Crossfade capture through their new successful Preview report and
+an exact match to the independently prepared final raster sample. Reports must
+contain the expected input and working dimensions; evidence retains the matched
+operation ID. Crossfade requires two distinct intermediate blends. Reveal also
+requires intermediate frames outside the linear endpoint blend. Both repeat the
+action with animation disabled, which must fail the same animation criterion.
 The Linux file chooser driver tracks its native window through closure and
 locates the primary action beside Cancel in the window's bottom button row.
 It does not treat the Open files read-only checkbox as an Open action.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
+Action-button discovery parks the pointer in the viewer's layer-tab bar.
+Residual sidebar scroll must not change canvas zoom or pan during discovery.
 
-Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
-engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo,
+Desktop acceptance requires NumPy, OpenImageIO, Exiv2 Python bindings, Pillow,
+mss, pytesseract, psutil, and the Tesseract engine. Linux additionally requires
+openbox, xdotool, xclip, xprop, xwininfo,
 zenity, ffmpeg, gdbus, and a working GTK file chooser portal on the same display.
-The driver checks portal readiness before launching the GUI. Package smoke also
-builds a ZIP bundle through the installed exporter, checks offline
-report references and artifacts, and executes its delivered OCIO processors.
-`package_smoke.py` requires `--package-root` and writes `package_report.json`
-next to `observations.json`. It records the Rust HEAD, pinned reference commit,
-platform, worktree status, a deterministic package-tree SHA256, each delivered
-binary SHA256 and the observed scenario results. A passing smoke command without
+The driver checks portal readiness before launching the GUI. Each Linux scenario
+verifies that the window manager's advertised X11 window still exists and points
+back to itself before reusing it. Otherwise, the scenario starts its own Openbox.
+Package smoke also builds a ZIP bundle through the installed exporter, checks
+offline report references and artifacts, and executes its delivered OCIO processors.
+`package_smoke.py` requires `--package-root` and its `build-manifest.json`;
+`--build-manifest` selects another explicit manifest path. It writes
+`package_report.json` next to `observations.json`. The report records the build's
+source snapshot and revision, pinned reference commit, platform, package-tree
+SHA-256, delivered binary hashes, and observed scenario results. Package
+transforms retain the original build hashes. A passing smoke command without
 that provenance is not publication evidence.
 For a single local gate, provide the built f64 CLI and portable package:
 
 ```bash
 xvfb-run -a -s '-screen 0 1600x1100x24' dbus-run-session -- python3 scripts/parity/run_all.py \
-  --rust-bin target/release/spektrafilm-f64 \
-  --data-dir data \
+  --build-manifest /data/tmp/spektrafilm-build/manifest.json \
   --package-root dist/spektrafilm-linux-x64 \
-  --out-root target/acceptance
+  --out-root /data/tmp/spektrafilm-unified-acceptance
 ```
 
 The wrapper runs the existing runtime parity, LUT acceptance, and package smoke
@@ -443,7 +511,8 @@ or on the first failed check and writes command logs plus `report.json`.
 The wrapper uses `SPEKTRAFILM_PY` for installed package acceptance and defaults
 to the pinned reference venv; `SPEKTRAFILM_PY_REPO` defaults to the sibling
 checkout. Supply both variables on CI or when using another checkout. Final
-reports record the Rust HEAD, executable SHA256, platform and reference pin.
+reports record the attested build source, executable SHA-256, platform, and
+reference pin.
 
 `--raw-fixture PATH` reuses the pinned Kodak KDC download when network access
 is unavailable; the same required SHA256 check runs before decoding.

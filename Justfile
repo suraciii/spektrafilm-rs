@@ -44,29 +44,47 @@ test:
 check-python-cache:
     python3 scripts/check_python_cache.py
 
+# Python syntax and clear-error lint checks (pip install -r scripts/requirements-check.txt).
+check-python:
+    python3 -B scripts/check_python.py
+    python3 -m ruff check --no-cache scripts tests
+
+# Offline OCR/geometry and animation regressions; only Python stdlib is required.
+test-gui-driver:
+    python3 -B -m unittest discover -s tests -p 'test_*.py' -v
+
 # Full local gate. PR CI runs this same command.
-ci: check-python-cache fmt check check-f64 clippy test
+ci: check-python-cache check-python test-gui-driver fmt check check-f64 clippy test
 
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
     python3 scripts/verify.py {{quote(evidence_dir)}}
 
+# Build all native acceptance binaries and bind them to source identity.
+build-evidence evidence_dir profile="dev":
+    python3 -B scripts/build_evidence.py --out-dir {{quote(evidence_dir)}} --profile {{quote(profile)}}
+
+# Run a real desktop scenario using a build-evidence manifest (default: full).
+# Linux requires Xvfb, a session D-Bus, GTK portal, and native GUI dependencies.
+test-gui build_manifest evidence_dir scenario="full":
+    python3 -B scripts/parity/gui_acceptance.py --build-manifest {{quote(build_manifest)}} --evidence-dir {{quote(evidence_dir)}} --scenario {{quote(scenario)}}
+
 # Create a self-contained portable directory and archive under dist/.
 [unix]
-package: build
+package:
     ./scripts/package_unix.sh
 
 [windows]
-package: build
+package:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package_windows.ps1
 
 # Install into a per-user location. Set SPEKTRAFILM_INSTALL_ROOT to override it.
 [unix]
-install: build
+install:
     ./scripts/install_unix.sh
 
 [windows]
-install: build
+install:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install_windows.ps1
 
 # Build the native macOS .app bundle.

@@ -1,0 +1,6 @@
+# Catch parser errors, undefined names, and invalid control flow without
+# imposing formatting or style changes on the acceptance drivers.
+target-version = "py313"
+
+[lint]
+select = ["E9", "F63", "F7", "F82"]

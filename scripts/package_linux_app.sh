@@ -3,8 +3,7 @@
 # This script never builds; callers produce the release binaries first.
 set -euo pipefail
 
-BUILD_TARGET_DIR="${BUILD_TARGET_DIR:-target/linux-app}"
-RELEASE_SUBDIR="${RELEASE_SUBDIR:-release}"
+BUILD_MANIFEST="${BUILD_MANIFEST:-}"
 DIST_DIR="${DIST_DIR:-dist/spektrafilm-linux-x64}"
 APP_NAME="$(basename "$DIST_DIR")"
 
@@ -17,8 +16,8 @@ case "$package_path" in
     /|"$repo_root"|"$repo_root"/scripts|"$repo_root"/data|"$repo_root"/crates)
         fail "DIST_DIR must name a generated package directory: $DIST_DIR" ;;
 esac
-[[ "$package_path" != "$(realpath -m -- "$BUILD_TARGET_DIR")" ]] ||
-    fail "DIST_DIR must differ from BUILD_TARGET_DIR"
+[[ -z "$BUILD_MANIFEST" || "$package_path" != "$(dirname "$(realpath -m -- "$BUILD_MANIFEST")")" ]] ||
+    fail "DIST_DIR must differ from build evidence directory"
 DIST_DIR="$package_path"
 canonical_file() {
     local resolved
@@ -37,11 +36,7 @@ for module in lensfun exiv2 glib-2.0 OpenImageIO; do
     pkg-config --exists "$module" || fail "native development dependency missing: $module"
 done
 
-release_dir="$BUILD_TARGET_DIR/$RELEASE_SUBDIR"
-[[ -d "$release_dir" ]] || fail "release directory missing: $release_dir"
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
-    [[ -x "$release_dir/$executable" ]] || fail "built executable missing: $release_dir/$executable"
-done
+source scripts/package_evidence.sh
 
 library_dirs=()
 for module in libraw lensfun exiv2 glib-2.0 OpenImageIO; do
@@ -105,7 +100,7 @@ rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib/spektrafilm" "$DIST_DIR/share/licenses"
 
 for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
-    canonical_file "$release_dir/$executable" >"$DIST_DIR/.source.$executable"
+    canonical_file "$(binary_source "$executable")" >"$DIST_DIR/.source.$executable"
     cp "$(cat "$DIST_DIR/.source.$executable")" "$DIST_DIR/lib/spektrafilm/$executable"
     chmod 0755 "$DIST_DIR/lib/spektrafilm/$executable"
     rm "$DIST_DIR/.source.$executable"
@@ -114,11 +109,11 @@ done
 declare -A dependency_sources
 queue=()
 for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
-    queue+=("$(canonical_file "$release_dir/$executable")")
+    queue+=("$(canonical_file "$(binary_source "$executable")")")
 done
 # winit/xkbcommon-dl loads these through dlopen, so they have no ELF NEEDED edge.
 for dependency in libxkbcommon.so.0 libxkbcommon-x11.so.0; do
-    source_path="$(resolve_dependency "$dependency" "$release_dir/spektrafilm-gui" || true)"
+    source_path="$(resolve_dependency "$dependency" "$(binary_source spektrafilm-gui)" || true)"
     [[ -n "$source_path" ]] || fail "GUI runtime provider missing: $dependency"
     dependency_sources["$dependency"]="$source_path"
     cp "$source_path" "$DIST_DIR/lib/$dependency"
@@ -250,6 +245,8 @@ exec "\$root/lib/spektrafilm/$executable" "\$@"
 LAUNCHER
     chmod 0755 "$launcher"
 done
+
+python3 scripts/build_evidence.py --manifest "$BUILD_MANIFEST" --package-root "$DIST_DIR" --layout linux --transformation patchelf-rpath
 
 mkdir -p "$(dirname "$DIST_DIR")"
 tar --sort=name --owner=0 --group=0 --numeric-owner \

@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+source scripts/package_evidence.sh
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
     default_root="$HOME/Library/Application Support/Spektrafilm"
@@ -15,7 +16,7 @@ bin_dir="${SPEKTRAFILM_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$install_root" "$bin_dir"
 
 for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
-    source="$repo_root/target/release/$binary"
+    source="$(binary_source "$binary")"
     test -x "$source" || { echo "missing release binary: $source" >&2; exit 1; }
     cp "$source" "$install_root/$binary"
     chmod 755 "$install_root/$binary"
@@ -23,6 +24,7 @@ done
 
 rm -rf "$install_root/data"
 cp -R "$repo_root/data" "$install_root/data"
+python3 scripts/build_evidence.py --manifest "$BUILD_MANIFEST" --package-root "$install_root"
 
 for binary in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
     ln -sfn "$install_root/$binary" "$bin_dir/$binary"

@@ -9,7 +9,72 @@ import re
 import sys
 import time
 
-import numpy as np
+def transition_evidence(before, frames, after, threshold=1.0):
+    """Require two distinct blend frames, excluding both endpoint rasters.
+
+    Flat RGB samples keep this criterion usable without desktop dependencies.
+    Projection onto the endpoint difference rejects unrelated repaint noise.
+    """
+    before, after = tuple(before), tuple(after)
+    _require(len(before) == len(after) and bool(before), 'Animation endpoints differ in size')
+    direction = tuple(b - a for a, b in zip(before, after))
+    energy = sum(d * d for d in direction)
+    delta = sum(abs(d) for d in direction) / len(direction)
+    intermediate = []
+    for index, frame in enumerate(frames):
+        frame = tuple(frame)
+        _require(len(frame) == len(before), 'Animation frame differs in size')
+        if not energy:
+            continue
+        alpha = sum((v - a) * d for v, a, d in zip(frame, before, direction)) / energy
+        start_distance = sum(abs(v - a) for v, a in zip(frame, before)) / len(before)
+        end_distance = sum(abs(v - b) for v, b in zip(frame, after)) / len(before)
+        residual = sum(abs(v - (a + alpha * d))
+                       for v, a, d in zip(frame, before, direction)) / len(before)
+        if (0.05 < alpha < 0.95 and min(start_distance, end_distance) > threshold
+                and residual <= max(threshold, delta * 0.15)):
+            intermediate.append({'frame': index, 'alpha': alpha, 'residual': residual})
+    distinct = any(abs(a['alpha'] - b['alpha']) >= 0.05
+                   for a in intermediate for b in intermediate)
+    return {'passed': delta > threshold and len(intermediate) >= 2 and distinct,
+            'endpoint_mean_delta': delta, 'intermediate_frames': intermediate}
+
+def reveal_evidence(before, frames, after, threshold=1.0):
+    """Require distinct nonlinear reveal frames outside both endpoint rasters."""
+    _require(bool(before) and len(before) == len(after), 'Reveal endpoints differ in size')
+    intermediate = []
+    distinct = []
+    direction = tuple(b - a for a, b in zip(before, after))
+    energy = sum(d * d for d in direction)
+    nonlinear = []
+    for index, frame in enumerate(frames):
+        _require(len(frame) == len(before), 'Reveal frame differs in size')
+        if min(_sample_distance(frame, before), _sample_distance(frame, after)) <= threshold:
+            continue
+        alpha = (sum((v - a) * d for v, a, d in zip(frame, before, direction)) / energy
+                 if energy else 0.0)
+        residual = sum(abs(v - (a + alpha * d))
+                       for v, a, d in zip(frame, before, direction)) / len(before)
+        if residual > threshold:
+            nonlinear.append(index)
+        if all(_sample_distance(frame, other) > threshold for other in distinct):
+            distinct.append(frame)
+            intermediate.append(index)
+    delta = _sample_distance(before, after)
+    return {'passed': delta > threshold and len(distinct) >= 2 and bool(nonlinear),
+            'endpoint_mean_delta': delta, 'intermediate_frames': intermediate,
+            'nonlinear_frames': nonlinear}
+
+
+def _sample_distance(left, right):
+    _require(bool(left) and len(left) == len(right), 'Viewer samples differ in size')
+    return sum(abs(a - b) for a, b in zip(left, right)) / len(left)
+
+
+def _sample(image):
+    return tuple(value for pixel in _viewer_crop(image).convert('RGB').resize((96, 64)).getdata()
+                 for value in pixel)
+
 
 from gui_acceptance import viewer_canvas_bounds, wait_for
 
@@ -76,13 +141,76 @@ def _record_frame(driver, records, label):
     return image
 
 
-def _transition_frames(driver, records, label, count=24, interval=0.05):
+def _preview_dimensions(report, records, label, dimensions):
+    input_size, working_size = dimensions
+    configuration = report['configuration']
+    _require(configuration['input_dimensions'] == list(input_size)
+             and configuration['working_dimensions'] == list(working_size),
+             f'Preview dimensions differ on {label}: {configuration}')
+    records.append({'scenario': label + '-report', 'operation_id': report['operation']['id'],
+                    'input_dimensions': configuration['input_dimensions'],
+                    'working_dimensions': configuration['working_dimensions']})
+
+
+def _loaded_preview_dimensions(driver, records, label, dimensions):
+    report = json.loads((driver.report_directory /
+                         f'operation-{driver.last_report_id}.json').read_text())
+    _preview_dimensions(report, records, label, dimensions)
+
+
+def _present_output(driver, records, label, input_width):
+    """Clear setup animation and establish distinct Input/Output presentations.
+
+    Input at 100% must reach its known source width before Output is selected.
+    The smaller preview Output then returns to fit for the animation reference.
+    """
+    driver.tab('CONFIG')
+    _display_control(driver, 'use display transform')
+    driver.reclick_last_control()
+    driver.click('Input', False)
+    driver.click('100%', False)
+    driver.measure_viewer(label + '-input-sentinel', expected_width=input_width)
+    fingerprint = driver.viewer_fingerprint()
+    driver.click('Output', False)
+    image, _ = driver.await_viewer(fingerprint, label=label + '-output-100-percent')
+    driver.snap(label + '-output-100-percent', image)
+    fingerprint = driver.viewer_fingerprint()
+    driver.click('reset view', False)
+    image, _ = driver.await_viewer(fingerprint, label=label + '-output')
+    driver.snap(label + '-output', image)
+    records.append({'scenario': label, 'screenshot': driver.records[-1]['screenshot']})
+    return _sample(image)
+
+
+def _capture_to_target(driver, records, label, target, dimensions, interval=0.025, timeout=120):
+    """Capture through the new render report and independently prepared endpoint.
+
+    Repeated intermediate frames never establish animation completion.
+    """
     frames = []
-    for index in range(count):
-        image = _record_frame(driver, records, f"{label}-frame-{index}")
-        frames.append(np.asarray(_viewer_crop(image), dtype=np.float32))
+    deadline = time.monotonic() + timeout
+    report = None
+    while time.monotonic() < deadline:
+        image = _record_frame(driver, records, f'{label}-frame-{len(frames)}')
+        frames.append(_sample(image))
+        if report is None:
+            for path in driver.report_directory.glob('operation-*.json'):
+                try:
+                    candidate = json.loads(path.read_text())
+                    operation = candidate['operation']
+                except (OSError, ValueError, KeyError):
+                    continue
+                if (operation['id'] > driver.last_report_id and operation['kind'] == 'preview'
+                        and operation['outcome'] != 'superseded'):
+                    _require(operation['outcome'] == 'succeeded',
+                             f'Animation preview failed: {operation}')
+                    _preview_dimensions(candidate, records, label, dimensions)
+                    report = candidate
+        if report is not None and frames[-1] == target:
+            return frames, frames[-1]
         time.sleep(interval)
-    return frames
+    raise RuntimeError(f'Timed out waiting for presented {label} preview ({timeout}s)')
+
 
 
 def _display_line(driver, words, section=None):
@@ -157,10 +285,12 @@ def _select_profile(driver, label, option):
 
 
 def _hover_float(driver, pixels, records):
+    import numpy as np
     before_view = driver.viewer_fingerprint()
     driver.click("Input", False)
     driver.click("100%", False)
-    bounds = driver.measure_viewer("viewer-float-inspection", before_view)
+    bounds = driver.measure_viewer('viewer-float-inspection', before_view,
+                                   expected_width=pixels.shape[1])
     x = bounds[0] + pixels.shape[1] // 2
     y = bounds[1] + pixels.shape[0] // 2
     driver.xd("mousemove", "--window", driver.window, x, y)
@@ -245,6 +375,8 @@ def _save(driver, root, name):
 
 def accept_viewer(driver, root, state, pixels, exporter):
     """Run required viewer scenarios and return assertion records."""
+    global np
+    import numpy as np
     root = Path(root)
     state = copy.deepcopy(state)
     source = root / "standard.tif"
@@ -408,49 +540,80 @@ def accept_viewer(driver, root, state, pixels, exporter):
                     "nonzero_screenshot": records[-1]["screenshot"]})
     _require(border_delta > 0.1, "White-padding field did not alter the real viewer")
 
-    animation_state = copy.deepcopy(state)
-    animation_state.setdefault("display", {}).update({"viewer_layer": "paper_back", "reveal": True})
-    animation_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "paper_back", "reveal": True})
-    animation_path = _state_path(root, "viewer-animation.json", animation_state)
-    _load_state(driver, animation_path, "viewer-animation-baseline")
-    driver.tab("MAIN")
-    driver.click('Paper back', False)
-    driver.click("Preview")
-    reveal_frames = _transition_frames(driver, records, "viewer-reveal", count=32, interval=0.05)
-    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-reveal-rendered")
-    reveal_delta = float(max(np.max(np.abs(reveal_frames[0] - frame)) for frame in reveal_frames[1:]))
-    records.append({"parity_action": "polaroid_animation",
-                    "scenario": "reveal", "action": "preview with Paper back and Reveal",
-                    "assertion": "raw transition frames differ in the viewer region",
-                    "frames": len(reveal_frames), "max_frame_delta": reveal_delta})
-    _require(reveal_delta > 1.0, "Reveal did not produce observable transition frames")
+    # Prepare fixed endpoints through a display change that clears animation,
+    # independent of whether either animation setting actually works.
+    reference_state = copy.deepcopy(state)
+    reference_state.setdefault('simulation', {})['auto_preview'] = False
+    settings = {'viewer_layer': 'output', 'reveal': False, 'crossfade': False}
+    reference_state.setdefault('display', {}).update(settings)
+    reference_state.setdefault('rust', {}).setdefault('viewer', {}).setdefault('settings', {}).update(settings)
+    input_size = (pixels.shape[1], pixels.shape[0])
+    scale = min(1.0, max(1, reference_state['display']['preview_max_size']) / max(input_size))
+    dimensions = (input_size, tuple(max(1, int(side * scale)) for side in input_size))
+    references = {}
+    for auto_exposure in (False, True):
+        reference_state['camera']['auto_exposure'] = auto_exposure
+        label = 'viewer-reference-' + ('auto' if auto_exposure else 'manual')
+        _load_state(driver, _state_path(root, label + '.json', reference_state), label + '-rendered')
+        _loaded_preview_dimensions(driver, records, label, dimensions)
+        references[auto_exposure] = _present_output(driver, records, label, pixels.shape[1])
+    _require(_sample_distance(references[False], references[True]) > 1.0,
+             'Animation exposure endpoints are indistinguishable')
 
-    crossfade_state = copy.deepcopy(state)
-    crossfade_state.setdefault("simulation", {})["auto_preview"] = False
-    crossfade_state.setdefault("display", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
-    crossfade_state.setdefault("rust", {}).setdefault("viewer", {}).setdefault("settings", {}).update({"viewer_layer": "output", "reveal": False, "crossfade": True})
-    crossfade_path = _state_path(root, "viewer-crossfade.json", crossfade_state)
-    _load_state(driver, crossfade_path, "viewer-crossfade-baseline")
-    driver.tab("MAIN")
-    driver.click("Output", False)
-    _, _, lines = driver.read()
-    if not driver.match(lines, 'Auto exposure', True):
-        driver.xd('mousemove', '--window', driver.window, 1090, 331)
-        driver.xd('click', 1)
-        time.sleep(.8)
-    _, _, lines = driver.read()
-    matches = driver.match(lines, 'Auto exposure', True)
-    _require(matches, 'Crossfade trigger requires visible Auto exposure')
-    driver.xd('mousemove', '--window', driver.window, 1073, int(matches[0][1]))
-    driver.xd('click', 1)
-    driver.click("Preview")
-    crossfade_frames = _transition_frames(driver, records, "viewer-crossfade", count=32, interval=0.05)
-    driver.wait_text(r"Preview[^\n]*\d+\s*[x×=*]\s*\d+", "viewer-crossfade-rendered")
-    crossfade_delta = float(max(np.max(np.abs(crossfade_frames[0] - frame)) for frame in crossfade_frames[1:]))
-    records.append({"scenario": "crossfade", "action": "preview Output with Crossfade",
-                    "assertion": "raw transition frames differ in the viewer region",
-                    "frames": len(crossfade_frames), "max_frame_delta": crossfade_delta})
-    _require(crossfade_delta > 1.0, "Crossfade did not produce observable transition frames")
+    for enabled in (False, True):
+        label = 'viewer-reveal' if enabled else 'viewer-reveal-disabled'
+        animation_state = copy.deepcopy(reference_state)
+        animation_state['camera']['auto_exposure'] = False
+        settings = {'viewer_layer': 'output', 'reveal': enabled, 'crossfade': False}
+        animation_state['display'].update(settings)
+        animation_state['rust']['viewer']['settings'].update(settings)
+        _load_state(driver, _state_path(root, label + '.json', animation_state), label + '-baseline')
+        _loaded_preview_dimensions(driver, records, label + '-baseline', dimensions)
+        presented = _present_output(driver, records, label + '-baseline', pixels.shape[1])
+        _require(_sample_distance(presented, references[False]) <= 1.0,
+                 'Reveal baseline differs from independently prepared Output')
+        fingerprint = driver.viewer_fingerprint()
+        driver.click('Paper back', False)
+        paper_image, _ = driver.await_viewer(fingerprint, label=label + '-paper')
+        before_sample = _sample(paper_image)
+        driver.snap(label + '-before', paper_image)
+        driver.tab('MAIN')
+        driver.click('Preview', settle=False)
+        frames, endpoint = _capture_to_target(driver, records, label, references[False], dimensions)
+        driver.wait_report(label + '-rendered', action='Preview')
+        evidence = reveal_evidence(before_sample, frames, endpoint)
+        records.append({'parity_action': 'polaroid_animation',
+                        'scenario': 'reveal' if enabled else 'reveal_negative_control',
+                        'action': 'explicit Preview with Reveal ' + ('enabled' if enabled else 'disabled'),
+                        'frames': len(frames), **evidence})
+        _require(evidence['passed'] == enabled,
+                 'Reveal criterion failed' if enabled else 'Disabled Reveal passed animation criterion')
+
+    for enabled in (False, True):
+        label = 'viewer-crossfade' if enabled else 'viewer-crossfade-disabled'
+        crossfade_state = copy.deepcopy(reference_state)
+        crossfade_state['camera']['auto_exposure'] = False
+        settings = {'viewer_layer': 'output', 'reveal': False, 'crossfade': enabled}
+        crossfade_state['display'].update(settings)
+        crossfade_state['rust']['viewer']['settings'].update(settings)
+        _load_state(driver, _state_path(root, label + '.json', crossfade_state), label + '-baseline')
+        _loaded_preview_dimensions(driver, records, label + '-baseline', dimensions)
+        before_sample = _present_output(driver, records, label + '-baseline', pixels.shape[1])
+        _require(_sample_distance(before_sample, references[False]) <= 1.0,
+                 'Crossfade baseline differs from independently prepared Output')
+        driver.tab('MAIN')
+        driver.click('Auto exposure')
+        driver.click('Preview', settle=False)
+        frames, endpoint = _capture_to_target(driver, records, label, references[True], dimensions)
+        driver.wait_report(label + '-rendered', action='Preview')
+        driver.snap(label + '-after')
+        evidence = transition_evidence(before_sample, frames, endpoint)
+        records.append({'scenario': 'crossfade' if enabled else 'crossfade_negative_control',
+                        'action': 'explicit Preview with Crossfade ' + ('enabled' if enabled else 'disabled'),
+                        'assertion': 'intermediate blend frames required only when enabled',
+                        'frames': len(frames), **evidence})
+        _require(evidence['passed'] == enabled,
+                 'Crossfade criterion failed' if enabled else 'Disabled Crossfade passed animation criterion')
 
     _load_state(driver, baseline, "viewer-float-baseline")
     driver.tab("CONFIG")

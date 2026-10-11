@@ -573,7 +573,7 @@ impl ObservationContext {
             && c.snapshot.coverage.retained_observations < 1024
             && c.snapshot.coverage.retained_bytes + bytes <= 1048576;
         let start = Instant::now();
-        let offset = c.start.elapsed().as_secs_f64();
+        let offset = start.duration_since(c.start).as_secs_f64();
         if retain {
             c.snapshot.observations.push(Observation {
                 id,
@@ -974,6 +974,46 @@ mod tests {
         let context = ObservationContext::new(CollectionMode::Off);
         assert!(!context.enabled());
         assert!(context.span().is_none());
+    }
+
+    #[test]
+    fn nested_host_scopes_share_offset_and_duration_start() {
+        let root = ObservationContext::new(CollectionMode::Summary);
+        let operation_start = root.collector.as_ref().unwrap().lock().start;
+        let parent = root.scope("simulation", ObservationKind::Phase, Purpose::Image);
+        let child = parent
+            .context()
+            .scope("grain_v1", ObservationKind::Stage, Purpose::Image);
+        let snapshot = root.snapshot();
+        for scope in [&parent, &child] {
+            let observation = snapshot
+                .observations
+                .iter()
+                .find(|observation| observation.id == scope.id())
+                .unwrap();
+            assert_eq!(
+                observation.start_offset,
+                scope
+                    .start
+                    .unwrap()
+                    .duration_since(operation_start)
+                    .as_secs_f64()
+            );
+        }
+
+        child.finish(Outcome::Succeeded);
+        parent.finish(Outcome::Succeeded);
+        root.finish(Outcome::Succeeded);
+        let snapshot = root.snapshot();
+        let parent = &snapshot.observations[0];
+        let child = &snapshot.observations[1];
+        assert!(parent.complete && child.complete);
+        assert_eq!(child.parent_id, parent.id);
+        assert!(child.start_offset >= parent.start_offset);
+        assert!(
+            child.start_offset + child.duration <= parent.start_offset + parent.duration + 1e-9
+        );
+        assert!(parent.start_offset + parent.duration <= snapshot.duration + 1e-9);
     }
 
     #[test]

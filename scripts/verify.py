@@ -2,45 +2,18 @@
 """Run the existing local gate and retain its result with source provenance."""
 
 import argparse
-import hashlib
 import json
-import os
 from pathlib import Path
 import platform
 import subprocess
 import sys
 from datetime import datetime, timezone
-
+from source_identity import snapshot, source_identity
 
 def timestamp():
     return datetime.now(timezone.utc).isoformat()
 
 
-def git(root, *args):
-    return subprocess.check_output(['git', *args], cwd=root)
-
-
-def snapshot(root, evidence, label):
-    diff = git(root, 'diff', '--binary', 'HEAD', '--')
-    (evidence / f'{label}.diff').write_bytes(diff)
-    untracked = {}
-    for name in git(root, 'ls-files', '--others', '--exclude-standard', '-z').split(b'\0'):
-        if name:
-            path = root / os.fsdecode(name)
-            content = os.fsencode(os.readlink(path)) if path.is_symlink() else path.read_bytes()
-            untracked[os.fsdecode(name)] = hashlib.sha256(content).hexdigest()
-    return {
-        'commit': git(root, 'rev-parse', 'HEAD').decode().strip(),
-        'tree': git(root, 'rev-parse', 'HEAD^{tree}').decode().strip(),
-        'status': git(root, 'status', '--porcelain=v1').decode(),
-        'diff_file': f'{label}.diff',
-        'diff_sha256': hashlib.sha256(diff).hexdigest(),
-        'untracked_sha256': untracked,
-    }
-
-
-def source_identity(snapshot):
-    return {key: value for key, value in snapshot.items() if key != 'diff_file'}
 
 
 def run(root, evidence):
