@@ -23,8 +23,9 @@ not copied into this source directory.
 
 Changes, 2026-10-11: reconstructed CMY amounts by forward Status A integration;
 inferred a smooth clear-film base; fitted three decreasing Gaussian-CDF
-components; normalized the direct-positive scan reference; independently fitted
-Hanatos window and surface parameters. The upstream borrowed grain curve and
+components; referenced exposure to green Status A D-min + 1.0 independently
+of print and scanner appearance; independently fitted Hanatos input-adaptation
+window and surface parameters. The upstream borrowed grain curve and
 color_masking adjustment were not imported.
 
 Source URLs, hashes, assumptions and reproduction steps are recorded in

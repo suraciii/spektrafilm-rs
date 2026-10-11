@@ -189,10 +189,11 @@ def prepare(source_path, data_dir):
         centers[c], amp[c], sigma[c] = centers[c, order], amp[c, order], sigma[c, order]
     fitted = np.stack((centers, amp, sigma)).ravel()
     cmfs, daylight = observer_and_illuminant(data_dir, 'D55')
-    _, viewing = observer_and_illuminant(data_dir, 'D50')
-    scan_weights = viewing * cmfs[:, 1]
-    scan_weights /= scan_weights.sum()
-    reference = brentq(lambda h: (10**(-(base+amounts(fitted, np.array([h]))[0] @ dyes.T))) @ scan_weights-.184, -3, 1.5)
+    # This is a material exposure coordinate, not a scanner brightness target.
+    # Use the green Status A response at D-min + 1.0; retain its absolute H.
+    reference_density = floors[1] + 1.0
+    reference = brentq(lambda h: prediction(fitted, np.array([h]))[0, 1]-reference_density,
+                       curves[1][0].min(), curves[1][0].max())
     grid = np.linspace(-3.5-reference, 1.5-reference, 256)
     density_curves = amounts(fitted, grid+reference)
     layers = amp[None]*ndtr((centers[None]-(grid+reference)[:, None, None])/sigma[None])
@@ -206,6 +207,10 @@ def prepare(source_path, data_dir):
               'illuminants_sha256': digest(data_dir/'illuminants/catalog.json'),
               'base_floor_status_a_rgb': floors.tolist(), 'estimated_base_status_a_rgb': measure(base).tolist(),
               'reference_log10_lux_seconds': reference,
+              'exposure_reference': {'channel': 'green', 'densitometer': 'Status A',
+                                     'density_above_min': 1.0,
+                                     'density': float(reference_density),
+                                     'meaning': 'Material coordinate convention; not an absolute ISO calibration or scanner target.'},
               'fit': {'rmse_rgb': [float(np.sqrt(np.mean(e**2))) for e in errors],
                       'max_abs_rgb': [float(np.max(abs(e))) for e in errors],
                       'heldout_rmse_rgb': [float(np.sqrt(np.mean(e[~m]**2))) for e, m in zip(errors, masks)],
@@ -216,7 +221,7 @@ def prepare(source_path, data_dir):
               'limitations': ['Base spectrum inferred from clear-end RGB densities; not independently measured.',
                               'Spectral tails outside digitized support are endpoint-slope extrapolations, clamped nonnegative.',
                               'Three CDF components are numerical fits, not measured emulsion sublayers.',
-                              'D55 reference is normalized to scanned Y=0.184; no absolute ISO calibration.',
+                              'Exposure zero is green Status A D-min + 1.0; D55 RGB midgray maps to this material coordinate, not to a scan luminance. No absolute ISO calibration.',
                               'Hanatos fit uses CIE test reflectances; no matched Velvia photographs establish stock fidelity.',
                               'No borrowed grain or color_masking values are imported. Stock-specific grain, DIR and halation are unmeasured.']}
     if max(report['fit']['heldout_rmse_rgb']) > .08 or max(report['fit']['max_abs_rgb']) > .15:

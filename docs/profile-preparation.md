@@ -5,6 +5,9 @@
 The displayed name includes `source fit` because the base spectrum and spectral
 reconstruction are estimates. No matched film captures establish stock fidelity.
 
+The [film material authoring contract](../specs/film-chain/spec.md#film-material-profiles-and-stock-presets)
+defines the material, input-adaptation, effect, and preset boundaries.
+
 ## Rebuild
 
 Use Python 3.13 with NumPy 2.5.3, SciPy 1.18.1, and colour-science 0.4.7.
@@ -79,11 +82,18 @@ readings do not uniquely determine a spectrum. This inferred base and the
 assumption that the dye plots can act as additive basis spectra remain physical
 uncertainties.
 
-A D50 scan with luminance 0.184 defines the curve's exposure origin. Each
-sensitivity channel is normalized to a D55 midgray raw response of 1 through
-the bundled Hanatos LUT. D55 is the implementation's daylight convention; the
-primary plot says daylight without specifying a CIE illuminant. Neither this
-normalization nor the stock's name establishes an absolute ISO calibration.
+The exposure origin is the fitted green Status A response at D-min + 1.0.
+This selects one material coordinate for the three-channel model; it does not
+claim that all channels reach this density at the same exposure. The report
+retains the corresponding `log10 H` in lux-seconds. Adding that reference to
+the relative exposure grid and model centers recovers the source coordinates.
+Print profiles, viewing spectra, and scanner brightness do not enter this choice.
+
+Each sensitivity channel is normalized to a D55 RGB midgray raw response of 1
+through the bundled Hanatos LUT. This is the input adapter's coordinate mapping.
+D55 is the implementation's daylight convention; the primary plot says daylight
+without specifying a CIE illuminant. Neither this mapping nor the stock's name
+establishes an absolute ISO calibration.
 
 The Hanatos erf4 window and degree-4 bounded correction surface are fitted
 independently for this sensitivity. Training uses the 99 CIE 2017 TCS
@@ -91,9 +101,11 @@ reflectances under D55; validation uses the 24 BabelColor Average patches.
 The fit uses the runtime's Mitchell interpolation, white normalization and
 2-stop bounded polynomial form. The window fit reaches parameter bounds;
 its cutoffs are numerical reconstruction controls, not physical film filters.
-The report includes surface-enabled and default window-only errors. The
-runtime keeps its normal default of window on and surface off. The review
-color-only configuration explicitly enables the surface.
+Its residuals compare film-channel exposure with direct spectral integration.
+The report includes surface-enabled and default window-only errors. These
+parameters are input-adapter estimates stored in the existing profile format;
+they are not measured emulsion properties. The runtime keeps its normal default
+of window on and surface off. Final scan color is not a fitting objective.
 
 ## Use and limits
 
@@ -106,13 +118,23 @@ Set the input color space and transfer decoding to match the input file.
 Use `direct_scan` for this positive profile. `positive_scan` is the separate
 negative-film interpretation and is not eligible.
 
-For a color-chain comparison, disable auto exposure, grain, DIR couplers,
-halation, glare and unsharp masking. Compare neutral exposure steps, color
-patches and photographs at identical settings. This profile has no measured
-stock-specific grain, coupler or halation calibration. Normal rendering uses
-the existing class defaults for those effects; it does not turn them into
-Velvia-specific measurements. `antihalation=strong` is an explicit routing
-assumption for the class, not a measured point-spread function.
+For material acceptance, disable auto exposure, scanner white/black corrections,
+grain, DIR couplers, halation, glare, and unsharp masking. Compare characteristic
+density and spectral transmittance before print or scan. In the current slide
+runtime, scanner white/black correction can feed an exposure adjustment into
+filming; leave it disabled when testing this boundary.
+
+Then measure stock-specific effects. A halation comparison needs documented
+exposure and highlight geometry, channel response, and spatial scale in film
+micrometers. Grain and sharpness comparisons need the source density, aperture,
+processing, and imaging-system response. Keep the scan or measurement setup fixed
+and characterized so its blur, tone curve, or flare is not assigned to the film.
+
+This profile has no measured stock-specific grain, coupler, or halation fit.
+Normal rendering uses existing class defaults; `antihalation=strong` is an
+explicit routing assumption, not a measured point-spread function. The source
+bulletin's RMS value and MTF graph alone do not determine those effect parameters.
+No new built-in Velvia 50 preset claims measured stock fidelity.
 
 The source fit, holdout, spectral-reconstruction check, backend comparison and
 real GUI/CLI smoke establish different facts. None alone establishes fidelity
