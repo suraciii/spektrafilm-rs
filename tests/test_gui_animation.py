@@ -46,17 +46,23 @@ class TransitionCriterionTests(unittest.TestCase):
         self.assertTrue(result['passed'])
         self.assertEqual(result['intermediate_frames'], [40, 41])
 
+    def test_reveal_rejects_linear_fade(self):
+        self.assertFalse(reveal_evidence([0, 0], [[25, 25], [60, 60], [100, 100]],
+                                         [100, 100])['passed'])
+
     def test_capture_ignores_repeated_intermediate_until_known_endpoint(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'operation-2.json').write_text(json.dumps({'operation': {
-                'id': 2, 'kind': 'preview', 'outcome': 'succeeded'}}))
+                'id': 2, 'kind': 'preview', 'outcome': 'succeeded'},
+                'configuration': {'input_dimensions': [192, 96], 'working_dimensions': [64, 32]}}))
             driver = SimpleNamespace(report_directory=root, last_report_id=1)
             frames = [(0,), (10,), (10,), (20,), (100,)]
             with (patch('gui_viewer_acceptance._record_frame', side_effect=frames),
                   patch('gui_viewer_acceptance._sample', side_effect=lambda value: value),
                   patch('gui_viewer_acceptance.time.sleep')):
-                captured, endpoint = _capture_to_target(driver, [], 'crossfade', (100,))
+                captured, endpoint = _capture_to_target(driver, [], 'crossfade', (100,),
+                                                       ((192, 96), (64, 32)))
             self.assertEqual(captured, frames)
             self.assertEqual(endpoint, (100,))
             self.assertTrue(transition_evidence((0,), captured, endpoint)['passed'])
@@ -73,13 +79,41 @@ class TransitionCriterionTests(unittest.TestCase):
                 calls.append(None)
                 if len(calls) == 3:
                     (root / 'operation-2.json').write_text(json.dumps({'operation': {
-                        'id': 2, 'kind': 'preview', 'outcome': 'succeeded'}}))
+                        'id': 2, 'kind': 'preview', 'outcome': 'succeeded'},
+                        'configuration': {'input_dimensions': [192, 96], 'working_dimensions': [64, 32]}}))
                 return (100,)
             with (patch('gui_viewer_acceptance._record_frame', side_effect=frame),
                   patch('gui_viewer_acceptance._sample', side_effect=lambda value: value),
                   patch('gui_viewer_acceptance.time.sleep')):
-                captured, _ = _capture_to_target(driver, [], 'reveal', (100,))
+                captured, _ = _capture_to_target(driver, [], 'reveal', (100,),
+                                                ((192, 96), (64, 32)))
             self.assertEqual(len(captured), 3)
+
+    def test_near_final_blend_cannot_complete_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'operation-2.json').write_text(json.dumps({'operation': {
+                'id': 2, 'kind': 'preview', 'outcome': 'succeeded'},
+                'configuration': {'input_dimensions': [192, 96], 'working_dimensions': [64, 32]}}))
+            driver = SimpleNamespace(report_directory=root, last_report_id=1)
+            with (patch('gui_viewer_acceptance._record_frame', side_effect=[(2,), (6,), (9,)]),
+                  patch('gui_viewer_acceptance._sample', side_effect=lambda value: value),
+                  patch('gui_viewer_acceptance.time.monotonic', side_effect=[0, 0, 1, 2, 4]),
+                  patch('gui_viewer_acceptance.time.sleep')):
+                with self.assertRaisesRegex(RuntimeError, 'Timed out waiting for presented'):
+                    _capture_to_target(driver, [], 'stuck', (10,), ((192, 96), (64, 32)), timeout=3)
+
+    def test_matching_frame_rejects_wrong_preview_dimensions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'operation-2.json').write_text(json.dumps({'operation': {
+                'id': 2, 'kind': 'preview', 'outcome': 'succeeded'},
+                'configuration': {'input_dimensions': [192, 96], 'working_dimensions': [192, 96]}}))
+            driver = SimpleNamespace(report_directory=root, last_report_id=1)
+            with (patch('gui_viewer_acceptance._record_frame', return_value=(100,)),
+                  patch('gui_viewer_acceptance._sample', side_effect=lambda value: value)):
+                with self.assertRaisesRegex(RuntimeError, 'Preview dimensions differ'):
+                    _capture_to_target(driver, [], 'wrong-size', (100,), ((192, 96), (64, 32)))
 
 
 if __name__ == '__main__':

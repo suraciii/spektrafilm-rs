@@ -463,11 +463,14 @@ reports and decoded Export.
 White-padding verification waits for the requested white border before
 measuring pixel differences; an unrelated changed frame is not completion.
 Animation references are prepared with fixed exposure settings. A native display
-transform toggle and restoration clears setup animation; visible colored Input
-then acts as a presentation barrier before capturing the direct Output reference.
-Reveal and Crossfade capture through their new successful Preview report and the
-independently prepared final raster. Crossfade requires two distinct intermediate
-blends; Reveal requires two distinct nonlinear intermediates. Both repeat the
+transform toggle and restoration clears setup animation. Input must present its
+known source width at 100% zoom; Output must then replace it and settle again
+after restoring fit. A colored stale Output cannot satisfy the Input barrier.
+Reveal and Crossfade capture through their new successful Preview report and
+an exact match to the independently prepared final raster sample. Reports must
+contain the expected input and working dimensions; evidence retains the matched
+operation ID. Crossfade requires two distinct intermediate blends. Reveal also
+requires intermediate frames outside the linear endpoint blend. Both repeat the
 action with animation disabled, which must fail the same animation criterion.
 The Linux file chooser driver tracks its native window through closure and
 locates the primary action beside Cancel in the window's bottom button row.

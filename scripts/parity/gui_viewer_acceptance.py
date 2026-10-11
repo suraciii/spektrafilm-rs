@@ -44,16 +44,26 @@ def reveal_evidence(before, frames, after, threshold=1.0):
     _require(bool(before) and len(before) == len(after), 'Reveal endpoints differ in size')
     intermediate = []
     distinct = []
+    direction = tuple(b - a for a, b in zip(before, after))
+    energy = sum(d * d for d in direction)
+    nonlinear = []
     for index, frame in enumerate(frames):
         _require(len(frame) == len(before), 'Reveal frame differs in size')
         if min(_sample_distance(frame, before), _sample_distance(frame, after)) <= threshold:
             continue
+        alpha = (sum((v - a) * d for v, a, d in zip(frame, before, direction)) / energy
+                 if energy else 0.0)
+        residual = sum(abs(v - (a + alpha * d))
+                       for v, a, d in zip(frame, before, direction)) / len(before)
+        if residual > threshold:
+            nonlinear.append(index)
         if all(_sample_distance(frame, other) > threshold for other in distinct):
             distinct.append(frame)
             intermediate.append(index)
     delta = _sample_distance(before, after)
-    return {'passed': delta > threshold and len(distinct) >= 2,
-            'endpoint_mean_delta': delta, 'intermediate_frames': intermediate}
+    return {'passed': delta > threshold and len(distinct) >= 2 and bool(nonlinear),
+            'endpoint_mean_delta': delta, 'intermediate_frames': intermediate,
+            'nonlinear_frames': nonlinear}
 
 
 def _sample_distance(left, right):
@@ -131,26 +141,48 @@ def _record_frame(driver, records, label):
     return image
 
 
-def _present_output(driver, records, label):
-    """Clear setup animation through the native display-transform control.
+def _preview_dimensions(report, records, label, dimensions):
+    input_size, working_size = dimensions
+    configuration = report['configuration']
+    _require(configuration['input_dimensions'] == list(input_size)
+             and configuration['working_dimensions'] == list(working_size),
+             f'Preview dimensions differ on {label}: {configuration}')
+    records.append({'scenario': label + '-report', 'operation_id': report['operation']['id'],
+                    'input_dimensions': configuration['input_dimensions'],
+                    'working_dimensions': configuration['working_dimensions']})
 
-    The colored Input sentinel proves that pending setup compositions have
-    completed before selecting the direct Output reference.
+
+def _loaded_preview_dimensions(driver, records, label, dimensions):
+    report = json.loads((driver.report_directory /
+                         f'operation-{driver.last_report_id}.json').read_text())
+    _preview_dimensions(report, records, label, dimensions)
+
+
+def _present_output(driver, records, label, input_width):
+    """Clear setup animation and establish distinct Input/Output presentations.
+
+    Input at 100% must reach its known source width before Output is selected.
+    The smaller preview Output then returns to fit for the animation reference.
     """
     driver.tab('CONFIG')
     _display_control(driver, 'use display transform')
     driver.reclick_last_control()
     driver.click('Input', False)
-    driver.measure_viewer(label + '-input-sentinel')
+    driver.click('100%', False)
+    driver.measure_viewer(label + '-input-sentinel', expected_width=input_width)
     fingerprint = driver.viewer_fingerprint()
     driver.click('Output', False)
+    image, _ = driver.await_viewer(fingerprint, label=label + '-output-100-percent')
+    driver.snap(label + '-output-100-percent', image)
+    fingerprint = driver.viewer_fingerprint()
+    driver.click('reset view', False)
     image, _ = driver.await_viewer(fingerprint, label=label + '-output')
     driver.snap(label + '-output', image)
     records.append({'scenario': label, 'screenshot': driver.records[-1]['screenshot']})
     return _sample(image)
 
 
-def _capture_to_target(driver, records, label, target, interval=0.025, timeout=120):
+def _capture_to_target(driver, records, label, target, dimensions, interval=0.025, timeout=120):
     """Capture through the new render report and independently prepared endpoint.
 
     Repeated intermediate frames never establish animation completion.
@@ -164,18 +196,18 @@ def _capture_to_target(driver, records, label, target, interval=0.025, timeout=1
         if report is None:
             for path in driver.report_directory.glob('operation-*.json'):
                 try:
-                    operation = json.loads(path.read_text())['operation']
+                    candidate = json.loads(path.read_text())
+                    operation = candidate['operation']
                 except (OSError, ValueError, KeyError):
                     continue
                 if (operation['id'] > driver.last_report_id and operation['kind'] == 'preview'
                         and operation['outcome'] != 'superseded'):
                     _require(operation['outcome'] == 'succeeded',
                              f'Animation preview failed: {operation}')
-                    report = operation
-        if report is not None:
-            distance = _sample_distance(frames[-1], target)
-            if distance <= 1.0:
-                return frames, target
+                    _preview_dimensions(candidate, records, label, dimensions)
+                    report = candidate
+        if report is not None and frames[-1] == target:
+            return frames, frames[-1]
         time.sleep(interval)
     raise RuntimeError(f'Timed out waiting for presented {label} preview ({timeout}s)')
 
@@ -515,12 +547,16 @@ def accept_viewer(driver, root, state, pixels, exporter):
     settings = {'viewer_layer': 'output', 'reveal': False, 'crossfade': False}
     reference_state.setdefault('display', {}).update(settings)
     reference_state.setdefault('rust', {}).setdefault('viewer', {}).setdefault('settings', {}).update(settings)
+    input_size = (pixels.shape[1], pixels.shape[0])
+    scale = min(1.0, max(1, reference_state['display']['preview_max_size']) / max(input_size))
+    dimensions = (input_size, tuple(max(1, int(side * scale)) for side in input_size))
     references = {}
     for auto_exposure in (False, True):
         reference_state['camera']['auto_exposure'] = auto_exposure
         label = 'viewer-reference-' + ('auto' if auto_exposure else 'manual')
         _load_state(driver, _state_path(root, label + '.json', reference_state), label + '-rendered')
-        references[auto_exposure] = _present_output(driver, records, label)
+        _loaded_preview_dimensions(driver, records, label, dimensions)
+        references[auto_exposure] = _present_output(driver, records, label, pixels.shape[1])
     _require(_sample_distance(references[False], references[True]) > 1.0,
              'Animation exposure endpoints are indistinguishable')
 
@@ -532,7 +568,8 @@ def accept_viewer(driver, root, state, pixels, exporter):
         animation_state['display'].update(settings)
         animation_state['rust']['viewer']['settings'].update(settings)
         _load_state(driver, _state_path(root, label + '.json', animation_state), label + '-baseline')
-        presented = _present_output(driver, records, label + '-baseline')
+        _loaded_preview_dimensions(driver, records, label + '-baseline', dimensions)
+        presented = _present_output(driver, records, label + '-baseline', pixels.shape[1])
         _require(_sample_distance(presented, references[False]) <= 1.0,
                  'Reveal baseline differs from independently prepared Output')
         fingerprint = driver.viewer_fingerprint()
@@ -542,7 +579,7 @@ def accept_viewer(driver, root, state, pixels, exporter):
         driver.snap(label + '-before', paper_image)
         driver.tab('MAIN')
         driver.click('Preview', settle=False)
-        frames, endpoint = _capture_to_target(driver, records, label, references[False])
+        frames, endpoint = _capture_to_target(driver, records, label, references[False], dimensions)
         driver.wait_report(label + '-rendered', action='Preview')
         evidence = reveal_evidence(before_sample, frames, endpoint)
         records.append({'parity_action': 'polaroid_animation',
@@ -560,13 +597,14 @@ def accept_viewer(driver, root, state, pixels, exporter):
         crossfade_state['display'].update(settings)
         crossfade_state['rust']['viewer']['settings'].update(settings)
         _load_state(driver, _state_path(root, label + '.json', crossfade_state), label + '-baseline')
-        before_sample = _present_output(driver, records, label + '-baseline')
+        _loaded_preview_dimensions(driver, records, label + '-baseline', dimensions)
+        before_sample = _present_output(driver, records, label + '-baseline', pixels.shape[1])
         _require(_sample_distance(before_sample, references[False]) <= 1.0,
                  'Crossfade baseline differs from independently prepared Output')
         driver.tab('MAIN')
         driver.click('Auto exposure')
         driver.click('Preview', settle=False)
-        frames, endpoint = _capture_to_target(driver, records, label, references[True])
+        frames, endpoint = _capture_to_target(driver, records, label, references[True], dimensions)
         driver.wait_report(label + '-rendered', action='Preview')
         driver.snap(label + '-after')
         evidence = transition_evidence(before_sample, frames, endpoint)
