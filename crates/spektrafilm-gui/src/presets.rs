@@ -685,6 +685,7 @@ mod tests {
             std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
             None,
             Some(state_path),
+            None,
         );
         app.presets.library = PresetLibrary::new(directory.join("presets"));
         app.presets.refresh();
