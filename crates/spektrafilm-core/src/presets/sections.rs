@@ -139,7 +139,7 @@ pub fn section_matches(preset: &Preset, params: &RuntimeParams) -> Result<bool, 
         unreachable!()
     };
     crate::params::sources::validate_finite(params)?;
-    let applied = preset.apply_section(params)?;
+    let applied = preset.overlay_section(params)?;
     let expected =
         serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| e.to_string())?;
     let current =

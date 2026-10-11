@@ -40,6 +40,8 @@ The browser must list, with its path, every document that cannot be read, parsed
 
 The browser must remember the applied preset group and name across restarts. A remembered preset whose document is absent must be shown as missing. The modified state must not persist across restarts. Restoring GUI state must restore its stored controls and must not re-apply the remembered preset document.
 
+Ordinary startup must restore the browser metadata independently of the configured startup controls. An explicitly loaded GUI state must supply its own browser metadata and must not inherit the remembered selection. Remembering a browser selection must not save current controls as the startup default.
+
 Renaming or deleting the applied user preset must update the marker: a rename follows the new name, and a delete leaves the look controls untouched and shows the remembered name as missing.
 
 Browser rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
@@ -53,7 +55,7 @@ Browser rows must show the preset name, the film reference, and the print refere
 - Applying a look preset normalizes the scanner output: when the resolved film is positive or the selected workflow route is not `input > film > scan`, the output becomes the direct-scan mode. `core` owns that rule once for the GUI and the CLI.
 - Applying a look preset does not change recorded explicit-leaf ownership. Only a section preset or a sparse parameter source marks its own leaves explicit, and those marks survive a later look application.
 - Applying a section preset replaces exactly the controls of its section, and those values count as explicit. Every other control retains its value, including explicit values from an earlier preset or parameter source, so the result does not re-derive them from stock defaults. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
-- Applying a section preset that would introduce a scanner-output, workflow-route, or scan-film combination the pipeline rejects must fail without changing any control. A state that already fails that check may still receive an unrelated section edit.
+- Applying a section preset that would introduce a scanner-output, workflow-route, scan-film, film-profile, scanner-correction, or grain-engine combination the pipeline rejects must fail without changing any control. A state that already fails that check may still receive an unrelated section edit.
 - Applying a section preset must not replace the remembered applied preset. It is an edit, so an applied look preset becomes modified.
 - Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure, crop, resize, rotation, viewer/display state, Save settings, and Export settings.
 - Built-in presets are immutable. Editing controls after an apply never rewrites the built-in definition.
@@ -146,5 +148,7 @@ candidate only after resolution succeeds.
 ### Transaction and stale results
 
 Applying a preset validates and resolves first, commits film/print/look parameters together, selects the profile-derived workflow default, preserves excluded context, clears transient Scan-for-print, increments a parameter revision, invalidates caches, and marks the render dirty. Render workers carry the parameter revision and stale results cannot replace a newer preset result.
+
+A failed application must preserve active controls, the applied marker, transient Scan-for-print state, and the parameter revision. Only the error status may change.
 
 CLI preset selection must use the same core resolver and name rules as GUI preset application. The [CLI parameter language](../cli-parameters/spec.md) defines selection, sparse parameter files, and command compatibility.

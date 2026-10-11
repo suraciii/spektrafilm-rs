@@ -148,6 +148,8 @@ spektrafilm-f64 process input.png --output output.tif \
 
 Each file source and inline assignment source must pass syntax, field, type, finite-number, leaf-range, and enum validation. Each selected preset must pass document validation before `--set` sources apply. Cross-field validation must run on the composed controls before runtime constraints so constraints cannot conceal an invalid user configuration. The runtime must also validate parameters after applying its constraints.
 
+Section composition must defer scan compatibility until explicit workflow and scan-output choices are applied. Active film and print chemistry must use the same control-domain validation in document validation, dry run, and runtime preparation.
+
 Errors must identify the offending option or file, field path when available, supplied value when safe to display, and violated rule. Parse errors must include the parser location when available. Unknown paths must not create new fields. Unsupported enum values, profile identities, ranges, and combinations must not fall back to defaults.
 
 A failed configuration must return a nonzero status before rendering or writing image output. The command must not retry with a different preset or baseline.
@@ -179,13 +181,9 @@ spektrafilm process input.png --output output.tif \
 
 Both executables must discover a group and an individual field without loading profiles, decoding images, or creating a device. Text and JSON views must report the same field facts. Single-field JSON must preserve optional values, array-component domains, enum choices, and effect conditions. Invalid field/group selectors and their conflict must fail before image work. Existing selector-free JSON and module JSON output must preserve their shape and meaning.
 
-Text preset listing must contain the same IDs, names, and profile references as JSON listing. File selectors and preset export validation must retain their existing behavior.
+Text preset listing must contain the same names, groups, kinds, and profile references as JSON listing. File selectors and preset export validation must retain their existing behavior.
 
 Dry run for custom RAW white balance with temperature `6500` and tint `-5` must expose those loading choices. It must differ from an as-shot report. Raster input must expose inactive RAW loading as `null`. Both must expose the selected data directory and source. None of these scenarios may decode input pixels, initialize a compute device, or write image or raw output. Existing runtime and writer fields must retain their meanings.
-
-## Implementation gap
-
-Discovery currently supports module JSON only, with no single-field selector or text format. Preset listing currently supports JSON only, with built-in entries and no library group. Dry run omits data-selection source and RAW loading choices. The added syntax and report keys in this document are target behavior awaiting implementation.
 
 ## Compatibility
 

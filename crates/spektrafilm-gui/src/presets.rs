@@ -16,7 +16,7 @@ pub struct AppliedPreset {
     pub group: PresetGroup,
     pub name: String,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct BrowserState {
     pub width: f32,
@@ -32,6 +32,43 @@ impl Default for BrowserState {
         }
     }
 }
+impl BrowserState {
+    pub fn restore(
+        extras: &serde_json::Value,
+        explicit: bool,
+        path: &Path,
+    ) -> anyhow::Result<Self> {
+        let embedded =
+            serde_json::from_value(extras["rust"]["presets"].clone()).unwrap_or_default();
+        if explicit {
+            return Ok(embedded);
+        }
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(embedded),
+            Err(error) => return Err(error.into()),
+        };
+        let carrier: serde_json::Value = serde_json::from_str(&text)?;
+        anyhow::ensure!(
+            carrier["rust"]["version"] == 1,
+            "Unsupported browser state extension version"
+        );
+        Ok(serde_json::from_value(carrier["rust"]["presets"].clone())?)
+    }
+
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        let carrier = serde_json::json!({"rust": {"version": 1, "presets": self}});
+        std::fs::write(path, serde_json::to_vec_pretty(&carrier)?)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Marker {
     Applied,
@@ -337,12 +374,15 @@ impl App {
             .library
             .load(entry.group, &entry.name)
             .and_then(|selected| {
-                if self.scan_for_print_snapshot.is_some() {
-                    self.toggle_scan_for_print();
+                let mut current = self.params.clone();
+                if let Some((white, black, glare)) = self.scan_for_print_snapshot {
+                    current.scanner.white_correction = white;
+                    current.scanner.black_correction = black;
+                    current.print_render.glare.active = glare;
                 }
                 match selected.preset.kind()? {
                     PresetKind::Look => {
-                        let resolved = selected.preset.resolve(&self.data_dir, &self.params)?;
+                        let resolved = selected.preset.resolve(&self.data_dir, &current)?;
                         self.film_name = resolved.film_name;
                         self.print_name = resolved.print_name;
                         self.params = resolved.params;
@@ -354,7 +394,12 @@ impl App {
                         });
                     }
                     PresetKind::Section(_) => {
-                        self.params = selected.preset.apply_section(&self.params)?;
+                        let film = spektrafilm_core::profile::load_profile_by_name(
+                            &self.data_dir,
+                            &self.film_name,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        self.params = selected.preset.apply_section(&current, &film)?;
                     }
                 }
                 self.invalidate_look_render();
@@ -681,15 +726,204 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let state_path = directory.join("state.json");
         state::GuiState::factory().save(&state_path).unwrap();
-        let mut app = App::new(
+        let mut app = App::new_with_browser_path(
             std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
             None,
             Some(state_path),
             None,
+            directory.join("preset_browser_state.json"),
         );
         app.presets.library = PresetLibrary::new(directory.join("presets"));
         app.presets.refresh();
         (app, directory)
+    }
+
+    #[test]
+    fn failed_look_and_section_preserve_entire_application_transaction() {
+        let (mut app, directory) = test_app("failed-transaction");
+        let mut look = builtin_presets().remove(0);
+        look.name = "Missing profile".into();
+        look.film_profile.as_mut().unwrap().stock = "missing_profile".into();
+        let section = Preset::from_json_str(r#"{"schema_version":2,"name":"Incompatible scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
+        std::fs::create_dir_all(directory.join("presets")).unwrap();
+        for preset in [look, section] {
+            std::fs::write(
+                directory
+                    .join("presets")
+                    .join(format!("{}.json", preset.name)),
+                preset.to_json().unwrap(),
+            )
+            .unwrap();
+        }
+        app.presets.refresh();
+        app.presets.state.applied = Some(AppliedPreset {
+            group: PresetGroup::BuiltIn,
+            name: "Remembered".into(),
+        });
+        app.params.scanner.white_correction = false;
+        app.params.scanner.black_correction = false;
+        app.params.print_render.glare.active = true;
+        app.toggle_scan_for_print();
+        app.dirty_since = Some(std::time::Instant::now());
+        for name in ["Missing profile", "Incompatible scan"] {
+            let entry = app
+                .presets
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .clone();
+            let before = serde_json::to_value(&app.params).unwrap();
+            let state = app.current_state().unwrap().sections;
+            let browser = app.presets.state.clone();
+            let film = app.film_name.clone();
+            let print = app.print_name.clone();
+            let film_times = app.film_dev_times.clone();
+            let print_times = app.print_dev_times.clone();
+            let snapshot = app.scan_for_print_snapshot;
+            let revision = app.parameter_revision;
+            let epoch = app.calibration_epoch;
+            let dirty = app.dirty;
+            let dirty_since = app.dirty_since;
+            let force_preview = app.force_preview;
+            app.load_preset(&entry);
+            assert!(app.status.starts_with("Preset error:"), "{}", app.status);
+            assert_eq!(serde_json::to_value(&app.params).unwrap(), before);
+            assert_eq!(app.current_state().unwrap().sections, state);
+            assert_eq!(app.presets.state, browser);
+            assert_eq!(app.film_name, film);
+            assert_eq!(app.print_name, print);
+            assert_eq!(app.film_dev_times, film_times);
+            assert_eq!(app.print_dev_times, print_times);
+            assert_eq!(app.scan_for_print_snapshot, snapshot);
+            assert_eq!(app.parameter_revision, revision);
+            assert_eq!(app.calibration_epoch, epoch);
+            assert_eq!(app.dirty, dirty);
+            assert_eq!(app.dirty_since, dirty_since);
+            assert_eq!(app.force_preview, force_preview);
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ordinary_restart_restores_browser_only_and_explicit_state_wins() {
+        let (mut app, directory) = test_app("browser-restart");
+        app.params.enlarger.print_exposure = 7.123;
+        let startup = app.current_state().unwrap();
+        startup
+            .save(&directory.join("gui_default_state.json"))
+            .unwrap();
+        let entry = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.group == PresetGroup::BuiltIn)
+            .unwrap()
+            .clone();
+        app.load_preset(&entry);
+        assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+        app.params.enlarger.print_exposure += 2.0;
+        app.presets.state.width = 327.0;
+        app.presets.state.expanded = false;
+        let remembered = app.presets.state.clone();
+        app.persist_browser_state(true);
+        let carrier: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&app.browser_state_path).unwrap()).unwrap();
+        assert!(carrier["rust"]["presets"].get("modified").is_none());
+        assert!(carrier["rust"].get("runtime").is_none());
+        let reopen = |initial_state| {
+            App::new_with_browser_path(
+                std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+                None,
+                initial_state,
+                None,
+                directory.join("preset_browser_state.json"),
+            )
+        };
+        let mut restarted = reopen(None);
+        assert_eq!(
+            serde_json::to_value(&restarted.params).unwrap(),
+            serde_json::to_value(startup.runtime_params().unwrap()).unwrap()
+        );
+        assert_eq!(restarted.film_name, startup.film());
+        assert_eq!(restarted.print_name, startup.paper());
+        assert_eq!(restarted.presets.state, remembered);
+        assert!(!restarted.dirty);
+        assert_eq!(restarted.parameter_revision, 0);
+        assert!(restarted.scan_for_print_snapshot.is_none());
+        assert_eq!(
+            marker(
+                remembered.applied.as_ref().unwrap(),
+                &restarted.presets.entries,
+                &restarted.params,
+                &restarted.film_name,
+                &restarted.print_name
+            ),
+            Marker::Modified
+        );
+        let mut explicit = state::GuiState::factory();
+        explicit.sections["rust"] = serde_json::json!({"version":1,"presets":{"width":211.0,"expanded":true,"applied":{"group":PresetGroup::User,"name":"Absent"}}});
+        let explicit_path = directory.join("explicit.json");
+        explicit.save(&explicit_path).unwrap();
+        let explicit_app = reopen(Some(explicit_path));
+        assert_eq!(
+            BrowserState::restore(
+                &state::GuiState::factory().sections,
+                true,
+                &app.browser_state_path
+            )
+            .unwrap(),
+            BrowserState::default()
+        );
+        assert_eq!(explicit_app.presets.state.width, 211.0);
+        assert!(explicit_app.presets.state.expanded);
+        assert_eq!(
+            marker(
+                explicit_app.presets.state.applied.as_ref().unwrap(),
+                &explicit_app.presets.entries,
+                &explicit_app.params,
+                &explicit_app.film_name,
+                &explicit_app.print_name
+            ),
+            Marker::Missing
+        );
+        restarted.apply_state(explicit.clone()).unwrap();
+        restarted.persist_browser_state(true);
+        assert_eq!(reopen(None).presets.state, explicit_app.presets.state);
+        restarted.apply_state(state::GuiState::factory()).unwrap();
+        restarted.persist_browser_state(true);
+        assert_eq!(reopen(None).presets.state, BrowserState::default());
+        std::fs::remove_file(directory.join("preset_browser_state.json")).unwrap();
+        assert_eq!(reopen(None).presets.state, BrowserState::default());
+        std::fs::write(directory.join("preset_browser_state.json"), "broken JSON").unwrap();
+        assert!(reopen(None).status.starts_with("Browser state load error:"));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn browser_file_errors_are_visible_and_explicit_state_ignores_bad_carrier() {
+        let (mut app, directory) = test_app("browser-errors");
+        std::fs::write(&app.browser_state_path, "broken JSON").unwrap();
+        assert!(
+            BrowserState::restore(&app.gui_state.sections, false, &app.browser_state_path).is_err()
+        );
+        assert_eq!(
+            BrowserState::restore(&app.gui_state.sections, true, &app.browser_state_path).unwrap(),
+            BrowserState::default()
+        );
+        let blocked = directory.join("blocked");
+        std::fs::write(&blocked, "not a directory").unwrap();
+        app.browser_state_path = blocked.join("browser.json");
+        app.presets.state.width += 1.0;
+        app.persist_browser_state(false);
+        assert!(app.browser_state_changed_at.is_some());
+        app.persist_browser_state(true);
+        assert!(
+            app.status.starts_with("Browser state save error:"),
+            "{}",
+            app.status
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -715,9 +949,14 @@ mod tests {
                 .clone();
             app.toggle_scan_for_print();
             assert_eq!(app.scan_for_print_snapshot, Some((false, false, true)));
+            let revision = app.parameter_revision;
+            let epoch = app.calibration_epoch;
             app.load_preset(&entry);
             assert!(app.status.starts_with("Applied preset"), "{}", app.status);
             assert!(app.scan_for_print_snapshot.is_none());
+            assert_eq!(app.parameter_revision, revision.wrapping_add(1));
+            assert_eq!(app.calibration_epoch, epoch.wrapping_add(1));
+            assert!(app.dirty);
             let restored = app.current_state().unwrap().runtime_params().unwrap();
             assert!(!restored.scanner.white_correction);
             assert!(!restored.scanner.black_correction);
@@ -944,7 +1183,14 @@ mod tests {
         params.enlarger.m_filter_neutral = 31.0;
         let preset =
             Preset::capture_section("Filters", Section::Enlarger, &params, provenance()).unwrap();
-        let applied = preset.apply_section(&RuntimeParams::default()).unwrap();
+        let film = spektrafilm_core::profile::load_profile_by_name(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            "kodak_gold_200",
+        )
+        .unwrap();
+        let applied = preset
+            .apply_section(&RuntimeParams::default(), &film)
+            .unwrap();
         let state = state::GuiState::from_runtime(
             &applied,
             "kodak_gold_200",

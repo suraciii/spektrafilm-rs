@@ -499,14 +499,14 @@ pub use spektrafilm_core::config::config_dir;
 pub fn default_path() -> PathBuf {
     config_dir().join("gui_default_state.json")
 }
-pub fn startup() -> Result<GuiState> {
-    let path = default_path();
+pub fn startup(directory: &Path) -> Result<GuiState> {
+    let path = directory.join("gui_default_state.json");
     let mut state = if path.exists() {
         GuiState::load(&path)?
     } else {
         GuiState::factory()
     };
-    let directories = config_dir().join("dialog_dirs.json");
+    let directories = directory.join("dialog_dirs.json");
     if directories.exists() {
         let value: Value = serde_json::from_str(&std::fs::read_to_string(directories)?)?;
         if !value.is_object() {
@@ -647,7 +647,12 @@ mod tests {
         // Monochrome is derived from the film, so sections preserve the target's value.
         let mut target = factory.runtime_params().unwrap();
         target.film_render.grain.monochrome = true;
-        let applied = preset.apply_section(&target).unwrap();
+        let film = spektrafilm_core::profile::load_profile_by_name(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            factory.film(),
+        )
+        .unwrap();
+        let applied = preset.apply_section(&target, &film).unwrap();
         let saved =
             GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
                 .unwrap();
