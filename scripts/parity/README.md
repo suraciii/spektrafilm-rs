@@ -455,8 +455,10 @@ Exact zoom verification temporarily widens the window to 1560 pixels so the
 Paper-back readiness uses the selected layer in the viewer status overlay;
 OCR ordering of the layer name and zoom text does not determine readiness.
 Zoom and rotation geometry use the known colored Input raster, selected after
-the render completes. Processed Output can be nearly neutral; its dimensions
-and metadata are checked separately through render reports and decoded Export.
+the render completes. Measurement waits for visible chroma and stable pixels;
+repeated Paper-back frames do not establish Input readiness. Processed Output
+can be nearly neutral; its dimensions and metadata are checked separately
+through render reports and decoded Export.
 White-padding verification waits for the requested white border before
 measuring pixel differences; an unrelated changed frame is not completion.
 Crossfade verification disables automatic preview while changing exposure,

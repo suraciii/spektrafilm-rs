@@ -567,20 +567,23 @@ class X11:
         _, canvas = self.viewer_canvas()
         return hashlib.sha256(canvas.tobytes()).hexdigest()
 
-    def await_viewer(self, previous=None, timeout=60, label='viewer'):
+    def await_viewer(self, previous=None, timeout=60, label='viewer', accept_frame=None):
         """Wait for the composition worker to paint a settled viewer frame.
 
         The raster reaches the viewer through an asynchronous composition
         worker, so the frame right after a display change still shows the
         previous settings and can stay that way for seconds under load. Wait
-        until the canvas differs from `previous`, then until two consecutive
-        screenshots agree. Returns the settled screenshot and canvas.
+        until the canvas differs from `previous`, satisfies `accept_frame` if
+        supplied, and two consecutive screenshots agree. Returns the frame.
         """
         state = {'image': None, 'canvas': None, 'digest': None, 'changed': previous is None}
 
         def settled():
             image, canvas = self.viewer_canvas()
             digest = hashlib.sha256(canvas.tobytes()).hexdigest()
+            if accept_frame is not None and not accept_frame(image, canvas):
+                state['digest'] = None
+                return False
             if not state['changed']:
                 if digest != previous:
                     state['changed'] = True
@@ -600,16 +603,22 @@ class X11:
 
     def measure_viewer(self, label, changed_from=None, timeout=60):
         """Measure the known colored fixture after selecting its Input raster."""
-        image, canvas = self.await_viewer(changed_from, timeout, label)
-        channels = [canvas[..., i].astype(np.int16) for i in range(3)]
-        chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
-        mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
-        ys, xs = np.where(mask)
         bounds = None
-        if xs.size > 100:
+
+        def colored_raster(image, canvas):
+            nonlocal bounds
+            channels = [canvas[..., i].astype(np.int16) for i in range(3)]
+            chroma = np.maximum.reduce(channels) - np.minimum.reduce(channels)
+            mask = (chroma > 25) & (np.maximum.reduce(channels) > 35)
+            ys, xs = np.where(mask)
+            if xs.size <= 100:
+                return False
             left, top, _, _ = viewer_canvas_bounds(image)
             bounds = [int(xs.min() + left), int(ys.min() + top),
                       int(xs.max() + left + 1), int(ys.max() + top + 1)]
+            return True
+
+        image, _ = self.await_viewer(changed_from, timeout, label, colored_raster)
         screenshot = f'{len(self.records):02d}-{label}.png'
         image.save(self.root / screenshot)
         self.records.append({'surface': label, 'screenshot': screenshot,
