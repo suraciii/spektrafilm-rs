@@ -1,6 +1,8 @@
 name: Diag windows telemetry
 
 on:
+  push:
+    branches: [diag/windows-telemetry]
   workflow_dispatch:
 
 permissions:
