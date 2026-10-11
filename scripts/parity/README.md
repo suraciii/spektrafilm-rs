@@ -136,17 +136,23 @@ Start D-Bus inside Xvfb so the GTK portal inherits DISPLAY. The driver performs
 an initial preview before saving state to establish the output viewing layer.
 It selects the requested uppercase footer action independently of neighboring
 button OCR, distinguishes SCAN from the Scan for print checkbox, and observes
-the requested Preview or Scan completion after resetting the prior status.
+the requested Preview or Scan completion from the report the GUI publishes for
+each operation (`SPEKTRAFILM_GUI_DIAGNOSTICS_DIR`), so render readiness never
+depends on the status line; the human status text is still recorded in the
+scenario records.
 RAW import requires the pinned fixture's loaded/full dimensions or corresponding
 preview dimensions, plus saved ACES2065-1 state with decoding disabled; transient
 Loaded text can be replaced by a completed preview.
 The driver normalizes initially expanded sections before topology checks and
 reads tab labels in the dedicated header region. Before selecting a footer
 action it moves the pointer away so hover highlighting does not hide the text.
-Export modal controls are read from their visible panel with independent
-contrast normalization; the loaded image cannot determine modal OCR contrast.
-Selected values are checked before opening a combo menu; open menu options use
-the same panel contrast normalization before matching the requested value.
+Export recognition uses the rendered title bar's contiguous background to bound
+the dialog horizontally. The inner right edge bounds closed button discovery,
+and the button row sets the final bottom; that frame is retained while a combo
+menu covers the buttons. Only the tight dialog crop supplies controls. Contrast
+passes remain independent observations, with
+each selected value checked against its own label span and row before opening
+the native combo menu; the same crop normalization reads the requested option.
 
 Profile selection records the open menu and scrolls one wheel increment between
 observations so intermediate stock rows cannot be skipped.
@@ -372,6 +378,43 @@ output, observes the GUI's independent Export worker, and checks cancellation
 and window-close cleanup. Linux GUI runs use Xvfb with a session bus created
 inside that display; Windows/macOS require a real interactive desktop and
 platform permissions.
+
+The package GUI driver locates Cancel and checks the in-flight status from the
+same captured frame, then sends one click without another scroll or OCR pass.
+Window close also checks the visible in-flight status without scrolling. The
+driver requires cancellation completion and absent destination files after both
+actions. Extra observations before dispatch can outlast a short export and click
+the replacement Export button instead.
+
+Export control OCR is bounded by the rendered dialog title bar and button row.
+Equalized and autocontrasted crops provide independent observations of each row;
+the driver does not combine their word widths or control coordinates. It checks
+the selected value before opening a menu and keeps the established dialog frame
+while a dropdown covers the buttons. It also distinguishes the sidebar Export
+button from the Export options heading.
+
+Each GUI launch keeps its operation reports in a separate directory under
+`diagnostics/`. Restart scenarios retain earlier reports; observations identify
+each session directory. Report publication failures appear in the GUI status on
+every tab.
+
+Viewer comparisons exclude both the preset browser and the controls sidebar.
+Exact zoom verification temporarily widens the window to 1560 pixels so the
+400% raster fits with the preset browser visible, then restores its dimensions.
+Paper-back readiness uses the selected layer in the viewer status overlay;
+OCR ordering of the layer name and zoom text does not determine readiness.
+Zoom and rotation geometry use the known colored Input raster, selected after
+the render completes. Processed Output can be nearly neutral; its dimensions
+and metadata are checked separately through render reports and decoded Export.
+White-padding verification waits for the requested white border before
+measuring pixel differences; an unrelated changed frame is not completion.
+Crossfade verification disables automatic preview while changing exposure,
+then clicks Preview to request the animated render.
+The Linux file chooser driver tracks its native window through closure and
+locates the primary action beside Cancel in the window's bottom button row.
+It does not treat the Open files read-only checkbox as an Open action.
+Numeric-entry acceptance uses native select-all, text entry, and Enter on each
+desktop platform.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
 engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo,
