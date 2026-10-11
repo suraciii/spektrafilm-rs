@@ -473,9 +473,11 @@ Desktop acceptance requires NumPy, OpenImageIO, Exiv2 Python bindings, Pillow,
 mss, pytesseract, psutil, and the Tesseract engine. Linux additionally requires
 openbox, xdotool, xclip, xprop, xwininfo,
 zenity, ffmpeg, gdbus, and a working GTK file chooser portal on the same display.
-The driver checks portal readiness before launching the GUI. Package smoke also
-builds a ZIP bundle through the installed exporter, checks offline
-report references and artifacts, and executes its delivered OCIO processors.
+The driver checks portal readiness before launching the GUI. Each Linux scenario
+verifies that the window manager's advertised X11 window still exists and points
+back to itself before reusing it. Otherwise, the scenario starts its own Openbox.
+Package smoke also builds a ZIP bundle through the installed exporter, checks
+offline report references and artifacts, and executes its delivered OCIO processors.
 `package_smoke.py` requires `--package-root` and its `build-manifest.json`;
 `--build-manifest` selects another explicit manifest path. It writes
 `package_report.json` next to `observations.json`. The report records the build's

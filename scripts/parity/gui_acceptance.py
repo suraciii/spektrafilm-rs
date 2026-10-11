@@ -150,12 +150,23 @@ class X11:
         self.records, self.wm = [], None
         self.last_report_id = 0
         self.log = (root / 'gui.log').open('w')
-        wm = subprocess.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], capture_output=True, text=True)
-        if 'window id #' not in wm.stdout:
+        def window_manager_ready():
+            root_property = subprocess.run(
+                ['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], capture_output=True, text=True)
+            match = re.search(r'window id # (0x[0-9a-fA-F]+)', root_property.stdout)
+            if root_property.returncode or not match:
+                return False
+            window_id = match.group(1)
+            child_property = subprocess.run(
+                ['xprop', '-id', window_id, '_NET_SUPPORTING_WM_CHECK'],
+                capture_output=True, text=True)
+            child = re.search(r'window id # (0x[0-9a-fA-F]+)', child_property.stdout)
+            return (child_property.returncode == 0 and child is not None
+                    and int(child.group(1), 16) == int(window_id, 16))
+
+        if not window_manager_ready():
             self.wm = subprocess.Popen(['openbox', '--sm-disable'], stdout=self.log, stderr=self.log)
-            wait_for(lambda: 'window id #' in subprocess.run(
-                ['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], capture_output=True, text=True).stdout,
-                'X11 window manager', 15)
+            wait_for(window_manager_ready, 'X11 window manager', 15)
 
     def xd(self, *args, check=True):
         if args[0] == 'click' and int(args[-1]) == 1 and '--repeat' not in args:
