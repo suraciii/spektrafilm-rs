@@ -14,6 +14,9 @@
   density brightness, three-channel balance, contrast, and maximum density.
   Print-paper and scan-minus-base routes keep `direct_scan`; route changes to
   an ineligible mode reset the output mode to `direct_scan`.
+- A film-scan route also exposes the scan light, with one entry that restores
+  the film profile default. A photographic-paper route must not expose the scan
+  light.
 - Numeric parameter fields use text editing and the default text cursor. Scrolling over a field changes its value by the declared step. Invalid or incomplete text must not enter runtime parameters.
 - Preview computation and viewer composition run outside the UI thread. Queued requests retain only the latest snapshot. Results from older requests, input images, or parameter revisions must not replace current output.
 - The viewer retains the last completed frame while new composition runs. Automatic parameter updates skip reveal and crossfade. Explicit Preview and Scan retain those configured animations.

@@ -8,6 +8,8 @@
 - Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`. The convert-film scan passes its selected scan illuminant into the same preparation path. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
 - The selected route determines the scanned medium. The medium determines the stage topology, the scanner calibration references, and the scanner controls that apply.
 - Scanner white and black correction derives its references from the scanned medium: film zero and maximum dye density for a slide scan, and the print exposure of the film density range for a photographic-paper scan.
+- The film-scan light is a runtime control, not a device profile. An unset value follows the film profile viewing illuminant, so the profile-derived capture stays the default.
+- The effective scan light supplies the film-scan capture context and the scanner white and black correction references together. The correction must not use a different light.
 - Positive interpretation derives its response from the profile density curves and the scan color context. It must not estimate its endpoints from image content.
 - Interpretation controls parameterize the inverse response only. They must not modify the film curves or the printing exposure.
 - Look reaches a film-scan image through the scan capture, positive interpretation, or the finishing treatment. The finishing treatment is the only look stage shared by a photographic-paper scan and a film scan.

@@ -18,15 +18,25 @@
 - The selected route determines the scanned medium. A film-scan route scans the
   film; a print route scans the photographic paper.
 - The scanned medium determines the scanner controls that apply.
-- A print route carries its positive image on the photographic paper, and the
+- A print route carries its positive image on the photographic paper, and its
   scan reads that paper. A negative film-scan route carries the negative image
-  on the film, and positive-film interpretation produces the positive image.
-- A photographic-paper scan exposes the scanner capture controls only: scanner
-  lens blur, scanner white and black correction with its white and black
-  levels, scanner unsharp mask, and the output color transform.
-- A film scan exposes the scanner capture controls and the scan polarity.
-- Positive-film interpretation belongs to a negative film scan. A photographic
-  paper scan and a slide film scan must not expose it. See
+  on the film; `positive_scan` produces the positive image by positive-film
+  interpretation.
+- Scanner capture corrections are scanner lens blur, scanner white and black
+  correction with its white and black levels, and scanner unsharp mask.
+- A photographic-paper scan exposes the scanner capture corrections only. It
+  must not expose the scan light or the scan polarity.
+- A film scan exposes the scan light, the scanner capture corrections, and the
+  scan polarity. A slide film scan and a negative film scan expose the same
+  scanner controls.
+- The scan light is the spectrum that reads the film. `scanner.illuminant`
+  selects it and accepts the same illuminant names as `enlarger.illuminant`. An
+  unset `scanner.illuminant` follows the film profile viewing illuminant.
+- Scanner white and black correction applies to a photographic-paper scan and
+  to a slide film scan. It must not change a negative film scan.
+- Positive-film interpretation belongs to a negative film profile with
+  `positive_scan`. A photographic-paper scan and a slide film scan must not
+  expose it. See
   [Direct negative-film scan output](#direct-negative-film-scan-output).
 - Look that must apply to both a photographic-paper scan and a film scan
   belongs to the finishing treatment, not to the scanner controls. See
