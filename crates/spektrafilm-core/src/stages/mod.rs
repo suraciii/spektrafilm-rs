@@ -1,6 +1,7 @@
 pub mod converting;
 mod debug_compare;
 pub mod filming;
+pub mod grain_v3;
 pub mod printing;
 pub mod scanning;
 

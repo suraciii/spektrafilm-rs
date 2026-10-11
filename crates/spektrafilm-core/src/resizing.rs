@@ -144,6 +144,25 @@ fn crop_rect(
     Ok((c0 as usize, r0 as usize, cw as usize, ch as usize))
 }
 
+/// Source rectangle of the requested film region: the upstream crop
+/// rectangle when `io.crop` is set, the whole image otherwise.
+///
+/// The grain V3 readout reads the requested film region out of the full
+/// source, so it needs the rectangle as geometry rather than as a cropped
+/// image ([`crop_image`]) or a cropped-and-rescaled working image
+/// ([`crop_and_rescale`]).
+pub fn requested_crop_rect(
+    w: u32,
+    h: u32,
+    io: &IoParams,
+) -> Result<(usize, usize, usize, usize), String> {
+    if io.crop {
+        crop_rect(w, h, io.crop_center, io.crop_size)
+    } else {
+        Ok((0, 0, w as usize, h as usize))
+    }
+}
+
 /// Crop `image` by the normalized `center`/`size` rectangle (see
 /// [`crop_rect`]). Mirrors Python `crop_image`: pixels are copied
 /// verbatim, no interpolation.
