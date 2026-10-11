@@ -304,6 +304,7 @@ struct App {
     observed_browser_state: presets::BrowserState,
     browser_state_changed_at: Option<Instant>,
     film_name: String,
+    film_medium: controls::ScanMedium,
     print_name: String,
     /// Development-time family (minutes) of the selected film / paper —
     /// non-trivial only for B&W stocks. Drives the dev-time pickers.
@@ -901,6 +902,24 @@ struct CalibrationJob {
     handle: Option<JoinHandle<()>>,
 }
 
+fn scan_medium(film: &profile::Profile) -> controls::ScanMedium {
+    if film.is_film() && film.is_negative() {
+        controls::ScanMedium::Negative
+    } else if film.is_film() && film.is_positive() {
+        controls::ScanMedium::Slide
+    } else {
+        controls::ScanMedium::None
+    }
+}
+
+fn normalize_scan_output(params: &mut RuntimeParams, film_medium: controls::ScanMedium) {
+    if !film_medium.positive_output_eligible(&params.workflow.route)
+        && params.scanner.scan_output != "direct_scan"
+    {
+        params.scanner.scan_output = "direct_scan".into();
+    }
+}
+
 impl App {
     fn new(
         backend: Arc<dyn ComputeBackend>,
@@ -946,9 +965,14 @@ impl App {
         let film_name = gui_state.film().to_owned();
         let print_name = gui_state.paper().to_owned();
         let film_profile = profile::load_profile_by_name(&data_dir, &film_name).ok();
-        let params = gui_state
+        let film_medium = film_profile
+            .as_ref()
+            .map(scan_medium)
+            .unwrap_or(controls::ScanMedium::None);
+        let mut params = gui_state
             .runtime_params()
             .expect("validated GUI factory state");
+        normalize_scan_output(&mut params, film_medium);
         let film_dev_times = film_profile
             .as_ref()
             .map(|f| f.data.development_time.clone())
@@ -978,6 +1002,7 @@ impl App {
             papers,
             observed_browser_state: presets.state.clone(),
             browser_state_changed_at: explicit_state.then(Instant::now),
+            film_medium,
             browser_state_path,
             presets,
             film_name,
@@ -1063,15 +1088,10 @@ impl App {
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
-        if film.is_positive()
-            || !matches!(
-                params.workflow.route.as_str(),
-                "input > film > scan" | "input > convert-film > scan"
-            )
-        {
-            params.scanner.scan_output = "direct_scan".into();
-        }
+        let film_medium = scan_medium(&film);
+        normalize_scan_output(&mut params, film_medium);
         self.film_name = state.film().to_owned();
+        self.film_medium = film_medium;
         self.print_name = state.paper().to_owned();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.parameter_revision = self.parameter_revision.wrapping_add(1);
@@ -1211,6 +1231,13 @@ impl App {
             self.params.scanner.black_correction = black;
             self.params.print_render.glare.active = glare;
         } else {
+            if !self
+                .film_medium
+                .for_route(&self.params.workflow.route)
+                .correction_eligible()
+            {
+                return;
+            }
             self.scan_for_print_snapshot = Some((
                 self.params.scanner.white_correction,
                 self.params.scanner.black_correction,
@@ -1228,9 +1255,11 @@ impl App {
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
-            let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-            if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
-                self.toggle_scan_for_print();
+            if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
+                let mut scan_for_print = self.scan_for_print_snapshot.is_some();
+                if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
+                    self.toggle_scan_for_print();
+                }
             }
         });
         ui.horizontal(|ui| {
@@ -1241,18 +1270,7 @@ impl App {
                 routes::entries(),
                 routes::tooltip(),
             ) {
-                let direct_film_scan = self.params.workflow.route == "input > film > scan";
-                let positive_scan_route = matches!(
-                    self.params.workflow.route.as_str(),
-                    "input > film > scan" | "input > convert-film > scan"
-                );
-                self.params.io.scan_film = direct_film_scan;
-                if !positive_scan_route {
-                    self.params.scanner.scan_output = "direct_scan".into();
-                }
-                self.dirty = true;
-                self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                self.finish_route_change();
             }
             if ui
                 .checkbox(
@@ -1327,6 +1345,17 @@ impl App {
         }
     }
 
+    fn finish_route_change(&mut self) {
+        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
+            self.params.scanner.white_correction = white;
+            self.params.scanner.black_correction = black;
+            self.params.print_render.glare.active = glare;
+        }
+        self.params.io.scan_film = self.params.workflow.route == "input > film > scan";
+        normalize_scan_output(&mut self.params, self.film_medium);
+        self.invalidate_look_render();
+    }
+
     fn invalidate_look_render(&mut self) {
         self.scan_for_print_snapshot = None;
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
@@ -1349,6 +1378,7 @@ impl App {
         };
         self.film_name = selected;
         self.film_dev_times = film.data.development_time.clone();
+        self.film_medium = scan_medium(&film);
         self.params.workflow.route = workflow_default(&film);
         self.params.io.scan_film = film.is_positive();
         self.params.scanner.scan_output = "direct_scan".into();
@@ -2359,7 +2389,13 @@ impl App {
     }
 
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
-        let changes = controls::show(ui, &mut self.params, &mut self.gui_state.sections, section);
+        let changes = controls::show(
+            ui,
+            &mut self.params,
+            &mut self.gui_state.sections,
+            section,
+            self.film_medium,
+        );
         if changes.runtime_changed {
             self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
             self.parameter_revision = self.parameter_revision.wrapping_add(1);

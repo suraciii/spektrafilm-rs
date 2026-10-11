@@ -42,11 +42,41 @@ pub struct ChangeFlags {
     pub action: Option<CalibrationAction>,
 }
 
-pub fn show(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScanMedium {
+    None,
+    Paper,
+    Slide,
+    Negative,
+}
+
+impl ScanMedium {
+    pub(crate) fn for_route(self, route: &str) -> Self {
+        if route.contains(" > print > scan") {
+            Self::Paper
+        } else if route.ends_with(" > scan") || route.ends_with(" > scan-minus-base") {
+            self
+        } else {
+            Self::None
+        }
+    }
+
+    pub(crate) fn positive_output_eligible(self, route: &str) -> bool {
+        self == Self::Negative
+            && matches!(route, "input > film > scan" | "input > convert-film > scan")
+    }
+
+    pub(crate) fn correction_eligible(self) -> bool {
+        matches!(self, Self::Paper | Self::Slide)
+    }
+}
+
+pub(crate) fn show(
     ui: &mut Ui,
     params: &mut RuntimeParams,
     extras: &mut Value,
     section: &str,
+    film_medium: ScanMedium,
 ) -> ChangeFlags {
     let mut flags = ChangeFlags::default();
     ui.push_id(("supplemental_controls", section), |ui| {
@@ -75,18 +105,23 @@ pub fn show(
         }
         if section == "Scanner" {
             ui.scope(|ui| {
-                let positive_route = matches!(
-                    params.workflow.route.as_str(),
-                    "input > film > scan" | "input > convert-film > scan"
-                );
-                if positive_route {
-                    flags.runtime_changed |= choice_tip(
-                        ui,
-                        "scan output",
-                        &mut params.scanner.scan_output,
-                        &["direct_scan", "positive_scan"],
-                        "direct_scan preserves the scanner capture; positive_scan applies calibrated density interpretation and print-like tone.",
-                    );
+                let medium = film_medium.for_route(&params.workflow.route);
+                let positive_route = medium.positive_output_eligible(&params.workflow.route);
+                if medium == ScanMedium::None {
+                    return;
+                }
+                if positive_route && choice_tip(
+                    ui,
+                    "scan output",
+                    &mut params.scanner.scan_output,
+                    &["direct_scan", "positive_scan"],
+                    "direct_scan preserves the scanner capture; positive_scan applies calibrated density interpretation and print-like tone. Selecting positive_scan turns off white and black capture correction.",
+                ) {
+                    if params.scanner.scan_output == "positive_scan" {
+                        params.scanner.white_correction = false;
+                        params.scanner.black_correction = false;
+                    }
+                    flags.runtime_changed = true;
                 }
                 if positive_route && params.scanner.scan_output == "positive_scan" {
                     flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Positive scan brightness offset in stops.");
@@ -94,14 +129,18 @@ pub fn show(
                     flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Positive scan logistic contrast; strictly positive.");
                     flags.runtime_changed |= numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, 0.0001, 16.0, 0.02, 3, "Positive scan maximum density; strictly positive.");
                 }
-                if !positive_route {
-                    params.scanner.scan_output = "direct_scan".into();
+                if medium == ScanMedium::Slide
+                    || (positive_route && params.scanner.scan_output == "positive_scan")
+                {
+                    flags.runtime_changed |= scan_points(ui, &mut params.scanner.black_point, &mut params.scanner.white_point);
                 }
                 flags.runtime_changed |= numeric(ui, "lens blur", &mut params.scanner.lens_blur, 0.0, 1000000.0, 0.05, 2, "Sigma of gaussian filter in pixel for the scanner lens blur.");
-                flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable white point correction applied to the scanner output.");
-                flags.runtime_changed |= numeric(ui, "white level", &mut params.scanner.white_level, 0.0, 1.0, 0.005, 3, "Target white level applied when white correction is enabled.");
-                flags.runtime_changed |= toggle(ui, "black correction", &mut params.scanner.black_correction, "Enable black point correction applied to the scanner output.");
-                flags.runtime_changed |= numeric(ui, "black level", &mut params.scanner.black_level, 0.0, 1.0, 0.005, 3, "Target black level applied when black correction is enabled.");
+                if medium.correction_eligible() {
+                    flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable white point correction applied to the scanner output.");
+                    flags.runtime_changed |= numeric(ui, "white level", &mut params.scanner.white_level, 0.0, 1.0, 0.005, 3, "Target white level applied when white correction is enabled.");
+                    flags.runtime_changed |= toggle(ui, "black correction", &mut params.scanner.black_correction, "Enable black point correction applied to the scanner output.");
+                    flags.runtime_changed |= numeric(ui, "black level", &mut params.scanner.black_level, 0.0, 1.0, 0.005, 3, "Target black level applied when black correction is enabled.");
+                }
                 flags.runtime_changed |= tuple(ui, "unsharp mask", &mut params.scanner.unsharp_mask, 0.0, 1000000.0, 0.05, 2, "Apply unsharp mask to the scan, [sigma in pixel, amount].");
             });
         }
@@ -523,6 +562,51 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
     .inner
 }
 
+fn scan_points(ui: &mut Ui, black: &mut [f64; 3], white: &mut [f64; 3]) -> bool {
+    point_tuple(ui, "black point", black, white, true)
+        | point_tuple(ui, "white point", white, black, false)
+}
+
+fn point_tuple(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [f64; 3],
+    other: &[f64; 3],
+    is_black: bool,
+) -> bool {
+    let tooltip = "Red, green, and blue positions in the film scan range. Each black point must be below its white point; values outside the points are not clipped.";
+    ui.push_id(label, |ui| {
+        ui.label(label).on_hover_text(tooltip);
+        ui.horizontal(|ui| {
+            values
+                .iter_mut()
+                .enumerate()
+                .map(|(channel, value)| {
+                    crate::numeric::numeric_field_validated(
+                        ui,
+                        (label, channel),
+                        value,
+                        0.0,
+                        1.0,
+                        0.005,
+                        3,
+                        tooltip,
+                        |next| {
+                            if is_black {
+                                next < other[channel]
+                            } else {
+                                next > other[channel]
+                            }
+                        },
+                    )
+                })
+                .fold(false, |changed, field_changed| changed | field_changed)
+        })
+        .inner
+    })
+    .inner
+}
+
 fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) -> bool {
     ui.checkbox(value, label).on_hover_text(tooltip).changed()
 }
@@ -704,4 +788,193 @@ fn set_extra(extras: &mut Value, section: &str, key: &str, value: Value) {
         extras[section] = Value::Object(Map::new());
     }
     extras[section][key] = value;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn click(position: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    fn text_position(output: &egui::FullOutput, text: &str) -> egui::Pos2 {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(shape) if shape.galley.job.text == text => {
+                    Some(shape.pos + shape.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .expect("rendered numeric text")
+    }
+    fn replace_text(text: &str) -> Vec<egui::Event> {
+        vec![
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                },
+            },
+            egui::Event::Text(text.into()),
+        ]
+    }
+
+    #[test]
+    fn point_text_edits_commit_only_valid_channel_pairs() {
+        let ctx = egui::Context::default();
+        let mut black = [0.1, 0.2, 0.3];
+        let mut white = [0.7, 0.8, 0.9];
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut changed = false;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 300.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        changed = scan_points(ui, &mut black, &mut white);
+                    });
+                },
+            );
+            (changed, black, white, output)
+        };
+        let (_, _, _, output) = frame(vec![]);
+        let position = text_position(&output, "0.100");
+        frame(click(position, true));
+        frame(click(position, false));
+        for text in ["0.7", "0.95", "NaN", "-"] {
+            let (changed, black, white, _) = frame(replace_text(text));
+            assert!(!changed, "{text}");
+            assert_eq!(black, [0.1, 0.2, 0.3]);
+            assert_eq!(white, [0.7, 0.8, 0.9]);
+        }
+        let (changed, black, white, _) = frame(replace_text("0.25"));
+        assert!(changed);
+        assert_eq!(black, [0.25, 0.2, 0.3]);
+        assert_eq!(white, [0.7, 0.8, 0.9]);
+    }
+
+    #[test]
+    fn rejected_point_edit_preserves_last_committed_value() {
+        let ctx = egui::Context::default();
+        let mut black = [0.1, 0.2, 0.3];
+        let mut white = [0.7, 0.8, 0.9];
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut changed = false;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 300.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        changed = scan_points(ui, &mut black, &mut white);
+                    });
+                },
+            );
+            (changed, black, white, output)
+        };
+        let (_, _, _, output) = frame(vec![]);
+        let position = text_position(&output, "0.100");
+        frame(click(position, true));
+        frame(click(position, false));
+        let (changed, black, _, _) = frame(replace_text("0.250"));
+        assert!(changed);
+        assert_eq!(black[0], 0.25);
+        let (changed, black, _, _) = frame(replace_text("0.700"));
+        assert!(!changed);
+        assert_eq!(black[0], 0.25);
+    }
+
+    #[test]
+    fn white_point_draft_survives_sequential_typing_and_external_changes() {
+        let ctx = egui::Context::default();
+        let mut black = [0.1; 3];
+        let mut white = [1.0; 3];
+        let mut frame = |events: Vec<egui::Event>, external: Option<f64>| {
+            if let Some(value) = external {
+                white[0] = value;
+            }
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 300.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        scan_points(ui, &mut black, &mut white);
+                    });
+                },
+            );
+            (black, white, output)
+        };
+        let (_, _, output) = frame(vec![], None);
+        let position = text_position(&output, "1.000");
+        frame(click(position, true), None);
+        frame(click(position, false), None);
+        let select_all = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        };
+        let (_, white, _) = frame(vec![select_all, egui::Event::Text("0".into())], None);
+        assert_eq!(white, [1.0; 3]);
+        let (_, white, _) = frame(vec![egui::Event::Text(".".into())], None);
+        assert_eq!(white, [1.0; 3]);
+        let (_, white, _) = frame(vec![egui::Event::Text("9".into())], None);
+        assert_eq!(white, [0.9, 1.0, 1.0]);
+        let (black, white, _) = frame(vec![egui::Event::Text("5".into())], None);
+        assert_eq!(white, [0.95, 1.0, 1.0]);
+        assert_eq!(black, [0.1; 3]);
+        frame(vec![], Some(0.8));
+        let (_, white, _) = frame(
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::End,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Text("5".into()),
+            ],
+            None,
+        );
+        assert_eq!(white, [0.8005, 1.0, 1.0]);
+    }
 }

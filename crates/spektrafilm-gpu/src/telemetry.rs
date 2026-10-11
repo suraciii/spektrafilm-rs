@@ -93,6 +93,7 @@ vocabulary!(CpuReason {
     GrainV2Unsupported,
     GrainV3FieldCpu,
     PositiveScanOutput,
+    ScannerFilmPoints,
 });
 vocabulary!(ResidentDeclineReason {
     WorkflowRoute,
@@ -109,6 +110,7 @@ vocabulary!(ResidentDeclineReason {
     BackendNoResidentSupport,
     DiagnosticTapRoute,
     PositiveScanOutput,
+    ScannerFilmPoints,
 });
 vocabulary!(IssueCategory {
     Input,

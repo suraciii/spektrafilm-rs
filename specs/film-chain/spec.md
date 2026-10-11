@@ -13,6 +13,64 @@
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
+## Scan medium and scanner controls
+
+- The selected route determines the scanned medium. A film-scan route scans the
+  film; a print route scans the photographic paper.
+- The scanned medium determines the scanner controls that apply.
+- A photographic-paper scan and a slide film scan read a positive image. A
+  negative film scan reads the negative image on the film; `positive_scan`
+  produces the positive image by positive interpretation.
+- Every scan exposes scanner lens blur and scanner unsharp mask.
+- Scanner white and black correction, with its white and black levels, applies
+  to a photographic-paper scan and a slide film scan. It does not change a
+  negative film scan.
+- Film-scan black and white points apply to a slide film scan and to a
+  negative film scan with `positive_scan`. See
+  [Film-scan black and white points](#film-scan-black-and-white-points).
+- A negative film scan exposes the scan output mode. Positive interpretation
+  and its controls belong to `positive_scan`. A photographic-paper scan and a
+  slide film scan must not expose them. See
+  [Direct negative-film scan output](#direct-negative-film-scan-output).
+- Look that must apply to both a photographic-paper scan and a film scan
+  belongs to the finishing treatment, not to the scanner controls. See
+  [Magazine print color](../magazine-print-color/spec.md).
+- The product must not model a physical scanner device. It must not expose a
+  measured sensor response, transport artifacts, or dust controls.
+
+## Film-scan black and white points
+
+- `scanner.black_point` and `scanner.white_point` are three-channel positions
+  on the point range of the scanned film. A photographic-paper scan and a
+  negative film scan with `direct_scan` must not expose them.
+- On a negative film scan with `positive_scan`, the point range is the relative
+  log-exposure range that the derived inverse covers in all three channels.
+  `0.0` is the lowest exposure of that range and `1.0` the highest.
+- On a slide film scan, each channel's scanned density is the negative base-10
+  logarithm of its capture divided by its zero-dye capture. The shared range
+  runs from zero to the largest channel density of the maximum-dye reference.
+  `0.0` is that shared maximum density, and `1.0` is zero density.
+- The defaults `0.0` and `1.0` leave the scan unchanged.
+- Each channel must satisfy `0.0 <= black_point < white_point <= 1.0`.
+- Point-map scales, mapped endpoint captures, and endpoint tangents must be
+  representable in the selected computation precision. An unrepresentable
+  active window must fail with an error before output publication.
+- Each channel linearly maps its black point to the start of the range and its
+  white point to the end. Values outside the points continue the same linear
+  map; the points do not clip.
+- A point pair acts on its own channel only. Points that are equal across the
+  three channels apply the same map to every channel.
+- On a negative film scan, the points act on the estimated relative log
+  exposure before the density brightness, RGB balance, and contrast controls.
+  Points that are equal across the three channels must not introduce a color
+  cast on a neutral ramp.
+- On a slide film scan, non-default points act on the scanner capture after
+  scanner spectral capture and scanner lens blur, and before scanner white
+  and black correction. The correction keeps its references and its levels.
+  Default points retain the existing capture, correction, and blur order.
+  Captures outside the reference range use finite endpoint tangent
+  extrapolation without taking a logarithm of clipped or nonpositive values.
+
 ## Direct negative-film scan output
 
 - `scanner.scan_output` is `direct_scan` by default. It preserves the
