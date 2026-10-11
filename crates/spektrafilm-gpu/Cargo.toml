@@ -34,3 +34,6 @@ openblas-src = { version = "0.10", features = ["system"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

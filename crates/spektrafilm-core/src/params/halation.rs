@@ -1,7 +1,7 @@
 use super::{default_one_f64, default_true};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HalationParams {
     #[serde(default = "default_true")]

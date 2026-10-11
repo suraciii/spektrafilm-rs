@@ -21,10 +21,16 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import numpy as np
 import OpenImageIO as oiio
+
+
+def viewer_canvas_bounds(image):
+    """Pinned client-coordinate canvas between the preset and controls panels."""
+    return (260, 80, image.width - 420, max(81, image.height - 80))
 
 
 def require(value, message):
@@ -191,10 +197,10 @@ class X11:
         """
         directory = self.root / 'diagnostics'
         directory.mkdir(exist_ok=True)
-        for stale in directory.glob('operation-*.json'):
-            stale.unlink()
+        self.report_directory = Path(tempfile.mkdtemp(prefix='session-', dir=directory))
+        self.records.append({'diagnostic_session': str(self.report_directory.relative_to(self.root))})
         env = dict(env)
-        env['SPEKTRAFILM_GUI_DIAGNOSTICS_DIR'] = str(directory)
+        env['SPEKTRAFILM_GUI_DIAGNOSTICS_DIR'] = str(self.report_directory)
         self.last_report_id = 0
         return env
 
@@ -250,7 +256,8 @@ class X11:
             background = grayscale.crop((0, 0, grayscale.width, min(50, grayscale.height)))
             return ImageOps.invert(grayscale) if ImageStat.Stat(background).median[0] < 128 else grayscale
 
-        for offset, region in ((0, image.crop((0, 0, image.width - 420, image.height))),
+        for offset, region in ((0, image.crop((0, 0, 260, image.height))),
+                               (260, image.crop((260, 0, image.width - 420, image.height))),
                                (image.width - 420, image.crop((image.width - 420, 0, image.width, image.height)))):
             prepared = normalize(region)
             # The sidebar is read in bands: a full-height pass loses the small
@@ -297,10 +304,12 @@ class X11:
                 grouped.setdefault(key, []).append((text, data['left'][i] / 3, top + data['top'][i] / 3,
                                                     data['width'][i] / 3, data['height'][i] / 3))
         lines.extend(grouped.values())
-        region = image.crop((370, image.height - 30, image.width - 420, image.height))
+        left = viewer_canvas_bounds(image)[0]
+        top = image.height - 80
+        region = image.crop((left, top, image.width - 420, image.height))
         data = self.ocr.image_to_data(normalize(region).resize((region.width * 4, region.height * 4)),
-                                      config='--psm 7', output_type=self.ocr.Output.DICT, timeout=15)
-        words = [(text, 370 + data['left'][i] / 4, image.height - 30 + data['top'][i] / 4,
+                                      config='--psm 6', output_type=self.ocr.Output.DICT, timeout=15)
+        words = [(text, left + data['left'][i] / 4, top + data['top'][i] / 4,
                   data['width'][i] / 4, data['height'][i] / 4)
                  for i, text in enumerate(data['text']) if text.strip()]
         lines.append(words)
@@ -405,25 +414,34 @@ class X11:
             'Input': (26, 16),
             'Output': (78, 16),
             'Paper back': (145, 16),
-            'ccw rotate': (42, 963),
-            'cw rotate': (114, 963),
-            '100%': (174, 963),
-            '200%': (221, 963),
-            '400%': (268, 963),
-            'reset view': (328, 963),
         }
         if label in fixed:
             x, y = fixed[label]
+            image, _ = self.image()
+            x += viewer_canvas_bounds(image)[0]
             if sys.platform == 'darwin' and y < 300:
                 # AX window bounds include the 30px macOS title bar; the
                 # fixed points above are content-relative Linux coordinates.
                 y += 30
-            if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view'):
-                image, _ = self.image()
-                y = image.height - 17
             self.xd('mousemove', '--window', self.window, x, y)
             self.xd('click', 1)
             time.sleep(.8 if label.endswith('%') or label in ('Input', 'Output', 'Paper back') else .15)
+            return
+        if label in ('ccw rotate', 'cw rotate', '100%', '200%', '400%', 'reset view'):
+            # The status can wrap as the preset panel narrows the viewer.
+            # Locate the rendered footer row instead of pinning its height.
+            def locate_footer():
+                image, _, lines = self.read()
+                left, _, right_edge, bottom = viewer_canvas_bounds(image)
+                footer = [[word for word in line
+                           if left <= word[1] < right_edge and word[2] >= bottom]
+                          for line in lines]
+                matches = self.match(footer, label)
+                return matches[0] if matches else None
+            x, y = wait_for(locate_footer, f'viewer footer {label}', 30)
+            self.xd('mousemove', '--window', self.window, int(x), int(y))
+            self.xd('click', 1)
+            time.sleep(.8 if label.endswith('%') else .15)
             return
         if label in ('Open', 'Export'):
             self.scroll(True)
@@ -517,10 +535,9 @@ class X11:
                 self.snap(f'{label}-{name}-{"bottom" if bottom else "top"}', image, lines)
         self.tab('MAIN')
     def viewer_canvas(self):
-        """Viewer canvas pixels, excluding both status bars."""
+        """Central canvas pixels, excluding panels and both status bars."""
         image, _ = self.image()
-        pixels = np.asarray(image.convert('RGB'))
-        return image, pixels[80:max(81, image.height - 80), :min(1030, image.width)]
+        return image, np.asarray(image.crop(viewer_canvas_bounds(image)).convert('RGB'))
 
     def viewer_fingerprint(self):
         """Canvas hash captured before a view change, for the next measurement."""
@@ -567,7 +584,9 @@ class X11:
         ys, xs = np.where(mask)
         bounds = None
         if xs.size > 100:
-            bounds = [int(xs.min()), int(ys.min() + 80), int(xs.max() + 1), int(ys.max() + 81)]
+            left, top, _, _ = viewer_canvas_bounds(image)
+            bounds = [int(xs.min() + left), int(ys.min() + top),
+                      int(xs.max() + left + 1), int(ys.max() + top + 1)]
         screenshot = f'{len(self.records):02d}-{label}.png'
         image.save(self.root / screenshot)
         self.records.append({'surface': label, 'screenshot': screenshot,
@@ -725,7 +744,7 @@ class X11:
         that stale report instead of the operation the action started.
         """
         highest = self.last_report_id
-        for path in (self.root / 'diagnostics').glob('operation-*.json'):
+        for path in self.report_directory.glob('operation-*.json'):
             try:
                 operation = json.loads(path.read_text())['operation']
             except (OSError, ValueError, KeyError):
@@ -744,7 +763,7 @@ class X11:
         def ready():
             require(self.proc.poll() is None, 'GUI exited; see gui.log')
             reports = []
-            for path in (self.root / 'diagnostics').glob('operation-*.json'):
+            for path in self.report_directory.glob('operation-*.json'):
                 try:
                     report = json.loads(path.read_text())
                 except (OSError, ValueError):
@@ -1215,6 +1234,26 @@ return (item 1 of p as integer as text) & "," & (item 2 of p as integer as text)
             else:
                 self.input.mouseUp()
             time.sleep(.08)
+        elif args[0] == 'key':
+            require(len(args) == 2 and args[1] in ('ctrl+a', 'Return'),
+                    f'Unsupported desktop key command: {args}')
+            if args[1] == 'ctrl+a':
+                self.input.hotkey('command' if sys.platform == 'darwin' else 'ctrl', 'a')
+            else:
+                self.input.press('enter')
+        elif args[0] == 'type':
+            require(len(args) >= 3 and args[1:-1] in (
+                ('--clearmodifiers',), ('--clearmodifiers', '--delay', '0')),
+                f'Unsupported desktop type options: {args}')
+            text = args[-1]
+            require(isinstance(text, str) and text.isascii()
+                    and all(character.isprintable() for character in text),
+                    'Native desktop typing requires printable ASCII text')
+            modifiers = ('ctrl', 'shift', 'alt',
+                         'command' if sys.platform == 'darwin' else 'win')
+            for modifier in modifiers:
+                self.input.keyUp(modifier)
+            self.input.write(text, interval=0)
         else:
             raise RuntimeError(f'Unsupported desktop input: {args}')
         return ''

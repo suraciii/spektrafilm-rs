@@ -375,6 +375,7 @@ output, observes the GUI's independent Export worker, and checks cancellation
 and window-close cleanup. Linux GUI runs use Xvfb with a session bus created
 inside that display; Windows/macOS require a real interactive desktop and
 platform permissions.
+
 The package GUI driver locates Cancel and checks the in-flight status from the
 same captured frame, then sends one click without another scroll or OCR pass.
 Window close also checks the visible in-flight status without scrolling. The
@@ -387,6 +388,14 @@ labels readable; the second preserves menu text and bordered button labels.
 The driver distinguishes the Export button from the Export options heading and
 checks selected values before opening a menu.
 
+Each GUI launch keeps its operation reports in a separate directory under
+`diagnostics/`. Restart scenarios retain earlier reports; observations identify
+each session directory. Report publication failures appear in the GUI status on
+every tab.
+
+Viewer comparisons exclude both the preset browser and the controls sidebar.
+Numeric-entry acceptance uses native select-all, text entry, and Enter on each
+desktop platform.
 
 Desktop acceptance requires Pillow, mss, pytesseract, psutil and the Tesseract
 engine. Linux additionally requires openbox, xdotool, xclip, xprop, xwininfo,

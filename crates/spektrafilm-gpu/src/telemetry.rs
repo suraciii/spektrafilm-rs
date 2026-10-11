@@ -13,6 +13,8 @@ vocabulary!(CollectionMode {
     Summary,
     GpuTiming
 });
+// The vocabulary macro shares derives across enums with no common default.
+#[allow(clippy::derivable_impls)]
 impl Default for CollectionMode {
     fn default() -> Self {
         Self::Off
@@ -891,35 +893,35 @@ impl Drop for ObservationScope {
         self.context.mutate(|s| {
             s.coverage.fixed_duration_totals[kind as usize] += duration;
             let meta = self.context.meta.clone();
-            if let Some(meta) = meta {
-                if meta.kind == ObservationKind::Phase {
-                    const NAMES: &[&str] = &[
-                        "input_load",
-                        "backend_init",
-                        "input_prepare",
-                        "runtime_prepare",
-                        "simulation",
-                        "display_prepare",
-                        "presentation_handoff",
-                        "saving_convert",
-                        "file_write",
-                        "metadata",
-                        "publication",
-                        "result_prepare",
-                        "worker_wait",
-                    ];
-                    if let Some(i) = NAMES.iter().position(|&n| n == meta.name) {
-                        while s.coverage.phase_totals.len() <= i {
-                            s.coverage.phase_totals.push(PhaseTotal {
-                                name: NAMES[s.coverage.phase_totals.len()].into(),
-                                total_duration: 0.0,
-                                count: 0,
-                            });
-                        }
-                        let t = &mut s.coverage.phase_totals[i];
-                        t.total_duration += duration;
-                        t.count = t.count.saturating_add(1);
+            if let Some(meta) = meta
+                && meta.kind == ObservationKind::Phase
+            {
+                const NAMES: &[&str] = &[
+                    "input_load",
+                    "backend_init",
+                    "input_prepare",
+                    "runtime_prepare",
+                    "simulation",
+                    "display_prepare",
+                    "presentation_handoff",
+                    "saving_convert",
+                    "file_write",
+                    "metadata",
+                    "publication",
+                    "result_prepare",
+                    "worker_wait",
+                ];
+                if let Some(i) = NAMES.iter().position(|&n| n == meta.name) {
+                    while s.coverage.phase_totals.len() <= i {
+                        s.coverage.phase_totals.push(PhaseTotal {
+                            name: NAMES[s.coverage.phase_totals.len()].into(),
+                            total_duration: 0.0,
+                            count: 0,
+                        });
                     }
+                    let t = &mut s.coverage.phase_totals[i];
+                    t.total_duration += duration;
+                    t.count = t.count.saturating_add(1);
                 }
             }
             let Some(o) = s.observations.iter_mut().find(|o| o.id == self.context.id) else {

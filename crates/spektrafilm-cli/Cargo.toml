@@ -42,3 +42,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 rayon.workspace = true
 tiff = "0.10"
+
+[lints]
+workspace = true

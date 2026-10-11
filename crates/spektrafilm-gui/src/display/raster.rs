@@ -184,7 +184,8 @@ pub(super) fn sample_image_with(
                     x.clamp(0, image.width as i32 - 1) as u32,
                     y.clamp(0, image.height as i32 - 1) as u32,
                 )
-                .map(|v| v as f32),
+                // `Scalar` is f64 under `precision-f64`.
+                .map(spektrafilm_math::precision::to_f32),
         )
     })
 }

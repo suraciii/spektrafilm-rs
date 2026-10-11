@@ -24,7 +24,7 @@ spektrafilm-model = { path = "crates/spektrafilm-model" }
 spektrafilm-raw = { path = "crates/spektrafilm-raw" }
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 rayon = "1.10"
 rand = "0.9"
 rand_distr = "0.5"
@@ -47,6 +47,13 @@ rustfft = "6"
 lto = "thin"
 codegen-units = 1
 opt-level = 3
+
+# Decimal literals are copied from the pinned Python reference (NumPy,
+# colour-science, the Ziggurat tables) at full printed precision. Digits
+# beyond the f64 shortest round-trip are inert after IEEE-754 rounding, and
+# keeping them lets a reader diff each constant against its Python source.
+[workspace.lints.clippy]
+excessive_precision = "allow"
 
 # WGPU 24 does not expose Metal floating-point compilation options. The local
 # HAL patch preserves CPU binary32 arithmetic only for the marked grain shader.

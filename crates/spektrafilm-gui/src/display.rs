@@ -146,17 +146,19 @@ struct DisplaySource {
     profile: Option<PathBuf>,
 }
 
+type FitCacheEntry = (
+    Arc<ImageBuf>,
+    DisplaySource,
+    usize,
+    DisplayRaster,
+    Option<String>,
+);
+
 #[derive(Default)]
 struct CompositionCache {
     paper: Option<DisplayRaster>,
     polaroid: Option<(DisplayRaster, PolaroidState)>,
-    fit: [Option<(
-        Arc<ImageBuf>,
-        DisplaySource,
-        usize,
-        DisplayRaster,
-        Option<String>,
-    )>; 2],
+    fit: [Option<FitCacheEntry>; 2],
 }
 
 struct DisplayResponse {
@@ -771,38 +773,38 @@ impl Viewer {
             });
             self.cache_key = Some(key.clone());
         }
-        if let Some(response) = self.worker.take_response() {
-            if response.matches(self.generation, &key) {
-                self.accepted_generation = response.generation;
-                if let Some(t) = self.transition.as_mut() {
-                    t.start = now;
-                    ui.ctx().request_repaint_after(Duration::from_millis(32));
-                }
-                if let Some(prepared) = response.prepared {
-                    match layer {
-                        ViewLayer::Input => {
-                            self.input = Some(prepared.raster.clone());
-                            self.prepared_input = Some(prepared);
-                        }
-                        ViewLayer::Output => {
-                            self.output = Some(prepared.raster.clone());
-                            self.prepared_output = Some(prepared);
-                        }
-                        ViewLayer::PaperBack => {}
+        if let Some(response) = self.worker.take_response()
+            && response.matches(self.generation, &key)
+        {
+            self.accepted_generation = response.generation;
+            if let Some(t) = self.transition.as_mut() {
+                t.start = now;
+                ui.ctx().request_repaint_after(Duration::from_millis(32));
+            }
+            if let Some(prepared) = response.prepared {
+                match layer {
+                    ViewLayer::Input => {
+                        self.input = Some(prepared.raster.clone());
+                        self.prepared_input = Some(prepared);
                     }
+                    ViewLayer::Output => {
+                        self.output = Some(prepared.raster.clone());
+                        self.prepared_output = Some(prepared);
+                    }
+                    ViewLayer::PaperBack => {}
                 }
-                if let Some(status) = response.status {
-                    self.transform_status = status;
-                }
-                if let Some(texture) = self.texture.as_mut() {
-                    texture.set(response.image, TextureOptions::NEAREST);
-                } else {
-                    self.texture = Some(ui.ctx().load_texture(
-                        "viewer-presentation",
-                        response.image,
-                        TextureOptions::NEAREST,
-                    ));
-                }
+            }
+            if let Some(status) = response.status {
+                self.transform_status = status;
+            }
+            if let Some(texture) = self.texture.as_mut() {
+                texture.set(response.image, TextureOptions::NEAREST);
+            } else {
+                self.texture = Some(ui.ctx().load_texture(
+                    "viewer-presentation",
+                    response.image,
+                    TextureOptions::NEAREST,
+                ));
             }
         }
         if let Some(texture) = self.texture.as_ref() {
@@ -991,70 +993,72 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
     }
     let mut status = None;
     let mut current_prepared = None;
-    if layer != ViewLayer::PaperBack {
-        if let (Some(source), Some(space)) = (source.as_ref(), metadata.space.as_deref()) {
-            let fit = &mut cache.fit[usize::from(layer == ViewLayer::Output)];
-            let cached = fit.as_ref().is_some_and(|(image, settings, size, _, _)| {
-                Arc::ptr_eq(image, source) && settings == &metadata && *size == max_size
-            });
-            if !cached {
-                if let Some(seed) = prepared.as_ref().filter(|seed| {
-                    Arc::ptr_eq(&seed.source, source)
-                        && seed.metadata == metadata
-                        && seed.max_size == max_size
-                }) {
+    if layer != ViewLayer::PaperBack
+        && let (Some(source), Some(space)) = (source.as_ref(), metadata.space.as_deref())
+    {
+        let fit = &mut cache.fit[usize::from(layer == ViewLayer::Output)];
+        let cached = fit.as_ref().is_some_and(|(image, settings, size, _, _)| {
+            Arc::ptr_eq(image, source) && settings == &metadata && *size == max_size
+        });
+        if !cached
+            && let Some(seed) = prepared.as_ref().filter(|seed| {
+                Arc::ptr_eq(&seed.source, source)
+                    && seed.metadata == metadata
+                    && seed.max_size == max_size
+            })
+        {
+            *fit = Some((
+                Arc::clone(source),
+                metadata.clone(),
+                max_size,
+                seed.raster.clone(),
+                None,
+            ));
+        }
+        let cached = fit.as_ref().is_some_and(|(image, settings, size, _, _)| {
+            Arc::ptr_eq(image, source) && settings == &metadata && *size == max_size
+        });
+        if !cached {
+            let result = if layer == ViewLayer::Input {
+                input_display_raster(source, space, metadata.encoded, max_size)
+                    .map(|raster| (raster, None))
+            } else {
+                output_display_raster(
+                    source,
+                    space,
+                    metadata.encoded,
+                    metadata.transform,
+                    metadata.profile.as_deref(),
+                    max_size,
+                )
+                .map(|(raster, status)| (raster, Some(status)))
+            };
+            match result {
+                Ok((prepared, message)) => {
                     *fit = Some((
                         Arc::clone(source),
                         metadata.clone(),
                         max_size,
-                        seed.raster.clone(),
-                        None,
-                    ));
+                        prepared,
+                        message,
+                    ))
                 }
+                Err(error) => status = Some(format!("Display transform: {error}")),
             }
-            let cached = fit.as_ref().is_some_and(|(image, settings, size, _, _)| {
-                Arc::ptr_eq(image, source) && settings == &metadata && *size == max_size
+        }
+        if let Some((image, settings, size, prepared, message)) = fit.as_ref()
+            && Arc::ptr_eq(image, source)
+            && settings == &metadata
+            && *size == max_size
+        {
+            raster = Some(prepared.clone());
+            status = message.clone();
+            current_prepared = Some(PreparedDisplay {
+                source: Arc::clone(source),
+                metadata: metadata.clone(),
+                max_size,
+                raster: prepared.clone(),
             });
-            if !cached {
-                let result = if layer == ViewLayer::Input {
-                    input_display_raster(source, space, metadata.encoded, max_size)
-                        .map(|raster| (raster, None))
-                } else {
-                    output_display_raster(
-                        source,
-                        space,
-                        metadata.encoded,
-                        metadata.transform,
-                        metadata.profile.as_deref(),
-                        max_size,
-                    )
-                    .map(|(raster, status)| (raster, Some(status)))
-                };
-                match result {
-                    Ok((prepared, message)) => {
-                        *fit = Some((
-                            Arc::clone(source),
-                            metadata.clone(),
-                            max_size,
-                            prepared,
-                            message,
-                        ))
-                    }
-                    Err(error) => status = Some(format!("Display transform: {error}")),
-                }
-            }
-            if let Some((image, settings, size, prepared, message)) = fit.as_ref() {
-                if Arc::ptr_eq(image, source) && settings == &metadata && *size == max_size {
-                    raster = Some(prepared.clone());
-                    status = message.clone();
-                    current_prepared = Some(PreparedDisplay {
-                        source: Arc::clone(source),
-                        metadata: metadata.clone(),
-                        max_size,
-                        raster: prepared.clone(),
-                    });
-                }
-            }
         }
     }
     if layer == ViewLayer::PaperBack {
@@ -1102,30 +1106,30 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
             } else {
                 gray
             };
-            if paper_rect.contains(p) && !image_rect.contains(p) {
-                if let Some(paper) = cache.paper.as_ref() {
-                    color = pack(sample_rect(paper, p, paper_rect, Interpolation::Spline36));
-                }
+            if paper_rect.contains(p)
+                && !image_rect.contains(p)
+                && let Some(paper) = cache.paper.as_ref()
+            {
+                color = pack(sample_rect(paper, p, paper_rect, Interpolation::Spline36));
             }
-            if image_rect.contains(p) {
-                if let Some(raster) = raster {
-                    let mut rgb = if let Some((view, _)) = full.as_ref() {
-                        view.rgb[y * texture_size[0] + x]
-                    } else {
-                        sample_rect(raster, p, image_rect, interpolation)
-                    };
-                    if layer == ViewLayer::Output {
-                        if let Some(previous) = previous.as_ref() {
-                            let a = frame as f32 / 10.0;
-                            let old = sample_rect(previous, p, image_rect, interpolation);
-                            for c in 0..3 {
-                                rgb[c] =
-                                    old[c].clamp(0.0, 1.0) * (1.0 - a) + rgb[c].clamp(0.0, 1.0) * a;
-                            }
-                        }
+            if image_rect.contains(p)
+                && let Some(raster) = raster
+            {
+                let mut rgb = if let Some((view, _)) = full.as_ref() {
+                    view.rgb[y * texture_size[0] + x]
+                } else {
+                    sample_rect(raster, p, image_rect, interpolation)
+                };
+                if layer == ViewLayer::Output
+                    && let Some(previous) = previous.as_ref()
+                {
+                    let a = frame as f32 / 10.0;
+                    let old = sample_rect(previous, p, image_rect, interpolation);
+                    for c in 0..3 {
+                        rgb[c] = old[c].clamp(0.0, 1.0) * (1.0 - a) + rgb[c].clamp(0.0, 1.0) * a;
                     }
-                    color = pack(rgb);
                 }
+                color = pack(rgb);
             }
             pixels.push(color);
         }

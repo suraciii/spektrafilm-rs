@@ -98,6 +98,8 @@ pub fn bicubic_2d_f64(
     ];
     let mut result = vec![0.0f64; channels];
     let mut weight_sum = 0.0f64;
+    // Indices supply reflected coordinates and address weight and data arrays.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..4usize {
         let xi_idx = reflect_index(xi as isize + i as isize - 1, first_dim);
         for j in 0..4usize {
@@ -111,8 +113,8 @@ pub fn bicubic_2d_f64(
         }
     }
     if weight_sum != 0.0 {
-        for c in 0..channels {
-            result[c] /= weight_sum;
+        for value in &mut result {
+            *value /= weight_sum;
         }
     }
     result
@@ -162,6 +164,8 @@ pub fn bicubic_2d(
     for c in 0..channels {
         let mut sum = 0.0f64;
         let mut weight_sum = 0.0f64;
+        // Indices supply reflected coordinates and address weight and data arrays.
+        #[allow(clippy::needless_range_loop)]
         for dy in 0..4usize {
             let sy = reflect_index(yi as isize + dy as isize - 1, height);
             for dx in 0..4usize {

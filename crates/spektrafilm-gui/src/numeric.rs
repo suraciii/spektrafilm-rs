@@ -37,6 +37,8 @@ fn parse_value<T: egui::emath::Numeric>(text: &str, min: f64, max: f64) -> Optio
     Some(parsed.clamp(min, max))
 }
 
+// Numeric widgets keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric<T: egui::emath::Numeric>(
     ui: &mut Ui,
     label: &str,
@@ -54,6 +56,8 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
     .inner
 }
 
+// Numeric widgets keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn numeric_field<T, Id>(
     ui: &mut Ui,
     id_salt: Id,
@@ -95,13 +99,13 @@ where
         .on_hover_text(tooltip);
 
     let mut changed = false;
-    if response.changed() {
-        if let Some(parsed) = parse_value::<T>(&state.text, min, max) {
-            let next = T::from_f64(parsed);
-            if *value != next {
-                *value = next;
-                changed = true;
-            }
+    if response.changed()
+        && let Some(parsed) = parse_value::<T>(&state.text, min, max)
+    {
+        let next = T::from_f64(parsed);
+        if *value != next {
+            *value = next;
+            changed = true;
         }
     }
 

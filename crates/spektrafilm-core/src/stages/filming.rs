@@ -239,7 +239,7 @@ pub fn develop(
     let gamma = params.film_render.density_curve_gamma;
     let t = Instant::now();
     let mut density_cmy =
-        backend.density_curve_interp(log_raw, &log_exposure_f64, &norm_curves_f64, gamma as f64);
+        backend.density_curve_interp(log_raw, log_exposure_f64, norm_curves_f64, gamma as f64);
     print_stage_timing(stage_timings, "filming_develop.density_interp", t);
 
     // DIR couplers
@@ -251,8 +251,8 @@ pub fn develop(
             &density_cmy,
             log_raw,
             pix_um,
-            &log_exposure_f64,
-            &density_curves_f64,
+            log_exposure_f64,
+            density_curves_f64,
             &matrix,
             dir.amount,
             dir.diffusion_size_um,
@@ -302,7 +302,7 @@ pub fn develop(
             );
             let density_cmy_layers = spektrafilm_model::density_curves::interp_density_cmy_layers(
                 &density_cmy,
-                &norm_curves_f64,
+                norm_curves_f64,
                 &layers_tensor,
                 film.is_positive(),
             );
@@ -344,7 +344,7 @@ pub fn develop(
                 backend,
             );
         } else {
-            let density_max = spektrafilm_model::density_curves::max_density_f64(&norm_curves_f64);
+            let density_max = spektrafilm_model::density_curves::max_density_f64(norm_curves_f64);
             density_cmy = spektrafilm_model::grain::v1::apply_grain_to_density(
                 &density_cmy,
                 pixel_size_um,

@@ -202,7 +202,7 @@ mod tests {
             })
             .collect();
         let print_illu: Vec<f64> = crate::enlarger::ILLUMINANT_TH_KG3_DEFAULT_FILTERS_F64.to_vec();
-        let midgray_sd_f64: Vec<f64> = midgray_sd.iter().map(|&v| v as f64).collect();
+        let midgray_sd_f64: Vec<f64> = midgray_sd.to_vec();
         let exp_factor =
             crate::enlarger::compute_exposure_factor(&midgray_sd_f64, &print_illu, &print_sens);
         eprintln!("exposure_factor: {:.17}", exp_factor);
@@ -269,7 +269,7 @@ mod tests {
     /// Verify erf4 bandpass window matches Python for kodak_portra_400 params.
     #[test]
     fn erf4_window_parity() {
-        let params = vec![433.49234895_f64, 31.55901378, 593.13407317, 68.76320496];
+        let params = [433.49234895_f64, 31.55901378, 593.13407317, 68.76320496];
         // Replicate eval_erf4_bandpass to test in isolation
         let sqrt2 = std::f64::consts::SQRT_2;
         let (c_uv, sigma_uv, c_ir, sigma_ir) = (params[0], params[1], params[2], params[3]);

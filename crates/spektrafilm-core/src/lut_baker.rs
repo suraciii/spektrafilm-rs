@@ -237,6 +237,8 @@ fn make_pipeline(
     Runtime::new(film, print, params, data_dir)
 }
 
+// The bake context keeps the existing parameter contract.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn bake_params(
     spec: &BundleSpec,
     input: &ColorSpaceEntry,
@@ -277,6 +279,8 @@ pub(crate) fn bake_params(
     ))
 }
 
+// The snapshot uses the same complete bake context.
+#[allow(clippy::too_many_arguments)]
 fn bake_snapshot(
     spec: &BundleSpec,
     print_stock: &str,
@@ -384,7 +388,7 @@ fn measure_wires(
         }
         if tap == Tap::CmyFilm {
             let mut max = [f64::NEG_INFINITY; 3];
-            for p in raw.data.chunks_exact(3) {
+            for p in raw.data.as_chunks::<3>().0 {
                 for c in 0..3 {
                     max[c] = max[c].max(to_f64(p[c]));
                 }
@@ -500,7 +504,7 @@ fn bake_recipe(
     let raw =
         pipeline.process_with_taps(image, backend, Some(recipe.inject), Some(recipe.collect))?;
     let mut table = Vec::with_capacity(spec.resolution.pow(3));
-    for pixel in raw.data.chunks_exact(3) {
+    for pixel in raw.data.as_chunks::<3>().0 {
         let physical = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
         let code = if recipe.collect == Tap::RgbOut {
             output.encode_rgb(physical.map(|v| v * output.output_gain()))

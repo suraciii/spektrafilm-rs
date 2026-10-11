@@ -128,7 +128,7 @@ fn render_recipe(
     )?;
     invocation
         .operation
-        .set_input_dimensions(loaded.image.width as u32, loaded.image.height as u32);
+        .set_input_dimensions(loaded.image.width, loaded.image.height);
     let input_size = [loaded.image.width, loaded.image.height];
     let image = invocation.phase(
         "input_prepare",
@@ -173,12 +173,9 @@ fn render_recipe(
         .and_then(|value| value.to_str())
         .unwrap_or("tmp");
     let temporary = parent.join(format!(
-        ".spektrafilm-{}-{}.{}",
+        ".spektrafilm-{}-{:x}.{}",
         std::process::id(),
-        format!(
-            "{:x}",
-            Sha256::digest(output.as_os_str().as_encoded_bytes())
-        ),
+        Sha256::digest(output.as_os_str().as_encoded_bytes()),
         extension
     ));
     if temporary.exists() {
@@ -240,7 +237,7 @@ fn render_recipe(
     )?;
     invocation
         .operation
-        .set_published_dimensions(result.width as u32, result.height as u32);
+        .set_published_dimensions(result.width, result.height);
     invocation.phase(
         "result_prepare",
         IssueCategory::Publication,

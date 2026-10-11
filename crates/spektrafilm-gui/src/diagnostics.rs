@@ -270,8 +270,10 @@ mod tests {
     }
     #[test]
     fn changing_mode_does_not_change_accepted_operation() {
-        let mut diagnostics = Diagnostics::default();
-        diagnostics.mode = CollectionMode::Summary;
+        let mut diagnostics = Diagnostics {
+            mode: CollectionMode::Summary,
+            ..Default::default()
+        };
         let operation = Operation::new(OperationKind::Preview, diagnostics.mode);
         diagnostics.mode = CollectionMode::Off;
         diagnostics.finish(operation, Outcome::Superseded);

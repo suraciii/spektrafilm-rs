@@ -1,7 +1,7 @@
 use super::{default_half, default_true};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlareParams {
     #[serde(default = "default_true")]

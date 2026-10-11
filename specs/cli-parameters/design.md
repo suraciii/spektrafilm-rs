@@ -4,7 +4,7 @@
 
 The [CLI parameter language](spec.md) owns syntax, composition, validation, and inspection behavior. The CLI adapter must parse options and choose the execution contract. Core must own preset resolution and effective parameter preparation. The adapter must not implement another film pipeline or duplicate stock calibration rules.
 
-A complete preset, a sparse parameter file, and inline assignments must remain different source types. Sparse files and assignments must retain supplied leaf paths until resolution. Deserializing a file into default-filled controls before merge would discard the distinction between omission and explicit values.
+A preset document, a sparse parameter file, and inline assignments must remain different source types. Sparse files and assignments must retain supplied leaf paths until resolution. Deserializing a file into default-filled controls before merge would discard the distinction between omission and explicit values.
 
 TOML and JSON must map into the same parameter types. Carrier parsing must not select a different resolver. Syntax adapters must not change units or coerce strings. The semantic validator must remain authoritative for field support, bounds, and combinations.
 

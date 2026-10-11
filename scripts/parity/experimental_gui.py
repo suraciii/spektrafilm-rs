@@ -125,6 +125,8 @@ class ExperimentalDesktop(X11):
             if bottom and line[0][2] < image.height - 150:
                 continue
             tokens = words(' '.join(w[0] for w in line))
+            if 'preset' in tokens:
+                tokens = tokens[:tokens.index('preset')]
             expected = words(label)
             if bottom and label in ('PREVIEW', 'SCAN', 'SAVE'):
                 actions = [word for word in line if word[0].strip('[]()|') == label]
@@ -226,7 +228,7 @@ class ExperimentalDesktop(X11):
             seen = []
             for label in expected:
                 matches = [line for line in sidebar
-                           if words(' '.join(w[0] for w in line)) in
+                           if words(' '.join(w[0] for w in line).split('Preset:')[0]) in
                            (words(label), ['v'] + words(label), ['y'] + words(label), ['vy'] + words(label))]
                 require(len(matches) == 1, f'{tab}: expected one section {label}, saw {len(matches)}')
                 seen.append(matches[0][0][2])
