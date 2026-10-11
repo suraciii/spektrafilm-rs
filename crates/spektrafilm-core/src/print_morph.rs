@@ -396,26 +396,7 @@ fn morph_density_curves_impl(
             return Err(format!("density_curves_model.{name} must be 3×{n_layers}"));
         }
     }
-    if p.active {
-        for (name, v) in [
-            ("gamma_factor", p.gamma_factor),
-            ("gamma_factor_fast", p.gamma_factor_fast),
-            ("gamma_factor_slow", p.gamma_factor_slow),
-            ("gamma_factor_red", p.gamma_factor_red),
-            ("gamma_factor_green", p.gamma_factor_green),
-            ("gamma_factor_blue", p.gamma_factor_blue),
-        ] {
-            if v <= 0.0 {
-                return Err(format!("{name} must be strictly positive (got {v})"));
-            }
-        }
-        if !(0.0..=1.0).contains(&p.developer_exhaustion) {
-            return Err(format!(
-                "developer_exhaustion must be in [0, 1] (got {})",
-                p.developer_exhaustion
-            ));
-        }
-    }
+    p.validate()?;
 
     let mut out = vec![[0.0f64; 3]; log_exposure.len()];
     for channel in 0..3 {

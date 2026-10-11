@@ -66,13 +66,14 @@ The flows a user actually runs must be short; every one below is two or three st
 ## Writes
 
 - A missing library directory is an empty library, not a fault. Discovery must not create it; the first write must create it.
-- A write must validate the whole document and resolve it before it replaces anything.
-- A write must be atomic: write a temporary file in the library directory, then rename it. A failed write must retain the preceding document.
-- Creating a name that already exists must fail without touching the existing document, including when two writers create the same new name at the same time.
+- A write must validate the whole document before it replaces anything. A look write must resolve its profile references. A section write must not require profiles or an application workflow.
+- A write must publish a complete temporary file atomically. A failed write must retain the preceding document and must not leave an empty document at a new name.
+- Library mutations must serialize name checks with publication and removal across processes. A name has one owner across letter case and carriers. Creating or renaming to an existing name must fail without touching its document, including when writers compete for that name.
 - A new document must default to TOML. A document whose explicit null leaves TOML cannot represent must be stored as JSON; rename and duplicate must preserve the source document's carrier.
 - Rename must change the document name and the file name together. A failed rename must leave the preceding document reachable under its old name. A rename that only changes letter case must keep the document reachable on a case-insensitive filesystem.
 - Import must not replace an existing name in `My Presets`. A conflict must be reported and must offer a renamed copy.
 - Export must default its file name to the preset name with the carrier extension and must not write into the library directory unless the user picks it.
+- Export into the library must use the document name as its file stem and must create a new name. It must not replace an existing library document; Update owns replacement.
 - Deleting or updating one document must not modify another document or a built-in document.
 
 ## Boundaries

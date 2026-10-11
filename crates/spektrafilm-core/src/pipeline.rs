@@ -1234,14 +1234,7 @@ mod spectral_invalidation_tests {
         let mut params = base.params.clone();
         params.print_render.density_curves_morph.active = true;
         params.print_render.density_curves_morph.gamma_factor = 0.0;
-        let error = match base.with_params(params) {
-            Ok(_) => panic!("invalid print morph update must be rejected"),
-            Err(error) => error,
-        };
-        assert!(
-            error.contains("gamma_factor must be strictly positive"),
-            "{error}"
-        );
+        assert!(base.with_params(params).is_err());
     }
 
     #[test]

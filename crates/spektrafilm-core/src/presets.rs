@@ -312,9 +312,30 @@ impl Preset {
         preset.validate()?;
         Ok(preset)
     }
-    /// Returns a validated candidate, retaining workflow, calibration policy and all
-    /// explicit values outside this section. Supplied leaves become explicit.
-    pub fn apply_section(&self, current: &RuntimeParams) -> Result<RuntimeParams, String> {
+    /// Returns a candidate validated against the current film and scan configuration.
+    /// An unrelated edit may preserve an already-invalid scan configuration.
+    pub fn apply_section(
+        &self,
+        current: &RuntimeParams,
+        film: &Profile,
+    ) -> Result<RuntimeParams, String> {
+        let params = self.overlay_section(current)?;
+        params.validate()?;
+        let scan_changed = params.scanner.scan_output != current.scanner.scan_output
+            || params.scanner.white_correction != current.scanner.white_correction
+            || params.scanner.black_correction != current.scanner.black_correction
+            || params.film_render.grain.active != current.film_render.grain.active
+            || params.film_render.grain.engine != current.film_render.grain.engine;
+        if scan_changed || crate::pipeline_calibration::validate_scan_output(current, film).is_ok()
+        {
+            crate::pipeline_calibration::validate_scan_output(&params, film)?;
+        }
+        Ok(params)
+    }
+
+    /// Compose independently validated leaves without validating intermediate controls.
+    /// The caller must validate the complete candidate before applying it.
+    pub(crate) fn overlay_section(&self, current: &RuntimeParams) -> Result<RuntimeParams, String> {
         self.validate()?;
         let PresetParameters::Section(payload) = &self.parameters else {
             return Err("expected a section preset".into());
@@ -332,10 +353,6 @@ impl Preset {
                     params.neutral_print_filters_protected[axis] = true;
                 }
             }
-        }
-        params.validate()?;
-        if crate::pipeline_calibration::validate_scan_output_route(current).is_ok() {
-            crate::pipeline_calibration::validate_scan_output_route(&params)?;
         }
         Ok(params)
     }
