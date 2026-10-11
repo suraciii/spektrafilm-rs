@@ -575,7 +575,7 @@ impl ObservationContext {
             && c.snapshot.coverage.retained_observations < 1024
             && c.snapshot.coverage.retained_bytes + bytes <= 1048576;
         let start = Instant::now();
-        let offset = c.start.elapsed().as_secs_f64();
+        let offset = start.duration_since(c.start).as_secs_f64();
         if retain {
             c.snapshot.observations.push(Observation {
                 id,
