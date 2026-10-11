@@ -218,9 +218,12 @@ class X11:
         with self.mss.mss() as screen:
             desktop = screen.monitors[0]
         require(desktop['height'] >= 1000, 'Native GUI probe requires a desktop at least 1000px high')
-        self.xd('windowsize', '--sync', self.window, 1460, 980)
+        self.resize_window(1460, 980)
         self.xd('windowmove', '--sync', self.window, 0, 0)
         wait_for(self.main_ready, 'rendered native MAIN controls', 30)
+
+    def resize_window(self, width, height):
+        self.xd('windowsize', '--sync', self.window, width, height)
 
     def window_geometry(self, window):
         # xdotool getwindowgeometry adds the reparented frame offset twice
@@ -799,9 +802,8 @@ class X11:
             from PIL import ImageOps
             crop = image.crop(box)
             grouped = {}
-            # Thresholding choices trade off differently: equalized crops keep
-            # the dimmed title and control labels, autocontrasted ones keep
-            # the combo menu items, so read both and merge the results.
+            # Keep each contrast pass's lines independent: their word boxes
+            # are alternative observations, not parts of one physical row.
             for pass_index, prepare in enumerate((ImageOps.equalize, ImageOps.autocontrast)):
                 prepared = prepare(ImageOps.invert(ImageOps.grayscale(crop)))
                 data = self.ocr.image_to_data(prepared.resize((crop.width * scale, crop.height * scale)),
@@ -817,58 +819,104 @@ class X11:
                             data['height'][i] / scale))
             return list(grouped.values())
 
-        def modal_read():
-            from scipy.ndimage import label, find_objects
-            image, bbox = self.image()
-            # The export dialog is a dark panel over the viewer. Isolate it as
-            # the dark region when the viewer is bright; when dark viewer
-            # content merges with the panel, read the whole left pane instead.
-            pixels = np.asarray(image)[:, :int(image.width * .65), :3].astype(np.int16)
-            components, _ = label((pixels.max(axis=2) < 60) &
-                                  (pixels.max(axis=2) - pixels.min(axis=2) < 5))
-            boxes = []
-            for region in find_objects(components):
-                if region is None:
-                    continue
-                ys, xs = region
-                if 250 < xs.stop - xs.start < 650 and 100 < ys.stop - ys.start < 900:
-                    boxes.append(((max(0, xs.start - 12), max(0, ys.start - 44),
-                                   xs.stop + 12, ys.start + 220), 3))
-            boxes.append(((0, 0, int(image.width * .65), image.height), 2))
-            for box, scale in boxes:
-                lines = modal_lines(image, box, scale)
-                # The dialog's title always shows; an open combo dropdown
-                # covers the button row, so its Cancel label is not enough.
-                if self.match(lines, 'Export options') or self.match(lines, 'Cancel'):
-                    return image, bbox, lines
+        def matched_span(line, label):
+            wanted = ''.join(re.findall(r'[a-z0-9]+', label.lower()))
+            for start in range(len(line)):
+                text = ''
+                for end in range(start, len(line)):
+                    text += ''.join(re.findall(r'[a-z0-9]+', line[end][0].lower()))
+                    if text == wanted:
+                        return line[start:end + 1]
+                    if len(text) >= len(wanted):
+                        break
             return None
+
+        modal_box = None
+        menu_open = False
+
+        def modal_read():
+            nonlocal modal_box
+            image, _ = self.image()
+            discovery_box = modal_box or (0, 0, int(image.width * .65), image.height)
+            discovery = modal_lines(image, discovery_box, 2)
+            titles = [span for line in discovery
+                      if (span := matched_span(line, 'Export options'))]
+            if not titles:
+                return None
+            title = titles[0]
+            pixels = np.asarray(image)[:, :, :3].astype(np.int16)
+            title_top = min(word[2] for word in title)
+            title_left = min(word[1] for word in title)
+            title_right = max(word[1] + word[3] for word in title)
+            tx = int((title_left + title_right) / 2)
+            ty = max(0, int(title_top) - 2)
+            # Immediately above the title glyphs the title bar is contiguous,
+            # even when the dark dialog body joins the preset pane underneath.
+            background = pixels[ty, tx]
+            strip = np.max(np.abs(pixels[ty] - background), axis=1) <= 3
+            left, right = tx, tx + 1
+            while left > 0 and strip[left - 1]:
+                left -= 1
+            while right < image.width and strip[right]:
+                right += 1
+            if left > title_left or right < title_right:
+                return None
+            top = ty
+            while top > 0 and np.max(np.abs(pixels[top - 1, tx] - background)) <= 3:
+                top -= 1
+            if menu_open:
+                if modal_box is None:
+                    return None
+                box = modal_box
+            else:
+                # This provisional strip is only for finding the closed
+                # button row. Only the resulting tight crop supplies controls.
+                provisional = modal_lines(image, (left, top, right, image.height), 3)
+                cancels = [span for line in provisional
+                           if (span := matched_span(line, 'Cancel'))
+                           and span[0][2] > title_top]
+                if not cancels:
+                    return None
+                cancel = min(cancels, key=lambda span: span[0][2])
+                button_bottom = max(word[2] + word[4] for word in cancel)
+                padding = max(word[4] for word in cancel) * .75 + 2
+                box = (left, top, right, min(image.height, int(button_bottom + padding)))
+                modal_box = box
+            return image, box, modal_lines(image, box, 3)
         wait_for(modal_read, 'visible export modal controls', 20)
         formats = {'.jpg': 'JPEG', '.jpeg': 'JPEG', '.png': 'PNG',
                    '.tif': 'TIFF', '.tiff': 'TIFF', '.exr': 'EXR'}
         requested = formats.get(Path(path).suffix.lower())
         require(requested, f'Unsupported acceptance export extension: {path}')
         def select(label, option):
-            image, _, lines = wait_for(modal_read, 'visible export modal controls', 20)
+            nonlocal menu_open
+            image, box, lines = wait_for(modal_read, 'visible export modal controls', 20)
             self.snap('modal-before-' + label.replace(' ', '-'), image, lines)
-            matches = self.match(lines, label)
-            if not matches and len(label.split()) > 1:
-                # OCR can lose the first word of a dimmed label. The final
-                # word still identifies this control within the dialog.
-                matches = self.match(lines, label.split()[-1])
-            matches = [(x, y) for x, y in matches if x < self.right_control_x]
-            require(matches, f'Export options control is not visible: {label}')
-            x, y = matches[0]
-            # egui draws the selected combo immediately left of its label.
-            label_left = x - sum(word[3] for line in lines for word in line
-                                 if abs(word[2] + word[4] / 2 - y) < 10 and
-                                 re.sub(r'[^a-z0-9]', '', word[0].lower()) in label.lower().split()) / 2
-            left = [word for line in lines for word in line
-                    if abs(word[2] + word[4] / 2 - y) < 10 and word[1] + word[3] < label_left]
-            require(left, f'Export options selected value is not visible: {label}')
-            if self.match([left], option):
+            rows = []
+            for line in lines:
+                span = matched_span(line, label)
+                if span is None and len(label.split()) > 1:
+                    span = matched_span(line, label.split()[-1])
+                if span is None:
+                    continue
+                label_left = min(word[1] for word in span)
+                y = span[0][2] + span[0][4] / 2
+                values = [word for word in line
+                          if box[0] <= word[1] and word[1] + word[3] < label_left
+                          and box[1] <= word[2] and word[2] + word[4] <= box[3]
+                          and abs(word[2] + word[4] / 2 - y) < 10]
+                if values:
+                    rows.append((values, label_left, y))
+            require(rows, f'Export options selected value is not visible: {label}')
+            if any(self.match([values], option) for values, _, _ in rows):
                 return
-            value = left[0]
-            self.xd('mousemove', '--window', self.window, int(value[1] + value[3] / 2), int(y))
+            choices = ('JPEG', 'PNG', 'TIFF', 'EXR') if label == 'Format' else ('8 bit', '16 bit', '32 bit')
+            current = [(point, label_left, y) for values, label_left, y in rows
+                       for choice in choices for point in self.match([values], choice)]
+            require(current, f'Export options selected value is not recognized: {label}')
+            (vx, vy), x, y = current[0]
+            self.xd('mousemove', '--window', self.window, int(vx), int(vy))
+            menu_open = True
             self.xd('click', 1)
             def choose():
                 result = modal_read()
@@ -884,6 +932,7 @@ class X11:
             self.xd('mousemove', '--window', self.window, int(mx), int(my))
             self.xd('click', 1)
             time.sleep(.15)
+            menu_open = False
         select('Format', requested)
         if requested in ('TIFF', 'EXR'):
             select('Bit depth', '16 bit')
@@ -1150,13 +1199,17 @@ return report''')
                     return hwnd
         self.window = wait_for(ready, 'native desktop window', 45)
         self.focus()
+        self.resize_window(1460, 980)
+        wait_for(self.main_ready, 'rendered desktop MAIN controls', 45)
+
+    def resize_window(self, width, height):
         if sys.platform == 'darwin':
-            self.apple('set w to first window whose name is "spektrafilm"\nset position of w to {0, 30}\nset size of w to {1460, 980}')
+            self.apple('set w to first window whose name is "spektrafilm"\n'
+                       f'set position of w to {{0, 30}}\nset size of w to {{{width}, {height}}}')
         else:
-            rect = self.types.RECT(0, 0, 1460, 980)
+            rect = self.types.RECT(0, 0, width, height)
             self.os.AdjustWindowRect(self.ctypes.byref(rect), self.os.GetWindowLongW(self.window, -16), False)
             self.os.MoveWindow(self.window, 0, 30, rect.right - rect.left, rect.bottom - rect.top, True)
-        wait_for(self.main_ready, 'rendered desktop MAIN controls', 45)
 
     def bounds(self):
         if sys.platform == 'darwin':
@@ -1611,20 +1664,27 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         viewing.write_text(json.dumps(viewing_state))
         driver.state_action('Load from file', viewing)
         driver.rendered('configured-after-factory-reset')
-        before_zoom = driver.viewer_fingerprint()
-        driver.click('100%', False)
-        driver.wait_text(r'zoom\s*100', 'zoom-100-selected')
-        zoom_100 = driver.measure_viewer('zoom-100-percent', before_zoom)
-        before_zoom = driver.viewer_fingerprint()
-        driver.click('200%', False)
-        driver.wait_text(r'zoom\s*200', 'zoom-200-selected')
-        zoom_200 = driver.measure_viewer('zoom-200-percent', before_zoom)
-        before_zoom = driver.viewer_fingerprint()
-        driver.click('400%', False)
-        driver.wait_text(r'zoom\s*400', 'zoom-400-selected')
-        zoom_400 = driver.measure_viewer('zoom-400-percent', before_zoom)
-        widths = [item[2] - item[0] for item in (zoom_100, zoom_200, zoom_400)]
-        require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
+        # Keep the preset panel visible while leaving room for all 768 pixels
+        # of the 400% raster, rather than measuring a clipped zoom at 1460px.
+        original_image, _ = driver.image()
+        driver.resize_window(1560, original_image.height)
+        try:
+            before_zoom = driver.viewer_fingerprint()
+            driver.click('100%', False)
+            driver.wait_text(r'zoom\s*100', 'zoom-100-selected')
+            zoom_100 = driver.measure_viewer('zoom-100-percent', before_zoom)
+            before_zoom = driver.viewer_fingerprint()
+            driver.click('200%', False)
+            driver.wait_text(r'zoom\s*200', 'zoom-200-selected')
+            zoom_200 = driver.measure_viewer('zoom-200-percent', before_zoom)
+            before_zoom = driver.viewer_fingerprint()
+            driver.click('400%', False)
+            driver.wait_text(r'zoom\s*400', 'zoom-400-selected')
+            zoom_400 = driver.measure_viewer('zoom-400-percent', before_zoom)
+            widths = [item[2] - item[0] for item in (zoom_100, zoom_200, zoom_400)]
+            require(widths == [192, 384, 768], f'Exact zoom pixel widths differ: {widths}')
+        finally:
+            driver.resize_window(original_image.width, original_image.height)
         before_reset = driver.viewer_fingerprint()
         driver.click('reset view', False)
         driver.measure_viewer('zoom-reset-view', before_reset)
@@ -1677,14 +1737,15 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         from gui_viewer_acceptance import accept_viewer
         driver.records.extend(accept_viewer(driver, root, state, pixels, exporter))
         driver.click('100%', False)
+        before_input = driver.viewer_fingerprint()
         driver.click('Input', False)
-        input_image, _ = driver.image()
-        driver.snap('input-view')
+        input_image, _ = driver.await_viewer(before_input, label='input comparison')
+        driver.snap('input-view', input_image)
+        before_output = driver.viewer_fingerprint()
         driver.click('Output', False)
-        time.sleep(.5)
-        output_image, _ = driver.image()
-        driver.snap('output-view')
-        roi = (100, 100, 900, 800)
+        output_image, _ = driver.await_viewer(before_output, label='output comparison')
+        driver.snap('output-view', output_image)
+        roi = viewer_canvas_bounds(input_image)
         input_crop, output_crop = input_image.crop(roi), output_image.crop(roi)
         input_crop.save(root / 'input-viewer-raster.png')
         output_crop.save(root / 'output-viewer-raster.png')

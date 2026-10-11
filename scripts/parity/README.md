@@ -146,10 +146,12 @@ Loaded text can be replaced by a completed preview.
 The driver normalizes initially expanded sections before topology checks and
 reads tab labels in the dedicated header region. Before selecting a footer
 action it moves the pointer away so hover highlighting does not hide the text.
-Export modal controls are read from their visible panel with independent
-contrast normalization; the loaded image cannot determine modal OCR contrast.
-Selected values are checked before opening a combo menu; open menu options use
-the same panel contrast normalization before matching the requested value.
+Export recognition uses the rendered title bar's contiguous background to bound
+the dialog horizontally and the closed button row to bound its bottom; that
+frame is retained while a combo menu covers the buttons. Only the tight dialog
+crop supplies controls. Contrast passes remain independent observations, with
+each selected value checked against its own label span and row before opening
+the native combo menu; the same crop normalization reads the requested option.
 
 Profile selection records the open menu and scrolls one wheel increment between
 observations so intermediate stock rows cannot be skipped.
@@ -383,10 +385,12 @@ driver requires cancellation completion and absent destination files after both
 actions. Extra observations before dispatch can outlast a short export and click
 the replacement Export button instead.
 
-Export controls use both equalized and autocontrasted crops. The first keeps dim
-labels readable; the second preserves menu text and bordered button labels.
-The driver distinguishes the Export button from the Export options heading and
-checks selected values before opening a menu.
+Export control OCR is bounded by the rendered dialog title bar and button row.
+Equalized and autocontrasted crops provide independent observations of each row;
+the driver does not combine their word widths or control coordinates. It checks
+the selected value before opening a menu and keeps the established dialog frame
+while a dropdown covers the buttons. It also distinguishes the sidebar Export
+button from the Export options heading.
 
 Each GUI launch keeps its operation reports in a separate directory under
 `diagnostics/`. Restart scenarios retain earlier reports; observations identify
@@ -394,6 +398,8 @@ each session directory. Report publication failures appear in the GUI status on
 every tab.
 
 Viewer comparisons exclude both the preset browser and the controls sidebar.
+Exact zoom verification temporarily widens the window to 1560 pixels so the
+400% raster fits with the preset browser visible, then restores its dimensions.
 Numeric-entry acceptance uses native select-all, text entry, and Enter on each
 desktop platform.
 
