@@ -21,6 +21,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: Configure benchmark environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/benchmark-venv" >> "$GITHUB_ENV"
       - name: Configure native library paths
         run: |
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libraw-022/lib/pkgconfig" >> "$GITHUB_ENV"
