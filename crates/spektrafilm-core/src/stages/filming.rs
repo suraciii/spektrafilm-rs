@@ -274,7 +274,7 @@ pub fn develop(
     // model always samples the profile's 3 emulsion sublayers) and
     // `use_fast_stats` only by the layered path, exactly like upstream.
     let grain = &params.film_render.grain;
-    if grain.active && matches!(grain.engine, crate::params::grain::GrainEngine::V1) {
+    if grain.active && matches!(grain.engine, crate::params::grain::GrainEngine::Spektra) {
         let t = Instant::now();
         let grain_observation = super::StageObservation::new(backend, "grain_v1");
         let backend = grain_observation.backend(backend);

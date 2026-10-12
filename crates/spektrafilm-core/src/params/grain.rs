@@ -1,20 +1,20 @@
 use super::{default_one, default_true};
 use serde::{Deserialize, Serialize};
 
-/// Selects the film-grain implementation. V1 remains the default for
-/// backwards-compatible recipes; V2 is procedural grain in linear scanner RGB;
-/// V3 is the mixed film-coordinate dye field (`specs/film-grain/v3/`).
+/// Selects one of three independent grain routes. Spektra preserves the
+/// upstream density model; Procedural is Dehancer-derived encoded RGB grain;
+/// Dye is the self-developed film-coordinate dye field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum GrainEngine {
     #[default]
-    V1,
-    V2,
-    V3,
+    Spektra,
+    Procedural,
+    Dye,
 }
 
-/// Procedural Grain V2 generation mode.
+/// Procedural Grain Procedural generation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -41,7 +41,7 @@ pub enum GrainV2FilmType {
 pub struct GrainParams {
     #[serde(default = "default_true")]
     pub active: bool,
-    /// Selects the grain implementation; V1 preserves the historical default.
+    /// Selects the grain route; Spektra preserves the upstream default.
     #[serde(default)]
     pub engine: GrainEngine,
     /// Dehancer grain profile id, or "custom" for explicit controls.
@@ -73,14 +73,14 @@ pub struct GrainParams {
     pub v2_timer: f32,
     #[serde(default = "default_particle_scale_sublayers_f64")]
     pub particle_scale_sublayers: [f64; 3],
-    /// Film-space Gaussian sigma of the V3 dye support, in micrometers. It
+    /// Film-space Gaussian sigma of Dye's support, in micrometers. It
     /// conditions the field: the resolved field-cell pitch is `support / 2`.
-    /// V3-only; V1 and V2 never read it.
+    /// Dye-only; Spektra and Procedural never read it.
     #[serde(default = "default_v3_dye_support_um")]
     pub v3_dye_support_um: f32,
-    /// Base statistical event area of V3, in square film micrometers. The
+    /// Base statistical event area of Dye, in square film micrometers. The
     /// stock granularity preset scales it per channel; it never changes the
-    /// dye support. V3-only; V1 reads `particle_area_um2` instead.
+    /// dye support. Dye-only; Spektra reads `particle_area_um2` instead.
     #[serde(default = "default_v3_event_area_um2")]
     pub v3_event_area_um2: f64,
     #[serde(default = "default_07")]
@@ -176,7 +176,7 @@ impl Default for GrainParams {
     fn default() -> Self {
         Self {
             active: true,
-            engine: GrainEngine::V1,
+            engine: GrainEngine::Spektra,
             v2_profile: default_grain_v2_profile().to_owned(),
             v2_mode: GrainV2Mode::Analogue,
             v2_film_type: GrainV2FilmType::Negative,
@@ -217,7 +217,7 @@ impl GrainParams {
         use spektrafilm_model::grain::v2::{self, GrainV2Params};
         let custom = self.v2_profile == "custom";
         let index = v2::profile_index(if custom { "35mm250" } else { &self.v2_profile })
-            .expect("Grain V2 profile must be validated before rendering");
+            .expect("Grain Procedural profile must be validated before rendering");
         let mut params = GrainV2Params::for_profile(index);
         params.resolution_type = self.v2_resolution_type;
         params.timer = (self.v2_timer != 0.0).then_some(self.v2_timer);
@@ -242,7 +242,7 @@ impl GrainParams {
         }
         params
     }
-    /// Convert the selected V2 profile to the shared f32 GPU boundary.
+    /// Convert the selected Procedural profile to the shared f32 GPU boundary.
     pub fn gpu_params(
         &self,
         random_seed: u64,

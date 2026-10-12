@@ -27,14 +27,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let film = profile::load_profile_by_name(&root, "kodak_portra_400")?;
     let paper = profile::load_profile_by_name(&root, "kodak_portra_endura")?;
     for scan_film in [false, true] {
-        for engine in [GrainEngine::V1, GrainEngine::V2] {
+        for engine in [GrainEngine::Spektra, GrainEngine::Procedural] {
             for (mode, film_type) in [
                 (GrainV2Mode::Analogue, GrainV2FilmType::Negative),
                 (GrainV2Mode::Analogue, GrainV2FilmType::Positive),
                 (GrainV2Mode::Noise, GrainV2FilmType::Negative),
                 (GrainV2Mode::Noise, GrainV2FilmType::Positive),
             ] {
-                if engine == GrainEngine::V1
+                if engine == GrainEngine::Spektra
                     && (mode == GrainV2Mode::Noise || film_type == GrainV2FilmType::Positive)
                 {
                     continue;

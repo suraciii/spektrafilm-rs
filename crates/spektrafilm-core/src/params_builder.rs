@@ -84,10 +84,10 @@ pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
 
 fn apply_preview_constraints(params: &mut RuntimeParams) {
     if params.settings.preview_mode {
-        // Preview keeps the per-pixel V2 scanner grain path. V1 remains a
-        // density-domain stochastic effect and V3 owns an explicit grain-free
+        // Preview keeps the per-pixel Procedural scanner grain path. Spektra remains a
+        // density-domain stochastic effect and Dye owns an explicit grain-free
         // preview contract.
-        if params.film_render.grain.engine != crate::params::GrainEngine::V2 {
+        if params.film_render.grain.engine != crate::params::GrainEngine::Procedural {
             params.film_render.grain.active = false;
         }
         params.enlarger.lens_blur = 0.0;
@@ -554,7 +554,7 @@ mod tests {
         let print = blank_profile();
         let mut params = RuntimeParams::default();
         params.settings.preview_mode = true;
-        params.film_render.grain.engine = crate::params::GrainEngine::V2;
+        params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
         params.film_render.grain.active = true;
 
         let digested = digest_params(params, &film, &print, None, true);

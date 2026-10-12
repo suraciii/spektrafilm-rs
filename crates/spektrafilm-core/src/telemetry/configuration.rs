@@ -120,9 +120,9 @@ impl GamutAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GrainEngine {
-    V1,
-    V2,
-    V3,
+    Spektra,
+    Procedural,
+    Dye,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,8 +130,8 @@ pub enum GrainEngine {
 pub enum GrainMode {
     Analogue,
     Noise,
-    V1,
-    /// The V3 conditional film-coordinate dye field.
+    Spektra,
+    /// The Dye conditional film-coordinate dye field.
     DyeField,
 }
 
@@ -140,7 +140,7 @@ pub struct GrainConfiguration {
     pub active: bool,
     pub engine: GrainEngine,
     pub mode: GrainMode,
-    pub v1_fast_statistics_sampler: bool,
+    pub spektra_fast_statistics_sampler: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,7 +296,7 @@ impl RenderConfiguration {
         let grain = &params.film_render.grain;
         let grain_active = grain.active
             && !params.debug.deactivate_stochastic_effects
-            && !(grain.engine == crate::params::GrainEngine::V2
+            && !(grain.engine == crate::params::GrainEngine::Procedural
                 && params.settings.rgb_to_raw_method == "mallett2019");
         let spatial_active = !params.debug.deactivate_spatial_effects;
         let receiver = crate::scan_receiver::provenance(params.scanner.receiver_profile);
@@ -335,20 +335,20 @@ impl RenderConfiguration {
             grain: GrainConfiguration {
                 active: grain_active,
                 engine: match grain.engine {
-                    crate::params::GrainEngine::V1 => GrainEngine::V1,
-                    crate::params::GrainEngine::V2 => GrainEngine::V2,
-                    crate::params::GrainEngine::V3 => GrainEngine::V3,
+                    crate::params::GrainEngine::Spektra => GrainEngine::Spektra,
+                    crate::params::GrainEngine::Procedural => GrainEngine::Procedural,
+                    crate::params::GrainEngine::Dye => GrainEngine::Dye,
                 },
                 mode: match grain.engine {
-                    crate::params::GrainEngine::V1 => GrainMode::V1,
-                    crate::params::GrainEngine::V2 => match grain.v2_mode {
+                    crate::params::GrainEngine::Spektra => GrainMode::Spektra,
+                    crate::params::GrainEngine::Procedural => match grain.v2_mode {
                         crate::params::grain::GrainV2Mode::Analogue => GrainMode::Analogue,
                         crate::params::grain::GrainV2Mode::Noise => GrainMode::Noise,
                     },
-                    crate::params::GrainEngine::V3 => GrainMode::DyeField,
+                    crate::params::GrainEngine::Dye => GrainMode::DyeField,
                 },
-                v1_fast_statistics_sampler: grain_active
-                    && grain.engine == crate::params::GrainEngine::V1
+                spektra_fast_statistics_sampler: grain_active
+                    && grain.engine == crate::params::GrainEngine::Spektra
                     && grain.sublayers_active
                     && params.settings.use_fast_stats,
             },

@@ -192,7 +192,7 @@ fn positive_scan_cpu_override_preserves_stage_reports() {
 
 #[test]
 fn active_v3_field_reports_its_cpu_stage_reason() {
-    // The supported V3 condition on a 2% crop: the readout region stays a few
+    // The supported Dye condition on a 2% crop: the readout region stays a few
     // film millimetres, so the field allocation is small while the pipeline
     // still resolves the engine, the plan and the report.
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
@@ -204,7 +204,7 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
     params.io.scan_film = true;
     params.io.crop = true;
     params.io.crop_size = [0.02, 0.02];
-    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
+    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
     params.film_render.grain.v3_dye_support_um = 8.0;
     let runtime =
         Runtime::from_stocks("kodak_portra_800", "kodak_portra_endura", params, &data).unwrap();
@@ -236,7 +236,7 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
             .summary()
             .cpu_stage_reasons
             .contains(&("grain_v3_field".to_owned(), CpuReason::GrainV3FieldCpu)),
-        "V3 field stage missing from the report: {:?}",
+        "Dye field stage missing from the report: {:?}",
         report.summary().cpu_stage_reasons
     );
 }

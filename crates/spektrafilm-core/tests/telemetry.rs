@@ -794,26 +794,26 @@ fn grain_configuration_describes_effective_sampler_branches() {
     assert!(
         RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
-            .v1_fast_statistics_sampler
+            .spektra_fast_statistics_sampler
     );
     params.film_render.grain.sublayers_active = false;
     assert!(
         !RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
-            .v1_fast_statistics_sampler
+            .spektra_fast_statistics_sampler
     );
-    params.film_render.grain.engine = params::GrainEngine::V2;
+    params.film_render.grain.engine = params::GrainEngine::Procedural;
     params.settings.rgb_to_raw_method = "mallett2019".to_owned();
     let grain = RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(!grain.active);
-    assert!(!grain.v1_fast_statistics_sampler);
-    params.film_render.grain.engine = params::GrainEngine::V1;
+    assert!(!grain.spektra_fast_statistics_sampler);
+    params.film_render.grain.engine = params::GrainEngine::Spektra;
     params.film_render.grain.active = false;
     params.film_render.grain.sublayers_active = true;
     assert!(
         !RenderConfiguration::from_runtime(&params, &profile, &profile)
             .grain
-            .v1_fast_statistics_sampler
+            .spektra_fast_statistics_sampler
     );
 }
 
@@ -825,15 +825,15 @@ fn v3_grain_configuration_reports_engine_and_field_mode() {
     }))
     .unwrap();
     let mut params = params::RuntimeParams::default();
-    params.film_render.grain.engine = params::GrainEngine::V3;
+    params.film_render.grain.engine = params::GrainEngine::Dye;
     params.film_render.grain.v3_dye_support_um = 8.0;
     params.settings.use_fast_stats = true;
     params.film_render.grain.sublayers_active = true;
     let grain = telemetry::RenderConfiguration::from_runtime(&params, &profile, &profile).grain;
     assert!(grain.active);
-    assert_eq!(grain.engine, telemetry::GrainEngine::V3);
+    assert_eq!(grain.engine, telemetry::GrainEngine::Dye);
     assert_eq!(grain.mode, telemetry::GrainMode::DyeField);
-    assert!(!grain.v1_fast_statistics_sampler);
+    assert!(!grain.spektra_fast_statistics_sampler);
 }
 
 #[cfg(unix)]

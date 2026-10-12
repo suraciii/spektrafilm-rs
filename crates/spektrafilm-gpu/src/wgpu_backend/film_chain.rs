@@ -678,7 +678,7 @@ impl WgpuBackend {
                 self,
             )
         });
-        // Encode the destination space before Grain V2 preparation; all
+        // Encode the destination space before Grain Procedural preparation; all
         // resolution and grain passes stay in this resident command buffer.
         let grain_v2_state = p.grain_v2.as_ref().map(|gp| {
             build_grain_v2_state(
@@ -868,7 +868,7 @@ impl WgpuBackend {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
             us.encode_passes(&mut encoder, n_pixels, wg_xy, &buf_b, img_bytes as u64);
         }
-        // 6e. Encode native destination RGB, then apply Grain V2. The readback
+        // 6e. Encode native destination RGB, then apply Grain Procedural. The readback
         // is encoded; the caller decodes only when linear output is requested.
         if let Some(gs) = grain_v2_state.as_ref() {
             gs.encode_pass(&mut encoder, n_pixels, &buf_b);

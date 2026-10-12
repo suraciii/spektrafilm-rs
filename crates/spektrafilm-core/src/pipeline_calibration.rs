@@ -297,11 +297,12 @@ pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<()
     if params.film_render.grain.active
         && matches!(
             params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::V2
+            crate::params::grain::GrainEngine::Procedural
         )
     {
         return Err(
-            "scanner.scan_output=positive_scan cannot be combined with active Grain V2".into(),
+            "scanner.scan_output=positive_scan cannot be combined with active Grain Procedural"
+                .into(),
         );
     }
     Ok(())
@@ -688,7 +689,7 @@ mod tests {
         assert!(validate_scan_output(&params, &film).is_err());
         params.scanner.white_correction = false;
         params.film_render.grain.active = true;
-        params.film_render.grain.engine = GrainEngine::V2;
+        params.film_render.grain.engine = GrainEngine::Procedural;
         assert!(validate_scan_output(&params, &film).is_err());
     }
 

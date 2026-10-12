@@ -682,11 +682,11 @@ impl Pipeline {
                 let t = Instant::now();
                 cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
                 pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
-                    "film grain V3 aperture: missing requested output pitch".to_owned()
+                    "film grain Dye aperture: missing requested output pitch".to_owned()
                 })?;
                 print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
                 record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
-                tracing::info!(factor, "film grain V3: collapsed linear print exposure");
+                tracing::info!(factor, "film grain Dye: collapsed linear print exposure");
             }
             i += 1;
         }
@@ -852,7 +852,7 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
-        // Active V3 outside its supported condition fails here, before any
+        // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
         // never reach a grain stage.
         stages::grain_v3::validate_supported(&self.film, &self.params)?;
@@ -1030,7 +1030,7 @@ impl Pipeline {
         // buffer — one upload + one readback total. WGSL runs the
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
-        // path; backends without resident support return `None`. Active V3
+        // path; backends without resident support return `None`. Active Dye
         // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
             && let Some(out) =
@@ -1203,7 +1203,7 @@ impl Pipeline {
             "geometry",
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
-        // V3 develops the full source; its field readout owns the crop and
+        // Dye develops the full source; its field readout owns the crop and
         // output grid so that overlapping reads keep the same film coordinates.
         let resized = if stages::grain_v3::active(&self.params) {
             Ok((
@@ -1661,7 +1661,7 @@ mod spectral_invalidation_tests {
             for scale in [1.0, 1.5] {
                 let mut params = RuntimeParams::default();
                 params.camera.film_format_mm = 36.0;
-                params.film_render.grain.engine = crate::params::GrainEngine::V3;
+                params.film_render.grain.engine = crate::params::GrainEngine::Dye;
                 params.film_render.dir_couplers.active = false;
                 params.film_render.halation.active = false;
                 params.workflow.route = if scan_film {
