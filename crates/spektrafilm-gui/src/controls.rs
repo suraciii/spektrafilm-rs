@@ -514,7 +514,15 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
                 .iter_mut()
                 .enumerate()
                 .map(|(index, value)| {
-                    numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip)
+                    let changed =
+                        numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip);
+                    let id = ui.make_persistent_id(("numeric-field", (label, index)));
+                    // Build the indexed name only when accessibility is requested, not in
+                    // the ordinary per-frame widget path. The visible group stays unchanged.
+                    ui.ctx().accesskit_node_builder(id, |node| {
+                        node.set_label(format!("{label} {index}"));
+                    });
+                    changed
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })
@@ -695,3 +703,7 @@ fn set_extra(extras: &mut Value, section: &str, key: &str, value: Value) {
     }
     extras[section][key] = value;
 }
+
+#[cfg(test)]
+#[path = "controls_acceptance.rs"]
+mod acceptance;
