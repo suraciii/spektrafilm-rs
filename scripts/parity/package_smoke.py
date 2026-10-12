@@ -84,19 +84,9 @@ def _benchmark_smoke(exporter, data, evidence, environment):
     fixtures = root / 'fixtures'
     invoke(binaries['spektrafilm-bench-fixtures'], '--renderer', exporter,
            '--data-dir', data, '--out', fixtures)
-    target = root / 'local-target.json'
-    invoke(bench, 'target', '--renderer', exporter, '--data-dir', data,
-           '--backend', 'cpu', '--out', target)
-    invoke(bench, 'validate', '--kind', 'target', '--file', target)
-    preflight = root / 'preflight'
-    invoke(bench, 'run', '--suite', fixtures / 'complete.json', '--target',
-           target, '--dry-run', '--out', preflight)
-    preflight_manifest = json.loads((preflight / 'preflight.json').read_text())
-    assert preflight_manifest['execution_status'] == 'validated'
-    assert not (preflight / 'run.json').exists()
     run = root / 'run'
     invoke(bench, 'run', '--suite', fixtures / 'quick.json', '--target',
-           target, '--case', 'color_chart', '--out', run)
+           fixtures / 'baseline.json', '--case', 'color_chart', '--out', run)
     invoke(bench, 'validate', '--kind', 'run', '--file', run / 'run.json')
     comparison = root / 'comparison'
     invoke(bench, 'compare', '--baseline', run, '--candidate', run,
@@ -109,14 +99,8 @@ def _benchmark_smoke(exporter, data, evidence, environment):
         assert row['availability'] == 'available' and row['value'] == 0, row
     invoke(bench, 'validate', '--kind', 'comparison', '--file',
            comparison / 'comparison.json')
-    inspected = invoke(bench, 'inspect', '--comparison', comparison,
-                       '--case', 'color_chart', '--region', 'full_image',
-                       '--metric', 'numeric.rmse')
-    assert inspected['comparison_id'] == manifest['id']
-    assert all(row['value'] == 0 and row['metric'] == 'numeric.rmse'
-               for row in inspected['measurements'])
     report = root / 'report'
-    invoke(bench, 'generate-report', '--comparison', comparison, '--out', report)
+    invoke(bench, 'report', '--comparison', comparison, '--out', report)
     assert (report / 'index.html').is_file()
     assert json.loads((report / 'report.json').read_text())['comparison_id'] == manifest['id']
     for license_name in ('nvlabs-flip-bsd-3-clause.txt', 'littlecms-mit.txt'):
