@@ -16,6 +16,10 @@ The command reads three data files:
 - `--reference <PATH>`: the reference patch table. Values are linear RGB with sRGB primaries, decoded from the encoding of the source measurement.
 - `--layout <PATH>`: the chart layout. It carries the grid geometry `rows`, `cols`, `patch_px`, `gap_px`, `box_px`, and three patch index ranges: `color`, `gray`, and `fit_gray`. The gap separates the patches; the sample box is centered in each patch and must not touch the gap or a neighbor.
 
+Each patch table carries `patches` and a non-empty `source` that names the instrument or computation that produced the values, for example a camera model with its raw conversion, a chart's colorimetric reference data with the illuminant it was adapted to, or a film scanner. A fit must fail with an actionable error when a table has no source.
+
+The fitted surface corrects the per-layer exposure as a function of the input chromaticity. It therefore learns every error of the scene table, not only the stock: a scene table read from a camera carries that camera's color error and metamerism into the fitted surface, and the fitted values then hold for that camera rather than for the stock. The scene source records which of the two a fitted surface describes.
+
 A patch index range is a half-open `[start, end)` pair. The color range selects the chromatic patches. The gray range selects the gray row. The fit-gray range selects the gray patches that the fit scores, which may exclude the brightest and darkest steps of that row.
 
 The chain configuration reuses the process command surface: `--preset`, `--data-dir`, `--route`, and `--set`. The scene table and the chain must agree on the input color space. The comparison interprets the chain output as linear sRGB, so the configured route and scanner output must produce the finished positive scan.
@@ -59,10 +63,10 @@ The fitted target is deterministic: identical inputs, preset, and options must p
 ## Outputs
 
 - `--report <PATH>`: the fit report as JSON. It is required.
-- `--out-profile <PATH>`: a copy of the resolved film profile with the fitted surface. Required when the fit includes the `surface` group.
+- `--out-profile <PATH>`: a copy of the resolved film profile with the fitted surface. Required when the fit includes the `surface` group. The copy appends to `metadata.datasource` one sentence that names the tool version, the scene source, and the reference source, and replaces the sentence an earlier fit appended, because the fit replaces the whole surface.
 - `--out-overlay <PATH>`: a sparse parameter file with the fitted tone leaves. Required when the fit includes the `tone` group.
 
-The report must carry the fitted values, the metrics below, every input path with its SHA-256, the resolved preset and route, the forced settings, and the tool version.
+The report must carry the fitted values, the metrics below, every input path with its SHA-256, the source of both patch tables, the resolved preset and route, the forced settings, and the tool version.
 
 ## Metrics
 

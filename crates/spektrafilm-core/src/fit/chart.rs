@@ -43,10 +43,13 @@ impl IndexRange {
     }
 }
 
-/// One ordered list of linear RGB patch values.
+/// One ordered list of linear RGB patch values and the origin of those values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PatchTable {
+    /// The instrument or computation that produced the values, for example a
+    /// camera model and its raw conversion, or a chart's colorimetric reference.
+    pub source: String,
     pub patches: Vec<[f64; 3]>,
 }
 

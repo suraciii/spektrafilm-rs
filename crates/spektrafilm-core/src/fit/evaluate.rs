@@ -122,6 +122,12 @@ impl Evaluator {
             ));
         }
         for (name, table) in [("scene", scene), ("reference", reference)] {
+            if table.source.trim().is_empty() {
+                return Err(format!(
+                    "{name} patch table needs a non-empty source naming the instrument or \
+                     computation that produced its values"
+                ));
+            }
             if let Some((index, patch)) = table
                 .patches
                 .iter()

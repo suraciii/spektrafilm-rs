@@ -31,10 +31,12 @@ pub(crate) struct FitArgs {
     /// Chart layout JSON: grid geometry and patch index ranges.
     #[arg(long, help_heading = "Fit data")]
     layout: PathBuf,
-    /// Scene patch table JSON: what the film saw, in the declared input color space.
+    /// Scene patch table JSON: what the film saw, in the declared input color
+    /// space, with the `source` that produced the values.
     #[arg(long, help_heading = "Fit data")]
     scene: PathBuf,
-    /// Reference patch table JSON: the developed film, linear sRGB.
+    /// Reference patch table JSON: the developed film, linear sRGB, with the
+    /// `source` that produced the values.
     #[arg(long, help_heading = "Fit data")]
     reference: PathBuf,
     /// Parameter groups to fit, comma-separated: surface, tone.
@@ -118,12 +120,39 @@ fn file_provenance(path: &Path) -> Result<Value> {
     }))
 }
 
+fn table_provenance(path: &Path, source: &str) -> Result<Value> {
+    let mut value = file_provenance(path)?;
+    value["source"] = json!(source);
+    Ok(value)
+}
+
+const SURFACE_PROVENANCE: &str = "Hanatos2025 adaptation surface fitted by spektrafilm-f64 fit ";
+
+/// Append the fitted surface's provenance to a profile datasource. The fit
+/// replaces the whole surface, so this replaces an earlier fit's sentence,
+/// which is always the last one.
+fn record_surface_provenance(datasource: &mut String, scene: &str, reference: &str) {
+    if let Some(start) = datasource.find(SURFACE_PROVENANCE) {
+        datasource.truncate(start);
+    }
+    datasource.truncate(datasource.trim_end().len());
+    if !datasource.is_empty() {
+        datasource.push(' ');
+    }
+    datasource.push_str(&format!(
+        "{SURFACE_PROVENANCE}{}: scene patches from {scene}; reference patches from {reference}.",
+        env!("CARGO_PKG_VERSION"),
+    ));
+}
+
 pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
     let data_dir = crate::select_data_dir(args.data_dir.clone(), matches)?.path;
     let data_dir = data_dir.as_path();
     let layout: ChartLayout = read_json(&args.layout, "chart layout")?;
     let scene: PatchTable = read_json(&args.scene, "scene patch table")?;
     let reference: PatchTable = read_json(&args.reference, "reference patch table")?;
+    let scene_source = scene.source.clone();
+    let reference_source = reference.source.clone();
 
     let groups: Vec<FitGroup> = args
         .groups
@@ -187,6 +216,11 @@ pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> 
 
     if let Some(surface_values) = &report.surface {
         fitted_profile.data.hanatos2025_adaptation_surface_params = surface_values.clone();
+        record_surface_provenance(
+            &mut fitted_profile.metadata.datasource,
+            &scene_source,
+            &reference_source,
+        );
         let path = args.out_profile.as_ref().expect("checked before the fit");
         spektrafilm_core::profile::save_profile_to(path, &fitted_profile)
             .map_err(anyhow::Error::msg)?;
@@ -217,8 +251,8 @@ pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> 
         "inputs".into(),
         json!({
             "layout": file_provenance(&args.layout)?,
-            "scene": file_provenance(&args.scene)?,
-            "reference": file_provenance(&args.reference)?,
+            "scene": table_provenance(&args.scene, &scene_source)?,
+            "reference": table_provenance(&args.reference, &reference_source)?,
         }),
     );
     object.insert(
@@ -283,4 +317,24 @@ fn write_json(path: &Path, document: &Value) -> Result<()> {
     text.push('\n');
     std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn surface_provenance_replaces_an_earlier_fit_and_keeps_the_rest() {
+        let mut datasource = "Curves from the Cs41 chart.".to_string();
+        record_surface_provenance(&mut datasource, "camera A", "lab scan");
+        record_surface_provenance(&mut datasource, "chart reference XYZ", "lab scan");
+        assert_eq!(datasource.matches(SURFACE_PROVENANCE).count(), 1);
+        assert!(datasource.starts_with("Curves from the Cs41 chart. "));
+        assert!(datasource.contains("scene patches from chart reference XYZ;"));
+        assert!(!datasource.contains("camera A"));
+
+        let mut empty = String::new();
+        record_surface_provenance(&mut empty, "camera A", "lab scan");
+        assert!(empty.starts_with(SURFACE_PROVENANCE));
+    }
 }
