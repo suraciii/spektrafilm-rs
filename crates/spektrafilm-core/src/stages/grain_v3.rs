@@ -10,6 +10,7 @@
 //! the readout region only, so field cells keep their global film positions
 //! and overlapping reads agree.
 
+use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_model::grain::v3::{self, GrainV3Params, SourceRect};
 
@@ -35,6 +36,52 @@ const CELL_UM_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_UM";
 /// Diagnostic expected-value render: every Poisson count is replaced by its
 /// conditional mean. It never changes the recipe.
 const EXPECTATION_ENV: &str = "SPEKTRAFILM_GRAIN_V3_EXPECTATION";
+/// Experimental supersampling factor for route-specific spectral aperture probing.
+const APERTURE_FACTOR_ENV: &str = "SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR";
+
+/// Resolve the optional spectral aperture probe factor.
+pub fn aperture_factor() -> Result<Option<u32>, String> {
+    let Some(value) = std::env::var_os(APERTURE_FACTOR_ENV) else {
+        return Ok(None);
+    };
+    let value = value.to_str().ok_or_else(|| {
+        format!("{APERTURE_FACTOR_ENV} must contain an ASCII integer from 2 through 24")
+    })?;
+    let factor = value.parse::<u32>().map_err(|_| {
+        format!("{APERTURE_FACTOR_ENV} must contain an integer from 2 through 24 (got {value:?})")
+    })?;
+    if !(2..=24).contains(&factor) {
+        return Err(format!(
+            "{APERTURE_FACTOR_ENV} must be from 2 through 24 (got {factor})"
+        ));
+    }
+    Ok(Some(factor))
+}
+
+/// Validate the first probe's deliberately narrow route and optical scope.
+pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> {
+    if !active(params) {
+        return Ok(None);
+    }
+    let Some(factor) = aperture_factor()? else {
+        return Ok(None);
+    };
+    if params.io.scan_film || params.workflow.route != PRINT_ROUTE {
+        return Err(format!(
+            "{APERTURE_FACTOR_ENV} supports only the {PRINT_ROUTE:?} route"
+        ));
+    }
+    if params.enlarger.diffusion_filter.active
+        || params.scanner.lens_blur > 0.0
+        || params.scanner.unsharp_mask.iter().any(|&v| v > 0.0)
+        || (params.print_render.glare.active && params.print_render.glare.percent > 0.0)
+    {
+        return Err(format!(
+            "{APERTURE_FACTOR_ENV} requires enlarger diffusion, scanner blur, unsharp mask, and print glare to be inactive"
+        ));
+    }
+    Ok(Some(factor))
+}
 
 /// Readout geometry of the requested output grid.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -137,6 +184,79 @@ pub fn geometry(
             height as f64 * source_pitch_um / out_height as f64,
         ],
     })
+}
+/// Scale the resolved output lattice for the aperture probe.
+pub fn aperture_grid(geometry: &Geometry, factor: u32) -> Result<ReadoutGrid, String> {
+    let width = geometry
+        .width
+        .checked_mul(factor)
+        .ok_or_else(|| "film grain V3 aperture: fine output width overflows".to_owned())?;
+    let height = geometry
+        .height
+        .checked_mul(factor)
+        .ok_or_else(|| "film grain V3 aperture: fine output height overflows".to_owned())?;
+    Ok(ReadoutGrid {
+        origin_um: [
+            geometry.rect.x as f64 * geometry.source_pitch_um,
+            geometry.rect.y as f64 * geometry.source_pitch_um,
+        ],
+        pitch_um: [
+            geometry.output_pitch_um[0] / factor as f64,
+            geometry.output_pitch_um[1] / factor as f64,
+        ],
+        width,
+        height,
+    })
+}
+/// Average a factor-upscaled linear RGB-like exposure back to the requested grid.
+pub fn collapse_linear_blocks(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
+    let factor = factor as usize;
+    let width = fine.width as usize;
+    let height = fine.height as usize;
+    if factor == 0 || width % factor != 0 || height % factor != 0 {
+        return Err(
+            "film grain V3 aperture: fine image dimensions must be divisible by the factor"
+                .to_owned(),
+        );
+    }
+    let out_width = width / factor;
+    let out_height = height / factor;
+    let mut out = ImageBuf::new(out_width as u32, out_height as u32);
+    let block_area = (factor * factor) as f64;
+    out.data
+        .par_chunks_exact_mut(3)
+        .enumerate()
+        .for_each(|(index, dst)| {
+            let ox = index % out_width;
+            let oy = index / out_width;
+            let mut sum = [0.0; 3];
+            for dy in 0..factor {
+                let row = (oy * factor + dy) * width;
+                for dx in 0..factor {
+                    let src = (row + ox * factor + dx) * 3;
+                    for c in 0..3 {
+                        sum[c] += fine.data[src + c] as f64;
+                    }
+                }
+            }
+            for c in 0..3 {
+                dst[c] = spektrafilm_math::precision::from_f64(sum[c] / block_area);
+            }
+        });
+    Ok(out)
+}
+/// Collapse fine print log exposure through linear light, then return to log space.
+pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
+    let mut linear = fine.clone();
+    linear.data.par_iter_mut().for_each(|value| {
+        *value = spektrafilm_math::precision::from_f64(10.0f64.powf(*value as f64));
+    });
+    let linear = collapse_linear_blocks(&linear, factor)?;
+    let mut output = linear;
+    output.data.par_iter_mut().for_each(|value| {
+        *value = spektrafilm_math::precision::from_f64((*value as f64).max(0.0).log10());
+    });
+    Ok(output)
 }
 
 /// Per-channel event-area scale `k_c` resolved from the stock granularity

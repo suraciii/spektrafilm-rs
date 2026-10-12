@@ -445,6 +445,7 @@ impl Pipeline {
 
     /// One topology node: transform the image at tap `at` into its value at
     /// the next tap in [`Pipeline::tap_order`]. `RgbOut` is terminal.
+    #[allow(clippy::too_many_arguments)]
     fn fire_node(
         &self,
         at: Tap,
@@ -502,28 +503,6 @@ impl Pipeline {
                 );
                 print_stage_timing(print_timings, "filming_develop", t);
                 record_stage_timing(stage_timings, "filming_develop", t);
-                // The V3 field reads the developed density out at the
-                // requested geometry: the full-frame density keeps its film
-                // coordinates and the readout owns region and output grid.
-                // The scanner consumes the readout, so its pitch is the
-                // output pitch (`pixel_size_um` stays the source pitch for
-                // any earlier-consuming stage; no stage after this point in
-                // the scan chain consumes the pitch).
-                let out = if stages::grain_v3::active(&self.params) {
-                    let t = Instant::now();
-                    let out = stages::grain_v3::readout(
-                        &out,
-                        &self.film,
-                        &self.params,
-                        pixel_size_um,
-                        backend,
-                    )?;
-                    print_stage_timing(print_timings, "grain_v3_readout", t);
-                    record_stage_timing(stage_timings, "grain_v3_readout", t);
-                    out
-                } else {
-                    out
-                };
                 tracing::info!("pipeline: filming complete");
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &out);
                 Ok(out)
@@ -596,6 +575,7 @@ impl Pipeline {
     /// `collect` (both inclusive bounds in [`Pipeline::tap_order`]).
     /// Mirrors upstream `run_topology`: unreachable pairs error with the
     /// upstream message, `inject == collect` returns the input unchanged.
+    #[allow(clippy::too_many_arguments)]
     fn run_from(
         &self,
         image: ImageBuf,
@@ -625,48 +605,16 @@ impl Pipeline {
                 collect, inject
             ));
         }
-        let (mut cur, pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
-            // Active V3 outside its supported condition fails before any
-            // work, for tap runs as well as full runs.
+        let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
             stages::grain_v3::validate_supported(&self.film, &self.params)?;
-            let metering = stages::StageObservation::cpu(
-                backend,
-                "metering",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-            );
-            let ae_ev = self.meter_autoexposure(&image);
-            let image = self.apply_autoexposure(image, ae_ev);
-            drop(metering);
-            let mut geometry = stages::StageObservation::cpu(
-                backend,
-                "geometry",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-            );
-            // The V3 readout owns the requested region and its output grid;
-            // the film stages see the full frame (see `process_full`).
-            let resized = if stages::grain_v3::active(&self.params) {
-                Ok((
-                    std::borrow::Cow::Borrowed(&image),
-                    crate::resizing::pixel_size_um(
-                        self.params.camera.film_format_mm,
-                        image.width,
-                        image.height,
-                    ),
-                ))
-            } else {
-                crate::resizing::crop_and_rescale(
-                    &image,
-                    &self.params.io,
-                    self.params.camera.film_format_mm,
-                )
-            };
-            geometry.set_complete(resized.is_ok());
-            let (working, pitch) = resized?;
-            drop(geometry);
+            let image = self.expose_full_input(image, backend);
+            let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
                 std::borrow::Cow::Owned(working) => working,
                 std::borrow::Cow::Borrowed(_) => image,
             };
+            // The exposure multiply already ran, so the stage sees EV 0 —
+            // matching upstream's prepared-input contract.
             (working, pitch, 0.0)
         } else {
             let (pitch, ae_ev) = physical_context.unwrap_or_else(|| {
@@ -682,10 +630,16 @@ impl Pipeline {
             context.set_working_dimensions(cur.width, cur.height);
         }
         let mut stage_timings = stage_timings;
+        let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+        if aperture_factor.is_some() && collect != Tap::RgbOut {
+            return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires collect=rgb_out".to_owned());
+        }
+        let mut aperture_output_pitch_um = None;
         let mut i = ip;
         if inject == Tap::RgbIn && cp > ip {
             i += 1;
         }
+        let mut output_crop = None;
         while i < cp {
             cur = self.fire_node(
                 order[i],
@@ -696,9 +650,67 @@ impl Pipeline {
                 ae_ev,
                 &mut stage_timings,
             )?;
+            if order[i] == Tap::LogEFilm && stages::grain_v3::active(&self.params) {
+                let t = Instant::now();
+                let geometry = stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
+                let glare = &self.params.print_render.glare;
+                let scan_spatial = collect == Tap::RgbOut
+                    && (self.params.scanner.lens_blur > 0.0
+                        || self.params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
+                        || (!self.params.io.scan_film && glare.active && glare.percent > 0.0));
+                let print_spatial = !self.params.io.scan_film
+                    && collect != Tap::CmyFilm
+                    && self.params.enlarger.diffusion_filter.active;
+                let grid = if let Some(factor) = aperture_factor {
+                    stages::grain_v3::aperture_grid(&geometry, factor)?
+                } else if self.params.io.crop && (scan_spatial || print_spatial) {
+                    let (grid, crop) = geometry.full_film_grid(&cur)?;
+                    output_crop = Some(crop);
+                    grid
+                } else {
+                    geometry.grid()
+                };
+                // The existing scalar optical controls use the actual pitch
+                // on the full source's long axis. Rounding may make the other
+                // axis differ; the field itself retains both exact pitches.
+                let long_axis = usize::from(cur.height > cur.width);
+                let requested_pitch_um = geometry.output_pitch_um[long_axis];
+                cur = stages::grain_v3::readout(
+                    &cur,
+                    &self.film,
+                    &self.params,
+                    pixel_size_um,
+                    grid,
+                    backend,
+                )?;
+                pixel_size_um = if let Some(factor) = aperture_factor {
+                    aperture_output_pitch_um = Some(requested_pitch_um);
+                    requested_pitch_um / factor as f64
+                } else {
+                    requested_pitch_um
+                };
+                print_stage_timing(stage_timings_enabled(), "grain_v3_readout", t);
+                record_stage_timing(&mut stage_timings, "grain_v3_readout", t);
+                dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
+            }
+            if order[i] == Tap::CmyFilm {
+                if let Some(factor) = aperture_factor {
+                    let t = Instant::now();
+                    cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
+                    pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
+                        "film grain V3 aperture: missing requested output pitch".to_owned()
+                    })?;
+                    print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
+                    record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
+                    tracing::info!(factor, "film grain V3: collapsed linear print exposure");
+                }
+            }
             i += 1;
         }
-        Ok(cur)
+        Ok(match output_crop {
+            Some(rect) => stages::grain_v3::crop_output(cur, rect),
+            None => cur,
+        })
     }
 
     /// Process an image with explicit pipeline taps — the Rust spelling of
@@ -783,17 +795,17 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
-        if let Some(context) = backend.observation_context() {
-            if inject != Tap::RgbIn || collect != Tap::RgbOut {
-                context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
-                );
-                context.set_path(if backend.is_gpu() {
-                    spektrafilm_gpu::telemetry::ExecutionPath::PerStage
-                } else {
-                    spektrafilm_gpu::telemetry::ExecutionPath::Cpu
-                });
-            }
+        if let Some(context) = backend.observation_context()
+            && (inject != Tap::RgbIn || collect != Tap::RgbOut)
+        {
+            context.decline_resident(
+                spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
+            );
+            context.set_path(if backend.is_gpu() {
+                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
+            } else {
+                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
+            });
         }
         if inject == Tap::RgbIn && collect == Tap::RgbOut {
             return self.process_full(image, backend, timings);
@@ -804,20 +816,7 @@ impl Pipeline {
             "pipeline: start"
         );
         let t = Instant::now();
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         record_stage_timing(&mut timings, "color_reference", t);
         self.run_from(image, inject, collect, backend, &color_ref, None, timings)
     }
@@ -872,45 +871,20 @@ impl Pipeline {
                     pixel[channel] = from_f64(rgb[channel]);
                 }
             });
+            // Finished RGB accepts the optional magazine finishing exactly like
+            // a scanned base workflow: after output color management, before
+            // the caller's image writer.
+            crate::magazine_print_color::apply(
+                &mut output,
+                &self.params.magazine_print_color,
+                destination,
+                self.params.io.output_cctf_encoding,
+            );
             return Ok(output);
         }
-        let metering = stages::StageObservation::cpu(
-            backend,
-            "metering",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let ae_ev = self.meter_autoexposure(&image);
-        let image = self.apply_autoexposure(image, ae_ev);
-        drop(metering);
+        let image = self.expose_full_input(image, backend);
         let t = Instant::now();
-        let mut geometry = stages::StageObservation::cpu(
-            backend,
-            "geometry",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        // V3 reads the requested region out of the full developed source:
-        // cropping or rescaling first would move the film coordinates the
-        // field lives in, and the readout owns the region and its output
-        // grid.
-        let resized = if stages::grain_v3::active(&self.params) {
-            Ok((
-                std::borrow::Cow::Borrowed(&image),
-                crate::resizing::pixel_size_um(
-                    self.params.camera.film_format_mm,
-                    image.width,
-                    image.height,
-                ),
-            ))
-        } else {
-            crate::resizing::crop_and_rescale(
-                &image,
-                &self.params.io,
-                self.params.camera.film_format_mm,
-            )
-        };
-        geometry.set_complete(resized.is_ok());
-        let (working, pixel_size_um) = resized?;
-        drop(geometry);
+        let (working, pixel_size_um) = self.rescale_working(&image, backend)?;
         print_stage_timing(stage_timings_enabled(), "resize", t);
         record_stage_timing(&mut timings, "resize", t);
         let working = match working {
@@ -958,20 +932,7 @@ impl Pipeline {
         converting.set_complete(converted.is_ok());
         let film_density = converted?;
         drop(converting);
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         if print_after_convert {
             let mut printing = stages::StageObservation::new(backend, "printing");
             let printing_backend = printing.backend(backend);
@@ -1043,20 +1004,7 @@ impl Pipeline {
         // white/black correction is on for a slide or print scan). Computed
         // up front so both the GPU-resident and per-stage paths share it.
         let t = Instant::now();
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         print_stage_timing(stage_timings, "color_reference", t);
         record_stage_timing(&mut timings, "color_reference", t);
 
@@ -1065,21 +1013,19 @@ impl Pipeline {
         // buffer — one upload + one readback total. WGSL runs the
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
-        // path; backends without resident support return `None`. An active
-        // V3 field makes `resident_decision` report a per-stage reason, so
-        // this attempt returns `None` for it.
-        if self.tc_lut.is_some() || self.mallett_core.is_some() {
-            if let Some(out) =
+        // path; backends without resident support return `None`. Active V3
+        // selects a per-stage path through `resident_decision`.
+        if (self.tc_lut.is_some() || self.mallett_core.is_some())
+            && let Some(out) =
                 self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)
-            {
-                tracing::info!("pipeline: gpu-resident fast path complete");
-                let _post = stages::StageObservation::cpu(
-                    backend,
-                    "post_scan",
-                    spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-                );
-                return Ok(self.apply_post_scan(out));
-            }
+        {
+            tracing::info!("pipeline: gpu-resident fast path complete");
+            let _post = stages::StageObservation::cpu(
+                backend,
+                "post_scan",
+                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            );
+            return Ok(self.apply_post_scan(out));
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
@@ -1161,6 +1107,8 @@ impl Pipeline {
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
         let ae_ev = self.meter_autoexposure(image);
+        // Clone only when the exposure multiply actually needs owned pixels;
+        // a full-resolution preview must not deep-clone a no-op exposure.
         let exposed;
         let image = if self.params.camera.auto_exposure {
             exposed = self.apply_autoexposure(image.clone(), ae_ev);
@@ -1169,36 +1117,11 @@ impl Pipeline {
             image
         };
         drop(metering);
-        let mut geometry = stages::StageObservation::cpu(
-            backend,
-            "geometry",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let resized = crate::resizing::crop_and_rescale(
-            image,
-            &self.params.io,
-            self.params.camera.film_format_mm,
-        );
-        geometry.set_complete(resized.is_ok());
-        let (working, pixel_size_um) = resized?;
-        drop(geometry);
+        let (working, pixel_size_um) = self.rescale_working(image, backend)?;
         if let Some(context) = backend.observation_context() {
             context.set_working_dimensions(working.width, working.height);
         }
-        let color_observation = stages::StageObservation::cpu(
-            backend,
-            "color_reference",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        let color_ref = crate::color_reference::ColorReference::compute(
-            &self.film,
-            &self.print,
-            &self.params,
-            &self.print_illuminant,
-            self.print_exposure_factor,
-            self.preflash_raw,
-        );
-        drop(color_observation);
+        let color_ref = self.color_reference(backend);
         let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0) {
             Some(out) => out,
             None => return Ok(None),
@@ -1225,6 +1148,79 @@ impl Pipeline {
             return 0.0;
         }
         stages::filming::meter_autoexposure_ev(image, &self.params)
+    }
+
+    /// Metering plus the exposure multiply, under the `metering` observation
+    /// scope. Both owned-image entry points apply the metered EV immediately,
+    /// so the EV itself stays internal.
+    fn expose_full_input(&self, image: ImageBuf, backend: &dyn ComputeBackend) -> ImageBuf {
+        let metering = stages::StageObservation::cpu(
+            backend,
+            "metering",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        let ae_ev = self.meter_autoexposure(&image);
+        let image = self.apply_autoexposure(image, ae_ev);
+        drop(metering);
+        image
+    }
+
+    /// Crop + rescale under the `geometry` observation scope. Callers resolve
+    /// the returned borrow against the image they still hold, so the
+    /// no-geometry case stays zero-copy.
+    fn rescale_working<'a>(
+        &self,
+        image: &'a ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> Result<(std::borrow::Cow<'a, ImageBuf>, f64), String> {
+        let mut geometry = stages::StageObservation::cpu(
+            backend,
+            "geometry",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        // V3 develops the full source; its field readout owns the crop and
+        // output grid so that overlapping reads keep the same film coordinates.
+        let resized = if stages::grain_v3::active(&self.params) {
+            Ok((
+                std::borrow::Cow::Borrowed(image),
+                crate::resizing::pixel_size_um(
+                    self.params.camera.film_format_mm,
+                    image.width,
+                    image.height,
+                ),
+            ))
+        } else {
+            crate::resizing::crop_and_rescale(
+                image,
+                &self.params.io,
+                self.params.camera.film_format_mm,
+            )
+        };
+        geometry.set_complete(resized.is_ok());
+        drop(geometry);
+        resized
+    }
+
+    /// Colour reference for one render — scanner/exposure corrections shared
+    /// by the resident and per-stage routes, computed under the
+    /// `color_reference` observation scope.
+    fn color_reference(
+        &self,
+        backend: &dyn ComputeBackend,
+    ) -> crate::color_reference::ColorReference {
+        let _observation = stages::StageObservation::cpu(
+            backend,
+            "color_reference",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        crate::color_reference::ColorReference::compute(
+            &self.film,
+            &self.print,
+            &self.params,
+            &self.print_illuminant,
+            self.print_exposure_factor,
+            self.preflash_raw,
+        )
     }
 }
 
@@ -1309,10 +1305,10 @@ mod spectral_invalidation_tests {
             ],
         ];
         for channel in 0..3 {
-            for layer in 0..3 {
+            for (layer, expected_layer) in expected.iter().enumerate() {
                 assert!(
                     (film.data.density_curves_layers[128][layer][channel]
-                        - expected[layer][channel])
+                        - expected_layer[channel])
                         .abs()
                         < 1e-9
                 );
@@ -1618,5 +1614,81 @@ mod spectral_invalidation_tests {
             .process(image, &backend)
             .unwrap();
         assert_eq!(normal.data, default.data);
+    }
+    #[test]
+    fn v3_final_crop_preserves_scanner_and_print_boundaries() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_800").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut image = ImageBuf::new(96, 64);
+        for y in 0..64 {
+            for x in 0..96 {
+                let exposure = if x < 48 { -1.7 } else { -0.6 };
+                image.set(x, y, [from_f64(exposure + y as f64 * 0.002); 3]);
+            }
+        }
+        for (scan_film, output) in [
+            (false, "direct_scan"),
+            (true, "direct_scan"),
+            (true, "positive_scan"),
+        ] {
+            for scale in [1.0, 1.5] {
+                let mut params = RuntimeParams::default();
+                params.camera.film_format_mm = 36.0;
+                params.film_render.grain.engine = crate::params::GrainEngine::V3;
+                params.film_render.dir_couplers.active = false;
+                params.film_render.halation.active = false;
+                params.workflow.route = if scan_film {
+                    "input > film > scan"
+                } else {
+                    "input > film > print > scan"
+                }
+                .into();
+                params.io.scan_film = scan_film;
+                params.io.upscale_factor = scale;
+                params.scanner.scan_output = output.into();
+                params.scanner.lens_blur = if scale == 1.0 { 1.5 } else { 3.0 };
+                params.scanner.unsharp_mask = [0.7, 0.7];
+                params.enlarger.diffusion_filter.active = !scan_film;
+                let full_pipeline = Pipeline::new(film.clone(), print.clone(), params.clone());
+                let color_ref = full_pipeline.color_reference(&backend);
+                // Inject a small developed-exposure field at photographic pitch.
+                let render = |pipeline: &Pipeline| {
+                    pipeline
+                        .run_from(
+                            image.clone(),
+                            Tap::LogEFilm,
+                            Tap::RgbOut,
+                            &backend,
+                            &color_ref,
+                            Some((3.1, 0.0)),
+                            None,
+                        )
+                        .unwrap()
+                };
+                let full = render(&full_pipeline);
+                params.io.crop = true;
+                params.io.crop_center = [0.5, 0.5];
+                params.io.crop_size = [0.5, 0.5];
+                let cropped = render(&Pipeline::new(film.clone(), print.clone(), params));
+                let expected = crate::resizing::crop_image(&full, [0.5, 0.5], [0.5, 0.5]);
+                let expected = expected.unwrap();
+                assert_eq!(
+                    (cropped.width, cropped.height),
+                    (expected.width, expected.height)
+                );
+                let worst = cropped
+                    .data
+                    .iter()
+                    .zip(expected.data.iter())
+                    .map(|(&a, &b)| (a as f64 - b as f64).abs())
+                    .fold(0.0f64, f64::max);
+                assert!(
+                    worst <= 1e-5,
+                    "{scan_film} {output} scale {scale}: crop edge error {worst}"
+                );
+            }
+        }
     }
 }
