@@ -27,7 +27,7 @@ impl From<FitGroupArg> for FitGroup {
 }
 
 #[derive(Args)]
-pub struct FitArgs {
+pub(crate) struct FitArgs {
     /// Chart layout JSON: grid geometry and patch index ranges.
     #[arg(long, help_heading = "Fit data")]
     layout: PathBuf,
@@ -83,11 +83,11 @@ pub struct FitArgs {
     /// Workflow route; the fit needs a scan route.
     #[arg(long, help_heading = "Look and workflow")]
     route: Option<String>,
-    /// Film scanner output mode; the fit requires negative_to_positive.
+    /// Film scanner output mode; the fit requires positive_scan.
     #[arg(
         long,
-        default_value = "negative_to_positive",
-        value_parser = ["direct_scan", "negative_to_positive"],
+        default_value = "positive_scan",
+        value_parser = ["direct_scan", "positive_scan"],
         help_heading = "Look and workflow"
     )]
     scan_output: String,
@@ -126,7 +126,7 @@ fn table_provenance(path: &Path, source: &str) -> Result<Value> {
     Ok(value)
 }
 
-const SURFACE_PROVENANCE: &str = "Hanatos2025 adaptation surface fitted by spektrafilm-lab fit ";
+const SURFACE_PROVENANCE: &str = "Hanatos2025 adaptation surface fitted by spektrafilm-f64 fit ";
 
 /// Append the fitted surface's provenance to a profile datasource. The fit
 /// replaces the whole surface, so this replaces an earlier fit's sentence,
@@ -145,7 +145,7 @@ fn record_surface_provenance(datasource: &mut String, scene: &str, reference: &s
     ));
 }
 
-pub fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
+pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
     let data_dir = crate::select_data_dir(args.data_dir.clone(), matches)?.path;
     let data_dir = data_dir.as_path();
     let layout: ChartLayout = read_json(&args.layout, "chart layout")?;
@@ -214,9 +214,6 @@ pub fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
     })
     .map_err(anyhow::Error::msg)?;
 
-    // Build every output and create every destination directory before the
-    // first write, so a failure leaves no partial set of results behind. The
-    // profile is written first because saving it validates it.
     if let Some(surface_values) = &report.surface {
         fitted_profile.data.hanatos2025_adaptation_surface_params = surface_values.clone();
         record_surface_provenance(
@@ -224,15 +221,20 @@ pub fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
             &scene_source,
             &reference_source,
         );
+        let path = args.out_profile.as_ref().expect("checked before the fit");
+        spektrafilm_core::profile::save_profile_to(path, &fitted_profile)
+            .map_err(anyhow::Error::msg)?;
     }
-    let overlay = report.tone.as_ref().map(|fitted_tone| {
-        json!({
+    if let Some(fitted_tone) = &report.tone {
+        let path = args.out_overlay.as_ref().expect("checked before the fit");
+        let overlay = json!({
             "scanner": {
-                "conversion_brightness_ev": fitted_tone.conversion_brightness_ev,
-                "conversion_balance_ev": fitted_tone.conversion_balance_ev,
+                "positive_density_ev": fitted_tone.positive_density_ev,
+                "positive_balance_ev": fitted_tone.positive_balance_ev,
             }
-        })
-    });
+        });
+        write_json(path, &overlay)?;
+    }
 
     let mut document = serde_json::to_value(&report)?;
     let object = document
@@ -241,7 +243,7 @@ pub fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
     object.insert(
         "tool".into(),
         json!({
-            "name": "spektrafilm-lab",
+            "name": "spektrafilm-f64",
             "version": env!("CARGO_PKG_VERSION"),
         }),
     );
@@ -273,8 +275,7 @@ pub fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> {
         outputs.insert("overlay".into(), json!(path.display().to_string()));
     }
     object.insert("outputs".into(), Value::Object(outputs));
-
-    publish_outputs(args, &report, &fitted_profile, overlay.as_ref(), &document)?;
+    write_json(&args.report, &document)?;
 
     eprintln!(
         "Fit {:?}: color ΔE00 {} → {}, gray ΔE00 {} → {}, {} iterations, {} evaluations",
@@ -304,82 +305,7 @@ fn format_de(value: f64) -> String {
     format!("{value:.3}")
 }
 
-/// Write every output to a staging sibling, then rename each into place. A
-/// failed write or move removes this run's staged and published files, so no
-/// destination keeps a partial set of the run's results.
-fn publish_outputs(
-    args: &FitArgs,
-    report: &spektrafilm_core::fit::FitReport,
-    profile: &spektrafilm_core::profile::Profile,
-    overlay: Option<&Value>,
-    document: &Value,
-) -> Result<()> {
-    enum Output<'a> {
-        Profile,
-        Json(&'a Value),
-    }
-    let mut planned = Vec::new();
-    if report.surface.is_some() {
-        let path = args.out_profile.as_deref().expect("checked before the fit");
-        planned.push((path, Output::Profile));
-    }
-    if let Some(overlay) = overlay {
-        let path = args.out_overlay.as_deref().expect("checked before the fit");
-        planned.push((path, Output::Json(overlay)));
-    }
-    planned.push((args.report.as_path(), Output::Json(document)));
-
-    let mut staged: Vec<(PathBuf, &Path)> = Vec::with_capacity(planned.len());
-    let mut written = Ok(());
-    for (path, output) in planned {
-        let staging = match staging_path(path) {
-            Ok(staging) => staging,
-            Err(error) => {
-                written = Err(error);
-                break;
-            }
-        };
-        staged.push((staging.clone(), path));
-        written = create_parent(path).and_then(|()| match output {
-            Output::Profile => spektrafilm_core::profile::save_profile_to(&staging, profile)
-                .map_err(anyhow::Error::msg),
-            Output::Json(value) => write_json(&staging, value),
-        });
-        if written.is_err() {
-            break;
-        }
-    }
-    if let Err(error) = written {
-        for (staging, _) in &staged {
-            let _ = std::fs::remove_file(staging);
-        }
-        return Err(error);
-    }
-    for (index, (staging, path)) in staged.iter().enumerate() {
-        if let Err(error) = std::fs::rename(staging, path) {
-            // Withdraw this run's published outputs and the staged rest.
-            for (_, published) in &staged[..index] {
-                let _ = std::fs::remove_file(published);
-            }
-            for (pending, _) in &staged[index..] {
-                let _ = std::fs::remove_file(pending);
-            }
-            return Err(error).with_context(|| format!("moving {} into place", path.display()));
-        }
-    }
-    Ok(())
-}
-
-fn staging_path(path: &Path) -> Result<PathBuf> {
-    let mut name = path
-        .file_name()
-        .with_context(|| format!("{} names no file", path.display()))?
-        .to_os_string();
-    name.push(".partial");
-    Ok(path.with_file_name(name))
-}
-
-fn create_parent(path: &Path) -> Result<()> {
+fn write_json(path: &Path, document: &Value) -> Result<()> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -387,10 +313,6 @@ fn create_parent(path: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
     }
-    Ok(())
-}
-
-fn write_json(path: &Path, document: &Value) -> Result<()> {
     let mut text = serde_json::to_string_pretty(document)?;
     text.push('\n');
     std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
