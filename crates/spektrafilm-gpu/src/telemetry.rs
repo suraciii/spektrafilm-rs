@@ -94,6 +94,7 @@ vocabulary!(CpuReason {
     GrainV3FieldCpu,
     PositiveScanOutput,
     ScannerFilmPoints,
+    ScannerReceiver,
 });
 vocabulary!(ResidentDeclineReason {
     WorkflowRoute,
@@ -111,6 +112,7 @@ vocabulary!(ResidentDeclineReason {
     DiagnosticTapRoute,
     PositiveScanOutput,
     ScannerFilmPoints,
+    ScannerReceiver,
 });
 vocabulary!(IssueCategory {
     Input,

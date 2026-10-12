@@ -10,6 +10,34 @@ use spektrafilm_gpu::{
 use spektrafilm_math::{image::ImageBuf, precision::from_f64};
 
 #[test]
+fn telemetry_scanner_configuration_roundtrips_actual_approximate_selection() {
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
+    params.scanner.scan_output = "positive_scan".into();
+    params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
+    params.scanner.finish_strength = 0.5;
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    let decoded =
+        spektrafilm_core::telemetry::Report::from_json(&report.to_json().unwrap()).unwrap();
+    let actual = decoded.configuration.render.unwrap();
+    assert_eq!(actual.receiver.profile, "lab_scan_approx");
+    assert_eq!(
+        actual.receiver.calibration_status,
+        "approximate_uncalibrated"
+    );
+    assert!(actual.receiver.approximate);
+    assert_eq!(actual.finish, "lab_scan");
+    assert_eq!(actual.finish_strength, 0.5);
+}
+
+#[test]
 fn concurrent_runtime_calls_preserve_pixels_and_operation_ownership() {
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();

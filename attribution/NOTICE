@@ -1,0 +1,15 @@
+Fotufilm
+https://fotufilm.com
+Copyright 2026 MUAStudio Inc.
+
+Project-authored code is licensed under the Apache License, Version 2.0.
+The 46 film profiles have separate CC BY-SA 4.0 terms;
+see licenses/FILM-PROFILES.txt.
+The editor glyphs have separate CC BY-SA 4.0 terms;
+see licenses/GLYPHS.txt. Third-party components retain their own licences;
+see THIRD_PARTY_NOTICES.md. No trademark rights are granted.
+
+Adapted source: Sources/FotufilmCore/LabScanFinish.swift
+Adapted constants: Sources/FotufilmCore/PrintPaperTables.swift (labScanSensitivity)
+Research revision: 59d43471dbef45c85ae442e507a291fdefb2ec5
+LabScanFinish.swift source SHA-256: fd2352193a8c91232729e51cc83cf748236b3a4b3cfaed07e703f5ae0943fe73

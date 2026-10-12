@@ -581,6 +581,43 @@ fn film_scan_without_preset_keeps_legacy_print_selection() {
 }
 
 #[test]
+fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_pixels() {
+    let f = Fixture::new();
+    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "positive_scan", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled,scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
+    assert_eq!(
+        report["parameters"]["scanner"]["receiver_profile"],
+        "lab_scan_approx"
+    );
+    assert_eq!(
+        report["parameters"]["scanner"]["positive_interpretation"],
+        "coupled"
+    );
+    assert_eq!(report["parameters"]["scanner"]["auto_setup"], "per_frame");
+    assert_eq!(
+        report["scanner_provenance"]["receiver"]["calibration_status"],
+        "approximate_uncalibrated"
+    );
+    std::fs::write(&f.input, b"invalid-pixels").unwrap();
+    for selection in [
+        "scanner.positive_interpretation=coupled",
+        "scanner.auto_setup=per_frame",
+        "scanner.finish=lab_scan",
+        "scanner.receiver_profile=not_a_scanner",
+    ] {
+        for dry in [false, true] {
+            let mut args = vec!["--film", "kodak_portra_400", "--set", selection];
+            if dry {
+                args.push("--dry-run");
+            }
+            let result = f.process(&args);
+            assert!(!result.status.success(), "accepted {selection}");
+            assert!(String::from_utf8_lossy(&result.stderr).contains("scanner"));
+            assert!(!f.root.join("output.tif").exists());
+        }
+    }
+}
+
+#[test]
 fn exr_writer_constraints_fail_before_decoding_or_device_selection() {
     let f = Fixture::new();
     std::fs::write(&f.input, b"invalid-pixels").unwrap();

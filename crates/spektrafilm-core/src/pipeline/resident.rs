@@ -6,6 +6,7 @@ use spektrafilm_math::image::ImageBuf;
 enum ResidentFallbackReason {
     WorkflowRoute,
     PositiveScanOutput,
+    ScannerReceiver,
     ScannerFilmPoints,
     LangmuirChemistry,
     InputTransferDecoding,
@@ -55,6 +56,9 @@ impl Pipeline {
         }
         if self.params.scanner.scan_output == "positive_scan" {
             reasons.push(ResidentFallbackReason::PositiveScanOutput);
+        }
+        if self.params.scanner.receiver_profile == crate::params::ReceiverProfile::LabScanApprox {
+            reasons.push(ResidentFallbackReason::ScannerReceiver);
         }
         if self.params.io.scan_film
             && self.film.is_positive()
@@ -196,6 +200,7 @@ impl Pipeline {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
                             ResidentFallbackReason::PositiveScanOutput => R::PositiveScanOutput,
                             ResidentFallbackReason::ScannerFilmPoints => R::ScannerFilmPoints,
+                            ResidentFallbackReason::ScannerReceiver => R::ScannerReceiver,
                             ResidentFallbackReason::LangmuirChemistry => R::LangmuirChemistry,
                             ResidentFallbackReason::InputTransferDecoding => {
                                 R::InputTransferDecoding

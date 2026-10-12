@@ -416,6 +416,17 @@ fn conditions(path: &str) -> Vec<String> {
     } else if path.starts_with("io.crop_") {
         out.push("io.crop = true".into());
     } else if path == "debug.print_timings" {
+        out.push("requires verbose runtime presentation; dormant otherwise".into());
+    } else if path == "scanner.receiver_profile" {
+        out.push("film scans only; legacy_colorimetric preserves CIE spectral-to-output acquisition; lab_scan_approx is an approximate uncalibrated Fotufilm narrow-band receiver (630/545/465 nm, sigma 8.5/14/9.5 nm), version fotufilm_lab_scan_approx_v1".into());
+    } else if matches!(
+        path,
+        "scanner.positive_interpretation"
+            | "scanner.auto_setup"
+            | "scanner.finish"
+            | "scanner.finish_strength"
+    ) {
+        out.push("non-default interpretation, per_frame setup and lab_scan finish require scanner.scan_output=positive_scan; finish_strength applies to lab_scan finish".into());
     } else if path == "scanner.scan_output" {
         out.push("positive_scan requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain V2 are unsupported".into());
     } else if matches!(path, "scanner.black_point" | "scanner.white_point") {

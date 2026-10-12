@@ -154,10 +154,16 @@ executable.
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
 
-# Direct negative-film scan interpreted as a positive image
+# Positive scanner interpretation with explicit receiver, inverse, setup and finish
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
     --backend cpu --film kodak_portra_400 --scan-film \
+    --set scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled \
+    --set scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
     --scan-output positive_scan --data-dir data
+
+# Inspect effective scanner selections without decoding or writing output
+./target/release/spektrafilm process input.tif -o positive.tif --film kodak_portra_400 --scan-film \
+    --scan-output positive_scan --set scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan --dry-run --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json
@@ -479,3 +485,5 @@ Claude code for being this awesome.
 ## License
 
 The Rust program is GPL-3.0; see [LICENSE](LICENSE). Andrea Volpato's spectral profiles and their LUT derivatives retain CC BY-SA 4.0; see [the canonical asset license](data/license/SPEKTRAFILM_LICENSE.txt).
+
+The optional LabScan scanner finish adapts Fotufilm project-authored `Sources/FotufilmCore/LabScanFinish.swift` under Apache-2.0, pinned at research revision `59d43471dbef45c85ae442e507a291fdefb2ec5` (source SHA-256 `fd2352193a8c91232729e51cc83cf748236b3a4b3cfaed07e703f5ae0943fe73`). The approximate narrow-band receiver follows Fotufilm's `PrintPaperTables.swift` sensitivity approximation; it is not a measured or calibrated scanner device. Receiver and finish source/version metadata is retained in scanner provenance.
