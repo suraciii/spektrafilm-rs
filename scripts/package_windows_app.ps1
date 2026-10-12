@@ -358,7 +358,11 @@ function Copy-NativeBundle([string]$Destination) {
         throw "Lensfun database CC BY-SA 3.0 license text missing: lensfun/LICENSE-data"
     }
     Copy-Item -LiteralPath "licenses\lensfun-cc-by-sa-3.0.txt" -Destination (Join-Path $licenses "lensfun-database-CC-BY-SA-3.0.txt")
-    if (-not (Test-Path -LiteralPath "licenses\Apache-2.0.txt")) { throw "Fotufilm Apache-2.0 license missing" }
+    Copy-Item -LiteralPath "LICENSE" -Destination (Join-Path $licenses "spektrafilm-GPL-3.0.txt")
+    foreach ($license in @("nvlabs-flip-bsd-3-clause.txt", "littlecms-mit.txt")) {
+        if (-not (Test-Path -LiteralPath (Join-Path "licenses" $license))) { throw "Benchmark license missing: $license" }
+        Copy-Item -LiteralPath (Join-Path "licenses" $license) -Destination (Join-Path $licenses $license)
+    }
     if (-not (Test-Path -LiteralPath "attribution\NOTICE")) { throw "Fotufilm attribution notice missing" }
     Copy-Item -LiteralPath "licenses\Apache-2.0.txt" -Destination (Join-Path $licenses "Fotufilm-Apache-2.0.txt")
     Copy-Item -LiteralPath "attribution\NOTICE" -Destination (Join-Path $licenses "Fotufilm-NOTICE.txt")

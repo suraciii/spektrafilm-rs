@@ -18,15 +18,10 @@ fn main() {
         PathBuf::from("Cargo.toml"),
         PathBuf::from("build.rs"),
         PathBuf::from("../../Cargo.lock"),
-        PathBuf::from("../../crates/spektrafilm-math/Cargo.toml"),
     ];
     for directory in ["src", "native", "assets"] {
         collect(Path::new(directory), &mut files)
     }
-    // Metric-relevant workspace math sources belong to the automatic
-    // implementation identity: measurement changes must change protocol
-    // identity without any manual bookkeeping.
-    collect(Path::new("../../crates/spektrafilm-math/src"), &mut files);
     files.sort();
     let mut hash = Sha256::new();
     for path in files {

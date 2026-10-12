@@ -4,30 +4,18 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "spektrafilm-bench-fixtures",
-    about = "Generate packaged benchmark suites and targets.",
-    after_help = "The generated bundle is consumed by `spektrafilm-bench run --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`."
+    about = "Generate packaged benchmark suites and targets."
 )]
 struct Args {
-    #[arg(
-        long,
-        help = "Renderer executable to use for preset export and configuration validation"
-    )]
+    #[arg(long)]
     renderer: PathBuf,
-    #[arg(long, help = "Explicit renderer data/profile directory")]
+    #[arg(long)]
     data_dir: PathBuf,
-    #[arg(long, help = "New fixture bundle directory; must not exist")]
+    #[arg(long)]
     out: PathBuf,
-    #[arg(
-        long,
-        conflicts_with = "download_natural",
-        help = "Optional pinned natural RAW input to include"
-    )]
+    #[arg(long)]
     natural_input: Option<PathBuf>,
-    #[arg(
-        long,
-        conflicts_with = "natural_input",
-        help = "Download the pinned natural RAW input"
-    )]
+    #[arg(long)]
     download_natural: bool,
 }
 fn main() {

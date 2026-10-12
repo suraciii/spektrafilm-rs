@@ -1,4 +1,3 @@
-use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -62,21 +61,6 @@ impl From<serde_json::Error> for Error {
     }
 }
 
-/// Generic JSON accessors shared by the document, comparison, and runner
-/// layers; they report the missing field with the same error code the
-/// evidence contract expects.
-pub fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| Error::new("missing_field", format!("Missing string: {key}")))
-}
-pub fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .ok_or_else(|| Error::new("missing_field", format!("Missing array: {key}")))
-}
 /// Python's finite JSON float spelling is part of the existing evidence hash contract.
 fn python_float(value: f64) -> Result<String> {
     if !value.is_finite() {
@@ -201,125 +185,9 @@ pub fn dump(path: &Path, value: &Value) -> Result<()> {
     output.write_all(b"\n")?;
     Ok(())
 }
-pub fn destination_exists(path: &Path) -> Error {
-    Error::new(
-        "destination_exists",
-        format!(
-            "Destination already exists: {}; choose a new destination or remove the existing destination before retrying",
-            path.display()
-        ),
-    )
-    .at(path.display().to_string())
-    .boundary("publication")
-}
-
-/// Report that an operation retained evidence but did not publish its terminal manifest.
-///
-/// A failed terminal manifest is a valid, published record and is deliberately not
-/// described as incomplete. This helper is only used after a destination has been
-/// created and an operation fails before its terminal manifest is written.
-pub fn incomplete_destination(mut error: Error, root: &Path, manifest: &str) -> Error {
-    if error.code == "destination_exists" {
-        return error;
-    }
-    let terminal = root.join(manifest);
-    if root.is_dir() && !terminal.is_file() {
-        error.message = format!(
-            "{}; destination {} is incomplete evidence because {} was not published; partial evidence was retained. Remove it or choose a new destination before retrying",
-            error.message,
-            root.display(),
-            manifest,
-        );
-    }
-    error
-}
-
-pub struct Progress<'a> {
-    operation: &'static str,
-    active: Option<(&'a str, u64, std::time::Instant)>,
-    started: std::time::Instant,
-    completed: usize,
-    failed: usize,
-    summarized: bool,
-}
-
-impl<'a> Progress<'a> {
-    pub fn new(operation: &'static str) -> Self {
-        Self {
-            operation,
-            active: None,
-            started: std::time::Instant::now(),
-            completed: 0,
-            failed: 0,
-            summarized: false,
-        }
-    }
-
-    pub fn start(&mut self, case_id: &'a str, seed: u64) -> std::time::Instant {
-        eprintln!("Starting {} {} seed {}", self.operation, case_id, seed);
-        let started = std::time::Instant::now();
-        self.active = Some((case_id, seed, started));
-        started
-    }
-
-    pub fn finish(&mut self, case_id: &str, seed: u64, status: &str, started: std::time::Instant) {
-        self.active = None;
-        if matches!(status, "completed" | "validated") {
-            self.completed += 1;
-        } else {
-            self.failed += 1;
-        }
-        eprintln!(
-            "Completed {} {} seed {}: status={} elapsed_seconds={:.3}",
-            self.operation,
-            case_id,
-            seed,
-            status,
-            started.elapsed().as_secs_f64()
-        );
-    }
-
-    pub fn summary_rows(&mut self, rows: &[Value]) {
-        self.completed = rows
-            .iter()
-            .filter(|row| matches!(row["status"].as_str(), Some("completed" | "validated")))
-            .count();
-        self.failed = rows
-            .iter()
-            .filter(|row| !matches!(row["status"].as_str(), Some("completed" | "validated")))
-            .count();
-        self.summary();
-    }
-
-    pub fn summary(&mut self) {
-        if self.summarized {
-            return;
-        }
-        self.summarized = true;
-        eprintln!(
-            "{} summary: completed={} failed={} elapsed_seconds={:.3}",
-            self.operation,
-            self.completed,
-            self.failed,
-            self.started.elapsed().as_secs_f64()
-        );
-    }
-}
-
-impl Drop for Progress<'_> {
-    fn drop(&mut self) {
-        if let Some((case_id, seed, started)) = self.active.take() {
-            self.finish(case_id, seed, "failed", started);
-        }
-        if !self.summarized {
-            self.summary();
-        }
-    }
-}
-
 pub fn create_destination(path: &Path) -> Result<()> {
     if fs::symlink_metadata(path).is_ok() {
-        return Err(destination_exists(path));
+        return Err(Error::new("destination_exists", path.display().to_string()));
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -328,87 +196,6 @@ pub fn create_destination(path: &Path) -> Result<()> {
         Error::new("publication_failure", e.to_string()).at(path.display().to_string())
     })?;
     Ok(())
-}
-
-/// Availability vocabulary shared by the appearance and reference evidence
-/// builders; both publish these exact snake_case spellings.
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Availability {
-    Available,
-    Unavailable,
-}
-
-/// Terminal state vocabulary shared by every evidence builder manifest.
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalState {
-    Completed,
-    Failed,
-}
-
-/// Metric payload of one measurement row, shared by the appearance and
-/// reference evidence builders. Each builder wraps it with its own identity
-/// fields (`case_id`, `seed_population`, `protocol_id`, `reference_id`) and
-/// `#[serde(flatten)]`s this payload into the same JSON object, so the
-/// published key set is unchanged.
-#[derive(Serialize)]
-pub struct Measurement {
-    pub region_id: String,
-    pub metric: String,
-    pub metric_version: &'static str,
-    pub domain: String,
-    pub units: String,
-    pub estimator: String,
-    pub sample_count: usize,
-    pub artifact_refs: Vec<String>,
-    pub availability: Availability,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// Evidence manifest shared by the appearance and reference builders: the three
-/// published collections, the terminal state, and the single place that merges
-/// them with the builder's own manifest keys.
-pub struct EvidenceBuilder<M, F, A> {
-    pub measurements: Vec<M>,
-    pub findings: Vec<F>,
-    pub artifacts: Vec<A>,
-    pub status: TerminalState,
-}
-
-impl<M, F, A> Default for EvidenceBuilder<M, F, A> {
-    fn default() -> Self {
-        Self {
-            measurements: Vec::new(),
-            findings: Vec::new(),
-            artifacts: Vec::new(),
-            status: TerminalState::Completed,
-        }
-    }
-}
-
-impl<M: Serialize, F: Serialize, A: Serialize> EvidenceBuilder<M, F, A> {
-    /// Publish the shared keys followed by the builder's own manifest keys.
-    pub fn finish(self, extra: BTreeMap<String, Value>) -> Value {
-        let mut result = json!({
-            "measurements": self.measurements,
-            "findings": self.findings,
-            "artifacts": self.artifacts,
-            "execution_status": self.status,
-        });
-        result
-            .as_object_mut()
-            .expect("evidence manifest is an object")
-            .extend(extra);
-        result
-    }
-    /// Record a terminal boundary failure.
-    pub fn mark_failed(&mut self) {
-        self.status = TerminalState::Failed;
-    }
 }
 
 pub struct Evidence {
@@ -429,10 +216,8 @@ impl Evidence {
         media_type: &str,
         metadata: Value,
     ) -> Result<Value> {
-        let canonical_root = self.root.canonicalize()?;
-        let canonical_path = path.canonicalize()?;
-        let relative = canonical_path
-            .strip_prefix(&canonical_root)
+        let relative = path
+            .strip_prefix(&self.root)
             .map_err(|_| Error::new("unsafe_artifact_path", "Artifact is outside destination"))?
             .to_str()
             .ok_or_else(|| Error::new("invalid_path", "Artifact path must be UTF-8"))?
