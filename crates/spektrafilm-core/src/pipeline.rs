@@ -1449,11 +1449,21 @@ mod spectral_invalidation_tests {
         }
     }
 
+    /// Keep one prepared fixture per test process. `Pipeline::clone` shares the
+    /// immutable Fotufilm preparation through `Prepared`'s `Arc`; each caller
+    /// still receives an independent parameter set, while repeated render tests
+    /// avoid rebuilding the same population and bank.
     fn build() -> Pipeline {
-        let dir = data_dir();
-        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap()
+        static SHARED: std::sync::OnceLock<Pipeline> = std::sync::OnceLock::new();
+        SHARED
+            .get_or_init(|| {
+                let dir = data_dir();
+                let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+                let print =
+                    crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+                Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap()
+            })
+            .clone()
     }
     #[test]
     fn fotufilm_zero_amount_bypasses_geometry_and_cancelled_render_fails() {
@@ -2091,6 +2101,9 @@ mod spectral_invalidation_tests {
             },
         ];
 
+        // The matrix changes only routing controls. Rebuild parameter views
+        // from one prepared pipeline so every case exercises its own route
+        // without repeating the same Fotufilm population preparation.
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -2102,6 +2115,7 @@ mod spectral_invalidation_tests {
                 .map(|i| from_f64(-1.6 + (i % 17) as f64 * 0.11))
                 .collect(),
         );
+        let base = Pipeline::new(film, print, RuntimeParams::default());
 
         for case in cases {
             let mut params = RuntimeParams::default();
@@ -2111,9 +2125,9 @@ mod spectral_invalidation_tests {
             params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
             params.film_render.grain.fotufilm.amount = 1.0;
             params.random_seed = 17;
-            let active = Pipeline::new(film.clone(), print.clone(), params.clone());
+            let active = base.clone().with_params(params.clone()).unwrap();
             params.film_render.grain.active = false;
-            let disabled = Pipeline::new(film.clone(), print.clone(), params);
+            let disabled = base.clone().with_params(params).unwrap();
 
             let active_context = spektrafilm_gpu::telemetry::ObservationContext::new(
                 spektrafilm_gpu::telemetry::CollectionMode::Summary,
@@ -2223,6 +2237,8 @@ mod spectral_invalidation_tests {
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        // Seed and amount are readout controls; keep the prepared pipeline
+        // shared while each parameter view remains independently rebuilt.
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
@@ -2238,17 +2254,18 @@ mod spectral_invalidation_tests {
                 .collect(),
         );
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let base = Pipeline::new(film, print, params.clone());
         let render = |p: Pipeline| p.process(image.clone(), &backend).unwrap().data;
-        let first = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
-        let repeat = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
+        let first = render(base.clone());
+        let repeat = render(base.clone());
         assert_eq!(first, repeat);
         params.random_seed += 1;
-        let changed = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
+        let changed = render(base.clone().with_params(params.clone()).unwrap());
         assert_ne!(first, changed);
         params.random_seed = 91;
         params.film_render.grain.fotufilm.amount = 0.65;
-        let amount_first = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
-        let amount_repeat = render(Pipeline::new(film, print, params));
+        let amount_first = render(base.clone().with_params(params.clone()).unwrap());
+        let amount_repeat = render(base.with_params(params).unwrap());
         assert_eq!(amount_first, amount_repeat);
     }
 }
