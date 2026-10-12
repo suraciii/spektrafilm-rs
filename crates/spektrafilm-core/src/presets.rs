@@ -4,7 +4,7 @@ mod sections;
 use crate::params::sources::{ParameterEdits, parse_carrier};
 use crate::params::{
     DiffusionFilterParams, EnlargerParams, FilmRenderingParams, PrintRenderingParams,
-    RuntimeParams, ScannerParams,
+    RuntimeParams, ScannerParams, SettingsParams,
 };
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
@@ -31,7 +31,7 @@ pub struct Provenance {
     pub implementation_version: String,
     pub model_version: String,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LookParameters {
     pub enlarger: EnlargerParams,
@@ -39,6 +39,37 @@ pub struct LookParameters {
     pub film_render: FilmRenderingParams,
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
+    /// Spectral-reconstruction switches that shape the rendered look. This is
+    /// deliberately a subset of `SettingsParams`: preview limits, performance
+    /// toggles, and the working wavelength grid are not look content.
+    #[serde(default)]
+    pub settings: LookSettingsParams,
+}
+/// Look-owned processing settings (subset of `SettingsParams`, same defaults).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LookSettingsParams {
+    #[serde(default = "default_true")]
+    pub apply_hanatos2025_adaptation_window: bool,
+    #[serde(default)]
+    pub apply_hanatos2025_adaptation_surface: bool,
+    #[serde(default)]
+    pub spectral_gaussian_blur: f32,
+    #[serde(default = "default_true")]
+    pub use_cat16: bool,
+}
+impl Default for LookSettingsParams {
+    fn default() -> Self {
+        Self {
+            apply_hanatos2025_adaptation_window: true,
+            apply_hanatos2025_adaptation_surface: false,
+            spectral_gaussian_blur: 0.0,
+            use_cat16: true,
+        }
+    }
+}
+fn default_true() -> bool {
+    true
 }
 // The look variant owns the full look, and preset collections are small.
 #[allow(clippy::large_enum_variant)]
@@ -85,7 +116,39 @@ impl LookParameters {
             film_render: params.film_render.clone(),
             print_render: params.print_render.clone(),
             camera_diffusion_filter: params.camera.diffusion_filter.clone(),
+            settings: LookSettingsParams {
+                apply_hanatos2025_adaptation_window: params
+                    .settings
+                    .apply_hanatos2025_adaptation_window,
+                apply_hanatos2025_adaptation_surface: params
+                    .settings
+                    .apply_hanatos2025_adaptation_surface,
+                spectral_gaussian_blur: params.settings.spectral_gaussian_blur,
+                use_cat16: params.settings.use_cat16,
+            },
         }
+    }
+
+    /// Replace every look-owned parameter of `params` with this look.
+    ///
+    /// The look owns the enlarger, scanner, film-render and print-render
+    /// sections, the camera diffusion filter, and the look-owned processing
+    /// settings. Every other parameter section keeps its value.
+    pub fn apply_to(&self, params: &mut RuntimeParams) {
+        params.enlarger = self.enlarger.clone();
+        params.scanner = self.scanner.clone();
+        params.film_render = self.film_render.clone();
+        params.print_render = self.print_render.clone();
+        params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
+        self.settings.apply_to(&mut params.settings);
+    }
+}
+impl LookSettingsParams {
+    fn apply_to(&self, settings: &mut SettingsParams) {
+        settings.apply_hanatos2025_adaptation_window = self.apply_hanatos2025_adaptation_window;
+        settings.apply_hanatos2025_adaptation_surface = self.apply_hanatos2025_adaptation_surface;
+        settings.spectral_gaussian_blur = self.spectral_gaussian_blur;
+        settings.use_cat16 = self.use_cat16;
     }
 }
 impl Preset {
@@ -179,13 +242,7 @@ impl Preset {
         }
         let mut params = RuntimeParams::default();
         match &self.parameters {
-            PresetParameters::Look(look) => {
-                params.enlarger = look.enlarger.clone();
-                params.scanner = look.scanner.clone();
-                params.film_render = look.film_render.clone();
-                params.print_render = look.print_render.clone();
-                params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
-            }
+            PresetParameters::Look(look) => look.apply_to(&mut params),
             PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
         }
         crate::params::sources::validate_finite(&params)?;
@@ -244,11 +301,7 @@ impl Preset {
         validate_profile_ref("print", print_ref, &print, print_identity.as_deref())?;
         let mut params = current.clone();
         apply_film_specifics(&mut params, &film);
-        params.enlarger = look.enlarger.clone();
-        params.scanner = look.scanner.clone();
-        params.film_render = look.film_render.clone();
-        params.print_render = look.print_render.clone();
-        params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
+        look.apply_to(&mut params);
         params.neutral_print_filters_protected = [true; 3];
         let default_route = workflow_default(&film);
         params.workflow.route = default_route.clone();

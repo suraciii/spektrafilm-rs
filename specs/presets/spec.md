@@ -81,7 +81,7 @@ A serialized `route` or `workflow` field is unknown and rejected.
 
 ### Look ownership
 
-A look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, glare, base, chemistry, and scanner look controls; a section preset owns exactly the controls of its section. A preset preserves enabled states and f64 values. It does not own workflow, image/input, RAW/source correction, geometry, viewer/display, output encoding, export destination, preview limits, cache, debug/taps, startup state, dialog directories, or random seed.
+A look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, glare, base, chemistry, and scanner look controls; a section preset owns exactly the controls of its section. A look preset also owns the look-relevant processing settings: the hanatos2025 adaptation window/surface switches, spectral Gaussian blur, and the CAT16 switch (`LookSettingsParams`, a subset of `SettingsParams` with the same defaults; omitted fields decode to defaults). It does not own the working wavelength grid, LUT wiring, performance toggles, or other `SettingsParams` fields. A preset preserves enabled states and f64 values. It does not own workflow, image/input, RAW/source correction, geometry, viewer/display, output encoding, export destination, preview limits, cache, debug/taps, startup state, dialog directories, or random seed.
 
 ### Implementation rules
 
