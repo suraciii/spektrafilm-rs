@@ -56,6 +56,10 @@ test-fast-precision precision_args:
     cargo test --locked -p spektrafilm-core --test telemetry {{precision_args}}
     cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui {{precision_args}} -- state::tests:: numeric::tests::
 
+# Run the appearance benchmark regressions with locked Python dependencies.
+benchmark-test:
+    uv run --project scripts/benchmark --locked python -m unittest discover -s scripts/benchmark/tests
+
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
 gui-headless:
     cargo test --locked -p spektrafilm-gui --features precision-f64 headless::
@@ -69,10 +73,10 @@ check-python-cache:
     python3 scripts/check_python_cache.py
 
 # Fast PR gate. Clippy also type-checks every default-feature target.
-ci-pr: check-python-cache fmt clippy check-f64 test-fast
+ci-pr: check-python-cache fmt clippy check-f64 test-fast benchmark-test
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache fmt check check-f64 clippy test test-f64
+ci: check-python-cache fmt check check-f64 clippy test test-f64 benchmark-test
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
     python3 scripts/verify.py {{quote(evidence_dir)}}

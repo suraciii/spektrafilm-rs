@@ -19,6 +19,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Magazine print color.** The optional finishing treatment applies a bundled RGB appearance to any supported base workflow — a scanned negative or a finished RGB input — after the base workflow and its scanner-domain effects: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. `magazine_print_color.active` and one appearance Strength from 0 to 1 enable it independently of the base workflow; there is no magazine route. It remains RGB-only and does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 - **Selectable grain engines.** V1 remains the default emulsion model. V2 provides procedural Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls. V3 conditions a film-coordinate dye field controlled by its film-space support `v3_dye_support_um` and event area `v3_event_area_um2`.
+- **Grain V3 experiments.** Opt-in formed-cell spectral readout and compensated fixed/two-class/Gamma event-mass comparisons are available through diagnostic environment selectors. See [experiment scope](specs/film-grain/v3/experiments.md); the default field and readout remain unchanged.
 
 ## Build
 
@@ -378,6 +379,48 @@ For Rust consumers, `BundleBuilder::build` returns typed `Bundle`, `Lut`, and
 `(r * resolution + g) * resolution + b`; format writers reorder at serialization.
 `export-lut` calls the same baker for a single combined ProPhoto RGB to sRGB
 transform with native input headroom.
+
+### Appearance benchmark
+
+The external `spektrafilm-bench` CLI renders immutable evidence, compares versions, and creates an offline review. It reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. It preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations. The [benchmark specification](specs/benchmark/README.md) defines reference scopes and qualification rules.
+
+Install the locked Python dependencies with `uv`. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
+
+```bash
+just build-f64
+uv sync --project scripts/benchmark --locked
+scripts/benchmark/.venv/bin/python scripts/benchmark/fixtures.py \
+    --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
+    --out /tmp/spektrafilm-benchmark-fixtures --download-natural
+
+scripts/benchmark/spektrafilm-bench validate --kind suite \
+    --file /tmp/spektrafilm-benchmark-fixtures/complete.json
+scripts/benchmark/spektrafilm-bench run \
+    --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
+    --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
+    --out /tmp/spektrafilm-benchmark-baseline
+scripts/benchmark/spektrafilm-bench run \
+    --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
+    --target /tmp/spektrafilm-benchmark-fixtures/candidate.json \
+    --out /tmp/spektrafilm-benchmark-candidate
+scripts/benchmark/spektrafilm-bench compare \
+    --baseline /tmp/spektrafilm-benchmark-baseline \
+    --candidate /tmp/spektrafilm-benchmark-candidate \
+    --out /tmp/spektrafilm-benchmark-comparison
+scripts/benchmark/spektrafilm-bench report \
+    --comparison /tmp/spektrafilm-benchmark-comparison \
+    --out /tmp/spektrafilm-benchmark-review
+just benchmark-test
+```
+
+Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time, prioritizes `color_chart_30mp` when present, and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows synchronized baseline/candidate imagery, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither a renderer nor the original run directories. Reference artifacts with unknown or denied redistribution permission remain omitted and identified in the report manifest.
+
+The viewer opens in split mode: drag the divider on the image, use the range control, or move the focused divider with arrow keys (Shift for larger steps; Home/End for endpoints). Display copies use 16-bit RGB sRGB PNG without dither. Fit views resize floating samples before 16-bit quantization; native 100%, 200%, and 400% views switch to the full-size image, and detail crops preserve its 16-bit samples. Browser and screen precision still limit the displayed result. Preview resampling never feeds measurements.
+
+Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied policy is exploratory and cannot qualify a release. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
+
+The generated quick and complete suites include the natural scene when acquired. Without `--natural-input` or `--download-natural`, they contain controlled probes only. The packaged scene covers shadows and texture; broader skin, foliage, mixed-light, and real film-scan coverage requires explicitly declared assets and regions. Synthetic probes and rendered reference fixtures do not establish physical film fidelity.
+
 ### LUT delivery
 
 LUT bundles carry their stock, transport, exposure, topology, wire constants and parameter snapshots in `bundle.json`, with consumer instructions, the canonical upstream `SPEKTRAFILM_LICENSE.txt`, and derivative notices. Directory and ZIP delivery use portable relative artifact paths. The only active camera target is `lumix_realtime_vlog`: Panasonic V-Log input, sRGB/Rec.709/Rec.2020 output, and the minimal `#LUMIXPHOTOSTYLE VLOG` header. Upstream field verification covers the 33³ grid; other exporter-accepted resolutions have no camera compatibility claim.

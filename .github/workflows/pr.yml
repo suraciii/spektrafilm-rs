@@ -22,15 +22,29 @@ jobs:
     env:
       OPENBLAS_NUM_THREADS: '1'
       RAYON_NUM_THREADS: '2'
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - name: Identify Rust cache environment
+        id: rust-environment
+        run: echo "version=$(rustc -V | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Restore Rust workspace cache
+        id: rust-cache
+        uses: actions/cache/restore@v4
         with:
-          shared-key: verification-v2
-          key: ${{ github.sha }}
-          cache-workspace-crates: true
-          save-if: ${{ github.event_name != 'pull_request' }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-${{ github.sha }}
+          restore-keys: |
+            rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: Configure benchmark environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/benchmark-venv" >> "$GITHUB_ENV"
       - name: Configure native library paths
         run: |
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libraw-022/lib/pkgconfig" >> "$GITHUB_ENV"
@@ -74,6 +88,15 @@ jobs:
       - name: Run full main gate with evidence
         if: github.event_name != 'pull_request'
         run: just verify "$RUNNER_TEMP/verification"
+      - name: Save verified main Rust workspace cache
+        if: github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Preserve verification evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -266,6 +266,44 @@ pub fn expose_calibrated(
     log_raw_print
 }
 
+/// Formed-cell response retains both historical exposure floors and preflash.
+/// Paper development runs only after the model averages this linear exposure.
+#[allow(clippy::too_many_arguments)]
+pub fn expose_linear_calibrated(
+    cmy_film: &ImageBuf,
+    film: &Profile,
+    print: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    print_illuminant: &[f64],
+    exposure_factor: f64,
+    preflash: [f64; 3],
+    bw_print_correction: f64,
+) -> Result<ImageBuf, String> {
+    if params.enlarger.diffusion_filter.active || params.settings.use_enlarger_lut {
+        return Err(
+            "exact-cell print exposure requires inactive diffusion and direct spectral integration"
+                .to_owned(),
+        );
+    }
+    let mut linear = expose_calibrated(
+        cmy_film,
+        film,
+        print,
+        params,
+        backend,
+        print_illuminant,
+        exposure_factor,
+        preflash,
+        bw_print_correction,
+        1.0,
+    );
+    linear.data.par_iter_mut().for_each(|value| {
+        *value = from_f64(10.0_f64.powf(spektrafilm_math::precision::to_f64(*value)));
+    });
+    Ok(linear)
+}
+
 pub fn develop(
     log_raw_print: &ImageBuf,
     print: &Profile,
