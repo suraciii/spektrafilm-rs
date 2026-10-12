@@ -1,5 +1,7 @@
 mod discovery;
+mod effects;
 mod metadata;
+pub(crate) use effects::inactive_reason;
 
 use discovery::schema_value;
 pub use discovery::{
@@ -78,6 +80,27 @@ impl ParameterEdits {
 
     pub fn paths(&self) -> impl Iterator<Item = &str> {
         self.edits.iter().map(|(p, _)| p.as_str())
+    }
+
+    pub(crate) fn values(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.edits
+            .iter()
+            .map(|(path, value)| (path.as_str(), value))
+    }
+
+    /// Validate a dedicated option with the canonical leaf validator.
+    pub(crate) fn single(path: &str, value: Value) -> Result<Self, String> {
+        let mut edits = Self::default();
+        edits.push(path, value)?;
+        Ok(edits)
+    }
+
+    pub(crate) fn file_path(source: &str) -> Option<&std::path::Path> {
+        let assignment = source
+            .split_once('=')
+            .is_some_and(|(path, _)| path.trim().split('.').all(valid_ident));
+        (!assignment && (source.ends_with(".toml") || source.ends_with(".json")))
+            .then(|| std::path::Path::new(source))
     }
 
     pub fn apply(&self, params: &mut RuntimeParams) -> Result<(), String> {

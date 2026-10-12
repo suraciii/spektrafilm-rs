@@ -359,6 +359,8 @@ target/release/spektrafilm-f64 process \
 
 `run_parity.py` automates exactly this invocation for every scenario.
 
+The generated legacy `rs_params.json` supplies both `io.input_color_space` and `io.input_cctf_decoding` from the scenario. These leaves declare the prepared raster samples without adding a `--set` source or changing the legacy numerical preparation. The package smoke and experimental runtime scripts also declare their linear sRGB inputs in legacy parameter files. See the [source declaration contract](../../specs/cli-parameters/spec.md#input-declaration).
+
 ## Interpretation rules
 
 - **expected_parity** rows must meet their budget; failures block.

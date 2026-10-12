@@ -12,6 +12,9 @@ The [publication contract](spec.md#publication) belongs to the shared image writ
 
 Native image data writes and close results must both be checked. Metadata read warnings after a write must not conceal a native write failure. The publication result must distinguish a committed image with a permitted metadata warning from an unpublished image error. Observers must retain the caller's final destination identity rather than expose an implementation temporary path as the output.
 
+The native file stream must detect short writes and buffered flush or close failures even when a container plugin reports success. A metadata warning requires a readable, complete image container. The writer may validate the container after a metadata failure, but must not repeat image decoding on the successful write path.
+
+
 Same-directory staging permits platform-native atomic replacement without a cross-filesystem move. Removing the old destination before renaming would destroy failure preservation and must not be used. A platform that cannot atomically replace the selected destination must fail while preserving it. The writer must not add copy-based fallback publication.
 
 Each image transaction must own a unique temporary file. Handled errors must clean up only that file. Source metadata retention and format choice must survive staging. The image transaction must not absorb `--raw-out` or telemetry persistence into a multi-file commit.

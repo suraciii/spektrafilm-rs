@@ -9,7 +9,7 @@ use spektrafilm_math::{
 };
 use std::{
     ffi::{CStr, CString, c_char, c_void},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -38,6 +38,39 @@ pub enum ImageIoError {
         path: String,
         message: String,
     },
+}
+
+/// A complete unpublished image. Dropping it removes only its owned temporary file.
+pub struct PreparedImageOutput {
+    temporary: tempfile::TempPath,
+    destination: PathBuf,
+    report: SaveReport,
+}
+
+impl PreparedImageOutput {
+    pub fn report(&self) -> &SaveReport {
+        &self.report
+    }
+
+    /// Atomically publish, optionally replacing an existing destination.
+    pub fn publish(self, replace: bool) -> Result<SaveReport, ImageIoError> {
+        let Self {
+            temporary,
+            destination,
+            report,
+        } = self;
+        let result = if replace {
+            temporary.persist(&destination)
+        } else {
+            temporary.persist_noclobber(&destination)
+        };
+        result.map_err(|error| ImageIoError::Native {
+            operation: "publication",
+            path: destination.display().to_string(),
+            message: error.error.to_string(),
+        })?;
+        Ok(report)
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BitDepth {
@@ -199,6 +232,7 @@ unsafe extern "C" {
         icc_len: usize,
         error: *mut *mut c_char,
     ) -> i32;
+    fn sf_image_validate(path: *const c_char, error: *mut *mut c_char) -> i32;
     fn sf_metadata_write(
         path: *const c_char,
         source: *const c_void,
@@ -220,7 +254,11 @@ fn take_error(pointer: *mut c_char) -> String {
         .to_string_lossy()
         .into_owned();
     unsafe { sf_io_free(pointer.cast()) };
-    result
+    if result.is_empty() {
+        "Native codec did not provide an error".into()
+    } else {
+        result
+    }
 }
 /// Metadata read failures are nonfatal, matching upstream read_image_metadata.
 pub fn read_metadata(path: &Path) -> Option<ImageMetadata> {
@@ -332,6 +370,24 @@ pub fn save_jpeg_quality(
     save_inner(path, image, options, metadata, false, None)
 }
 
+/// Prepare a complete export without publishing it, for cancellation or no-replace adapters.
+pub fn prepare_save_observed(
+    path: &Path,
+    image: &ImageBuf,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    context: &ObservationContext,
+) -> Result<PreparedImageOutput, ImageIoError> {
+    prepare_inner(
+        path,
+        image,
+        options,
+        metadata,
+        false,
+        context.enabled().then_some(context),
+    )
+}
+
 fn save_inner(
     path: &Path,
     image: &ImageBuf,
@@ -340,6 +396,17 @@ fn save_inner(
     rendered_output: bool,
     observation: Option<&ObservationContext>,
 ) -> Result<SaveReport, ImageIoError> {
+    prepare_inner(path, image, options, metadata, rendered_output, observation)?.publish(true)
+}
+
+fn prepare_inner(
+    path: &Path,
+    image: &ImageBuf,
+    options: SaveOptions<'_>,
+    metadata: Option<&ImageMetadata>,
+    rendered_output: bool,
+    observation: Option<&ObservationContext>,
+) -> Result<PreparedImageOutput, ImageIoError> {
     let format = ImageFormat::detect(path)?;
     let format_name = match format {
         ImageFormat::Jpeg => "JPEG",
@@ -421,7 +488,28 @@ fn save_inner(
     {
         return Err(ImageIoError::InvalidImage);
     }
-    let name = cpath(path)?;
+    cpath(path)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let suffix = format!(
+        ".{}",
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("tmp")
+    );
+    let temporary = tempfile::Builder::new()
+        .prefix(".spektrafilm-")
+        .suffix(&suffix)
+        .tempfile_in(parent)
+        .map_err(|error| ImageIoError::Native {
+            operation: "staging",
+            path: path.display().to_string(),
+            message: error.to_string(),
+        })?
+        .into_temp_path();
+    let name = cpath(&temporary)?;
     let space = CString::new(options.color_space).map_err(|_| ImageIoError::InvalidPath)?;
     let icc = icc_profile(options.color_space, options.cctf_encoding).unwrap_or(&[]);
     #[cfg(feature = "precision-f64")]
@@ -482,13 +570,25 @@ fn save_inner(
         } == 0
         {
             report.metadata_warning = Some(take_error(error));
+            error = std::ptr::null_mut();
+            if unsafe { sf_image_validate(name.as_ptr(), &mut error) } == 0 {
+                return Err(ImageIoError::Native {
+                    operation: "metadata finalization",
+                    path: path.display().to_string(),
+                    message: take_error(error),
+                });
+            }
             if let Some(context) = observation {
                 context.issue(IssueCategory::MetadataWarning, IssueBoundary::Metadata);
             }
         }
         drop(metadata_scope);
     }
-    Ok(report)
+    Ok(PreparedImageOutput {
+        temporary,
+        destination: path.to_owned(),
+        report,
+    })
 }
 
 /// Convert retained simulation output into an independently selected saving
