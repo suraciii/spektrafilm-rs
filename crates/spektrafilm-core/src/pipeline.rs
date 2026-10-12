@@ -66,166 +66,10 @@ fn record_stage_timing(
 }
 
 use crate::params::{RuntimeParams, Tap};
+#[cfg(test)]
+use crate::pipeline_calibration::{apply_base_tuning, apply_film_chemistry};
 use crate::profile::Profile;
 use crate::stages;
-fn interpolate(values: &[f64], wavelengths: &[f64], wavelength: f64) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    if values.len() < 2 || wavelengths.len() < 2 {
-        return values[0];
-    }
-    if wavelength <= wavelengths[0] {
-        return values[0];
-    }
-    if wavelength >= wavelengths[wavelengths.len() - 1] {
-        return values[values.len() - 1];
-    }
-    let upper = wavelengths
-        .partition_point(|&x| x < wavelength)
-        .min(values.len() - 1);
-    let lower = upper - 1;
-    let fraction = (wavelength - wavelengths[lower]) / (wavelengths[upper] - wavelengths[lower]);
-    values[lower] + (values[upper] - values[lower]) * fraction
-}
-
-fn gaussian_smooth(values: &[f64], sigma_points: f64) -> Vec<f64> {
-    if values.is_empty() || sigma_points <= 0.0 {
-        return values.to_vec();
-    }
-    let radius = (sigma_points * 4.0).ceil() as isize;
-    let mut out = vec![0.0; values.len()];
-    for (index, value) in out.iter_mut().enumerate() {
-        let mut sum = 0.0;
-        let mut weight_sum = 0.0;
-        for offset in -radius..=radius {
-            let sample = (index as isize + offset).clamp(0, values.len() as isize - 1) as usize;
-            let weight = (-0.5 * (offset as f64 / sigma_points).powi(2)).exp();
-            sum += values[sample] * weight;
-            weight_sum += weight;
-        }
-        *value = sum / weight_sum;
-    }
-    out
-}
-
-pub(crate) fn apply_base_tuning(
-    profile: &mut Profile,
-    film_base: &crate::params::FilmBaseParams,
-    print_base: Option<&crate::params::PrintBaseParams>,
-) {
-    let (active, scale, channels, tilt, sigma_points, peaks) = if let Some(base) = print_base {
-        (
-            base.active,
-            base.scale,
-            [base.yellow, base.magenta, base.cyan],
-            0.0,
-            20.0 / 5.0,
-            [445.0, 530.0, 610.0],
-        )
-    } else {
-        (
-            film_base.active,
-            film_base.scale,
-            [film_base.yellow, film_base.magenta, film_base.cyan],
-            film_base.tilt,
-            35.0 / 5.0,
-            [460.0, 555.0, 650.0],
-        )
-    };
-    if !active || profile.data.base_density.is_empty() {
-        return;
-    }
-    let neutral = channels == [1.0, 1.0, 1.0] && tilt == 0.0;
-    if neutral {
-        for value in &mut profile.data.base_density {
-            if value.is_finite() {
-                *value *= scale;
-            }
-        }
-        return;
-    }
-    let base = &profile.data.base_density;
-    let wavelengths = if profile.data.wavelengths.len() == base.len() {
-        profile.data.wavelengths.as_slice()
-    } else {
-        &[]
-    };
-    let wavelength_at = |index: usize| {
-        wavelengths
-            .get(index)
-            .copied()
-            .unwrap_or(380.0 + 5.0 * index as f64)
-    };
-    let tuned = if print_base.is_some() {
-        let channel_density = [
-            interpolate(base, wavelengths, peaks[0]) * channels[0],
-            interpolate(base, wavelengths, peaks[1]) * channels[1],
-            interpolate(base, wavelengths, peaks[2]) * channels[2],
-        ];
-        let mut spectral = Vec::with_capacity(base.len());
-        for i in 0..base.len() {
-            let wavelength = wavelength_at(i);
-            let value = if wavelength <= peaks[1] {
-                let p = ((wavelength - peaks[0]) / (peaks[1] - peaks[0])).clamp(0.0, 1.0);
-                channel_density[0] * (1.0 - p) + channel_density[1] * p
-            } else {
-                let p = ((wavelength - peaks[1]) / (peaks[2] - peaks[1])).clamp(0.0, 1.0);
-                channel_density[1] * (1.0 - p) + channel_density[2] * p
-            };
-            spectral.push(value);
-        }
-        gaussian_smooth(&spectral, sigma_points)
-    } else {
-        let mut channel_scale = Vec::with_capacity(base.len());
-        for i in 0..base.len() {
-            let wavelength = wavelength_at(i);
-            let value = if wavelength <= peaks[1] {
-                let p = ((wavelength - peaks[0]) / (peaks[1] - peaks[0])).clamp(0.0, 1.0);
-                channels[0] * (1.0 - p) + channels[1] * p
-            } else {
-                let p = ((wavelength - peaks[1]) / (peaks[2] - peaks[1])).clamp(0.0, 1.0);
-                channels[1] * (1.0 - p) + channels[2] * p
-            };
-            channel_scale.push(value);
-        }
-        let density_scale = gaussian_smooth(&channel_scale, sigma_points);
-        let tilt_scale: Vec<f64> = (0..base.len())
-            .map(|i| {
-                let wavelength = wavelength_at(i);
-                (1.0 + tilt / 95.0 * (wavelength - 555.0)).max(0.0)
-            })
-            .collect();
-        let density_tilt = gaussian_smooth(&tilt_scale, sigma_points);
-        base.iter()
-            .zip(density_scale.iter().zip(density_tilt.iter()))
-            .map(|(&value, (&channel, &tilt_value))| value * channel * tilt_value)
-            .collect()
-    };
-    for (value, replacement) in profile.data.base_density.iter_mut().zip(tuned) {
-        if value.is_finite() {
-            *value = replacement * scale;
-        }
-    }
-}
-
-pub(crate) fn apply_film_chemistry(
-    profile: &mut Profile,
-    chemistry: &crate::params::PrintCurvesMorphParams,
-) -> Result<(), String> {
-    let Some(model) = profile.data.density_curves_model.as_ref() else {
-        return Ok(());
-    };
-    let (curves, layers) = crate::print_morph::morph_density_curves_with_layers(
-        &profile.log_exposure_f64(),
-        model,
-        chemistry,
-        profile.is_positive(),
-    )?;
-    profile.data.density_curves = curves.iter().map(|row| row.to_vec()).collect();
-    profile.data.density_curves_layers = layers;
-    Ok(())
-}
 
 #[derive(Clone)]
 pub struct Pipeline {
@@ -668,6 +512,30 @@ impl Pipeline {
                 collect, inject
             ));
         }
+        let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+        let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
+        if cell_spectral {
+            if aperture_factor.is_some() {
+                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
+            }
+            let supported_collect = collect == Tap::RgbOut
+                || (!self.params.io.scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
+            if !supported_collect || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap() {
+                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
+            }
+            if color_ref.has_remap() {
+                return Err(
+                    "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
+                        .to_owned(),
+                );
+            }
+        }
+        if aperture_factor.is_some()
+            && (collect != Tap::RgbOut
+                || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap())
+        {
+            return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires injection at or before log_e_film and collect=rgb_out".to_owned());
+        }
         let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
             stages::grain_v3::validate_supported(&self.film, &self.params)?;
             let image = self.expose_full_input(image, backend);
@@ -693,10 +561,6 @@ impl Pipeline {
             context.set_working_dimensions(cur.width, cur.height);
         }
         let mut stage_timings = stage_timings;
-        let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
-        if aperture_factor.is_some() && collect != Tap::RgbOut {
-            return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires collect=rgb_out".to_owned());
-        }
         let mut aperture_output_pitch_um = None;
         let mut i = ip;
         if inject == Tap::RgbIn && cp > ip {
@@ -738,6 +602,61 @@ impl Pipeline {
                 // axis differ; the field itself retains both exact pitches.
                 let long_axis = usize::from(cur.height > cur.width);
                 let requested_pitch_um = geometry.output_pitch_um[long_axis];
+                if cell_spectral {
+                    cur = stages::grain_v3::readout_with_response(
+                        &cur,
+                        &self.film,
+                        &self.params,
+                        pixel_size_um,
+                        grid,
+                        backend,
+                        |cells, backend| {
+                            if self.params.io.scan_film {
+                                stages::scanning::capture_linear(
+                                    cells,
+                                    &self.film,
+                                    &self.params,
+                                    backend,
+                                    color_ref,
+                                )
+                            } else {
+                                stages::printing::expose_linear_calibrated(
+                                    cells,
+                                    &self.film,
+                                    &self.print,
+                                    &self.params,
+                                    backend,
+                                    &self.print_illuminant,
+                                    self.print_exposure_factor,
+                                    self.preflash_raw,
+                                    color_ref.printing_exposure_correction,
+                                )
+                            }
+                        },
+                    )?;
+                    pixel_size_um = requested_pitch_um;
+                    if self.params.io.scan_film {
+                        let observation = stages::StageObservation::new(backend, "scanning");
+                        cur = stages::scanning::finish_capture(
+                            cur,
+                            &self.film,
+                            &self.params,
+                            observation.backend(backend),
+                            color_ref,
+                            &self.output_gamut,
+                        )?;
+                        i = order.iter().position(|tap| *tap == Tap::RgbOut).unwrap();
+                    } else {
+                        cur.data.par_iter_mut().for_each(|value| {
+                            *value = from_f64(to_f64(*value).log10());
+                        });
+                        dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &cur);
+                        i = order.iter().position(|tap| *tap == Tap::LogEPrint).unwrap();
+                    }
+                    print_stage_timing(stage_timings_enabled(), "grain_v3_cell_spectral", t);
+                    record_stage_timing(&mut stage_timings, "grain_v3_cell_spectral", t);
+                    continue;
+                }
                 cur = stages::grain_v3::readout(
                     &cur,
                     &self.film,
@@ -756,17 +675,17 @@ impl Pipeline {
                 record_stage_timing(&mut stage_timings, "grain_v3_readout", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
             }
-            if order[i] == Tap::CmyFilm {
-                if let Some(factor) = aperture_factor {
-                    let t = Instant::now();
-                    cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
-                    pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
-                        "film grain V3 aperture: missing requested output pitch".to_owned()
-                    })?;
-                    print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
-                    record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
-                    tracing::info!(factor, "film grain V3: collapsed linear print exposure");
-                }
+            if order[i] == Tap::CmyFilm
+                && let Some(factor) = aperture_factor
+            {
+                let t = Instant::now();
+                cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
+                pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
+                    "film grain V3 aperture: missing requested output pitch".to_owned()
+                })?;
+                print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
+                record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
+                tracing::info!(factor, "film grain V3: collapsed linear print exposure");
             }
             i += 1;
         }
@@ -875,6 +794,23 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
+        if stages::grain_v3::active(&self.params) {
+            let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
+            let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+            if cell_spectral {
+                stages::grain_v3::validate_supported(&self.film, &self.params)?;
+                if aperture_factor.is_some() {
+                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
+                }
+                if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm)
+                    || !(collect == Tap::RgbOut
+                        || (!self.params.io.scan_film
+                            && matches!(collect, Tap::LogEPrint | Tap::CmyPrint)))
+                {
+                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
+                }
+            }
+        }
         if let Some(context) = backend.observation_context()
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
         {
