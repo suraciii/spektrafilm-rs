@@ -7,6 +7,10 @@
 ///   4. Pass all calibration data to the pipeline stages
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -100,8 +104,11 @@ pub struct Pipeline {
     /// stale one.
     data_dir: Option<std::path::PathBuf>,
     scanner_setup: Option<stages::scanning::ScannerSetup>,
+    /// Original film reference captured before calibration mutates the render profile.
+    original_film: Arc<Profile>,
+    fotufilm_prepared: stages::grain_fotufilm::Prepared,
+    cancellation: Option<Arc<AtomicBool>>,
 }
-
 impl Pipeline {
     pub(crate) fn with_scanner_setup(mut self, setup: stages::scanning::ScannerSetup) -> Self {
         self.scanner_setup = Some(setup);
@@ -210,16 +217,7 @@ impl Pipeline {
         let calibration_changed =
             crate::pipeline_calibration::calibration_changed(&self.params, &params);
         if spectral_changed || calibration_changed {
-            let data_dir = self
-                .data_dir
-                .clone()
-                .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
-            return Self::new_with_spectral(
-                self.film.clone(),
-                self.print.clone(),
-                params,
-                &data_dir,
-            );
+            return self.rebuild_spectral(params);
         }
         self.output_gamut = crate::gamut_compression::OutputGamutCompress::build(
             &params.io.output_gamut_compress,
@@ -230,6 +228,45 @@ impl Pipeline {
         }
         self.params = params;
         Ok(self)
+    }
+    /// Rebuild the spectral pipeline unconditionally, carrying the prepared
+    /// grain cache and the bound cancellation signal across the rebuild.
+    ///
+    /// Film-curve controls such as `film_render.density_curve_gamma`,
+    /// `film_render.development_time` and `film_render.chemistry` are absent
+    /// from the spectral and calibration control keys, so a caller that must
+    /// refresh the resolved film cannot rely on `with_params` alone.
+    pub(crate) fn rebuild_spectral(self, params: RuntimeParams) -> Result<Self, String> {
+        let data_dir = self
+            .data_dir
+            .clone()
+            .ok_or_else(|| "pipeline lacks data_dir for calibration rebuild".to_owned())?;
+        let mut rebuilt =
+            Self::new_with_spectral(self.film.clone(), self.print.clone(), params, &data_dir)?;
+        rebuilt.original_film = self.original_film.clone();
+        rebuilt.fotufilm_prepared = self.fotufilm_prepared.clone();
+        rebuilt.cancellation = self.cancellation.clone();
+        Ok(rebuilt)
+    }
+    #[cfg(test)]
+    pub(crate) fn fotufilm_bank_identity(&self) -> Option<usize> {
+        self.fotufilm_prepared.bank_identity()
+    }
+    pub fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
+    fn check_cancelled(&self) -> Result<(), String> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|token| token.load(Ordering::Relaxed))
+        {
+            Err("operation cancelled".to_owned())
+        } else {
+            Ok(())
+        }
     }
     fn effective_backend<'a>(&self, backend: &'a dyn ComputeBackend) -> &'a dyn ComputeBackend {
         if self.params.scanner.scan_output == "positive_scan" {
@@ -252,6 +289,11 @@ impl Pipeline {
     /// without paying LUT construction.
     #[cfg(test)]
     pub fn new(film: Profile, print: Profile, params: RuntimeParams) -> Self {
+        let original_film = Arc::new(film.clone());
+        let fotufilm_prepared = stages::grain_fotufilm::Prepared::new(
+            &original_film,
+            params.film_render.development_time,
+        );
         params
             .validate_color()
             .expect("invalid colour configuration");
@@ -299,6 +341,9 @@ impl Pipeline {
             output_gamut,
             data_dir: None,
             scanner_setup: None,
+            original_film,
+            fotufilm_prepared,
+            cancellation: None,
         }
     }
 
@@ -309,6 +354,11 @@ impl Pipeline {
         params: RuntimeParams,
         data_dir: &Path,
     ) -> Result<Self, String> {
+        let original_film = Arc::new(film.clone());
+        let fotufilm_prepared = stages::grain_fotufilm::Prepared::new(
+            &original_film,
+            params.film_render.development_time,
+        );
         let calibrated = crate::pipeline_calibration::build(film, print, params, data_dir)?;
         Ok(Self {
             film: calibrated.film,
@@ -323,6 +373,9 @@ impl Pipeline {
             output_gamut: calibrated.output_gamut,
             data_dir: calibrated.data_dir,
             scanner_setup: None,
+            original_film,
+            fotufilm_prepared,
+            cancellation: None,
         })
     }
 
@@ -494,6 +547,8 @@ impl Pipeline {
         physical_context: Option<(f64, f64)>,
         stage_timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        self.check_cancelled()?;
+        stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         let order = self.tap_order();
         let Some(ip) = order.iter().position(|t| *t == inject) else {
             return Err(format!(
@@ -569,6 +624,7 @@ impl Pipeline {
         }
         let mut output_crop = None;
         while i < cp {
+            self.check_cancelled()?;
             cur = self.fire_node(
                 order[i],
                 cur,
@@ -674,6 +730,38 @@ impl Pipeline {
                 };
                 print_stage_timing(stage_timings_enabled(), "grain_v3_readout", t);
                 record_stage_timing(&mut stage_timings, "grain_v3_readout", t);
+                dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
+            }
+            if order[i] == Tap::LogEFilm && stages::grain_fotufilm::active(&self.params) {
+                let t = Instant::now();
+                let geometry = stages::grain_v3::geometry(&cur, &self.params, pixel_size_um)?;
+                let glare = &self.params.print_render.glare;
+                let scan_spatial = collect == Tap::RgbOut
+                    && (self.params.scanner.lens_blur > 0.0
+                        || self.params.scanner.unsharp_mask.iter().all(|&v| v > 0.0)
+                        || (!self.params.io.scan_film && glare.active && glare.percent > 0.0));
+                let print_spatial = !self.params.io.scan_film
+                    && collect != Tap::CmyFilm
+                    && self.params.enlarger.diffusion_filter.active;
+                let grid = if self.params.io.crop && (scan_spatial || print_spatial) {
+                    let (grid, crop) = geometry.full_film_grid(&cur)?;
+                    output_crop = Some(crop);
+                    grid
+                } else {
+                    geometry.grid()
+                };
+                let long_axis = usize::from(cur.height > cur.width);
+                cur = self.fotufilm_prepared.readout(
+                    &cur,
+                    &self.film,
+                    &self.params,
+                    pixel_size_um,
+                    grid,
+                    backend,
+                    &|| self.check_cancelled(),
+                )?;
+                pixel_size_um = geometry.output_pitch_um[long_axis];
+                record_stage_timing(&mut stage_timings, "grain_fotufilm_readout", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
             }
             if order[i] == Tap::CmyFilm
@@ -856,6 +944,8 @@ impl Pipeline {
         // route work — including the passthrough and convert routes, which
         // never reach a grain stage.
         stages::grain_v3::validate_supported(&self.film, &self.params)?;
+        stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
+        self.check_cancelled()?;
         if self.params.workflow.route == "input" {
             let _observation = stages::StageObservation::cpu(
                 backend,
@@ -1205,7 +1295,9 @@ impl Pipeline {
         );
         // Dye develops the full source; its field readout owns the crop and
         // output grid so that overlapping reads keep the same film coordinates.
-        let resized = if stages::grain_v3::active(&self.params) {
+        let resized = if stages::grain_v3::active(&self.params)
+            || stages::grain_fotufilm::active(&self.params)
+        {
             Ok((
                 std::borrow::Cow::Borrowed(image),
                 crate::resizing::pixel_size_um(
@@ -1348,6 +1440,148 @@ mod spectral_invalidation_tests {
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap()
+    }
+    #[test]
+    fn fotufilm_zero_amount_bypasses_geometry_and_cancelled_render_fails() {
+        let mut pipeline = build();
+        pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        pipeline.params.film_render.grain.active = true;
+        pipeline.params.film_render.grain.fotufilm.amount = 0.0;
+        pipeline.params.io.upscale_factor = 0.5;
+        let image = ImageBuf::new(8, 6);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let (working, _) = pipeline.rescale_working(&image, &backend).unwrap();
+        assert_eq!((working.width, working.height), (4, 3));
+        pipeline.params.film_render.grain.fotufilm.amount = 1.0;
+        let (working, _) = pipeline.rescale_working(&image, &backend).unwrap();
+        assert_eq!((working.width, working.height), (8, 6));
+        let cancelled = pipeline.with_cancellation(Some(Arc::new(AtomicBool::new(true))));
+        assert!(
+            cancelled
+                .process(image, &backend)
+                .unwrap_err()
+                .contains("cancelled")
+        );
+    }
+    #[test]
+    fn fotufilm_reference_survives_amount_and_calibration_edits() {
+        let base = build();
+        let original = base.original_film.clone();
+        let mut params = base.params.clone();
+        params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        params.film_render.grain.fotufilm.amount = 0.25;
+        let edited = base.with_params(params).unwrap();
+        assert!(Arc::ptr_eq(&original, &edited.original_film));
+        let mut params = edited.params.clone();
+        params.camera.exposure_compensation_ev += 1.0;
+        let recalibrated = edited.with_params(params).unwrap();
+        assert!(Arc::ptr_eq(&original, &recalibrated.original_film));
+    }
+
+    /// A monochrome stock must reach the silver path: the pipeline renders
+    /// `kodak_doublex` (five development-time columns, one emulsion value per
+    /// sample) with grain on and off, and the grain must cover the frame,
+    /// stay bounded in density and be seed-deterministic. This exercises the
+    /// single-curve record adaptation and the resolved reference on a real
+    /// profile; the CLI cannot reach it, because the loaded monochrome
+    /// profiles carry no Hanatos2025 adaptation window and the spectral front
+    /// end rejects them on every revision.
+    #[test]
+    fn fotufilm_grain_reaches_a_monochrome_film() {
+        let dir = data_dir();
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut image = ImageBuf::new(32, 24);
+        for y in 0..24 {
+            for x in 0..32 {
+                let exposure = if x < 16 { -1.7 } else { -0.6 };
+                image.set(x, y, [from_f64(exposure + y as f64 * 0.002); 3]);
+            }
+        }
+        let mut params = RuntimeParams::default();
+        params.camera.film_format_mm = 36.0;
+        params.film_render.development_time = Some(6.5);
+        params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        params.film_render.grain.active = true;
+        params.film_render.grain.fotufilm.amount = 1.0;
+        let pipeline = Pipeline::new(
+            crate::profile::load_profile_by_name(&dir, "kodak_doublex").unwrap(),
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+            params.clone(),
+        );
+        let grained = pipeline
+            .process_with_taps(
+                image.clone(),
+                &backend,
+                Some(Tap::LogEFilm),
+                Some(Tap::CmyFilm),
+            )
+            .unwrap();
+        let repeat = pipeline
+            .process_with_taps(
+                image.clone(),
+                &backend,
+                Some(Tap::LogEFilm),
+                Some(Tap::CmyFilm),
+            )
+            .unwrap();
+        assert_eq!(grained.data, repeat.data, "grain readout must be seeded");
+        let mut bypass = params;
+        bypass.film_render.grain.active = false;
+        let plain = Pipeline::new(
+            crate::profile::load_profile_by_name(&dir, "kodak_doublex").unwrap(),
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+            bypass,
+        )
+        .process_with_taps(image, &backend, Some(Tap::LogEFilm), Some(Tap::CmyFilm))
+        .unwrap();
+        assert_eq!((grained.width, grained.height), (32, 24));
+        let mut changed = 0_usize;
+        let mut worst = 0.0_f64;
+        let (grained_pixels, _) = grained.data.as_chunks::<3>();
+        let (plain_pixels, _) = plain.data.as_chunks::<3>();
+        for (pixel, plain_pixel) in grained_pixels.iter().zip(plain_pixels.iter()) {
+            assert!(pixel.iter().all(|value| value.is_finite()));
+            let delta = (0..3)
+                .map(|channel| (to_f64(pixel[channel]) - to_f64(plain_pixel[channel])).abs())
+                .fold(0.0_f64, f64::max);
+            worst = worst.max(delta);
+            if delta > 1e-6 {
+                changed += 1;
+            }
+        }
+        let pixels = grained.data.len() / 3;
+        assert!(
+            changed * 2 > pixels,
+            "grain must reach most pixels, changed {changed} of {pixels}"
+        );
+        assert!(
+            worst < 1.0,
+            "silver grain must stay within a density unit, worst {worst}"
+        );
+    }
+
+    #[test]
+    fn injected_film_density_does_not_generate_fotufilm_grain() {
+        let mut pipeline = build();
+        pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        pipeline.params.film_render.grain.active = true;
+        pipeline.params.io.scan_film = true;
+        pipeline.params.workflow.route = "input > film > scan".to_owned();
+        let image = ImageBuf::new(4, 3);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let active = pipeline
+            .process_with_taps(
+                image.clone(),
+                &backend,
+                Some(Tap::CmyFilm),
+                Some(Tap::RgbOut),
+            )
+            .unwrap();
+        pipeline.params.film_render.grain.active = false;
+        let disabled = pipeline
+            .process_with_taps(image, &backend, Some(Tap::CmyFilm), Some(Tap::RgbOut))
+            .unwrap();
+        assert_eq!(active.data, disabled.data);
     }
 
     fn lut_data(pipeline: &Pipeline) -> Vec<f64> {
@@ -1715,5 +1949,292 @@ mod spectral_invalidation_tests {
                 );
             }
         }
+    }
+    #[test]
+    fn fotufilm_dispatch_matrix_follows_development_boundary() {
+        #[derive(Clone, Copy)]
+        struct Case {
+            name: &'static str,
+            route: &'static str,
+            scan_film: bool,
+            inject: Tap,
+            collect: Tap,
+            develops: bool,
+        }
+
+        let cases = [
+            Case {
+                name: "film-scan full",
+                route: "input > film > scan",
+                scan_film: true,
+                inject: Tap::RgbIn,
+                collect: Tap::RgbOut,
+                develops: true,
+            },
+            Case {
+                name: "film-scan collect film",
+                route: "input > film > scan",
+                scan_film: true,
+                inject: Tap::RgbIn,
+                collect: Tap::CmyFilm,
+                develops: true,
+            },
+            Case {
+                name: "film-scan developed injection",
+                route: "input > film > scan",
+                scan_film: true,
+                inject: Tap::CmyFilm,
+                collect: Tap::RgbOut,
+                develops: false,
+            },
+            Case {
+                name: "film-scan film-log injection",
+                route: "input > film > scan",
+                scan_film: true,
+                inject: Tap::LogEFilm,
+                collect: Tap::CmyFilm,
+                develops: true,
+            },
+            Case {
+                name: "film-scan passthrough",
+                route: "input > film > scan",
+                scan_film: true,
+                inject: Tap::CmyFilm,
+                collect: Tap::CmyFilm,
+                develops: false,
+            },
+            Case {
+                name: "film-print full",
+                route: "input > film > print > scan",
+                scan_film: false,
+                inject: Tap::RgbIn,
+                collect: Tap::RgbOut,
+                develops: true,
+            },
+            Case {
+                name: "film-print collect film",
+                route: "input > film > print > scan",
+                scan_film: false,
+                inject: Tap::RgbIn,
+                collect: Tap::CmyFilm,
+                develops: true,
+            },
+            Case {
+                name: "film-print collect print log",
+                route: "input > film > print > scan",
+                scan_film: false,
+                inject: Tap::RgbIn,
+                collect: Tap::LogEPrint,
+                develops: true,
+            },
+            Case {
+                name: "film-print collect print density",
+                route: "input > film > print > scan",
+                scan_film: false,
+                inject: Tap::LogEPrint,
+                collect: Tap::CmyPrint,
+                develops: false,
+            },
+            Case {
+                name: "film-print print-paper segment",
+                route: "input > film > print > scan",
+                scan_film: false,
+                inject: Tap::CmyFilm,
+                collect: Tap::CmyPrint,
+                develops: false,
+            },
+            Case {
+                name: "film-print later injection",
+                route: "input > film > print > scan",
+                scan_film: false,
+                inject: Tap::CmyPrint,
+                collect: Tap::RgbOut,
+                develops: false,
+            },
+            Case {
+                name: "passthrough",
+                route: "input",
+                scan_film: false,
+                inject: Tap::RgbIn,
+                collect: Tap::RgbIn,
+                develops: false,
+            },
+            Case {
+                name: "convert-film print segment",
+                route: "input > convert-film > print > scan",
+                scan_film: false,
+                inject: Tap::CmyFilm,
+                collect: Tap::RgbOut,
+                develops: false,
+            },
+            Case {
+                name: "convert-film scan segment",
+                route: "input > convert-film > scan",
+                scan_film: true,
+                inject: Tap::CmyFilm,
+                collect: Tap::RgbOut,
+                develops: false,
+            },
+        ];
+
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(-1.6 + (i % 17) as f64 * 0.11))
+                .collect(),
+        );
+
+        for case in cases {
+            let mut params = RuntimeParams::default();
+            params.workflow.route = case.route.into();
+            params.io.scan_film = case.scan_film;
+            params.film_render.grain.active = true;
+            params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+            params.film_render.grain.fotufilm.amount = 1.0;
+            params.random_seed = 17;
+            let active = Pipeline::new(film.clone(), print.clone(), params.clone());
+            params.film_render.grain.active = false;
+            let disabled = Pipeline::new(film.clone(), print.clone(), params);
+
+            let active_context = spektrafilm_gpu::telemetry::ObservationContext::new(
+                spektrafilm_gpu::telemetry::CollectionMode::Summary,
+            );
+            let active_backend = spektrafilm_gpu::bind_backend(&backend, active_context.clone());
+            let active_image = active
+                .process_with_taps(
+                    image.clone(),
+                    active_backend.as_ref(),
+                    Some(case.inject),
+                    Some(case.collect),
+                )
+                .unwrap_or_else(|error| panic!("{}: {error}", case.name));
+            let active_grain_stages = active_context
+                .snapshot()
+                .observations
+                .iter()
+                .filter(|observation| observation.name == "grain_fotufilm")
+                .count();
+            assert_eq!(
+                active_grain_stages,
+                if case.develops { 1 } else { 0 },
+                "{}",
+                case.name
+            );
+            let disabled_image = disabled
+                .process_with_taps(
+                    image.clone(),
+                    &backend,
+                    Some(case.inject),
+                    Some(case.collect),
+                )
+                .unwrap_or_else(|error| panic!("{} disabled: {error}", case.name));
+            if case.develops {
+                assert_ne!(active_image.data, disabled_image.data, "{}", case.name);
+            } else {
+                assert_eq!(active_image.data, disabled_image.data, "{}", case.name);
+            }
+        }
+    }
+
+    #[test]
+    fn fotufilm_dispatch_with_crop_and_optics_runs_once() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        params.film_render.grain.active = true;
+        params.io.crop = true;
+        params.io.crop_size = [0.5, 0.5];
+        params.enlarger.lens_blur = 1.25;
+        params.scanner.lens_blur = 1.0;
+        params.random_seed = 41;
+        let pipeline = Pipeline::new(film.clone(), print.clone(), params.clone());
+        params.film_render.grain.active = false;
+        let disabled = Pipeline::new(film, print, params);
+        let image = ImageBuf::from_data(12, 8, vec![from_f64(-0.8); 12 * 8 * 3]);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut timings = std::collections::BTreeMap::new();
+        let active = pipeline
+            .process_with_taps_timed(
+                image.clone(),
+                &backend,
+                Some(Tap::RgbIn),
+                Some(Tap::RgbOut),
+                Some(&mut timings),
+            )
+            .unwrap();
+        assert!(timings.contains_key("grain_fotufilm_readout"));
+        let quiet = disabled
+            .process_with_taps(image, &backend, Some(Tap::RgbIn), Some(Tap::RgbOut))
+            .unwrap();
+        assert_ne!(active.data, quiet.data);
+        assert!(active.width < 12 && active.height < 8);
+    }
+
+    #[test]
+    fn fotufilm_lut_mode_matches_grain_disabled_and_prepares_no_bank() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.debug.lut_mode = true;
+        params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        params.film_render.grain.active = true;
+        params.film_render.grain.fotufilm.amount = 1.0;
+        let digested =
+            crate::params_builder::digest_params(params.clone(), &film, &print, None, true);
+        assert!(!stages::grain_fotufilm::active(&digested));
+        let active = Pipeline::new(film.clone(), print.clone(), digested);
+        params.film_render.grain.active = false;
+        let disabled_params =
+            crate::params_builder::digest_params(params, &film, &print, None, true);
+        let disabled = Pipeline::new(film, print, disabled_params);
+        let image = ImageBuf::from_data(4, 4, vec![from_f64(0.18); 4 * 4 * 3]);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        assert_eq!(
+            active.process(image.clone(), &backend).unwrap().data,
+            disabled.process(image, &backend).unwrap().data
+        );
+    }
+
+    #[test]
+    fn fotufilm_seed_and_amount_determinism() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        params.film_render.grain.active = true;
+        params.film_render.grain.fotufilm.amount = 1.0;
+        params.random_seed = 91;
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(-1.1 + (i % 13) as f64 * 0.15))
+                .collect(),
+        );
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let render = |p: Pipeline| p.process(image.clone(), &backend).unwrap().data;
+        let first = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
+        let repeat = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
+        assert_eq!(first, repeat);
+        params.random_seed += 1;
+        let changed = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
+        assert_ne!(first, changed);
+        params.random_seed = 91;
+        params.film_render.grain.fotufilm.amount = 0.65;
+        let amount_first = render(Pipeline::new(film.clone(), print.clone(), params.clone()));
+        let amount_repeat = render(Pipeline::new(film, print, params));
+        assert_eq!(amount_first, amount_repeat);
     }
 }

@@ -1,9 +1,9 @@
 use super::{default_one, default_true};
 use serde::{Deserialize, Serialize};
 
-/// Selects one of three independent grain routes. Spektra preserves the
+/// Selects one of four independent grain routes. Spektra preserves the
 /// upstream density model; Procedural is Dehancer-derived encoded RGB grain;
-/// Dye is the self-developed film-coordinate dye field.
+/// Dye is the self-developed dye field; Fotufilm is an appearance population model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -12,6 +12,7 @@ pub enum GrainEngine {
     Spektra,
     Procedural,
     Dye,
+    Fotufilm,
 }
 
 /// Procedural Grain Procedural generation mode.
@@ -36,6 +37,63 @@ pub enum GrainV2FilmType {
     Positive,
 }
 
+/// Effective grain material. Auto follows the resolved film polarity and color
+/// type; an explicit override supports chromogenic monochrome films.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FotufilmMaterial {
+    #[default]
+    Auto,
+    Silver,
+    DyeNegative,
+    DyeReversal,
+}
+
+/// Authored effective-appearance controls, not measured stock calibration.
+/// Population controls fit the model; amount, size, softness, color and layers
+/// modify sampling only. Sublayer shares must sum to one, never auto-normalize.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FotufilmGrainParams {
+    pub amount: f64,
+    pub size: f64,
+    pub softness: f64,
+    pub color: f64,
+    pub layers: [f64; 3],
+    /// Effective RMS optical-density target, not measured stock granularity.
+    pub rms_density: f64,
+    /// Effective population clump radius in film micrometers.
+    pub clump_radius_um: f64,
+    pub layer_weights: [f64; 3],
+    pub layer_size_ratio: [f64; 3],
+    pub radius_span: f64,
+    pub sublayer_shares: [f64; 4],
+    pub coating_density_scale: f64,
+    pub fog_density: f64,
+    pub material: FotufilmMaterial,
+}
+
+impl Default for FotufilmGrainParams {
+    fn default() -> Self {
+        Self {
+            amount: 1.0,
+            size: 1.0,
+            softness: 1.0,
+            color: 1.0,
+            layers: [1.0; 3],
+            rms_density: 0.009,
+            clump_radius_um: 5.0,
+            layer_weights: [0.7, 1.0, 1.35],
+            layer_size_ratio: [1.0; 3],
+            radius_span: 6.0,
+            sublayer_shares: [0.25; 4],
+            coating_density_scale: 1.0,
+            fog_density: 0.03,
+            material: FotufilmMaterial::Auto,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrainParams {
@@ -44,6 +102,8 @@ pub struct GrainParams {
     /// Selects the grain route; Spektra preserves the upstream default.
     #[serde(default)]
     pub engine: GrainEngine,
+    #[serde(default)]
+    pub fotufilm: FotufilmGrainParams,
     /// Dehancer grain profile id, or "custom" for explicit controls.
     #[serde(default = "default_grain_v2_profile")]
     pub v2_profile: String,
@@ -177,6 +237,7 @@ impl Default for GrainParams {
         Self {
             active: true,
             engine: GrainEngine::Spektra,
+            fotufilm: FotufilmGrainParams::default(),
             v2_profile: default_grain_v2_profile().to_owned(),
             v2_mode: GrainV2Mode::Analogue,
             v2_film_type: GrainV2FilmType::Negative,
@@ -305,4 +366,70 @@ fn default_micro_structure() -> [f32; 2] {
 }
 fn default_1i() -> u32 {
     1
+}
+
+#[cfg(test)]
+mod fotufilm_tests {
+    use super::*;
+
+    /// A named control and the setter that writes it.
+    type Setter = (&'static str, fn(&mut FotufilmGrainParams, f64));
+
+    #[test]
+    fn fotufilm_defaults_partial_sections_and_material_roundtrip() {
+        let defaults = FotufilmGrainParams::default();
+        let legacy: GrainParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.engine, GrainEngine::Spektra);
+        assert_eq!(legacy.fotufilm, defaults);
+        let partial: GrainParams =
+            serde_json::from_str(r#"{"engine":"fotufilm","fotufilm":{"amount":2.0}}"#).unwrap();
+        assert_eq!(partial.fotufilm.amount, 2.0);
+        assert_eq!(partial.fotufilm.sublayer_shares, [0.25; 4]);
+        for material in [
+            FotufilmMaterial::Auto,
+            FotufilmMaterial::Silver,
+            FotufilmMaterial::DyeNegative,
+            FotufilmMaterial::DyeReversal,
+        ] {
+            let mut params = partial.clone();
+            params.fotufilm.material = material;
+            let json = serde_json::to_string(&params).unwrap();
+            assert_eq!(serde_json::from_str::<GrainParams>(&json).unwrap(), params);
+            let toml = toml::to_string(&params).unwrap();
+            assert_eq!(toml::from_str::<GrainParams>(&toml).unwrap(), params);
+        }
+        assert!(serde_json::from_str::<GrainParams>(r#"{"fotufilm":{"unknown":1}}"#).is_err());
+        assert!(serde_json::from_str::<GrainParams>(r#"{"engine":"v4"}"#).is_err());
+    }
+
+    #[test]
+    fn fotufilm_typed_runtime_rejects_nonfinite_controls_even_when_inactive() {
+        let setters: [Setter; 13] = [
+            ("amount", |p, v| p.amount = v),
+            ("size", |p, v| p.size = v),
+            ("softness", |p, v| p.softness = v),
+            ("color", |p, v| p.color = v),
+            ("layers", |p, v| p.layers[1] = v),
+            ("rms_density", |p, v| p.rms_density = v),
+            ("clump_radius_um", |p, v| p.clump_radius_um = v),
+            ("layer_weights", |p, v| p.layer_weights[1] = v),
+            ("layer_size_ratio", |p, v| p.layer_size_ratio[1] = v),
+            ("radius_span", |p, v| p.radius_span = v),
+            ("sublayer_shares", |p, v| p.sublayer_shares[1] = v),
+            ("coating_density_scale", |p, v| p.coating_density_scale = v),
+            ("fog_density", |p, v| p.fog_density = v),
+        ];
+        for (name, set) in setters {
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let mut params = crate::params::RuntimeParams::default();
+                params.film_render.grain.active = false;
+                set(&mut params.film_render.grain.fotufilm, value);
+                let error = params.validate().unwrap_err();
+                assert!(
+                    error.contains(&format!("film_render.grain.fotufilm.{name}")),
+                    "{error}"
+                );
+            }
+        }
+    }
 }

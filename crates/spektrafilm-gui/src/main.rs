@@ -258,6 +258,8 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
 fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {
         format!("{selected} · grain Dye on CPU")
+    } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
+        format!("{selected} · grain Fotufilm on CPU")
     } else {
         selected.to_owned()
     }
@@ -429,6 +431,7 @@ struct RenderWorker {
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     next_request_id: u64,
+    active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 struct RenderResult {
     output: ImageBuf,
@@ -457,6 +460,7 @@ struct RenderSnapshot {
     data_dir: PathBuf,
     special: serde_json::Value,
     scanner_setup: SharedScannerSetup,
+    cancellation: Option<Arc<AtomicBool>>,
 }
 
 impl RenderSnapshot {
@@ -468,13 +472,14 @@ impl RenderSnapshot {
         if self.params.scanner.auto_setup != ScannerAutoSetup::PerFrame {
             return Ok(None);
         }
-        self.scanner_setup
-            .get_or_init(|| {
-                let canonical = build_runtime_observed(self, false, context)?;
-                canonical.prepare_scanner_setup(full_input)
-            })
-            .clone()
-            .map(Some)
+        if let Some(setup) = self.scanner_setup.get() {
+            return setup.clone().map(Some);
+        }
+        let canonical = build_runtime_observed(self, false, context)?
+            .with_cancellation(self.cancellation.clone());
+        let setup = canonical.prepare_scanner_setup(full_input)?;
+        let _ = self.scanner_setup.set(Ok(setup));
+        Ok(Some(setup))
     }
 }
 #[derive(Clone, PartialEq)]
@@ -499,6 +504,8 @@ impl RenderWorker {
         let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(Mutex::new(None));
+        let active_cancel = Arc::new(Mutex::new(None::<Arc<AtomicBool>>));
+        let active_cancel_for_worker = active_cancel.clone();
         let active_for_worker = active.clone();
         let (tx, rx) = mpsc::channel();
         let state_for_worker = state.clone();
@@ -517,7 +524,9 @@ impl RenderWorker {
                         if shutdown_for_worker.load(Ordering::SeqCst) {
                             return;
                         }
-                        queued.take().expect("render request signaled")
+                        let request = queued.take().expect("render request signaled");
+                        *active_cancel_for_worker.lock() = request.snapshot.cancellation.clone();
+                        request
                     };
                     drop(request.worker_wait);
                     let mut operation = request.operation;
@@ -537,6 +546,9 @@ impl RenderWorker {
                             &request.image,
                             &observation,
                         )?;
+                        let pipeline_template = pipeline_template
+                            .clone()
+                            .with_cancellation(request.snapshot.cancellation.clone());
                         if operation.enabled() {
                             operation.set_render_configuration(
                                 pipeline_template.telemetry_configuration(),
@@ -615,13 +627,33 @@ impl RenderWorker {
                         })
                     }))
                     .unwrap_or_else(|panic| Err(panic_message(&panic)));
-                    attempt.finish(if result.is_ok() {
-                        Outcome::Succeeded
+                    let result = if request
+                        .snapshot
+                        .cancellation
+                        .as_ref()
+                        .is_some_and(|token| token.load(Ordering::SeqCst))
+                    {
+                        Err("operation cancelled".to_owned())
                     } else {
-                        Outcome::Failed
-                    });
+                        result
+                    };
+                    attempt.finish(
+                        if request
+                            .snapshot
+                            .cancellation
+                            .as_ref()
+                            .is_some_and(|token| token.load(Ordering::SeqCst))
+                        {
+                            Outcome::Cancelled
+                        } else if result.is_ok() {
+                            Outcome::Succeeded
+                        } else {
+                            Outcome::Failed
+                        },
+                    );
                     let _ = tx.send((job, operation, result));
                     *active_for_worker.lock() = None;
+                    *active_cancel_for_worker.lock() = None;
                     ctx.request_repaint();
                 }
             });
@@ -632,6 +664,7 @@ impl RenderWorker {
             shutdown,
             handle: Some(handle.expect("OS thread spawn")),
             next_request_id: 0,
+            active_cancel,
         }
     }
 
@@ -640,12 +673,30 @@ impl RenderWorker {
         request.job.request_id = self.next_request_id;
         let job = request.job.clone();
         let (lock, wake) = &*self.state;
-        let replaced = lock.lock().replace(request).map(|request| {
+        let mut queued = lock.lock();
+        if let Some(token) = self.active_cancel.lock().as_ref() {
+            token.store(true, Ordering::SeqCst);
+        }
+        let replaced = queued.replace(request).map(|request| {
             drop(request.worker_wait);
             request.operation
         });
         wake.notify_one();
         (job, replaced)
+    }
+
+    fn cancel_active(&self) {
+        let (lock, _) = &*self.state;
+        let queued = lock.lock();
+        if let Some(token) = self.active_cancel.lock().as_ref() {
+            token.store(true, Ordering::SeqCst);
+        }
+        if let Some(token) = queued
+            .as_ref()
+            .and_then(|request| request.snapshot.cancellation.as_ref())
+        {
+            token.store(true, Ordering::SeqCst);
+        }
     }
 
     fn shutdown(&mut self) -> Option<Operation> {
@@ -654,7 +705,13 @@ impl RenderWorker {
             let (lock, wake) = &*self.state;
             let mut queued = lock.lock();
             self.shutdown.store(true, Ordering::SeqCst);
+            if let Some(token) = self.active_cancel.lock().as_ref() {
+                token.store(true, Ordering::SeqCst);
+            }
             cancelled = queued.take().map(|request| {
+                if let Some(token) = request.snapshot.cancellation.as_ref() {
+                    token.store(true, Ordering::SeqCst);
+                }
                 drop(request.worker_wait);
                 request.operation
             });
@@ -1518,6 +1575,7 @@ impl App {
                 }
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.input_epoch = self.input_epoch.wrapping_add(1);
+                self.render_worker.cancel_active();
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
                 self.refresh_input_viewer();
@@ -1543,6 +1601,7 @@ impl App {
         self.image = Some(Arc::new(rotated));
         self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
         self.input_epoch = self.input_epoch.wrapping_add(1);
+        self.render_worker.cancel_active();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.full_scan_requested = false;
         self.output_image = None;
@@ -1612,6 +1671,7 @@ impl App {
             data_dir: self.data_dir.clone(),
             special: self.gui_state.sections["special"].clone(),
             scanner_setup,
+            cancellation: None,
         }
     }
 
@@ -1653,7 +1713,8 @@ impl App {
         // Report the Dye field's effective CPU route next to the selected backend.
         let backend_name = effective_backend_name(self.backend.name(), &params);
         let parameter_revision = self.parameter_revision;
-        let snapshot = self.render_snapshot(params);
+        let mut snapshot = self.render_snapshot(params);
+        snapshot.cancellation = Some(Arc::new(AtomicBool::new(false)));
         let request = RenderRequest {
             job: RenderJob {
                 input_epoch,
@@ -2052,11 +2113,14 @@ impl App {
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
+                        let mut snapshot = snapshot.clone();
+                        snapshot.cancellation = Some(cancel_for_worker.clone());
                         let setup = snapshot
                             .prepare_scanner_setup(&image, &observation)
                             .map_err(anyhow::Error::msg)?;
                         let mut pipeline = build_runtime_observed(&snapshot, false, &observation)
                             .map_err(anyhow::Error::msg)?;
+                        pipeline = pipeline.with_cancellation(Some(cancel_for_worker.clone()));
                         if let Some(setup) = setup {
                             pipeline = pipeline.with_scanner_setup(setup);
                         }
