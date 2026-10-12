@@ -8,18 +8,17 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use parking_lot::Mutex;
-use spektrafilm_backend::ComputeBackend;
-use spektrafilm_backend::telemetry::{ObservationKind, Purpose};
 use spektrafilm_core::image_io::{self};
 use spektrafilm_core::telemetry::OperationKind;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, Outcome};
+use spektrafilm_gpu::ComputeBackend;
+use spektrafilm_gpu::telemetry::{ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 
-use super::App;
-use super::diagnostics::{BackendRequested, effective_backend_name};
+use super::diagnostics::BackendRequested;
 use super::export::{ExportBackend, ExportOptions};
-use super::render_worker::{observed_result, panic_message};
+use super::{App, effective_backend_name, observed_result};
 
 /// One in-flight export owning an immutable input, pipeline and option snapshot.
 /// Cancellation discards its staged file once the current operation completes.
@@ -33,29 +32,6 @@ pub(super) struct ExportJob {
         Option<Arc<Mutex<Option<spektrafilm_core::telemetry::RenderConfiguration>>>>,
     pub(super) backend: ExportBackend,
     pub(super) operation: Operation,
-    #[cfg(test)]
-    pub(super) pause: Option<Arc<ExportPause>>,
-}
-
-/// Armed only by cancellation acceptance tests, after the real writer has staged output.
-#[cfg(test)]
-pub(super) struct ExportPause {
-    pub(super) staged: mpsc::Sender<()>,
-    pub(super) released: (Mutex<bool>, parking_lot::Condvar),
-    pub(super) cancelled: (Mutex<bool>, parking_lot::Condvar),
-}
-
-#[cfg(test)]
-impl ExportPause {
-    pub(super) fn notify_cancelled(&self) {
-        *self.cancelled.0.lock() = true;
-        self.cancelled.1.notify_all();
-    }
-
-    pub(super) fn release(&self) {
-        *self.released.0.lock() = true;
-        self.released.1.notify_all();
-    }
 }
 
 pub(super) struct ExportResult {
@@ -85,11 +61,12 @@ impl App {
             options.backend.argument(),
             options.format.extension()
         );
-        let Some(chosen_path) = self.chooser.save_file(
-            self.file_dialog("export")
-                .add_filter(options.format.label(), options.format.extensions())
-                .set_file_name(&default_name),
-        ) else {
+        let Some(chosen_path) = self
+            .file_dialog("export")
+            .add_filter(options.format.label(), options.format.extensions())
+            .set_file_name(&default_name)
+            .save_file()
+        else {
             return;
         };
         self.start_export_to_path(ctx, options, &chosen_path);
@@ -113,24 +90,8 @@ impl App {
     pub(super) fn start_export_to_path(
         &mut self,
         ctx: &egui::Context,
-        options: ExportOptions,
-        chosen_path: &Path,
-    ) {
-        self.start_export_to_path_inner(
-            ctx,
-            options,
-            chosen_path,
-            #[cfg(test)]
-            None,
-        );
-    }
-
-    pub(super) fn start_export_to_path_inner(
-        &mut self,
-        ctx: &egui::Context,
         mut options: ExportOptions,
         chosen_path: &Path,
-        #[cfg(test)] pause: Option<Arc<ExportPause>>,
     ) {
         let Some(image) = self.export_input() else {
             return;
@@ -157,7 +118,6 @@ impl App {
                 "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
                 out_path.display()
             );
-            self.last_export_error = Some(self.status.clone());
             operation.issue(IssueCategory::Publication, IssueBoundary::Operation);
             self.diagnostics.finish(operation, Outcome::Failed);
             return;
@@ -169,7 +129,6 @@ impl App {
             Ok(params) => params,
             Err(error) => {
                 self.status = format!("Export state error: {error:#}");
-                self.last_export_error = Some(self.status.clone());
                 operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
                 self.diagnostics.finish(operation, Outcome::Failed);
                 return;
@@ -194,8 +153,6 @@ impl App {
         }
         let observation = attempt.context().clone();
         let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
-        #[cfg(test)]
-        let worker_pause = pause.clone();
         let handle = std::thread::Builder::new()
             .name("spektrafilm-export".into())
             .spawn(move || {
@@ -205,15 +162,12 @@ impl App {
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
-                        let snapshot =
-                            snapshot.with_cancellation(Some(Arc::clone(&cancel_for_worker)));
                         let setup = snapshot
                             .prepare_scanner_setup(&image, &observation)
                             .map_err(anyhow::Error::msg)?;
                         let mut pipeline =
                             super::build_runtime_observed(&snapshot, false, &observation)
-                                .map_err(anyhow::Error::msg)?
-                                .with_cancellation(Some(Arc::clone(&cancel_for_worker)));
+                                .map_err(anyhow::Error::msg)?;
                         if let Some(setup) = setup {
                             pipeline = pipeline.with_scanner_setup(setup);
                         }
@@ -230,21 +184,11 @@ impl App {
                         );
                         let backend_result: Result<Arc<dyn ComputeBackend>> = match export_backend {
                             ExportBackend::Cpu => {
-                                Ok(Arc::new(spektrafilm_backend::cpu_backend::CpuBackend))
+                                Ok(Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend))
                             }
-                            // The export "GPU" selection is an explicit request
-                            // (spec gpu-execution §Backend selection): a
-                            // configuration that needs a host-executed stage
-                            // fails at assembly instead of being demoted. The
-                            // preview backend is derived so device, pipeline
-                            // cache, and readback pool stay shared.
-                            ExportBackend::Gpu => selected_backend
-                                .with_explicit_request()
-                                .map(Arc::from)
-                                .or_else(|| {
-                                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit()
-                                        .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
-                                })
+                            ExportBackend::Gpu if selected_backend.is_gpu() => Ok(selected_backend),
+                            ExportBackend::Gpu => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
+                                .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
                                 .context("GPU export requested but no WGPU adapter is available"),
                         };
                         let backend = observed_result(
@@ -307,14 +251,6 @@ impl App {
                             IssueCategory::Writing,
                             IssueBoundary::FileWrite,
                         )?;
-                        #[cfg(test)]
-                        if let Some(pause) = &worker_pause {
-                            let _ = pause.staged.send(());
-                            let mut released = pause.released.0.lock();
-                            while !*released {
-                                pause.released.1.wait(&mut released);
-                            }
-                        }
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
@@ -325,13 +261,13 @@ impl App {
                                 .and_then(|s| s.to_str())
                                 .unwrap_or("(file)")
                                 .to_owned(),
-                            backend_name: effective_backend_name(&*backend, pipeline.params()),
+                            backend_name: effective_backend_name(backend.name(), pipeline.params()),
                             size: [output.width, output.height],
                             staged,
                         })
                     },
                 ))
-                .unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
+                .unwrap_or_else(|panic| Err(anyhow::anyhow!(super::panic_message(&panic))));
                 attempt.finish(if res.is_ok() {
                     Outcome::Succeeded
                 } else if cancel_for_worker.load(Ordering::SeqCst) {
@@ -353,8 +289,6 @@ impl App {
             backend: export_backend,
             operation,
             configuration,
-            #[cfg(test)]
-            pause,
         });
     }
 
@@ -364,10 +298,6 @@ impl App {
             return;
         };
         if !job.cancel.swap(true, Ordering::SeqCst) {
-            #[cfg(test)]
-            if let Some(pause) = &job.pause {
-                pause.notify_cancelled();
-            }
             self.status = "Cancelling export…".into();
         }
     }
@@ -395,7 +325,6 @@ impl App {
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.status = "Export error: worker thread vanished".into();
-                self.last_export_error = Some("Export error: worker thread vanished".into());
                 let mut job = self.export_job.take().expect("export job exists");
                 if let Some(handle) = job.handle.take() {
                     let _ = handle.join();
@@ -446,7 +375,6 @@ impl App {
                 match published {
                     Ok(report) => {
                         outcome = Outcome::Succeeded;
-                        self.last_export_error = None;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
                         let mut status = format!(
                             "Exported ({}) {} · {} × {} in {:.1} s",
@@ -461,19 +389,11 @@ impl App {
                         }
                         status
                     }
-                    Err(e) => {
-                        let msg = format!("Export error: {e:#}");
-                        self.last_export_error = Some(msg.clone());
-                        msg
-                    }
+                    Err(e) => format!("Export error: {e:#}"),
                 }
             }
             Err(_) if cancelled => "Export cancelled.".into(),
-            Err(e) => {
-                let msg = format!("Export error: {e}");
-                self.last_export_error = Some(msg.clone());
-                msg
-            }
+            Err(e) => format!("Export error: {e}"),
         };
         if cancelled {
             operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);

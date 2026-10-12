@@ -40,7 +40,9 @@ impl App {
             &self.output_color_space,
             self.output_cctf_encoding,
             self.viewer.settings.use_display_transform,
-            self.gui_state.display_profile().map(Path::new),
+            self.gui_state.sections["rust"]["display_profile"]
+                .as_str()
+                .map(Path::new),
         );
         self.viewer.invalidate_display();
     }
@@ -59,11 +61,10 @@ impl App {
             .map(|job| ("Export", job.operation.mode()));
         let save_report = self.diagnostics.show(ui, render, queued, export);
         if save_report
-            && let Some(path) = self.chooser.save_file(
-                rfd::FileDialog::new()
-                    .add_filter("JSON report", &["json"])
-                    .set_file_name("spektrafilm-report.json"),
-            )
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("JSON report", &["json"])
+                .set_file_name("spektrafilm-report.json")
+                .save_file()
         {
             self.status = match self.diagnostics.save_selected(&path) {
                 Ok(()) => "Saved diagnostic report.".into(),
@@ -74,61 +75,50 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked() {
-                self.save_state_with_dialog();
+            if ui.button("Save current to file").clicked()
+                && let Some(path) = self
+                    .file_dialog("state")
+                    .set_file_name("gui_state.json")
+                    .add_filter("JSON", &["json"])
+                    .save_file()
+            {
+                self.remember_dialog("state", &path);
+                let result = self.current_state().and_then(|s| s.save(&path));
+                self.status = match result {
+                    Ok(()) => format!("Saved GUI state to {}", path.display()),
+                    Err(e) => format!("State save error: {e:#}"),
+                };
             }
-            if ui.button("Load from file").clicked() {
-                self.load_state_with_dialog();
+            if ui.button("Load from file").clicked()
+                && let Some(path) = self
+                    .file_dialog("state")
+                    .add_filter("JSON", &["json"])
+                    .pick_file()
+            {
+                self.remember_dialog("state", &path);
+                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
+                self.status = match result {
+                    Ok(()) => format!("Loaded GUI state from {}", path.display()),
+                    Err(e) => format!("State load error: {e:#}"),
+                };
             }
             if ui.button("Save current as default").clicked() {
                 let result = self
                     .current_state()
-                    .and_then(|s| s.save(&state::default_path(&self.config_directory)));
+                    .and_then(|s| s.save(&state::default_path()));
                 self.status = match result {
                     Ok(()) => "Saved current GUI state as startup default".into(),
                     Err(e) => format!("Startup save error: {e:#}"),
                 };
             }
             if ui.button("Restore factory default").clicked() {
-                let result =
-                    state::reset_factory(&self.config_directory).and_then(|s| self.apply_state(s));
+                let result = state::reset_factory().and_then(|s| self.apply_state(s));
                 self.status = match result {
                     Ok(()) => "Restored factory default GUI state".into(),
                     Err(e) => format!("Factory reset error: {e:#}"),
                 };
             }
         });
-    }
-
-    fn save_state_with_dialog(&mut self) {
-        if let Some(path) = self.chooser.save_file(
-            self.file_dialog("state")
-                .set_file_name("gui_state.json")
-                .add_filter("JSON", &["json"]),
-        ) {
-            self.remember_dialog("state", &path);
-            let result = self.current_state().and_then(|s| s.save(&path));
-            self.status = match result {
-                Ok(()) => format!("Saved GUI state to {}", path.display()),
-                Err(e) => format!("State save error: {e:#}"),
-            };
-        }
-    }
-
-    fn load_state_with_dialog(&mut self) {
-        if let Some(path) = self
-            .chooser
-            .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
-        {
-            let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-            self.status = match result {
-                Ok(()) => {
-                    self.remember_dialog("state", &path);
-                    format!("Loaded GUI state from {}", path.display())
-                }
-                Err(e) => format!("State load error: {e:#}"),
-            };
-        }
     }
 
     pub(super) fn toggle_scan_for_print(&mut self) {
@@ -153,7 +143,8 @@ impl App {
             self.params.scanner.black_correction = true;
             self.params.print_render.glare.active = false;
         }
-        self.mark_parameters_changed();
+        self.dirty = true;
+        self.parameter_revision = self.parameter_revision.wrapping_add(1);
         self.force_preview = true;
     }
 
@@ -162,7 +153,7 @@ impl App {
             controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
             if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
                 let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-                if ui.checkbox(&mut scan_for_print, "white and black correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
+                if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
                     self.toggle_scan_for_print();
                 }
             }
@@ -180,12 +171,13 @@ impl App {
             if ui
                 .checkbox(
                     &mut self.params.magazine_print_color.active,
-                    "Magazine finish",
+                    "Magazine print",
                 )
-                .on_hover_text("Apply a magazine finish appearance after the selected workflow.")
+                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
                 .changed()
             {
-                self.mark_parameters_changed();
+                self.dirty = true;
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
             }
         });
         ui.horizontal(|ui| {
@@ -218,19 +210,11 @@ impl App {
                 self.save_dialog();
             }
         });
-        if let Some(error) = self.last_export_error.clone() {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(error).color(theme::ERROR).small());
-                if ui.button("Dismiss").clicked() {
-                    self.last_export_error = None;
-                }
-            });
-        }
     }
 
     pub(super) fn file_dialog(&self, key: &str) -> rfd::FileDialog {
         let dialog = rfd::FileDialog::new();
-        match self.gui_state.dialog_dirs()[key].as_str() {
+        match self.gui_state.sections["rust"]["dialog_dirs"][key].as_str() {
             Some(path) => dialog.set_directory(path),
             None => dialog,
         }
@@ -265,13 +249,15 @@ impl App {
             self.params.print_render.glare.active = glare;
         }
         self.params.io.scan_film = self.params.workflow.route == "input > film > scan";
-        normalize_scanner_selections(&mut self.params, self.film_medium);
+        normalize_scan_output(&mut self.params, self.film_medium);
         self.invalidate_look_render();
     }
 
     pub(super) fn invalidate_look_render(&mut self) {
         self.scan_for_print_snapshot = None;
-        self.mark_parameters_changed_invalidating_calibration();
+        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+        self.parameter_revision = self.parameter_revision.wrapping_add(1);
+        self.dirty = true;
     }
 
     pub(super) fn select_film_profile(&mut self, selected: String) {
@@ -293,7 +279,7 @@ impl App {
         self.params.workflow.route = workflow_default(&film);
         self.params.io.scan_film = film.is_positive();
         self.params.scanner.scan_output = "direct_scan".into();
-        normalize_scanner_selections(&mut self.params, self.film_medium);
+        normalize_scan_output(&mut self.params, self.film_medium);
         self.invalidate_look_render();
     }
 
@@ -373,7 +359,6 @@ impl App {
                 }
                 self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
                 self.input_epoch = self.input_epoch.wrapping_add(1);
-                self.render_worker.cancel_active();
                 self.full_scan_requested = false;
                 self.image = Some(Arc::new(img));
                 self.refresh_input_viewer();
@@ -399,7 +384,6 @@ impl App {
         self.image = Some(Arc::new(rotated));
         self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
         self.input_epoch = self.input_epoch.wrapping_add(1);
-        self.render_worker.cancel_active();
         self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
         self.full_scan_requested = false;
         self.output_image = None;
@@ -453,29 +437,12 @@ impl App {
             "Halation" => Some((Section::Halation, "Halation", false)),
             "Couplers" => Some((Section::Couplers, "Couplers", false)),
             "Convert" => Some((Section::Convert, "Convert", false)),
-            "Camera" => Some((Section::Camera, "Camera", true)),
             "Camera diffusion" => Some((Section::CameraFilter, "Diffusion", false)),
             "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
             "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
             "Scanner" => Some((Section::Scanner, "Scanner", false)),
-            "Output" => Some((Section::OutputMix, "Output", true)),
             _ => None,
         };
-        if !self.filter.is_empty() {
-            // Search mode: reveal the matching controls of a section that has
-            // any, and drop a section that has none.
-            if !self.section_has_filter_match(section) {
-                return;
-            }
-            if let Some((kind, label, _)) = preset_section {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(label).strong());
-                    self.section_preset_menu(ui, kind);
-                });
-            }
-            self.parameter_section_controls(ui, section);
-            return;
-        }
         if let Some((kind, label, default_open)) = preset_section {
             let mut label_clicked = false;
             let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -498,25 +465,18 @@ impl App {
         }
     }
 
-    /// Whether `section` rendered a control whose label matches the search
-    /// filter.
-    fn section_has_filter_match(&self, section: &str) -> bool {
-        controls::cached_labels_match(&self.filter, self.section_labels.get(section))
-    }
-
     fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
-        let cache = self.section_labels.entry(section.to_owned()).or_default();
         let changes = controls::show(
             ui,
             &mut self.params,
             &mut self.gui_state.sections,
             section,
             self.film_medium,
-            &self.filter,
-            cache,
         );
         if changes.runtime_changed {
-            self.mark_parameters_changed_invalidating_calibration();
+            self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+            self.parameter_revision = self.parameter_revision.wrapping_add(1);
+            self.dirty = true;
         }
         if let Some(action) = changes.action {
             self.start_calibration(action);
@@ -530,7 +490,7 @@ impl App {
         {
             self.load_image_from_path(&path);
         }
-        if section == "Scanner" && self.params.scanner.scan_output == "negative_to_positive" {
+        if section == "Scanner" && self.params.scanner.scan_output == "positive_scan" {
             match self.params.scanner.auto_setup {
                 ScannerAutoSetup::Off => {
                     ui.label("Scanner setup: disabled");
@@ -568,13 +528,10 @@ impl App {
             } else {
                 "Select an input image"
             }).clicked()
-                && let Some(path) = self.chooser.pick_file(
-                    self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()),
-                )
-            {
-                self.remember_dialog("load", &path);
-                self.load_image_from_path(&path);
-            }
+                && let Some(path) = self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()).pick_file() {
+                    self.remember_dialog("load", &path);
+                    self.load_image_from_path(&path);
+                }
             if raw {
                 self.parameter_section(ui, "Import Raw");
             }
@@ -610,27 +567,6 @@ impl App {
             });
     }
     fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
-        let section = if film {
-            "Film chemistry"
-        } else {
-            "Print chemistry"
-        };
-        if !self.filter.is_empty() {
-            // Search mode: no collapsing header, and matching parts only.
-            let development_time = controls::label_matches(&self.filter, "development time");
-            if !development_time && !self.section_has_filter_match(section) {
-                return;
-            }
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Chemistry").strong());
-                self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
-            });
-            if development_time {
-                self.chemistry_dev_time(ui, film);
-            }
-            self.parameter_section(ui, section);
-            return;
-        }
         let mut label_clicked = false;
         let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
@@ -647,32 +583,36 @@ impl App {
             header.toggle();
         }
         header.body(|ui| {
-            self.chemistry_dev_time(ui, film);
-            self.parameter_section(ui, section);
+            let (times, selected) = if film {
+                (
+                    &self.film_dev_times,
+                    &mut self.params.film_render.development_time,
+                )
+            } else {
+                (
+                    &self.print_dev_times,
+                    &mut self.params.print_render.development_time,
+                )
+            };
+            if dev_time_combo(
+                ui,
+                if film { "film-time" } else { "print-time" },
+                "development time",
+                times,
+                selected,
+            ) {
+                self.dirty = true;
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+            }
+            self.parameter_section(
+                ui,
+                if film {
+                    "Film chemistry"
+                } else {
+                    "Print chemistry"
+                },
+            );
         });
-    }
-
-    fn chemistry_dev_time(&mut self, ui: &mut egui::Ui, film: bool) {
-        let (times, selected) = if film {
-            (
-                &self.film_dev_times,
-                &mut self.params.film_render.development_time,
-            )
-        } else {
-            (
-                &self.print_dev_times,
-                &mut self.params.print_render.development_time,
-            )
-        };
-        if dev_time_combo(
-            ui,
-            if film { "film-time" } else { "print-time" },
-            "development time",
-            times,
-            selected,
-        ) {
-            self.mark_parameters_changed();
-        }
     }
 
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
@@ -715,8 +655,12 @@ impl App {
                 for section in ["Enlarger", "Scanner"] {
                     self.parameter_section(ui, section);
                 }
-                self.parameter_section(ui, "Output");
-                self.export_actions(ui);
+                egui::CollapsingHeader::new("Output")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        self.parameter_section(ui, "Output");
+                        self.export_actions(ui);
+                    });
             }
             GuiTab::Film => {
                 self.chemistry_section(ui, true);
@@ -733,16 +677,17 @@ impl App {
             }
             GuiTab::Print => {
                 self.chemistry_section(ui, false);
-                for section in ["Print base", "Glare", "Enlarger diffusion"] {
+                for section in ["Print base", "Preflash", "Glare", "Enlarger diffusion"] {
                     self.parameter_section(ui, section);
                 }
-                self.parameter_section(ui, "Magazine finish color");
             }
             GuiTab::Advanced => {
                 for section in [
                     "Spectral upsampling",
+                    "Magazine print color",
                     "Input gamut compress",
                     "Output gamut compress",
+                    "Experimental",
                 ] {
                     self.parameter_section(ui, section);
                 }
@@ -761,8 +706,12 @@ impl App {
                         self.refresh_viewing_artifacts();
                     }
                 });
+                ui.collapsing("napari layers", |ui| {
+                    self.viewer.layer_controls(ui);
+                });
             }
         }
+        ui.label(egui::RichText::new(&self.status).small());
         if input_view_before
             != (
                 self.params.io.input_color_space.clone(),
@@ -772,34 +721,6 @@ impl App {
         {
             self.refresh_viewing_artifacts();
         }
-    }
-
-    /// The window header spans the full width above the three regions. It
-    /// shows the film profile, print profile, and workflow route as
-    /// read-only text, and it is the only surface that shows the
-    /// operation status.
-    fn window_header(&self, ctx: &egui::Context) {
-        let film = profiles::selected_display(&self.films, &self.film_name);
-        let paper = profiles::selected_display(&self.papers, &self.print_name);
-        egui::TopBottomPanel::top("window-header")
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::SURFACE2)
-                    .inner_margin(egui::Margin::symmetric(8, 4)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new("spektrafilm").strong());
-                    ui.separator();
-                    ui.label(format!("Film: {film}"));
-                    ui.separator();
-                    ui.label(format!("Print: {paper}"));
-                    ui.separator();
-                    ui.label(format!("Route: {}", self.params.workflow.route));
-                    ui.separator();
-                    ui.label(egui::RichText::new(&self.status).small());
-                });
-            });
     }
 }
 
@@ -812,7 +733,7 @@ impl eframe::App for App {
         if !self.metal_colorspace_tagged
             && raw_window_handle::HasWindowHandle::window_handle(frame).is_ok()
         {
-            match crate::platform::tag_metal_layer_srgb(frame) {
+            match tag_metal_layer_srgb(frame) {
                 Ok(()) => {
                     eprintln!("[spektrafilm] CAMetalLayer.colorspace = sRGB — tagged OK");
                     self.metal_colorspace_tagged = true;
@@ -845,44 +766,22 @@ impl eframe::App for App {
         self.poll_render_job(ctx);
         self.poll_calibration_job(ctx);
         self.poll_export_job(ctx);
-        // The export renders the retained input, so the dialog's estimate
-        // reads that image's dimensions while the dialog is open.
-        let export_dimensions = self
-            .image
-            .as_ref()
-            .map(|image| [image.width, image.height])
-            .unwrap_or([0, 0]);
-        if let Some(options) = self.export_dialog.show(ctx, export_dimensions) {
+        if let Some(options) = self.export_dialog.show(ctx) {
             self.start_export(ctx, options);
         }
-        self.window_header(ctx);
         self.preset_panel(ctx);
-        // Right control panel: histogram at top, tabs, scrollable controls, action bar
         egui::SidePanel::right("controls")
             .resizable(false)
-            .exact_width(320.0)
+            .exact_width(420.0)
             .show(ctx, |ui| {
-                let output_id = self
-                    .output_image
-                    .as_ref()
-                    .map(|o| Arc::as_ptr(o) as usize as u64)
-                    .unwrap_or(0);
-                self.histogram
-                    .update(&self.output_image, output_id, ui.ctx());
-                self.histogram.render(ui);
-                ui.add_space(4.0);
+                ui.heading("spektrafilm");
+                ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
                     for tab in GuiTab::ALL {
                         ui.selectable_value(&mut self.gui_tab, tab, tab.label());
                     }
                 });
                 ui.separator();
-                ui.horizontal(|ui| {
-                    let label = ui.label("Filter controls");
-                    ui.text_edit_singleline(&mut self.filter)
-                        .labelled_by(label.id);
-                });
-                ui.add_space(2.0);
                 let scroll_height = (ui.available_height() - 95.0).max(1.0);
                 ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
                     egui::ScrollArea::vertical()
@@ -900,7 +799,6 @@ impl eframe::App for App {
         if let Some(error) = self.diagnostics.take_publication_error() {
             self.status = format!("Diagnostic report publication error: {error}");
         }
-        // Central viewer
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -922,84 +820,20 @@ impl eframe::App for App {
                         self.viewer.reset_view();
                         ui.ctx().request_repaint();
                     }
-                    // Before/after compare slider
-                    let compare_label = if self.compare_active {
-                        "compare ON"
-                    } else {
-                        "compare"
-                    };
-                    if ui
-                        .selectable_label(self.compare_active, compare_label)
-                        .on_hover_text("Split-screen before/after comparison")
-                        .clicked()
-                    {
-                        self.compare_active = !self.compare_active;
-                        ui.ctx().request_repaint();
-                    }
-                    if self.compare_active {
-                        ui.add_space(8.0);
-                        let slider = ui.add(
-                            egui::Slider::new(&mut self.compare_split, 0.0..=1.0)
-                                .fixed_decimals(2)
-                                .trailing_fill(false),
-                        );
-                        if slider.changed() {
-                            ui.ctx().request_repaint();
-                        }
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "←input {:.0}% | {:.0}%output→",
-                                self.compare_split * 100.0,
-                                (1.0 - self.compare_split) * 100.0
-                            ))
-                            .color(theme::FG_MUTED)
-                            .size(9.0),
-                        );
-                    }
                     let zoom = self.viewer.zoom_percent().map_or_else(
                         || format!("{:.0}% fit", self.viewer.zoom * 100.0),
                         |percent| format!("{percent:.0}%"),
                     );
-                    ui.label(format!("zoom {zoom}"));
+                    ui.label(format!("{} · zoom {zoom}", self.status));
                 });
             });
             self.viewer.layer_controls(ui);
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);
-            self.viewer.set_compare_split(if self.compare_active {
-                Some(self.compare_split)
-            } else {
-                None
-            });
             self.viewer
                 .show(ui, self.image.as_ref(), self.output_image.as_ref());
-            // Before/after compare divider overlay
-            if self.compare_active {
-                let rect = ui.max_rect();
-                let painter = ui.painter_at(rect);
-                let x = rect.left() + rect.width() * self.compare_split;
-                // Divider line
-                painter.line_segment(
-                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                    egui::Stroke::new(2.0_f32, theme::ACCENT),
-                );
-                // Labels
-                painter.text(
-                    egui::pos2(x - 8.0, rect.top() + 12.0),
-                    egui::Align2::RIGHT_TOP,
-                    "input",
-                    egui::FontId::proportional(10.0),
-                    theme::ACCENT,
-                );
-                painter.text(
-                    egui::pos2(x + 8.0, rect.top() + 12.0),
-                    egui::Align2::LEFT_TOP,
-                    "output",
-                    egui::FontId::proportional(10.0),
-                    theme::ACCENT,
-                );
-            }
         });
+
         // Accept drag-and-dropped image files.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -1018,11 +852,6 @@ impl eframe::App for App {
         self.persist_browser_state(true);
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);
-            #[cfg(test)]
-            if let Some(pause) = &job.pause {
-                pause.notify_cancelled();
-                pause.release();
-            }
             if let Some(h) = job.handle.take() {
                 let _ = h.join();
             }

@@ -155,21 +155,24 @@ impl App {
             }) => {
                 self.params.film_render.base = params;
                 self.params.film_render.convert.exposure_compensation_ev = exposure_ev;
-                self.mark_parameters_changed();
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                self.dirty = true;
                 self.force_preview = true;
                 self.status =
                     format!("Film base detected; exposure compensation {exposure_ev:+.2} EV.");
             }
             Ok(CalibrationResult::BlindCalibration(calibration)) => {
                 self.params.film_render.convert.calibration = calibration;
-                self.mark_parameters_changed();
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                self.dirty = true;
                 self.force_preview = true;
                 self.status = "Blind calibration fitted.".into();
             }
             Ok(CalibrationResult::NeutralizeFilters { m_shift, y_shift }) => {
                 self.params.enlarger.m_filter_shift = m_shift;
                 self.params.enlarger.y_filter_shift = y_shift;
-                self.mark_parameters_changed();
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                self.dirty = true;
                 self.force_preview = true;
                 self.status =
                     format!("Print filters neutralized: M {m_shift:+.2}, Y {y_shift:+.2}.");
