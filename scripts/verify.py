@@ -43,7 +43,7 @@ def source_identity(snapshot):
     return {key: value for key, value in snapshot.items() if key != 'diff_file'}
 
 
-def run(root, evidence):
+def run(root, evidence, gate='ci'):
     root = root.resolve()
     evidence = evidence.resolve()
     if evidence == root or root in evidence.parents:
@@ -53,7 +53,7 @@ def run(root, evidence):
         'status': 'running',
         'started_at': timestamp(),
         'repository': str(root),
-        'command': ['just', 'ci'],
+        'command': ['just', gate],
         'platform': platform.platform(),
         'python_version': platform.python_version(),
         'log_file': 'gate.log',
@@ -73,7 +73,7 @@ def run(root, evidence):
         }
         (evidence / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         with (evidence / 'gate.log').open('wb') as log:
-            process = subprocess.Popen(['just', 'ci'], cwd=root, stdout=subprocess.PIPE,
+            process = subprocess.Popen(['just', gate], cwd=root, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT)
             while chunk := process.stdout.read1(65536):
                 log.write(chunk)
@@ -106,8 +106,10 @@ def run(root, evidence):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('evidence_dir', type=Path, help='New directory outside the repository')
+    parser.add_argument('--gate', choices=('ci', 'ci-pr'), default='ci',
+                        help='Verification gate (default: full ci)')
     args = parser.parse_args()
-    return run(Path(__file__).resolve().parents[1], args.evidence_dir)
+    return run(Path(__file__).resolve().parents[1], args.evidence_dir, args.gate)
 
 
 if __name__ == '__main__':

@@ -24,7 +24,9 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 
 Requires Rust stable (≥ 1.88), a C++17 compiler, pkg-config, OpenImageIO and Exiv2 development libraries. The locked `image` dependency requires Rust 1.88. Image I/O uses the same native libraries as Python 0.3.4, preserving float samples and EXIF/IPTC/XMP. On Debian/Ubuntu install `libopenimageio-dev libexiv2-dev libopenblas-dev`; Linux links the installed OpenBLAS library. On macOS use `brew install openimageio exiv2 pkg-config`. Windows packaging uses a matching MSYS2 UCRT64 native toolchain and pkg-config dependencies. The package scripts collect native runtime libraries; the build fails explicitly when required development libraries are absent.
 
-The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI runs the full `just ci` gate through `just verify`: formatting, all-target checks with default and `precision-f64` features, first-party Clippy, and workspace tests. It retains verification evidence without release builds, Python parity or packaging. Pushes to `main-0.3.4` run the full three-platform release workflow: workspace tests, native builds and package smoke, plus the existing Linux Python parity and LUT acceptance checks. Version tags and manual dispatch also retain the full workflow. Release runs use one concurrency group per ref. A commit pushed while a release run is active waits as the single pending run, and a later commit replaces that pending run, so only the newest commit is built. An active run is never canceled for a newer commit.
+The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run `Main full verification` through `just verify`. The [test architecture](eng/testing.md) defines layer responsibilities, test design rules, and the PR cost budget. Main verification retains workspace build artifacts and dependencies in commit-keyed caches for PR reuse. An active main verification is not canceled by a newer push; pending runs coalesce to the newest commit.
+
+Pushes to `main-0.3.4` also run the three-platform release workflow: workspace tests, native builds, package smoke, Linux Python parity, and LUT acceptance. Version tags and manual release dispatch retain this workflow. Release runs use one concurrency group per ref. An active release run is not canceled by a newer commit; pending runs coalesce to the newest commit.
 
 ```bash
 git clone <this-repo> && cd spektrafilm-rs
@@ -96,12 +98,16 @@ just build
 just check
 just test
 just test-f64
+just test-fast
+just ci-pr
 just ci
 just package
 just install
 ```
 
 Run `just verify /absolute/path/outside/the/repo/new-directory` to retain gate evidence. The directory must not exist. The runner displays and saves combined output in `gate.log`, preserves the gate's failure exit status, and writes `report.json` on success or failure. The report records commit and tree IDs, tracked changes in `before.diff` and `after.diff`, hashes of untracked files, tool versions, timestamps, and exit status. A source change during verification fails the run. The evidence covers `just ci`; native GUI, image, CLI, and package smoke evidence remains separate. Call this entry point directly so an outer shell pipeline cannot mask its exit status.
+
+Use `just verify-pr /absolute/path/outside/the/repo/new-directory` for the fast PR gate. Its report records `just ci-pr` and uses the same source and exit-status checks as full verification. Test selection lives in the Justfile; admission rules live in the [test architecture](eng/testing.md).
 
 `just ci` first runs `just check-python-cache`. This check rejects Git-index paths with a `__pycache__` component or a `.pyc` or `.pyo` suffix, including files added with `git add -f`. Python caches remain ignored local outputs.
 
