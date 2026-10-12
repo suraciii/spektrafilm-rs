@@ -538,12 +538,17 @@ struct RuntimeCacheKey {
     special: serde_json::Value,
 }
 
+#[derive(Default)]
 struct RuntimeCache {
+    entry: Option<RuntimeCacheEntry>,
+}
+
+struct RuntimeCacheEntry {
     key: RuntimeCacheKey,
     film: spektrafilm_core::profile::Profile,
     digest_print: spektrafilm_core::profile::Profile,
     neutral: spektrafilm_core::neutral_filters::NeutralFilters,
-    runtime: Option<Runtime>,
+    runtime: Runtime,
 }
 
 impl RenderWorker {
@@ -558,7 +563,7 @@ impl RenderWorker {
         let handle = std::thread::Builder::new()
             .name("spektrafilm-render".into())
             .spawn(move || {
-                let mut runtime_cache: Option<RuntimeCache> = None;
+                let mut runtime_cache = RuntimeCache::default();
                 loop {
                     let request = {
                         let (lock, wake) = &*state_for_worker;
@@ -582,8 +587,7 @@ impl RenderWorker {
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let t_total = Instant::now();
                         let t_pipeline = Instant::now();
-                        let pipeline_template = prepare_runtime_observed(
-                            &mut runtime_cache,
+                        let pipeline_template = runtime_cache.prepare_observed(
                             &request.snapshot,
                             job.kind == RenderKind::Preview,
                             &request.image,
@@ -725,115 +729,94 @@ impl Drop for RenderWorker {
     }
 }
 
-fn prepare_runtime_observed<'a>(
-    cache: &'a mut Option<RuntimeCache>,
-    snapshot: &RenderSnapshot,
-    preview: bool,
-    full_input: &ImageBuf,
-    context: &ObservationContext,
-) -> Result<&'a mut Runtime, String> {
-    let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
-    let result =
-        prepare_runtime_with_setup(cache, snapshot, preview, full_input, prepare.context());
-    observed_result(
-        prepare,
-        result,
-        IssueCategory::Configuration,
-        IssueBoundary::RuntimePrepare,
-    )
-}
-
-fn prepare_runtime_with_setup<'a>(
-    cache: &'a mut Option<RuntimeCache>,
-    snapshot: &RenderSnapshot,
-    preview: bool,
-    full_input: &ImageBuf,
-    context: &ObservationContext,
-) -> Result<&'a mut Runtime, String> {
-    let setup = snapshot.prepare_scanner_setup(full_input, context)?;
-    prepare_runtime_cached(cache, snapshot, preview, context)?;
-    let cached = cache.as_mut().expect("runtime cache prepared");
-    if let Some(setup) = setup {
-        cached.runtime = cached
-            .runtime
-            .take()
-            .map(|runtime| runtime.with_scanner_setup(setup));
+impl RuntimeCache {
+    fn prepare_observed(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        preview: bool,
+        full_input: &ImageBuf,
+        context: &ObservationContext,
+    ) -> Result<&mut Runtime, String> {
+        let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
+        let result = snapshot
+            .prepare_scanner_setup(full_input, prepare.context())
+            .and_then(|setup| self.prepare(snapshot, preview, setup, prepare.context()));
+        observed_result(
+            prepare,
+            result,
+            IssueCategory::Configuration,
+            IssueBoundary::RuntimePrepare,
+        )
     }
-    Ok(cached
-        .runtime
-        .as_mut()
-        .expect("runtime cache runtime prepared"))
-}
 
-fn prepare_runtime_cached<'a>(
-    cache: &'a mut Option<RuntimeCache>,
-    snapshot: &RenderSnapshot,
-    preview: bool,
-    context: &ObservationContext,
-) -> Result<&'a mut Runtime, String> {
-    if let Some(mut cached) = cache.take() {
-        let digested =
-            snapshot.digested_params(preview, &cached.film, &cached.digest_print, &cached.neutral);
-        let runtime_print_name = snapshot.runtime_print_name(&digested);
-        let key = RuntimeCacheKey {
-            data_dir: snapshot.data_dir.clone(),
-            film_name: snapshot.film_name.clone(),
-            digest_print_name: snapshot.print_name.clone(),
-            runtime_print_name: runtime_print_name.to_owned(),
-            special: snapshot.special.clone(),
-        };
-        if cached.key == key {
-            let runtime = cached
-                .runtime
-                .take()
-                .expect("runtime cache entry without runtime");
-            let runtime = runtime.with_params(digested)?;
-            cached.runtime = Some(runtime);
-            *cache = Some(cached);
-            return Ok(cache
-                .as_mut()
-                .expect("runtime cache restored")
-                .runtime
-                .as_mut()
-                .expect("runtime cache runtime restored"));
+    fn prepare(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        preview: bool,
+        setup: Option<ScannerSetup>,
+        context: &ObservationContext,
+    ) -> Result<&mut Runtime, String> {
+        if let Some(mut cached) = self.entry.take() {
+            let digested = snapshot.digested_params(
+                preview,
+                &cached.film,
+                &cached.digest_print,
+                &cached.neutral,
+            );
+            let runtime_print_name = snapshot.runtime_print_name(&digested);
+            let key = RuntimeCacheKey {
+                data_dir: snapshot.data_dir.clone(),
+                film_name: snapshot.film_name.clone(),
+                digest_print_name: snapshot.print_name.clone(),
+                runtime_print_name: runtime_print_name.to_owned(),
+                special: snapshot.special.clone(),
+            };
+            if cached.key == key {
+                let runtime = cached.runtime.with_params(digested)?;
+                cached.runtime = match setup {
+                    Some(setup) => runtime.with_scanner_setup(setup),
+                    None => runtime,
+                };
+                self.entry = Some(cached);
+                return Ok(&mut self.entry.as_mut().expect("runtime cache restored").runtime);
+            }
+            self.entry = Some(cached);
         }
-        *cache = Some(cached);
-    }
 
-    let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-        .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
-    let digest_print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
-        .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
-    let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
-        .map_err(|e| format!("neutral filters: {e}"))?;
-    let digested = snapshot.digested_params(preview, &film, &digest_print, &neutral);
-    let runtime_print_name = snapshot.runtime_print_name(&digested);
-    let runtime_film = film.clone();
-    let runtime_print = if digested.io.scan_film {
-        film.clone()
-    } else {
-        digest_print.clone()
-    };
-    let runtime = snapshot.build_runtime(runtime_film, runtime_print, digested, context)?;
-    *cache = Some(RuntimeCache {
-        key: RuntimeCacheKey {
-            data_dir: snapshot.data_dir.clone(),
-            film_name: snapshot.film_name.clone(),
-            digest_print_name: snapshot.print_name.clone(),
-            runtime_print_name: runtime_print_name.to_owned(),
-            special: snapshot.special.clone(),
-        },
-        film,
-        digest_print,
-        neutral,
-        runtime: Some(runtime),
-    });
-    Ok(cache
-        .as_mut()
-        .expect("runtime cache inserted")
-        .runtime
-        .as_mut()
-        .expect("runtime cache runtime inserted"))
+        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
+            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
+        let digest_print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
+            .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
+        let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
+            .map_err(|e| format!("neutral filters: {e}"))?;
+        let digested = snapshot.digested_params(preview, &film, &digest_print, &neutral);
+        let runtime_print_name = snapshot.runtime_print_name(&digested);
+        let runtime_film = film.clone();
+        let runtime_print = if digested.io.scan_film {
+            film.clone()
+        } else {
+            digest_print.clone()
+        };
+        let runtime = snapshot.build_runtime(runtime_film, runtime_print, digested, context)?;
+        let runtime = match setup {
+            Some(setup) => runtime.with_scanner_setup(setup),
+            None => runtime,
+        };
+        self.entry = Some(RuntimeCacheEntry {
+            key: RuntimeCacheKey {
+                data_dir: snapshot.data_dir.clone(),
+                film_name: snapshot.film_name.clone(),
+                digest_print_name: snapshot.print_name.clone(),
+                runtime_print_name: runtime_print_name.to_owned(),
+                special: snapshot.special.clone(),
+            },
+            film,
+            digest_print,
+            neutral,
+            runtime,
+        });
+        Ok(&mut self.entry.as_mut().expect("runtime cache inserted").runtime)
+    }
 }
 
 fn build_runtime_observed(
@@ -3158,16 +3141,11 @@ mod telemetry_lifecycle_tests {
             let input = app.image.as_ref().unwrap().clone();
             let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
             let expected = canonical.prepare_scanner_setup(&input).unwrap();
-            let mut cache = None;
+            let mut cache = RuntimeCache::default();
             if let Some(preview_first) = first {
-                let runtime = prepare_runtime_observed(
-                    &mut cache,
-                    &snapshot,
-                    preview_first,
-                    &input,
-                    &context,
-                )
-                .unwrap();
+                let runtime = cache
+                    .prepare_observed(&snapshot, preview_first, &input, &context)
+                    .unwrap();
                 let working = if preview_first {
                     spektrafilm_core::params_builder::resize_for_preview(
                         &input,
@@ -3212,8 +3190,9 @@ mod telemetry_lifecycle_tests {
                 Some(expected),
                 "initialized snapshot must reuse its measured full source rather than remeasure another raster"
             );
-            let scan_runtime =
-                prepare_runtime_observed(&mut cache, &export, false, &input, &context).unwrap();
+            let scan_runtime = cache
+                .prepare_observed(&export, false, &input, &context)
+                .unwrap();
             let scan = scan_runtime
                 .process((*input).clone(), app.backend.as_ref())
                 .unwrap();
@@ -3227,8 +3206,9 @@ mod telemetry_lifecycle_tests {
                 scan.data, exported.data,
                 "shared full setup must produce the same Scan and Export raster"
             );
-            let preview_runtime =
-                prepare_runtime_observed(&mut cache, &export, true, &input, &context).unwrap();
+            let preview_runtime = cache
+                .prepare_observed(&export, true, &input, &context)
+                .unwrap();
             let working = spektrafilm_core::params_builder::resize_for_preview(
                 &input,
                 preview_runtime.params().settings.preview_max_size,
@@ -3295,8 +3275,8 @@ mod telemetry_lifecycle_tests {
         let input = app.image.as_ref().unwrap().clone();
         let context = ObservationContext::default();
         let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
-        let mut cache = None;
-        let actual = prepare_runtime_cached(&mut cache, &snapshot, false, &context).unwrap();
+        let mut cache = RuntimeCache::default();
+        let actual = cache.prepare(&snapshot, false, None, &context).unwrap();
         let expected = canonical.prepare_scanner_setup(&input).unwrap();
         assert_eq!(
             actual.prepare_scanner_setup(&input).unwrap(),
@@ -3307,12 +3287,79 @@ mod telemetry_lifecycle_tests {
             .with_scanner_setup(expected)
             .process((*input).clone(), app.backend.as_ref())
             .unwrap();
-        let actual =
-            prepare_runtime_observed(&mut cache, &snapshot, false, &input, &context).unwrap();
+        let actual = cache
+            .prepare_observed(&snapshot, false, &input, &context)
+            .unwrap();
         let actual_output = actual
             .process((*input).clone(), app.backend.as_ref())
             .unwrap();
         assert_eq!(actual_output.data, canonical_output.data);
+    }
+
+    #[test]
+    fn runtime_cache_recovers_from_setup_update_and_profile_failures() {
+        let mut app = scanner_app();
+        app.params.scanner.auto_setup = ScannerAutoSetup::Off;
+        let snapshot = app.render_snapshot(app.params.clone());
+        let input = app.image.as_ref().unwrap();
+        let context = ObservationContext::default();
+        let mut cache = RuntimeCache::default();
+        let expected = cache
+            .prepare_observed(&snapshot, false, input, &context)
+            .unwrap()
+            .process((**input).clone(), app.backend.as_ref())
+            .unwrap();
+
+        let mut failed_setup = snapshot.clone();
+        failed_setup.params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        failed_setup.scanner_setup = Arc::new(OnceLock::new());
+        failed_setup
+            .scanner_setup
+            .set(Err("scanner setup unavailable".into()))
+            .unwrap();
+        assert_eq!(
+            cache
+                .prepare_observed(&failed_setup, false, input, &context)
+                .err()
+                .unwrap(),
+            "scanner setup unavailable"
+        );
+        assert!(cache.entry.is_some());
+
+        let missing = tempfile::tempdir().unwrap();
+        let mut failed_profile = snapshot.clone();
+        failed_profile.data_dir = missing.path().to_owned();
+        assert!(
+            cache
+                .prepare_observed(&failed_profile, false, input, &context)
+                .err()
+                .unwrap()
+                .contains("film profile 'kodak_portra_400'")
+        );
+        assert!(cache.entry.is_some());
+        let recovered = cache
+            .prepare_observed(&snapshot, false, input, &context)
+            .unwrap()
+            .process((**input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert_eq!(recovered.data, expected.data);
+
+        let mut failed_update = snapshot.clone();
+        failed_update.params.scanner.positive_density_ev = f64::NAN;
+        assert!(
+            cache
+                .prepare_observed(&failed_update, false, input, &context)
+                .err()
+                .unwrap()
+                .contains("scanner.positive_density_ev")
+        );
+        assert!(cache.entry.is_none());
+        let rebuilt = cache
+            .prepare_observed(&snapshot, false, input, &context)
+            .unwrap()
+            .process((**input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert_eq!(rebuilt.data, expected.data);
     }
 
     #[test]
