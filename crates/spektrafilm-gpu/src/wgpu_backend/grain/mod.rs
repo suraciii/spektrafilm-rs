@@ -44,7 +44,7 @@ impl WgpuBackend {
         let (backend, _batch) = self.observed_batch("grain_v2");
         backend.grain_v2_gpu_inner(img, params)
     }
-    /// Execute Grain V2 on native encoded RGB with no transfer or primaries conversion.
+    /// Execute Grain Procedural on native encoded RGB with no transfer or primaries conversion.
     fn grain_v2_gpu_inner(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> ImageBuf {
         if img.width == 0 || img.height == 0 {
             return img.clone();
@@ -81,7 +81,7 @@ impl WgpuBackend {
 }
 
 /// Shared standalone/resident preparation, optional Analogue resolution filter,
-/// and Grain V2 execution. Noise remains a single-pass image-resolution path.
+/// and Grain Procedural execution. Noise remains a single-pass image-resolution path.
 pub(super) struct GrainV2State {
     output: wgpu::Buffer,
     _buffers: Vec<wgpu::Buffer>,

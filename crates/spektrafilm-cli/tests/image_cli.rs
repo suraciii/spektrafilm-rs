@@ -111,7 +111,7 @@ fn fixed_input_precedence_and_winning_edit_feedback_are_observable() {
     let report = f.report(&[
         "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
         "--set", "io.input_color_space=ProPhoto RGB,io.input_cctf_decoding=false",
-        "--set", "film_render.grain.engine=v2,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12",
+        "--set", "film_render.grain.engine=procedural,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12",
         "--set", "film_render.grain.v2_size=15,film_render.grain.v2_amount=25", "--dry-run",
     ]);
     assert_eq!(report["parameters"]["io"]["input_color_space"], "sRGB");
@@ -186,7 +186,7 @@ fn seed_repeats_stochastic_pixels_and_benchmark_attempts() {
         let raw = f.0.join(format!("{index}.raw"));
         let result = f.run(&format!("{index}.tif"), &[
             "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
-            "--set", "camera.auto_exposure=false,film_render.grain.engine=v2,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=75",
+            "--set", "camera.auto_exposure=false,film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=75",
             "--seed", seed, "--iters", iters, "--raw-out", raw.to_str().unwrap(),
         ]);
         assert!(
@@ -281,7 +281,7 @@ fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
     use spektrafilm_math::precision::to_f64;
 
     let f = Fixture::new();
-    let settings = "camera.auto_exposure=false,camera.film_format_mm=0.1,film_render.halation.active=false,film_render.dir_couplers.active=false,print_render.glare.active=false,film_render.grain.engine=v1,film_render.grain.sublayers_active=false,film_render.grain.particle_area_um2=2,scanner.auto_setup=per_frame,io.output_gamut_compress.algorithm=off,scanner.unsharp_mask=[0,0],settings.use_enlarger_lut=false,settings.use_scanner_lut=false";
+    let settings = "camera.auto_exposure=false,camera.film_format_mm=0.1,film_render.halation.active=false,film_render.dir_couplers.active=false,print_render.glare.active=false,film_render.grain.engine=spektra,film_render.grain.sublayers_active=false,film_render.grain.particle_area_um2=2,scanner.auto_setup=per_frame,io.output_gamut_compress.algorithm=off,scanner.unsharp_mask=[0,0],settings.use_enlarger_lut=false,settings.use_scanner_lut=false";
     let args = [
         "--input-color-space",
         "sRGB",

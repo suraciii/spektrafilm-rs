@@ -1098,7 +1098,7 @@ mod tests {
     #[test]
     fn feedback_reports_conditions_constraints_and_only_winning_leaves() {
         let sources = vec![
-            "film_render.grain.engine=v2,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12,film_render.grain.v2_amount=20,camera.lens_blur_um=2".into(),
+            "film_render.grain.engine=procedural,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12,film_render.grain.v2_amount=20,camera.lens_blur_um=2".into(),
             "film_render.grain.v2_amount=25,settings.preview_mode=true".into(),
         ];
         let result = resolve(public_request(&sources), &data_dir()).unwrap();

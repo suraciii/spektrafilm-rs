@@ -136,7 +136,7 @@ fn taps(n: usize, out: usize) -> Vec<([usize; 4], [f64; 4])> {
 /// rejected beyond the u32 image limit.
 ///
 /// This is the single authority for the rescale rounding rule: the grain
-/// V3 readout asks for the output grid the user's crop/upscale request
+/// Dye readout asks for the output grid the user's crop/upscale request
 /// resolves to, so it must not re-derive that rounding.
 pub fn rescaled_dimensions(w: u32, h: u32, scale: f64) -> Result<(u32, u32), String> {
     if !scale.is_finite() || scale <= 0.0 {

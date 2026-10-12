@@ -687,6 +687,15 @@ mod tests {
     fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
         use spektrafilm_core::presets::{Preset, Provenance, Section};
 
+        fn negative_film_profile() -> spektrafilm_core::profile::Profile {
+            // This test exercises preset/state projection, so keep the profile
+            // small while satisfying positive-scan profile validation.
+            serde_json::from_str(
+                r#"{"metadata":{},"info":{"stock":"test-negative","type":"negative","support":"film","stage":"filming","use":"still"},"data":{"density_curves":[[0.0,0.0,0.0]]}}"#,
+            )
+            .unwrap()
+        }
+
         let factory = GuiState::factory();
         let baseline = GuiState::from_runtime(
             &factory.runtime_params().unwrap(),
@@ -713,11 +722,7 @@ mod tests {
         // Monochrome is derived from the film, so sections preserve the target's value.
         let mut target = factory.runtime_params().unwrap();
         target.film_render.grain.monochrome = true;
-        let film = spektrafilm_core::profile::load_profile_by_name(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
-            factory.film(),
-        )
-        .unwrap();
+        let film = negative_film_profile();
         let applied = preset.apply_section(&target, &film).unwrap();
         let saved =
             GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
@@ -841,7 +846,7 @@ mod tests {
         let mut params = factory.runtime_params().unwrap();
         params.io.output_cctf_encoding = false;
         params.film_render.development_time = Some(9.0);
-        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
+        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
         params.film_render.grain.v3_dye_support_um = 4.5;
         params.film_render.grain.v3_event_area_um2 = 0.6;
         params.film_render.grain.v2_profile = "8mm500".into();
@@ -853,7 +858,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             saved.sections["rust"]["runtime"]["film_render"]["grain"]["engine"],
-            "v3"
+            "dye"
         );
         assert_eq!(
             saved.sections["rust"]["runtime"]["film_render"]["grain"]["v3_dye_support_um"],
@@ -866,7 +871,7 @@ mod tests {
         assert_eq!(restored.film_render.development_time, Some(9.0));
         assert_eq!(
             restored.film_render.grain.engine,
-            spektrafilm_core::params::GrainEngine::V3
+            spektrafilm_core::params::GrainEngine::Dye
         );
         assert_eq!(restored.film_render.grain.v3_dye_support_um, 4.5);
         assert_eq!(restored.film_render.grain.v3_event_area_um2, 0.6);
@@ -936,7 +941,7 @@ mod tests {
         let factory = GuiState::factory();
         let mut params = factory.runtime_params().unwrap();
         let grain = &mut params.film_render.grain;
-        grain.engine = spektrafilm_core::params::GrainEngine::V2;
+        grain.engine = spektrafilm_core::params::GrainEngine::Procedural;
         grain.v2_profile = "custom".into();
         grain.v2_resolution_type = 0;
         grain.v2_timer = 0.375;

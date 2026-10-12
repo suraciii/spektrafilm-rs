@@ -478,6 +478,26 @@ impl Pipeline {
             Tap::RgbOut => unreachable!("RgbOut is terminal — run_from stops before it"),
         }
     }
+    fn validate_grain_v3_taps(
+        cell_spectral: bool,
+        aperture_factor: Option<u32>,
+        inject: Tap,
+        collect: Tap,
+        scan_film: bool,
+    ) -> Result<(), String> {
+        if !cell_spectral {
+            return Ok(());
+        }
+        if aperture_factor.is_some() {
+            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
+        }
+        let supported_collect = collect == Tap::RgbOut
+            || (!scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
+        if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm) || !supported_collect {
+            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
+        }
+        Ok(())
+    }
 
     /// Run the topology from the value at `inject` to the value at
     /// `collect` (both inclusive bounds in [`Pipeline::tap_order`]).
@@ -515,21 +535,18 @@ impl Pipeline {
         }
         let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
         let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
-        if cell_spectral {
-            if aperture_factor.is_some() {
-                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
-            }
-            let supported_collect = collect == Tap::RgbOut
-                || (!self.params.io.scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
-            if !supported_collect || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap() {
-                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
-            }
-            if color_ref.has_remap() {
-                return Err(
-                    "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
-                        .to_owned(),
-                );
-            }
+        Self::validate_grain_v3_taps(
+            cell_spectral,
+            aperture_factor,
+            inject,
+            collect,
+            self.params.io.scan_film,
+        )?;
+        if cell_spectral && color_ref.has_remap() {
+            return Err(
+                "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
+                    .to_owned(),
+            );
         }
         if aperture_factor.is_some()
             && (collect != Tap::RgbOut
@@ -682,11 +699,11 @@ impl Pipeline {
                 let t = Instant::now();
                 cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
                 pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
-                    "film grain V3 aperture: missing requested output pitch".to_owned()
+                    "film grain Dye aperture: missing requested output pitch".to_owned()
                 })?;
                 print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
                 record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
-                tracing::info!(factor, "film grain V3: collapsed linear print exposure");
+                tracing::info!(factor, "film grain Dye: collapsed linear print exposure");
             }
             i += 1;
         }
@@ -800,17 +817,14 @@ impl Pipeline {
             let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
             if cell_spectral {
                 stages::grain_v3::validate_supported(&self.film, &self.params)?;
-                if aperture_factor.is_some() {
-                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
-                }
-                if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm)
-                    || !(collect == Tap::RgbOut
-                        || (!self.params.io.scan_film
-                            && matches!(collect, Tap::LogEPrint | Tap::CmyPrint)))
-                {
-                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
-                }
             }
+            Self::validate_grain_v3_taps(
+                cell_spectral,
+                aperture_factor,
+                inject,
+                collect,
+                self.params.io.scan_film,
+            )?;
         }
         if let Some(context) = backend.observation_context()
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
@@ -852,7 +866,7 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
-        // Active V3 outside its supported condition fails here, before any
+        // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
         // never reach a grain stage.
         stages::grain_v3::validate_supported(&self.film, &self.params)?;
@@ -1030,7 +1044,7 @@ impl Pipeline {
         // buffer — one upload + one readback total. WGSL runs the
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
-        // path; backends without resident support return `None`. Active V3
+        // path; backends without resident support return `None`. Active Dye
         // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
             && let Some(out) =
@@ -1203,7 +1217,7 @@ impl Pipeline {
             "geometry",
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
-        // V3 develops the full source; its field readout owns the crop and
+        // Dye develops the full source; its field readout owns the crop and
         // output grid so that overlapping reads keep the same film coordinates.
         let resized = if stages::grain_v3::active(&self.params) {
             Ok((
@@ -1661,7 +1675,7 @@ mod spectral_invalidation_tests {
             for scale in [1.0, 1.5] {
                 let mut params = RuntimeParams::default();
                 params.camera.film_format_mm = 36.0;
-                params.film_render.grain.engine = crate::params::GrainEngine::V3;
+                params.film_render.grain.engine = crate::params::GrainEngine::Dye;
                 params.film_render.dir_couplers.active = false;
                 params.film_render.halation.active = false;
                 params.workflow.route = if scan_film {

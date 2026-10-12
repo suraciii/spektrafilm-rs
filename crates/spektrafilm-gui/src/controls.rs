@@ -131,7 +131,7 @@ pub(crate) fn show(
             egui::CollapsingHeader::new("Camera").default_open(true).show(ui, |ui| {
                 flags.runtime_changed |= numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, -100.0, 100.0, 0.25, 2, "Add a bias to the auto-exposure of the camera.");
                 flags.runtime_changed |= toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera.");
-                flags.runtime_changed |= numeric(ui, "film format mm", &mut params.camera.film_format_mm, 1.0, 1000.0, 0.5, 2, "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain V3, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
+                flags.runtime_changed |= numeric(ui, "film format mm", &mut params.camera.film_format_mm, 1.0, 1000.0, 0.5, 2, "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain Dye, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
                 flags.runtime_changed |= choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure.");
                 flags.runtime_changed |= choice_tip(ui, "color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter.");
             });
@@ -335,13 +335,13 @@ pub(crate) fn show(
                 let grain = &mut params.film_render.grain;
                 flags.runtime_changed |= toggle(ui, "active", &mut grain.active, "Add grain to the negative");
                 egui::ComboBox::from_label("Engine")
-                    .selected_text(match grain.engine { GrainEngine::V1 => "V1 — emulsion grain", GrainEngine::V2 => "V2 — procedural grain", GrainEngine::V3 => "V3 — film-coordinate dye field" })
+                    .selected_text(match grain.engine { GrainEngine::Spektra => "Spektra", GrainEngine::Procedural => "Procedural", GrainEngine::Dye => "Dye" })
                     .show_ui(ui, |ui| {
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V1, "V1 — emulsion grain").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V2, "V2 — procedural grain").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V3, "V3 — film-coordinate dye field").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Spektra, "Spektra").on_hover_text("Original upstream experimental density-domain grain.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Procedural, "Procedural").on_hover_text("Dehancer-derived procedural grain in encoded RGB.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Dye, "Dye").on_hover_text("Self-developed grain formed in a film-coordinate dye field.").changed();
                     });
-                if grain.engine == GrainEngine::V2 {
+                if grain.engine == GrainEngine::Procedural {
                     let mut profile = grain.v2_profile.clone();
                     egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
                         for name in PROFILE_NAMES { ui.selectable_value(&mut profile, (*name).to_owned(), name); }
@@ -373,10 +373,10 @@ pub(crate) fn show(
                         flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, 0.0, 100.0, 1.0, 1, "Chromatic grain amount.");
                     }
                     flags.runtime_changed |= numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, 0.0, 1.0, 1.0, 0, "Film resolution implementation: 0 = Optical Resolution; 1 = Fast Blur.");
-                    flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain V2 phase timer; 0 uses the seed-derived phase.");
+                    flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase.");
                     let resolved = grain.resolved_grain_v2();
                     flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
-                } else if grain.engine == GrainEngine::V3 {
+                } else if grain.engine == GrainEngine::Dye {
                     flags.runtime_changed |= numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, 1.0, 32.0, 0.5, 1, "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
                     flags.runtime_changed |= numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, 0.1, 8.0, 0.05, 2, "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
                     flags.runtime_changed |= tuple(ui, "rms granularity", &mut grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");

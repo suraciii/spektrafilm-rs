@@ -1,12 +1,12 @@
-# Grain V3 Spectral Aperture Probe
+# Grain Dye Spectral Aperture Probe
 
 ## Purpose
 
-The probe measures the effect of reading formed Grain V3 density through a finer output lattice before film-print exposure. It is an engineering control for the print route. It does not change the Grain V3 field model or the default product behavior.
+The probe measures the effect of reading formed Grain Dye density through a finer output lattice before film-print exposure. It is an engineering control for the print route. It does not change the Grain Dye field model or the default product behavior.
 
 ## Scope
 
-The probe is enabled for active Grain V3 when `SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR` is set to an integer from `2` through `24`. Other grain engines and inactive Grain V3 ignore the variable.
+The probe is enabled for active Grain Dye when `SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR` is set to an integer from `2` through `24`. Other grain engines and inactive Grain Dye ignore the variable.
 
 The probe supports the `input > film > print > scan` route with `io.scan_film = false`, injection at or before `log_e_film`, and collection at `rgb_out`. It rejects film scans, later injection taps, and other collection taps. Enlarger diffusion, scanner blur, unsharp mask, and print glare must be inactive.
 
@@ -14,13 +14,13 @@ The default path remains the existing density readout when the variable is absen
 
 ## Readout
 
-The probe keeps the developed source, V3 parameters, random seed, global cell addresses, source edge extension, formation support, layer allocation, Poisson counts, and cell pitch unchanged.
+The probe keeps the developed source, Dye parameters, random seed, global cell addresses, source edge extension, formation support, layer allocation, Poisson counts, and cell pitch unchanged.
 
-It multiplies the requested V3 output dimensions by the factor and divides both output footprint pitches by the factor. Grain V3 then reads the same global formed field at the finer footprints.
+It multiplies the requested Dye output dimensions by the factor and divides both output footprint pitches by the factor. Grain Dye then reads the same global formed field at the finer footprints.
 
 The print spectral stage runs on the finer CMY readout with the existing film profile, print profile, illuminant, filtration, normalization, preflash, exposure, and selected enlarger LUT. The returned linear print exposure is reconstructed from the stage log output, averaged over each factor-by-factor output block, and converted back to the stage log representation before print development.
 
-The probe performs no averaging in encoded RGB. It does not average CMY before the print spectral transfer more than the finer V3 footprints already do.
+The probe performs no averaging in encoded RGB. It does not average CMY before the print spectral transfer more than the finer Dye footprints already do.
 
 ## Interpretation
 

@@ -19,7 +19,7 @@ impl MassLaw {
             Ok(value) => Self::parse(&value),
             Err(std::env::VarError::NotPresent) => Ok(Self::Fixed),
             Err(std::env::VarError::NotUnicode(_)) => Err(
-                "film grain V3: SPEKTRAFILM_GRAIN_V3_MASS_LAW must be fixed, two_class or gamma4"
+                "film grain Dye: SPEKTRAFILM_GRAIN_V3_MASS_LAW must be fixed, two_class or gamma4"
                     .to_owned(),
             ),
         }
@@ -31,7 +31,7 @@ impl MassLaw {
             "two_class" => Ok(Self::TwoClass),
             "gamma4" => Ok(Self::Gamma4),
             _ => Err(format!(
-                "film grain V3: unknown mass law {value:?}; expected fixed, two_class or gamma4"
+                "film grain Dye: unknown mass law {value:?}; expected fixed, two_class or gamma4"
             )),
         }
     }
@@ -49,7 +49,7 @@ impl MassLaw {
         let rate = lambda * self.rate_multiplier();
         if !lambda.is_finite() || lambda < 0.0 || rate > (1u64 << 52) as f64 {
             return Err(
-                "film grain V3: mass-law rate must be finite, nonnegative and at most 2^52 after compensation"
+                "film grain Dye: mass-law rate must be finite, nonnegative and at most 2^52 after compensation"
                     .to_owned(),
             );
         }
@@ -76,7 +76,7 @@ impl MassLaw {
             }
         };
         if !mass.is_finite() || mass < 0.0 {
-            return Err("film grain V3: sampled dye mass is unrepresentable".to_owned());
+            return Err("film grain Dye: sampled dye mass is unrepresentable".to_owned());
         }
         Ok(mass)
     }
@@ -85,7 +85,7 @@ impl MassLaw {
 /// Marsaglia–Tsang for shape 4K >= 4, using the existing cached normal stream.
 fn gamma4_total(rng: &mut FastStatsRng, count: u64) -> Result<f64, String> {
     if count == 0 || count >= 1u64 << 53 {
-        return Err("film grain V3: conditional Gamma count is unrepresentable".to_owned());
+        return Err("film grain Dye: conditional Gamma count is unrepresentable".to_owned());
     }
     let d = 4.0 * count as f64 - 1.0 / 3.0;
     let c = 1.0 / (9.0 * d).sqrt();
@@ -100,7 +100,7 @@ fn gamma4_total(rng: &mut FastStatsRng, count: u64) -> Result<f64, String> {
         if u < 1.0 - 0.0331 * x.powi(4) || u.ln() < gamma_log_acceptance(x, t, d) {
             let mass = (0.2 * d) * v;
             if !mass.is_finite() || mass <= 0.0 {
-                return Err("film grain V3: conditional Gamma mass is unrepresentable".to_owned());
+                return Err("film grain Dye: conditional Gamma mass is unrepresentable".to_owned());
             }
             return Ok(mass);
         }

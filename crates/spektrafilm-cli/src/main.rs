@@ -773,7 +773,7 @@ fn cmd_process(
         saving_space_resolved,
     );
     plan.validate_saving()?;
-    // Active V3 resolves its field on the CPU and never enters the resident
+    // Active Dye resolves its field on the CPU and never enters the resident
     // WGPU chain, whatever backend the surrounding stages use. Its supported
     // condition is validated here so the dry run reports and rejects exactly
     // what a render does, and the effective backend is reported next to the
@@ -787,7 +787,7 @@ fn cmd_process(
             spektrafilm_core::stages::grain_v3::effective_backend_note()
         );
     }
-    // An active V3 field resolves on the CPU whatever backend the rest of
+    // An active Dye field resolves on the CPU whatever backend the rest of
     // the chain uses, so the dry run reports the effective backend it did
     // not select.
     let grain_v3 = json!({
@@ -806,7 +806,7 @@ fn cmd_process(
             "print_profile": resolved.print_name,
             "parameters": params,
             "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
-            "film_grain_v3": grain_v3,
+            "film_grain_dye": grain_v3,
             "data": {"path": data.path, "source": data.source},
             "input": {
                 "kind": if input_is_raw { "raw" } else { "raster" },

@@ -344,7 +344,7 @@ fn conditions(path: &str) -> Vec<String> {
     if path == "scanner.receiver_profile" {
         out.push("film scans only; legacy_colorimetric preserves CIE spectral-to-output acquisition; lab_scan_approx is an approximate uncalibrated Fotufilm narrow-band receiver (630/545/465 nm, sigma 8.5/14/9.5 nm), version fotufilm_lab_scan_approx_v1".into());
     } else if path == "scanner.scan_output" {
-        out.push("positive_scan requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain V2 are unsupported".into());
+        out.push("positive_scan requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain Procedural are unsupported".into());
     }
     if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push("each channel requires 0 <= black_point < white_point <= 1; points remap without clipping".into());
@@ -379,13 +379,13 @@ fn description(path: &str) -> Option<&'static str> {
             "Both components are fractions of the uncropped source long edge, not independent width and height fractions.",
         ),
         "film_render.grain.v2_size" => {
-            Some("Grain V2 Size; used only with engine v2 and profile custom.")
+            Some("Grain Procedural Size; used only with engine procedural and profile custom.")
         }
         "film_render.grain.v2_amount" => Some(
-            "Grain V2 Amount in percent; used with named and custom V2 profiles, distinct from RMS granularity.",
+            "Grain Procedural Amount in percent; used with named and custom Procedural profiles, distinct from RMS granularity.",
         ),
         "film_render.grain.rms_granularity" => Some(
-            "RMS granularity is distinct from V2 Amount; V3 uses it to scale per-channel event area; upstream V1 preserves it as a no-op.",
+            "RMS granularity is distinct from Procedural Amount; Dye uses it to scale per-channel event area; upstream Spektra preserves it as a no-op.",
         ),
         _ => None,
     }

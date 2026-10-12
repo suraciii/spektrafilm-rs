@@ -94,7 +94,7 @@ pub(crate) fn print_text(report: &Value) {
         "GRAIN (effective controls; conditions from describe --module film_render.grain)",
         &params["film_render"]["grain"],
     );
-    record("GRAIN V3 ROUTING", &report["film_grain_v3"]);
+    record("GRAIN DYE ROUTING", &report["film_grain_dye"]);
     record(
         "BACKEND (requested, not device availability)",
         &report["backend"],

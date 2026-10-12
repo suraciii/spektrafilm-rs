@@ -625,7 +625,7 @@ mod parity_tests {
         // matrix is exercised, not just the identity case.
         params.camera.exposure_compensation_ev = 0.5;
         params.film_render.grain.active = true;
-        params.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
         // Output gamut compression forces the per-stage path — keep it off
         // so this test exercises the GPU-resident chain.
         params.io.output_gamut_compress.algorithm = "off".into();
