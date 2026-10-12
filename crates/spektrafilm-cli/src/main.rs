@@ -1,6 +1,7 @@
 mod contract;
 mod lut;
 mod preset;
+mod process_report;
 mod runner;
 mod telemetry;
 
@@ -206,6 +207,12 @@ struct ProcessArgs {
     /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
     #[arg(help_heading = "Input and RAW loading")]
     input: PathBuf,
+    /// Raster color space; discover with describe --field io.input_color_space.
+    #[arg(long, help_heading = "Input and RAW loading")]
+    input_color_space: Option<String>,
+    /// Whether raster samples require transfer decoding (true or false).
+    #[arg(long, action = clap::ArgAction::Set, help_heading = "Input and RAW loading")]
+    input_cctf_decoding: Option<bool>,
     /// Destination TIFF, EXR, PNG, or JPEG image.
     #[arg(short, long, help_heading = "Output")]
     output: PathBuf,
@@ -239,8 +246,8 @@ struct ProcessArgs {
     /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
     #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
     preset: Vec<String>,
-    /// Scan film directly, skipping printing unless --route overrides it.
-    #[arg(long, help_heading = "Look and workflow")]
+    /// Scan film directly, skipping printing; conflicts with --route.
+    #[arg(long, conflicts_with = "route", help_heading = "Look and workflow")]
     scan_film: bool,
     /// Print per-stage timing information to stderr.
     #[arg(long, help_heading = "Execution and diagnostics")]
@@ -265,6 +272,17 @@ struct ProcessArgs {
     /// Validate and print effective configuration without decoding or rendering.
     #[arg(long, help_heading = "Execution and diagnostics")]
     dry_run: bool,
+    /// Dry-run presentation: json or text; requires --dry-run.
+    #[arg(
+        long,
+        value_enum,
+        requires = "dry_run",
+        help_heading = "Execution and diagnostics"
+    )]
+    dry_run_format: Option<DiscoveryFormat>,
+    /// Deterministic stochastic seed, from 0 through 4294967295 (default: 0).
+    #[arg(long, help_heading = "Execution and diagnostics")]
+    seed: Option<u32>,
     /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
     #[arg(long, help_heading = "Output")]
     raw_out: Option<PathBuf>,
@@ -739,6 +757,13 @@ fn cmd_process(
                 scan_film,
                 scan_output: workflow.scan_output.as_deref(),
                 input_is_raw,
+                input_color_space: args.input_color_space.as_deref(),
+                input_cctf_decoding: args.input_cctf_decoding,
+                require_input_declaration: std::env::var_os(
+                    "SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS",
+                )
+                .as_deref()
+                    != Some(std::ffi::OsStr::new("1")),
                 digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
                     .as_deref()
                     == Some(std::ffi::OsStr::new("1"))
@@ -768,7 +793,9 @@ fn cmd_process(
     let mut print = resolved.print;
     apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
     apply_channel_swap(&mut print, &workflow.print_channel_swap)?;
-    let params = resolved.params;
+    let mut params = resolved.params;
+    params.random_seed = u64::from(args.seed.unwrap_or(0));
+    process_report::warn_edits(&resolved.edits);
     let inject = params
         .taps
         .inject
@@ -805,7 +832,7 @@ fn cmd_process(
         saving_space_resolved,
     );
     plan.validate_saving()?;
-    // Active V3 resolves its field on the CPU and never enters the resident
+    // Active Dye resolves its field on the CPU and never enters the resident
     // WGPU chain, whatever backend the surrounding stages use. Its supported
     // condition is validated here so the dry run reports and rejects exactly
     // what a render does, and the effective backend is reported next to the
@@ -819,7 +846,7 @@ fn cmd_process(
             spektrafilm_core::stages::grain_v3::effective_backend_note()
         );
     }
-    // An active V3 field resolves on the CPU whatever backend the rest of
+    // An active Dye field resolves on the CPU whatever backend the rest of
     // the chain uses, so the dry run reports the effective backend it did
     // not select.
     let grain_v3 = json!({
@@ -833,41 +860,52 @@ fn cmd_process(
     });
     if dry_run {
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "film_profile": resolved.film_name,
-                "print_profile": resolved.print_name,
-                "parameters": params,
-                "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
-                "film_grain_v3": grain_v3,
-                "data": {"path": data.path, "source": data.source},
-                "input": {
-                    "kind": if input_is_raw { "raw" } else { "raster" },
-                    "raw_loading": input_is_raw.then(|| json!({
-                        "white_balance": workflow.raw_white_balance,
-                        "temperature": raw_options.temperature,
-                        "tint": raw_options.tint,
-                        "lens_correction": raw_options.lens_correction
-                    }))
-                },
-                "output": {
-                    "path": output,
-                    "format": plan.format.name(),
-                    "bit_depth": plan.depth.bits(),
-                    "color_space": plan.saving_space,
-                    "cctf_encoding": plan.saving_encoded,
-                    "compression": plan.compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
-                    "jpeg_quality": plan.jpeg_quality,
-                    "jpeg_subsampling": plan.jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
-                },
-                "backend": {
-                    "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
-                    "policy": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }).unwrap_or("auto"),
-                    "environment": backend_env
-                }
-            }))?
-        );
+        let report = json!({
+            "film_profile": resolved.film_name,
+            "print_profile": resolved.print_name,
+            "parameters": params,
+            "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
+            "film_grain_dye": grain_v3,
+            "data": {"path": data.path, "source": data.source},
+            "input": {
+                "kind": if input_is_raw { "raw" } else { "raster" },
+                "declaration": resolved.input_declaration,
+                "raw_loading": input_is_raw.then(|| json!({
+                    "white_balance": workflow.raw_white_balance,
+                    "temperature": raw_options.temperature,
+                    "tint": raw_options.tint,
+                    "lens_correction": raw_options.lens_correction
+                }))
+            },
+            "output": {
+                "path": output,
+                "format": plan.format.name(),
+                "bit_depth": plan.depth.bits(),
+                "color_space": plan.saving_space,
+                "cctf_encoding": plan.saving_encoded,
+                "compression": plan.compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
+                "jpeg_quality": plan.jpeg_quality,
+                "jpeg_subsampling": plan.jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
+            },
+            "backend": {
+                "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
+                "policy": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }).unwrap_or("auto"),
+                "environment": backend_env
+            }
+        });
+        let mut report = report;
+        report["seed"] = json!(params.random_seed);
+        report["edits"] = serde_json::to_value(&resolved.edits)?;
+        report["unchecked"] = json!([
+            "pixel_decode",
+            "compute_device",
+            "metered_exposure",
+            "output_geometry"
+        ]);
+        match args.dry_run_format.unwrap_or(DiscoveryFormat::Json) {
+            DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+            DiscoveryFormat::Text => process_report::print_text(&report),
+        }
         return Ok(());
     }
     let backend = invocation.phase(

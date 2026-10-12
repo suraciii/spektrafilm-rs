@@ -159,7 +159,7 @@ pub(crate) fn validate_gamut_triplet(
     Ok((threshold, limit, power))
 }
 
-/// Grain V2 timer override sentinel: 0 selects the seed-derived phase;
+/// Grain Procedural timer override sentinel: 0 selects the seed-derived phase;
 /// otherwise the phase must be finite and strictly below 1.
 pub(crate) fn validate_v2_timer(value: f64) -> Result<(), String> {
     if value != 0.0 && (!value.is_finite() || !(0.0..1.0).contains(&value)) {
@@ -188,7 +188,10 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "film_render.grain.engine" => ["v1", "v2", "v3"].iter().map(|v| (*v).into()).collect(),
+        "film_render.grain.engine" => ["spektra", "procedural", "dye"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
         "film_render.grain.v2_mode" => ["analogue", "noise"].iter().map(|v| (*v).into()).collect(),
         "film_render.grain.v2_film_type" => ["negative", "positive"]
             .iter()
@@ -284,7 +287,7 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
         "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
         "scanner.scan_output" => matches!(value, "direct_scan" | "positive_scan"),
-        "film_render.grain.engine" => matches!(value, "v1" | "v2" | "v3"),
+        "film_render.grain.engine" => matches!(value, "spektra" | "procedural" | "dye"),
         "film_render.grain.v2_mode" => matches!(value, "analogue" | "noise"),
         "film_render.grain.v2_film_type" => matches!(value, "negative" | "positive"),
         "film_render.grain.v2_profile" => {

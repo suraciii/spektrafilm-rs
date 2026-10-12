@@ -48,7 +48,7 @@ impl ParameterEdits {
                 return Err("empty parameter assignment".into());
             }
             let eq = find_equals(item).ok_or_else(|| {
-                format!("expected PATH=VALUE or a .toml/.json file, got {item:?}; example: --set film_render.grain.engine=v2")
+                format!("expected PATH=VALUE or a .toml/.json file, got {item:?}; example: --set film_render.grain.engine=procedural")
             })?;
             let path = item[..eq].trim();
             let raw = item[eq + 1..].trim();
@@ -252,7 +252,7 @@ mod inline_value_tests {
 
     #[test]
     fn plain_values_follow_parameter_types_and_preserve_quoted_forms() {
-        let source = "film_render.grain.engine=v2,film_render.grain.v2_profile=custom,io.output_color_space=ProPhoto RGB,camera.auto_exposure=false,camera.exposure_compensation_ev=+.5,camera.filter_uv=[1,2,3],film_render.grain.v2_amount=null";
+        let source = "film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,io.output_color_space=ProPhoto RGB,camera.auto_exposure=false,camera.exposure_compensation_ev=+.5,camera.filter_uv=[1,2,3],film_render.grain.v2_amount=null";
         let mut params = RuntimeParams::default();
         ParameterEdits::parse(source)
             .unwrap()
@@ -260,7 +260,7 @@ mod inline_value_tests {
             .unwrap();
         assert_eq!(
             params.film_render.grain.engine,
-            super::super::grain::GrainEngine::V2
+            super::super::grain::GrainEngine::Procedural
         );
         assert_eq!(params.film_render.grain.v2_profile, "custom");
         assert_eq!(params.io.output_color_space, "ProPhoto RGB");
@@ -268,14 +268,14 @@ mod inline_value_tests {
         assert_eq!(params.camera.exposure_compensation_ev, 0.5);
         assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);
         assert_eq!(params.film_render.grain.v2_amount, None);
-        ParameterEdits::parse(r#"io.output_color_space="sRGB",film_render.grain.engine="v1""#)
+        ParameterEdits::parse(r#"io.output_color_space="sRGB",film_render.grain.engine="spektra""#)
             .unwrap()
             .apply(&mut params)
             .unwrap();
         assert_eq!(params.io.output_color_space, "sRGB");
         assert_eq!(
             params.film_render.grain.engine,
-            super::super::grain::GrainEngine::V1
+            super::super::grain::GrainEngine::Spektra
         );
     }
 
@@ -300,7 +300,7 @@ mod inline_value_tests {
             "camera.auto_exposure=yes,camera.auto_exposure=false",
             "camera.exposure_compensation_ev=fast,camera.exposure_compensation_ev=0",
             "camera.exposure_compensation_ev=inf",
-            "film_render.grain.engine=invalid,film_render.grain.engine=v2",
+            "film_render.grain.engine=invalid,film_render.grain.engine=procedural",
             "settings.preview_max_size=1.5",
             "camera.filter_uv=1,2,3",
             r#"camera.auto_exposure="false""#,
@@ -311,7 +311,7 @@ mod inline_value_tests {
         let error = ParameterEdits::parse("camera.auto_exposure=yes").unwrap_err();
         assert!(error.contains("true or false"));
         let error = ParameterEdits::parse("film_render.grain.engine=unknown").unwrap_err();
-        assert!(error.contains("v1") && error.contains("v2"));
+        assert!(error.contains("spektra") && error.contains("procedural"));
     }
 }
 
@@ -853,7 +853,7 @@ mod tests {
             describe_field(typo).unwrap_err(),
             ParameterEdits::parse("film_render.grain.engin=v2").unwrap_err(),
             ParameterEdits::from_value(
-                serde_json::json!({"film_render": {"grain": {"engin": "v2"}}}),
+                serde_json::json!({"film_render": {"grain": {"engin": "procedural"}}}),
             )
             .unwrap_err(),
         ] {
@@ -991,7 +991,7 @@ mod tests {
             f["path"] == "film_render.grain.engine"
                 && f["enum_values"]
                     .as_array()
-                    .is_some_and(|v| v.iter().any(|e| e == "v2"))
+                    .is_some_and(|v| v.iter().any(|e| e == "procedural"))
         }));
         assert!(describe_module("workflow").is_err());
         assert!(describe_module("unknown").is_err());

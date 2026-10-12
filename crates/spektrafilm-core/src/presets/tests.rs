@@ -650,7 +650,7 @@ fn section_application_checks_film_corrections_and_grain_before_commit() {
     current.scanner.black_correction = false;
     current.film_render.grain.active = false;
     for payload in [
-        serde_json::json!({"film_render":{"grain":{"active":true,"engine":"v2"}}}),
+        serde_json::json!({"film_render":{"grain":{"active":true,"engine":"procedural"}}}),
         serde_json::json!({"scanner":{"white_correction":true}}),
         serde_json::json!({"scanner":{"black_correction":true}}),
     ] {

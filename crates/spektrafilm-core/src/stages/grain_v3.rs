@@ -1,7 +1,7 @@
-//! Film-coordinate grain V3 integration (`specs/film-grain/v3/`).
+//! Film-coordinate grain Dye integration (`specs/film-grain/v3/`).
 //!
 //! The pipeline develops the *full* source and hands the developed CMY
-//! density to this module. The module owns V3 field resolution and the
+//! density to this module. The module owns Dye field resolution and the
 //! readout to the requested output geometry
 //! ([`spektrafilm_model::grain::v3::apply`]); scanner interpretation and
 //! encoding stay with their owners.
@@ -12,14 +12,12 @@
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_model::grain::v3::{self, GrainV3Params, SourceRect};
+use spektrafilm_model::grain::v3::{self, GrainV3Params, ReadoutGrid};
 
 use crate::params::RuntimeParams;
 use crate::params::grain::GrainEngine;
 use crate::profile::Profile;
 
-/// Film usage of the supported condition: still photography.
-const SUPPORTED_USAGE: &str = "still";
 /// Granularity preset of the reference stock `kodak_portra_800`. A channel
 /// with this preset keeps the validated `v3_event_area_um2`; every other
 /// channel and stock is resolved against it.
@@ -64,6 +62,11 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     if params.workflow.route != PRINT_ROUTE && params.workflow.route != FILM_SCAN_ROUTE {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
+        ));
+    }
+    if params.scanner.auto_setup == crate::params::ScannerAutoSetup::PerFrame {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} does not support per_frame scanner setup"
         ));
     }
     if params.settings.use_enlarger_lut || params.settings.use_scanner_lut {
@@ -138,6 +141,15 @@ pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> 
     Ok(Some(factor))
 }
 
+/// Integer rectangle, in source pixels or in the extended output grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRect {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
 /// Readout geometry of the requested output grid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Geometry {
@@ -154,24 +166,88 @@ pub struct Geometry {
     pub output_pitch_um: [f64; 2],
 }
 
-/// Whether an active V3 field must run.
+impl Geometry {
+    pub fn grid(&self) -> ReadoutGrid {
+        ReadoutGrid {
+            origin_um: [
+                self.rect.x as f64 * self.source_pitch_um,
+                self.rect.y as f64 * self.source_pitch_um,
+            ],
+            pitch_um: self.output_pitch_um,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    /// Extend the requested output lattice to cover the full film. The crop
+    /// retains its exact footprints even when output rounding changes pitch.
+    pub fn full_film_grid(&self, source: &ImageBuf) -> Result<(ReadoutGrid, SourceRect), String> {
+        let mut grid = self.grid();
+        let mut offset = [0usize; 2];
+        let mut dimensions = [0u32; 2];
+        let axes = [
+            (source.width, self.rect.x, self.rect.width, self.width),
+            (source.height, self.rect.y, self.rect.height, self.height),
+        ];
+        for (axis, (extent, start, length, samples)) in axes.into_iter().enumerate() {
+            // Source and output dimensions are u32, so each product fits u64.
+            let before = (start as u64 * samples as u64).div_ceil(length as u64);
+            let after = ((extent as usize - start - length) as u64 * samples as u64)
+                .div_ceil(length as u64);
+            let count = before + samples as u64 + after;
+            if count > u32::MAX as u64 {
+                return Err("film grain Dye: full-film output grid exceeds addressable dimensions; reduce the output size".into());
+            }
+            offset[axis] = before as usize;
+            dimensions[axis] = count as u32;
+            grid.origin_um[axis] -= before as f64 * grid.pitch_um[axis];
+        }
+        grid.width = dimensions[0];
+        grid.height = dimensions[1];
+        Ok((
+            grid,
+            SourceRect {
+                x: offset[0],
+                y: offset[1],
+                width: self.width as usize,
+                height: self.height as usize,
+            },
+        ))
+    }
+}
+
+/// Extract the delivered region after every downstream spatial operation.
+pub fn crop_output(image: ImageBuf, rect: SourceRect) -> ImageBuf {
+    if rect.x == 0
+        && rect.y == 0
+        && rect.width == image.width as usize
+        && rect.height == image.height as usize
+    {
+        return image;
+    }
+    let mut data = Vec::with_capacity(rect.width * rect.height * 3);
+    for row in image.rows().skip(rect.y).take(rect.height) {
+        data.extend_from_slice(&row[rect.x * 3..(rect.x + rect.width) * 3]);
+    }
+    ImageBuf::from_data(rect.width as u32, rect.height as u32, data)
+}
+
+/// Whether an active Dye field must run.
 ///
 /// Preview mode, LUT mode and stochastic deactivation already clear
-/// `grain.active` at digest time. Spatial deactivation bypasses V3 here:
+/// `grain.active` at digest time. Spatial deactivation bypasses Dye here:
 /// the field is spatial by construction, and the LUT bake needs a
 /// pointwise chain. These modes must not resolve or allocate the field.
 pub fn active(params: &RuntimeParams) -> bool {
     let grain = &params.film_render.grain;
     grain.active
-        && matches!(grain.engine, GrainEngine::V3)
+        && matches!(grain.engine, GrainEngine::Dye)
         && !params.debug.deactivate_spatial_effects
 }
 
-/// Fail before any work when V3 is selected outside its supported
-/// condition: still color-negative filming stocks (spec §Supported
-/// condition). The restriction is this implementation's support, not a
-/// permanent exclusion: expanding it requires the same validation for the
-/// additional condition.
+/// Fail before any work when Dye is selected outside its supported
+/// condition: color-negative filming stocks and film-scan or print routes
+/// (spec §Supported condition).
 pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), String> {
     if !active(params) {
         return Ok(());
@@ -183,18 +259,17 @@ pub fn validate_supported(film: &Profile, params: &RuntimeParams) -> Result<(), 
         _ => false,
     };
     let info = &film.info;
-    let stock_supported =
-        film.is_negative() && film.is_filming() && film.is_color() && info.usage == SUPPORTED_USAGE;
+    let stock_supported = film.is_negative() && film.is_filming() && film.is_color();
     if stock_supported && route_supported {
         return Ok(());
     }
     Err(format!(
-        "film grain V3: unsupported condition — this implementation supports {SUPPORTED_USAGE} \
+        "film grain Dye: unsupported condition — this implementation supports \
          color-negative filming stocks on the `{PRINT_ROUTE}` route with io.scan_film = false \
          or the `{FILM_SCAN_ROUTE}` route with io.scan_film = true, but got stock {:?} \
          (type {:?}, use {:?}, support {:?}, stage {:?}, channel model {:?}), \
          workflow.route {route:?}, io.scan_film {}; select a supported film and route, or set \
-         film_render.grain.engine to v1/v2",
+         film_render.grain.engine to spektra/procedural",
         info.stock.as_deref().unwrap_or(""),
         info.film_type,
         info.usage,
@@ -245,11 +320,11 @@ pub fn aperture_grid(geometry: &Geometry, factor: u32) -> Result<ReadoutGrid, St
     let width = geometry
         .width
         .checked_mul(factor)
-        .ok_or_else(|| "film grain V3 aperture: fine output width overflows".to_owned())?;
+        .ok_or_else(|| "film grain Dye aperture: fine output width overflows".to_owned())?;
     let height = geometry
         .height
         .checked_mul(factor)
-        .ok_or_else(|| "film grain V3 aperture: fine output height overflows".to_owned())?;
+        .ok_or_else(|| "film grain Dye aperture: fine output height overflows".to_owned())?;
     Ok(ReadoutGrid {
         origin_um: [
             geometry.rect.x as f64 * geometry.source_pitch_um,
@@ -263,14 +338,14 @@ pub fn aperture_grid(geometry: &Geometry, factor: u32) -> Result<ReadoutGrid, St
         height,
     })
 }
-/// Average a factor-upscaled linear RGB-like exposure back to the requested grid.
-pub fn collapse_linear_blocks(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
+/// Average fine print log exposure in linear light, then return to log space.
+pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
     let factor = factor as usize;
     let width = fine.width as usize;
     let height = fine.height as usize;
-    if factor == 0 || width % factor != 0 || height % factor != 0 {
+    if factor == 0 || !width.is_multiple_of(factor) || !height.is_multiple_of(factor) {
         return Err(
-            "film grain V3 aperture: fine image dimensions must be divisible by the factor"
+            "film grain Dye aperture: fine image dimensions must be divisible by the factor"
                 .to_owned(),
         );
     }
@@ -289,29 +364,17 @@ pub fn collapse_linear_blocks(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, 
                 let row = (oy * factor + dy) * width;
                 for dx in 0..factor {
                     let src = (row + ox * factor + dx) * 3;
-                    for c in 0..3 {
-                        sum[c] += fine.data[src + c] as f64;
+                    for (c, value) in sum.iter_mut().enumerate() {
+                        *value +=
+                            10.0f64.powf(spektrafilm_math::precision::to_f64(fine.data[src + c]));
                     }
                 }
             }
-            for c in 0..3 {
-                dst[c] = spektrafilm_math::precision::from_f64(sum[c] / block_area);
+            for (value, sum) in dst.iter_mut().zip(sum) {
+                *value = spektrafilm_math::precision::from_f64((sum / block_area).log10());
             }
         });
     Ok(out)
-}
-/// Collapse fine print log exposure through linear light, then return to log space.
-pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
-    let mut linear = fine.clone();
-    linear.data.par_iter_mut().for_each(|value| {
-        *value = spektrafilm_math::precision::from_f64(10.0f64.powf(*value as f64));
-    });
-    let linear = collapse_linear_blocks(&linear, factor)?;
-    let mut output = linear;
-    output.data.par_iter_mut().for_each(|value| {
-        *value = spektrafilm_math::precision::from_f64((*value as f64).max(0.0).log10());
-    });
-    Ok(output)
 }
 
 /// Per-channel event-area scale `k_c` resolved from the stock granularity
@@ -321,7 +384,7 @@ pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, S
 /// the readout RMS proportional to the preset at fixed density and support.
 /// The presets are not verified Kodak density-RMS values: they act only as
 /// channel and stock ratios against [`GRANULARITY_REFERENCE`]. This is the
-/// only per-channel strength input; V1's `particle_scale` would count a
+/// only per-channel strength input; Spektra's `particle_scale` would count a
 /// coarser blue record a second time.
 fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
     rms_granularity.map(|granularity| {
@@ -333,7 +396,7 @@ fn channel_event_scale(rms_granularity: [f64; 3]) -> [f64; 3] {
     })
 }
 
-/// Resolve the V3 model inputs from the resolved film profile and the
+/// Resolve the Dye model inputs from the resolved film profile and the
 /// runtime controls. `resolve` owns the profile-derived inputs (layer
 /// maxima, composite curves, layer curves, film polarity) so every caller
 /// — render, expectation diagnostic, certification — feeds the model the
@@ -345,7 +408,7 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
     let layer_curves = film.density_curves_layers_f64();
     if layer_curves.is_empty() || curves.normalized.is_empty() {
         return Err(format!(
-            "film grain V3: film profile '{}' has no density curves \
+            "film grain Dye: film profile '{}' has no density curves \
              (density_curves / density_curves_layers), so the field cannot be \
              resolved",
             film.info.stock.as_deref().unwrap_or("<unnamed>")
@@ -354,7 +417,7 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
     let layer_max = spektrafilm_model::density_curves::density_max_layers_f64(&layer_curves);
     if layer_max.iter().flatten().any(|&max| max <= 0.0) {
         return Err(format!(
-            "film grain V3: film profile '{}' yields a non-positive per-layer density \
+            "film grain Dye: film profile '{}' yields a non-positive per-layer density \
              maximum (empty or all-zero density_curves_layers), so no field can be \
              realized",
             film.info.stock.as_deref().unwrap_or("<unnamed>")
@@ -380,18 +443,18 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
 
 /// Read the requested film region out of the full developed source.
 ///
-/// The field is realized on the CPU: V3 disables the fused WGPU/resident
+/// The field is realized on the CPU: Dye disables the fused WGPU/resident
 /// chain (see [`crate::pipeline::Pipeline::process`]), so the reported
-/// backend for an active V3 render is CPU regardless of the selected
+/// backend for an active Dye render is CPU regardless of the selected
 /// backend of the surrounding stages.
 pub fn readout(
     source: &ImageBuf,
     film: &Profile,
     params: &RuntimeParams,
     source_pitch_um: f64,
+    grid: ReadoutGrid,
     backend: &dyn spektrafilm_gpu::ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let readout_geometry = geometry(source, params, source_pitch_um)?;
     let resolved = resolve(film, params)?;
     // The field resolves on the CPU whatever backend the surrounding stages
     // use; the observation records that executor and its reason.
@@ -403,14 +466,9 @@ pub fn readout(
     tracing::info!(
         stock = film.info.stock.as_deref().unwrap_or(""),
         source = format_args!("{}x{}", source.width, source.height),
-        region = format_args!(
-            "{}x{}+({},{})",
-            readout_geometry.rect.width,
-            readout_geometry.rect.height,
-            readout_geometry.rect.x,
-            readout_geometry.rect.y
-        ),
-        output = format_args!("{}x{}", readout_geometry.width, readout_geometry.height),
+        origin_um = ?grid.origin_um,
+        output_pitch_um = ?grid.pitch_um,
+        output = format_args!("{}x{}", grid.width, grid.height),
         support_um = resolved.support_um,
         event_area_um2 = resolved.event_area_um2,
         channel_scale = format_args!(
@@ -419,16 +477,9 @@ pub fn readout(
         ),
         cell_um = resolved.cell_um.unwrap_or(resolved.support_um / 2.0),
         expectation = resolved.expectation,
-        "film grain V3: field readout on CPU"
+        "film grain Dye: field readout on CPU"
     );
-    v3::apply(
-        source,
-        readout_geometry.source_pitch_um,
-        readout_geometry.rect,
-        readout_geometry.width,
-        readout_geometry.height,
-        &resolved,
-    )
+    v3::apply(source, source_pitch_um, grid, &resolved)
 }
 
 /// Read linear route response with the same formed field and exact cell overlaps.
@@ -456,7 +507,7 @@ pub fn readout_with_response(
 
 /// Effective-backend note for user-visible backend/capability output.
 pub fn effective_backend_note() -> &'static str {
-    "film grain V3: field readout on CPU (resident WGPU chain disabled)"
+    "film grain Dye: field readout on CPU (resident WGPU chain disabled)"
 }
 
 fn cell_um_override() -> Option<f64> {
@@ -476,6 +527,45 @@ mod tests {
     use crate::params::RuntimeParams;
     use spektrafilm_math::precision::from_f64;
 
+    #[test]
+    fn aperture_averages_linear_exposure_per_output_block() {
+        // Adjacent blocks contain exposures 1/100 and 10/1000. Averaging
+        // their logs would yield 1 and 2 instead of log10(50.5/505).
+        let fine = ImageBuf::from_data(
+            4,
+            2,
+            [0.0, 2.0, 1.0, 3.0, 0.0, 2.0, 1.0, 3.0]
+                .into_iter()
+                .flat_map(|v| [from_f64(v); 3])
+                .collect(),
+        );
+        let out = collapse_log_exposure(&fine, 2).unwrap();
+        assert_eq!((out.width, out.height), (2, 1));
+        for (pixel, expected) in out.data.as_chunks::<3>().0.iter().zip([50.5_f64, 505.0]) {
+            for &value in pixel {
+                assert!(
+                    (spektrafilm_math::precision::to_f64(value) - expected.log10()).abs()
+                        < read_tolerance()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn aperture_rejects_partial_output_blocks() {
+        let fine = ImageBuf::new(3, 2);
+        assert!(
+            collapse_log_exposure(&fine, 2)
+                .unwrap_err()
+                .contains("divisible")
+        );
+        assert!(
+            collapse_log_exposure(&fine, 0)
+                .unwrap_err()
+                .contains("divisible")
+        );
+    }
+
     fn data_dir() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -494,7 +584,7 @@ mod tests {
         params.workflow.route = "input > film > print > scan".into();
         params.io.scan_film = false;
         params.camera.film_format_mm = 36.0;
-        params.film_render.grain.engine = GrainEngine::V3;
+        params.film_render.grain.engine = GrainEngine::Dye;
         params.film_render.grain.active = true;
         params
     }
@@ -657,19 +747,38 @@ mod tests {
         validate_supported(&film, &params).unwrap();
         resolve(&film, &params).unwrap();
 
-        // Still color-negative stocks share the validated boundary.
-        for stock in ["kodak_portra_400", "kodak_ultramax_400"] {
-            let other = load(stock);
-            validate_supported(&other, &params).unwrap();
-            resolve(&other, &params).unwrap();
-        }
-
-        // Other chemistry and cine stocks stay outside the support.
+        // Still and cine color-negative stocks share the same model boundary.
         for stock in [
-            "kodak_ektachrome_100",
-            "kodak_doublex",
+            "kodak_portra_400",
+            "kodak_ultramax_400",
+            "kodak_vision3_50d",
+            "kodak_vision3_250d",
+            "kodak_vision3_200t",
             "kodak_vision3_500t",
         ] {
+            let other = load(stock);
+            let mut stock_params = params.clone();
+            crate::params_builder::apply_film_specifics(&mut stock_params, &other);
+            for (route, scan_film, scan_output) in [
+                (PRINT_ROUTE, false, "direct_scan"),
+                (FILM_SCAN_ROUTE, true, "direct_scan"),
+                (FILM_SCAN_ROUTE, true, "positive_scan"),
+            ] {
+                stock_params.workflow.route = route.into();
+                stock_params.io.scan_film = scan_film;
+                stock_params.scanner.scan_output = scan_output.into();
+                let resolved = resolve(&other, &stock_params).unwrap();
+                if stock == "kodak_vision3_500t" {
+                    assert_eq!(
+                        resolved.channel_scale,
+                        [2.25, (13.0_f64 / 6.0).powi(2), 25.0]
+                    );
+                }
+            }
+        }
+
+        // Other chemistry stays outside the support.
+        for stock in ["kodak_ektachrome_100", "kodak_doublex"] {
             let other = load(stock);
             let error = validate_supported(&other, &params).unwrap_err();
             assert!(
@@ -738,7 +847,7 @@ mod tests {
             );
         }
 
-        // Inactive V3 is not gated: it never renders, so nothing to reject.
+        // Inactive Dye is not gated: it never renders, so nothing to reject.
         let mut inactive = supported_params();
         inactive.film_render.grain.active = false;
         inactive.workflow.route = "input".into();
@@ -754,7 +863,7 @@ mod tests {
         // Unset granularity resolves to the reference scale.
         assert_eq!(channel_event_scale([0.0, f64::NAN, 6.0]), [1.0; 3]);
 
-        // V1's blue-heavy `particle_scale` must not double a coarser blue
+        // Spektra's blue-heavy `particle_scale` must not double a coarser blue
         // record: only the granularity preset separates the channels.
         let film = load("kodak_portra_800");
         let mut params = supported_params();
@@ -803,7 +912,7 @@ mod tests {
         assert!(!stochastic.film_render.grain.active);
         assert!(!active(&stochastic));
 
-        // Spatial deactivation alone bypasses V3: the field is spatial by
+        // Spatial deactivation alone bypasses Dye: the field is spatial by
         // construction and the LUT bake needs a pointwise chain.
         let mut spatial = supported_params();
         spatial.debug.deactivate_spatial_effects = true;
@@ -850,39 +959,59 @@ mod tests {
     }
 
     #[test]
+    fn fractional_crop_keeps_its_rounded_footprints_on_the_full_grid() {
+        let source = density_target(7, 7);
+        let mut params = supported_params();
+        params.io.crop = true;
+        params.io.crop_size = [5.0 / 7.0; 2];
+        params.io.crop_center = [3.0 / 7.0; 2];
+        params.io.upscale_factor = 1.5;
+        // Explicitly exercise [1,6) even though source crop centering uses ties-to-even.
+        let mut requested = geometry(&source, &params, 2.0).unwrap();
+        requested.rect.x = 1;
+        requested.rect.y = 1;
+        assert_eq!((requested.width, requested.height), (8, 8));
+        let (grid, keep) = requested.full_film_grid(&source).unwrap();
+        assert_eq!((grid.width, grid.height), (12, 12));
+        assert_eq!(grid.origin_um, [-0.5; 2]);
+        assert_eq!(grid.pitch_um, [1.25; 2]);
+        assert_eq!((keep.x, keep.y, keep.width, keep.height), (2, 2, 8, 8));
+        let film = load("kodak_portra_800");
+        let resolved = resolve(&film, &params).unwrap();
+        let full = v3::apply(&source, 2.0, grid, &resolved).unwrap();
+        let crop = v3::apply(&source, 2.0, requested.grid(), &resolved).unwrap();
+        assert!(max_abs_diff_at(&full, &crop, keep.x, keep.y) <= read_tolerance());
+    }
+
+    #[test]
     fn crop_read_agrees_with_the_full_frame() {
         let film = load("kodak_portra_800");
         let params = supported_params();
         let resolved = resolve(&film, &params).unwrap();
-        // 3.5 µm source pitch against a 4 µm field pitch: fractional
-        // footprints, and the 160-row frame spans two output bands.
-        let pitch = 3.5;
+        // Fractional source-to-field footprints, across two output bands.
+        let pitch = 3.1;
         let source = density_target(96, 160);
         let full = v3::apply(
             &source,
             pitch,
-            SourceRect {
-                x: 0,
-                y: 0,
+            ReadoutGrid {
+                origin_um: [0.0; 2],
+                pitch_um: [pitch; 2],
                 width: 96,
                 height: 160,
             },
-            96,
-            160,
             &resolved,
         )
         .unwrap();
         let crop = v3::apply(
             &source,
             pitch,
-            SourceRect {
-                x: 16,
-                y: 40,
+            ReadoutGrid {
+                origin_um: [16.0 * pitch, 40.0 * pitch],
+                pitch_um: [pitch; 2],
                 width: 32,
                 height: 48,
             },
-            32,
-            48,
             &resolved,
         )
         .unwrap();
@@ -897,13 +1026,13 @@ mod tests {
     fn dye_support_is_independent_of_the_event_area() {
         let film = load("kodak_portra_800");
         let params = supported_params();
-        let rect = SourceRect {
-            x: 0,
-            y: 0,
+        let pitch = 3.5;
+        let grid = ReadoutGrid {
+            origin_um: [0.0; 2],
+            pitch_um: [pitch; 2],
             width: 64,
             height: 48,
         };
-        let pitch = 3.5;
         let source = density_target(64, 48);
         let coarser = resolve(&film, &params).unwrap();
 
@@ -913,8 +1042,8 @@ mod tests {
         expected_a.expectation = true;
         let mut expected_b = expected_a.clone();
         expected_b.event_area_um2 = expected_a.event_area_um2 * 10.0;
-        let a = v3::apply(&source, pitch, rect, 64, 48, &expected_a).unwrap();
-        let b = v3::apply(&source, pitch, rect, 64, 48, &expected_b).unwrap();
+        let a = v3::apply(&source, pitch, grid, &expected_a).unwrap();
+        let b = v3::apply(&source, pitch, grid, &expected_b).unwrap();
         let mean_diff = max_abs_diff(&a, &b);
         assert!(
             mean_diff <= 1e-5,
@@ -924,8 +1053,8 @@ mod tests {
         // Realized field: the same support, different statistical strength.
         let mut realized_b = coarser.clone();
         realized_b.event_area_um2 *= 10.0;
-        let ra = v3::apply(&source, pitch, rect, 64, 48, &coarser).unwrap();
-        let rb = v3::apply(&source, pitch, rect, 64, 48, &realized_b).unwrap();
+        let ra = v3::apply(&source, pitch, grid, &coarser).unwrap();
+        let rb = v3::apply(&source, pitch, grid, &realized_b).unwrap();
         let noise_diff = max_abs_diff(&ra, &rb);
         assert!(
             noise_diff > 1e-4,

@@ -1133,15 +1133,15 @@ mod tests {
     #[test]
     fn v3_engine_and_controls_round_trip() {
         let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
-        // V1 stays the default for existing recipes.
+        // Spektra stays the default for existing recipes.
         let default: super::RuntimeParams = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
             default.film_render.grain.engine,
-            super::grain::GrainEngine::V1
+            super::grain::GrainEngine::Spektra
         );
         assert_eq!(default.film_render.grain.v3_dye_support_um, 3.5);
         assert_eq!(default.film_render.grain.v3_event_area_um2, 1.28);
-        // A recipe saved before the V3 event area existed gets its default.
+        // A recipe saved before the Dye event area existed gets its default.
         let mut legacy = value.clone();
         legacy["film_render"]["grain"]
             .as_object_mut()
@@ -1149,14 +1149,14 @@ mod tests {
             .remove("v3_event_area_um2");
         let legacy: super::RuntimeParams = serde_json::from_value(legacy).unwrap();
         assert_eq!(legacy.film_render.grain.v3_event_area_um2, 1.28);
-        value["film_render"]["grain"]["engine"] = serde_json::json!("v3");
+        value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
         value["film_render"]["grain"]["v3_dye_support_um"] = serde_json::json!(4.5);
         value["film_render"]["grain"]["v3_event_area_um2"] = serde_json::json!(0.6);
         let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
         let reparsed: super::RuntimeParams =
             serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
         for grain in [&params.film_render.grain, &reparsed.film_render.grain] {
-            assert_eq!(grain.engine, super::grain::GrainEngine::V3);
+            assert_eq!(grain.engine, super::grain::GrainEngine::Dye);
             assert_eq!(grain.v3_dye_support_um, 4.5);
             assert_eq!(grain.v3_event_area_um2, 0.6);
         }
@@ -1165,7 +1165,7 @@ mod tests {
     #[test]
     fn v3_controls_must_be_finite_and_positive() {
         let mut params = super::RuntimeParams::default();
-        params.film_render.grain.engine = super::grain::GrainEngine::V3;
+        params.film_render.grain.engine = super::grain::GrainEngine::Dye;
         params.validate().unwrap();
         for value in [0.0, -0.5, f32::NAN, f32::INFINITY] {
             let mut bad = params.clone();
@@ -1183,9 +1183,9 @@ mod tests {
                 "unexpected error for {value}: {error}"
             );
         }
-        // V1 ignores the controls, but stored values stay validated so a
-        // later switch to V3 cannot render from an invalid recipe.
-        params.film_render.grain.engine = super::grain::GrainEngine::V1;
+        // Spektra ignores the controls, but stored values stay validated so a
+        // later switch to Dye cannot render from an invalid recipe.
+        params.film_render.grain.engine = super::grain::GrainEngine::Spektra;
         params.film_render.grain.v3_event_area_um2 = -1.0;
         assert!(params.validate().is_err());
     }
@@ -1195,9 +1195,9 @@ mod tests {
         let mut params = super::RuntimeParams::default();
         assert_eq!(params.camera.film_format_mm, 35.0);
         for engine in [
-            super::GrainEngine::V1,
-            super::GrainEngine::V2,
-            super::GrainEngine::V3,
+            super::GrainEngine::Spektra,
+            super::GrainEngine::Procedural,
+            super::GrainEngine::Dye,
         ] {
             params.film_render.grain.engine = engine;
             for mm in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {

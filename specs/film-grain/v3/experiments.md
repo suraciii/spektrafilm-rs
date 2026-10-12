@@ -1,4 +1,4 @@
-# Grain V3 Diagnostic Experiments
+# Grain Dye Diagnostic Experiments
 
 ## Scope
 
@@ -6,7 +6,7 @@ These opt-in experiments compare optical readout and random event mass. They do 
 
 ## Formed-cell optical reading
 
-For active Grain V3, `SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL=1` requests linear spectral response on each formed CMY field cell followed by exact fractional cell-area integration. The optical response belongs to the print or scanner stage. Formation, conditional targets, seed streams and global coordinates remain in the grain model.
+For active Grain Dye, `SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL=1` requests linear spectral response on each formed CMY field cell followed by exact fractional cell-area integration. The optical response belongs to the print or scanner stage. Formation, conditional targets, seed streams and global coordinates remain in the grain model.
 
 Exactness refers to the piecewise-constant formed field. It does not recover within-cell variations. Field refinement must be assessed separately from output-footprint refinement.
 
@@ -18,7 +18,7 @@ The optical reader bounds each band to at most 1,048,576 field or source cells. 
 
 ## Random mass
 
-For active Grain V3, `SPEKTRAFILM_GRAIN_V3_MASS_LAW` selects `fixed`, `two_class`, or `gamma4`. An absent selector uses `fixed`; invalid values fail. These settings are diagnostic environment variables, not saved recipe fields or GUI controls.
+For active Grain Dye, `SPEKTRAFILM_GRAIN_V3_MASS_LAW` selects `fixed`, `two_class`, or `gamma4`. An absent selector uses `fixed`; invalid values fail. These settings are diagnostic environment variables, not saved recipe fields or GUI controls.
 
 For the two random-mark candidates, `q = E[W²] = 1.25`, event rate is multiplied by q and baseline event mass is divided by q. This preserves conditional density mean, variance and common-kernel covariance. It changes higher cumulants, empty-cell probability and mean optical transmission.
 

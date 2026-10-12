@@ -943,8 +943,8 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
         (
             "kodak_portra_400",
             "input > film > scan",
-            "film_render.grain.engine=\"v2\",film_render.grain.active=true,settings.preview_mode=true",
-            "active Grain V2",
+            "film_render.grain.engine=\"procedural\",film_render.grain.active=true,settings.preview_mode=true",
+            "active Grain Procedural",
         ),
     ];
     std::fs::write(f.root.join("output.tif"), b"retained output").unwrap();
@@ -1047,7 +1047,7 @@ fn inline_strings_and_enums_accept_normal_cli_values() {
         "--preset",
         "Kodak Portra 400",
         "--set",
-        "film_render.grain.engine=v2,film_render.grain.v2_profile=custom",
+        "film_render.grain.engine=procedural,film_render.grain.v2_profile=custom",
         "--set",
         "io.output_color_space=ProPhoto RGB",
         "--set",
@@ -1058,7 +1058,10 @@ fn inline_strings_and_enums_accept_normal_cli_values() {
         "film_render.grain.v2_amount=null",
         "--dry-run",
     ]);
-    assert_eq!(report["parameters"]["film_render"]["grain"]["engine"], "v2");
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["engine"],
+        "procedural"
+    );
     assert_eq!(
         report["parameters"]["film_render"]["grain"]["v2_profile"],
         "custom"
@@ -1085,7 +1088,7 @@ fn invalid_plain_values_report_the_field_requirement() {
     for (source, requirement) in [
         ("camera.auto_exposure=yes", "true or false"),
         ("camera.exposure_compensation_ev=bright", "finite number"),
-        ("film_render.grain.engine=unknown", "v1"),
+        ("film_render.grain.engine=unknown", "spektra"),
     ] {
         let output = f.process(&["--preset", "Kodak Portra 400", "--set", source, "--dry-run"]);
         assert!(!output.status.success());
