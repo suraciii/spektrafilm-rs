@@ -124,7 +124,7 @@ pub struct ScannerParams {
     #[serde(default)]
     pub lens_blur: f32,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
-    /// `positive_scan` interprets a direct negative-film capture as a
+    /// `positive_scan` interprets each negative dye record's density as a
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,

@@ -273,7 +273,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn positive_scan_inverts_negative_capture_on_cpu_path() {
+    fn positive_scan_reverses_negative_polarity_on_cpu_path() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();

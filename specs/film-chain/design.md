@@ -3,9 +3,9 @@
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and stage state.
 - Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
 - `ComputeBackend` separates stage orchestration from CPU and WGPU execution. The CPU backend preserves f64 reference order; WGPU owns f32 conversion, resources, and dispatch.
-- For `positive_scan`, stage preparation derives one private calibrated scanner response from the selected profile density curves and the actual scan color context. The response stores per-channel monotone capture-to-log-exposure knots and finite endpoint slopes; image pixels reuse that response without rebuilding spectral calibration per pixel.
-- Scanner calibration uses least-squares isotonic regression on the scanned neutral density samples to regularize measurement reversals. Pooled plateaus use their mean log exposure. The forward film curves remain unchanged.
-- Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`. The convert-film scan passes its selected scan illuminant into the same preparation path. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
+- For `positive_scan`, stage preparation derives one private per-record response from the selected profile density curves: monotone density-to-log-exposure knots with finite endpoint slopes. Image pixels reuse that response.
+- The response uses least-squares isotonic regression on the profile density samples to regularize reversals. Pooled plateaus use their mean log exposure. The forward film curves remain unchanged.
+- Positive interpretation is shared by direct `input > film > scan` and real negative-capture `input > convert-film > scan`; both hand it record densities, and it needs no spectral scan. Camera exposure compensation is applied only to the simulated direct-film route; the real scanner capture is already in scanner exposure space.
 - The scanned medium determines the stage topology and the scanner calibration references.
 - Scanner white and black correction derives its references from the scanned medium: film zero and maximum dye density for a slide scan, and the print exposure of the film density range for a photographic-paper scan.
 - Positive interpretation and the film-scan black and white points must not estimate their response or their points from image content.

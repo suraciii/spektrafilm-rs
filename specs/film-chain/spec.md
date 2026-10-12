@@ -79,17 +79,19 @@
   `input > film > scan` route or the real negative-capture
   `input > convert-film > scan` route. Paper profiles, print-paper routes,
   and `scan-minus-base` are not eligible.
-- Positive interpretation derives a per-channel monotone inverse from the
-  selected profile density curves after the same spectral scan context. It
-  estimates relative log exposure, subtracts camera exposure compensation
-  only on the simulated `input > film > scan` route, applies the configured
-  density brightness, RGB balance, contrast, and maximum-density controls,
-  then emits output-space linear RGB.
-- Calibration captures outside the profile range use finite endpoint tangent
-  extrapolation. Negative and above-clear scanner RGB remains representable
-  until the normal writer; no log-of-clipped-RGB operation is permitted.
-- Positive interpretation runs after scanner spectral capture and scanner lens
-  blur, then output gamut compression, unsharp mask, transfer encoding, and
-  output handoff.
+- Positive interpretation reads each dye record's density, as a narrowband
+  scanner does, and derives a per-record monotone inverse from the selected
+  profile density curves. One record's output must not depend on another
+  record's density. It estimates relative log exposure, subtracts camera
+  exposure compensation only on the simulated `input > film > scan` route,
+  applies the configured density brightness, RGB balance, contrast, and
+  maximum-density controls, then emits output-space linear RGB. Zero balance
+  renders a grey lit by the profile reference illuminant neutral.
+- Densities outside the profile curves use finite endpoint tangent
+  extrapolation; the tone curve keeps output finite and within the
+  configured density range.
+- Scanner lens blur acts on transmitted light before the density reading.
+  Positive interpretation is followed by output gamut compression, unsharp
+  mask, transfer encoding, and output handoff.
 - `positive_scan` rejects scanner white/black correction and active Grain V2.
   It uses the CPU per-stage backend; resident WGPU execution is not eligible.
