@@ -203,10 +203,10 @@ pub struct Browser {
     delete: Option<String>,
 }
 impl Browser {
-    pub fn new(extras: &serde_json::Value) -> Self {
+    pub fn new(extras: &serde_json::Value, library: PresetLibrary) -> Self {
         let mut browser = Self {
             state: serde_json::from_value(extras["rust"]["presets"].clone()).unwrap_or_default(),
-            library: PresetLibrary::default(),
+            library,
             entries: vec![],
             scan_error: None,
             name_dialog: None,
@@ -782,6 +782,7 @@ mod tests {
             Some(state_path),
             None,
             directory.join("preset_browser_state.json"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         );
         app.presets.library = PresetLibrary::new(directory.join("presets"));
         app.presets.refresh();
@@ -888,6 +889,7 @@ mod tests {
                 initial_state,
                 None,
                 directory.join("preset_browser_state.json"),
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
             )
         };
         let mut restarted = reopen(None);
@@ -1078,6 +1080,7 @@ mod tests {
             Some(path),
             None,
             directory.join("preset_browser_state.json"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         );
         assert!(
             restarted
@@ -1156,6 +1159,7 @@ mod tests {
             Some(path),
             None,
             directory.join("preset_browser_state.json"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         );
         assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
         assert_eq!(restarted.params.scanner.white_point, [0.7, 0.8, 0.9]);
@@ -1419,7 +1423,7 @@ mod tests {
         )
         .unwrap();
         let restored = state::GuiState::from_value(s.sections.clone()).unwrap();
-        let b = Browser::new(&restored.sections);
+        let b = Browser::new(&restored.sections, PresetLibrary::default());
         assert_eq!(b.state.width, 312.0);
         assert!(!b.state.expanded);
         assert_eq!(b.state.applied.unwrap().name, "Remembered");

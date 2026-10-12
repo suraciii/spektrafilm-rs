@@ -66,6 +66,13 @@ Therefore its package status covers CLI/RAW/IO/LUT/OCIO/QA and provenance, not
 native desktop interaction. GUI evidence is maintained separately and is not
 silently counted as a release pass.
 
+The workspace tests include headless GUI acceptance with the real App, CPU
+workers, and image writer. Run `just gui-headless` for the focused scenarios.
+Run `just gui-layout` separately for offscreen layout checks with a usable WGPU
+adapter. See [GUI acceptance scopes](scripts/parity/README.md#headless-gui-acceptance)
+for coverage, image artifacts, and the native desktop gate retained for platform
+integration and release evidence.
+
 Historical Linux native GUI acceptance used the debug GUI and a separate f64 export child under Xvfb. Its five-tab shell, viewer, state, RAW and output records remain under `gui_evidence` in `docs/parity/parity_matrix.json`, including local Rust `8bdd7fe` and CI workflow `37226896580`. Those records describe the earlier worker and viewport implementation and do not establish acceptance of the current direct Pipeline Export, extension-based Save or full-resolution viewport. Historical Windows package smoke also passed; historical macOS native acceptance failed the Reveal-frame assertion. Fresh GUI results must identify the current executable and exercised workflow.
 
 Quarter-turn actions rotate the in-memory pipeline input and preserve source metadata. Export captures those pixels directly together with the simulation parameters; it does not stage input for a CLI child. The metadata writer normalizes orientation and dimensions. Cancel sets a worker signal: an active Pipeline computation or native write may finish before the next cancellation boundary, where its result is discarded before publication. Closing the GUI signals cancellation and joins the worker.
@@ -88,6 +95,7 @@ The `just` command surface also covers packaging and per-user installation:
 just build
 just check
 just test
+just test-f64
 just ci
 just package
 just install
@@ -150,12 +158,14 @@ executable.
 
 # Explicit JPEG quality and chroma sampling
 ./target/release/spektrafilm-f64 process input.tif -o out.jpg \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --format jpeg --bit-depth 8 --jpeg-quality 95 --jpeg-subsampling 444 \
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
 
 # Positive scanner interpretation with explicit receiver, inverse, setup and finish
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --set scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled \
     --set scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
@@ -182,6 +192,7 @@ The film chain normalizes spectral upsampling to the profile's reference illumin
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --preset 'CineStill 800T Cs41 (experimental)' --backend cpu --data-dir data \
     --route 'input > film > scan' --scan-output positive_scan
 ```
@@ -193,6 +204,7 @@ Film scans expose per-channel `scanner.black_point` and `scanner.white_point` fo
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o slide.tif \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --film fujifilm_provia_100f --route 'input > film > scan' --backend cpu \
     --set 'scanner.black_point=[0.05,0.05,0.05],scanner.white_point=[0.95,0.95,0.95]' \
     --data-dir data
@@ -200,12 +212,16 @@ Film scans expose per-channel `scanner.black_point` and `scanner.white_point` fo
 
 The GUI shows scanner controls for the scanned medium: white/black correction for paper and slides, scan polarity and positive interpretation for negatives, and film-scan points for slides and positive-interpreted negatives. Selecting positive interpretation clears incompatible capture-correction flags. State files and scanner section presets retain point values.
 
+The TIFF examples above use prepared linear ProPhoto RGB samples. The PNG examples below use encoded sRGB samples. Declare the actual source interpretation for your own files; see [source declarations](specs/cli-parameters/spec.md#input-declaration). RAW examples retain automatic linear ACES2065-1 declaration.
+
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. `--format` must match the output extension when supplied; otherwise the extension selects JPEG/PNG/TIFF/EXR. Bit depth defaults to 8 for JPEG/PNG and 16 for TIFF/EXR; JPEG/PNG require 8-bit, EXR requires 16- or 32-bit. JPEG defaults to quality 95 and 4:4:4; `--compression zip|none` applies to TIFF/EXR, while JPEG/PNG reject compression options. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
 `process` and `render` accept `--diagnostics REPORT.json`. Add `--gpu-timings` to collect compute-pass timestamps when the adapter supports them. The report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons. Diagnostics do not change image parameters or machine-readable render output. Report-write errors are reported separately from the image result. CLI reports never replace an existing file. Report paths must not alias input, output, or configuration files.
 
 ```bash
 ./target/release/spektrafilm process input.tif -o out.png \
+    --film kodak_portra_400 --paper kodak_portra_endura \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend gpu --diagnostics report.json --gpu-timings --data-dir data
 ```
 
@@ -227,6 +243,7 @@ Section files can be saved and exported without an active workflow. Their applic
 
 # Inspect the effective configuration without decoding pixels or creating output
 ./target/release/spektrafilm process input.png -o output.tif \
+    --input-color-space sRGB --input-cctf-decoding true \
     --preset 'Kodak Portra 400' \
     --preset 'Soft grain' \
     --set film_render.grain.engine=v2 \
@@ -235,6 +252,7 @@ Section files can be saved and exported without an active workflow. Their applic
 
 # Apply a sparse file, then an inline edit, with independent writer settings
 ./target/release/spektrafilm-f64 process input.png -o output.tif \
+    --input-color-space sRGB --input-cctf-decoding true \
     --preset 'Kodak Portra 400' --set adjustments.toml \
     --set 'enlarger.print_exposure=1.2' --backend cpu \
     --format tiff --bit-depth 16 --compression zip \
@@ -403,9 +421,13 @@ V1 grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (default, m
 
 Both V1 composite and layered grain use the CPU sampler during preview and export; no resident WGPU V1 grain shader is maintained. Active V1 grain rendering selects the faithful per-stage path. The separate Grain V2 implementation remains available.
 
-Grain V3 is selected with `film_render.grain.engine: "v3"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (Gaussian sigma in micrometers, default `3.5`; the field-cell pitch is `support / 2`) and realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers` (square micrometers, default `1.28`), using the resolved `density_min` and `uniformity` and forming every channel from the film's three sublayers. Both controls must be finite and strictly positive. The channel scale is `k_c = (rms_granularity_c / 6)²`, where `6` is the preset of the reference stock `kodak_portra_800`. It is the only per-channel strength input: V3 does not read V1's `particle_area_um2` or `particle_scale`, whose blue-heavy default would double a coarser blue record. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. V3 supports still color-negative profiles (`info.type = "negative"`, `info.use = "still"`) using the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`; it is not a roll-width designation. The reference validation remains a 36 mm long edge on `input > film > print > scan` with `io.scan_film = false`. Format changes alter physical footprints and workload, while crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound. The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `positive_scan` and `direct_scan`. Another chemistry or usage (including cine), or an unsupported route, fails with an actionable unsupported-condition error. V3 resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the V3 specification](specs/film-grain/v3/spec.md).
+Grain V3 is selected with `film_render.grain.engine: "v3"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (Gaussian sigma in micrometers, default `3.5`; the field-cell pitch is `support / 2`) and realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers` (square micrometers, default `1.28`), using the resolved `density_min` and `uniformity` and forming every channel from the film's three sublayers. Both controls must be finite and strictly positive. The channel scale is `k_c = (rms_granularity_c / 6)²`, where `6` is the preset of the reference stock `kodak_portra_800`. It is the only per-channel strength input: V3 does not read V1's `particle_area_um2` or `particle_scale`, whose blue-heavy default would double a coarser blue record. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. V3 supports still and cine color-negative filming profiles using the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`; it is not a roll-width designation. The reference validation remains a 36 mm long edge on `input > film > print > scan` with `io.scan_film = false`. Format changes alter physical footprints and workload, while crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound. The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `positive_scan` and `direct_scan`. Another chemistry or an unsupported route, fails with an actionable unsupported-condition error. V3 resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the V3 specification](specs/film-grain/v3/spec.md).
 
 When downstream spatial processing is active, V3 extends the output grid to cover the full film before those stages and extracts the requested crop afterward. Physical optical controls use the actual output pitch; scanner blur and unsharp masking remain pixel controls. See [film geometry](specs/film-grain/v3/design.md#film-geometry) for rounded and anisotropic output limits. The final V3 cell-address mapping changes the realization of prototype seeds while preserving the probability law. V3 sublayer scales must be positive; the GUI editing minimum is `0.01`.
+
+Cine profiles such as Kodak VISION3 500T can use V3 with their existing stock controls. This availability does not establish cine photographic calibration. The current density-average readout exceeds the spectral aperture gate for the measured 500T-to-2383 condition; see [known optical limits](specs/film-grain/v3/design.md#evidence-and-limits).
+
+Set `SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR=6` to try the [spectral aperture probe](specs/film-grain/v3/spectral-aperture.md) on an active V3 print route. It reads a finer lattice and averages linear print exposure before print development. Disable enlarger diffusion, scanner blur, unsharp mask, and print glare for this probe. The default path remains unchanged when the variable is absent. Supersampling does not establish cine calibration or replace exact fractional-overlap integration.
 
 The LUT path (`use_enlarger_lut` + `use_scanner_lut`) ports Python's PCHIP 3D interpolation (`crates/spektrafilm-math/src/pchip3d.rs` ↔ `spektrafilm/utils/fast_interp_lut.py`). The executed f64 LUT-reduction scenarios passed the **1e-5** maximum absolute-error budget; the 265 delivered LUT stock/topology/transport cases passed independent Python comparisons.
 

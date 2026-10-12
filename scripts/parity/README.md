@@ -75,6 +75,30 @@ the machine-readable inventory is
 
 Pass `--gui-report path/to/gui-acceptance/observations.json` to `gen_matrix.py` to retain the executed native GUI records and their SHA256 alongside the spectral report. A failed or incomplete GUI report is rejected. Each named scenario remains scoped to its actual assertions; Linux desktop evidence does not establish Windows/macOS display behavior.
 
+## Headless GUI acceptance
+
+`just gui-headless` runs the GUI App with `egui_kittest` and the real CPU
+workers. It does not require a display server, OCR, or a native file chooser.
+The same tests run in the workspace test step of `just ci` and `just verify`.
+The tests use isolated state, image, and output files. They drive production
+controls and check scanner mode changes, numeric edits, rendering, state
+restoration, and image output.
+
+Save and Export tests enter at the selected-path boundary. They use the same
+conversion, worker, and writer as the native dialog actions. These tests do not
+check file chooser interaction or prove native desktop acceptance.
+
+`just gui-layout` renders focused layouts offscreen through WGPU. It requires
+a usable adapter; a software adapter is sufficient. It checks control geometry
+and captures rendered pixels. Set `SPEKTRAFILM_GUI_SNAPSHOT_DIR` to a directory
+outside the repository to retain PNGs for review. This command runs separately
+from the default PR gate.
+
+Run the native GUI gate below for changes to window integration, file choosers,
+GPU presentation, display scaling, platform color management, or shutdown.
+Retain native desktop evidence for releases. Headless behavior and offscreen
+layout results must identify their scope separately from native desktop results.
+
 ## Experimental GUI gate
 
 `experimental_gui.py` targets upstream experimental commit
@@ -334,6 +358,8 @@ target/release/spektrafilm-f64 process \
 ```
 
 `run_parity.py` automates exactly this invocation for every scenario.
+
+The generated legacy `rs_params.json` supplies both `io.input_color_space` and `io.input_cctf_decoding` from the scenario. These leaves declare the prepared raster samples without adding a `--set` source or changing the legacy numerical preparation. The package smoke and experimental runtime scripts also declare their linear sRGB inputs in legacy parameter files. See the [source declaration contract](../../specs/cli-parameters/spec.md#input-declaration).
 
 ## Interpretation rules
 

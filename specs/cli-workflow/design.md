@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-The [CLI workflow](spec.md) is an adapter over the existing parameter, image-input, LUT-delivery, and telemetry capabilities. It must retain clap derive and existing command handlers. Parser replacement, shell completion, terminal prompts, and a new machine protocol do not belong to this change.
+The [CLI workflow](spec.md) is an adapter over the existing parameter, image-input, LUT-delivery, and telemetry capabilities. It must retain clap derive and existing command handlers. Parser replacement, shell completion, terminal prompts, and a replacement machine protocol do not belong to this change. Additive dry-run feedback and explicit text presentation belong to the [CLI parameter contract](../cli-parameters/spec.md#discovery-and-dry-run).
 
 Clap must own external argument forms, finite CLI choices, argument relations, help, and syntax errors. Core must own parameter types, supported field paths, runtime choices, and semantic validation. Human field descriptions and suggestions must consume the existing field description defined by the [CLI parameter design](../cli-parameters/design.md#field-description). They must not maintain another inventory of fields or bounds.
 
