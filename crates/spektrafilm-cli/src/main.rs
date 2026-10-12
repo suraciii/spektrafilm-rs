@@ -1,7 +1,6 @@
 mod contract;
 mod lut;
 mod preset;
-mod process_report;
 mod runner;
 mod telemetry;
 
@@ -207,12 +206,6 @@ struct ProcessArgs {
     /// Input TIFF, EXR, PNG, JPEG, or camera RAW image.
     #[arg(help_heading = "Input and RAW loading")]
     input: PathBuf,
-    /// Raster color space; discover with describe --field io.input_color_space.
-    #[arg(long, help_heading = "Input and RAW loading")]
-    input_color_space: Option<String>,
-    /// Whether raster samples require transfer decoding (true or false).
-    #[arg(long, action = clap::ArgAction::Set, help_heading = "Input and RAW loading")]
-    input_cctf_decoding: Option<bool>,
     /// Destination TIFF, EXR, PNG, or JPEG image.
     #[arg(short, long, help_heading = "Output")]
     output: PathBuf,
@@ -246,8 +239,8 @@ struct ProcessArgs {
     /// Exact preset name or .toml/.json file; repeat to compose looks and sections.
     #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
     preset: Vec<String>,
-    /// Scan film directly, skipping printing; conflicts with --route.
-    #[arg(long, conflicts_with = "route", help_heading = "Look and workflow")]
+    /// Scan film directly, skipping printing unless --route overrides it.
+    #[arg(long, help_heading = "Look and workflow")]
     scan_film: bool,
     /// Print per-stage timing information to stderr.
     #[arg(long, help_heading = "Execution and diagnostics")]
@@ -272,17 +265,6 @@ struct ProcessArgs {
     /// Validate and print effective configuration without decoding or rendering.
     #[arg(long, help_heading = "Execution and diagnostics")]
     dry_run: bool,
-    /// Dry-run presentation: json or text; requires --dry-run.
-    #[arg(
-        long,
-        value_enum,
-        requires = "dry_run",
-        help_heading = "Execution and diagnostics"
-    )]
-    dry_run_format: Option<DiscoveryFormat>,
-    /// Deterministic stochastic seed, from 0 through 4294967295 (default: 0).
-    #[arg(long, help_heading = "Execution and diagnostics")]
-    seed: Option<u32>,
     /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
     #[arg(long, help_heading = "Output")]
     raw_out: Option<PathBuf>,
@@ -740,40 +722,52 @@ fn cmd_process(
         .iter()
         .map(|selector| preset::select(&library, selector).map(|selected| selected.preset))
         .collect::<Result<Vec<_>>>()?;
-    let resolved = spektrafilm_core::process_params::resolve(
-        spektrafilm_core::process_params::ProcessParamsRequest {
-            film: film_name,
-            paper: paper_name,
-            presets: &presets,
-            params_file,
-            sources,
-            route: workflow.route.as_deref(),
-            scan_film,
-            scan_output: workflow.scan_output.as_deref(),
-            input_is_raw,
-            input_color_space: args.input_color_space.as_deref(),
-            input_cctf_decoding: args.input_cctf_decoding,
-            require_input_declaration: std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
-                .as_deref()
-                != Some(std::ffi::OsStr::new("1")),
-            digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
-                == Some(std::ffi::OsStr::new("1"))
-            {
-                DigestMode::PreserveUserEdits
-            } else {
-                DigestMode::ApplyStockSpecifics
+    let resolve_params = |canonical| {
+        let resolve = if canonical {
+            spektrafilm_core::process_params::resolve_scanner_setup
+        } else {
+            spektrafilm_core::process_params::resolve
+        };
+        resolve(
+            spektrafilm_core::process_params::ProcessParamsRequest {
+                film: film_name,
+                paper: paper_name,
+                presets: &presets,
+                params_file,
+                sources,
+                route: workflow.route.as_deref(),
+                scan_film,
+                scan_output: workflow.scan_output.as_deref(),
+                input_is_raw,
+                digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+                    .as_deref()
+                    == Some(std::ffi::OsStr::new("1"))
+                {
+                    DigestMode::PreserveUserEdits
+                } else {
+                    DigestMode::ApplyStockSpecifics
+                },
             },
-        },
-        data_dir,
-    )
-    .map_err(anyhow::Error::msg)?;
+            data_dir,
+        )
+        .map_err(anyhow::Error::msg)
+    };
+    let resolved = resolve_params(false)?;
+    let canonical = if resolved.params.scanner.auto_setup
+        == spektrafilm_core::params::ScannerAutoSetup::PerFrame
+    {
+        let mut canonical = resolve_params(true)?;
+        apply_channel_swap(&mut canonical.film, &workflow.film_channel_swap)?;
+        apply_channel_swap(&mut canonical.print, &workflow.print_channel_swap)?;
+        Some(canonical)
+    } else {
+        None
+    };
     let mut film = resolved.film;
     let mut print = resolved.print;
     apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
     apply_channel_swap(&mut print, &workflow.print_channel_swap)?;
-    let mut params = resolved.params;
-    params.random_seed = u64::from(args.seed.unwrap_or(0));
-    process_report::warn_edits(&resolved.edits);
+    let params = resolved.params;
     let inject = params
         .taps
         .inject
@@ -838,51 +832,41 @@ fn cmd_process(
     });
     if dry_run {
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
-        let report = json!({
-            "film_profile": resolved.film_name,
-            "print_profile": resolved.print_name,
-            "parameters": params,
-            "film_grain_v3": grain_v3,
-            "data": {"path": data.path, "source": data.source},
-            "input": {
-                "kind": if input_is_raw { "raw" } else { "raster" },
-                "declaration": resolved.input_declaration,
-                "raw_loading": input_is_raw.then(|| json!({
-                    "white_balance": workflow.raw_white_balance,
-                    "temperature": raw_options.temperature,
-                    "tint": raw_options.tint,
-                    "lens_correction": raw_options.lens_correction
-                }))
-            },
-            "output": {
-                "path": output,
-                "format": plan.format.name(),
-                "bit_depth": plan.depth.bits(),
-                "color_space": plan.saving_space,
-                "cctf_encoding": plan.saving_encoded,
-                "compression": plan.compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
-                "jpeg_quality": plan.jpeg_quality,
-                "jpeg_subsampling": plan.jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
-            },
-            "backend": {
-                "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
-                "policy": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }).unwrap_or("auto"),
-                "environment": backend_env
-            }
-        });
-        let mut report = report;
-        report["seed"] = json!(params.random_seed);
-        report["edits"] = serde_json::to_value(&resolved.edits)?;
-        report["unchecked"] = json!([
-            "pixel_decode",
-            "compute_device",
-            "metered_exposure",
-            "output_geometry"
-        ]);
-        match args.dry_run_format.unwrap_or(DiscoveryFormat::Json) {
-            DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
-            DiscoveryFormat::Text => process_report::print_text(&report),
-        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "film_profile": resolved.film_name,
+                "print_profile": resolved.print_name,
+                "parameters": params,
+                "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
+                "film_grain_v3": grain_v3,
+                "data": {"path": data.path, "source": data.source},
+                "input": {
+                    "kind": if input_is_raw { "raw" } else { "raster" },
+                    "raw_loading": input_is_raw.then(|| json!({
+                        "white_balance": workflow.raw_white_balance,
+                        "temperature": raw_options.temperature,
+                        "tint": raw_options.tint,
+                        "lens_correction": raw_options.lens_correction
+                    }))
+                },
+                "output": {
+                    "path": output,
+                    "format": plan.format.name(),
+                    "bit_depth": plan.depth.bits(),
+                    "color_space": plan.saving_space,
+                    "cctf_encoding": plan.saving_encoded,
+                    "compression": plan.compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
+                    "jpeg_quality": plan.jpeg_quality,
+                    "jpeg_subsampling": plan.jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
+                },
+                "backend": {
+                    "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
+                    "policy": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }).unwrap_or("auto"),
+                    "environment": backend_env
+                }
+            }))?
+        );
         return Ok(());
     }
     let backend = invocation.phase(
@@ -932,6 +916,29 @@ fn cmd_process(
     invocation
         .operation
         .set_input_dimensions(image.width, image.height);
+    let scanner_setup = if let Some(canonical) = canonical {
+        Some(invocation.phase(
+            "scanner_setup_prepare",
+            IssueCategory::Configuration,
+            IssueBoundary::RuntimePrepare,
+            &context,
+            |prepare_context| {
+                let canonical = Runtime::new_observed(
+                    canonical.film,
+                    canonical.print,
+                    canonical.params,
+                    data_dir,
+                    prepare_context,
+                )
+                .map_err(anyhow::Error::msg)?;
+                canonical
+                    .prepare_scanner_setup(&image)
+                    .map_err(anyhow::Error::msg)
+            },
+        )?)
+    } else {
+        None
+    };
     // Preview mode: bound the long edge before processing (upstream
     // `simulate_preview` + `resize_for_preview`).
     let image = invocation.phase(
@@ -983,6 +990,11 @@ fn cmd_process(
     })
         },
     )?;
+    let runtime = if let Some(setup) = scanner_setup {
+        runtime.with_scanner_setup(setup)
+    } else {
+        runtime
+    };
     if context.enabled() {
         invocation
             .operation

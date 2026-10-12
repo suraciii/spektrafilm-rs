@@ -5,9 +5,9 @@
 // the central viewer owns the input/output/paper-back presentation.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -15,10 +15,10 @@ use anyhow::{Context, Result};
 use eframe::egui;
 use parking_lot::{Condvar, Mutex};
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
-use spektrafilm_core::params::RuntimeParams;
+use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
 use spektrafilm_core::presets::{Section, workflow_default};
 use spektrafilm_core::profile;
-use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
+use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams, ScannerSetup};
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};
 use spektrafilm_gpu::ComputeBackend;
@@ -30,8 +30,6 @@ mod controls;
 mod diagnostics;
 mod display;
 mod export;
-#[cfg(test)]
-mod headless;
 mod numeric;
 mod presets;
 mod profiles;
@@ -328,6 +326,7 @@ struct App {
     export_options: ExportOptions,
     export_dialog: ExportDialog,
     input_epoch: u64,
+    scanner_setup: Option<((u64, u64), SharedScannerSetup)>,
     /// Latest accepted floating output, shared with background viewing workers.
     output_image: Option<Arc<ImageBuf>>,
     output_metadata: Option<ImageMetadata>,
@@ -383,6 +382,7 @@ impl RenderKind {
     }
 }
 
+#[derive(Clone)]
 struct RenderJob {
     input_epoch: u64,
     parameter_revision: u64,
@@ -407,12 +407,7 @@ impl RenderJob {
 }
 
 struct RenderRequest {
-    input_epoch: u64,
-    parameter_revision: u64,
-    request_id: u64,
-    kind: RenderKind,
-    animate: bool,
-    backend_name: String,
+    job: RenderJob,
     image: Arc<ImageBuf>,
     input_clone_ms: f32,
     snapshot: RenderSnapshot,
@@ -450,6 +445,8 @@ struct RenderResult {
     preview_ms: f32,
     worker_total_ms: f32,
 }
+type SharedScannerSetup = Arc<OnceLock<Result<ScannerSetup, String>>>;
+
 #[derive(Clone)]
 struct RenderSnapshot {
     params: RuntimeParams,
@@ -457,6 +454,26 @@ struct RenderSnapshot {
     print_name: String,
     data_dir: PathBuf,
     special: serde_json::Value,
+    scanner_setup: SharedScannerSetup,
+}
+
+impl RenderSnapshot {
+    fn prepare_scanner_setup(
+        &self,
+        full_input: &ImageBuf,
+        context: &ObservationContext,
+    ) -> Result<Option<ScannerSetup>, String> {
+        if self.params.scanner.auto_setup != ScannerAutoSetup::PerFrame {
+            return Ok(None);
+        }
+        self.scanner_setup
+            .get_or_init(|| {
+                let canonical = build_runtime_observed(self, false, context)?;
+                canonical.prepare_scanner_setup(full_input)
+            })
+            .clone()
+            .map(Some)
+    }
 }
 #[derive(Clone, PartialEq)]
 struct RuntimeCacheKey {
@@ -504,15 +521,7 @@ impl RenderWorker {
                     let mut operation = request.operation;
                     let attempt = operation.attempt(1);
                     let observation = attempt.context().clone();
-                    let job = RenderJob {
-                        input_epoch: request.input_epoch,
-                        parameter_revision: request.parameter_revision,
-                        request_id: request.request_id,
-                        kind: request.kind,
-                        animate: request.animate,
-                        backend_name: request.backend_name.clone(),
-                        collection_mode: observation.mode(),
-                    };
+                    let job = request.job;
                     *active_for_worker.lock() =
                         Some((job.request_id, job.kind, job.collection_mode));
                     let ctx = request.ctx.clone();
@@ -522,7 +531,8 @@ impl RenderWorker {
                         let pipeline_template = prepare_runtime_observed(
                             &mut runtime_cache,
                             &request.snapshot,
-                            request.kind == RenderKind::Preview,
+                            job.kind == RenderKind::Preview,
+                            &request.image,
                             &observation,
                         )?;
                         if operation.enabled() {
@@ -623,16 +633,17 @@ impl RenderWorker {
         }
     }
 
-    fn submit(&mut self, mut request: RenderRequest) -> (u64, Option<Operation>) {
+    fn submit(&mut self, mut request: RenderRequest) -> (RenderJob, Option<Operation>) {
         self.next_request_id = self.next_request_id.wrapping_add(1);
-        request.request_id = self.next_request_id;
+        request.job.request_id = self.next_request_id;
+        let job = request.job.clone();
         let (lock, wake) = &*self.state;
         let replaced = lock.lock().replace(request).map(|request| {
             drop(request.worker_wait);
             request.operation
         });
         wake.notify_one();
-        (self.next_request_id, replaced)
+        (job, replaced)
     }
 
     fn shutdown(&mut self) -> Option<Operation> {
@@ -664,16 +675,40 @@ fn prepare_runtime_observed<'a>(
     cache: &'a mut Option<RuntimeCache>,
     snapshot: &RenderSnapshot,
     preview: bool,
+    full_input: &ImageBuf,
     context: &ObservationContext,
 ) -> Result<&'a mut Runtime, String> {
     let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
-    let result = prepare_runtime_cached(cache, snapshot, preview, prepare.context());
+    let result =
+        prepare_runtime_with_setup(cache, snapshot, preview, full_input, prepare.context());
     observed_result(
         prepare,
         result,
         IssueCategory::Configuration,
         IssueBoundary::RuntimePrepare,
     )
+}
+
+fn prepare_runtime_with_setup<'a>(
+    cache: &'a mut Option<RuntimeCache>,
+    snapshot: &RenderSnapshot,
+    preview: bool,
+    full_input: &ImageBuf,
+    context: &ObservationContext,
+) -> Result<&'a mut Runtime, String> {
+    let setup = snapshot.prepare_scanner_setup(full_input, context)?;
+    prepare_runtime_cached(cache, snapshot, preview, context)?;
+    let cached = cache.as_mut().expect("runtime cache prepared");
+    if let Some(setup) = setup {
+        cached.runtime = cached
+            .runtime
+            .take()
+            .map(|runtime| runtime.with_scanner_setup(setup));
+    }
+    Ok(cached
+        .runtime
+        .as_mut()
+        .expect("runtime cache runtime prepared"))
 }
 
 fn prepare_runtime_cached<'a>(
@@ -882,7 +917,8 @@ struct ExportResult {
     filename: String,
     backend_name: String,
     size: [u32; 2],
-    staged: image_io::PreparedImageOutput,
+    metadata_warning: Option<String>,
+    staged: TempPath,
 }
 
 enum CalibrationResult {
@@ -914,11 +950,7 @@ fn scan_medium(film: &profile::Profile) -> controls::ScanMedium {
 }
 
 fn normalize_scan_output(params: &mut RuntimeParams, film_medium: controls::ScanMedium) {
-    if !film_medium.positive_output_eligible(&params.workflow.route)
-        && params.scanner.scan_output != "direct_scan"
-    {
-        params.scanner.scan_output = "direct_scan".into();
-    }
+    controls::normalize_scanner_selections(params, film_medium);
 }
 
 impl App {
@@ -934,7 +966,6 @@ impl App {
             initial_state,
             diagnostics_dir,
             state::config_dir().join("preset_browser_state.json"),
-            pick_data_dir(),
         )
     }
 
@@ -944,9 +975,9 @@ impl App {
         initial_state: Option<PathBuf>,
         diagnostics_dir: Option<PathBuf>,
         browser_state_path: PathBuf,
-        data_dir: PathBuf,
     ) -> Self {
         let explicit_state = initial_state.is_some();
+        let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
         let gui_state = match initial_state {
@@ -957,7 +988,9 @@ impl App {
             // A startup state the runtime cannot accept (a removed workflow
             // route, an unsupported combination) must fall back to the factory
             // state with a visible reason instead of failing at construction.
-            state.runtime_params()?;
+            let params = state.runtime_params()?;
+            let film = profile::load_profile_by_name(&data_dir, state.film())?;
+            spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
             Ok(state)
         })
         .unwrap_or_else(|error| {
@@ -981,15 +1014,7 @@ impl App {
             .unwrap_or_default();
         let print_dev_times = profile_dev_times(&data_dir, &print_name);
         let export_options = ExportOptions::from_state(&gui_state.sections);
-        let mut presets = presets::Browser::new(
-            &gui_state.sections,
-            spektrafilm_core::presets::PresetLibrary::new(
-                browser_state_path
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .join("presets"),
-            ),
-        );
+        let mut presets = presets::Browser::new(&gui_state.sections);
         match presets::BrowserState::restore(
             &gui_state.sections,
             explicit_state,
@@ -1032,6 +1057,7 @@ impl App {
             export_options,
             export_dialog: ExportDialog::default(),
             input_epoch: 0,
+            scanner_setup: None,
             output_image: None,
             output_metadata: None,
             source_render: None,
@@ -1098,6 +1124,7 @@ impl App {
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
+        spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
         normalize_scan_output(&mut params, film_medium);
         self.film_name = state.film().to_owned();
@@ -1111,15 +1138,7 @@ impl App {
         self.params = params;
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();
-        self.presets = presets::Browser::new(
-            &state.sections,
-            spektrafilm_core::presets::PresetLibrary::new(
-                self.browser_state_path
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .join("presets"),
-            ),
-        );
+        self.presets = presets::Browser::new(&state.sections);
         self.browser_state_changed_at = Some(Instant::now());
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
@@ -1400,6 +1419,7 @@ impl App {
         self.params.workflow.route = workflow_default(&film);
         self.params.io.scan_film = film.is_positive();
         self.params.scanner.scan_output = "direct_scan".into();
+        normalize_scan_output(&mut self.params, self.film_medium);
         self.invalidate_look_render();
     }
 
@@ -1551,6 +1571,31 @@ impl App {
         self.rotate_input_image(false);
     }
 
+    fn render_snapshot(&mut self, params: RuntimeParams) -> RenderSnapshot {
+        let key = (self.input_epoch, self.parameter_revision);
+        if self
+            .scanner_setup
+            .as_ref()
+            .is_none_or(|(cached, _)| *cached != key)
+        {
+            self.scanner_setup = Some((key, Arc::new(OnceLock::new())));
+        }
+        let scanner_setup = self
+            .scanner_setup
+            .as_ref()
+            .expect("scanner setup slot inserted")
+            .1
+            .clone();
+        RenderSnapshot {
+            params,
+            film_name: self.film_name.clone(),
+            print_name: self.print_name.clone(),
+            data_dir: self.data_dir.clone(),
+            special: self.gui_state.sections["special"].clone(),
+            scanner_setup,
+        }
+    }
+
     /// Submit the latest snapshot without waiting for active computation.
     fn dispatch_render(&mut self, ctx: &egui::Context) {
         let t_clone = Instant::now();
@@ -1589,22 +1634,22 @@ impl App {
         // Report the V3 field's effective CPU route next to the selected backend.
         let backend_name = effective_backend_name(self.backend.name(), &params);
         let parameter_revision = self.parameter_revision;
+        let snapshot = self.render_snapshot(params);
         let request = RenderRequest {
-            input_epoch,
-            parameter_revision,
-            request_id: 0,
-            kind,
-            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
-            backend_name: backend_name.clone(),
+            job: RenderJob {
+                input_epoch,
+                parameter_revision,
+                request_id: 0,
+                kind,
+                animate: self.force_preview
+                    || self.full_scan_requested
+                    || self.output_image.is_none(),
+                backend_name,
+                collection_mode: operation.mode(),
+            },
             image,
             input_clone_ms,
-            snapshot: RenderSnapshot {
-                params,
-                film_name: self.film_name.clone(),
-                print_name: self.print_name.clone(),
-                data_dir: self.data_dir.clone(),
-                special: self.gui_state.sections["special"].clone(),
-            },
+            snapshot,
             backend: self.backend.clone(),
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
@@ -1615,19 +1660,11 @@ impl App {
             worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
         };
-        let (request_id, replaced) = self.render_worker.submit(request);
+        let (job, replaced) = self.render_worker.submit(request);
         if let Some(operation) = replaced {
             self.diagnostics.finish(operation, Outcome::Superseded);
         }
-        self.render_job = Some(RenderJob {
-            input_epoch,
-            parameter_revision,
-            request_id,
-            kind,
-            animate: self.force_preview || self.full_scan_requested || self.output_image.is_none(),
-            backend_name,
-            collection_mode: self.diagnostics.mode,
-        });
+        self.render_job = Some(job);
         self.full_scan_requested = false;
     }
 
@@ -1763,15 +1800,6 @@ impl App {
         else {
             return;
         };
-        self.save_to_path(&path);
-    }
-
-    /// Save the retained output; `path` is the native chooser's confirmed result.
-    fn save_to_path(&mut self, path: &Path) {
-        if self.output_image.is_none() {
-            self.status = "Nothing to save yet — load an image first.".into();
-            return;
-        }
         let mut operation = Operation::new(OperationKind::Save, self.diagnostics.mode);
         if let Some(source) = self.source_render.clone() {
             operation.set_source_render(source);
@@ -1779,8 +1807,8 @@ impl App {
         if let Some(source) = &self.source_render {
             operation.set_working_dimensions(source.dimensions[0], source.dimensions[1]);
         }
-        self.remember_dialog("save_output", path);
-        let actual_format = match image_io::ImageFormat::detect(path) {
+        self.remember_dialog("save_output", &path);
+        let actual_format = match image_io::ImageFormat::detect(&path) {
             Ok(format) => format,
             Err(error) => {
                 self.status = format!("Save error: {error}");
@@ -1842,7 +1870,7 @@ impl App {
         drop(saving_convert);
         let file_write = operation.scope("file_write", ObservationKind::Phase, Purpose::Image);
         let result = image_io::save_rendered_output_observed(
-            path,
+            &path,
             &converted,
             save_options,
             self.output_metadata.as_ref(),
@@ -1879,9 +1907,14 @@ impl App {
 
     /// Render an immutable snapshot of the loaded full input independently of Save.
     fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
-        if self.export_input().is_none() {
+        if self.export_job.is_some() || self.calibration_job.is_some() {
+            self.status = "Wait for the current operation before exporting.".into();
             return;
         }
+        let Some(image) = self.image.as_ref().cloned() else {
+            self.status = "Load an image before exporting.".into();
+            return;
+        };
         options.normalize();
         let stem = self
             .image_path
@@ -1903,34 +1936,6 @@ impl App {
         else {
             return;
         };
-        self.start_export_to_path(ctx, options, &chosen_path);
-    }
-
-    fn export_input(&mut self) -> Option<Arc<ImageBuf>> {
-        if self.export_job.is_some() || self.calibration_job.is_some() {
-            self.status = "Wait for the current operation before exporting.".into();
-            return None;
-        }
-        match self.image.as_ref().cloned() {
-            Some(image) => Some(image),
-            None => {
-                self.status = "Load an image before exporting.".into();
-                None
-            }
-        }
-    }
-
-    /// Render to the native chooser's confirmed path, preserving overwrite checks.
-    fn start_export_to_path(
-        &mut self,
-        ctx: &egui::Context,
-        mut options: ExportOptions,
-        chosen_path: &Path,
-    ) {
-        let Some(image) = self.export_input() else {
-            return;
-        };
-        options.normalize();
         let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
         operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
@@ -1946,7 +1951,7 @@ impl App {
                 ),
             );
         }
-        let out_path = options.format.output_path(chosen_path);
+        let out_path = options.format.output_path(&chosen_path);
         if out_path != chosen_path && out_path.exists() {
             self.status = format!(
                 "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
@@ -1968,13 +1973,7 @@ impl App {
                 return;
             }
         };
-        let snapshot = RenderSnapshot {
-            params,
-            film_name: self.film_name.clone(),
-            print_name: self.print_name.clone(),
-            data_dir: self.data_dir.clone(),
-            special: self.gui_state.sections["special"].clone(),
-        };
+        let snapshot = self.render_snapshot(params);
         self.remember_dialog("export", &out_path);
         self.export_options = options.clone();
         let metadata = self.source_metadata.clone();
@@ -2002,8 +2001,14 @@ impl App {
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
-                        let pipeline = build_runtime_observed(&snapshot, false, &observation)
+                        let setup = snapshot
+                            .prepare_scanner_setup(&image, &observation)
                             .map_err(anyhow::Error::msg)?;
+                        let mut pipeline = build_runtime_observed(&snapshot, false, &observation)
+                            .map_err(anyhow::Error::msg)?;
+                        if let Some(setup) = setup {
+                            pipeline = pipeline.with_scanner_setup(setup);
+                        }
                         if let Some(slot) = &worker_configuration {
                             *slot.lock() = Some(pipeline.telemetry_configuration());
                         }
@@ -2069,18 +2074,29 @@ impl App {
                             IssueCategory::Writing,
                             IssueBoundary::SavingConvert,
                         )?;
+                        let nanos = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_nanos();
+                        let staged = TempPath(
+                            out_path.with_file_name(format!(
+                                "spektrafilm-export-{}-{nanos}.{}",
+                                std::process::id(),
+                                options.format.extension()
+                            )),
+                            Some(out_path.clone()),
+                        );
                         let file_write =
                             observation.scope("file_write", ObservationKind::Phase, Purpose::Image);
-                        let staged = image_io::prepare_save_observed(
-                            &out_path,
+                        let report = image_io::save_observed(
+                            &staged.0,
                             &converted,
                             options.save_options(),
                             metadata.as_ref(),
                             file_write.context(),
                         );
-                        let staged = observed_result(
+                        let report = observed_result(
                             file_write,
-                            staged,
+                            report,
                             IssueCategory::Writing,
                             IssueBoundary::FileWrite,
                         )?;
@@ -2096,6 +2112,7 @@ impl App {
                                 .to_owned(),
                             backend_name: effective_backend_name(backend.name(), pipeline.params()),
                             size: [output.width, output.height],
+                            metadata_warning: report.metadata_warning,
                             staged,
                         })
                     },
@@ -2198,7 +2215,7 @@ impl App {
             Ok(result) => {
                 let publication =
                     operation.scope("publication", ObservationKind::Phase, Purpose::Image);
-                let published = result.staged.publish(true);
+                let published = result.staged.publish();
                 let published = observed_result(
                     publication,
                     published,
@@ -2206,7 +2223,7 @@ impl App {
                     IssueBoundary::Publication,
                 );
                 match published {
-                    Ok(report) => {
+                    Ok(()) => {
                         outcome = Outcome::Succeeded;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
                         let mut status = format!(
@@ -2217,7 +2234,7 @@ impl App {
                             result.size[1],
                             result.elapsed
                         );
-                        if let Some(warning) = report.metadata_warning {
+                        if let Some(warning) = result.metadata_warning {
                             status.push_str(&format!(" — Metadata warning: {warning}"));
                         }
                         status
@@ -2662,9 +2679,7 @@ impl eframe::App for App {
         // Has to happen here (not in `App::new`) because the CAMetalLayer
         // isn't wired up at construction time.
         #[cfg(target_os = "macos")]
-        if !self.metal_colorspace_tagged
-            && raw_window_handle::HasWindowHandle::window_handle(frame).is_ok()
-        {
+        if !self.metal_colorspace_tagged {
             match tag_metal_layer_srgb(frame) {
                 Ok(()) => {
                     eprintln!("[spektrafilm] CAMetalLayer.colorspace = sRGB — tagged OK");
@@ -2862,6 +2877,22 @@ fn pick_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("data"))
 }
 
+struct TempPath(PathBuf, Option<PathBuf>);
+
+impl TempPath {
+    fn publish(self) -> Result<()> {
+        let destination = self.1.as_ref().context("missing export destination")?;
+        std::fs::rename(&self.0, destination)
+            .with_context(|| format!("publishing export {}", destination.display()))
+    }
+}
+
+impl Drop for TempPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// macOS only: walk from the eframe `RawWindowHandle` down to the
 /// `CAMetalLayer` and tag its colorspace as sRGB. Without this the
 /// metal layer's `colorspace` is null and macOS treats the framebuffer
@@ -2964,6 +2995,317 @@ fn tag_metal_layer_srgb<H: raw_window_handle::HasWindowHandle>(h: &H) -> Result<
 #[cfg(test)]
 mod telemetry_lifecycle_tests {
     use super::*;
+
+    fn scanner_app() -> App {
+        let mut app = App::new_with_browser_path(
+            Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            None,
+            None,
+            None,
+            std::env::temp_dir().join(format!(
+                "scanner-snapshots-{}-{}.json",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )),
+        );
+        app.data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        app.film_name = "kodak_portra_400".into();
+        app.print_name = "kodak_portra_endura".into();
+        app.params.workflow.route = "input > film > scan".into();
+        app.params.io.scan_film = true;
+        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        app.params.scanner.white_correction = false;
+        app.params.scanner.black_correction = false;
+        app.params.film_render.grain.active = false;
+        app.params.camera.auto_exposure = false;
+        app.params.print_render.glare.active = false;
+        app.params.settings.preview_max_size = 4;
+        app.image = Some(Arc::new(ImageBuf::from_data(
+            24,
+            8,
+            (0..24 * 8 * 3)
+                .map(|i| {
+                    spektrafilm_math::precision::from_f64(if i / 3 % 24 < 5 { 0.01 } else { 0.7 })
+                })
+                .collect(),
+        )));
+        app
+    }
+
+    #[test]
+    fn app_source_remeasurement_and_manual_scanner_edits_preserve_user_brightness() {
+        let mut app = scanner_app();
+        let context = ObservationContext::default();
+        let original = app.render_snapshot(app.params.clone());
+        let initial = original
+            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
+            .unwrap()
+            .unwrap();
+        let mut changed_input = (**app.image.as_ref().unwrap()).clone();
+        for (index, sample) in changed_input.data.iter_mut().enumerate() {
+            *sample *= spektrafilm_math::precision::from_f64([0.18, 0.45, 0.8][index % 3]);
+        }
+        app.image = Some(Arc::new(changed_input));
+        app.input_epoch = app.input_epoch.wrapping_add(1);
+        let source = app.render_snapshot(app.params.clone());
+        let source_setup = source
+            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            initial, source_setup,
+            "new chromatic source must change measured scanner setup"
+        );
+        app.params.scanner.positive_density_ev += 1.0;
+        app.parameter_revision = app.parameter_revision.wrapping_add(1);
+        let edited = app.render_snapshot(app.params.clone());
+        assert!(!Arc::ptr_eq(&source.scanner_setup, &edited.scanner_setup));
+        assert!(
+            edited.scanner_setup.get().is_none(),
+            "parameter revision must create a fresh measurement slot"
+        );
+        let edited_setup = edited
+            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            source_setup, edited_setup,
+            "derived setup must preserve the user's additional brightness"
+        );
+        let input = app.image.as_ref().unwrap();
+        let source_runtime = build_runtime_observed(&source, false, &context)
+            .unwrap()
+            .with_scanner_setup(source_setup);
+        let edited_runtime = build_runtime_observed(&edited, false, &context)
+            .unwrap()
+            .with_scanner_setup(edited_setup);
+        assert_eq!(
+            edited_runtime.params().scanner.positive_density_ev
+                - source_runtime.params().scanner.positive_density_ev,
+            1.0
+        );
+        let before = source_runtime
+            .process((**input).clone(), app.backend.as_ref())
+            .unwrap();
+        let after = edited_runtime
+            .process((**input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert!(
+            after
+                .data
+                .iter()
+                .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
+        );
+        let brightness = |image: &ImageBuf| {
+            image
+                .data
+                .iter()
+                .map(|sample| spektrafilm_math::precision::to_f64(*sample))
+                .sum::<f64>()
+        };
+        assert!(
+            brightness(&after) > brightness(&before),
+            "manual +1 EV must increase rendered brightness with the measured setup retained"
+        );
+        assert_eq!(original.scanner_setup.get().unwrap(), &Ok(initial));
+        assert_eq!(source.scanner_setup.get().unwrap(), &Ok(source_setup));
+    }
+
+    #[test]
+    fn app_preview_scan_and_export_measure_canonical_full_source_once() {
+        for first in [Some(true), Some(false), None] {
+            let mut app = scanner_app();
+            let snapshot = app.render_snapshot(app.params.clone());
+            let context = ObservationContext::default();
+            let input = app.image.as_ref().unwrap().clone();
+            let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
+            let expected = canonical.prepare_scanner_setup(&input).unwrap();
+            let mut cache = None;
+            if let Some(preview_first) = first {
+                let runtime = prepare_runtime_observed(
+                    &mut cache,
+                    &snapshot,
+                    preview_first,
+                    &input,
+                    &context,
+                )
+                .unwrap();
+                let working = if preview_first {
+                    spektrafilm_core::params_builder::resize_for_preview(
+                        &input,
+                        runtime.params().settings.preview_max_size,
+                    )
+                } else {
+                    (*input).clone()
+                };
+                let rendered = runtime.process(working, app.backend.as_ref()).unwrap();
+                assert!(
+                    rendered
+                        .data
+                        .iter()
+                        .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
+                );
+                assert_eq!(runtime.params().settings.preview_mode, preview_first);
+            } else {
+                assert_eq!(
+                    snapshot.prepare_scanner_setup(&input, &context).unwrap(),
+                    Some(expected)
+                );
+            }
+            assert_eq!(snapshot.scanner_setup.get().unwrap(), &Ok(expected));
+            let original_params = serde_json::to_value(&snapshot.params).unwrap();
+            let export = app.render_snapshot(app.params.clone());
+            assert_eq!(
+                export.prepare_scanner_setup(&input, &context).unwrap(),
+                Some(expected)
+            );
+            let mut alternative_input = (*input).clone();
+            for (index, sample) in alternative_input.data.iter_mut().enumerate() {
+                *sample *= spektrafilm_math::precision::from_f64([0.18, 0.45, 0.8][index % 3]);
+            }
+            assert_ne!(
+                canonical.prepare_scanner_setup(&alternative_input).unwrap(),
+                expected
+            );
+            assert_eq!(
+                export
+                    .prepare_scanner_setup(&alternative_input, &context)
+                    .unwrap(),
+                Some(expected),
+                "initialized snapshot must reuse its measured full source rather than remeasure another raster"
+            );
+            let scan_runtime =
+                prepare_runtime_observed(&mut cache, &export, false, &input, &context).unwrap();
+            let scan = scan_runtime
+                .process((*input).clone(), app.backend.as_ref())
+                .unwrap();
+            let export_runtime = build_runtime_observed(&export, false, &context)
+                .unwrap()
+                .with_scanner_setup(expected);
+            let exported = export_runtime
+                .process((*input).clone(), app.backend.as_ref())
+                .unwrap();
+            assert_eq!(
+                scan.data, exported.data,
+                "shared full setup must produce the same Scan and Export raster"
+            );
+            let preview_runtime =
+                prepare_runtime_observed(&mut cache, &export, true, &input, &context).unwrap();
+            let working = spektrafilm_core::params_builder::resize_for_preview(
+                &input,
+                preview_runtime.params().settings.preview_max_size,
+            );
+            let preview = preview_runtime
+                .process(working, app.backend.as_ref())
+                .unwrap();
+            assert_eq!(preview.width.max(preview.height), 4);
+            assert!(
+                preview
+                    .data
+                    .iter()
+                    .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
+            );
+            assert!(Arc::ptr_eq(&snapshot.scanner_setup, &export.scanner_setup));
+            assert_eq!(
+                serde_json::to_value(&snapshot.params).unwrap(),
+                original_params
+            );
+        }
+    }
+
+    #[test]
+    fn app_real_negative_setup_ignores_virtual_camera_metering() {
+        let mut app = scanner_app();
+        app.params.workflow.route = "input > convert-film > scan".into();
+        let context = ObservationContext::default();
+        let input = app.image.as_ref().unwrap().clone();
+        app.params.camera.auto_exposure = false;
+        let first = app.render_snapshot(app.params.clone());
+        let expected = first.prepare_scanner_setup(&input, &context).unwrap();
+        app.parameter_revision = app.parameter_revision.wrapping_add(1);
+        app.params.camera.auto_exposure = true;
+        app.params.camera.exposure_compensation_ev += 3.0;
+        let changed = app.render_snapshot(app.params.clone());
+        assert_eq!(
+            changed.prepare_scanner_setup(&input, &context).unwrap(),
+            expected
+        );
+        let first_runtime = build_runtime_observed(&first, false, &context)
+            .unwrap()
+            .with_scanner_setup(expected.unwrap());
+        let changed_runtime = build_runtime_observed(&changed, false, &context)
+            .unwrap()
+            .with_scanner_setup(expected.unwrap());
+        let first_output = first_runtime
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        let changed_output = changed_runtime
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert_eq!(
+            first_output.data, changed_output.data,
+            "real negative render must bypass virtual camera metering"
+        );
+    }
+
+    #[test]
+    fn app_channel_swaps_use_identical_canonical_and_render_calibration() {
+        let mut app = scanner_app();
+        app.gui_state.sections["special"]["film_channel_swap"] = serde_json::json!([2, 0, 1]);
+        app.gui_state.sections["special"]["print_channel_swap"] = serde_json::json!([1, 2, 0]);
+        let snapshot = app.render_snapshot(app.params.clone());
+        let input = app.image.as_ref().unwrap().clone();
+        let context = ObservationContext::default();
+        let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
+        let mut cache = None;
+        let actual = prepare_runtime_cached(&mut cache, &snapshot, false, &context).unwrap();
+        let expected = canonical.prepare_scanner_setup(&input).unwrap();
+        assert_eq!(
+            actual.prepare_scanner_setup(&input).unwrap(),
+            expected,
+            "full setup and cached runtime must apply the same film and print channel swaps"
+        );
+        let canonical_output = canonical
+            .with_scanner_setup(expected)
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        let actual =
+            prepare_runtime_observed(&mut cache, &snapshot, false, &input, &context).unwrap();
+        let actual_output = actual
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert_eq!(actual_output.data, canonical_output.data);
+    }
+
+    #[test]
+    fn imported_positive_slide_state_fails_without_mutating_current_scan() {
+        let mut app = scanner_app();
+        let original = app.params.clone();
+        let revision = app.parameter_revision;
+        let mut invalid = app.current_state().unwrap();
+        invalid.sections["simulation"]["film_stock"] = "fujifilm_provia_100f".into();
+        invalid.sections["scanner"]["positive_interpretation"] = "coupled".into();
+        invalid.sections["scanner"]["auto_setup"] = "per_frame".into();
+        invalid.sections["scanner"]["finish"] = "lab_scan".into();
+        let error = app.apply_state(invalid).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("negative filming-stage film profile")
+        );
+        assert_eq!(app.params, original);
+        assert_eq!(app.parameter_revision, revision);
+        assert_eq!(app.film_name, "kodak_portra_400");
+        app.image_path = None;
+        let valid = app.current_state().unwrap();
+        app.apply_state(valid).unwrap();
+        assert_eq!(app.params.scanner.scan_output, "positive_scan");
+        assert_eq!(app.params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
+    }
 
     fn job(request_id: u64) -> RenderJob {
         RenderJob {

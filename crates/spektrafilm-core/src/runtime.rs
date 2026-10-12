@@ -2,6 +2,7 @@
 use crate::params::{RuntimeParams, Tap};
 use crate::pipeline::Pipeline;
 use crate::profile;
+pub use crate::stages::scanning::ScannerSetup;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
@@ -197,6 +198,17 @@ impl Runtime {
         }
     }
 
+    /// Measure scanner placement on the full input before any preview geometry.
+    pub fn prepare_scanner_setup(&self, full_input: &ImageBuf) -> Result<ScannerSetup, String> {
+        self.pipeline.prepare_scanner_setup(full_input)
+    }
+
+    /// Attach the immutable setup shared by renders of one source revision.
+    pub fn with_scanner_setup(mut self, setup: ScannerSetup) -> Self {
+        self.pipeline = self.pipeline.with_scanner_setup(setup);
+        self
+    }
+
     pub fn process(
         &self,
         image: ImageBuf,
@@ -273,8 +285,10 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
+        let setup = self.prepare_scanner_setup(&image)?;
+        let prepared = self.clone().with_scanner_setup(setup);
         let preview = crate::params_builder::resize_for_preview(&image, max_size);
-        self.process(preview, backend)
+        prepared.process(preview, backend)
     }
 
     /// Process using `settings.preview_max_size`, matching upstream
@@ -468,9 +482,45 @@ pub fn simulate_preview(
     digest_params_first: bool,
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
+    if photo.params.scanner.auto_setup == crate::params::ScannerAutoSetup::Off {
+        let preview = crate::params_builder::resize_for_preview(
+            &image,
+            photo.params.settings.preview_max_size,
+        );
+        return simulate(preview, photo, backend, digest_params_first, print_timings);
+    }
+    let mut canonical = photo.clone();
+    canonical.params.settings.preview_mode = false;
+    let mode = if digest_params_first {
+        DigestMode::ApplyStockSpecifics
+    } else {
+        DigestMode::PreserveUserEdits
+    };
+    let measurement = if digest_params_first {
+        canonical.into_runtime(mode)?
+    } else {
+        Runtime::from_photo_params(canonical)?
+    };
+    let setup = measurement.prepare_scanner_setup(&image)?;
+    let params = if digest_params_first {
+        photo.digested_params(mode)?
+    } else {
+        photo.params.clone()
+    };
+    let runtime = Runtime::new(
+        photo.film.clone(),
+        photo.print.clone(),
+        params,
+        &photo.data_dir,
+    )?
+    .with_scanner_setup(setup);
     let preview =
         crate::params_builder::resize_for_preview(&image, photo.params.settings.preview_max_size);
-    simulate(preview, photo, backend, digest_params_first, print_timings)
+    let result = runtime.process(preview, backend);
+    if print_timings {
+        runtime.print_timings();
+    }
+    result
 }
 
 /// Legacy ART compatibility name.

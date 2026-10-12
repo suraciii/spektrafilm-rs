@@ -64,8 +64,6 @@ pub struct ReceiverProvenance {
     pub band_centers_nm: Option<[f64; 3]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub band_sigma_nm: Option<[f64; 3]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reference_model: Option<&'static str>,
 }
 
 pub fn provenance(profile: ReceiverProfile) -> ReceiverProvenance {
@@ -78,7 +76,6 @@ pub fn provenance(profile: ReceiverProfile) -> ReceiverProvenance {
             reference_levels: [1.0; 3],
             band_centers_nm: None,
             band_sigma_nm: None,
-            reference_model: None,
         },
         ReceiverProfile::LabScanApprox => ReceiverProvenance {
             profile,
@@ -88,19 +85,6 @@ pub fn provenance(profile: ReceiverProfile) -> ReceiverProvenance {
             reference_levels: [1.0; 3],
             band_centers_nm: Some([630.0, 545.0, 465.0]),
             band_sigma_nm: Some([8.5, 14.0, 9.5]),
-            reference_model: None,
-        },
-        ReceiverProfile::DigitalReference => ReceiverProvenance {
-            profile,
-            source: "SpektraFilm project-authored equal-energy Kodak Portra Endura receiver / Kodak Portra400 dye basis; CC BY-SA 4.0 profile data, Andrea Volpato",
-            version: crate::digital_reference::VERSION,
-            calibration_status: "modeled_uncalibrated",
-            reference_levels: [0.18; 3],
-            band_centers_nm: None,
-            band_sigma_nm: None,
-            reference_model: Some(
-                "Reference Exposure; log10 exposure 0; clear black; sign(x)*x^2/(x^2+41/9); common linear sRGB",
-            ),
         },
     }
 }

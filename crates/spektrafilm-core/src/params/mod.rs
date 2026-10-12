@@ -118,9 +118,83 @@ impl Default for EnlargerParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiverProfile {
+    #[default]
+    LegacyColorimetric,
+    LabScanApprox,
+}
+impl ReceiverProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LegacyColorimetric => "legacy_colorimetric",
+            Self::LabScanApprox => "lab_scan_approx",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PositiveInterpretation {
+    #[default]
+    Separable,
+    Coupled,
+}
+impl PositiveInterpretation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Separable => "separable",
+            Self::Coupled => "coupled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScannerAutoSetup {
+    #[default]
+    Off,
+    PerFrame,
+}
+impl ScannerAutoSetup {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::PerFrame => "per_frame",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScannerFinish {
+    #[default]
+    Neutral,
+    LabScan,
+}
+impl ScannerFinish {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::LabScan => "lab_scan",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
+    #[serde(default)]
+    pub receiver_profile: ReceiverProfile,
+    #[serde(default)]
+    pub positive_interpretation: PositiveInterpretation,
+    #[serde(default)]
+    pub auto_setup: ScannerAutoSetup,
+    #[serde(default)]
+    pub finish: ScannerFinish,
+    #[serde(default = "default_finish_strength")]
+    pub finish_strength: f64,
     #[serde(default)]
     pub lens_blur: f32,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
@@ -155,6 +229,11 @@ pub struct ScannerParams {
 impl Default for ScannerParams {
     fn default() -> Self {
         Self {
+            receiver_profile: ReceiverProfile::default(),
+            positive_interpretation: PositiveInterpretation::default(),
+            auto_setup: ScannerAutoSetup::default(),
+            finish: ScannerFinish::default(),
+            finish_strength: default_finish_strength(),
             lens_blur: 0.0,
             scan_output: default_direct_scan(),
             white_correction: false,
@@ -170,6 +249,10 @@ impl Default for ScannerParams {
             positive_dmax: default_positive_dmax(),
         }
     }
+}
+
+fn default_finish_strength() -> f64 {
+    1.0
 }
 
 fn default_scanner_white_point() -> [f64; 3] {
@@ -889,6 +972,40 @@ fn default_route() -> String {
 #[cfg(test)]
 mod tests {
     use super::{CameraParams, RuntimeParams};
+    #[test]
+    fn scanner_selector_defaults_and_sparse_edits_are_compatible() {
+        let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            legacy.receiver_profile,
+            super::ReceiverProfile::LegacyColorimetric
+        );
+        assert_eq!(
+            legacy.positive_interpretation,
+            super::PositiveInterpretation::Separable
+        );
+        assert_eq!(legacy.auto_setup, super::ScannerAutoSetup::Off);
+        assert_eq!(legacy.finish, super::ScannerFinish::Neutral);
+        assert_eq!(legacy.finish_strength, 1.0);
+        for (path, allowed) in [
+            (
+                "scanner.receiver_profile",
+                ["legacy_colorimetric", "lab_scan_approx"],
+            ),
+            ("scanner.positive_interpretation", ["separable", "coupled"]),
+            ("scanner.auto_setup", ["off", "per_frame"]),
+            ("scanner.finish", ["neutral", "lab_scan"]),
+        ] {
+            for value in allowed {
+                assert!(super::sources::ParameterEdits::parse(&format!("{path}={value}")).is_ok());
+            }
+            assert!(super::sources::ParameterEdits::parse(&format!("{path}=unknown")).is_err());
+        }
+        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=1.1").is_err());
+        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=-0.1").is_err());
+        let encoded = serde_json::to_value(&legacy).unwrap();
+        assert_eq!(encoded["receiver_profile"], "legacy_colorimetric");
+        assert_eq!(encoded["positive_interpretation"], "separable");
+    }
 
     #[test]
     fn null_or_missing_camera_color_filter_uses_no_filter() {

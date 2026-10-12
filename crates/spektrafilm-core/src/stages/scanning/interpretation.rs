@@ -1,9 +1,7 @@
 use super::{
     ForwardCapture,
     coupled::{CoupledBounds, CoupledInverse},
-    developed_density_curves,
 };
-use crate::WorkflowRoute;
 use crate::{params::RuntimeParams, profile::Profile};
 
 struct DensityAxis {
@@ -12,17 +10,24 @@ struct DensityAxis {
 }
 
 impl DensityAxis {
-    fn prepare(log_exposure: &[f64], curves: &[[f64; 3]], channel: usize) -> Result<Self, String> {
-        if log_exposure.len() < 2
-            || log_exposure.len() != curves.len()
-            || log_exposure
+    fn prepare(profile: &Profile, channel: usize) -> Result<Self, String> {
+        if profile.data.log_exposure.len() < 2
+            || profile.data.log_exposure.len() != profile.data.density_curves.len()
+            || profile
+                .data
+                .log_exposure
                 .windows(2)
                 .any(|w| !w[0].is_finite() || !w[1].is_finite() || w[0] >= w[1])
         {
             return Err("coupled inverse requires finite increasing film exposure knots and matching density samples".into());
         }
         let mut blocks: Vec<(f64, f64, usize)> = Vec::new();
-        for (&e, row) in log_exposure.iter().zip(curves) {
+        for (&e, row) in profile
+            .data
+            .log_exposure
+            .iter()
+            .zip(&profile.data.density_curves)
+        {
             let d = row[channel];
             if !d.is_finite() || !e.is_finite() {
                 continue;
@@ -89,19 +94,6 @@ impl DensityAxis {
     }
 }
 
-/// The three record axes, read from the developed curves: the film stage
-/// emits densities over each record's minimum, so the inverse uses the same
-/// origin.
-fn prepare_axes(profile: &Profile) -> Result<[DensityAxis; 3], String> {
-    let curves = developed_density_curves(profile);
-    let log_exposure = &profile.data.log_exposure;
-    (0..3)
-        .map(|channel| DensityAxis::prepare(log_exposure, &curves, channel))
-        .collect::<Result<Vec<_>, _>>()?
-        .try_into()
-        .map_err(|_| "three film axes required".into())
-}
-
 /// The coupled receiver inverse recovers dye densities; the film's monotone
 /// characteristic curves then recover relative exposure without toe singularities.
 pub(super) struct CoupledCalibration {
@@ -111,7 +103,11 @@ pub(super) struct CoupledCalibration {
 
 impl CoupledCalibration {
     pub(super) fn prepare(profile: &Profile, forward: &ForwardCapture<'_>) -> Result<Self, String> {
-        let axes = prepare_axes(profile)?;
+        let axes: [DensityAxis; 3] = (0..3)
+            .map(|c| DensityAxis::prepare(profile, c))
+            .collect::<Result<Vec<_>, _>>()?
+            .try_into()
+            .map_err(|_| "three film axes required")?;
         let minimum = std::array::from_fn(|c| axes[c].density[0]);
         let maximum = std::array::from_fn(|c| *axes[c].density.last().unwrap());
         let inverse = CoupledInverse::prepare(
@@ -160,58 +156,19 @@ impl CoupledCalibration {
 }
 
 pub(super) fn camera_ev(params: &RuntimeParams) -> f64 {
-    if params.workflow.route_enum() == WorkflowRoute::FilmScan {
+    if params.workflow.route == "input > film > scan" {
         params.camera.exposure_compensation_ev as f64
     } else {
         0.0
     }
 }
 
-/// The record-density reading: the film's own monotone characteristic curves,
-/// with no synthetic capture in the loop. A narrowband lab scanner reads each
-/// dye record through its own band, so one record's estimate must not depend on
-/// another record's density.
-pub(super) struct DensityCalibration {
-    axes: [DensityAxis; 3],
-}
-
-impl DensityCalibration {
-    pub(super) fn prepare(profile: &Profile) -> Result<Self, String> {
-        Ok(Self {
-            axes: prepare_axes(profile)?,
-        })
-    }
-
-    /// Relative log-exposure range that all three record inverses cover.
-    pub(super) fn range(&self) -> [f64; 2] {
-        [
-            self.axes
-                .iter()
-                .map(|axis| axis.exposure[0])
-                .fold(f64::NEG_INFINITY, f64::max),
-            self.axes
-                .iter()
-                .map(|axis| *axis.exposure.last().unwrap())
-                .fold(f64::INFINITY, f64::min),
-        ]
-    }
-
-    pub(super) fn estimate(&self, density: [f64; 3]) -> Result<[f64; 3], String> {
-        let exposure = std::array::from_fn(|channel| self.axes[channel].estimate(density[channel]));
-        if exposure.iter().any(|value| !value.is_finite()) {
-            return Err("density inverse exceeds finite relative exposure range".into());
-        }
-        Ok(exposure)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::data_dir;
-
     fn profile(name: &str) -> Profile {
-        crate::profile::load_profile_by_name(&data_dir(), name).unwrap()
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        crate::profile::load_profile_by_name(&data, name).unwrap()
     }
     #[test]
     fn coupled_real_receivers_recover_chromatic_density_and_exposure() {
@@ -219,9 +176,8 @@ mod tests {
         let dyes = crate::chain_prep::channel_density(&film);
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
-        params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.negative_conversion_method =
-            crate::params::NegativeConversionMethod::Coupled;
+        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
         for receiver in [
             crate::params::ReceiverProfile::LegacyColorimetric,
             crate::params::ReceiverProfile::LabScanApprox,
@@ -289,9 +245,8 @@ mod tests {
         let dyes = crate::chain_prep::channel_density(&film);
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
-        params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.negative_conversion_method =
-            crate::params::NegativeConversionMethod::Coupled;
+        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
         params.scanner.unsharp_mask = [0.0; 2];
         params.io.output_cctf_encoding = false;
         params.settings.use_scanner_lut = false;
@@ -342,7 +297,7 @@ mod tests {
                 &image,
                 &film,
                 &params,
-                &spektrafilm_backend::cpu_backend::CpuBackend,
+                &spektrafilm_gpu::cpu_backend::CpuBackend,
                 &correction,
                 &crate::gamut_compression::OutputGamutCompress::identity(),
             )

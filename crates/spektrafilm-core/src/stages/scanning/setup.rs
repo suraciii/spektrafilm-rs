@@ -19,7 +19,7 @@ pub struct ScannerSetup {
     pub density_ev: f64,
     /// Additive scanner channel balance, in stops, with zero sum.
     pub balance_ev: [f64; 3],
-    /// Multiplier for the user's conversion contrast.
+    /// Multiplier for the user's positive contrast.
     pub contrast_scale: f64,
 }
 
@@ -55,16 +55,14 @@ impl ScannerSetup {
                 "scanner auto setup requires finite camera EV and calibration range".into(),
             );
         }
-        if !scanner.conversion_brightness_ev.is_finite()
-            || !scanner.conversion_balance_ev.iter().all(|v| v.is_finite())
-            || !scanner.conversion_contrast.is_finite()
-            || scanner.conversion_contrast <= 0.0
-            || !scanner.conversion_dmax.is_finite()
-            || scanner.conversion_dmax <= 0.0
+        if !scanner.positive_density_ev.is_finite()
+            || !scanner.positive_balance_ev.iter().all(|v| v.is_finite())
+            || !scanner.positive_contrast.is_finite()
+            || scanner.positive_contrast <= 0.0
+            || !scanner.positive_dmax.is_finite()
+            || scanner.positive_dmax <= 0.0
         {
-            return Err(
-                "scanner auto setup requires finite negative conversion tone controls".into(),
-            );
+            return Err("scanner auto setup requires finite positive scan tone controls".into());
         }
 
         let to_ev = |sample: &[f64; 3]| sample.map(|v| v / std::f64::consts::LOG10_2 - camera_ev);
@@ -105,7 +103,7 @@ impl ScannerSetup {
         // linear-RGB stretch or the constants of a different film renderer.
         let reference = ScannerParams::default();
         let targets = [SHADOW_OUTPUT, MID_OUTPUT, HIGHLIGHT_OUTPUT]
-            .map(|output| tone_coordinate(output, scanner.conversion_dmax));
+            .map(|output| tone_coordinate(output, scanner.positive_dmax));
         if !targets.iter().all(|v| v.is_finite()) {
             return Err(
                 "scanner auto setup cannot represent the selected positive density tone".into(),
@@ -116,12 +114,12 @@ impl ScannerSetup {
         let contrast_scale = if flat {
             1.0
         } else {
-            ((targets[2] - targets[0]) / reference.conversion_contrast / observed_span)
+            ((targets[2] - targets[0]) / reference.positive_contrast / observed_span)
                 .clamp(CONTRAST_MIN, CONTRAST_MAX)
         };
-        let contrast = reference.conversion_contrast * contrast_scale;
+        let contrast = reference.positive_contrast * contrast_scale;
         let placement = |target: f64, measured: f64| {
-            target / contrast - reference.conversion_brightness_ev - measured
+            target / contrast - reference.positive_density_ev - measured
         };
         // Median drives exposure; robust tails gently bias placement. Flat
         // scenes carry no usable contrast information, so use only the median.
@@ -135,9 +133,9 @@ impl ScannerSetup {
         if !density_ev.is_finite()
             || !contrast_scale.is_finite()
             || !observed_span.is_finite()
-            || !(scanner.conversion_contrast * contrast_scale).is_finite()
-            || !(scanner.conversion_brightness_ev + density_ev).is_finite()
-            || !(0..3).all(|c| (scanner.conversion_balance_ev[c] + balance_ev[c]).is_finite())
+            || !(scanner.positive_contrast * contrast_scale).is_finite()
+            || !(scanner.positive_density_ev + density_ev).is_finite()
+            || !(0..3).all(|c| (scanner.positive_balance_ev[c] + balance_ev[c]).is_finite())
         {
             return Err("scanner auto setup cannot represent the measured tone corrections".into());
         }
@@ -150,11 +148,11 @@ impl ScannerSetup {
 
     /// Apply once to a render-local clone, leaving the original recipe intact.
     pub fn apply(&self, params: &mut RuntimeParams) {
-        params.scanner.conversion_brightness_ev += self.density_ev;
+        params.scanner.positive_density_ev += self.density_ev;
         for channel in 0..3 {
-            params.scanner.conversion_balance_ev[channel] += self.balance_ev[channel];
+            params.scanner.positive_balance_ev[channel] += self.balance_ev[channel];
         }
-        params.scanner.conversion_contrast *= self.contrast_scale;
+        params.scanner.positive_contrast *= self.contrast_scale;
     }
 }
 
@@ -169,7 +167,7 @@ fn quantile(sorted: &[f64], fraction: f64) -> f64 {
 /// Logistic coordinate `contrast * exposure_ev` for the density tone output.
 fn tone_coordinate(output: f64, dmax: f64) -> f64 {
     let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
-    let density = -(-denominator * (1.0 - output)).ln_1p() / std::f64::consts::LN_10;
+    let density = -(1.0 - denominator * (1.0 - output)).ln() / std::f64::consts::LN_10;
     let t = 1.0 - density / dmax;
     (t / (1.0 - t)).ln()
 }
@@ -281,33 +279,30 @@ mod tests {
         let original = RuntimeParams::default();
         let measured = setup(&ramp());
         let mut adjusted = original.clone();
-        adjusted.scanner.conversion_brightness_ev += 0.7;
-        adjusted.scanner.conversion_balance_ev = [0.1, -0.3, 0.2];
-        adjusted.scanner.conversion_contrast *= 1.2;
+        adjusted.scanner.positive_density_ev += 0.7;
+        adjusted.scanner.positive_balance_ev = [0.1, -0.3, 0.2];
+        adjusted.scanner.positive_contrast *= 1.2;
         let before = adjusted.clone();
         measured.apply(&mut adjusted);
         assert_eq!(
-            adjusted.scanner.conversion_brightness_ev,
-            before.scanner.conversion_brightness_ev + measured.density_ev
+            adjusted.scanner.positive_density_ev,
+            before.scanner.positive_density_ev + measured.density_ev
         );
         assert_eq!(
-            adjusted.scanner.conversion_contrast,
-            before.scanner.conversion_contrast * measured.contrast_scale
+            adjusted.scanner.positive_contrast,
+            before.scanner.positive_contrast * measured.contrast_scale
         );
         assert_eq!(adjusted.scanner.black_point, before.scanner.black_point);
         assert_eq!(adjusted.scanner.white_point, before.scanner.white_point);
-        assert_eq!(
-            adjusted.scanner.conversion_dmax,
-            before.scanner.conversion_dmax
-        );
+        assert_eq!(adjusted.scanner.positive_dmax, before.scanner.positive_dmax);
         assert_eq!(
             adjusted.camera.exposure_compensation_ev,
             before.camera.exposure_compensation_ev
         );
         for c in 0..3 {
             assert_eq!(
-                adjusted.scanner.conversion_balance_ev[c],
-                before.scanner.conversion_balance_ev[c] + measured.balance_ev[c]
+                adjusted.scanner.positive_balance_ev[c],
+                before.scanner.positive_balance_ev[c] + measured.balance_ev[c]
             );
         }
         // No cross-channel mixer or content-derived saturation operation is
@@ -321,8 +316,8 @@ mod tests {
             .collect();
         assert_eq!(setup(&neutral), setup(&chromatic));
         assert_eq!(
-            original.scanner.conversion_brightness_ev,
-            ScannerParams::default().conversion_brightness_ev
+            original.scanner.positive_density_ev,
+            ScannerParams::default().positive_density_ev
         );
     }
 }

@@ -1,4 +1,4 @@
-//! LabScan-style scanner finishing for converted negative images.
+//! LabScan-style scanner finishing for positive scans.
 //!
 //! The constants and Oklab treatment are adapted from FotufilmCore's
 //! `LabScanFinish.swift`, SHA-256
@@ -53,7 +53,14 @@ fn clamp(value: f64, low: f64, high: f64) -> f64 {
     value.clamp(low, high)
 }
 
-use crate::math::mat_vec;
+#[inline]
+fn mul(matrix: &[[f64; 3]; 3], rgb: [f64; 3]) -> [f64; 3] {
+    [
+        matrix[0][0] * rgb[0] + matrix[0][1] * rgb[1] + matrix[0][2] * rgb[2],
+        matrix[1][0] * rgb[0] + matrix[1][1] * rgb[1] + matrix[1][2] * rgb[2],
+        matrix[2][0] * rgb[0] + matrix[2][1] * rgb[1] + matrix[2][2] * rgb[2],
+    ]
+}
 
 #[inline]
 fn oklab(rgb: [f64; 3]) -> [f64; 3] {
@@ -112,7 +119,7 @@ fn finish_pixel(
     if !chromatic {
         return toned;
     }
-    let mut lab = oklab(mat_vec(output_to_srgb, toned));
+    let mut lab = oklab(mul(output_to_srgb, toned));
     let level = lab[0];
     // The simple core API has no per-frame floor; LabScanFinish's default
     // floor of zero makes the crossover onset fully active.
@@ -155,7 +162,7 @@ fn finish_pixel(
     let corrected_hue = (hue + turn * fade) * std::f64::consts::PI / 180.0;
     lab[1] = corrected_chroma * corrected_hue.cos();
     lab[2] = corrected_chroma * corrected_hue.sin();
-    mat_vec(srgb_to_output, linear_from_oklab(lab))
+    mul(srgb_to_output, linear_from_oklab(lab))
 }
 
 /// Apply the LabScan finish in-place to linear RGB in `output_space`.
