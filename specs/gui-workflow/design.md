@@ -2,6 +2,7 @@
 
 - The GUI is an adapter over `core::runtime`; it does not implement a second film pipeline or color model.
 - UI edits serialize to the runtime parameter model. Preview and Scan use the same model with different geometry limits.
+- Cached preview preparation and independent export preparation must share parameter digestion, scanned-medium selection, and channel-swap rules. Cache reuse and operation observation scopes remain separate.
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
 - Viewer presentation uses disposable display rasters. Save and Export consume retained native output or invoke the export renderer and shared writer.
 - Preview and viewport composition use separate persistent workers. Each worker retains one queued snapshot and replaces it when a newer request arrives.

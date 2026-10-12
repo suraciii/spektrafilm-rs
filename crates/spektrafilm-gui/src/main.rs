@@ -18,7 +18,7 @@ use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, Sav
 use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
 use spektrafilm_core::presets::{Section, workflow_default};
 use spektrafilm_core::profile;
-use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams, ScannerSetup};
+use spektrafilm_core::runtime::{DigestMode, Runtime, ScannerSetup};
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};
 use spektrafilm_gpu::ComputeBackend;
@@ -458,6 +458,58 @@ struct RenderSnapshot {
 }
 
 impl RenderSnapshot {
+    fn digested_params(
+        &self,
+        preview: bool,
+        film: &profile::Profile,
+        print: &profile::Profile,
+        neutral: &spektrafilm_core::neutral_filters::NeutralFilters,
+    ) -> RuntimeParams {
+        let mut params = self.params.clone();
+        params.settings.preview_mode = preview;
+        spektrafilm_core::runtime::digest_params_with_neutral(
+            params,
+            film,
+            print,
+            neutral,
+            DigestMode::PreserveUserEdits,
+        )
+    }
+
+    fn runtime_print_name(&self, params: &RuntimeParams) -> &str {
+        if params.io.scan_film {
+            &self.film_name
+        } else {
+            &self.print_name
+        }
+    }
+
+    fn build_runtime(
+        &self,
+        mut film: profile::Profile,
+        mut print: profile::Profile,
+        params: RuntimeParams,
+        context: &ObservationContext,
+    ) -> Result<Runtime, String> {
+        for (profile, key) in [
+            (&mut film, "film_channel_swap"),
+            (&mut print, "print_channel_swap"),
+        ] {
+            if let Some(order) = self.special[key].as_array() {
+                for row in &mut profile.data.channel_density {
+                    if row.len() >= 3 {
+                        let original = [row[0], row[1], row[2]];
+                        for ch in 0..3 {
+                            row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
+                        }
+                    }
+                }
+            }
+        }
+        Runtime::new_observed(film, print, params, &self.data_dir, context)
+            .map_err(|e| format!("runtime build: {e}"))
+    }
+
     fn prepare_scanner_setup(
         &self,
         full_input: &ImageBuf,
@@ -717,22 +769,10 @@ fn prepare_runtime_cached<'a>(
     preview: bool,
     context: &ObservationContext,
 ) -> Result<&'a mut Runtime, String> {
-    let mut params = snapshot.params.clone();
-    params.settings.preview_mode = preview;
-
     if let Some(mut cached) = cache.take() {
-        let digested = spektrafilm_core::runtime::digest_params_with_neutral(
-            params.clone(),
-            &cached.film,
-            &cached.digest_print,
-            &cached.neutral,
-            DigestMode::PreserveUserEdits,
-        );
-        let runtime_print_name = if digested.io.scan_film {
-            snapshot.film_name.as_str()
-        } else {
-            snapshot.print_name.as_str()
-        };
+        let digested =
+            snapshot.digested_params(preview, &cached.film, &cached.digest_print, &cached.neutral);
+        let runtime_print_name = snapshot.runtime_print_name(&digested);
         let key = RuntimeCacheKey {
             data_dir: snapshot.data_dir.clone(),
             film_name: snapshot.film_name.clone(),
@@ -764,47 +804,15 @@ fn prepare_runtime_cached<'a>(
         .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
     let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
         .map_err(|e| format!("neutral filters: {e}"))?;
-    let digested = spektrafilm_core::runtime::digest_params_with_neutral(
-        params,
-        &film,
-        &digest_print,
-        &neutral,
-        DigestMode::PreserveUserEdits,
-    );
-    let runtime_print_name = if digested.io.scan_film {
-        snapshot.film_name.as_str()
-    } else {
-        snapshot.print_name.as_str()
-    };
-    let mut runtime_film = film.clone();
-    let mut runtime_print = if digested.io.scan_film {
+    let digested = snapshot.digested_params(preview, &film, &digest_print, &neutral);
+    let runtime_print_name = snapshot.runtime_print_name(&digested);
+    let runtime_film = film.clone();
+    let runtime_print = if digested.io.scan_film {
         film.clone()
     } else {
         digest_print.clone()
     };
-    for (profile, key) in [
-        (&mut runtime_film, "film_channel_swap"),
-        (&mut runtime_print, "print_channel_swap"),
-    ] {
-        if let Some(order) = snapshot.special[key].as_array() {
-            for row in &mut profile.data.channel_density {
-                if row.len() >= 3 {
-                    let original = [row[0], row[1], row[2]];
-                    for ch in 0..3 {
-                        row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
-                    }
-                }
-            }
-        }
-    }
-    let runtime = Runtime::new_observed(
-        runtime_film,
-        runtime_print,
-        digested,
-        &snapshot.data_dir,
-        context,
-    )
-    .map_err(|e| format!("runtime build: {e}"))?;
+    let runtime = snapshot.build_runtime(runtime_film, runtime_print, digested, context)?;
     *cache = Some(RuntimeCache {
         key: RuntimeCacheKey {
             data_dir: snapshot.data_dir.clone(),
@@ -833,47 +841,19 @@ fn build_runtime_observed(
 ) -> Result<Runtime, String> {
     let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
     let result = (|| {
-        let mut params = snapshot.params.clone();
-        params.settings.preview_mode = preview;
         let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
             .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
         let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
             .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
-        let photo = RuntimePhotoParams {
-            film,
-            print,
-            params,
-            data_dir: snapshot.data_dir.clone(),
-        };
-        let params = photo
-            .digested_params(DigestMode::PreserveUserEdits)
+        let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
             .map_err(|e| format!("parameter digest: {e}"))?;
-        let mut film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
+        let params = snapshot.digested_params(preview, &film, &print, &neutral);
+        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
             .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
-        let effective_print_name = if params.io.scan_film {
-            snapshot.film_name.as_str()
-        } else {
-            snapshot.print_name.as_str()
-        };
-        let mut print = profile::load_profile_by_name(&snapshot.data_dir, effective_print_name)
+        let effective_print_name = snapshot.runtime_print_name(&params);
+        let print = profile::load_profile_by_name(&snapshot.data_dir, effective_print_name)
             .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
-        for (profile, key) in [
-            (&mut film, "film_channel_swap"),
-            (&mut print, "print_channel_swap"),
-        ] {
-            if let Some(order) = snapshot.special[key].as_array() {
-                for row in &mut profile.data.channel_density {
-                    if row.len() >= 3 {
-                        let original = [row[0], row[1], row[2]];
-                        for ch in 0..3 {
-                            row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
-                        }
-                    }
-                }
-            }
-        }
-        Runtime::new_observed(film, print, params, &snapshot.data_dir, prepare.context())
-            .map_err(|e| format!("runtime build: {e}"))
+        snapshot.build_runtime(film, print, params, prepare.context())
     })();
     observed_result(
         prepare,
