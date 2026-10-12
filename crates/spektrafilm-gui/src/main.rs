@@ -5,6 +5,7 @@
 // the central viewer owns the input/output/paper-back presentation.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -265,6 +266,8 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
 fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {
         format!("{selected} · grain Dye on CPU")
+    } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
+        format!("{selected} · grain Fotufilm on CPU")
     } else {
         selected.to_owned()
     }
@@ -659,7 +662,9 @@ impl App {
         // Report the Dye field's effective CPU route next to the selected backend.
         let backend_name = effective_backend_name(self.backend.name(), &params);
         let parameter_revision = self.parameter_revision;
-        let snapshot = self.render_snapshot(params);
+        let snapshot = self
+            .render_snapshot(params)
+            .with_cancellation(Some(Arc::new(AtomicBool::new(false))));
         let request = RenderRequest {
             job: RenderJob {
                 input_epoch,

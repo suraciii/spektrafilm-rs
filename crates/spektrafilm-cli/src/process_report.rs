@@ -95,6 +95,16 @@ pub(crate) fn print_text(report: &Value) {
         &params["film_render"]["grain"],
     );
     record("GRAIN DYE ROUTING", &report["film_grain_dye"]);
+    if params["film_render"]["grain"]["engine"] == "fotufilm" {
+        record(
+            "FOTUFILM FILM (authored effective appearance, not stock calibration)",
+            &params["film_render"]["grain"]["fotufilm"],
+        );
+        record(
+            "FOTUFILM FILM PROVENANCE AND READOUT",
+            &report["film_grain_fotufilm"],
+        );
+    }
     record(
         "BACKEND (requested, not device availability)",
         &report["backend"],

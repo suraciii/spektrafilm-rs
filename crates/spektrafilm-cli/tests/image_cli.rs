@@ -106,6 +106,64 @@ fn raster_declaration_requires_supplied_components_without_publication() {
 }
 
 #[test]
+fn fotufilm_dry_run_reports_authored_controls_and_cpu_provenance() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
+        "--route", "input > film > scan",
+        "--set", "film_render.grain.engine=fotufilm,film_render.grain.fotufilm.amount=1.5,film_render.grain.fotufilm.rms_density=0.012,film_render.grain.fotufilm.clump_radius_um=7.5,film_render.grain.fotufilm.material=dye_negative",
+        "--dry-run",
+    ]);
+    let grain = &report["parameters"]["film_render"]["grain"];
+    assert_eq!(grain["engine"], "fotufilm");
+    assert_eq!(grain["fotufilm"]["amount"], 1.5);
+    assert_eq!(grain["fotufilm"]["rms_density"], 0.012);
+    assert_eq!(grain["fotufilm"]["clump_radius_um"], 7.5);
+    assert_eq!(grain["fotufilm"]["material"], "dye_negative");
+    let provenance = &report["film_grain_fotufilm"];
+    assert_eq!(provenance["active"], true);
+    assert_eq!(provenance["implementation"], "rust_cpu_film");
+    assert_eq!(provenance["effective_backend"], "cpu");
+    assert!(
+        provenance["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("CPU"))
+    );
+    assert_eq!(
+        provenance["appearance_status"],
+        "authored_effective_not_stock_calibration"
+    );
+    assert_eq!(provenance["readout"], "complete_periodic_tile");
+    assert_eq!(provenance["prepared"], false);
+    assert!(
+        provenance["source_revision"]
+            .as_str()
+            .is_some_and(|revision| !revision.is_empty())
+    );
+    assert_eq!(report["film_grain_dye"]["active"], false);
+    assert!(!f.0.join("output.tif").exists());
+}
+
+#[test]
+fn fotufilm_zero_amount_is_not_reported_as_active() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--set",
+        "film_render.grain.engine=fotufilm,film_render.grain.fotufilm.amount=0",
+        "--dry-run",
+    ]);
+    assert_eq!(report["film_grain_fotufilm"]["active"], false);
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["engine"],
+        "fotufilm"
+    );
+}
+
+#[test]
 fn fixed_input_precedence_and_winning_edit_feedback_are_observable() {
     let f = Fixture::new();
     let report = f.report(&[

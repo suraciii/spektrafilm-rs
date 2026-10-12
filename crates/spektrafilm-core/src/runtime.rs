@@ -8,6 +8,7 @@ use spektrafilm_gpu::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -125,9 +126,16 @@ pub struct Runtime {
     data_dir: std::path::PathBuf,
     timings: Arc<Mutex<Timings>>,
     last_elapsed_seconds: Arc<Mutex<Option<f64>>>,
+    cancellation: Option<Arc<AtomicBool>>,
 }
 
 impl Runtime {
+    /// Bind a caller-owned cancellation signal while retaining prepared film grain caches.
+    pub fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
+        self.cancellation = cancellation.clone();
+        self.pipeline = self.pipeline.with_cancellation(cancellation);
+        self
+    }
     pub fn new(
         film: profile::Profile,
         print: profile::Profile,
@@ -140,6 +148,7 @@ impl Runtime {
             data_dir: data_dir.to_owned(),
             timings: Arc::new(Mutex::new(BTreeMap::new())),
             last_elapsed_seconds: Arc::new(Mutex::new(None)),
+            cancellation: None,
         })
     }
 
@@ -307,12 +316,10 @@ impl Runtime {
 
     pub fn update(&mut self, params: RuntimeParams) -> Result<(), String> {
         params.validate()?;
-        self.pipeline = Pipeline::new_with_spectral(
-            self.pipeline.film.clone(),
-            self.pipeline.print.clone(),
-            params,
-            &self.data_dir,
-        )?;
+        // Film-curve controls are absent from the spectral and calibration
+        // control keys, so refresh the resolved film unconditionally and keep
+        // the prepared grain cache and cancellation binding across the rebuild.
+        self.pipeline = self.pipeline.clone().rebuild_spectral(params)?;
         Ok(())
     }
     /// Return a runtime with updated parameters while retaining the facade state.
@@ -330,6 +337,25 @@ impl Runtime {
     /// changes affect calibration state, so retaining derived values would
     /// produce stale output.
     pub fn soft_update_fields(&mut self, update: SoftUpdate) -> Result<(), String> {
+        if update.film_density_curves.is_none() && update.print_density_curves.is_none() {
+            let mut params = self.pipeline.params.clone();
+            if let Some(value) = update.exposure_compensation_ev {
+                params.camera.exposure_compensation_ev = value;
+            }
+            if let Some(value) = update.print_exposure {
+                params.enlarger.print_exposure = value;
+            }
+            if let Some(value) = update.c_filter_neutral {
+                params.enlarger.c_filter_neutral = value;
+            }
+            if let Some(value) = update.m_filter_neutral {
+                params.enlarger.m_filter_neutral = value;
+            }
+            if let Some(value) = update.y_filter_neutral {
+                params.enlarger.y_filter_neutral = value;
+            }
+            return self.update(params);
+        }
         let mut params = self.pipeline.params.clone();
         if let Some(value) = update.exposure_compensation_ev {
             params.camera.exposure_compensation_ev = value;
@@ -355,7 +381,8 @@ impl Runtime {
         if let Some(curves) = update.print_density_curves {
             print.data.density_curves = curves;
         }
-        self.pipeline = Pipeline::new_with_spectral(film, print, params, &self.data_dir)?;
+        self.pipeline = Pipeline::new_with_spectral(film, print, params, &self.data_dir)?
+            .with_cancellation(self.cancellation.clone());
         Ok(())
     }
 
@@ -688,5 +715,59 @@ mod tests {
         assert!(timings.contains_key("total"));
         assert!(timings.contains_key("filming_expose"));
         assert!(runtime.get_total_elapsed_time().is_some());
+    }
+    #[test]
+    fn update_refreshes_film_curve_gamma_in_processed_pixels() {
+        let dir = data_dir();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.camera.auto_exposure = false;
+        params.film_render.grain.active = false;
+        params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
+        let mut runtime =
+            Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &dir).unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let baseline = runtime.process(image.clone(), &backend).unwrap();
+        let mut updated = runtime.params().clone();
+        updated.film_render.density_curve_gamma = 2.0;
+        runtime.update(updated).unwrap();
+        let changed = runtime.process(image, &backend).unwrap();
+        assert!(
+            baseline
+                .data
+                .iter()
+                .zip(&changed.data)
+                .any(|(before, after)| (*before as f64 - *after as f64).abs() > 1e-6),
+            "film curve gamma update did not change processed pixels"
+        );
+    }
+
+    #[test]
+    fn amount_only_update_reuses_prepared_fotufilm_bank() {
+        let dir = data_dir();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.camera.auto_exposure = false;
+        params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        params.film_render.grain.fotufilm.amount = 1.0;
+        let mut runtime =
+            Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &dir).unwrap();
+        let backend = CpuBackend;
+        runtime.process(scanner_image(), &backend).unwrap();
+        let first = runtime.pipeline.fotufilm_bank_identity().unwrap();
+        let mut updated = runtime.params().clone();
+        updated.film_render.grain.fotufilm.amount = 2.0;
+        runtime.update(updated).unwrap();
+        runtime.process(scanner_image(), &backend).unwrap();
+        let second = runtime.pipeline.fotufilm_bank_identity().unwrap();
+        assert_eq!(
+            first, second,
+            "amount-only update rebuilt the Fotufilm bank"
+        );
     }
 }

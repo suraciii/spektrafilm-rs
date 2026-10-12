@@ -162,12 +162,15 @@ impl App {
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
+                        let snapshot =
+                            snapshot.with_cancellation(Some(Arc::clone(&cancel_for_worker)));
                         let setup = snapshot
                             .prepare_scanner_setup(&image, &observation)
                             .map_err(anyhow::Error::msg)?;
                         let mut pipeline =
                             super::build_runtime_observed(&snapshot, false, &observation)
-                                .map_err(anyhow::Error::msg)?;
+                                .map_err(anyhow::Error::msg)?
+                                .with_cancellation(Some(Arc::clone(&cancel_for_worker)));
                         if let Some(setup) = setup {
                             pipeline = pipeline.with_scanner_setup(setup);
                         }

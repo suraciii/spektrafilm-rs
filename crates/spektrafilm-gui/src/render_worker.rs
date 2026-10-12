@@ -78,6 +78,7 @@ pub(super) struct RenderWorker {
     pub(super) shutdown: Arc<AtomicBool>,
     pub(super) handle: Option<JoinHandle<()>>,
     pub(super) next_request_id: u64,
+    pub(super) active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
 pub(super) struct RenderResult {
@@ -103,6 +104,8 @@ impl RenderWorker {
         let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(Mutex::new(None));
+        let active_cancel = Arc::new(Mutex::new(None::<Arc<AtomicBool>>));
+        let active_cancel_for_worker = active_cancel.clone();
         let active_for_worker = active.clone();
         let (tx, rx) = mpsc::channel();
         let state_for_worker = state.clone();
@@ -121,7 +124,9 @@ impl RenderWorker {
                         if shutdown_for_worker.load(Ordering::SeqCst) {
                             return;
                         }
-                        queued.take().expect("render request signaled")
+                        let request = queued.take().expect("render request signaled");
+                        *active_cancel_for_worker.lock() = request.snapshot.cancellation().clone();
+                        request
                     };
                     drop(request.worker_wait);
                     let mut operation = request.operation;
@@ -140,6 +145,9 @@ impl RenderWorker {
                             &request.image,
                             &observation,
                         )?;
+                        let pipeline_template = pipeline_template
+                            .clone()
+                            .with_cancellation(request.snapshot.cancellation().clone());
                         if operation.enabled() {
                             operation.set_render_configuration(
                                 pipeline_template.telemetry_configuration(),
@@ -218,13 +226,25 @@ impl RenderWorker {
                         })
                     }))
                     .unwrap_or_else(|panic| Err(panic_message(&panic)));
-                    attempt.finish(if result.is_ok() {
+                    let cancelled = request
+                        .snapshot
+                        .cancellation()
+                        .is_some_and(|token| token.load(Ordering::SeqCst));
+                    let result = if cancelled {
+                        Err("operation cancelled".to_owned())
+                    } else {
+                        result
+                    };
+                    attempt.finish(if cancelled {
+                        Outcome::Cancelled
+                    } else if result.is_ok() {
                         Outcome::Succeeded
                     } else {
                         Outcome::Failed
                     });
                     let _ = tx.send((job, operation, result));
                     *active_for_worker.lock() = None;
+                    *active_cancel_for_worker.lock() = None;
                     ctx.request_repaint();
                 }
             });
@@ -235,6 +255,7 @@ impl RenderWorker {
             shutdown,
             handle: Some(handle.expect("OS thread spawn")),
             next_request_id: 0,
+            active_cancel,
         }
     }
 
@@ -243,12 +264,34 @@ impl RenderWorker {
         request.job.request_id = self.next_request_id;
         let job = request.job.clone();
         let (lock, wake) = &*self.state;
-        let replaced = lock.lock().replace(request).map(|request| {
+        let mut queued = lock.lock();
+        if let Some(token) = self.active_cancel.lock().as_ref() {
+            token.store(true, Ordering::SeqCst);
+        }
+        let replaced = queued.replace(request).map(|request| {
             drop(request.worker_wait);
             request.operation
         });
+        drop(queued);
         wake.notify_one();
         (job, replaced)
+    }
+
+    /// Cancel the active and queued work after the input identity changed.
+    pub(super) fn cancel_active(&self) {
+        let (lock, wake) = &*self.state;
+        let queued = lock.lock();
+        if let Some(token) = self.active_cancel.lock().as_ref() {
+            token.store(true, Ordering::SeqCst);
+        }
+        if let Some(token) = queued
+            .as_ref()
+            .and_then(|request| request.snapshot.cancellation())
+        {
+            token.store(true, Ordering::SeqCst);
+        }
+        drop(queued);
+        wake.notify_one();
     }
 
     pub(super) fn shutdown(&mut self) -> Option<Operation> {
@@ -257,7 +300,13 @@ impl RenderWorker {
             let (lock, wake) = &*self.state;
             let mut queued = lock.lock();
             self.shutdown.store(true, Ordering::SeqCst);
+            if let Some(token) = self.active_cancel.lock().as_ref() {
+                token.store(true, Ordering::SeqCst);
+            }
             cancelled = queued.take().map(|request| {
+                if let Some(token) = request.snapshot.cancellation() {
+                    token.store(true, Ordering::SeqCst);
+                }
                 drop(request.worker_wait);
                 request.operation
             });
