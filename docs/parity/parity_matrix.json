@@ -3466,6 +3466,7 @@
       "evidence": "pipeline.rs:462-471 vs pipeline.py:191-195"
     },
     {
+      "gap": "glare RNG stream: Rust fixed seed 42 vs Python continued np.random stream (statistical parity only)",
       "owner_issue": 8,
       "evidence": "scanning.rs::scan_with_capture; model/glare.py via fast_stats np.random"
     },
