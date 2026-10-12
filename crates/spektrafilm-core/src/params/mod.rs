@@ -15,8 +15,8 @@ pub(crate) mod validation;
 use couplers::DirCouplersParams;
 pub use diffusion::DiffusionFilterParams;
 use glare::GlareParams;
-pub use grain::GrainEngine;
-pub use grain::GrainParams;
+pub use grain::{FotufilmGrainParams, FotufilmMaterial};
+pub use grain::{GrainEngine, GrainParams};
 pub use halation::HalationParams;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
