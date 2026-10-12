@@ -458,7 +458,7 @@ mod tests {
         );
         let out = collapse_log_exposure(&fine, 2).unwrap();
         assert_eq!((out.width, out.height), (2, 1));
-        for (pixel, expected) in out.data.chunks_exact(3).zip([50.5_f64, 505.0]) {
+        for (pixel, expected) in out.data.as_chunks::<3>().0.iter().zip([50.5_f64, 505.0]) {
             for &value in pixel {
                 assert!(
                     (spektrafilm_math::precision::to_f64(value) - expected.log10()).abs()
