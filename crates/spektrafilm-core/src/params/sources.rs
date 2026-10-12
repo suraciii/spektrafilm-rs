@@ -1,9 +1,26 @@
+mod discovery;
+mod effects;
 mod metadata;
+pub(crate) use effects::inactive_reason;
+
+use discovery::schema_value;
+pub use discovery::{
+    describe_field, describe_groups, describe_module, describe_root_groups, suggest_groups,
+    suggest_parameter_paths, supported_routes,
+};
 
 use super::RuntimeParams;
-use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
-use metadata::{metadata, nullable, rust_type};
+use crate::suggest::error_suffix;
+use metadata::{nullable, rust_type};
 use serde_json::{Map, Value};
+
+/// Runtime leaves intentionally outside the user-settable parameter surface.
+pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
+    &[(
+        "random_seed",
+        "per-render stochastic seed is set by the recipe runner",
+    )]
+}
 
 /// Ordered sparse edits to runtime parameter leaves.
 #[derive(Debug, Clone, Default)]
@@ -65,6 +82,27 @@ impl ParameterEdits {
         self.edits.iter().map(|(p, _)| p.as_str())
     }
 
+    pub(crate) fn values(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.edits
+            .iter()
+            .map(|(path, value)| (path.as_str(), value))
+    }
+
+    /// Validate a dedicated option with the canonical leaf validator.
+    pub(crate) fn single(path: &str, value: Value) -> Result<Self, String> {
+        let mut edits = Self::default();
+        edits.push(path, value)?;
+        Ok(edits)
+    }
+
+    pub(crate) fn file_path(source: &str) -> Option<&std::path::Path> {
+        let assignment = source
+            .split_once('=')
+            .is_some_and(|(path, _)| path.trim().split('.').all(valid_ident));
+        (!assignment && (source.ends_with(".toml") || source.ends_with(".json")))
+            .then(|| std::path::Path::new(source))
+    }
+
     pub fn apply(&self, params: &mut RuntimeParams) -> Result<(), String> {
         // serde_json turns non-finite floats into null; reject the typed
         // baseline before that conversion can erase an invalid Option value.
@@ -72,6 +110,7 @@ impl ParameterEdits {
         let seed = params.random_seed;
         let particle_layers = params.film_render.grain.particle_scale_layers;
         let neutral_protected = params.neutral_print_filters_protected;
+        let explicit_section_paths = params.explicit_section_paths.clone();
         let mut root =
             serde_json::to_value(&*params).map_err(|e| format!("serialize parameters: {e}"))?;
         for (path, value) in &self.edits {
@@ -82,6 +121,7 @@ impl ParameterEdits {
         params.random_seed = seed;
         params.film_render.grain.particle_scale_layers = particle_layers;
         params.neutral_print_filters_protected = neutral_protected;
+        params.explicit_section_paths = explicit_section_paths;
         validate_finite(params)
     }
 
@@ -166,9 +206,7 @@ fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
 fn parse_inline_value(path: &str, raw: &str) -> Result<Value, String> {
     let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
     if expected.is_object() {
-        return Err(format!(
-            "{path}: assign a parameter within this group, not the whole group"
-        ));
+        return Err(group_rejected(path));
     }
     let ty = rust_type(path);
     let base_ty = ty
@@ -289,7 +327,10 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
     if !finite_json(value) {
         return Err(format!("{path}: non-finite numbers are not allowed"));
     }
-    if expected.is_object() || value.is_object() {
+    if expected.is_object() {
+        return Err(group_rejected(path));
+    }
+    if value.is_object() {
         return Err(format!(
             "{path}: assignments must address scalar or array leaves"
         ));
@@ -569,6 +610,11 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
     Ok(out)
 }
 fn unknown_path(path: &str) -> String {
+    if let Some((_, reason)) = non_settable_leaves().iter().find(|(leaf, _)| *leaf == path) {
+        return format!(
+            "{path} is a runtime field outside the settable parameter surface; {reason}"
+        );
+    }
     format!(
         "unknown parameter path: {path}; {}",
         error_suffix(
@@ -578,112 +624,11 @@ fn unknown_path(path: &str) -> String {
     )
 }
 
-/// Describe one editable leaf using the module discovery metadata.
-pub fn describe_field(path: &str) -> Result<Value, String> {
-    let default = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
-    if default.is_object() {
-        return Err(format!(
-            "parameter field is a group: {path}; use spektrafilm describe --module {path}"
-        ));
-    }
-    Ok(metadata(path, default))
-}
-
-/// Canonical group prefixes with editable leaves, including nested groups.
-pub fn describe_groups() -> Vec<String> {
-    fn collect(prefix: &str, value: &Value, groups: &mut Vec<String>) -> bool {
-        let Some(map) = value.as_object() else {
-            return true;
-        };
-        let mut has_leaves = false;
-        for (key, child) in map {
-            let path = if prefix.is_empty() {
-                key.clone()
-            } else {
-                format!("{prefix}.{key}")
-            };
-            has_leaves |= collect(&path, child, groups);
-        }
-        if has_leaves && !prefix.is_empty() {
-            groups.push(prefix.to_owned());
-        }
-        has_leaves
-    }
-    let mut groups = Vec::new();
-    collect("", schema_value(), &mut groups);
-    groups.sort();
-    groups
-}
-
-pub fn suggest_parameter_paths(input: &str) -> Vec<String> {
-    fn collect(prefix: &str, value: &Value, paths: &mut Vec<String>) {
-        if let Some(map) = value.as_object() {
-            for (key, child) in map {
-                let path = if prefix.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{prefix}.{key}")
-                };
-                collect(&path, child, paths);
-            }
-        } else {
-            paths.push(prefix.to_owned());
-        }
-    }
-    let mut paths = Vec::new();
-    collect("", schema_value(), &mut paths);
-    closest(input, paths.into_iter(), MAX_SUGGESTIONS)
-}
-
-pub fn suggest_groups(input: &str) -> Vec<String> {
-    closest(input, describe_groups().into_iter(), MAX_SUGGESTIONS)
-}
-
-pub fn describe_module(prefix: &str) -> Result<Value, String> {
-    let schema = schema_value();
-    let group = lookup(schema, prefix).ok_or_else(|| {
-        format!(
-            "unknown parameter module: {prefix}; {}",
-            error_suffix(
-                &suggest_groups(prefix),
-                "use spektrafilm describe --format text to list modules"
-            )
-        )
-    })?;
-    if !group.is_object() {
-        return Err(format!(
-            "parameter module is not a group: {prefix}; use spektrafilm describe --field {prefix}"
-        ));
-    }
-    let mut fields = Vec::new();
-    collect_metadata(prefix, group, &mut fields);
-    Ok(serde_json::json!({"module": prefix, "fields": fields}))
-}
-fn collect_metadata(prefix: &str, value: &Value, out: &mut Vec<Value>) {
-    if let Some(map) = value.as_object() {
-        for (key, default) in map {
-            let path = format!("{prefix}.{key}");
-            if default.is_object() {
-                collect_metadata(&path, default, out);
-            } else {
-                out.push(metadata(&path, default));
-            }
-        }
-    }
-}
-fn schema_value() -> &'static Value {
-    static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
-    SCHEMA.get_or_init(|| {
-        let mut value =
-            serde_json::to_value(RuntimeParams::default()).expect("RuntimeParams serializes");
-        value.as_object_mut().unwrap().remove("workflow");
-        value["io"].as_object_mut().unwrap().remove("scan_film");
-        value["film_render"]["grain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("monochrome");
-        value
-    })
+/// One shared rejection for a value assigned to a parameter group.
+fn group_rejected(path: &str) -> String {
+    format!(
+        "{path}: assign a parameter within this group, not the whole group; spektrafilm describe --module {path} lists its fields"
+    )
 }
 
 pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
@@ -809,6 +754,14 @@ mod tests {
             params.validate().unwrap();
             assert_eq!(params.camera.film_format_mm, mm);
         }
+        let record = describe_field("camera.film_format_mm").unwrap();
+        let conditions = record["conditions"].as_array().unwrap();
+        assert!(
+            conditions
+                .iter()
+                .any(|c| c.as_str().is_some_and(|t| t.contains("strictly positive"))),
+            "discovery must state the strict-positivity refinement: {record}"
+        );
     }
 
     #[test]
@@ -848,6 +801,48 @@ mod tests {
                     .is_empty()
             );
         }
+    }
+
+    #[test]
+    fn root_groups_are_the_first_segment_of_editable_groups() {
+        let roots = describe_root_groups();
+        let mut expected: Vec<String> = describe_groups()
+            .into_iter()
+            .map(|group| group.split('.').next().unwrap().to_owned())
+            .collect();
+        expected.dedup();
+        assert_eq!(roots, expected);
+        assert!(roots.iter().any(|group| group == "film_render"));
+        assert!(!roots.iter().any(|group| group.contains('.')));
+        for root in &roots {
+            assert!(
+                !describe_module(root).unwrap()["fields"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn out_of_band_runtime_leaf_names_field_and_reason() {
+        let error = ParameterEdits::parse("random_seed=17").unwrap_err();
+        assert!(error.contains("random_seed"), "{error}");
+        assert!(
+            error.contains("runtime field outside the settable parameter surface"),
+            "{error}"
+        );
+        assert!(error.contains("recipe runner"), "{error}");
+    }
+
+    #[test]
+    fn group_values_share_one_rejection_across_sources() {
+        let inline = ParameterEdits::parse("film_render.convert=nope").unwrap_err();
+        let file =
+            ParameterEdits::from_value(serde_json::json!({"film_render": {"convert": "nope"}}))
+                .unwrap_err();
+        assert_eq!(inline, file);
+        assert!(inline.contains("describe --module film_render.convert"));
     }
 
     #[test]
@@ -1045,14 +1040,29 @@ mod tests {
 
     #[test]
     fn apply_rejects_optional_overflow_in_legacy_baseline_before_serialization() {
-        let mut params: RuntimeParams =
-            serde_json::from_str(r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#).unwrap();
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.v2_amount = Some(f32::INFINITY);
         assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
         let edits = ParameterEdits::parse("camera.auto_exposure=false").unwrap();
         let error = edits.apply(&mut params).unwrap_err();
         assert!(error.contains("film_render.grain.v2_amount"), "{error}");
         assert!(params.film_render.grain.v2_amount.unwrap().is_infinite());
         assert!(params.camera.auto_exposure);
+    }
+
+    #[test]
+    fn json_numeric_decoding_rejects_overflow_and_preserves_legacy_finite_range() {
+        // Preset File formats: reject numbers overflowing their declared f32/f64
+        // type. Correctly rounded JSON decoding rejects overflow before merging.
+        assert!(
+            serde_json::from_str::<RuntimeParams>(
+                r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#
+            )
+            .is_err()
+        );
+        let params: RuntimeParams = serde_json::from_str(r#"{"film_render":{"grain":{"v2_amount":42.5}},"camera":{"exposure_compensation_ev":0.5}}"#).unwrap();
+        assert_eq!(params.film_render.grain.v2_amount, Some(42.5));
+        assert_eq!(params.camera.exposure_compensation_ev, 0.5);
     }
 
     fn described_field(path: &str) -> Value {
@@ -1121,10 +1131,14 @@ mod tests {
             let fields = describe_module(module).unwrap();
             for field in fields["fields"].as_array().unwrap() {
                 let path = field["path"].as_str().unwrap();
-                if module == "film_render.glare"
-                    || path.ends_with("rms_granularity")
-                    || path.ends_with("micro_sublayers")
-                {
+                if path.ends_with("rms_granularity") {
+                    assert_eq!(
+                        field["conditions"],
+                        serde_json::json!([
+                            "upstream V1 no-op; grain V3 resolves the stock's event area from it"
+                        ])
+                    );
+                } else if module == "film_render.glare" || path.ends_with("micro_sublayers") {
                     assert_eq!(
                         field["conditions"],
                         serde_json::json!(["preserved upstream no-op"])

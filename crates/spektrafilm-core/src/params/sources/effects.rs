@@ -1,5 +1,4 @@
 //! Conditions shared by field discovery and winning-edit feedback.
-use crate::WorkflowRoute;
 use crate::params::{GrainEngine, RuntimeParams};
 use crate::profile::Profile;
 
@@ -7,14 +6,13 @@ use crate::profile::Profile;
 pub(super) enum Condition {
     NoOp,
     Grain,
-    Spektra,
-    Procedural,
-    Dye,
-    Fotufilm,
-    SpektraOrDye,
+    V1,
+    V2,
+    V3,
+    V1OrV3,
     Custom,
     Sublayers,
-    SpektraSublayers,
+    V1Sublayers,
     NoSublayers,
     Spatial,
     Diffusion(bool),
@@ -25,35 +23,27 @@ pub(super) enum Condition {
     AutoExposure,
     Crop,
     ScannerPoints,
-    NegativeToPositive,
-    LabScanFinish,
-    FilmScan,
-    DigitalReference,
+    PositiveScan,
     MagazineActive,
     MagazineStrength,
-    FilmDevelopment,
-    PrintDevelopment,
-    Preflash,
-    Chemistry(bool),
 }
 impl Condition {
     pub(super) fn description(self) -> &'static str {
         match self {
             Self::NoOp => "preserved upstream no-op",
             Self::Grain => "film_render.grain.active = true; stochastic effects enabled",
-            Self::Spektra => "film_render.grain.engine = spektra",
-            Self::Procedural => "film_render.grain.engine = procedural",
-            Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
-            Self::Fotufilm => "film_render.grain.engine = fotufilm",
-            Self::SpektraOrDye => "film_render.grain.engine = spektra or dye",
+            Self::V1 => "film_render.grain.engine = v1",
+            Self::V2 => "film_render.grain.engine = v2",
+            Self::V3 => "film_render.grain.engine = v3; supported stock, format and route",
+            Self::V1OrV3 => "film_render.grain.engine = v1 or v3",
             Self::Custom => {
                 "film_render.grain.v2_profile = custom; select custom to use this control"
             }
             Self::Sublayers => {
                 "film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
             }
-            Self::SpektraSublayers => {
-                "when engine = spektra: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
+            Self::V1Sublayers => {
+                "when engine = v1: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
             }
             Self::NoSublayers => "film_render.grain.sublayers_active = false",
             Self::Spatial => "spatial effects enabled",
@@ -72,29 +62,11 @@ impl Condition {
             Self::AutoExposure => "camera.auto_exposure = true",
             Self::Crop => "io.crop = true",
             Self::ScannerPoints => {
-                "slide film scan or negative film scan with scanner.scan_output = negative_to_positive; ignored for paper and direct negative scans"
+                "slide film scan or negative film scan with scanner.scan_output = positive_scan; ignored for paper and direct negative scans"
             }
-            Self::NegativeToPositive => "scanner.scan_output = negative_to_positive",
-            Self::LabScanFinish => "scanner.finish = lab_scan",
-            Self::FilmScan => "film-scan route",
-            Self::DigitalReference => "scanner.negative_conversion_method = digital_reference",
+            Self::PositiveScan => "scanner.scan_output = positive_scan",
             Self::MagazineActive => "magazine_print_color.active = true",
             Self::MagazineStrength => "magazine_print_color.strength > 0",
-            Self::FilmDevelopment => {
-                "actual Film development route; captured negatives and Finished RGB are not redeveloped"
-            }
-            Self::PrintDevelopment => {
-                "admitted print-development route, including recovered-negative printing"
-            }
-            Self::Preflash => {
-                "enlarger.preflash_exposure > 0; zero disables flash and retains filter settings"
-            }
-            Self::Chemistry(false) => {
-                "film_render.chemistry.active = true; supported fitted density_curves_model required"
-            }
-            Self::Chemistry(true) => {
-                "print_render.density_curves_morph.active = true; supported fitted density_curves_model required"
-            }
         }
     }
     fn holds(self, p: &RuntimeParams, film: &Profile) -> bool {
@@ -102,15 +74,14 @@ impl Condition {
         match self {
             Self::NoOp => false,
             Self::Grain => g.active && !p.debug.deactivate_stochastic_effects,
-            Self::Spektra => g.engine == GrainEngine::Spektra,
-            Self::Procedural => g.engine == GrainEngine::Procedural,
-            Self::Dye => g.engine == GrainEngine::Dye,
-            Self::Fotufilm => g.engine == GrainEngine::Fotufilm,
-            Self::SpektraOrDye => matches!(g.engine, GrainEngine::Spektra | GrainEngine::Dye),
+            Self::V1 => g.engine == GrainEngine::V1,
+            Self::V2 => g.engine == GrainEngine::V2,
+            Self::V3 => g.engine == GrainEngine::V3,
+            Self::V1OrV3 => matches!(g.engine, GrainEngine::V1 | GrainEngine::V3),
             Self::Custom => g.v2_profile == "custom",
             Self::Sublayers => g.sublayers_active && !film.data.density_curves_layers.is_empty(),
-            Self::SpektraSublayers => {
-                g.engine != GrainEngine::Spektra
+            Self::V1Sublayers => {
+                g.engine != GrainEngine::V1
                     || (g.sublayers_active && !film.data.density_curves_layers.is_empty())
             }
             Self::NoSublayers => !g.sublayers_active,
@@ -135,63 +106,18 @@ impl Condition {
             Self::AutoExposure => p.camera.auto_exposure,
             Self::Crop => p.io.crop,
             Self::ScannerPoints => {
-                (p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan)
-                    && (film.is_positive() || p.scanner.scan_output == "negative_to_positive")
+                (p.io.scan_film || p.workflow.route == "input > convert-film > scan")
+                    && (film.is_positive() || p.scanner.scan_output == "positive_scan")
             }
-            Self::NegativeToPositive => p.scanner.scan_output == "negative_to_positive",
-            Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
-            Self::FilmScan => {
-                p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan
-            }
-            Self::DigitalReference => {
-                p.scanner.negative_conversion_method
-                    == crate::params::NegativeConversionMethod::DigitalReference
-            }
+            Self::PositiveScan => p.scanner.scan_output == "positive_scan",
             Self::MagazineActive => p.magazine_print_color.active,
             Self::MagazineStrength => p.magazine_print_color.strength > 0.0,
-            Self::FilmDevelopment => matches!(
-                p.workflow.route.as_str(),
-                "input > film > scan" | "input > film > print > scan"
-            ),
-            Self::PrintDevelopment => matches!(
-                p.workflow.route.as_str(),
-                "input > film > print > scan" | "input > convert-film > print > scan"
-            ),
-            Self::Preflash => p.enlarger.preflash_exposure > 0.0,
-            Self::Chemistry(print) => {
-                if print {
-                    p.print_render.density_curves_morph.active
-                } else {
-                    p.film_render.chemistry.active
-                }
-            }
         }
     }
 }
 pub(super) fn conditions(path: &str) -> Vec<Condition> {
     use Condition::*;
     let mut out = Vec::new();
-    if path.starts_with("enlarger.preflash_") {
-        out.push(PrintDevelopment);
-        if path != "enlarger.preflash_exposure" {
-            out.push(Preflash);
-        }
-        return out;
-    }
-    if path.starts_with("film_render.chemistry.")
-        || path.starts_with("print_render.density_curves_morph.")
-    {
-        let print = path.starts_with("print_render.");
-        out.push(if print {
-            PrintDevelopment
-        } else {
-            FilmDevelopment
-        });
-        if !path.ends_with(".active") {
-            out.push(Chemistry(print));
-        }
-        return out;
-    }
     if path == "film_render.grain.micro_sublayers" || path == "debug.print_timings" {
         return vec![NoOp];
     }
@@ -203,31 +129,26 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
             return out;
         }
         out.push(Grain);
-        if path.starts_with("film_render.grain.fotufilm.") {
-            out.push(Fotufilm);
-        } else if path.contains(".v2_") {
-            out.push(Procedural);
+        if path.contains(".v2_") {
+            out.push(V2);
             if !["v2_profile", "v2_amount", "v2_timer", "v2_resolution_type"]
                 .iter()
                 .any(|f| path.ends_with(f))
             {
                 out.push(Custom);
             }
-        } else if path.contains(".v3_")
-            || path.ends_with(".rms_granularity")
-            || path.ends_with(".channel_correlation")
-        {
-            out.push(Dye);
+        } else if path.contains(".v3_") || path.ends_with(".rms_granularity") {
+            out.push(V3);
         } else if ["density_min", "uniformity", "particle_scale_sublayers"]
             .iter()
             .any(|f| path.ends_with(f))
         {
-            out.push(SpektraOrDye);
+            out.push(V1OrV3);
             if path.ends_with(".particle_scale_sublayers") {
-                out.push(SpektraSublayers);
+                out.push(V1Sublayers);
             }
         } else {
-            out.push(Spektra);
+            out.push(V1);
             if path.ends_with(".n_sub_layers") {
                 out.push(NoSublayers);
             }
@@ -264,19 +185,8 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(Crop);
     } else if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push(ScannerPoints);
-    } else if path == "scanner.finish_strength" {
-        out.extend([NegativeToPositive, LabScanFinish]);
-    } else if path == "scanner.receiver_profile" {
-        out.push(FilmScan);
-    } else if path.starts_with("scanner.reference_") {
-        out.push(DigitalReference);
-    } else if path.starts_with("scanner.conversion_")
-        || matches!(
-            path,
-            "scanner.negative_conversion_method" | "scanner.auto_setup" | "scanner.finish"
-        )
-    {
-        out.push(NegativeToPositive);
+    } else if path.starts_with("scanner.positive_") {
+        out.push(PositiveScan);
     } else if path.starts_with("magazine_print_color.") {
         out.push(if path.ends_with(".strength") {
             MagazineActive
@@ -290,35 +200,9 @@ pub(crate) fn inactive_reason(
     path: &str,
     params: &RuntimeParams,
     film: &Profile,
-    print: &Profile,
 ) -> Option<String> {
-    if let Some(reason) = conditions(path)
+    conditions(path)
         .into_iter()
         .find(|condition| !condition.holds(params, film))
         .map(|condition| condition.description().into())
-    {
-        return Some(reason);
-    }
-    let material = if path.starts_with("film_render.chemistry.") {
-        Some(film)
-    } else if path.starts_with("print_render.density_curves_morph.") {
-        Some(print)
-    } else {
-        None
-    };
-    if let Some(material) = material
-        && !material
-            .data
-            .density_curves_model
-            .as_ref()
-            .is_some_and(|model| {
-                matches!(
-                    model.model_type.as_str(),
-                    "cdfs" | "norm_cdfs" | "sept_norm_cdfs"
-                ) && model.n_layers() > 0
-            })
-    {
-        return Some("selected material has no supported fitted density_curves_model; chemistry values remain stored and inactive".into());
-    }
-    None
 }

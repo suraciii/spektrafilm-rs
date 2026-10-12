@@ -38,26 +38,6 @@ fn value(value: &Value) -> String {
     }
 }
 
-fn output_value(name: &str, field: &Value) -> String {
-    if field.is_null() {
-        return match name {
-            "path" => "not selected".into(),
-            "format" => "unresolved".into(),
-            _ => "not applicable".into(),
-        };
-    }
-    value(field)
-}
-
-fn output_record(fields: &Value) {
-    println!("OUTPUT");
-    if let Some(fields) = fields.as_object() {
-        for (name, field) in fields {
-            println!("  {name}: {}", output_value(name, field));
-        }
-    }
-}
-
 fn record(label: &str, fields: &Value) {
     println!("{label}");
     if let Some(fields) = fields.as_object() {
@@ -92,12 +72,6 @@ pub(crate) fn print_text(report: &Value) {
         value(&params["scanner"]["scan_output"])
     );
     println!("  seed: {}", value(&report["seed"]));
-    record("SCANNER", &params["scanner"]);
-    record(
-        "SCANNER RECEIVER",
-        &report["scanner_provenance"]["receiver"],
-    );
-    record("SCANNER PROVENANCE", &report["scanner_provenance"]);
     println!(
         "  camera exposure: {} EV",
         value(&params["camera"]["exposure_compensation_ev"])
@@ -114,22 +88,12 @@ pub(crate) fn print_text(report: &Value) {
         "GRAIN (effective controls; conditions from describe --module film_render.grain)",
         &params["film_render"]["grain"],
     );
-    record("GRAIN DYE ROUTING", &report["film_grain_dye"]);
-    if params["film_render"]["grain"]["engine"] == "fotufilm" {
-        record(
-            "FOTUFILM FILM (authored effective appearance, not stock calibration)",
-            &params["film_render"]["grain"]["fotufilm"],
-        );
-        record(
-            "FOTUFILM FILM PROVENANCE AND READOUT",
-            &report["film_grain_fotufilm"],
-        );
-    }
+    record("GRAIN V3 ROUTING", &report["film_grain_v3"]);
     record(
         "BACKEND (requested, not device availability)",
         &report["backend"],
     );
-    output_record(&report["output"]);
+    record("OUTPUT", &report["output"]);
     println!("EXPLICIT EDITS");
     if let Some(edits) = report["edits"].as_array() {
         for edit in edits {
@@ -148,14 +112,7 @@ pub(crate) fn print_text(report: &Value) {
         }
     }
     println!("NOT CHECKED");
-    let unresolved_format = report["unchecked"]
-        .as_array()
-        .map(|values| values.iter().any(|value| value == "output_format"))
-        .unwrap_or(false);
-    let unchecked = if unresolved_format {
-        "Pixel decoding; compute-device availability; metered exposure; final pixel geometry; output format"
-    } else {
-        "Pixel decoding; compute-device availability; metered exposure; final pixel geometry"
-    };
-    println!("  {unchecked}");
+    println!(
+        "  Pixel decoding; compute-device availability; metered exposure; final pixel geometry"
+    );
 }

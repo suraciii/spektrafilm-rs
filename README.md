@@ -157,12 +157,14 @@ executable.
 
 # Explicit JPEG quality and chroma sampling
 ./target/release/spektrafilm-f64 process input.tif -o out.jpg \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --format jpeg --bit-depth 8 --jpeg-quality 95 --jpeg-subsampling 444 \
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
 
 # Direct negative-film scan interpreted as a positive image
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --scan-output positive_scan --data-dir data
 
@@ -181,6 +183,7 @@ The built-in `CineStill 800T Cs41 (experimental)` look uses RGB halation strengt
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --preset 'CineStill 800T Cs41 (experimental)' --backend cpu --data-dir data \
     --route 'input > film > scan' --scan-output positive_scan
 ```
@@ -192,6 +195,7 @@ Film scans expose per-channel `scanner.black_point` and `scanner.white_point` fo
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o slide.tif \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --film fujifilm_provia_100f --route 'input > film > scan' --backend cpu \
     --set 'scanner.black_point=[0.05,0.05,0.05],scanner.white_point=[0.95,0.95,0.95]' \
     --data-dir data
@@ -199,12 +203,16 @@ Film scans expose per-channel `scanner.black_point` and `scanner.white_point` fo
 
 The GUI shows scanner controls for the scanned medium: white/black correction for paper and slides, scan polarity and positive interpretation for negatives, and film-scan points for slides and positive-interpreted negatives. Selecting positive interpretation clears incompatible capture-correction flags. State files and scanner section presets retain point values.
 
+The TIFF examples above use prepared linear ProPhoto RGB samples. The PNG examples below use encoded sRGB samples. Declare the actual source interpretation for your own files; see [source declarations](specs/cli-parameters/spec.md#input-declaration). RAW examples retain automatic linear ACES2065-1 declaration.
+
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`; omitting it preserves the environment/default selection. `--format` must match the output extension when supplied; otherwise the extension selects JPEG/PNG/TIFF/EXR. Bit depth defaults to 8 for JPEG/PNG and 16 for TIFF/EXR; JPEG/PNG require 8-bit, EXR requires 16- or 32-bit. JPEG defaults to quality 95 and 4:4:4; `--compression zip|none` applies to TIFF/EXR, while JPEG/PNG reject compression options. CPU precision follows the executable build: use `spektrafilm-f64` for reference exports. Output bit depth is independent of computation precision. GPU selection does not disable grain, optical effects or requested spectral LUTs to force acceleration, and software Vulkan adapters can also execute the WGPU path; speed depends on the adapter and active effects.
 
 `process` and `render` accept `--diagnostics REPORT.json`. Add `--gpu-timings` to collect compute-pass timestamps when the adapter supports them. The report includes operation outcomes, repeated simulation attempts, saving attribution, actual GPU work, and explicit availability reasons. Diagnostics do not change image parameters or machine-readable render output. Report-write errors are reported separately from the image result. CLI reports never replace an existing file. Report paths must not alias input, output, or configuration files.
 
 ```bash
 ./target/release/spektrafilm process input.tif -o out.png \
+    --film kodak_portra_400 --paper kodak_portra_endura \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend gpu --diagnostics report.json --gpu-timings --data-dir data
 ```
 
@@ -226,6 +234,7 @@ Section files can be saved and exported without an active workflow. Their applic
 
 # Inspect the effective configuration without decoding pixels or creating output
 ./target/release/spektrafilm process input.png -o output.tif \
+    --input-color-space sRGB --input-cctf-decoding true \
     --preset 'Kodak Portra 400' \
     --preset 'Soft grain' \
     --set film_render.grain.engine=v2 \
@@ -234,6 +243,7 @@ Section files can be saved and exported without an active workflow. Their applic
 
 # Apply a sparse file, then an inline edit, with independent writer settings
 ./target/release/spektrafilm-f64 process input.png -o output.tif \
+    --input-color-space sRGB --input-cctf-decoding true \
     --preset 'Kodak Portra 400' --set adjustments.toml \
     --set 'enlarger.print_exposure=1.2' --backend cpu \
     --format tiff --bit-depth 16 --compression zip \

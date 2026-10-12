@@ -1,5 +1,5 @@
-use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
 use spektrafilm_core::image_io::{self, BitDepth, SaveOptions};
+use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext};
 use spektrafilm_math::{image::ImageBuf, precision::from_f64};
 
 fn options(extension: &str) -> SaveOptions<'static> {

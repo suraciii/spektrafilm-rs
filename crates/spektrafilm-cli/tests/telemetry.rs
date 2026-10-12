@@ -41,6 +41,10 @@ impl Fixture {
             .arg("--output")
             .arg(self.path(name))
             .args([
+                "--input-color-space",
+                "ProPhoto RGB",
+                "--input-cctf-decoding",
+                "false",
                 "--backend",
                 "cpu",
                 "--film",

@@ -3722,6 +3722,7 @@ dependencies = [
  "cc",
  "fs2",
  "image",
+ "libc",
  "libm",
  "nalgebra",
  "pkg-config",

@@ -168,19 +168,6 @@ fn render_recipe(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("output has no parent directory"))?;
     fs::create_dir_all(parent)?;
-    let extension = output
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("tmp");
-    let temporary = parent.join(format!(
-        ".spektrafilm-{}-{:x}.{}",
-        std::process::id(),
-        Sha256::digest(output.as_os_str().as_encoded_bytes()),
-        extension
-    ));
-    if temporary.exists() {
-        bail!("temporary output already exists: {}", temporary.display());
-    }
     let jpeg_output = recipe.output.format == "jpeg";
     let options = SaveOptions {
         depth: BitDepth::Eight,
@@ -201,8 +188,8 @@ fn render_recipe(
         IssueBoundary::FileWrite,
         &context,
         |write_context| {
-            image_io::save_observed(
-                &temporary,
+            image_io::prepare_save_observed(
+                output,
                 &result,
                 options,
                 loaded.metadata.as_ref(),
@@ -211,16 +198,9 @@ fn render_recipe(
             .map_err(anyhow::Error::from)
         },
     );
-    match write_result {
-        Ok(report) => {
-            if let Some(warning) = report.metadata_warning {
-                eprintln!("Warning: {warning}");
-            }
-        }
-        Err(error) => {
-            let _ = fs::remove_file(&temporary);
-            return Err(error).context("writing spektrafilm-rs output");
-        }
+    let prepared = write_result.context("writing spektrafilm-rs output")?;
+    if let Some(warning) = &prepared.report().metadata_warning {
+        eprintln!("Warning: {warning}");
     }
     invocation.phase(
         "publication",
@@ -228,10 +208,9 @@ fn render_recipe(
         IssueBoundary::Publication,
         &context,
         |_| {
-            if let Err(error) = fs::rename(&temporary, output) {
-                let _ = fs::remove_file(&temporary);
-                return Err(error).context("committing spektrafilm-rs output");
-            }
+            prepared
+                .publish(false)
+                .context("committing spektrafilm-rs output")?;
             Ok(())
         },
     )?;
