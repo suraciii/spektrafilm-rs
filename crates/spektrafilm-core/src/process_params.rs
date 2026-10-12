@@ -122,6 +122,22 @@ pub fn resolve(
     request: ProcessParamsRequest<'_>,
     data_dir: &Path,
 ) -> Result<ResolvedProcessParams, String> {
+    resolve_with_preview_mode(request, data_dir, None)
+}
+
+/// Resolve the same sources for full-frame scanner measurement before preview constraints.
+pub fn resolve_scanner_setup(
+    request: ProcessParamsRequest<'_>,
+    data_dir: &Path,
+) -> Result<ResolvedProcessParams, String> {
+    resolve_with_preview_mode(request, data_dir, Some(false))
+}
+
+fn resolve_with_preview_mode(
+    request: ProcessParamsRequest<'_>,
+    data_dir: &Path,
+    preview_mode: Option<bool>,
+) -> Result<ResolvedProcessParams, String> {
     let supplies_film = request
         .presets
         .iter()
@@ -292,6 +308,9 @@ pub fn resolve(
             force_raw_input(&mut params);
         }
         params.validate_color()?;
+        if let Some(mode) = preview_mode {
+            params.settings.preview_mode = mode;
+        }
         let neutral = NeutralFilters::load(data_dir)?;
         params = digest_params(
             params,
@@ -327,6 +346,9 @@ pub fn resolve(
         }
         if let Some(mode) = request.scan_output {
             params.scanner.scan_output = mode.to_owned();
+        }
+        if let Some(mode) = preview_mode {
+            params.settings.preview_mode = mode;
         }
         // Cross-field checks precede destructive preview/debug constraints.
         validate_finite(&params)?;

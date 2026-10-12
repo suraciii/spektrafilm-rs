@@ -2,6 +2,7 @@
 use crate::params::{RuntimeParams, Tap};
 use crate::pipeline::Pipeline;
 use crate::profile;
+pub use crate::stages::scanning::ScannerSetup;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{ObservationContext, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
@@ -197,6 +198,17 @@ impl Runtime {
         }
     }
 
+    /// Measure scanner placement on the full input before any preview geometry.
+    pub fn prepare_scanner_setup(&self, full_input: &ImageBuf) -> Result<ScannerSetup, String> {
+        self.pipeline.prepare_scanner_setup(full_input)
+    }
+
+    /// Attach the immutable setup shared by renders of one source revision.
+    pub fn with_scanner_setup(mut self, setup: ScannerSetup) -> Self {
+        self.pipeline = self.pipeline.with_scanner_setup(setup);
+        self
+    }
+
     pub fn process(
         &self,
         image: ImageBuf,
@@ -273,8 +285,14 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
+        if self.pipeline.has_scanner_setup() {
+            let preview = crate::params_builder::resize_for_preview(&image, max_size);
+            return self.process(preview, backend);
+        }
+        let setup = self.prepare_scanner_setup(&image)?;
+        let prepared = self.clone().with_scanner_setup(setup);
         let preview = crate::params_builder::resize_for_preview(&image, max_size);
-        self.process(preview, backend)
+        prepared.process(preview, backend)
     }
 
     /// Process using `settings.preview_max_size`, matching upstream
@@ -468,9 +486,45 @@ pub fn simulate_preview(
     digest_params_first: bool,
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
+    if photo.params.scanner.auto_setup == crate::params::ScannerAutoSetup::Off {
+        let preview = crate::params_builder::resize_for_preview(
+            &image,
+            photo.params.settings.preview_max_size,
+        );
+        return simulate(preview, photo, backend, digest_params_first, print_timings);
+    }
+    let mut canonical = photo.clone();
+    canonical.params.settings.preview_mode = false;
+    let mode = if digest_params_first {
+        DigestMode::ApplyStockSpecifics
+    } else {
+        DigestMode::PreserveUserEdits
+    };
+    let measurement = if digest_params_first {
+        canonical.into_runtime(mode)?
+    } else {
+        Runtime::from_photo_params(canonical)?
+    };
+    let setup = measurement.prepare_scanner_setup(&image)?;
+    let params = if digest_params_first {
+        photo.digested_params(mode)?
+    } else {
+        photo.params.clone()
+    };
+    let runtime = Runtime::new(
+        photo.film.clone(),
+        photo.print.clone(),
+        params,
+        &photo.data_dir,
+    )?
+    .with_scanner_setup(setup);
     let preview =
         crate::params_builder::resize_for_preview(&image, photo.params.settings.preview_max_size);
-    simulate(preview, photo, backend, digest_params_first, print_timings)
+    let result = runtime.process(preview, backend);
+    if print_timings {
+        runtime.print_timings();
+    }
+    result
 }
 
 /// Legacy ART compatibility name.
@@ -492,6 +546,126 @@ mod tests {
             .parent()
             .unwrap()
             .join("data")
+    }
+
+    fn scanner_params() -> RuntimeParams {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.camera.auto_exposure = false;
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.film_render.glare.active = false;
+        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.auto_setup = crate::params::ScannerAutoSetup::PerFrame;
+        params
+    }
+
+    fn scanner_image() -> ImageBuf {
+        ImageBuf::from_data(
+            4,
+            4,
+            (0..16)
+                .flat_map(|i| [from_f64(0.08 + i as f64 * 0.02); 3])
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn preview_preserves_attached_scanner_setup() {
+        let mut params = scanner_params();
+        params.settings.preview_max_size = 2;
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let mut setup = runtime.prepare_scanner_setup(&image).unwrap();
+        setup.density_ev += 2.0;
+        setup.balance_ev = [0.5, 0.0, -0.5];
+        let attached = runtime.clone().with_scanner_setup(setup);
+        let resized = crate::params_builder::resize_for_preview(&image, 2);
+        let expected = attached.process(resized, &backend).unwrap();
+        let remeasured = runtime.process_preview(image.clone(), 2, &backend).unwrap();
+        assert!(
+            expected
+                .data
+                .iter()
+                .zip(&remeasured.data)
+                .any(|(a, b)| { (*a as f64 - *b as f64).abs() > 1e-3 })
+        );
+        let preview = attached
+            .process_preview(image.clone(), 2, &backend)
+            .unwrap();
+        let configured = attached
+            .process_configured_preview(image, &backend)
+            .unwrap();
+        assert_eq!((preview.width, preview.height), (2, 2));
+        assert_eq!(preview.data, expected.data);
+        assert_eq!(configured.data, expected.data);
+    }
+
+    #[test]
+    fn per_frame_setup_accepts_small_valid_positive_density() {
+        let mut params = scanner_params();
+        params.scanner.positive_dmax = 1e-18;
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let setup = runtime.prepare_scanner_setup(&image).unwrap();
+        assert!(setup.density_ev.is_finite());
+        assert!(setup.balance_ev.iter().all(|v| v.is_finite()));
+        assert!((0.5..=2.0).contains(&setup.contrast_scale));
+        let output = runtime.process(image.clone(), &backend).unwrap();
+        let prepared = runtime
+            .with_scanner_setup(setup)
+            .process(image, &backend)
+            .unwrap();
+        assert!(output.data.iter().all(|v| v.is_finite()));
+        assert!(output.data.windows(3).any(|w| w[0] != w[2]));
+        assert_eq!(output.data, prepared.data);
+    }
+
+    #[test]
+    fn explicit_rgb_input_overrides_persisted_diagnostic_inject_for_setup() {
+        let mut params = scanner_params();
+        params.taps.inject = Some("log_e_film".into());
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        assert_eq!(
+            runtime.process(image.clone(), &backend).unwrap_err(),
+            "per_frame scanner setup requires the full rgb_in input"
+        );
+        let explicit = runtime
+            .process_with_taps(image.clone(), &backend, Some(Tap::RgbIn), Some(Tap::RgbOut))
+            .unwrap();
+        let mut params = runtime.params().clone();
+        params.taps.inject = None;
+        let default = runtime
+            .with_params(params)
+            .unwrap()
+            .process(image, &backend)
+            .unwrap();
+        assert_eq!((explicit.width, explicit.height), (4, 4));
+        assert_eq!(explicit.data, default.data);
     }
 
     #[test]

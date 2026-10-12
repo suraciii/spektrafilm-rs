@@ -110,6 +110,7 @@ pub struct ScanColorContext {
     pub adapt: [[f64; 3]; 3],
     /// Output colour space XYZ→RGB matrix.
     pub base_xyz_to_rgb: [[f64; 3]; 3],
+    pub(crate) receiver: Option<crate::scan_receiver::ScanReceiver>,
 }
 
 impl ScanColorContext {
@@ -165,6 +166,7 @@ impl ScanColorContext {
             viewing_white,
             adapt,
             base_xyz_to_rgb: output_space.matrix_xyz_to_rgb,
+            receiver: None,
         }
     }
 }
@@ -191,11 +193,19 @@ impl PreparedChain {
                 crate::spectral_service::select_illuminant_f64(&profile.info.viewing_illuminant)
             });
         let channel_density_len = profile.data.channel_density.len();
-        let scan = ScanColorContext::build(
+        let mut scan = ScanColorContext::build(
             illuminant.into_owned(),
             channel_density_len,
             &params.io.output_color_space,
         );
+        if params.io.scan_film
+            && params.scanner.receiver_profile == crate::params::ReceiverProfile::LabScanApprox
+        {
+            scan.receiver = Some(crate::scan_receiver::ScanReceiver::resolve(
+                &scan,
+                &params.io.output_color_space,
+            ));
+        }
         let mut scan_xyz_to_rgb = [[0.0f64; 3]; 3];
         // Matrix multiplication indexes both operands by row and column.
         #[allow(clippy::needless_range_loop)]

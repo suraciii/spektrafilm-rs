@@ -33,6 +33,7 @@ pub const PHASE_NAMES: &[&str] = &[
     "backend_init",
     "input_prepare",
     "runtime_prepare",
+    "scanner_setup_prepare",
     "simulation",
     "display_prepare",
     "presentation_handoff",
@@ -94,6 +95,7 @@ vocabulary!(CpuReason {
     GrainV3FieldCpu,
     PositiveScanOutput,
     ScannerFilmPoints,
+    ScannerReceiver,
 });
 vocabulary!(ResidentDeclineReason {
     WorkflowRoute,
@@ -111,6 +113,7 @@ vocabulary!(ResidentDeclineReason {
     DiagnosticTapRoute,
     PositiveScanOutput,
     ScannerFilmPoints,
+    ScannerReceiver,
 });
 vocabulary!(IssueCategory {
     Input,
