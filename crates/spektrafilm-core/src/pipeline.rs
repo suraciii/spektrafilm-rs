@@ -99,9 +99,67 @@ pub struct Pipeline {
     /// when a sensitivity-affecting control changes instead of reusing a
     /// stale one.
     data_dir: Option<std::path::PathBuf>,
+    scanner_setup: Option<stages::scanning::ScannerSetup>,
 }
 
 impl Pipeline {
+    pub(crate) fn with_scanner_setup(mut self, setup: stages::scanning::ScannerSetup) -> Self {
+        self.scanner_setup = Some(setup);
+        self
+    }
+
+    pub(crate) fn has_scanner_setup(&self) -> bool {
+        self.scanner_setup.is_some()
+    }
+
+    pub(crate) fn prepare_scanner_setup(
+        &self,
+        full_input: &ImageBuf,
+    ) -> Result<stages::scanning::ScannerSetup, String> {
+        if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::Off {
+            return Ok(stages::scanning::ScannerSetup::IDENTITY);
+        }
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut measurement = self.clone();
+        measurement.params.io.crop = false;
+        measurement.params.io.upscale_factor = 1.0;
+        measurement.params.settings.preview_mode = false;
+        measurement.params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
+        measurement.scanner_setup = None;
+        let color_ref = measurement.color_reference(&backend);
+        let converting = self.params.workflow.route == "input > convert-film > scan";
+        let density = if converting {
+            stages::converting::process(full_input, &measurement.film, &measurement.params)?
+        } else {
+            measurement.run_from(
+                full_input.clone(),
+                Tap::RgbIn,
+                Tap::CmyFilm,
+                &backend,
+                &color_ref,
+                None,
+                None,
+            )?
+        };
+        stages::scanning::prepare_setup(
+            &density,
+            &measurement.film,
+            &measurement.params,
+            &color_ref,
+            converting.then_some(self.params.film_render.convert.scan_illuminant.as_str()),
+        )
+    }
+
+    fn scan_params(&self) -> std::borrow::Cow<'_, RuntimeParams> {
+        match self.scanner_setup {
+            Some(setup) => {
+                let mut params = self.params.clone();
+                setup.apply(&mut params);
+                std::borrow::Cow::Owned(params)
+            }
+            None => std::borrow::Cow::Borrowed(&self.params),
+        }
+    }
     /// Accessor for the pre-computed TC LUT (used by parity tests).
     pub fn tc_lut(&self) -> Option<&TcLut> {
         self.tc_lut.as_ref()
@@ -166,6 +224,9 @@ impl Pipeline {
             &params.io.output_gamut_compress,
             &params.io.output_color_space,
         )?;
+        if self.params != params {
+            self.scanner_setup = None;
+        }
         self.params = params;
         Ok(self)
     }
@@ -236,6 +297,7 @@ impl Pipeline {
             preflash_raw: [0.0; 3],
             output_gamut,
             data_dir: None,
+            scanner_setup: None,
         }
     }
 
@@ -259,6 +321,7 @@ impl Pipeline {
             preflash_raw: calibrated.preflash_raw,
             output_gamut: calibrated.output_gamut,
             data_dir: calibrated.data_dir,
+            scanner_setup: None,
         })
     }
 
@@ -357,7 +420,7 @@ impl Pipeline {
                     let out = stages::scanning::process(
                         &image,
                         &self.film,
-                        &self.params,
+                        &self.scan_params(),
                         backend,
                         color_ref,
                         &self.output_gamut,
@@ -599,6 +662,34 @@ impl Pipeline {
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        let inject = match inject {
+            Some(tap) => tap,
+            None => self
+                .params
+                .taps
+                .inject
+                .as_deref()
+                .map(Tap::parse)
+                .transpose()?
+                .unwrap_or(Tap::RgbIn),
+        };
+        if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::PerFrame
+            && self.scanner_setup.is_none()
+        {
+            if inject != Tap::RgbIn {
+                return Err("per_frame scanner setup requires the full rgb_in input".into());
+            }
+            let setup = self.prepare_scanner_setup(&image)?;
+            let mut prepared = self.clone();
+            prepared.scanner_setup = Some(setup);
+            return prepared.process_with_taps_timed(
+                image,
+                backend,
+                Some(inject),
+                collect,
+                timings,
+            );
+        }
         let cpu_fallback = if self.params.scanner.scan_output == "positive_scan" {
             backend
                 .observation_context()
@@ -620,17 +711,6 @@ impl Pipeline {
         let backend = cpu_fallback
             .as_deref()
             .unwrap_or_else(|| self.effective_backend(backend));
-        let inject = match inject {
-            Some(tap) => tap,
-            None => self
-                .params
-                .taps
-                .inject
-                .as_deref()
-                .map(Tap::parse)
-                .transpose()?
-                .unwrap_or(Tap::RgbIn),
-        };
         let collect = match collect {
             Some(tap) => tap,
             None => self
@@ -815,7 +895,7 @@ impl Pipeline {
                 &self.output_gamut,
             )?)
         } else {
-            let mut scan_params = self.params.clone();
+            let mut scan_params = self.scan_params().into_owned();
             scan_params.io.scan_film = true;
             let scanning = stages::StageObservation::new(backend, "scanning");
             let backend = scanning.backend(backend);
@@ -1001,6 +1081,14 @@ impl Pipeline {
     /// scope. Both owned-image entry points apply the metered EV immediately,
     /// so the EV itself stays internal.
     fn expose_full_input(&self, image: ImageBuf, backend: &dyn ComputeBackend) -> ImageBuf {
+        if self
+            .params
+            .workflow
+            .route
+            .starts_with("input > convert-film")
+        {
+            return image;
+        }
         let metering = stages::StageObservation::cpu(
             backend,
             "metering",

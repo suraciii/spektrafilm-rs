@@ -169,6 +169,7 @@ fn provenance() -> Provenance {
     Provenance {
         implementation_version: env!("CARGO_PKG_VERSION").into(),
         model_version: "spektrafilm".into(),
+        scanner: None,
     }
 }
 
@@ -984,11 +985,33 @@ mod tests {
         app.params.scanner.white_point = [0.7, 0.8, 0.9];
         app.params.workflow.route = "input > film > scan".into();
         app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.receiver_profile =
+            spektrafilm_core::params::ReceiverProfile::LabScanApprox;
+        app.params.scanner.positive_interpretation =
+            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
+        app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.dirty = false;
         let revision = app.parameter_revision;
         app.params.workflow.route = "input > film > print > scan".into();
         app.finish_route_change();
         assert_eq!(app.params.scanner.scan_output, "direct_scan");
+        assert_eq!(
+            app.params.scanner.receiver_profile,
+            spektrafilm_core::params::ReceiverProfile::LegacyColorimetric
+        );
+        assert_eq!(
+            app.params.scanner.positive_interpretation,
+            spektrafilm_core::params::PositiveInterpretation::Separable
+        );
+        assert_eq!(
+            app.params.scanner.auto_setup,
+            spektrafilm_core::params::ScannerAutoSetup::Off
+        );
+        assert_eq!(
+            app.params.scanner.finish,
+            spektrafilm_core::params::ScannerFinish::Neutral
+        );
         assert!(app.dirty);
         assert_eq!(app.parameter_revision, revision.wrapping_add(1));
         app.params.workflow.route = "input > convert-film > scan".into();
@@ -1002,9 +1025,31 @@ mod tests {
         assert!(!app.params.scanner.white_correction);
         assert!(!app.params.scanner.black_correction);
         assert_eq!(app.parameter_revision, revision);
+        app.params.scanner.receiver_profile =
+            spektrafilm_core::params::ReceiverProfile::LabScanApprox;
+        app.params.scanner.positive_interpretation =
+            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
+        app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.select_film_profile("kodak_ektachrome_100".into());
         assert_eq!(app.film_medium, crate::controls::ScanMedium::Slide);
         assert_eq!(app.params.scanner.scan_output, "direct_scan");
+        assert_eq!(
+            app.params.scanner.receiver_profile,
+            spektrafilm_core::params::ReceiverProfile::LabScanApprox
+        );
+        assert_eq!(
+            app.params.scanner.positive_interpretation,
+            spektrafilm_core::params::PositiveInterpretation::Separable
+        );
+        assert_eq!(
+            app.params.scanner.auto_setup,
+            spektrafilm_core::params::ScannerAutoSetup::Off
+        );
+        assert_eq!(
+            app.params.scanner.finish,
+            spektrafilm_core::params::ScannerFinish::Neutral
+        );
         let restored = app.current_state().unwrap().runtime_params().unwrap();
         assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
         assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
@@ -1012,7 +1057,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_startup_normalizes_positive_output_without_resetting_points() {
+    fn slide_startup_rejects_positive_output_with_visible_error() {
         let (app, directory) = test_app("slide-startup");
         let mut params = app.params.clone();
         params.workflow.route = "input > film > scan".into();
@@ -1037,15 +1082,31 @@ mod tests {
             directory.join("preset_browser_state.json"),
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         );
-        assert_eq!(restarted.film_medium, crate::controls::ScanMedium::Slide);
-        assert_eq!(restarted.params.scanner.scan_output, "direct_scan");
-        assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
+        assert!(
+            restarted
+                .status
+                .contains("negative filming-stage film profile")
+        );
+        assert_eq!(
+            restarted.params,
+            state::GuiState::factory().runtime_params().unwrap()
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn scanner_points_survive_section_preset_and_restart() {
         let (mut app, directory) = test_app("scanner-points");
+        app.params.workflow.route = "input > film > scan".into();
+        app.finish_route_change();
+        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.receiver_profile =
+            spektrafilm_core::params::ReceiverProfile::LabScanApprox;
+        app.params.scanner.positive_interpretation =
+            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
+        app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
+        app.params.scanner.finish_strength = 0.0;
         app.params.scanner.black_point = [0.1, 0.2, 0.3];
         app.params.scanner.white_point = [0.7, 0.8, 0.9];
         let preset =
@@ -1065,8 +1126,31 @@ mod tests {
             .clone();
         app.params.scanner.black_point = [0.0; 3];
         app.params.scanner.white_point = [1.0; 3];
+        app.params.scanner.receiver_profile =
+            spektrafilm_core::params::ReceiverProfile::LegacyColorimetric;
+        app.params.scanner.positive_interpretation =
+            spektrafilm_core::params::PositiveInterpretation::Separable;
+        app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::Neutral;
+        app.params.scanner.finish_strength = 1.0;
         app.load_preset(entry.group, &entry.name);
         assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+        assert_eq!(
+            app.params.scanner.receiver_profile,
+            spektrafilm_core::params::ReceiverProfile::LabScanApprox
+        );
+        assert_eq!(
+            app.params.scanner.positive_interpretation,
+            spektrafilm_core::params::PositiveInterpretation::Coupled
+        );
+        assert_eq!(
+            app.params.scanner.auto_setup,
+            spektrafilm_core::params::ScannerAutoSetup::PerFrame
+        );
+        assert_eq!(
+            app.params.scanner.finish,
+            spektrafilm_core::params::ScannerFinish::LabScan
+        );
+        assert_eq!(app.params.scanner.finish_strength, 0.0);
         let path = directory.join("saved.json");
         app.current_state().unwrap().save(&path).unwrap();
         let mut restarted = App::new_with_browser_path(
@@ -1079,6 +1163,23 @@ mod tests {
         );
         assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
         assert_eq!(restarted.params.scanner.white_point, [0.7, 0.8, 0.9]);
+        assert_eq!(
+            restarted.params.scanner.receiver_profile,
+            spektrafilm_core::params::ReceiverProfile::LabScanApprox
+        );
+        assert_eq!(
+            restarted.params.scanner.positive_interpretation,
+            spektrafilm_core::params::PositiveInterpretation::Coupled
+        );
+        assert_eq!(
+            restarted.params.scanner.auto_setup,
+            spektrafilm_core::params::ScannerAutoSetup::PerFrame
+        );
+        assert_eq!(
+            restarted.params.scanner.finish,
+            spektrafilm_core::params::ScannerFinish::LabScan
+        );
+        assert_eq!(restarted.params.scanner.finish_strength, 0.0);
         restarted.params.scanner.black_point = [0.0; 3];
         restarted.apply_state(app.current_state().unwrap()).unwrap();
         assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
