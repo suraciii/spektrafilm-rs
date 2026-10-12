@@ -420,6 +420,8 @@ When downstream spatial processing is active, V3 extends the output grid to cove
 
 Cine profiles such as Kodak VISION3 500T can use V3 with their existing stock controls. This availability does not establish cine photographic calibration. The current density-average readout exceeds the spectral aperture gate for the measured 500T-to-2383 condition; see [known optical limits](specs/film-grain/v3/design.md#evidence-and-limits).
 
+Set `SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR=6` to try the [spectral aperture probe](specs/film-grain/v3/spectral-aperture.md) on an active V3 print route. It reads a finer lattice and averages linear print exposure before print development. Disable enlarger diffusion, scanner blur, unsharp mask, and print glare for this probe. The default path remains unchanged when the variable is absent. Supersampling does not establish cine calibration or replace exact fractional-overlap integration.
+
 The LUT path (`use_enlarger_lut` + `use_scanner_lut`) ports Python's PCHIP 3D interpolation (`crates/spektrafilm-math/src/pchip3d.rs` ↔ `spektrafilm/utils/fast_interp_lut.py`). The executed f64 LUT-reduction scenarios passed the **1e-5** maximum absolute-error budget; the 265 delivered LUT stock/topology/transport cases passed independent Python comparisons.
 
 Rust profile authoring supports `profile::save_profile`, preserving JSON nulls
