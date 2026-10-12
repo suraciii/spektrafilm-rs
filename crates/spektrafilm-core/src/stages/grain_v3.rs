@@ -36,6 +36,66 @@ const CELL_UM_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_UM";
 const EXPECTATION_ENV: &str = "SPEKTRAFILM_GRAIN_V3_EXPECTATION";
 /// Experimental supersampling factor for route-specific spectral aperture probing.
 const APERTURE_FACTOR_ENV: &str = "SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR";
+/// Exact formed-cell optical response experiment.
+const CELL_SPECTRAL_ENV: &str = "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL";
+
+pub fn cell_spectral_enabled() -> Result<bool, String> {
+    match std::env::var_os(CELL_SPECTRAL_ENV) {
+        None => Ok(false),
+        Some(value) if value == "1" => Ok(true),
+        Some(value) => Err(format!(
+            "{CELL_SPECTRAL_ENV} must be exactly 1 when set (got {:?})",
+            value.to_string_lossy()
+        )),
+    }
+}
+
+/// Validate the initial exact-cell optical scope before field allocation.
+pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
+    if !active(params) {
+        return Ok(false);
+    }
+    let enabled = cell_spectral_enabled()?;
+    if !enabled {
+        return Ok(false);
+    }
+    if params.workflow.route != PRINT_ROUTE && params.workflow.route != FILM_SCAN_ROUTE {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
+        ));
+    }
+    if params.scanner.auto_setup == crate::params::ScannerAutoSetup::PerFrame {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} does not support per_frame scanner setup"
+        ));
+    }
+    if params.settings.use_enlarger_lut || params.settings.use_scanner_lut {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} does not support enlarger or scanner LUTs"
+        ));
+    }
+    if params.enlarger.diffusion_filter.active
+        || params.enlarger.lens_blur > 0.0
+        || params.scanner.lens_blur > 0.0
+        || params.scanner.unsharp_mask.iter().any(|&v| v > 0.0)
+        || (params.print_render.glare.active && params.print_render.glare.percent > 0.0)
+        || (params.magazine_print_color.active && params.magazine_print_color.strength > 0.0)
+    {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} does not support spatial optics or finishing"
+        ));
+    }
+    if params.scanner.black_point != [0.0; 3]
+        || params.scanner.white_point != [1.0; 3]
+        || params.scanner.white_correction
+        || params.scanner.black_correction
+    {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} does not support scanner point or white corrections"
+        ));
+    }
+    Ok(true)
+}
 
 /// Resolve the optional spectral aperture probe factor.
 pub fn aperture_factor() -> Result<Option<u32>, String> {
@@ -422,6 +482,29 @@ pub fn readout(
     v3::apply(source, source_pitch_um, grid, &resolved)
 }
 
+/// Read linear route response with the same formed field and exact cell overlaps.
+pub fn readout_with_response(
+    source: &ImageBuf,
+    film: &Profile,
+    params: &RuntimeParams,
+    source_pitch_um: f64,
+    grid: ReadoutGrid,
+    backend: &dyn spektrafilm_gpu::ComputeBackend,
+    response: impl Fn(&ImageBuf, &dyn spektrafilm_gpu::ComputeBackend) -> Result<ImageBuf, String>
+    + Sync,
+) -> Result<ImageBuf, String> {
+    let resolved = resolve(film, params)?;
+    let observation = super::StageObservation::cpu(
+        backend,
+        "grain_v3_field",
+        spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu,
+    );
+    let backend = observation.backend(backend);
+    v3::apply_with_response(source, source_pitch_um, grid, &resolved, |cells| {
+        response(cells, backend)
+    })
+}
+
 /// Effective-backend note for user-visible backend/capability output.
 pub fn effective_backend_note() -> &'static str {
     "film grain V3: field readout on CPU (resident WGPU chain disabled)"
@@ -552,6 +635,109 @@ mod tests {
             }
         }
         max
+    }
+
+    fn block_average_linear(fine: &ImageBuf, factor: u32) -> ImageBuf {
+        let mut coarse = ImageBuf::new(fine.width / factor, fine.height / factor);
+        for y in 0..coarse.height {
+            for x in 0..coarse.width {
+                let mut sum = [0.0; 3];
+                for dy in 0..factor {
+                    for dx in 0..factor {
+                        let pixel = fine.get(x * factor + dx, y * factor + dy);
+                        for c in 0..3 {
+                            sum[c] += pixel[c] as f64;
+                        }
+                    }
+                }
+                coarse.set(
+                    x,
+                    y,
+                    sum.map(|value| from_f64(value / (factor * factor) as f64)),
+                );
+            }
+        }
+        coarse
+    }
+
+    #[test]
+    fn cell_spectral_matches_independent_aligned_print_and_scan_reading() {
+        let film = load("kodak_portra_800");
+        let print = load("kodak_portra_endura");
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let source = density_target(16, 12);
+        let mut params = supported_params();
+        params.random_seed = 19273;
+        params.io.output_cctf_encoding = true;
+        let mut model = resolve(&film, &params).unwrap();
+        model.cell_um = Some(model.support_um / 2.0);
+        let cell = model.cell_um.unwrap();
+        let fine_grid = ReadoutGrid {
+            origin_um: [0.0; 2],
+            pitch_um: [cell; 2],
+            width: 32,
+            height: 24,
+        };
+        let coarse_grid = ReadoutGrid {
+            origin_um: [0.0; 2],
+            pitch_um: [4.0 * cell; 2],
+            width: 8,
+            height: 6,
+        };
+        let formed_cells = v3::apply(&source, cell * 2.0, fine_grid, &model).unwrap();
+        let color = crate::color_reference::ColorReference::identity();
+        let gamut = crate::gamut_compression::OutputGamutCompress::identity();
+        let illuminant =
+            crate::spectral_service::select_illuminant_f64(&print.info.reference_illuminant);
+        for preflash in [[0.0; 3], [0.01, 0.02, 0.03]] {
+            let expose = |cells: &ImageBuf| {
+                super::super::printing::expose_linear_calibrated(
+                    cells,
+                    &film,
+                    &print,
+                    &params,
+                    &backend,
+                    &illuminant,
+                    0.7,
+                    preflash,
+                    1.0,
+                )
+            };
+            let fine = expose(&formed_cells).unwrap();
+            let expected = block_average_linear(&fine, 4);
+            let actual =
+                v3::apply_with_response(&source, cell * 2.0, coarse_grid, &model, expose).unwrap();
+            assert!(max_abs_diff(&actual, &expected) < read_tolerance());
+        }
+        params.io.scan_film = true;
+        params.workflow.route = FILM_SCAN_ROUTE.into();
+        for mode in ["direct_scan", "positive_scan"] {
+            params.scanner.scan_output = mode.into();
+            let capture = |cells: &ImageBuf| {
+                super::super::scanning::capture_linear(cells, &film, &params, &backend, &color)
+            };
+            let fine_capture = capture(&formed_cells).unwrap();
+            let expected = block_average_linear(&fine_capture, 4);
+            let actual =
+                v3::apply_with_response(&source, cell * 2.0, coarse_grid, &model, capture).unwrap();
+            assert!(max_abs_diff(&actual, &expected) < read_tolerance());
+            let finish = |rgb| {
+                super::super::scanning::finish_capture(
+                    rgb, &film, &params, &backend, &color, &gamut,
+                )
+                .unwrap()
+            };
+            assert!(max_abs_diff(&finish(actual.clone()), &finish(expected)) < read_tolerance());
+            let crop_grid = ReadoutGrid {
+                origin_um: [8.0 * cell, 4.0 * cell],
+                width: 4,
+                height: 3,
+                ..coarse_grid
+            };
+            let cropped =
+                v3::apply_with_response(&source, cell * 2.0, crop_grid, &model, capture).unwrap();
+            assert!(max_abs_diff_at(&actual, &cropped, 2, 1) < read_tolerance());
+        }
     }
 
     #[test]

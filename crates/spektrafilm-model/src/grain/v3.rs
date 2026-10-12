@@ -12,6 +12,11 @@ use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_math::stats::FastStatsRng;
 
+mod experiment_mass;
+use experiment_mass::MassLaw;
+
+type CellResponse<'a> = &'a (dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + Sync);
+
 /// Production field pitch as a fraction of the support sigma (`h = sigma/2`).
 const CELLS_PER_SIGMA: f64 = 2.0;
 /// Gaussian truncation half-width in sigmas.
@@ -82,12 +87,40 @@ pub fn apply(
     apply_with_budget(target, pitch_um, grid, params, MAX_BAND_CELLS)
 }
 
+/// Experimental optical readout of the same formed field. The route owner
+/// converts each bounded CMY band (base offset already subtracted) into a
+/// linear response. Exact cell overlaps average that response, before any
+/// nonlinear development or output encoding. Exactness is relative to the
+/// piecewise-constant field; it does not recover within-cell fluctuations.
+pub fn apply_with_response(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &GrainV3Params,
+    response: impl Fn(&ImageBuf) -> Result<ImageBuf, String> + Sync,
+) -> Result<ImageBuf, String> {
+    // Existing spectral backends may materialize wavelength tensors. Bound
+    // the band rather than allocate them for a full film canvas.
+    apply_impl(target, pitch_um, grid, params, 1 << 20, Some(&response))
+}
+
 fn apply_with_budget(
     target: &ImageBuf,
     pitch_um: f64,
     grid: ReadoutGrid,
     params: &GrainV3Params,
     max_band_cells: u64,
+) -> Result<ImageBuf, String> {
+    apply_impl(target, pitch_um, grid, params, max_band_cells, None)
+}
+
+fn apply_impl(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &GrainV3Params,
+    max_band_cells: u64,
+    response: Option<CellResponse<'_>>,
 ) -> Result<ImageBuf, String> {
     let model = Model::new(params, pitch_um)?;
     let src_w = target.width as usize;
@@ -293,10 +326,17 @@ fn apply_with_budget(
 
         hbuf.resize(ext_rows * cols, 0.0);
         fbuf.resize(rows * cols, 0.0);
+        let mut formed = response.map(|_| ImageBuf::new(cols as u32, rows as u32));
         for (c, s) in src.iter().enumerate() {
             horizontal_pass(s, &mut hbuf, ext_rows, ext_cols, cols, dr, &model.taps);
             vertical_pass(&hbuf, &mut fbuf, ext_rows, cols, rows, dr, &model.taps);
             let min = model.channels[c].min;
+            if let Some(formed) = &mut formed {
+                for (pixel, &density) in formed.data.as_chunks_mut::<3>().0.iter_mut().zip(&fbuf) {
+                    pixel[c] = from_f64(density - min);
+                }
+                continue;
+            }
             let band = &mut out.data[py * out_w * 3..band_end * out_w * 3];
             band.par_chunks_mut(out_w * 3)
                 .enumerate()
@@ -311,6 +351,36 @@ fn apply_with_budget(
                             }
                         }
                         data[px * 3 + c] = from_f64(acc - min);
+                    }
+                });
+        }
+        if let (Some(response), Some(formed)) = (response, formed) {
+            let linear = response(&formed)?;
+            if linear.width != formed.width
+                || linear.height != formed.height
+                || linear.data.len() != formed.data.len()
+                || linear.data.iter().any(|&value| !to_f64(value).is_finite())
+            {
+                return Err("film grain V3: cell response must preserve band dimensions and return finite linear values".to_owned());
+            }
+            out.data[py * out_w * 3..band_end * out_w * 3]
+                .par_chunks_mut(out_w * 3)
+                .enumerate()
+                .for_each(|(r, data)| {
+                    for (px, xst) in x_read.iter().enumerate() {
+                        let mut sum = [0.0; 3];
+                        for &(cj, wy) in &y_read[py + r] {
+                            for &(ci, wx) in xst {
+                                let index =
+                                    ((cj - j_lo) as usize * cols + (ci - inner_i0) as usize) * 3;
+                                for (c, value) in sum.iter_mut().enumerate() {
+                                    *value += wy * wx * to_f64(linear.data[index + c]);
+                                }
+                            }
+                        }
+                        for c in 0..3 {
+                            data[px * 3 + c] = from_f64(sum[c]);
+                        }
                     }
                 });
         }
@@ -329,6 +399,7 @@ struct Model {
     channels: [Channel; 3],
     seed: u64,
     expectation: bool,
+    mass_law: MassLaw,
 }
 
 /// Per-channel layer state and composite-axis lookup.
@@ -411,8 +482,10 @@ impl Model {
                 std::array::from_fn(|l| params.layer_curves.iter().map(|row| row[l][c]).collect()),
             )?);
         }
+        let mass_law = MassLaw::from_env()?;
         for (c, channel) in channels.iter().enumerate() {
             channel.check_sampling_bounds(c, cell_area)?;
+            channel.check_sampling_bounds(c, cell_area * mass_law.rate_multiplier())?;
         }
         Ok(Self {
             taps: support_taps(params.support_um, cell_um),
@@ -423,6 +496,7 @@ impl Model {
                 .map_err(|_| "film grain V3: channel state".to_owned())?,
             seed: params.seed,
             expectation: params.expectation,
+            mass_law,
         })
     }
 
@@ -477,9 +551,14 @@ impl Model {
                     lambda
                 } else {
                     let mut rng = FastStatsRng::stream(self.seed, (c * 3 + l) as u64, index);
-                    poisson_exact(&mut rng, lambda)? as f64
+                    self.mass_law.sample(&mut rng, lambda)?
                 };
                 density += mass * count / cell_area;
+                if !density.is_finite() {
+                    return Err(
+                        "film grain V3: sampled dye mass exceeds finite density range".to_owned(),
+                    );
+                }
             }
             out[c] = density;
         }
@@ -1036,6 +1115,95 @@ mod tests {
             positive_film: false,
             seed,
             expectation,
+        }
+    }
+
+    #[test]
+    fn cell_response_matches_independent_fractional_optical_integral() {
+        let p = params(None, false, 1234, 1.28);
+        let target = ImageBuf::from_data(16, 16, vec![from_f64(0.15); 16 * 16 * 3]);
+        let h = SIGMA / 2.0;
+        let coarse = ReadoutGrid {
+            origin_um: [9.13, 8.27],
+            pitch_um: [5.31, 4.73],
+            width: 6,
+            height: 5,
+        };
+        let optical = |density: &ImageBuf| {
+            let mut out = density.clone();
+            for pixel in out.data.as_chunks_mut::<3>().0 {
+                let cmy = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
+                for (c, value) in pixel.iter_mut().enumerate() {
+                    *value = from_f64(10.0f64.powf(-cmy[c] - 0.4 * cmy[(c + 1) % 3]));
+                }
+            }
+            Ok(out)
+        };
+        let actual = apply_with_response(&target, PITCH, coarse, &p, optical).unwrap();
+        let fine_grid = ReadoutGrid {
+            origin_um: [7.0, 7.0],
+            pitch_um: [h; 2],
+            width: 24,
+            height: 20,
+        };
+        let cells = apply(&target, PITCH, fine_grid, &p).unwrap();
+        let light = optical(&cells).unwrap();
+        for y in 0..coarse.height as usize {
+            for x in 0..coarse.width as usize {
+                let lo = [
+                    coarse.origin_um[0] + x as f64 * coarse.pitch_um[0],
+                    coarse.origin_um[1] + y as f64 * coarse.pitch_um[1],
+                ];
+                let hi = [lo[0] + coarse.pitch_um[0], lo[1] + coarse.pitch_um[1]];
+                let mut expected = [0.0; 3];
+                for j in 0..fine_grid.height as usize {
+                    let cy = fine_grid.origin_um[1] + j as f64 * h;
+                    let dy = (hi[1].min(cy + h) - lo[1].max(cy)).max(0.0);
+                    for i in 0..fine_grid.width as usize {
+                        let cx = fine_grid.origin_um[0] + i as f64 * h;
+                        let dx = (hi[0].min(cx + h) - lo[0].max(cx)).max(0.0);
+                        for (c, value) in expected.iter_mut().enumerate() {
+                            *value += dx
+                                * dy
+                                * to_f64(light.data[(j * fine_grid.width as usize + i) * 3 + c])
+                                / (coarse.pitch_um[0] * coarse.pitch_um[1]);
+                        }
+                    }
+                }
+                for (c, value) in expected.iter().enumerate() {
+                    assert!(
+                        (to_f64(actual.data[(y * coarse.width as usize + x) * 3 + c]) - value)
+                            .abs()
+                            < 2e-7
+                    );
+                }
+            }
+        }
+        let narrow = apply_impl(&target, PITCH, coarse, &p, 1_100, Some(&optical)).unwrap();
+        for (&a, &b) in actual.data.iter().zip(&narrow.data) {
+            assert!((to_f64(a) - to_f64(b)).abs() < 2e-7);
+        }
+        let crop = ReadoutGrid {
+            origin_um: [
+                coarse.origin_um[0] + coarse.pitch_um[0],
+                coarse.origin_um[1] + coarse.pitch_um[1],
+            ],
+            width: 3,
+            height: 2,
+            ..coarse
+        };
+        let cropped = apply_with_response(&target, PITCH, crop, &p, optical).unwrap();
+        for y in 0..2 {
+            for x in 0..3 {
+                for c in 0..3 {
+                    assert!(
+                        (to_f64(cropped.data[(y * 3 + x) * 3 + c])
+                            - to_f64(actual.data[((y + 1) * 6 + x + 1) * 3 + c]))
+                        .abs()
+                            < 2e-7
+                    );
+                }
+            }
         }
     }
 
