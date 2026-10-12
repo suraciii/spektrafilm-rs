@@ -18,10 +18,10 @@ jobs:
   lightweight:
     name: ${{ github.event_name == 'pull_request' && 'PR lightweight' || 'Main full verification' }}
     runs-on: ubuntu-24.04
-    # A cold `just ci` (no restored target cache) needs the dependency build, the
-    # f32 and f64 suites and the benchmark gate; 30 minutes cancelled the first
-    # run after this file changed the lock file.
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 90 }}
+    # A warm `just ci` (restored workspace cache) measured 13-16 minutes; the
+    # cap only bounds a cold or evicted cache, and the save step below keeps a
+    # partial `target` after a cancellation so the next run converges.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 45 }}
     env:
       OPENBLAS_NUM_THREADS: '1'
       RAYON_NUM_THREADS: '2'
@@ -41,8 +41,14 @@ jobs:
             ~/.cargo/git
             target
           key: rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-${{ github.sha }}
+          # The lock/Cargo.toml hash in the first restore key makes any
+          # dependency change a total cache miss (measured: a 0s restore for the
+          # 084be533 main run, then 29m07s of cold dependency build). The second
+          # key matches the newest cache for the same toolchain, so cargo only
+          # rebuilds the delta of the changed lock file.
           restore-keys: |
             rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config.toml') }}-
+            rust-verification-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.13'
