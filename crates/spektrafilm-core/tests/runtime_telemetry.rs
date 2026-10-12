@@ -229,6 +229,59 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
 }
 
 #[test]
+fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
+    // The grain engine resolves on the CPU from the developed film density, so
+    // a report must name the stage and the CPU reason that declined the
+    // resident route. The crop keeps the readout region a few film
+    // millimetres while the pipeline still resolves the engine and the plan.
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.camera.film_format_mm = 36.0;
+    params.workflow.route = "input > film > scan".to_owned();
+    params.scanner.scan_output = "positive_scan".to_owned();
+    params.io.scan_film = true;
+    params.io.crop = true;
+    params.io.crop_size = [0.02, 0.02];
+    params.film_render.grain.active = true;
+    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Fotufilm;
+    params.film_render.grain.fotufilm.amount = 1.0;
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let (width, height) = (512u32, 384u32);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..(width * height * 3) as usize)
+            .map(|index| from_f64(0.2 + (index % 97) as f64 * 0.004))
+            .collect(),
+    );
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(width, height);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let output = runtime
+        .process_observed(image, &CpuBackend, simulation.context())
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    assert!(output.width < 64 && output.height < 64, "crop geometry");
+    assert!(
+        report
+            .summary()
+            .cpu_stage_reasons
+            .contains(&("grain_fotufilm".to_owned(), CpuReason::FotufilmFilmCpu)),
+        "Fotufilm stage missing from the report: {:?}",
+        report.summary().cpu_stage_reasons
+    );
+}
+
+#[test]
 fn slide_reference_batches_are_calibration_not_image_work() {
     let Some(backend) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
         eprintln!("WGPU adapter unavailable; calibration batch accounting not exercised");

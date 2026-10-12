@@ -431,6 +431,9 @@ fn range_check(path: &str, value: &Value) -> Result<(), String> {
         Value::Array(a) => a.iter().filter_map(Value::as_f64).collect(),
         _ => vec![],
     };
+    if path.starts_with("film_render.grain.fotufilm.") {
+        return super::validation::validate_fotufilm_values(path, &nums);
+    }
     let too_low = nums
         .iter()
         .any(|x| *x < min || (path == "io.input_gamut_compress.hull_detail" && *x <= 0.0));
@@ -535,23 +538,38 @@ pub(crate) fn parse_carrier(text: &str, toml: bool) -> Result<Value, String> {
     }
 }
 fn toml_to_json(v: toml::Value) -> Result<Value, String> {
-    match v {
-        toml::Value::String(s) => Ok(Value::String(s)),
-        toml::Value::Integer(i) => Ok(Value::Number(i.into())),
-        toml::Value::Float(f) => serde_json::Number::from_f64(f)
-            .map(Value::Number)
-            .ok_or_else(|| "TOML non-finite float is not allowed".into()),
-        toml::Value::Boolean(b) => Ok(Value::Bool(b)),
-        toml::Value::Datetime(_) => Err("TOML datetime values are not allowed".into()),
-        toml::Value::Array(a) => Ok(Value::Array(
-            a.into_iter().map(toml_to_json).collect::<Result<_, _>>()?,
-        )),
-        toml::Value::Table(t) => Ok(Value::Object(
-            t.into_iter()
-                .map(|(k, v)| Ok((k, toml_to_json(v)?)))
-                .collect::<Result<_, String>>()?,
-        )),
+    fn convert(v: toml::Value, path: &str) -> Result<Value, String> {
+        match v {
+            toml::Value::String(s) => Ok(Value::String(s)),
+            toml::Value::Integer(i) => Ok(Value::Number(i.into())),
+            toml::Value::Float(f) => serde_json::Number::from_f64(f)
+                .map(Value::Number)
+                .ok_or_else(|| format!("{path}: TOML non-finite float is not allowed")),
+            toml::Value::Boolean(b) => Ok(Value::Bool(b)),
+            toml::Value::Datetime(_) => {
+                Err(format!("{path}: TOML datetime values are not allowed"))
+            }
+            toml::Value::Array(a) => Ok(Value::Array(
+                a.into_iter()
+                    .enumerate()
+                    .map(|(index, value)| convert(value, &format!("{path}[{index}]")))
+                    .collect::<Result<_, _>>()?,
+            )),
+            toml::Value::Table(t) => Ok(Value::Object(
+                t.into_iter()
+                    .map(|(key, value)| {
+                        let next = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        };
+                        Ok((key, convert(value, &next)?))
+                    })
+                    .collect::<Result<_, String>>()?,
+            )),
+        }
     }
+    convert(v, "")
 }
 fn find_equals(s: &str) -> Option<usize> {
     let (mut depth, mut quote, mut esc) = (0, false, false);
@@ -701,10 +719,117 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
             .particle_scale_layers
             .iter()
             .any(|x| !x.is_finite())
+        || params
+            .film_render
+            .grain
+            .fotufilm
+            .layers
+            .iter()
+            .chain(params.film_render.grain.fotufilm.layer_weights.iter())
+            .chain(params.film_render.grain.fotufilm.layer_size_ratio.iter())
+            .chain(params.film_render.grain.fotufilm.sublayer_shares.iter())
+            .any(|x| !x.is_finite())
+        || [
+            params.film_render.grain.fotufilm.amount,
+            params.film_render.grain.fotufilm.size,
+            params.film_render.grain.fotufilm.softness,
+            params.film_render.grain.fotufilm.color,
+            params.film_render.grain.fotufilm.rms_density,
+            params.film_render.grain.fotufilm.clump_radius_um,
+            params.film_render.grain.fotufilm.radius_span,
+            params.film_render.grain.fotufilm.coating_density_scale,
+            params.film_render.grain.fotufilm.fog_density,
+        ]
+        .iter()
+        .any(|x| !x.is_finite())
     {
         return Err("parameter array values must be finite".into());
     }
+    params.film_render.grain.fotufilm.validate()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod fotufilm_tests {
+    use super::*;
+
+    #[test]
+    fn fotufilm_metadata_has_exact_types_bounds_units_materials() {
+        let fields = [
+            ("amount", "f64", 0.0, 4.0, "dimensionless"),
+            ("size", "f64", 0.5, 4.0, "dimensionless"),
+            ("softness", "f64", 0.5, 4.0, "dimensionless"),
+            ("color", "f64", 0.0, 1.0, "dimensionless"),
+            ("layers", "[f64; 3]", 0.0, 4.0, "dimensionless"),
+            ("rms_density", "f64", 0.0, 0.1, "optical density"),
+            ("clump_radius_um", "f64", 0.0, 32.0, "µm"),
+            ("layer_weights", "[f64; 3]", 0.0, 4.0, "dimensionless"),
+            ("layer_size_ratio", "[f64; 3]", 0.25, 4.0, "dimensionless"),
+            ("radius_span", "f64", 1.0, 20.0, "dimensionless"),
+            ("sublayer_shares", "[f64; 4]", 0.0, 1.0, "dimensionless"),
+            ("coating_density_scale", "f64", 0.25, 4.0, "dimensionless"),
+            ("fog_density", "f64", 0.0, 0.3, "optical density"),
+        ];
+        for (name, ty, min, max, unit) in fields {
+            let path = format!("film_render.grain.fotufilm.{name}");
+            let field = describe_field(&path).unwrap();
+            assert_eq!(field["type"], ty);
+            assert_eq!(field["minimum"], min);
+            assert_eq!(field["maximum"], max);
+            assert_eq!(field["unit"], unit);
+            assert!(
+                field["conditions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v == "film_render.grain.engine = fotufilm")
+            );
+        }
+        let material = describe_field("film_render.grain.fotufilm.material").unwrap();
+        assert_eq!(material["type"], "FotufilmMaterial");
+        assert_eq!(
+            material["enum_values"],
+            serde_json::json!(["auto", "silver", "dye_negative", "dye_reversal"])
+        );
+        assert_eq!(
+            describe_module("film_render.grain.fotufilm").unwrap()["fields"]
+                .as_array()
+                .unwrap()
+                .len(),
+            14
+        );
+    }
+
+    #[test]
+    fn fotufilm_sparse_domains_and_share_sum_reject_invalid_input() {
+        for (name, values) in [
+            ("amount", vec!["-1", "4.1"]),
+            ("size", vec!["0.49", "4.1"]),
+            ("softness", vec!["0.49", "4.1"]),
+            ("color", vec!["-0.1", "1.1"]),
+            ("layers", vec!["[1,-1,1]", "[1,4.1,1]"]),
+            ("rms_density", vec!["0", "0.11"]),
+            ("clump_radius_um", vec!["0", "33"]),
+            ("layer_weights", vec!["[1,0,1]", "[1,4.1,1]"]),
+            ("layer_size_ratio", vec!["[1,0.24,1]", "[1,4.1,1]"]),
+            ("radius_span", vec!["0.9", "21"]),
+            (
+                "sublayer_shares",
+                vec!["[0,0.5,0.25,0.25]", "[0.25,0.25,0.25,0.2]"],
+            ),
+            ("coating_density_scale", vec!["0.24", "4.1"]),
+            ("fog_density", vec!["-0.1", "0.31"]),
+            ("material", vec!["dye", "v4"]),
+        ] {
+            let path = format!("film_render.grain.fotufilm.{name}");
+            for value in values {
+                let error = ParameterEdits::parse(&format!("{path}={value}")).unwrap_err();
+                assert!(error.contains(&path), "{error}");
+            }
+        }
+        ParameterEdits::parse("film_render.grain.fotufilm.sublayer_shares=[0.1,0.2,0.3,0.4]")
+            .unwrap();
+    }
 }
 
 #[cfg(test)]

@@ -18,16 +18,18 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|positive_scan`; calibrated `positive_scan` is supported for direct `input > film > scan` and real negative-capture `input > convert-film > scan`, while paper, positive-film, print-paper, scan-minus-base, white/black-corrected, and active-Grain-Procedural combinations remain rejected. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can reuse the calibrated positive interpretation on its direct scan route.
 - **Magazine print color.** The optional finishing treatment applies a bundled RGB appearance to any supported base workflow — a scanned negative or a finished RGB input — after the base workflow and its scanner-domain effects: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. `magazine_print_color.active` and one appearance Strength from 0 to 1 enable it independently of the base workflow; there is no magazine route. It remains RGB-only and does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
-- **Selectable grain engines.** Spektra is the default upstream experimental original. Procedural is derived from Dehancer and provides Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls; pixel parity with Dehancer is not claimed. Dye is a self-developed experimental film-coordinate dye field, opt-in, controlled by `v3_dye_support_um` and `v3_event_area_um2`.
+- **Selectable grain engines.** Spektra is the default upstream experimental original. Procedural is derived from Dehancer and provides Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls; pixel parity with Dehancer is not claimed. Dye is a self-developed experimental film-coordinate dye field, opt-in, controlled by `v3_dye_support_um` and `v3_event_area_um2`. Fotufilm Film is an adapted appearance population model fitted to resolved film curves, opt-in, controlled by `film_render.grain.fotufilm.*`. It resolves on the CPU, prepares its population before the first readout of a given population identity, and reuses the prepared bank for later renders of that identity.
 - **Grain Dye experiments.** Opt-in formed-cell spectral readout and compensated fixed/two-class/Gamma event-mass comparisons are available through diagnostic environment selectors. See [experiment scope](specs/film-grain/v3/experiments.md); the default field and readout remain unchanged.
 
-`film_render.grain.engine` accepts `spektra`, `procedural`, or `dye`. Replace explicit old selectors `v1`, `v2`, and `v3` with these values respectively; old selectors are invalid. Existing `v2_*` and `v3_*` control keys, internal module paths, and diagnostic environment variable names remain unchanged.
+`film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, or `fotufilm`. Replace explicit old selectors `v1`, `v2`, and `v3` with these values respectively; old selectors are invalid. Existing `v2_*` and `v3_*` control keys, internal module paths, and diagnostic environment variable names remain unchanged.
 
 ## Build
 
 Requires Rust stable (≥ 1.88), a C++17 compiler, pkg-config, OpenImageIO and Exiv2 development libraries. The locked `image` dependency requires Rust 1.88. Image I/O uses the same native libraries as Python 0.3.4, preserving float samples and EXIF/IPTC/XMP. On Debian/Ubuntu install `libopenimageio-dev libexiv2-dev libopenblas-dev`; Linux links the installed OpenBLAS library. On macOS use `brew install openimageio exiv2 pkg-config`. Windows packaging uses a matching MSYS2 UCRT64 native toolchain and pkg-config dependencies. The package scripts collect native runtime libraries; the build fails explicitly when required development libraries are absent.
 
-The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI runs the full `just ci` gate through `just verify`: formatting, all-target checks with default and `precision-f64` features, first-party Clippy, and workspace tests. It retains verification evidence without release builds, Python parity or packaging. Pushes to `main-0.3.4` run the full three-platform release workflow: workspace tests, native builds and package smoke, plus the existing Linux Python parity and LUT acceptance checks. Version tags and manual dispatch also retain the full workflow. Release runs use one concurrency group per ref. A commit pushed while a release run is active waits as the single pending run, and a later commit replaces that pending run, so only the newest commit is built. An active run is never canceled for a newer commit.
+The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check. PR CI runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run `Main full verification` through `just verify`. The [test architecture](eng/testing.md) defines layer responsibilities, test design rules, and the PR cost budget. Main verification retains workspace build artifacts and dependencies in commit-keyed caches for PR reuse. An active main verification is not canceled by a newer push; pending runs coalesce to the newest commit.
+
+Pushes to `main-0.3.4` also run the three-platform release workflow: workspace tests, native builds, package smoke, Linux Python parity, and LUT acceptance. Version tags and manual release dispatch retain this workflow. Release runs use one concurrency group per ref. An active release run is not canceled by a newer commit; pending runs coalesce to the newest commit.
 
 ```bash
 git clone <this-repo> && cd spektrafilm-rs
@@ -99,12 +101,16 @@ just build
 just check
 just test
 just test-f64
+just test-fast
+just ci-pr
 just ci
 just package
 just install
 ```
 
 Run `just verify /absolute/path/outside/the/repo/new-directory` to retain gate evidence. The directory must not exist. The runner displays and saves combined output in `gate.log`, preserves the gate's failure exit status, and writes `report.json` on success or failure. The report records commit and tree IDs, tracked changes in `before.diff` and `after.diff`, hashes of untracked files, tool versions, timestamps, and exit status. A source change during verification fails the run. The evidence covers `just ci`; native GUI, image, CLI, and package smoke evidence remains separate. Call this entry point directly so an outer shell pipeline cannot mask its exit status.
+
+Use `just verify-pr /absolute/path/outside/the/repo/new-directory` for the fast PR gate. Its report records `just ci-pr` and uses the same source and exit-status checks as full verification. Test selection lives in the Justfile; admission rules live in the [test architecture](eng/testing.md).
 
 `just ci` first runs `just check-python-cache`. This check rejects Git-index paths with a `__pycache__` component or a `.pyc` or `.pyo` suffix, including files added with `git add -f`. Python caches remain ignored local outputs.
 
@@ -166,11 +172,18 @@ executable.
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
 
-# Direct negative-film scan interpreted as a positive image
+# Positive scanner interpretation with explicit receiver, inverse, setup and finish
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
+    --set scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled \
+    --set scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
     --scan-output positive_scan --data-dir data
+
+# Inspect effective scanner selections without decoding or writing output
+./target/release/spektrafilm process input.tif -o positive.tif --film kodak_portra_400 --scan-film \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
+    --scan-output positive_scan --set scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan --dry-run --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json
@@ -546,3 +559,7 @@ Claude code for being this awesome.
 ## License
 
 The Rust program is GPL-3.0; see [LICENSE](LICENSE). Andrea Volpato's spectral profiles and their LUT derivatives retain CC BY-SA 4.0; see [the canonical asset license](data/license/SPEKTRAFILM_LICENSE.txt).
+
+The optional LabScan scanner finish adapts Fotufilm project-authored `Sources/FotufilmCore/LabScanFinish.swift` under Apache-2.0, pinned at research revision `59d43471dbef45c85ae442e507a291fdebfb2ec5` (source SHA-256 `fd2352193a8c91232729e51cc83cf748236b3a4b3cfaed07e703f5ae0943fe73`). The approximate narrow-band receiver follows Fotufilm's `PrintPaperTables.swift` sensitivity approximation; it is not a measured or calibrated scanner device. Receiver and finish source/version metadata is retained in scanner provenance.
+
+The optional Fotufilm Film grain engine adapts the crystal-population and periodic-aperture mechanism of Fotufilm project-authored `Sources/FotufilmCore/FilmGrain.swift` under Apache-2.0, pinned at the same research revision `59d43471dbef45c85ae442e507a291fdebfb2ec5` (source SHA-256 `76ad52a3421d6f1c3cd7c5d98aabd488dcf81c1212555a317cd650f36d067fad`). It is an authored appearance model: the resolved spectral film profile remains the authority for developed colour and tone, its grain parameters are explicitly authored effective values rather than measured stock data, and the complete-periodic readout above 96 micrometers is a documented extension of the upstream clipped sampler.

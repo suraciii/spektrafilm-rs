@@ -836,6 +836,83 @@ mod tests {
     }
 
     #[test]
+    fn fotufilm_effective_controls_roundtrip_only_in_rust_extension() {
+        use spektrafilm_core::params::grain::{FotufilmGrainParams, FotufilmMaterial};
+        let factory = GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Fotufilm;
+        params.film_render.grain.fotufilm = FotufilmGrainParams {
+            amount: 2.0,
+            size: 1.5,
+            softness: 2.5,
+            color: 0.4,
+            layers: [0.5, 1.0, 2.0],
+            rms_density: 0.015,
+            clump_radius_um: 7.5,
+            layer_weights: [0.8, 1.2, 1.5],
+            layer_size_ratio: [0.75, 1.0, 1.25],
+            radius_span: 8.0,
+            sublayer_shares: [0.1, 0.2, 0.3, 0.4],
+            coating_density_scale: 1.25,
+            fog_density: 0.04,
+            material: FotufilmMaterial::DyeNegative,
+        };
+        let saved = GuiState::from_runtime(
+            &params,
+            "kodak_gold_200",
+            "kodak_supra_endura",
+            &factory.sections,
+        )
+        .unwrap();
+        assert!(saved.sections["grain"].get("fotufilm").is_none());
+        assert!(saved.sections["grain"].get("engine").is_none());
+        assert!(factory.sections["grain"].get("fotufilm").is_none());
+        assert_eq!(
+            saved.sections["rust"]["runtime"]["film_render"]["grain"]["engine"],
+            "fotufilm"
+        );
+        let encoded = serde_json::to_vec(&saved.sections).unwrap();
+        let loaded = GuiState::from_value(serde_json::from_slice(&encoded).unwrap()).unwrap();
+        let restored = loaded.runtime_params().unwrap();
+        assert_eq!(
+            restored.film_render.grain.engine,
+            params.film_render.grain.engine
+        );
+        assert_eq!(
+            restored.film_render.grain.fotufilm,
+            params.film_render.grain.fotufilm
+        );
+        let changed_stock = GuiState::from_runtime(
+            &restored,
+            "kodak_gold_200",
+            "kodak_supra_endura",
+            &loaded.sections,
+        )
+        .unwrap();
+        assert_eq!(
+            changed_stock
+                .runtime_params()
+                .unwrap()
+                .film_render
+                .grain
+                .fotufilm,
+            params.film_render.grain.fotufilm
+        );
+    }
+
+    #[test]
+    fn partial_fotufilm_state_keeps_nested_defaults_and_old_engine_controls() {
+        let state = GuiState::from_value(json!({"rust": {"version": 1, "runtime": {
+            "film_render": {"grain": {"engine": "fotufilm", "fotufilm": {"amount": 0.0}, "v3_dye_support_um": 4.5}}
+        }}})).unwrap();
+        let grain = state.runtime_params().unwrap().film_render.grain;
+        assert_eq!(grain.fotufilm.amount, 0.0);
+        assert_eq!(grain.fotufilm.rms_density, 0.009);
+        assert_eq!(grain.fotufilm.sublayer_shares, [0.25; 4]);
+        assert_eq!(grain.v3_dye_support_um, 4.5);
+    }
+
+    #[test]
     fn runtime_extensions_roundtrip_without_overriding_upstream_selection() {
         let factory = GuiState::factory();
         let mut params = factory.runtime_params().unwrap();

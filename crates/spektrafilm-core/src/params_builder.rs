@@ -84,10 +84,15 @@ pub(crate) fn apply_runtime_constraints(params: &mut RuntimeParams) {
 
 fn apply_preview_constraints(params: &mut RuntimeParams) {
     if params.settings.preview_mode {
-        // Preview keeps the per-pixel Procedural scanner grain path. Spektra remains a
+        // Preview keeps the per-pixel Procedural scanner grain path and the
+        // Fotufilm Film population model, whose contract evaluates the same
+        // model on the declared reduced-resolution source. Spektra remains a
         // density-domain stochastic effect and Dye owns an explicit grain-free
         // preview contract.
-        if params.film_render.grain.engine != crate::params::GrainEngine::Procedural {
+        if !matches!(
+            params.film_render.grain.engine,
+            crate::params::GrainEngine::Procedural | crate::params::GrainEngine::Fotufilm
+        ) {
             params.film_render.grain.active = false;
         }
         params.enlarger.lens_blur = 0.0;

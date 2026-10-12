@@ -46,9 +46,11 @@ const EXECUTION_PRECISION: &str = if std::mem::size_of::<spektrafilm_math::preci
 /// predicate is the exact bypass boundary: `amount = 0` prepares no bank and
 /// changes no pixel.
 pub fn active(params: &RuntimeParams) -> bool {
-    super::grain_engine_active(params, GrainEngine::Fotufilm)
+    let grain = &params.film_render.grain;
+    grain.active
         && !params.debug.deactivate_stochastic_effects
-        && params.film_render.grain.fotufilm.amount > 0.0
+        && matches!(grain.engine, GrainEngine::Fotufilm)
+        && grain.fotufilm.amount > 0.0
 }
 
 /// Fail before any work when Fotufilm is selected outside its supported
@@ -294,13 +296,13 @@ impl Prepared {
         params: &RuntimeParams,
         source_pitch_um: f64,
         grid: ReadoutGrid,
-        backend: &dyn spektrafilm_backend::ComputeBackend,
+        backend: &dyn spektrafilm_gpu::ComputeBackend,
         cancel: &(dyn Fn() -> Result<(), String> + Sync),
     ) -> Result<ImageBuf, String> {
         let mut observation = super::StageObservation::cpu(
             backend,
             "grain_fotufilm",
-            spektrafilm_backend::telemetry::CpuReason::FotufilmFilmCpu,
+            spektrafilm_gpu::telemetry::CpuReason::FotufilmFilmCpu,
         );
         let result = self.readout_inner(source, film, params, source_pitch_um, grid, cancel);
         observation.set_complete(result.is_ok());
@@ -669,6 +671,15 @@ mod tests {
         let error = build_curves(&film, 1.0, "test").unwrap_err();
         assert!(error.contains("density-curve records"), "{error}");
         assert!(error.contains("expected at least 3"), "{error}");
+    }
+
+    #[test]
+    fn source_revision_matches_model_provenance() {
+        assert!(
+            model::PROVENANCE.contains(SOURCE_REVISION),
+            "{}",
+            model::PROVENANCE
+        );
     }
 
     #[test]

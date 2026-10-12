@@ -310,7 +310,15 @@ pub(super) fn metadata(path: &str, default: &Value) -> Value {
 }
 
 fn unit(path: &str) -> Option<&'static str> {
-    if path.ends_with("_ev") {
+    if path.starts_with("film_render.grain.fotufilm.") && !path.ends_with(".material") {
+        Some(if path.ends_with(".clump_radius_um") {
+            "µm"
+        } else if path.ends_with(".rms_density") || path.ends_with(".fog_density") {
+            "optical density"
+        } else {
+            "dimensionless"
+        })
+    } else if path.ends_with("_ev") {
         Some("EV")
     } else if path.ends_with("_um2") {
         Some("µm²")
@@ -349,11 +357,36 @@ fn conditions(path: &str) -> Vec<String> {
     if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push("each channel requires 0 <= black_point < white_point <= 1; points remap without clipping".into());
     }
+    if path.starts_with("film_render.grain.fotufilm.") {
+        out.push("authored effective-appearance control; not measured stock calibration".into());
+        if super::super::validation::fotufilm_minimum_exclusive(path) {
+            out.push("finite and strictly positive (each array component)".into());
+        }
+        if path.ends_with(".sublayer_shares") {
+            out.push(
+                "four positive shares must sum to 1 within 1e-6; never automatically normalized"
+                    .into(),
+            );
+        }
+    }
     out
 }
 
 fn description(path: &str) -> Option<&'static str> {
     match path {
+        "film_render.grain.fotufilm.material" => Some(
+            "Effective material; auto selects dye_reversal for positive films, silver for negative monochrome, and dye_negative for negative color. Override for chromogenic monochrome.",
+        ),
+        "film_render.grain.fotufilm.amount"
+        | "film_render.grain.fotufilm.size"
+        | "film_render.grain.fotufilm.softness"
+        | "film_render.grain.fotufilm.color"
+        | "film_render.grain.fotufilm.layers" => Some(
+            "Fotufilm Film sampling-only appearance control; does not change the fitted population.",
+        ),
+        path if path.starts_with("film_render.grain.fotufilm.") => Some(
+            "Fotufilm Film effective-appearance population control; authored metadata, not a measured stock claim.",
+        ),
         "io.input_color_space" => Some(
             "Color primaries of source raster samples before simulation; not scanner output or saving conversion.",
         ),

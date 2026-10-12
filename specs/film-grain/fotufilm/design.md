@@ -6,7 +6,7 @@ The model owns exposure-class fitting, four speed bins, fog/development adaptati
 
 A population is an effective distribution fitted to a characteristic curve. A bin is a fitted speed grouping, not one of Spektra's supplied three emulsion layers. A bank is a canonical stationary texture at 17 density levels, with one shared crystal realization across levels. A placement is a seed-derived periodic offset and orientation of that bank. A footprint is a complete film-space rectangle read through a placement. These terms must not imply a uniquely reconstructed physical emulsion.
 
-Rust remains the shipped host/runtime stack, with CPU and WGPU executors selected by [GPU backend selection](../../gpu-execution/spec.md#backend-selection). Swift and Halide may supply external reference evidence but must not become implicit shipped fallbacks. Failure to prepare the selected model must remain an error.
+Rust must be the shipped execution stack. Swift and Halide may supply external reference evidence but must not become implicit shipped fallbacks. Failure to prepare the selected model must remain an error.
 
 ## Density adaptation
 
@@ -18,7 +18,7 @@ The population fit must use nonnegative exposure-class weights, source hit-thres
 
 ## Formation and calibration
 
-The reference model's counter/hash streams must fix coating count, crystal position, activation draw and mass independently of output dimensions. The canonical bank must use the pinned fixed formation seed. Crystal mass marks, deposition, blur terms, capacity saturation and supersampling order must match the source behavior before optimization. CPU and GPU must preserve these streams and model-defined discrete choices under [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment).
+The reference model's counter/hash streams must fix coating count, crystal position, activation draw and mass independently of output dimensions. The canonical bank must use the pinned fixed formation seed. Crystal mass marks, deposition, blur terms, capacity saturation and supersampling order must match the source behavior before optimization.
 
 Each dye bin must sum cloud demand before applying capacity saturation. Density must sum through film depth; transmitted light must average over area. The bank must store centered transmittance running sums and per-level mean light. Construction must retain sufficient precision to avoid cancellation-induced noise at large box areas.
 
@@ -42,12 +42,12 @@ The film long-edge convention, source crop rounding and output dimension roundin
 
 A crop with downstream spatial optics must extend its output lattice to enclose the full film before those optics and crop afterward. Parent geometry calculations must be shared only when both film-coordinate engines consume the same invariant; Dye formation law and cell readout remain separate. Reference comparisons must cover non-square rounding and global origin shifts.
 
-Preparation must be lazy. A population/bank identity must include all numerical curve/metadata/reference and algorithm inputs, but not Amount, Size, Softness, Color, Layers, seed, crop or display dimensions. Prepared pitch tables must use bank identity, both footprint axes and readout method. Stage configuration and scanner setup must track their own effective measurement inputs. A rendering snapshot must retain its immutable bank even after cache eviction. A bounded cache must not publish canceled partial preparation. A cache hit does not establish GPU preparation; full-GPU execution must perform numerical population/bank preparation and sampling on the device under [device residency](../../gpu-execution/design.md#device-residency).
+Preparation must be lazy. A population/bank identity must include all numerical curve/metadata/reference and algorithm inputs, but not Amount, Size, Softness, Color, Layers, seed, crop or display dimensions. Prepared pitch tables must use bank identity, both footprint axes and readout method. Stage configuration and scanner setup must track their own effective measurement inputs. A rendering snapshot must retain its immutable bank even after cache eviction. A bounded cache must not publish canceled partial preparation.
 
 Cancellation must reach fitting, anchor work, bank formation, pitch preparation and sampling with bounded polling units. The existing render worker may keep its queue and revision filtering. Film preparation must not require an unrelated job framework. A stock/metadata change or shutdown may cancel obsolete bank work; an Amount-only edit must not discard a reusable completed bank.
 
 ## Precision and evidence
 
-Source Float preparation, source production arithmetic, and Rust reference arithmetic must have separate measured comparison budgets. CPU/GPU alignment evidence uses identical resolved curves, bank identity, seed, coordinates, and model-defined discrete decisions plus scoped floating agreement under [numerical alignment](../../gpu-execution/design.md#numerical-alignment) and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment). Full source input, resolved curves, parameter identity, source revision, compiler/toolchain, seed, physical pitch, disabled effects and output encoding must accompany verification.
+The CPU model must work in both native build precisions without claiming upstream bit identity. Source Float preparation, source production arithmetic and Rust reference arithmetic must have separate measured comparison budgets. Full source input, resolved curves, parameter identity, source revision, compiler/toolchain, seed, physical pitch, disabled effects and output encoding must accompany verification.
 
 A synthetic sampler probe establishes arithmetic only. A real stock oracle must establish preparation, real pitch correction and residual behavior. A real CLI/native GUI run must establish product wiring, publication and state. Output regression, source parity, adapted appearance and physical calibration must remain separate acceptance claims.
