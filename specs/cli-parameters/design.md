@@ -16,7 +16,7 @@ Stock look initialization, explicit controls, and runtime constraints must be se
 
 Explicit-axis ownership must survive runtime construction and calibration rebuilds. It must not change the user's database-calibration setting. Calibration must retain database f64 values for axes that remain database-owned.
 
-A prepared configuration must not receive another stock initialization step when the runtime is constructed. Applying preview, LUT-mode, or debug constraints must not corrupt the editable controls used to resolve a subsequent configuration. Legacy invocations must retain their established preparation order and numerical results.
+A prepared configuration must not receive another stock initialization step when the runtime is constructed. Applying preview, LUT-mode, or debug constraints must not corrupt the editable controls used to resolve a subsequent configuration. Legacy baseline decoding and numerical preparation must remain unchanged except for the explicit declaration and route changes in the [compatibility contract](spec.md#compatibility).
 
 Core must return the resolved profiles and effective parameters as one validated result. The CLI must resolve and validate writer options separately from scanner output parameters. Normal processing and dry run must consume these same resolution results. Dry run must stop before image decoding and compute-device creation. It must not approximate a render or independently reconstruct the parameter composition.
 
@@ -38,6 +38,33 @@ The [CLI workflow design](../cli-workflow/design.md) owns source-aware data sele
 
 The original `--params` decoder must remain the legacy baseline decoder. A recursive merge into Rust defaults is not an equivalent replacement: a supplied group can have field-level deserialization defaults that differ from the group's Rust defaults. New sparse parameter files must operate on the resolved baseline rather than changing this decoder.
 
-For a legacy baseline followed by new parameter sources, baseline decoding must remain unchanged while preparation follows the added language's composition rules. Only preset, sparse-file, and inline-assignment sources must protect explicit values from recalibration. Source tracking must not promote every leaf produced by legacy deserialization into an explicit edit. This distinction must not require a second implementation of stock defaults or runtime constraints.
+For a legacy baseline followed by new parameter sources, baseline decoding must remain unchanged while preparation follows the added language's composition rules. Only preset, sparse-file, inline-assignment, and dedicated input-flag leaves must protect explicit edits from recalibration. Source tracking must not promote every leaf produced by legacy deserialization into a protected edit. This distinction must not require a second implementation of stock defaults or runtime constraints.
 
 RenderRecipe must remain the structured render contract. The resolution report must not change recipe normalization, seed ownership, or parameter-digest computation. GUI persistence must follow the [preset state compatibility rules](../presets/spec.md#gui-state-compatibility).
+
+## Source declarations and execution context
+
+The CLI must retain supplied input leaves separately from decoded baseline values. This distinction permits legacy files to declare source color without changing their calibration ownership. Dedicated input flags must use the same typed field validation as `--set`; they must not create a second color-space registry or an input-conversion algorithm. The RAW adapter must remain the authority for RAW sample color.
+
+Route selection must finish before runtime print-profile selection. Public process paths must derive topology from the selected route through the same rule, with or without parameter sources. Parser conflicts must eliminate redundant route choices. Core must still reject an inconsistent invocation from a non-parser caller. Internal GUI child contracts must retain their own admitted behavior rather than inherit new public argument requirements.
+
+Seed must be an invocation value, not a sparse runtime leaf. The CLI must reuse the admitted seed domain from structured render. Both adapters must apply it to the runtime before simulation. Seed must not select a digest policy or modify parameters other than the existing out-of-band stochastic seed. Repeated benchmark attempts must restart from the same input and seed.
+
+## Resolution feedback
+
+The shared resolver must retain winning explicit edits before constraints and compare them with the effective typed result. It must retain source identity only where the [report contract](spec.md#discovery-and-dry-run) requires it. Tracking must not serialize a complete history or copy image buffers. One feedback evaluation must serve normal processing and both dry-run views.
+
+The authoritative effect conditions must be evaluable against effective controls and selected workflow. Validators, discovery, and feedback must share these conditions. Parsing human condition strings is not an effect evaluator. The CLI must not add a handwritten switch over every control. Controls with no known disabling condition may be classified as active; this classification must not claim measured influence on output pixels.
+
+When a source is invalid, validation must fail before feedback is emitted for a resolved configuration. When a valid edit is inactive, feedback must preserve it rather than activate another control. Text rendering must format the same result as JSON. Diagnostics remain on stderr and telemetry remains independent.
+
+## Design choice and implementation dependencies
+
+Canonical runtime paths and the existing sparse TOML/JSON language are retained. Short aliases would duplicate vocabulary and obscure distinct exposure and grain controls. A complete job file would duplicate profile, render-recipe, and export boundaries. Neither alternative is part of this design. Dedicated source declarations and seed flags solve invocation context without expanding the look language.
+
+Safe publication must land before new success-facing image examples are accepted. The publication transaction belongs to [photo export](../photo-export/design.md#transaction-boundary). Declaration, seed, and route changes must then migrate every public process caller, README example, packaged example, acceptance script, and affected behavior test. New required declarations must not be bypassed by legacy-only calls or a compatibility flag.
+
+Feedback and text presentation must build on the same prepared result after source tracking is available. Selected-field descriptions must be updated with the authoritative conditions. Existing RenderRecipe, selector-free discovery, GUI child-process, LUT, and preset document schemas must stay unchanged. GUI internal calls that use `process` must be exercised without silently treating them as public batch invocations.
+
+Implementation must run the existing formatting, relevant checks, and relevant tests defined in `Justfile`. It must additionally exercise the [real-entry-point scenarios](spec.md#image-processing-acceptance) and [publication failures](../photo-export/spec.md#publication-acceptance). The current f64-feature workspace tests alone do not establish default-f32 executable behavior. Baseline incidental-behavior tests for ambiguous route precedence must be removed or replaced by consumer-visible route invariants, not re-pinned to a new incidental order.
+

@@ -129,6 +129,8 @@ Tab按阅读顺序移动；Escape在编辑时取消，在任务状态下只收�
 
 示例（拟议命令，文件路径仅示例）：
 
+For public raster commands, `export-params.json` must supply both `io.input_color_space` and `io.input_cctf_decoding` for the actual source samples. A complete GUI snapshot supplies those leaves. These proposed export examples rely on that legacy declaration; they do not add an override that could change numerical preparation. See [source declarations](../specs/cli-parameters/spec.md#input-declaration).
+
 ```sh
 spektrafilm-f64 process photo.tif -o photo_portra.jpg \
   --params export-params.json --backend cpu --format jpeg \

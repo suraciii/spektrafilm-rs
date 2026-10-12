@@ -871,8 +871,7 @@ struct ExportResult {
     filename: String,
     backend_name: String,
     size: [u32; 2],
-    metadata_warning: Option<String>,
-    staged: TempPath,
+    staged: image_io::PreparedImageOutput,
 }
 
 enum CalibrationResult {
@@ -2057,29 +2056,18 @@ impl App {
                             IssueCategory::Writing,
                             IssueBoundary::SavingConvert,
                         )?;
-                        let nanos = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)?
-                            .as_nanos();
-                        let staged = TempPath(
-                            out_path.with_file_name(format!(
-                                "spektrafilm-export-{}-{nanos}.{}",
-                                std::process::id(),
-                                options.format.extension()
-                            )),
-                            Some(out_path.clone()),
-                        );
                         let file_write =
                             observation.scope("file_write", ObservationKind::Phase, Purpose::Image);
-                        let report = image_io::save_observed(
-                            &staged.0,
+                        let staged = image_io::prepare_save_observed(
+                            &out_path,
                             &converted,
                             options.save_options(),
                             metadata.as_ref(),
                             file_write.context(),
                         );
-                        let report = observed_result(
+                        let staged = observed_result(
                             file_write,
-                            report,
+                            staged,
                             IssueCategory::Writing,
                             IssueBoundary::FileWrite,
                         )?;
@@ -2095,7 +2083,6 @@ impl App {
                                 .to_owned(),
                             backend_name: effective_backend_name(backend.name(), pipeline.params()),
                             size: [output.width, output.height],
-                            metadata_warning: report.metadata_warning,
                             staged,
                         })
                     },
@@ -2198,7 +2185,7 @@ impl App {
             Ok(result) => {
                 let publication =
                     operation.scope("publication", ObservationKind::Phase, Purpose::Image);
-                let published = result.staged.publish();
+                let published = result.staged.publish(true);
                 let published = observed_result(
                     publication,
                     published,
@@ -2206,7 +2193,7 @@ impl App {
                     IssueBoundary::Publication,
                 );
                 match published {
-                    Ok(()) => {
+                    Ok(report) => {
                         outcome = Outcome::Succeeded;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
                         let mut status = format!(
@@ -2217,7 +2204,7 @@ impl App {
                             result.size[1],
                             result.elapsed
                         );
-                        if let Some(warning) = result.metadata_warning {
+                        if let Some(warning) = report.metadata_warning {
                             status.push_str(&format!(" — Metadata warning: {warning}"));
                         }
                         status
@@ -2860,22 +2847,6 @@ fn pick_data_dir() -> PathBuf {
         .into_iter()
         .find(|p| p.is_dir())
         .unwrap_or_else(|| PathBuf::from("data"))
-}
-
-struct TempPath(PathBuf, Option<PathBuf>);
-
-impl TempPath {
-    fn publish(self) -> Result<()> {
-        let destination = self.1.as_ref().context("missing export destination")?;
-        std::fs::rename(&self.0, destination)
-            .with_context(|| format!("publishing export {}", destination.display()))
-    }
-}
-
-impl Drop for TempPath {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
 }
 
 /// macOS only: walk from the eframe `RawWindowHandle` down to the

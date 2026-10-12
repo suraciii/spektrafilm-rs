@@ -1,8 +1,12 @@
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/half.h>
+#include <OpenImageIO/filesystem.h>
 #include <exiv2/exiv2.hpp>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -17,6 +21,28 @@ namespace {
 struct Metadata { Exiv2::ExifData exif; Exiv2::IptcData iptc; Exiv2::XmpData xmp; };
 std::once_flag xmp_initialization;
 std::mutex xmp_namespace_mutex;
+// Plugins can return success while their underlying writes fail. Track the
+// stream independently, including buffered errors exposed only at finalization.
+class CheckedOutput : public OIIO::Filesystem::IOFile {
+public:
+    explicit CheckedOutput(FILE* file) : IOFile(file, Write) {}
+    const char* proxytype() const override { return "spektrafilm-checked-file"; }
+    void close() override { m_mode = Closed; }
+    size_t write(const void* data, size_t size) override {
+        const auto written = IOFile::write(data, size);
+        if (written != size) failed = true;
+        return written;
+    }
+    size_t pwrite(const void* data, size_t size, int64_t offset) override {
+        const auto written = IOFile::pwrite(data, size, offset);
+        if (written != size) failed = true;
+        return written;
+    }
+    std::atomic<bool> failed{false};
+};
+struct FileCloser {
+    void operator()(FILE* file) const { if (file) std::fclose(file); }
+};
 void lock_xmp_namespace(void* pointer, bool lock) {
     auto& mutex = *static_cast<std::mutex*>(pointer);
     if (lock) mutex.lock();
@@ -112,6 +138,8 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         }
         if (format == 2 || format == 3)
             spec.attribute("Compression", compression == 0 ? "none" : "zip");
+        if (format == 2)
+            spec.attribute("tiff:write_exif", 0);
         if (format == 3 && export_metadata) {
             const float srgb[] = {0.64f, 0.33f, 0.30f, 0.60f, 0.15f, 0.06f, 0.3127f, 0.3290f};
             const float aces[] = {0.7347f, 0.2653f, 0.0f, 1.0f, 0.0001f, -0.0770f, 0.32168f, 0.33767f};
@@ -120,9 +148,24 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         }
         if (icc && icc_len && format != 3)
             spec.attribute("ICCProfile", OIIO::TypeDesc(OIIO::TypeDesc::UINT8, int(icc_len)), icc);
+        std::unique_ptr<FILE, FileCloser> file(OIIO::Filesystem::fopen(path, "wb"));
+        if (!file) { error(err, std::string("Cannot open image output: ") + std::strerror(errno)); return 0; }
+        CheckedOutput proxy(file.get());
         auto output = OIIO::ImageOutput::create(path);
-        if (!output) { error(err, OIIO::geterror()); return 0; }
-        if (!output->open(path, spec)) { error(err, output->geterror()); return 0; }
+        if (!output) {
+            auto message = OIIO::geterror();
+            error(err, message.empty() ? "Cannot create image output plugin" : message);
+            return 0;
+        }
+        if (!output->set_ioproxy(&proxy)) {
+            error(err, "Image output plugin does not support checked file writes");
+            return 0;
+        }
+        if (!output->open(path, spec)) {
+            auto message = output->geterror();
+            error(err, message.empty() ? "Cannot open image container" : message);
+            return 0;
+        }
         size_t count = size_t(width) * height * 3;
         bool ok;
         if (type == OIIO::TypeDesc::UINT8) {
@@ -142,9 +185,44 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
             std::vector<float> data(samples, samples + count);
             ok = output->write_image(OIIO::TypeDesc::FLOAT, data.data());
         }
-        std::string message = ok ? "" : output->geterror();
-        bool closed = output->close();
-        if (!ok || !closed) { error(err, message.empty() ? output->geterror() : message); return 0; }
+        std::string message = output->geterror();
+        if (!ok && message.empty()) message = "Native image data write failed";
+        const bool closed = output->close();
+        const auto close_message = output->geterror();
+        if (!close_message.empty()) {
+            if (!message.empty()) message += "; ";
+            message += close_message;
+        }
+        if (!closed && message.empty()) message = "Native image container finalization failed";
+        output.reset();
+        const bool flushed = std::fflush(file.get()) == 0;
+        const bool stream_failed = std::ferror(file.get()) != 0;
+        proxy.close();
+        file.release();
+        if (proxy.failed || !flushed || stream_failed) {
+            if (!message.empty()) message += "; ";
+            message += "Native image file write/finalization failed";
+        }
+        if (!ok || !closed || !message.empty()) { error(err, message); return 0; }
+        return 1;
+    } catch (const std::exception& ex) { error(err, ex.what()); return 0; }
+}
+int sf_image_validate(const char* path, char** err) {
+    try {
+        auto input = OIIO::ImageInput::open(path);
+        if (!input) { error(err, "Image container is unreadable after metadata failure"); return 0; }
+        const auto spec = input->spec();
+        if (spec.width <= 0 || spec.height <= 0 || spec.nchannels < 3) {
+            error(err, "Invalid image container after metadata failure"); return 0;
+        }
+        std::vector<float> row(size_t(spec.width) * spec.nchannels);
+        for (int y = spec.y; y < spec.y + spec.height; ++y) {
+            if (!input->read_scanline(y, spec.z, OIIO::TypeDesc::FLOAT, row.data())) {
+                auto message = input->geterror();
+                error(err, message.empty() ? "Incomplete image after metadata failure" : message); return 0;
+            }
+        }
+        if (!input->close()) { error(err, "Image read finalization failed after metadata failure"); return 0; }
         return 1;
     } catch (const std::exception& ex) { error(err, ex.what()); return 0; }
 }
