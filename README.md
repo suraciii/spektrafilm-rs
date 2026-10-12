@@ -95,6 +95,7 @@ The `just` command surface also covers packaging and per-user installation:
 just build
 just check
 just test
+just test-f64
 just ci
 just package
 just install

@@ -256,7 +256,8 @@ Legacy `--params` must retain its existing decoding and relationship to stock in
 
 Acceptance must identify the source commit, both binary identities and build configurations, input provenance, complete invocation, exit status, stdout/stderr, and observed files or pixel comparisons. Specs and parser-only results must not count as image-processing acceptance. Unavailable RAW or GPU environments must be reported as unverified, not passed.
 
-## Implementation gap
+## Implementation status
+The current `process` implementation provides the dedicated raster input declarations, deterministic seed selection, text and JSON dry-run reports, input provenance, winning-edit feedback, shared route resolution, and staged image publication described above. The acceptance section remains the source of required behavioral evidence; this specification alone does not establish that every scenario has been exercised in every supported environment.
 
-The CLI lacks the dedicated input flags, seed selection, text dry run, input provenance, and edit feedback defined here. Raster invocations still fall back to linear ProPhoto RGB. Legacy route and scan-film handling differs from the parameter-source path. Normal `process` writes directly to the final image path. This specification defines the target; it does not establish implementation acceptance.
+Native writer behavior, including platform-specific failure and cancellation scenarios, remains owned by [photo export](../photo-export/spec.md#publication). RAW and GPU scenarios still require environment-specific evidence when those dependencies or adapters are unavailable.
 
