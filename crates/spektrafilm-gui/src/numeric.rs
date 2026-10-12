@@ -51,8 +51,13 @@ pub(crate) fn numeric<T: egui::emath::Numeric>(
     tooltip: &str,
 ) -> bool {
     ui.horizontal(|ui| {
-        ui.label(label).on_hover_text(tooltip);
-        numeric_field(ui, label, value, min, max, step, decimals, tooltip)
+        let label_response = ui.label(label).on_hover_text(tooltip);
+        let changed = numeric_field(ui, label, value, min, max, step, decimals, tooltip);
+        let id = ui.make_persistent_id(("numeric-field", label));
+        if let Some(response) = ui.ctx().read_response(id) {
+            response.labelled_by(label_response.id);
+        }
+        changed
     })
     .inner
 }
@@ -214,16 +219,9 @@ fn wheel_adjust<T: egui::emath::Numeric>(
     if !response.hovered() {
         return false;
     }
-    let (raw_delta, smooth_delta) =
-        ui.input(|input| (input.raw_scroll_delta.y, input.smooth_scroll_delta.y));
-    let delta = if raw_delta != 0.0 {
-        raw_delta
-    } else {
-        smooth_delta
-    };
-    if delta == 0.0 {
-        return false;
-    }
+    // Numeric steps follow physical wheel events, not egui's smoothing tail:
+    // one notch must not change the value again on later repaint frames.
+    let delta = ui.input(|input| input.raw_scroll_delta.y);
     let changed = apply_wheel_delta(value, delta, min, max, step);
     ui.input_mut(|input| {
         input.raw_scroll_delta.y = 0.0;

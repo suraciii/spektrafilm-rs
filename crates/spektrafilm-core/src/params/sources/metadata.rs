@@ -304,7 +304,8 @@ pub(super) fn metadata(path: &str, default: &Value) -> Value {
         "unit": unit(path), "enum_values": super::super::validation::enum_values(path),
         "minimum": bounds.map(|b| b.0), "maximum": bounds.and_then(|b| b.1),
         "component_domains": super::super::validation::gamut_component_domains(path),
-        "conditions": conditions(path), "default_source": default_source(path)
+        "conditions": conditions(path), "default_source": default_source(path),
+        "description": description(path)
     })
 }
 
@@ -333,104 +334,59 @@ fn unit(path: &str) -> Option<&'static str> {
     }
 }
 fn conditions(path: &str) -> Vec<String> {
-    let mut out = Vec::new();
+    let mut out: Vec<String> = super::effects::conditions(path)
+        .into_iter()
+        .map(|condition| condition.description().into())
+        .collect();
     if path == "camera.film_format_mm" {
         out.push("finite and strictly positive; exposed full-source long edge, not roll width or film-stock designation".into());
     }
-    if matches!(path, "film_render.grain.micro_sublayers") || path.starts_with("film_render.glare.")
-    {
-        out.push("preserved upstream no-op".into());
-        return out;
-    }
-    if path.starts_with("film_render.grain.") {
-        if !path.ends_with(".active") && !path.ends_with(".engine") {
-            out.push("film_render.grain.active = true; stochastic effects enabled".into());
-        }
-        if path.contains(".v2_") {
-            out.push("film_render.grain.engine = v2".into());
-            // resolved_grain_v2 applies v2_amount/v2_timer/v2_resolution_type
-            // for named profiles; all other v2 controls are custom-only.
-            if !["v2_profile", "v2_amount", "v2_timer", "v2_resolution_type"]
-                .iter()
-                .any(|s| path.ends_with(s))
-            {
-                out.push("film_render.grain.v2_profile = custom".into());
-            }
-            if path.ends_with("v2_timer") {
-                out.push(
-                    "0 selects seed-derived phase; otherwise phase is strictly below 1".into(),
-                );
-            }
-        } else if path.contains(".v3_") {
-            out.push("film_render.grain.engine = v3".into());
-            out.push("film grain V3 selected under its supported stock, format and route".into());
-        } else if path.ends_with(".rms_granularity") {
-            out.push("film_render.grain.engine = v3".into());
-            out.push("film grain V3 selected under its supported stock, format and route".into());
-            out.push("V3 scales per-channel event area relative to the reference stock (6); preserved upstream V1 no-op".into());
-        } else if ["density_min", "uniformity", "particle_scale_sublayers"]
-            .iter()
-            .any(|field| path.ends_with(field))
-        {
-            out.push("film_render.grain.engine = v1 or v3".into());
-            out.push("when engine = v3: film grain V3 selected under its supported stock, format and route".into());
-            if path.ends_with(".particle_scale_sublayers") {
-                out.push("when engine = v1: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves".into());
-            }
-        } else if !path.ends_with(".active") && !path.ends_with(".engine") {
-            out.push("film_render.grain.engine = v1".into());
-            if path.ends_with(".n_sub_layers") {
-                out.push("film_render.grain.sublayers_active = false".into());
-            } else if [
-                "blur_dye_clouds_um",
-                "micro_structure",
-                "mult_usm_sigma",
-                "mult_usm_amount",
-            ]
-            .iter()
-            .any(|field| path.ends_with(field))
-            {
-                out.push("film_render.grain.sublayers_active = true; film profile supplies sublayer density curves".into());
-            }
-        }
-    } else if path.contains("diffusion_filter.") {
-        out.push(
-            "diffusion_filter.active; strength and spatial_scale positive; spatial effects enabled"
-                .into(),
-        );
-    } else if matches!(
-        path,
-        "film_render.halation.boost_ev"
-            | "film_render.halation.boost_range"
-            | "film_render.halation.protect_ev"
-    ) {
-        out.push("film_render.halation.boost_ev != 0; LUT mode disabled".into());
-    } else if path.contains(".halation.") {
-        out.push("film_render.halation.active; spatial effects enabled".into());
-    } else if path.starts_with("print_render.glare.") {
-        out.push("io.scan_film = false; print_render.glare.active; print_render.glare.percent > 0; stochastic effects enabled".into());
-    } else if path.contains(".dir_couplers.") {
-        out.push("film_render.dir_couplers.active".into());
-    } else if path == "camera.auto_exposure_method" {
-        out.push("camera.auto_exposure = true".into());
-    } else if path.starts_with("io.crop_") {
-        out.push("io.crop = true".into());
-    } else if path == "debug.print_timings" {
-    } else if path == "scanner.scan_output" {
+    if path == "scanner.scan_output" {
         out.push("positive_scan requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain V2 are unsupported".into());
-    } else if matches!(path, "scanner.black_point" | "scanner.white_point") {
-        out.push("applies to slide film scans or negative film scans with scanner.scan_output = positive_scan; ignored for paper and direct negative scans".into());
+    }
+    if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push("each channel requires 0 <= black_point < white_point <= 1; points remap without clipping".into());
-    } else if path.starts_with("scanner.positive_") {
-        out.push("applies when scanner.scan_output = positive_scan".into());
-    } else if path.starts_with("magazine_print_color.") {
-        if path.ends_with(".strength") {
-            out.push("magazine_print_color.active = true".into());
-        } else {
-            out.push("magazine_print_color.strength > 0".into());
-        }
     }
     out
+}
+
+fn description(path: &str) -> Option<&'static str> {
+    match path {
+        "io.input_color_space" => Some(
+            "Color primaries of source raster samples before simulation; not scanner output or saving conversion.",
+        ),
+        "io.input_cctf_decoding" => Some(
+            "Decode the source raster transfer function when true; false declares linear samples. This does not encode scanner or saving output.",
+        ),
+        "io.output_color_space" => Some(
+            "Scanner output color space; independent of source declaration and final saving color conversion.",
+        ),
+        "io.output_cctf_encoding" => Some(
+            "Encode scanner output samples; independent of source transfer decoding and final saving encoding.",
+        ),
+        "camera.exposure_compensation_ev" => {
+            Some("Camera exposure compensation in EV, distinct from enlarger print exposure.")
+        }
+        "enlarger.print_exposure" => {
+            Some("Print exposure multiplier, distinct from camera exposure compensation in EV.")
+        }
+        "camera.film_format_mm" => Some(
+            "Exposed full-source long-edge dimension in millimeters; not roll width or film-stock designation.",
+        ),
+        "io.crop_size" => Some(
+            "Both components are fractions of the uncropped source long edge, not independent width and height fractions.",
+        ),
+        "film_render.grain.v2_size" => {
+            Some("Grain V2 Size; used only with engine v2 and profile custom.")
+        }
+        "film_render.grain.v2_amount" => Some(
+            "Grain V2 Amount in percent; used with named and custom V2 profiles, distinct from RMS granularity.",
+        ),
+        "film_render.grain.rms_granularity" => Some(
+            "RMS granularity is distinct from V2 Amount; V3 uses it to scale per-channel event area; upstream V1 preserves it as a no-op.",
+        ),
+        _ => None,
+    }
 }
 fn default_source(path: &str) -> &'static str {
     if matches!(

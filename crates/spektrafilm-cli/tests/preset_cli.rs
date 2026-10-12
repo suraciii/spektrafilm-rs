@@ -57,6 +57,23 @@ impl Fixture {
             "--output",
             output.to_str().unwrap(),
         ];
+        // Preserve this synthetic PNG fixture's historical linear interpretation.
+        // Declaration-specific cases and RAW input must supply their own contract.
+        if self.input.extension().and_then(|ext| ext.to_str()) == Some("png")
+            && !extra.iter().any(|arg| {
+                arg.contains("input_color_space")
+                    || arg.contains("input_cctf_decoding")
+                    || arg.starts_with("--input-color-space")
+                    || arg.starts_with("--input-cctf-decoding")
+            })
+        {
+            args.extend_from_slice(&[
+                "--input-color-space",
+                "ProPhoto RGB",
+                "--input-cctf-decoding",
+                "false",
+            ]);
+        }
         args.extend_from_slice(extra);
         self.run(&args)
     }
@@ -349,12 +366,36 @@ fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
 }
 
 #[test]
+fn route_and_scan_film_conflict_in_public_process() {
+    let f = Fixture::new();
+    for dry in [false, true] {
+        let mut args = vec![
+            "--preset",
+            "Kodak Portra 400",
+            "--scan-film",
+            "--route",
+            "input",
+        ];
+        if dry {
+            args.push("--dry-run");
+        }
+        let output = f.process(&args);
+        assert_eq!(output.status.code(), Some(2));
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            message.contains("--route") && message.contains("--scan-film"),
+            "{message}"
+        );
+        assert!(!f.root.join("output.tif").exists());
+    }
+}
+
+#[test]
 fn final_workflow_and_runtime_constraints_resolve_after_edits() {
     let f = Fixture::new();
     let report = f.report(&[
         "--preset",
         "Kodak Portra 400",
-        "--scan-film",
         "--route",
         "input",
         "--set",
@@ -596,6 +637,10 @@ fn exr_writer_constraints_fail_before_decoding_or_device_selection() {
                 f.input.to_str().unwrap(),
                 "-o",
                 output.to_str().unwrap(),
+                "--input-color-space",
+                "ProPhoto RGB",
+                "--input-cctf-decoding",
+                "false",
                 "--preset",
                 "Kodak Portra 400",
                 "--backend",
@@ -1074,10 +1119,8 @@ fn data_selection_retains_source_and_never_falls_back() {
         std::fs::canonicalize(&f.data).unwrap().to_str().unwrap()
     );
     assert_eq!(report["data"]["source"], "environment");
-    assert_eq!(
-        report["input"],
-        json!({"kind":"raster", "raw_loading":null})
-    );
+    assert_eq!(report["input"]["kind"], "raster");
+    assert_eq!(report["input"]["raw_loading"], Value::Null);
     let selected = f.report(&[
         "--preset",
         "Kodak Portra 400",
@@ -1151,8 +1194,8 @@ fn raw_dry_run_reports_validated_signed_loading_options() {
         ])
     );
     assert_eq!(
-        custom["input"],
-        json!({"kind":"raw", "raw_loading":{"white_balance":"custom", "temperature":6500.0, "tint":-5.0, "lens_correction":false}})
+        custom["input"]["raw_loading"],
+        json!({"white_balance":"custom", "temperature":6500.0, "tint":-5.0, "lens_correction":false})
     );
     assert_ne!(shot["input"], custom["input"]);
     assert_eq!(shot["input"]["raw_loading"]["temperature"], Value::Null);
@@ -1554,7 +1597,7 @@ fn later_look_replaces_earlier_section_and_section_only_keeps_static_route() {
         sections["parameters"]["workflow"],
         baseline["parameters"]["workflow"]
     );
-    let explicit = f.report(&[
+    let explicit = f.process(&[
         "--preset",
         "Kodak Portra 400",
         "--scan-film",
@@ -1562,9 +1605,14 @@ fn later_look_replaces_earlier_section_and_section_only_keeps_static_route() {
         "input > film > print > scan",
         "--dry-run",
     ]);
-    assert_eq!(explicit["parameters"]["io"]["scan_film"], false);
-    assert_eq!(explicit["print_profile"], "kodak_portra_endura");
-    let section = f.report(&[
+    assert!(!explicit.status.success());
+    let message = String::from_utf8_lossy(&explicit.stderr);
+    assert!(
+        message.contains("--route") && message.contains("--scan-film"),
+        "{message}"
+    );
+    assert!(!f.root.join("output.tif").exists());
+    let section = f.process(&[
         "--film",
         "kodak_portra_400",
         "--preset",
@@ -1574,8 +1622,12 @@ fn later_look_replaces_earlier_section_and_section_only_keeps_static_route() {
         "input > film > print > scan",
         "--dry-run",
     ]);
-    assert_eq!(section["parameters"]["io"]["scan_film"], false);
-    assert_eq!(section["print_profile"], "kodak_portra_endura");
+    assert!(!section.status.success());
+    let message = String::from_utf8_lossy(&section.stderr);
+    assert!(
+        message.contains("--route") && message.contains("--scan-film"),
+        "{message}"
+    );
 }
 
 #[test]

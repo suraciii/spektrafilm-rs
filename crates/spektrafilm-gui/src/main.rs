@@ -30,6 +30,8 @@ mod controls;
 mod diagnostics;
 mod display;
 mod export;
+#[cfg(test)]
+mod headless;
 mod numeric;
 mod presets;
 mod profiles;
@@ -869,8 +871,7 @@ struct ExportResult {
     filename: String,
     backend_name: String,
     size: [u32; 2],
-    metadata_warning: Option<String>,
-    staged: TempPath,
+    staged: image_io::PreparedImageOutput,
 }
 
 enum CalibrationResult {
@@ -922,6 +923,7 @@ impl App {
             initial_state,
             diagnostics_dir,
             state::config_dir().join("preset_browser_state.json"),
+            pick_data_dir(),
         )
     }
 
@@ -931,9 +933,9 @@ impl App {
         initial_state: Option<PathBuf>,
         diagnostics_dir: Option<PathBuf>,
         browser_state_path: PathBuf,
+        data_dir: PathBuf,
     ) -> Self {
         let explicit_state = initial_state.is_some();
-        let data_dir = pick_data_dir();
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
         let gui_state = match initial_state {
@@ -968,7 +970,15 @@ impl App {
             .unwrap_or_default();
         let print_dev_times = profile_dev_times(&data_dir, &print_name);
         let export_options = ExportOptions::from_state(&gui_state.sections);
-        let mut presets = presets::Browser::new(&gui_state.sections);
+        let mut presets = presets::Browser::new(
+            &gui_state.sections,
+            spektrafilm_core::presets::PresetLibrary::new(
+                browser_state_path
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join("presets"),
+            ),
+        );
         match presets::BrowserState::restore(
             &gui_state.sections,
             explicit_state,
@@ -1090,7 +1100,15 @@ impl App {
         self.params = params;
         self.export_options = ExportOptions::from_state(&state.sections);
         self.export_dialog = ExportDialog::default();
-        self.presets = presets::Browser::new(&state.sections);
+        self.presets = presets::Browser::new(
+            &state.sections,
+            spektrafilm_core::presets::PresetLibrary::new(
+                self.browser_state_path
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join("presets"),
+            ),
+        );
         self.browser_state_changed_at = Some(Instant::now());
         self.gui_state = state;
         self.scan_for_print_snapshot = None;
@@ -1322,8 +1340,9 @@ impl App {
             }
             self.gui_state.sections["rust"]["dialog_dirs"][key] =
                 serde_json::json!(parent.to_string_lossy());
-            let path = state::config_dir().join("dialog_dirs.json");
-            if let Err(e) = std::fs::create_dir_all(state::config_dir()).and_then(|_| {
+            let directory = self.browser_state_path.parent().unwrap_or(Path::new("."));
+            let path = directory.join("dialog_dirs.json");
+            if let Err(e) = std::fs::create_dir_all(directory).and_then(|_| {
                 std::fs::write(
                     path,
                     self.gui_state.sections["rust"]["dialog_dirs"].to_string(),
@@ -1731,6 +1750,15 @@ impl App {
         else {
             return;
         };
+        self.save_to_path(&path);
+    }
+
+    /// Save the retained output; `path` is the native chooser's confirmed result.
+    fn save_to_path(&mut self, path: &Path) {
+        if self.output_image.is_none() {
+            self.status = "Nothing to save yet — load an image first.".into();
+            return;
+        }
         let mut operation = Operation::new(OperationKind::Save, self.diagnostics.mode);
         if let Some(source) = self.source_render.clone() {
             operation.set_source_render(source);
@@ -1738,8 +1766,8 @@ impl App {
         if let Some(source) = &self.source_render {
             operation.set_working_dimensions(source.dimensions[0], source.dimensions[1]);
         }
-        self.remember_dialog("save_output", &path);
-        let actual_format = match image_io::ImageFormat::detect(&path) {
+        self.remember_dialog("save_output", path);
+        let actual_format = match image_io::ImageFormat::detect(path) {
             Ok(format) => format,
             Err(error) => {
                 self.status = format!("Save error: {error}");
@@ -1801,7 +1829,7 @@ impl App {
         drop(saving_convert);
         let file_write = operation.scope("file_write", ObservationKind::Phase, Purpose::Image);
         let result = image_io::save_rendered_output_observed(
-            &path,
+            path,
             &converted,
             save_options,
             self.output_metadata.as_ref(),
@@ -1838,14 +1866,9 @@ impl App {
 
     /// Render an immutable snapshot of the loaded full input independently of Save.
     fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
-        if self.export_job.is_some() || self.calibration_job.is_some() {
-            self.status = "Wait for the current operation before exporting.".into();
+        if self.export_input().is_none() {
             return;
         }
-        let Some(image) = self.image.as_ref().cloned() else {
-            self.status = "Load an image before exporting.".into();
-            return;
-        };
         options.normalize();
         let stem = self
             .image_path
@@ -1867,6 +1890,34 @@ impl App {
         else {
             return;
         };
+        self.start_export_to_path(ctx, options, &chosen_path);
+    }
+
+    fn export_input(&mut self) -> Option<Arc<ImageBuf>> {
+        if self.export_job.is_some() || self.calibration_job.is_some() {
+            self.status = "Wait for the current operation before exporting.".into();
+            return None;
+        }
+        match self.image.as_ref().cloned() {
+            Some(image) => Some(image),
+            None => {
+                self.status = "Load an image before exporting.".into();
+                None
+            }
+        }
+    }
+
+    /// Render to the native chooser's confirmed path, preserving overwrite checks.
+    fn start_export_to_path(
+        &mut self,
+        ctx: &egui::Context,
+        mut options: ExportOptions,
+        chosen_path: &Path,
+    ) {
+        let Some(image) = self.export_input() else {
+            return;
+        };
+        options.normalize();
         let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
         operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
@@ -1882,7 +1933,7 @@ impl App {
                 ),
             );
         }
-        let out_path = options.format.output_path(&chosen_path);
+        let out_path = options.format.output_path(chosen_path);
         if out_path != chosen_path && out_path.exists() {
             self.status = format!(
                 "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
@@ -2005,29 +2056,18 @@ impl App {
                             IssueCategory::Writing,
                             IssueBoundary::SavingConvert,
                         )?;
-                        let nanos = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)?
-                            .as_nanos();
-                        let staged = TempPath(
-                            out_path.with_file_name(format!(
-                                "spektrafilm-export-{}-{nanos}.{}",
-                                std::process::id(),
-                                options.format.extension()
-                            )),
-                            Some(out_path.clone()),
-                        );
                         let file_write =
                             observation.scope("file_write", ObservationKind::Phase, Purpose::Image);
-                        let report = image_io::save_observed(
-                            &staged.0,
+                        let staged = image_io::prepare_save_observed(
+                            &out_path,
                             &converted,
                             options.save_options(),
                             metadata.as_ref(),
                             file_write.context(),
                         );
-                        let report = observed_result(
+                        let staged = observed_result(
                             file_write,
-                            report,
+                            staged,
                             IssueCategory::Writing,
                             IssueBoundary::FileWrite,
                         )?;
@@ -2043,7 +2083,6 @@ impl App {
                                 .to_owned(),
                             backend_name: effective_backend_name(backend.name(), pipeline.params()),
                             size: [output.width, output.height],
-                            metadata_warning: report.metadata_warning,
                             staged,
                         })
                     },
@@ -2146,7 +2185,7 @@ impl App {
             Ok(result) => {
                 let publication =
                     operation.scope("publication", ObservationKind::Phase, Purpose::Image);
-                let published = result.staged.publish();
+                let published = result.staged.publish(true);
                 let published = observed_result(
                     publication,
                     published,
@@ -2154,7 +2193,7 @@ impl App {
                     IssueBoundary::Publication,
                 );
                 match published {
-                    Ok(()) => {
+                    Ok(report) => {
                         outcome = Outcome::Succeeded;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
                         let mut status = format!(
@@ -2165,7 +2204,7 @@ impl App {
                             result.size[1],
                             result.elapsed
                         );
-                        if let Some(warning) = result.metadata_warning {
+                        if let Some(warning) = report.metadata_warning {
                             status.push_str(&format!(" — Metadata warning: {warning}"));
                         }
                         status
@@ -2610,7 +2649,9 @@ impl eframe::App for App {
         // Has to happen here (not in `App::new`) because the CAMetalLayer
         // isn't wired up at construction time.
         #[cfg(target_os = "macos")]
-        if !self.metal_colorspace_tagged {
+        if !self.metal_colorspace_tagged
+            && raw_window_handle::HasWindowHandle::window_handle(frame).is_ok()
+        {
             match tag_metal_layer_srgb(frame) {
                 Ok(()) => {
                     eprintln!("[spektrafilm] CAMetalLayer.colorspace = sRGB — tagged OK");
@@ -2806,22 +2847,6 @@ fn pick_data_dir() -> PathBuf {
         .into_iter()
         .find(|p| p.is_dir())
         .unwrap_or_else(|| PathBuf::from("data"))
-}
-
-struct TempPath(PathBuf, Option<PathBuf>);
-
-impl TempPath {
-    fn publish(self) -> Result<()> {
-        let destination = self.1.as_ref().context("missing export destination")?;
-        std::fs::rename(&self.0, destination)
-            .with_context(|| format!("publishing export {}", destination.display()))
-    }
-}
-
-impl Drop for TempPath {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
 }
 
 /// macOS only: walk from the eframe `RawWindowHandle` down to the

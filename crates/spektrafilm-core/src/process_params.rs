@@ -10,7 +10,51 @@ use crate::params_builder::{
 use crate::presets;
 use crate::profile::{self, Profile};
 use crate::runtime::DigestMode;
+use serde::Serialize;
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeclarationSource {
+    pub kind: String,
+    pub option: Option<String>,
+    pub index: Option<usize>,
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InputDeclarationSources {
+    pub color_space: DeclarationSource,
+    pub cctf_decoding: DeclarationSource,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InputDeclaration {
+    pub color_space: String,
+    pub cctf_decoding: bool,
+    pub sources: InputDeclarationSources,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EditStatus {
+    Active,
+    Inactive,
+    Constrained,
+    Overridden,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EditFeedback {
+    pub path: String,
+    pub requested: Value,
+    pub effective: Value,
+    pub source: DeclarationSource,
+    pub status: EditStatus,
+    pub reason: Option<String>,
+}
 
 pub struct ProcessParamsRequest<'a> {
     pub film: Option<&'a str>,
@@ -22,6 +66,9 @@ pub struct ProcessParamsRequest<'a> {
     pub scan_film: bool,
     pub scan_output: Option<&'a str>,
     pub input_is_raw: bool,
+    pub input_color_space: Option<&'a str>,
+    pub input_cctf_decoding: Option<bool>,
+    pub require_input_declaration: bool,
     pub digest_mode: DigestMode,
 }
 
@@ -31,6 +78,43 @@ pub struct ResolvedProcessParams {
     pub film_name: String,
     pub print_name: String,
     pub params: RuntimeParams,
+    pub input_declaration: InputDeclaration,
+    pub edits: Vec<EditFeedback>,
+}
+
+fn equal_control_values(path: &str, requested: &Value, effective: &Value) -> bool {
+    if requested == effective {
+        return true;
+    }
+    let metadata = crate::params::sources::describe_field(path).expect("validated edit path");
+    if metadata["type"]
+        .as_str()
+        .is_some_and(|ty| ty.contains("f32"))
+    {
+        fn equal_f32(a: &Value, b: &Value) -> bool {
+            match (a, b) {
+                (Value::Number(a), Value::Number(b)) => {
+                    a.as_f64().map(|v| v as f32) == b.as_f64().map(|v| v as f32)
+                }
+                (Value::Array(a), Value::Array(b)) => {
+                    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equal_f32(a, b))
+                }
+                _ => a == b,
+            }
+        }
+        equal_f32(requested, effective)
+    } else {
+        fn equal_numbers(a: &Value, b: &Value) -> bool {
+            match (a, b) {
+                (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
+                (Value::Array(a), Value::Array(b)) => {
+                    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| equal_numbers(a, b))
+                }
+                _ => a == b,
+            }
+        }
+        equal_numbers(requested, effective)
+    }
 }
 
 /// Return effective parameters ready for `Runtime::new`, without a second digest.
@@ -53,6 +137,9 @@ pub fn resolve(
         return Err("--preset conflicts with --film, --paper and --params when it supplies their profile references".into());
     }
     let mut params = load_baseline(request.params_file)?;
+    let mut declarations = baseline_declarations(request.params_file)?;
+    let mut winning = BTreeMap::new();
+    let mut parsed_sources = Vec::new();
     // A saved removed route must be reported before any explicit route
     // override can mask it.
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
@@ -84,8 +171,8 @@ pub fn resolve(
         if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
             params.validate()?;
         }
-        let direct_scan =
-            params.workflow.route == "input > film > scan" || (!added_sources && request.scan_film);
+        let direct_scan = params.workflow.route == "input > film > scan"
+            || (!request.require_input_declaration && !added_sources && request.scan_film);
         let name = request
             .film
             .ok_or("--film is required when the preset set supplies no film reference")?;
@@ -124,10 +211,78 @@ pub fn resolve(
         (film, print, name.to_owned(), print_name)
     };
 
+    if added_sources {
+        for (index, source) in request.sources.iter().enumerate() {
+            let edits =
+                ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
+            if request.input_is_raw {
+                edits
+                    .validate_raw_input()
+                    .map_err(|e| format!("--set {source:?}: {e}"))?;
+            }
+            let origin = DeclarationSource {
+                kind: "set".into(),
+                option: Some("--set".into()),
+                index: Some(index + 1),
+                path: ParameterEdits::file_path(source)
+                    .map(absolute_path)
+                    .transpose()?,
+            };
+            for (path, value) in edits.values() {
+                if matches!(path, "io.input_color_space" | "io.input_cctf_decoding") {
+                    declarations.insert(path.to_owned(), origin.clone());
+                }
+                winning.insert(path.to_owned(), (value.clone(), origin.clone()));
+            }
+            parsed_sources.push(edits);
+        }
+    }
+    for (path, value, option) in [
+        (
+            "io.input_color_space",
+            request.input_color_space.map(|v| Value::String(v.into())),
+            "--input-color-space",
+        ),
+        (
+            "io.input_cctf_decoding",
+            request.input_cctf_decoding.map(Value::Bool),
+            "--input-cctf-decoding",
+        ),
+    ] {
+        if let Some(value) = value {
+            let edits =
+                ParameterEdits::single(path, value).map_err(|e| format!("{option}: {e}"))?;
+            if request.input_is_raw {
+                edits
+                    .validate_raw_input()
+                    .map_err(|e| format!("{option}: {e}"))?;
+            }
+            // Apply again after sparse sources below; the legacy branch has no sources.
+            edits.apply(&mut params)?;
+            declarations.insert(
+                path.into(),
+                DeclarationSource {
+                    kind: "argument".into(),
+                    option: Some(option.into()),
+                    index: None,
+                    path: None,
+                },
+            );
+        }
+    }
+    if request.require_input_declaration
+        && !request.input_is_raw
+        && (!declarations.contains_key("io.input_color_space")
+            || !declarations.contains_key("io.input_cctf_decoding"))
+    {
+        return Err("raster input requires both io.input_color_space and io.input_cctf_decoding; declare both with --input-color-space and --input-cctf-decoding, supplied --params leaves, or --set".into());
+    }
+
     if !added_sources {
         // Keep the legacy decoder, route/scan relationship and digest ordering.
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = request.scan_film || params.workflow.route == "input > film > scan";
+        params.io.scan_film = params.workflow.route == "input > film > scan"
+            || (!request.require_input_declaration && request.scan_film);
         if let Some(mode) = request.scan_output {
             params.scanner.scan_output = mode.to_owned();
         }
@@ -147,17 +302,8 @@ pub fn resolve(
         );
     } else {
         let mut protected = params.neutral_print_filters_protected;
-        for source in request.sources {
-            let edits =
-                ParameterEdits::parse(source).map_err(|e| format!("--set {source:?}: {e}"))?;
-            if request.input_is_raw {
-                edits
-                    .validate_raw_input()
-                    .map_err(|e| format!("--set {source:?}: {e}"))?;
-            }
-            edits
-                .apply(&mut params)
-                .map_err(|e| format!("--set {source:?}: {e}"))?;
+        for edits in &parsed_sources {
+            edits.apply(&mut params)?;
             for path in edits.paths() {
                 match path {
                     "enlarger.c_filter_neutral" => protected[0] = true,
@@ -166,6 +312,13 @@ pub fn resolve(
                     _ => {}
                 }
             }
+        }
+        // Dedicated input flags override source leaves after all source composition.
+        if let Some(value) = request.input_color_space {
+            params.io.input_color_space = value.into();
+        }
+        if let Some(value) = request.input_cctf_decoding {
+            params.io.input_cctf_decoding = value;
         }
         choose_workflow(&mut params, request.route, request.scan_film);
         params.io.scan_film = params.workflow.route == "input > film > scan";
@@ -194,12 +347,71 @@ pub fn resolve(
     }
     normalize_runtime_topology(&film, &mut params);
     crate::pipeline_calibration::validate_scan_output(&params, &film)?;
+    let raw_source = DeclarationSource {
+        kind: "raw".into(),
+        option: None,
+        index: None,
+        path: None,
+    };
+    // Internal protocol callers can retain implicit controls. Public callers cannot.
+    let implicit_source = DeclarationSource {
+        kind: "params".into(),
+        option: None,
+        index: None,
+        path: None,
+    };
+    let declaration_source = |path: &str| {
+        if request.input_is_raw {
+            raw_source.clone()
+        } else {
+            declarations
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| implicit_source.clone())
+        }
+    };
+    let input_declaration = InputDeclaration {
+        color_space: params.io.input_color_space.clone(),
+        cctf_decoding: params.io.input_cctf_decoding,
+        sources: InputDeclarationSources {
+            color_space: declaration_source("io.input_color_space"),
+            cctf_decoding: declaration_source("io.input_cctf_decoding"),
+        },
+    };
+    let effective_params = serde_json::to_value(&params).map_err(|e| e.to_string())?;
+    let edits = winning.into_iter().map(|(path, (requested, source))| {
+        let effective = parameter_value(&effective_params, &path).cloned().unwrap_or(Value::Null);
+        let override_option = match path.as_str() {
+            "io.input_color_space" if request.input_color_space.is_some() => Some("--input-color-space"),
+            "io.input_cctf_decoding" if request.input_cctf_decoding.is_some() => Some("--input-cctf-decoding"),
+            "scanner.scan_output" if request.scan_output.is_some() => Some("--scan-output"),
+            _ => None,
+        };
+        let (status, reason) = if let Some(option) = override_option {
+            (EditStatus::Overridden, Some(format!("replaced by {option}")))
+        } else if !equal_control_values(&path, &requested, &effective) {
+            let mut causes = Vec::new();
+            if params.settings.preview_mode { causes.push("settings.preview_mode"); }
+            if params.debug.lut_mode { causes.push("debug.lut_mode"); }
+            if params.debug.deactivate_spatial_effects { causes.push("debug.deactivate_spatial_effects"); }
+            if params.debug.deactivate_stochastic_effects { causes.push("debug.deactivate_stochastic_effects"); }
+            let reason = if causes.is_empty() {
+                "runtime preparation changed the requested value for derived profile topology".into()
+            } else { format!("runtime preparation changed the requested value with {} enabled; disable the applicable constraint to retain it", causes.join(", ")) };
+            (EditStatus::Constrained, Some(reason))
+        } else if let Some(reason) = crate::params::sources::inactive_reason(&path, &params, &film) {
+            (EditStatus::Inactive, Some(reason))
+        } else { (EditStatus::Active, None) };
+        EditFeedback { path, requested, effective, source, status, reason }
+    }).collect();
     Ok(ResolvedProcessParams {
         film,
         print,
         film_name,
         print_name,
         params,
+        input_declaration,
+        edits,
     })
 }
 
@@ -228,6 +440,41 @@ fn force_raw_input(params: &mut RuntimeParams) {
     params.io.input_cctf_decoding = false;
 }
 
+fn absolute_path(path: &Path) -> Result<PathBuf, String> {
+    std::path::absolute(path).map_err(|e| format!("resolving {}: {e}", path.display()))
+}
+
+fn parameter_value<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.').try_fold(root, |value, key| value.get(key))
+}
+
+fn baseline_declarations(
+    path: Option<&Path>,
+) -> Result<BTreeMap<String, DeclarationSource>, String> {
+    let mut declarations = BTreeMap::new();
+    if let Some(path) = path {
+        let value: Value = serde_json::from_reader(
+            std::fs::File::open(path)
+                .map_err(|e| format!("opening params file {}: {e}", path.display()))?,
+        )
+        .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
+        for leaf in ["io.input_color_space", "io.input_cctf_decoding"] {
+            if parameter_value(&value, leaf).is_some() {
+                declarations.insert(
+                    leaf.into(),
+                    DeclarationSource {
+                        kind: "params".into(),
+                        option: Some("--params".into()),
+                        index: None,
+                        path: Some(absolute_path(path)?),
+                    },
+                );
+            }
+        }
+    }
+    Ok(declarations)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +492,9 @@ mod tests {
             scan_film: false,
             scan_output: None,
             input_is_raw: false,
+            input_color_space: None,
+            input_cctf_decoding: None,
+            require_input_declaration: false,
             digest_mode: DigestMode::ApplyStockSpecifics,
         }
     }
@@ -267,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_scan_topology_matches_runtime_without_resetting_explicit_scan() {
+    fn internal_protocol_retains_admitted_scan_topology() {
         let sources = [];
         for (route, scan_film) in [
             ("input > film > scan", false),
@@ -527,7 +777,7 @@ mod tests {
         assert_ne!(result.params.film_render.grain.rms_granularity, [0.0; 3]);
     }
     #[test]
-    fn route_precedes_scan_flag_and_derives_topology() {
+    fn internal_protocol_route_precedes_scan_flag_with_sources() {
         let sources = vec!["camera.auto_exposure=false".into()];
         let mut req = request(&sources);
         let documents = vec![presets::load_selector("Kodak Portra 400", &data_dir()).unwrap()];
@@ -723,5 +973,138 @@ mod tests {
             assert_eq!(scanned.print_name, name);
             assert!(scanned.params.io.scan_film);
         }
+    }
+
+    fn public_request(sources: &[String]) -> ProcessParamsRequest<'_> {
+        let mut req = request(sources);
+        req.require_input_declaration = true;
+        req.input_color_space = Some("sRGB");
+        req.input_cctf_decoding = Some(false);
+        req
+    }
+
+    #[test]
+    fn public_raster_requires_both_supplied_components() {
+        for (color, decoding) in [(None, None), (Some("sRGB"), None), (None, Some(false))] {
+            let mut req = public_request(&[]);
+            req.input_color_space = color;
+            req.input_cctf_decoding = decoding;
+            assert!(
+                resolve(req, &data_dir())
+                    .err()
+                    .unwrap()
+                    .contains("declare both")
+            );
+        }
+        let resolved = resolve(public_request(&[]), &data_dir()).unwrap();
+        assert!(!resolved.input_declaration.cctf_decoding);
+        assert_eq!(
+            resolved.input_declaration.sources.cctf_decoding.kind,
+            "argument"
+        );
+    }
+
+    #[test]
+    fn legacy_supplied_declaration_does_not_protect_other_baseline_values() {
+        let path = std::env::temp_dir().join(format!(
+            "spektrafilm-input-declaration-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, r#"{"io":{"input_color_space":"sRGB","input_cctf_decoding":false},"enlarger":{"m_filter_neutral":12}}"#).unwrap();
+        let mut req = public_request(&[]);
+        req.params_file = Some(&path);
+        req.input_color_space = None;
+        req.input_cctf_decoding = None;
+        let result = resolve(req, &data_dir()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(result.input_declaration.sources.color_space.kind, "params");
+        assert!(!result.input_declaration.cctf_decoding);
+        assert_ne!(result.params.enlarger.m_filter_neutral, 12.0);
+    }
+
+    #[test]
+    fn dedicated_declaration_overrides_winning_set_with_typed_feedback() {
+        let sources = vec!["io.input_color_space=ProPhoto RGB,io.input_cctf_decoding=true,camera.exposure_compensation_ev=.5".into()];
+        let result = resolve(public_request(&sources), &data_dir()).unwrap();
+        assert_eq!(result.input_declaration.color_space, "sRGB");
+        assert!(!result.input_declaration.cctf_decoding);
+        assert_eq!(result.edits[0].status, EditStatus::Active);
+        for edit in &result.edits[1..] {
+            assert_eq!(edit.status, EditStatus::Overridden);
+            assert_eq!(edit.source.index, Some(1));
+        }
+        assert_eq!(result.edits[1].effective, Value::Bool(false));
+    }
+
+    #[test]
+    fn raw_rejects_early_sources_even_when_dedicated_flags_replace_them() {
+        let sources = vec![
+            "io.input_color_space=sRGB".into(),
+            "io.input_color_space=ACES2065-1".into(),
+        ];
+        let mut req = public_request(&sources);
+        req.input_is_raw = true;
+        req.input_color_space = Some("ACES2065-1");
+        assert!(resolve(req, &data_dir()).err().unwrap().contains("RAW"));
+        let mut req = public_request(&[]);
+        req.input_is_raw = true;
+        req.input_color_space = None;
+        req.input_cctf_decoding = None;
+        let result = resolve(req, &data_dir()).unwrap();
+        assert_eq!(result.input_declaration.sources.color_space.kind, "raw");
+    }
+
+    #[test]
+    fn public_routes_have_identical_topology_with_noop_sources() {
+        for route in crate::params::sources::supported_routes() {
+            let mut results = Vec::new();
+            for sources in [vec![], vec!["camera.auto_exposure=true".into()]] {
+                let mut req = public_request(&sources);
+                req.route = Some(route);
+                let result = resolve(req, &data_dir()).unwrap();
+                assert_eq!(result.params.io.scan_film, *route == "input > film > scan");
+                results.push((
+                    result.params.workflow.route,
+                    result.params.io.scan_film,
+                    result.print_name,
+                ));
+            }
+            assert_eq!(results[0], results[1], "{route}");
+        }
+    }
+
+    #[test]
+    fn feedback_reports_conditions_constraints_and_only_winning_leaves() {
+        let sources = vec![
+            "film_render.grain.engine=v2,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12,film_render.grain.v2_amount=20,camera.lens_blur_um=2".into(),
+            "film_render.grain.v2_amount=25,settings.preview_mode=true".into(),
+        ];
+        let result = resolve(public_request(&sources), &data_dir()).unwrap();
+        let edit = |path: &str| result.edits.iter().find(|edit| edit.path == path).unwrap();
+        assert_eq!(
+            edit("film_render.grain.v2_size").status,
+            EditStatus::Inactive
+        );
+        assert!(
+            edit("film_render.grain.v2_size")
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("custom")
+        );
+        assert_eq!(
+            edit("film_render.grain.v2_amount").status,
+            EditStatus::Active
+        );
+        assert_eq!(edit("film_render.grain.v2_amount").source.index, Some(2));
+        assert_eq!(edit("camera.lens_blur_um").status, EditStatus::Constrained);
+        assert_eq!(
+            result
+                .edits
+                .iter()
+                .filter(|edit| edit.path == "film_render.grain.v2_amount")
+                .count(),
+            1
+        );
     }
 }

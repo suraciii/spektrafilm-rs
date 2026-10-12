@@ -40,6 +40,14 @@ clippy:
 test:
     cargo test --locked --workspace --features precision-f64
 
+# Exercise the real GUI App and CPU workers without a desktop or OCR.
+gui-headless:
+    cargo test --locked -p spektrafilm-gui --features precision-f64 headless::
+
+# Render focused GUI layouts offscreen; requires a usable WGPU adapter.
+gui-layout:
+    cargo test --locked -p spektrafilm-gui --features precision-f64,gui-snapshots layout_snapshots::
+
 # Reject Python bytecode and cache directories in the Git index.
 check-python-cache:
     python3 scripts/check_python_cache.py
