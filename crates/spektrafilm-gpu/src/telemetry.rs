@@ -33,6 +33,7 @@ pub const PHASE_NAMES: &[&str] = &[
     "backend_init",
     "input_prepare",
     "runtime_prepare",
+    "scanner_setup_prepare",
     "simulation",
     "display_prepare",
     "presentation_handoff",

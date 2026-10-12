@@ -23,6 +23,19 @@ fn telemetry_scanner_configuration_roundtrips_actual_approximate_selection() {
         Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
     operation.set_render_configuration(runtime.telemetry_configuration());
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    runtime
+        .process_observed(
+            ImageBuf::from_data(2, 1, vec![from_f64(0.18); 6]),
+            &CpuBackend,
+            simulation.context(),
+        )
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
     let report = operation.finish(Outcome::Succeeded).unwrap();
     let decoded =
         spektrafilm_core::telemetry::Report::from_json(&report.to_json().unwrap()).unwrap();
