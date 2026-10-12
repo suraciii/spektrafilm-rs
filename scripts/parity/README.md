@@ -448,6 +448,10 @@ zenity, ffmpeg, gdbus, and a working GTK file chooser portal on the same display
 The driver checks portal readiness before launching the GUI. Package smoke also
 builds a ZIP bundle through the installed exporter, checks offline
 report references and artifacts, and executes its delivered OCIO processors.
+It also exercises installed native benchmark fixture generation, rendering,
+identity comparison, manifest validation, and offline report generation.
+Numeric RMSE, median CIEDE2000, and mean FLIP must be exactly zero for the
+retained identity comparison. Both benchmark binaries and licenses must exist.
 `package_smoke.py` requires `--package-root` and writes `package_report.json`
 next to `observations.json`. It records the Rust HEAD, pinned reference commit,
 platform, worktree status, a deterministic package-tree SHA256, each delivered

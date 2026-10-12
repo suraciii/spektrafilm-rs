@@ -63,13 +63,15 @@ Image IO additionally requires OpenImageIO and Imath development headers. OIIO i
 
 Distribute the native shared libraries and their transitive dependencies with the CLI, GUI, and `decode_raw_gui`, together with the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory. LibRaw is dual LGPL 2.1/CDDL 1.0, Lensfun's library is LGPL 3.0 (database CC BY-SA 3.0), Exiv2 is GPL 2.0 or later, and GLib is LGPL 2.1 or later; include applicable license texts when packaging. The application remains GPL 3.0.
 
-On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after building the release CLI, f64 exporter, GUI and RAW helper. `BUILD_TARGET_DIR` selects Cargo's output directory and `DIST_DIR` selects the generated package directory. The script copies the actual recursive ELF dependencies, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML and native license notices; it verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`. Extract the entire archive and launch the wrappers in `bin/`; they locate bundled data and libraries relative to their own location. The host supplies glibc, the display server and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh` respectively.
+On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after `just build`. This builds the CLI, f64 exporter, GUI, RAW helper, and both native benchmark tools. `BUILD_TARGET_DIR` selects Cargo's output directory and `DIST_DIR` selects the generated package directory. The script copies recursive ELF dependencies, LittleCMS, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML, and native license notices. It verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`. Extract the entire archive and launch the wrappers in `bin/`; they locate bundled data and libraries relative to their own location. The host supplies glibc, the display server, and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh`.
 
 The release workflow runs workspace tests with `precision-f64` and `scripts/parity/package_smoke.py` on each platform before uploading the package. The smoke runner requires installed CLI, f64 exporter, RAW helper and data paths. It exercises generated float/integer files, retained EXIF/IPTC/XMP/ICC, invalid-input/depth errors, a SHA-verified Kodak RAW fixture, and delivered ZIP LUT/OCIO/QA artifacts. With `--gui`, the external native driver operates the real window and file dialogs, checks state restoration and viewer behavior, compares Save/Export output, and exercises Cancel/close cleanup. Linux uses Xvfb; Windows/macOS require an interactive desktop, and macOS requires Accessibility/Automation/Screen Recording authorization. Driver and OCR dependencies are listed in [scripts/parity/README.md](scripts/parity/README.md). CI retains screenshots, observations and command logs, including failed runs.
 The release workflow intentionally invokes package smoke without `--gui`.
 Therefore its package status covers CLI/RAW/IO/LUT/OCIO/QA and provenance, not
 native desktop interaction. GUI evidence is maintained separately and is not
 silently counted as a release pass.
+
+Package smoke also runs the installed native benchmark tools from outside the checkout. It generates fixtures, renders a color chart, compares the retained run with itself, verifies exact-zero numeric/color/FLIP measurements, validates manifests, and creates the offline report. It checks the bundled FLIP and LittleCMS licenses and records both benchmark executable hashes.
 
 The workspace tests include headless GUI acceptance with the real App, CPU
 workers, and image writer. Run `just gui-headless` for the focused scenarios.
@@ -390,7 +392,7 @@ Build the native benchmark tools. Generate fixtures outside the repository. The 
 
 ```bash
 just build-f64
-cargo build --locked --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures
+just build-benchmark
 ./target/release/spektrafilm-bench-fixtures \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --out /tmp/spektrafilm-benchmark-fixtures --download-natural
@@ -523,6 +525,7 @@ crates/
   spektrafilm-cli/     `spektrafilm` / `spektrafilm-f64` (process, list-profiles, lut, export-lut) + `decode_raw_gui`
   spektrafilm-gui/     egui/eframe preview (wgpu renderer, Metal-backed on macOS)
   spektrafilm-raw/     shared native LibRaw white balance and Lensfun correction
+  spektrafilm-benchmark/ native benchmark CLI, fixture generator, retained metrics and offline review
 data/
   profiles/            film + paper JSON profiles (spectral sensitivities, density curves, etc.)
   luts/                Hanatos2025 spectral basis + standard observer CMFs (.npy)
