@@ -450,10 +450,24 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
         Arc::ptr_eq(&baseline, h.state().output_image.as_ref().unwrap()),
         "stale real worker response must not replace retained output"
     );
+    let start_guard = active.lock();
     h.state_mut().dispatch_render(&ctx);
     let first_request = h.state().render_job.as_ref().unwrap().request_id;
+    // The worker takes the preview before blocking on its start marker. Keep
+    // that preview in flight so submitting a full scan cannot replace it in
+    // the pending slot; both real responses must reach the App.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.state().render_worker.state.0.lock().is_some() {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not take first request"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    h.state_mut().full_scan_requested = true;
     h.state_mut().dispatch_render(&ctx);
     assert!(h.state().render_job.as_ref().unwrap().request_id > first_request);
+    drop(start_guard);
     wait_until(h, |a| {
         a.render_job.is_none()
             && a.output_image
@@ -461,7 +475,9 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
                 .is_some_and(|out| !Arc::ptr_eq(out, &baseline))
     });
     assert!(edge_difference(h.state().output_image.as_ref().unwrap()) < -0.01);
-    assert!(h.state().status.starts_with("Preview ·"));
+    let accepted = h.state().output_image.as_ref().unwrap();
+    assert_eq!((accepted.width, accepted.height), (160, 80));
+    assert!(h.state().status.starts_with("Scan ·"));
 }
 
 #[cfg(feature = "gui-snapshots")]
