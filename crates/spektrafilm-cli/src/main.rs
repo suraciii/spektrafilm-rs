@@ -1,4 +1,6 @@
 mod contract;
+#[cfg(feature = "precision-f64")]
+mod fit;
 mod lut;
 mod preset;
 mod process_report;
@@ -37,6 +39,9 @@ enum Commands {
         after_long_help = "Examples:\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --set camera.exposure_compensation_ev=0.5 --seed 42\n  spektrafilm process input.png -o output.tif --preset 'Kodak Portra 400' --input-color-space sRGB --input-cctf-decoding true --dry-run --dry-run-format text\n  spektrafilm preset list --format text\n  spektrafilm list-profiles\n  spektrafilm describe --format text\n  spektrafilm describe --module film_render.grain --format json\n\nRaster source color and transfer state must be declared explicitly; RAW uses linear ACES2065-1 from its decoder. Scanner io.output_color_space controls simulation output; --saving-color-space converts it for the writer. --saving-cctf-encoding controls writer encoding. Output bit depth does not select computation precision. Dry run does not decode pixels or prove device availability."
     )]
     Process(ProcessArgs),
+    /// Fit profile and look parameters against reference patch data.
+    #[cfg(feature = "precision-f64")]
+    Fit(fit::FitArgs),
     /// List available film and paper profiles.
     ListProfiles {
         /// Data directory; otherwise use SPEKTRAFILM_DATA_DIR or automatic discovery.
@@ -561,6 +566,10 @@ fn main() -> Result<()> {
         Commands::ListProfiles { data_dir } => {
             let data = select_data_dir(data_dir, command_matches)?;
             cmd_list_profiles(&data.path)?;
+        }
+        #[cfg(feature = "precision-f64")]
+        Commands::Fit(args) => {
+            fit::cmd_fit(&args, command_matches)?;
         }
         Commands::Lut { command } => lut::run(command, command_matches)?,
         Commands::ExportLut {

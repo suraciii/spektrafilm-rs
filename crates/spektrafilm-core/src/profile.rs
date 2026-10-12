@@ -10,6 +10,7 @@ mod validation;
 
 pub use io::{
     list_profiles, load_profile, load_profile_by_name, save_processed_profile, save_profile,
+    save_profile_to,
 };
 pub use model::{DensityCurvesModel, Profile, ProfileData, ProfileInfo, ProfileMetadata};
 pub use render::{development_time_index, resolve_for_render};

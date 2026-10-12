@@ -12,6 +12,7 @@ Capabilities:
 - [LUT delivery](lut-delivery/spec.md) — deterministic LUT bundles.
 - [GUI workflow](gui-workflow/spec.md) — interactive control and state behavior.
 - [Presets](presets/spec.md) — portable film and print looks, the user library, and GUI state compatibility.
+- [Profile fitting](profile-fit/spec.md) — deriving profile and look values from reference patch data.
 - [CLI parameters](cli-parameters/spec.md) — source declarations, preset selection, sparse parameter overrides, seeds, parameter discovery, and dry run.
 - [CLI workflow](cli-workflow/spec.md) — help, version identity, data selection, command status, and human feedback.
 
