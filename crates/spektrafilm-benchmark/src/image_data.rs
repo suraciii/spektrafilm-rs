@@ -2,7 +2,7 @@ use crate::common::{Error, Result};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{Read, Write},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
 };
 pub fn native_identity() -> Value {
@@ -458,13 +458,14 @@ pub fn write_npy(path: &Path, values: &[f64], shape: &[usize]) -> Result<()> {
     let raw = format!("{{'descr': '<f8', 'fortran_order': False, 'shape': ({tuple}), }}");
     let pad = (16 - (10 + raw.len() + 1) % 16) % 16;
     let header = format!("{}{}\n", raw, " ".repeat(pad));
-    let mut f = fs::File::create(path)?;
+    let mut f = BufWriter::with_capacity(65536, fs::File::create(path)?);
     f.write_all(b"\x93NUMPY\x01\x00")?;
     f.write_all(&(header.len() as u16).to_le_bytes())?;
     f.write_all(header.as_bytes())?;
     for v in values {
         f.write_all(&v.to_le_bytes())?
     }
+    f.flush()?;
     Ok(())
 }
 

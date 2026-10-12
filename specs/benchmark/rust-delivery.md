@@ -78,6 +78,8 @@ The required workloads are a small automated suite, one 6720-by-4480 color compa
 
 The comparison engine must avoid allocating full-image representations for unselected measurement families. It must bound the lifetime of temporary buffers and reuse buffers where numerical semantics allow. Local kernels may use tiles with sufficient halo. Global populations, exact quantiles, FFTs, and official FLIP must retain their declared semantics rather than substitute tile-local approximations.
 
+NPY artifact serialization must use bounded buffered writes. It must propagate the final flush error before hashing or publishing the artifact. Buffering must preserve the declared NPY header, little-endian f64 samples, and content hashes.
+
 Rust comparison peak memory for the 30 MP workload must be lower than the reference implementation's peak memory. Runtime must have no unexplained regression beyond the measured variation. Release evidence must state the observed changes without promising an unmeasured speedup factor. A resource regression requires an explicit reviewed tradeoff before cutover.
 
 ## Verification and cutover
