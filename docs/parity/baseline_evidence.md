@@ -118,8 +118,7 @@ correction (`utils/spectral_upsampling.py:336-386`).
 output as error-logged **identity fallback**
 (`crates/spektrafilm-core/src/gamut_compression.rs:267-293`); Python 0.3.4
 supports all five algorithms on any output space
-(`utils/gamut_compression.py:197-216`). Similarly unknown input color
-spaces silently fall back (filming.rs:516 → ProPhoto; scanning.rs:455 →
+spaces silently fall back (filming.rs:516 → ProPhoto; `scanning.rs::scan_with_capture` →
 sRGB) where Python raises.
 
 ### 6. Wrong LUT constructor — CLI `export-lut` (issue #13)
@@ -132,7 +131,7 @@ per-pixel regime (spatial/stochastic off, AE off, corrections off).
 
 ### 7. Output encoding / clipping — scenario `output_encoding_srgb` (issue #4)
 Rust clamps the final RGB to [0,1] on **both** branches of the encoding
-switch (`crates/spektrafilm-core/src/stages/scanning.rs:370-389`); Python
+switch (`crates/spektrafilm-core/src/stages/scanning.rs::scan_with_capture`); Python
 0.3.4's `_apply_cctf_encoding` never clips (`runtime/stages/scanning.py:130-139`)
 — the doc-comment in Rust references a `_apply_cctf_encoding_and_clip`
 helper that does not exist at this pin. With gamut compression off and
@@ -142,8 +141,8 @@ out-of-gamut input, Python returns out-of-range values.
 On `scan_film=True` Python passes `glare=None`
 (`runtime/stages/scanning.py:54-55`) — no glare on the direct scan, ever.
 Rust selects `film_render.glare` for the scan path
-(`crates/spektrafilm-core/src/stages/scanning.rs:284-288`) and applies it
-with a **fixed seed 42** (`scanning.rs:325-333`), diverging both in
+(`crates/spektrafilm-core/src/stages/scanning.rs::scan_with_capture`) and applies it
+with a **fixed seed 42** (same function), diverging both in
 semantics and in RNG stream.
 
 ## Integrated acceptance evidence

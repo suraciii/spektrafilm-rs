@@ -9,6 +9,7 @@ pub(super) enum Condition {
     Spektra,
     Procedural,
     Dye,
+    Fotufilm,
     SpektraOrDye,
     Custom,
     Sublayers,
@@ -37,6 +38,7 @@ impl Condition {
             Self::Spektra => "film_render.grain.engine = spektra",
             Self::Procedural => "film_render.grain.engine = procedural",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
+            Self::Fotufilm => "film_render.grain.engine = fotufilm",
             Self::SpektraOrDye => "film_render.grain.engine = spektra or dye",
             Self::Custom => {
                 "film_render.grain.v2_profile = custom; select custom to use this control"
@@ -81,6 +83,7 @@ impl Condition {
             Self::Spektra => g.engine == GrainEngine::Spektra,
             Self::Procedural => g.engine == GrainEngine::Procedural,
             Self::Dye => g.engine == GrainEngine::Dye,
+            Self::Fotufilm => g.engine == GrainEngine::Fotufilm,
             Self::SpektraOrDye => matches!(g.engine, GrainEngine::Spektra | GrainEngine::Dye),
             Self::Custom => g.v2_profile == "custom",
             Self::Sublayers => g.sublayers_active && !film.data.density_curves_layers.is_empty(),
@@ -135,7 +138,9 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
             return out;
         }
         out.push(Grain);
-        if path.contains(".v2_") {
+        if path.starts_with("film_render.grain.fotufilm.") {
+            out.push(Fotufilm);
+        } else if path.contains(".v2_") {
             out.push(Procedural);
             if !["v2_profile", "v2_amount", "v2_timer", "v2_resolution_type"]
                 .iter()

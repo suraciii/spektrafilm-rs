@@ -67,6 +67,22 @@ pub(crate) fn rgb_to_raw_names() -> [&'static str; 7] {
 /// maximum means unbounded above.
 pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
     match path {
+        "film_render.grain.fotufilm.amount" | "film_render.grain.fotufilm.layers" => {
+            Some((0.0, Some(4.0)))
+        }
+        "film_render.grain.fotufilm.size" | "film_render.grain.fotufilm.softness" => {
+            Some((0.5, Some(4.0)))
+        }
+        "film_render.grain.fotufilm.color" | "film_render.grain.fotufilm.sublayer_shares" => {
+            Some((0.0, Some(1.0)))
+        }
+        "film_render.grain.fotufilm.rms_density" => Some((0.0, Some(0.1))),
+        "film_render.grain.fotufilm.clump_radius_um" => Some((0.0, Some(32.0))),
+        "film_render.grain.fotufilm.layer_weights" => Some((0.0, Some(4.0))),
+        "film_render.grain.fotufilm.layer_size_ratio"
+        | "film_render.grain.fotufilm.coating_density_scale" => Some((0.25, Some(4.0))),
+        "film_render.grain.fotufilm.radius_span" => Some((1.0, Some(20.0))),
+        "film_render.grain.fotufilm.fog_density" => Some((0.0, Some(0.3))),
         "film_render.grain.v2_size" => Some((1.0, Some(48.0))),
         "film_render.grain.v2_amount"
         | "film_render.grain.v2_shadows"
@@ -89,6 +105,105 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "scanner.positive_density_ev" | "scanner.positive_balance_ev" => Some((-16.0, Some(16.0))),
         "scanner.positive_contrast" | "scanner.positive_dmax" => Some((0.0, Some(16.0))),
         _ => None,
+    }
+}
+
+pub(crate) fn fotufilm_minimum_exclusive(path: &str) -> bool {
+    matches!(
+        path,
+        "film_render.grain.fotufilm.rms_density"
+            | "film_render.grain.fotufilm.clump_radius_um"
+            | "film_render.grain.fotufilm.layer_weights"
+            | "film_render.grain.fotufilm.sublayer_shares"
+    )
+}
+
+/// Shared sparse-source and typed-runtime domains; shares are rejected, not normalized.
+pub(crate) fn validate_fotufilm_values(path: &str, values: &[f64]) -> Result<(), String> {
+    let (min, max) = leaf_numeric_bounds(path).expect("Fotufilm numeric field domain");
+    let max = max.expect("Fotufilm finite maximum");
+    for (index, &value) in values.iter().enumerate() {
+        if !value.is_finite()
+            || value < min
+            || value > max
+            || (fotufilm_minimum_exclusive(path) && value == min)
+        {
+            let lower = if fotufilm_minimum_exclusive(path) {
+                "("
+            } else {
+                "["
+            };
+            return Err(format!(
+                "{path}: component {index} must be finite and in {lower}{min}, {max}] (got {value})"
+            ));
+        }
+    }
+    if path == "film_render.grain.fotufilm.sublayer_shares"
+        && (values.iter().sum::<f64>() - 1.0).abs() > 1e-6
+    {
+        return Err(format!(
+            "{path}: shares must sum to 1 within 1e-6; no automatic normalization"
+        ));
+    }
+    Ok(())
+}
+
+impl super::FotufilmGrainParams {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for (path, values) in [
+            (
+                "film_render.grain.fotufilm.amount",
+                std::slice::from_ref(&self.amount),
+            ),
+            (
+                "film_render.grain.fotufilm.size",
+                std::slice::from_ref(&self.size),
+            ),
+            (
+                "film_render.grain.fotufilm.softness",
+                std::slice::from_ref(&self.softness),
+            ),
+            (
+                "film_render.grain.fotufilm.color",
+                std::slice::from_ref(&self.color),
+            ),
+            ("film_render.grain.fotufilm.layers", self.layers.as_slice()),
+            (
+                "film_render.grain.fotufilm.rms_density",
+                std::slice::from_ref(&self.rms_density),
+            ),
+            (
+                "film_render.grain.fotufilm.clump_radius_um",
+                std::slice::from_ref(&self.clump_radius_um),
+            ),
+            (
+                "film_render.grain.fotufilm.layer_weights",
+                self.layer_weights.as_slice(),
+            ),
+            (
+                "film_render.grain.fotufilm.layer_size_ratio",
+                self.layer_size_ratio.as_slice(),
+            ),
+            (
+                "film_render.grain.fotufilm.radius_span",
+                std::slice::from_ref(&self.radius_span),
+            ),
+            (
+                "film_render.grain.fotufilm.sublayer_shares",
+                self.sublayer_shares.as_slice(),
+            ),
+            (
+                "film_render.grain.fotufilm.coating_density_scale",
+                std::slice::from_ref(&self.coating_density_scale),
+            ),
+            (
+                "film_render.grain.fotufilm.fog_density",
+                std::slice::from_ref(&self.fog_density),
+            ),
+        ] {
+            validate_fotufilm_values(path, values)?;
+        }
+        Ok(())
     }
 }
 
@@ -190,7 +305,11 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "film_render.grain.engine" => ["spektra", "procedural", "dye"]
+        "film_render.grain.engine" => ["spektra", "procedural", "dye", "fotufilm"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
+        "film_render.grain.fotufilm.material" => ["auto", "silver", "dye_negative", "dye_reversal"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
@@ -289,7 +408,12 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
         "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
         "scanner.scan_output" => matches!(value, "direct_scan" | "positive_scan"),
-        "film_render.grain.engine" => matches!(value, "spektra" | "procedural" | "dye"),
+        "film_render.grain.engine" => {
+            matches!(value, "spektra" | "procedural" | "dye" | "fotufilm")
+        }
+        "film_render.grain.fotufilm.material" => {
+            matches!(value, "auto" | "silver" | "dye_negative" | "dye_reversal")
+        }
         "film_render.grain.v2_mode" => matches!(value, "analogue" | "noise"),
         "film_render.grain.v2_film_type" => matches!(value, "negative" | "positive"),
         "film_render.grain.v2_profile" => {
@@ -399,6 +523,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         .validate()
         .map_err(|error| format!("print_render.density_curves_morph.{error}"))?;
     let grain = &params.film_render.grain;
+    grain.fotufilm.validate()?;
     if grain.v2_profile != "custom"
         && spektrafilm_model::grain::v2::profile_index(&grain.v2_profile).is_none()
     {

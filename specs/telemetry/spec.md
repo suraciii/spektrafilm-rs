@@ -50,7 +50,7 @@ Recoverable collection and report persistence failures must not fail an image op
 
 With identical inputs and effective parameters, enabling summary collection must preserve output pixels and publication outcomes. Enabling GPU timestamps must preserve the same image passes and execution route.
 
-Resident and per-stage scenarios must show different observed GPU boundary counts. A Grain V1 scenario must identify its CPU grain stage even when WGPU is selected. A Grain V2 resident scenario must identify the actual dispatched grain pass. CPU-only execution must report zero observed GPU work and unavailable GPU timestamp measurements.
+Resident and per-stage scenarios must show different observed GPU boundary counts. A Grain V1 scenario must identify its CPU grain stage even when WGPU is selected. A Grain V2 resident scenario must identify the actual dispatched grain pass. Film-coordinate grain must identify its own CPU stage: a Dye scenario must publish its field stage, and a Fotufilm Film scenario must publish `grain_fotufilm` with its CPU reason in both per-stage execution and a resident-chain decline. CPU-only execution must report zero observed GPU work and unavailable GPU timestamp measurements.
 
 Concurrent GUI render and export operations must keep separate records. Superseded previews must not replace the diagnostics attached to the accepted output. Cancellation and write failure must produce the correct terminal record without publishing a successful Export record.
 

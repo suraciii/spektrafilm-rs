@@ -123,6 +123,7 @@ pub enum GrainEngine {
     Spektra,
     Procedural,
     Dye,
+    Fotufilm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +134,8 @@ pub enum GrainMode {
     Spektra,
     /// The Dye conditional film-coordinate dye field.
     DyeField,
+    /// The Fotufilm effective-appearance film population model.
+    FotufilmFilm,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,7 +301,9 @@ impl RenderConfiguration {
         let grain_active = grain.active
             && !params.debug.deactivate_stochastic_effects
             && !(grain.engine == crate::params::GrainEngine::Procedural
-                && params.settings.rgb_to_raw_method == "mallett2019");
+                && params.settings.rgb_to_raw_method == "mallett2019")
+            && !(grain.engine == crate::params::GrainEngine::Fotufilm
+                && grain.fotufilm.amount == 0.0);
         let spatial_active = !params.debug.deactivate_spatial_effects;
         let receiver = crate::scan_receiver::provenance(params.scanner.receiver_profile);
         Self {
@@ -340,6 +345,7 @@ impl RenderConfiguration {
                     crate::params::GrainEngine::Spektra => GrainEngine::Spektra,
                     crate::params::GrainEngine::Procedural => GrainEngine::Procedural,
                     crate::params::GrainEngine::Dye => GrainEngine::Dye,
+                    crate::params::GrainEngine::Fotufilm => GrainEngine::Fotufilm,
                 },
                 mode: match grain.engine {
                     crate::params::GrainEngine::Spektra => GrainMode::Spektra,
@@ -348,6 +354,7 @@ impl RenderConfiguration {
                         crate::params::grain::GrainV2Mode::Noise => GrainMode::Noise,
                     },
                     crate::params::GrainEngine::Dye => GrainMode::DyeField,
+                    crate::params::GrainEngine::Fotufilm => GrainMode::FotufilmFilm,
                 },
                 spektra_fast_statistics_sampler: grain_active
                     && grain.engine == crate::params::GrainEngine::Spektra
@@ -475,5 +482,32 @@ impl SavingConfiguration {
             ColorSpaceRole::parse(options.color_space),
             options.cctf_encoding,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fotufilm_engine_and_model_have_distinct_telemetry_identity() {
+        assert_eq!(
+            serde_json::to_value(GrainEngine::Fotufilm).unwrap(),
+            "fotufilm"
+        );
+        assert_eq!(
+            serde_json::to_value(GrainMode::FotufilmFilm).unwrap(),
+            "fotufilm_film"
+        );
+        assert_ne!(GrainMode::FotufilmFilm, GrainMode::DyeField);
+        assert_eq!(
+            serde_json::to_value(GrainEngine::Spektra).unwrap(),
+            "spektra"
+        );
+        assert_eq!(
+            serde_json::to_value(GrainEngine::Procedural).unwrap(),
+            "procedural"
+        );
+        assert_eq!(serde_json::to_value(GrainEngine::Dye).unwrap(), "dye");
     }
 }

@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use spektrafilm_core::params::{
     PositiveInterpretation, ReceiverProfile, RuntimeParams, ScannerAutoSetup, ScannerFinish,
     diffusion::DiffusionFilterParams,
-    grain::{GrainEngine, GrainV2FilmType, GrainV2Mode},
+    grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
 use spektrafilm_model::grain::v2::PROFILE_NAMES;
 
@@ -336,11 +336,12 @@ pub(crate) fn show(
                 let grain = &mut params.film_render.grain;
                 flags.runtime_changed |= toggle(ui, "active", &mut grain.active, "Add grain to the negative");
                 egui::ComboBox::from_label("Engine")
-                    .selected_text(match grain.engine { GrainEngine::Spektra => "Spektra", GrainEngine::Procedural => "Procedural", GrainEngine::Dye => "Dye" })
+                    .selected_text(match grain.engine { GrainEngine::Spektra => "Spektra", GrainEngine::Procedural => "Procedural", GrainEngine::Dye => "Dye", GrainEngine::Fotufilm => "Fotufilm Film" })
                     .show_ui(ui, |ui| {
                         flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Spektra, "Spektra").on_hover_text("Original upstream experimental density-domain grain.").changed();
                         flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Procedural, "Procedural").on_hover_text("Dehancer-derived procedural grain in encoded RGB.").changed();
                         flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Dye, "Dye").on_hover_text("Self-developed grain formed in a film-coordinate dye field.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Fotufilm, "Fotufilm Film").on_hover_text("Effective-appearance film population grain model.").changed();
                     });
                 if grain.engine == GrainEngine::Procedural {
                     let mut profile = grain.v2_profile.clone();
@@ -377,6 +378,29 @@ pub(crate) fn show(
                     flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase.");
                     let resolved = grain.resolved_grain_v2();
                     flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
+                } else if grain.engine == GrainEngine::Fotufilm {
+                    let fotufilm = &mut grain.fotufilm;
+                    flags.runtime_changed |= numeric(ui, "Amount", &mut fotufilm.amount, 0.0, 4.0, 0.05, 2, "Effective Fotufilm grain amount.");
+                    flags.runtime_changed |= numeric(ui, "Size", &mut fotufilm.size, 0.5, 4.0, 0.05, 2, "Effective Fotufilm particle size multiplier.");
+                    flags.runtime_changed |= numeric(ui, "Softness", &mut fotufilm.softness, 0.5, 4.0, 0.05, 2, "Effective Fotufilm particle softness.");
+                    flags.runtime_changed |= numeric(ui, "Color", &mut fotufilm.color, 0.0, 1.0, 0.01, 2, "Effective chromatic grain amount.");
+                    flags.runtime_changed |= tuple(ui, "Layer amounts", &mut fotufilm.layers, 0.0, 4.0, 0.05, 2, "Effective grain amount per emulsion layer.");
+                    egui::CollapsingHeader::new("Fotufilm advanced").default_open(false).show(ui, |ui| {
+                        flags.runtime_changed |= numeric(ui, "RMS density", &mut fotufilm.rms_density, f64::MIN_POSITIVE, 0.1, 0.001, 6, "Authored effective RMS optical-density target; not measured stock calibration.");
+                        flags.runtime_changed |= numeric(ui, "Cloud radius (µm)", &mut fotufilm.clump_radius_um, f64::MIN_POSITIVE, 32.0, 0.1, 3, "Authored effective population clump radius in film micrometers.");
+                        flags.runtime_changed |= tuple(ui, "Layer weights", &mut fotufilm.layer_weights, f64::MIN_POSITIVE, 4.0, 0.05, 6, "Authored effective relative population weight per layer.");
+                        flags.runtime_changed |= tuple(ui, "Layer size ratio", &mut fotufilm.layer_size_ratio, 0.25, 4.0, 0.05, 2, "Effective relative particle size per layer.");
+                        flags.runtime_changed |= numeric(ui, "Radius span", &mut fotufilm.radius_span, 1.0, 20.0, 0.1, 1, "Effective population radius span.");
+                        flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares);
+                        flags.runtime_changed |= numeric(ui, "Coating density scale", &mut fotufilm.coating_density_scale, 0.25, 4.0, 0.05, 2, "Effective coating density scale.");
+                        flags.runtime_changed |= numeric(ui, "Fog density", &mut fotufilm.fog_density, 0.0, 0.3, 0.005, 3, "Effective fog density.");
+                        egui::ComboBox::from_label("Material").selected_text(match fotufilm.material { FotufilmMaterial::Auto => "Auto", FotufilmMaterial::Silver => "Silver", FotufilmMaterial::DyeNegative => "Dye negative", FotufilmMaterial::DyeReversal => "Dye reversal" }).show_ui(ui, |ui| {
+                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::Auto, "Auto").changed();
+                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::Silver, "Silver").changed();
+                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::DyeNegative, "Dye negative").changed();
+                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::DyeReversal, "Dye reversal").changed();
+                        });
+                    });
                 } else if grain.engine == GrainEngine::Dye {
                     flags.runtime_changed |= numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, 1.0, 32.0, 0.5, 1, "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
                     flags.runtime_changed |= numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, 0.1, 8.0, 0.05, 2, "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
@@ -632,6 +656,36 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
         .inner
     })
     .inner
+}
+
+fn fotufilm_sublayer_shares(ui: &mut Ui, shares: &mut [f64; 4]) -> bool {
+    ui.label("Sublayer shares").on_hover_text("Edit the first three shares; the fourth is the remaining share so the authored total stays one. All four shares must be positive.");
+    let mut changed = false;
+    for index in 0..3 {
+        let other_sum: f64 = shares[..3]
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != index)
+            .map(|(_, share)| *share)
+            .sum();
+        let maximum = 1.0 - other_sum - 1e-9;
+        let edited = numeric(
+            ui,
+            ["Sublayer 1", "Sublayer 2", "Sublayer 3"][index],
+            &mut shares[index],
+            1e-9,
+            maximum,
+            0.01,
+            6,
+            "Authored share; transfers weight to or from sublayer 4.",
+        );
+        if edited {
+            shares[3] = 1.0 - shares[..3].iter().sum::<f64>();
+            changed = true;
+        }
+    }
+    ui.label(format!("Sublayer 4 (remainder): {:.6}", shares[3]));
+    changed
 }
 
 fn scan_points(ui: &mut Ui, black: &mut [f64; 3], white: &mut [f64; 3]) -> bool {
@@ -1069,6 +1123,150 @@ mod tests {
             },
             egui::Event::Text(text.into()),
         ]
+    }
+
+    #[test]
+    fn fotufilm_amount_widget_edits_native_runtime_without_touching_dye() {
+        let ctx = egui::Context::default();
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Fotufilm;
+        let old_dye_support = params.film_render.grain.v3_dye_support_um;
+        let mut frame = |events| {
+            let mut flags = ChangeFlags::default();
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 1600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        flags = show(
+                            ui,
+                            &mut params,
+                            &mut serde_json::json!({}),
+                            "Grain",
+                            ScanMedium::Negative,
+                        );
+                    });
+                },
+            );
+            (
+                flags.runtime_changed,
+                params.film_render.grain.clone(),
+                output,
+            )
+        };
+        let (_, _, output) = frame(vec![]);
+        assert!(has_text(&output, "Fotufilm Film"));
+        assert!(has_text(&output, "Softness"));
+        assert!(has_text(&output, "Layer amounts"));
+        assert!(!has_text(&output, "Dye support (µm)"));
+        let position = text_position(&output, "1.00");
+        frame(click(position, true));
+        frame(click(position, false));
+        let (changed, grain, _) = frame(replace_text("2.25"));
+        assert!(changed);
+        assert_eq!(grain.fotufilm.amount, 2.25);
+        assert_eq!(grain.v3_dye_support_um, old_dye_support);
+    }
+    #[test]
+    fn fotufilm_selector_switches_real_widget_and_replaces_dye_controls() {
+        let ctx = egui::Context::default();
+        let mut params = RuntimeParams::default();
+        params.film_render.grain.engine = GrainEngine::Dye;
+        let mut frame = |events| {
+            let mut flags = ChangeFlags::default();
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 3000.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        flags = show(
+                            ui,
+                            &mut params,
+                            &mut serde_json::json!({}),
+                            "Grain",
+                            ScanMedium::Negative,
+                        );
+                    });
+                },
+            );
+            (flags, output)
+        };
+
+        let (_, initial) = frame(vec![]);
+        assert!(has_text(&initial, "Dye support (µm)"));
+        assert!(!has_text(&initial, "Layer amounts"));
+        let selector = text_position(&initial, "Dye");
+        frame(click(selector, true));
+        frame(click(selector, false));
+        let (_, popup) = frame(vec![]);
+        assert!(has_text(&popup, "Fotufilm Film"));
+        let fotufilm = text_position(&popup, "Fotufilm Film");
+        frame(click(fotufilm, true));
+        let (flags, _) = frame(click(fotufilm, false));
+        assert!(flags.runtime_changed);
+        let (_, selected) = frame(vec![]);
+        let advanced = text_position(&selected, "Fotufilm advanced");
+        frame(click(advanced, true));
+        frame(click(advanced, false));
+        let (_, selected) = frame(vec![]);
+        for label in [
+            "Amount",
+            "Size",
+            "Softness",
+            "Color",
+            "Layer amounts",
+            "RMS density",
+        ] {
+            assert!(
+                has_text(&selected, label),
+                "missing Fotufilm control: {label}"
+            );
+        }
+        assert!(has_text(&selected, "RMS density"));
+        assert!(!has_text(&selected, "Dye support (µm)"));
+    }
+
+    #[test]
+    fn fotufilm_share_editor_keeps_total_one() {
+        let ctx = egui::Context::default();
+        let mut shares = [0.25; 4];
+        let mut frame = |events| {
+            let mut changed = false;
+            let output = ctx.run(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        changed = fotufilm_sublayer_shares(ui, &mut shares);
+                    });
+                },
+            );
+            (changed, shares, output)
+        };
+        let (_, _, output) = frame(vec![]);
+        let position = text_position(&output, "0.250000");
+        frame(click(position, true));
+        frame(click(position, false));
+        let (changed, shares, _) = frame(replace_text("0.4"));
+        assert!(changed);
+        assert_eq!(shares[0], 0.4);
+        assert!((shares[3] - 0.1).abs() < 1e-12);
+        assert!((shares.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert!(shares.iter().all(|share| *share > 0.0));
     }
 
     #[test]

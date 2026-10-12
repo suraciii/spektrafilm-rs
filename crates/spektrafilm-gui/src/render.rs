@@ -1,6 +1,7 @@
 //! GUI render snapshots and runtime preparation shared by Preview, Scan, and Export.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
 use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
@@ -22,6 +23,7 @@ pub(super) struct RenderSnapshot {
     data_dir: PathBuf,
     special: serde_json::Value,
     scanner_setup: SharedScannerSetup,
+    cancellation: Option<Arc<AtomicBool>>,
 }
 
 impl RenderSnapshot {
@@ -40,7 +42,18 @@ impl RenderSnapshot {
             data_dir,
             special,
             scanner_setup,
+            cancellation: None,
         }
+    }
+
+    /// Bind the owner's cancellation token to runtimes built from this snapshot.
+    pub(super) fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
+    pub(super) fn cancellation(&self) -> Option<Arc<AtomicBool>> {
+        self.cancellation.clone()
     }
 
     #[cfg(test)]
@@ -113,13 +126,14 @@ impl RenderSnapshot {
         if self.params.scanner.auto_setup != ScannerAutoSetup::PerFrame {
             return Ok(None);
         }
-        self.scanner_setup
-            .get_or_init(|| {
-                let canonical = build_runtime_observed(self, false, context)?;
-                canonical.prepare_scanner_setup(full_input)
-            })
-            .clone()
-            .map(Some)
+        if let Some(setup) = self.scanner_setup.get() {
+            return setup.clone().map(Some);
+        }
+        let canonical = build_runtime_observed(self, false, context)?
+            .with_cancellation(self.cancellation.clone());
+        let setup = canonical.prepare_scanner_setup(full_input)?;
+        let _ = self.scanner_setup.set(Ok(setup));
+        Ok(Some(setup))
     }
 }
 #[derive(Clone, PartialEq)]

@@ -313,6 +313,7 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "grain_v2",
         "grain_v2_cpu",
         "grain_v3_field",
+        "grain_fotufilm",
         "printing",
         "scanning",
         "post_scan",

@@ -857,11 +857,11 @@ class X11:
         self.xd('click', 1)
         time.sleep(.15)
 
-    def file_action(self, control, path, save=False):
+    def file_action(self, control, path, save=False, float_export=False):
         self.tab('MAIN')
         if control == 'Export':
             self.click_export_button()
-            self.export_options(path)
+            self.export_options(path, float_export=float_export)
         else:
             self.click(control)
         self.dialog(path, save)
@@ -924,7 +924,7 @@ class X11:
         self.snap(label, image, lines)
         return text
 
-    def export_options(self, path):
+    def export_options(self, path, float_export=False):
         def modal_lines(image, box, scale):
             from PIL import ImageOps
             crop = image.crop(box)
@@ -1077,7 +1077,7 @@ class X11:
             menu_open = False
         select('Format', requested)
         if requested in ('TIFF', 'EXR'):
-            select('Bit depth', '16 bit')
+            select('Bit depth', '32 bit' if float_export else '16 bit')
         def submit():
             result = modal_read()
             if result is None:
@@ -1637,6 +1637,102 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         # for the automatic preview before measuring the viewer.
         driver.wait_report('loaded-input-auto-preview')
         before_input = driver.viewer_fingerprint()
+        # Native Fotufilm scenario: exercise the rendered engine selector and
+        # controls, a changed-path preview, explicit Preview/Scan, state
+        # persistence, CPU disclosure, and a float EXR export.
+        from gui_control_acceptance import enter_number
+        driver.tab('FILM')
+        driver.scroll(True)
+        if not driver.match(driver.read()[2], 'Grain', True):
+            driver.scroll(False)
+        require(driver.match(driver.read()[2], 'Grain', True),
+                'Film view did not expose the Grain section')
+        driver.click('Grain')
+        def grain_scroll_once():
+            image, _ = driver.image()
+            driver.xd('mousemove', '--window', driver.window, image.width - 180, int(image.height / 2))
+            driver.xd('click', '--repeat', 3, '--delay', 8, 5)
+            time.sleep(.15)
+        for control in ('active',):
+            visible = False
+            for _ in range(20):
+                _, _, candidate_lines = driver.read()
+                if driver.match(candidate_lines, control, True):
+                    visible = True
+                    break
+                grain_scroll_once()
+            require(visible, f'Expanded Grain section did not expose {control}')
+            driver.click(control)
+        visible = False
+        for _ in range(20):
+            _, _, candidate_lines = driver.read()
+            if driver.match(candidate_lines, 'Engine', True):
+                visible = True
+                break
+            grain_scroll_once()
+        require(visible, 'Expanded Grain section did not expose the Engine selector after scrolling')
+        driver.click('Engine')
+        image, _, grain_lines = driver.read()
+        grain_text = '\n'.join(' '.join(word[0] for word in line) for line in grain_lines)
+        driver.snap('fotufilm-controls', image, grain_lines)
+        for control in ('Fotufilm Film', 'Amount', 'Size', 'Softness', 'Color', 'Layer amounts'):
+            require(driver.match(grain_lines, control, True),
+                    f'Fotufilm control missing from native Grain section: {control}')
+        require(not re.search(r'Dye\s+support', grain_text, re.I),
+                f'Dye-only control remained visible for Fotufilm: {grain_text}')
+        before_amount = driver.viewer_fingerprint()
+        enter_number(driver, 'Amount', '1.65')
+        changed_amount = driver.wait_report('fotufilm-amount-change')
+        driver.await_viewer(before_amount, label='fotufilm amount render update')
+        driver.records.append({'parity_action': 'select_fotufilm_and_edit_amount',
+                               'assertion': 'Fotufilm controls are rendered and Amount changes the native render',
+                               'controls_ocr': grain_text,
+                               'amount': 1.65,
+                               'report': changed_amount})
+        driver.tab('MAIN')
+        driver.click('Preview')
+        preview_report = driver.wait_report('fotufilm-preview', 'Preview')
+        preview_text = driver.rendered('fotufilm-preview-status', 'Preview')
+        driver.click('Scan')
+        scan_report = driver.wait_report('fotufilm-scan', 'Scan')
+        scan_text = driver.rendered('fotufilm-scan-status', 'Scan')
+        disclosure = preview_text + '\n' + scan_text
+        require(re.search(r'grain\s+Fotufilm\s+on\s+CPU', disclosure, re.I),
+                f'Fotufilm backend disclosure did not identify CPU grain execution: {disclosure}')
+        require(not re.search(r'GPU\s+grain|grain\s+GPU', disclosure, re.I),
+                f'Fotufilm disclosure claimed a GPU grain kernel: {disclosure}')
+        driver.records.append({'parity_action': 'fotufilm_preview_and_scan',
+                               'assertion': 'Preview and Scan complete with CPU grain disclosure',
+                               'preview_report': preview_report,
+                               'scan_report': scan_report,
+                               'ocr': disclosure})
+        fotufilm_state = root / 'fotufilm-state.json'
+        driver.state_action('Save current to file', fotufilm_state, True)
+        wait_for(fotufilm_state.is_file, 'saved Fotufilm state', 20)
+        saved_fotufilm = json.loads(fotufilm_state.read_text())
+        saved_grain = saved_fotufilm['rust']['runtime']['film_render']['grain']
+        require(saved_grain['engine'] == 'fotufilm', 'Saved Fotufilm engine did not round-trip')
+        require(saved_grain['fotufilm']['amount'] == 1.65,
+                f'Saved Fotufilm Amount changed unexpectedly: {saved_grain["fotufilm"]}')
+        driver.state_action('Load from file', fotufilm_state)
+        loaded_fotufilm = root / 'fotufilm-loaded-state.json'
+        driver.state_action('Save current to file', loaded_fotufilm, True)
+        wait_for(loaded_fotufilm.is_file, 'observed loaded Fotufilm state', 20)
+        observed_fotufilm = json.loads(loaded_fotufilm.read_text())
+        observed_grain = observed_fotufilm['rust']['runtime']['film_render']['grain']
+        require(observed_grain == saved_grain,
+                f'Fotufilm state did not round-trip: {observed_grain} != {saved_grain}')
+        float_export = root / 'fotufilm-float-export.exr'
+        driver.file_action('Export', float_export, True, float_export=True)
+        driver.exported(float_export, 'fotufilm-float-export')
+        float_pixels = read_image(float_export)
+        driver.records.append({'parity_action': 'fotufilm_state_roundtrip_and_float_export',
+                               'assertion': 'effective Fotufilm state round-trips and float Export publishes an EXR',
+                               'saved_state': fotufilm_state.name,
+                               'loaded_state': loaded_fotufilm.name,
+                               'float_export': float_export.name,
+                               'float_export_shape': list(float_pixels.shape)})
+
         driver.click('Input', False)
         loaded_bounds = driver.measure_viewer('loaded-input-image', before_input)
         driver.records.append({'parity_action': 'load_input_image',

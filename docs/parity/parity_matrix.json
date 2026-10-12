@@ -345,7 +345,7 @@
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
-          "notes": "scanning.rs:348"
+          "notes": "scanning.rs::scan_with_capture"
         }
       },
       "white_correction": {
@@ -395,7 +395,7 @@
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
-          "notes": "scanning.rs:353"
+          "notes": "scanning.rs::scan_with_capture"
         }
       }
     },
@@ -1227,7 +1227,7 @@
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "supported",
-          "notes": "scanning.rs:252-267"
+          "notes": "scanning/spectral.rs::scan_spectral_rgb"
         }
       },
       "lut_resolution": {
@@ -1237,7 +1237,7 @@
         "verification": "Implementation source and current differential/package evidence.",
         "audit_baseline": {
           "rust_status": "accepted_but_unread",
-          "notes": "printing.rs:214; scanning.rs:265"
+          "notes": "printing.rs:214; scanning/spectral.rs::scan_spectral_rgb"
         }
       },
       "use_fast_stats": {
@@ -3438,17 +3438,17 @@
     {
       "gap": "direct-scan glare: Python passes glare=None on scan_film; Rust applies film_render.glare (seed 42)",
       "owner_issue": 8,
-      "evidence": "scanning.py:54-55 vs scanning.rs:284-288,325-333"
+      "evidence": "scanning.py:54-55 vs scanning.rs::scan_with_capture"
     },
     {
       "gap": "output clip semantics: Rust clamps [0,1] when output_cctf_encoding=False; Python never clips",
       "owner_issue": 4,
-      "evidence": "scanning.rs:385-389 vs scanning.py:130-139"
+      "evidence": "scanning.rs::scan_with_capture vs scanning.py:130-139"
     },
     {
       "gap": "unsupported color spaces silently fall back (input->ProPhoto, output->sRGB) instead of erroring",
       "owner_issue": 4,
-      "evidence": "filming.rs:510-518 _ => PROPHOTO_TO_XYZ; scanning.rs:449-456 _ => XYZ_TO_SRGB_F64"
+      "evidence": "filming.rs:510-518 _ => PROPHOTO_TO_XYZ; scanning.rs::scan_with_capture"
     },
     {
       "gap": "jzazbz/oklrab output gamut + perceptual compression on non-sRGB output fall back to identity",
@@ -3468,7 +3468,7 @@
     {
       "gap": "glare RNG stream: Rust fixed seed 42 vs Python continued np.random stream (statistical parity only)",
       "owner_issue": 8,
-      "evidence": "scanning.rs:331 comment; model/glare.py via fast_stats np.random"
+      "evidence": "scanning.rs::scan_with_capture; model/glare.py via fast_stats np.random"
     },
     {
       "gap": "ICC profiles (166 files) + SPEKTRAFILM_LICENSE.txt not bundled in the Rust tree",
@@ -3919,7 +3919,7 @@
         "declared_status": "expected_parity",
         "audit_baseline": {
           "status": "expected_parity",
-          "notes": "Rust scanning.rs:243 routes through scan_spectral_via_lut when use_scanner_lut is set.",
+          "notes": "Rust scanning/spectral.rs::scan_spectral_rgb routes through scan_spectral_via_lut when use_scanner_lut is set.",
           "description": "settings.use_scanner_lut=True \u2014 scan evaluated through the 17^3 PCHIP scanner LUT."
         },
         "owner_issue": null,
@@ -4498,7 +4498,7 @@
         "audit_baseline": {
           "status": "known_gap",
           "notes": "film_render.glare is a distinct upstream group from print_render.glare; upstream never applies it anywhere (no-op on the print path, explicitly None on scan_film).",
-          "description": "Direct film scan with default glare flags \u2014 Python passes glare=None on the scan_film path (scanning.py:54-55); Rust applies film_render.glare (scanning.rs:284-288) with a fixed seed 42."
+          "description": "Direct film scan with default glare flags — Python passes glare=None on the scan_film path (scanning.py:54-55); Rust applies film_render.glare (scanning.rs::scan_with_capture) with a fixed seed 42."
         },
         "owner_issue": 8,
         "status": "pass",
