@@ -285,6 +285,10 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
+        if self.pipeline.has_scanner_setup() {
+            let preview = crate::params_builder::resize_for_preview(&image, max_size);
+            return self.process(preview, backend);
+        }
         let setup = self.prepare_scanner_setup(&image)?;
         let prepared = self.clone().with_scanner_setup(setup);
         let preview = crate::params_builder::resize_for_preview(&image, max_size);
@@ -542,6 +546,126 @@ mod tests {
             .parent()
             .unwrap()
             .join("data")
+    }
+
+    fn scanner_params() -> RuntimeParams {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.camera.auto_exposure = false;
+        params.film_render.grain.active = false;
+        params.film_render.halation.active = false;
+        params.film_render.dir_couplers.active = false;
+        params.film_render.glare.active = false;
+        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.auto_setup = crate::params::ScannerAutoSetup::PerFrame;
+        params
+    }
+
+    fn scanner_image() -> ImageBuf {
+        ImageBuf::from_data(
+            4,
+            4,
+            (0..16)
+                .flat_map(|i| [from_f64(0.08 + i as f64 * 0.02); 3])
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn preview_preserves_attached_scanner_setup() {
+        let mut params = scanner_params();
+        params.settings.preview_max_size = 2;
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let mut setup = runtime.prepare_scanner_setup(&image).unwrap();
+        setup.density_ev += 2.0;
+        setup.balance_ev = [0.5, 0.0, -0.5];
+        let attached = runtime.clone().with_scanner_setup(setup);
+        let resized = crate::params_builder::resize_for_preview(&image, 2);
+        let expected = attached.process(resized, &backend).unwrap();
+        let remeasured = runtime.process_preview(image.clone(), 2, &backend).unwrap();
+        assert!(
+            expected
+                .data
+                .iter()
+                .zip(&remeasured.data)
+                .any(|(a, b)| { (*a as f64 - *b as f64).abs() > 1e-3 })
+        );
+        let preview = attached
+            .process_preview(image.clone(), 2, &backend)
+            .unwrap();
+        let configured = attached
+            .process_configured_preview(image, &backend)
+            .unwrap();
+        assert_eq!((preview.width, preview.height), (2, 2));
+        assert_eq!(preview.data, expected.data);
+        assert_eq!(configured.data, expected.data);
+    }
+
+    #[test]
+    fn per_frame_setup_accepts_small_valid_positive_density() {
+        let mut params = scanner_params();
+        params.scanner.positive_dmax = 1e-18;
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        let setup = runtime.prepare_scanner_setup(&image).unwrap();
+        assert!(setup.density_ev.is_finite());
+        assert!(setup.balance_ev.iter().all(|v| v.is_finite()));
+        assert!((0.5..=2.0).contains(&setup.contrast_scale));
+        let output = runtime.process(image.clone(), &backend).unwrap();
+        let prepared = runtime
+            .with_scanner_setup(setup)
+            .process(image, &backend)
+            .unwrap();
+        assert!(output.data.iter().all(|v| v.is_finite()));
+        assert!(output.data.windows(3).any(|w| w[0] != w[2]));
+        assert_eq!(output.data, prepared.data);
+    }
+
+    #[test]
+    fn explicit_rgb_input_overrides_persisted_diagnostic_inject_for_setup() {
+        let mut params = scanner_params();
+        params.taps.inject = Some("log_e_film".into());
+        let runtime = Runtime::from_stocks(
+            "kodak_portra_400",
+            "kodak_portra_endura",
+            params,
+            &data_dir(),
+        )
+        .unwrap();
+        let backend = CpuBackend;
+        let image = scanner_image();
+        assert_eq!(
+            runtime.process(image.clone(), &backend).unwrap_err(),
+            "per_frame scanner setup requires the full rgb_in input"
+        );
+        let explicit = runtime
+            .process_with_taps(image.clone(), &backend, Some(Tap::RgbIn), Some(Tap::RgbOut))
+            .unwrap();
+        let mut params = runtime.params().clone();
+        params.taps.inject = None;
+        let default = runtime
+            .with_params(params)
+            .unwrap()
+            .process(image, &backend)
+            .unwrap();
+        assert_eq!((explicit.width, explicit.height), (4, 4));
+        assert_eq!(explicit.data, default.data);
     }
 
     #[test]

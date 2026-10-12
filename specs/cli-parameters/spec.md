@@ -196,6 +196,8 @@ The report must add `edits` as an array of winning `--set` leaves sorted by cano
 
 Text dry run must show the same resolved input declaration and sources, profile identities, route, scan-output mode, seed, requested backend, writer options, and edit feedback as JSON. It must show data selection and RAW loading choices. Effective exposure, film format, grain engine, and grain controls must use their canonical units and conditions. Text layout must not be a machine contract.
 
+Both dry-run formats must report scanner receiver provenance and calibration status. Approximate receiver profiles must be labeled approximate. Scanner finish strength must be reported as inactive when the selected finish is neutral.
+
 Both formats must state that pixel decoding, compute-device availability, metered exposure, and final pixel geometry remain unchecked. JSON must add `unchecked` with the stable values `pixel_decode`, `compute_device`, `metered_exposure`, and `output_geometry`. Dry run must not claim these outcomes. A configuration valid in dry run may still fail on decoding, resource availability, rendering, or publication.
 
 Normal processing and dry run must warn on stderr for winning `--set` edits with non-active status. Each warning must name the canonical path, source, and reason. Known corrective choices must be explained without applying them. Unedited inactive defaults and preset controls must not produce these warnings. Feedback must not enable effects, select a grain engine, change a V2 profile to `custom`, or turn a valid stored inactive value into a configuration error.
