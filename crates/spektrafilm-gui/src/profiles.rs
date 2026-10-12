@@ -76,7 +76,7 @@ pub(super) fn dev_time_combo(
     let current_idx = profile::development_time_index(times, *selection);
     let mut changed = false;
     let tooltip = "Development time for a BW development-time family: selects the density curve and base+fog to render. '—' uses the representative middle development; ignored for single-curve and color stocks.";
-    ui.label(label).on_hover_text(tooltip);
+    let label_response = ui.label(label).on_hover_text(tooltip);
     egui::ComboBox::from_id_salt(salt)
         .selected_text(format!("{} min", times[current_idx]))
         .width(ui.available_width().min(280.0))
@@ -94,6 +94,17 @@ pub(super) fn dev_time_combo(
         })
         .response
         .on_hover_text(tooltip);
+    if let Some(response) = ui
+        .ctx()
+        .read_response(ui.make_persistent_id(egui::Id::new(salt)))
+    {
+        let id = response.id;
+        response.labelled_by(label_response.id);
+        // egui's unlabelled ComboBox installs an empty explicit label, which
+        // overrides the associated visible label in AccessKit consumers.
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.clear_label());
+    }
     changed
 }
 
@@ -113,7 +124,7 @@ pub(super) fn profile_combo(
     } else {
         "Print stock to simulate"
     };
-    ui.label(label).on_hover_text(tooltip);
+    let label_response = ui.label(label).on_hover_text(tooltip);
     let display = entries
         .iter()
         .find(|e| &e.stock == selected_stock)
@@ -130,5 +141,66 @@ pub(super) fn profile_combo(
         })
         .response
         .on_hover_text(tooltip);
+    if let Some(response) = ui
+        .ctx()
+        .read_response(ui.make_persistent_id(egui::Id::new(salt)))
+    {
+        let id = response.id;
+        response.labelled_by(label_response.id);
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.clear_label());
+    }
     prev != *selected_stock
+}
+
+#[cfg(test)]
+mod headless {
+    use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn profile_and_development_labels_resolve_to_selectors_and_select_real_values() {
+        let entries = vec![
+            ProfileEntry {
+                stock: "first".into(),
+                display: "First film".into(),
+            },
+            ProfileEntry {
+                stock: "second".into(),
+                display: "Second film".into(),
+            },
+        ];
+        let mut harness = Harness::new_ui_state(
+            |ui, state: &mut (String, Option<f64>)| {
+                profile_combo(ui, "film", "Film", &entries, &mut state.0);
+                dev_time_combo(
+                    ui,
+                    "film-dev",
+                    "Film development",
+                    &[4.0, 8.0, 12.0],
+                    &mut state.1,
+                );
+            },
+            ("first".to_owned(), None),
+        );
+        for label in ["Film", "Film development"] {
+            assert_eq!(
+                harness.get_by_label(label).role(),
+                egui::accesskit::Role::ComboBox
+            );
+        }
+        let film_id = harness.get_by_label("Film").id();
+        harness.get_by_label("Film").click();
+        harness.run();
+        harness.get_by_label("Second film").click();
+        harness.step();
+        assert_eq!(harness.state().0, "second");
+        harness.run();
+        assert_eq!(harness.get_by_label("Film").id(), film_id);
+        harness.get_by_label("Film development").click();
+        harness.run();
+        harness.get_by_label("12 min").click();
+        harness.step();
+        assert_eq!(harness.state().1, Some(12.0));
+    }
 }
