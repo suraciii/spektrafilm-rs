@@ -18,7 +18,10 @@ jobs:
   lightweight:
     name: ${{ github.event_name == 'pull_request' && 'PR lightweight' || 'Main full verification' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 30 }}
+    # A cold `just ci` (no restored target cache) needs the dependency build, the
+    # f32 and f64 suites and the benchmark gate; 30 minutes cancelled the first
+    # run after this file changed the lock file.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 90 }}
     env:
       OPENBLAS_NUM_THREADS: '1'
       RAYON_NUM_THREADS: '2'
@@ -87,8 +90,11 @@ jobs:
       - name: Run full main gate with evidence
         if: github.event_name != 'pull_request'
         run: just verify "$RUNNER_TEMP/verification"
-      - name: Save verified main Rust workspace cache
-        if: github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true'
+      - name: Save main Rust workspace cache
+        # `always()` retains a partially warmed `target` after a cancelled or
+        # failed gate, so the next main run restores it instead of rebuilding
+        # from scratch; an exact cache hit still skips the duplicate save.
+        if: always() && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |

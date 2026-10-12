@@ -4016,6 +4016,7 @@ dependencies = [
  "rand_distr",
  "rand_mt",
  "rayon",
+ "serde_json",
  "spektrafilm-gpu",
  "spektrafilm-math",
  "thiserror 2.0.18",

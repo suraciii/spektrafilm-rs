@@ -799,6 +799,7 @@ fn cmd_process(
             None
         },
     });
+    let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
         let report = json!({
@@ -807,6 +808,7 @@ fn cmd_process(
             "parameters": params,
             "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
             "film_grain_dye": grain_v3,
+            "film_grain_fotufilm": grain_fotufilm,
             "data": {"path": data.path, "source": data.source},
             "input": {
                 "kind": if input_is_raw { "raw" } else { "raster" },

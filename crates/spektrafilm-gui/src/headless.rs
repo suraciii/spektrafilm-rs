@@ -31,6 +31,12 @@ fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
 }
 
 fn session() -> Session {
+    session_stochastic(true)
+}
+
+/// The shared harness deactivates stochastic effects so preview and scan
+/// comparisons stay deterministic; grain acceptance needs them active.
+fn session_stochastic(deactivate_stochastic_effects: bool) -> Session {
     let directory = tempfile::tempdir().unwrap();
     let image_path = directory.path().join("asymmetric-ramp.png");
     let mut image = ImageBuf::new(160, 80);
@@ -63,7 +69,7 @@ fn session() -> Session {
     params.settings.preview_max_size = 128;
     params.camera.auto_exposure = false;
     params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
+    params.debug.deactivate_stochastic_effects = deactivate_stochastic_effects;
     params.io.crop = false;
     let mut initial =
         state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
@@ -427,6 +433,50 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     choose(h, "workflow", "Finished RGB");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert!(h.query_by_label("positive density ev").is_none());
+}
+
+#[test]
+fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
+    use spektrafilm_core::params::GrainEngine;
+    let mut s = session();
+    let h = &mut s.harness;
+    choose(h, "workflow", "input > film > scan");
+    click(h, "Profiles");
+    let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    let profile_label = profile.info.name.as_deref().unwrap_or("kodak_portra_400");
+    choose(h, "film profile", profile_label);
+    // Selecting a stock intentionally resets its workflow.
+    choose(h, "workflow", "input > film > scan");
+    click(h, "FILM");
+    if !h.state().params.film_render.grain.active {
+        click(h, "active");
+    }
+    assert!(h.state().params.film_render.grain.active);
+    assert_eq!(
+        h.state().params.film_render.grain.engine,
+        GrainEngine::Spektra
+    );
+    let spektra = render(h, "PREVIEW");
+    choose(h, "Engine", "Fotufilm Film");
+    assert_eq!(
+        h.state().params.film_render.grain.engine,
+        GrainEngine::Fotufilm
+    );
+    assert_eq!(h.state().film_name, "kodak_portra_400");
+    assert!(h.query_by_label("Layer amounts").is_some());
+    assert!(
+        h.query_by_label("Dye support (µm)").is_none(),
+        "another engine's controls must not appear"
+    );
+    // The harness deactivates stochastic effects, so the selected engine must
+    // remain an exact bypass; the release-binary CLI smoke exercises the
+    // prepared bank and residual sampling.
+    let fotufilm = render(h, "PREVIEW");
+    assert_eq!((fotufilm.width, fotufilm.height), (128, 64));
+    assert_eq!(
+        fotufilm.data, spektra.data,
+        "stochastic deactivation must bypass the selected grain engine"
+    );
 }
 
 #[test]

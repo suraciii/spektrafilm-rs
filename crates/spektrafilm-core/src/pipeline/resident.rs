@@ -16,6 +16,7 @@ enum ResidentFallbackReason {
     /// Active Dye resolves its film-coordinate field on the CPU; the
     /// resident chain has no equivalent readout.
     FilmGrainV3FieldCpu,
+    FilmGrainFotufilmCpu,
     UnsupportedOutputGamut,
     BlurRadiusExceedsBackendSupport,
     MissingResidentFrontPass,
@@ -106,6 +107,9 @@ impl Pipeline {
         // resident entry point.
         if crate::stages::grain_v3::active(&self.params) {
             reasons.push(ResidentFallbackReason::FilmGrainV3FieldCpu);
+        }
+        if crate::stages::grain_fotufilm::active(&self.params) {
+            reasons.push(ResidentFallbackReason::FilmGrainFotufilmCpu);
         }
         if self.output_gamut.is_active() && self.output_gamut.gpu_params().is_none() {
             reasons.push(ResidentFallbackReason::UnsupportedOutputGamut);
@@ -213,6 +217,7 @@ impl Pipeline {
                                 R::FaithfulGrainDistribution
                             }
                             ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
+                            ResidentFallbackReason::FilmGrainFotufilmCpu => R::FotufilmFilmCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
                                 R::UnsupportedOutputGamut
                             }
@@ -610,6 +615,21 @@ mod tests {
                 .iter()
                 .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainV3FieldCpu))
         );
+        pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
+        pipeline.params.film_render.grain.fotufilm.amount = 1.0;
+        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
+            panic!("Fotufilm grain must remain on the per-stage path");
+        };
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainFotufilmCpu))
+        );
+        pipeline.params.film_render.grain.fotufilm.amount = 0.0;
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
     }
 
     #[test]
