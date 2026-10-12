@@ -70,6 +70,8 @@ pub struct FitForcedSettings {
     pub grain_active: bool,
     /// The scan output domain; always false, because the reference is linear.
     pub output_cctf_encoding: bool,
+    /// The scan output color space; always sRGB, the primaries of the reference.
+    pub output_color_space: &'static str,
     /// The surface toggle the fit enabled; absent when the surface is not fitted.
     pub surface_toggle: Option<bool>,
 }
@@ -242,6 +244,18 @@ pub fn fit(request: FitRequest) -> Result<FitReport, String> {
     )?;
 
     let run = solve_fit(&evaluator, &options)?;
+    // A lower objective can trade one metric for the other; the fit only
+    // publishes values that reduce both.
+    for (metric, base, fitted) in [
+        ("color", run.base.color_de, run.fitted.color_de),
+        ("gray", run.base.gray_de, run.fitted.gray_de),
+    ] {
+        if fitted.partial_cmp(&base) != Some(std::cmp::Ordering::Less) {
+            return Err(format!(
+                "fit did not reduce the {metric} ΔE00 median: unfitted {base:.3}, fitted {fitted:.3}"
+            ));
+        }
+    }
     let cv = if options.cv {
         Some(cross_validate(&evaluator, &options)?)
     } else {
@@ -285,6 +299,7 @@ pub fn fit(request: FitRequest) -> Result<FitReport, String> {
             halation_active: false,
             grain_active: false,
             output_cctf_encoding: false,
+            output_color_space: evaluate::FIT_OUTPUT_COLOR_SPACE,
             surface_toggle: surface.then_some(true),
         },
     })

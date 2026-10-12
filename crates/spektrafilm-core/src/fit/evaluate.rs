@@ -31,6 +31,9 @@ pub(crate) const BALANCE_LOWER: f64 = -2.0;
 pub(crate) const BALANCE_UPPER: f64 = 2.0;
 pub(crate) const SURFACE_STEP: f64 = 0.05;
 pub(crate) const TONE_STEP: f64 = 0.01;
+/// The scan output color space of every evaluation: the reference table has
+/// sRGB primaries and the patch comparison converts from linear sRGB.
+pub(crate) const FIT_OUTPUT_COLOR_SPACE: &str = "sRGB";
 
 /// One forward evaluation: the patch colors, the residual vector, and the two
 /// reported medians.
@@ -85,6 +88,11 @@ impl Evaluator {
         lambda: f64,
     ) -> Result<Self, String> {
         layout.validate()?;
+        if !(lambda.is_finite() && lambda >= 0.0) {
+            return Err(format!(
+                "lambda must be a finite value of at least 0, got {lambda}"
+            ));
+        }
         if surface {
             if !(1..=MAX_SURFACE_TERMS).contains(&surface_terms) {
                 return Err(format!(
@@ -283,6 +291,7 @@ impl Evaluator {
         params.film_render.halation.active = false;
         params.film_render.grain.active = false;
         params.io.output_cctf_encoding = false;
+        params.io.output_color_space = FIT_OUTPUT_COLOR_SPACE.into();
 
         let runtime = Runtime::new(film, self.print.clone(), params, &self.data_dir)?;
         let rendered = runtime.process(self.chart.clone(), &CpuBackend)?;
@@ -299,7 +308,7 @@ impl Evaluator {
             }
         }
         if self.surface {
-            let weight = self.lambda.max(0.0).sqrt();
+            let weight = self.lambda.sqrt();
             residual.extend(surface_values.iter().map(|value| weight * value));
         }
         let color_de = self.delta_median(&labs, &self.color);

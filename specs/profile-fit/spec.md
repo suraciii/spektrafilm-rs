@@ -68,6 +68,8 @@ The fitted target is deterministic: identical inputs, preset, and options must p
 
 The report must carry the fitted values, the metrics below, every input path with its SHA-256, the source of both patch tables, the resolved preset and route, the forced settings, and the tool version.
 
+A fit publishes its outputs only when the fitted values reduce both metrics against the unfitted configuration on the same data. Otherwise it fails with both values and writes no output. A failed write must not leave a partial set of outputs from the run.
+
 ## Metrics
 
 Both metrics are median CIEDE2000 values between the chain output patches and the reference patches in CIE L\*a\*b\* coordinates.
