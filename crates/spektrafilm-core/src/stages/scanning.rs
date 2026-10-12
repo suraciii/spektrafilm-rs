@@ -630,7 +630,57 @@ fn scan_rgb_to_y(color: &crate::chain_prep::ScanColorContext) -> Result<[f64; 3]
     Ok(cofactors.map(|v| v / determinant))
 }
 
-// Scan options preserve the existing stage interface.
+/// Linear optical capture before inversion, gamut compression and encoding.
+pub fn capture_linear(
+    density_cmy: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+) -> Result<ImageBuf, String> {
+    if color_ref.has_remap() || params.settings.use_scanner_lut {
+        return Err(
+            "exact-cell scanning requires direct spectral capture without luminance remap or LUT"
+                .to_owned(),
+        );
+    }
+    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, None);
+    Ok(scan_spectral_rgb(
+        density_cmy,
+        profile,
+        params,
+        backend,
+        color_ref,
+        &crate::chain_prep::channel_density(profile),
+        &profile.data.base_density,
+        &prepared.scan,
+        false,
+    ))
+}
+
+/// Finish an area-averaged capture in the scanner's original stage order.
+pub fn finish_capture(
+    rgb: ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+) -> Result<ImageBuf, String> {
+    let unused_density = ImageBuf::new(0, 0);
+    scan_with_capture(
+        &unused_density,
+        profile,
+        params,
+        backend,
+        color_ref,
+        gamut,
+        None,
+        true,
+        Some(rgb),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn scan_with_options(
     density_cmy: &ImageBuf,
@@ -641,6 +691,32 @@ pub fn scan_with_options(
     gamut: &crate::gamut_compression::OutputGamutCompress,
     scan_illuminant: Option<&str>,
     include_base: bool,
+) -> Result<ImageBuf, String> {
+    scan_with_capture(
+        density_cmy,
+        profile,
+        params,
+        backend,
+        color_ref,
+        gamut,
+        scan_illuminant,
+        include_base,
+        None,
+    )
+}
+
+// Scan options preserve the existing stage interface.
+#[allow(clippy::too_many_arguments)]
+fn scan_with_capture(
+    density_cmy: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+    scan_illuminant: Option<&str>,
+    include_base: bool,
+    captured_rgb: Option<ImageBuf>,
 ) -> Result<ImageBuf, String> {
     let positive_scan = positive_scan_requested(params);
     let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
@@ -703,17 +779,19 @@ pub fn scan_with_options(
     // The path selection (including the faithful B&W/slide luminance
     // remap) lives in `scan_spectral_rgb` so the reference samples
     // below cannot diverge from this bulk scan.
-    let mut rgb = scan_spectral_rgb(
-        density_cmy,
-        profile,
-        params,
-        backend,
-        color_ref,
-        &channel_density,
-        base_density,
-        scan_context,
-        slide_points,
-    );
+    let mut rgb = captured_rgb.unwrap_or_else(|| {
+        scan_spectral_rgb(
+            density_cmy,
+            profile,
+            params,
+            backend,
+            color_ref,
+            &channel_density,
+            base_density,
+            scan_context,
+            slide_points,
+        )
+    });
 
     // Historical white/black correction stays inside the scan LUT. Active
     // slide points defer only that remap until after capture blur and points.

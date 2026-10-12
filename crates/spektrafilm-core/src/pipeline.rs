@@ -450,6 +450,23 @@ impl Pipeline {
             ));
         }
         let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+        let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
+        if cell_spectral {
+            if aperture_factor.is_some() {
+                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
+            }
+            let supported_collect = collect == Tap::RgbOut
+                || (!self.params.io.scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
+            if !supported_collect || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap() {
+                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
+            }
+            if color_ref.has_remap() {
+                return Err(
+                    "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
+                        .to_owned(),
+                );
+            }
+        }
         if aperture_factor.is_some()
             && (collect != Tap::RgbOut
                 || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap())
@@ -522,6 +539,61 @@ impl Pipeline {
                 // axis differ; the field itself retains both exact pitches.
                 let long_axis = usize::from(cur.height > cur.width);
                 let requested_pitch_um = geometry.output_pitch_um[long_axis];
+                if cell_spectral {
+                    cur = stages::grain_v3::readout_with_response(
+                        &cur,
+                        &self.film,
+                        &self.params,
+                        pixel_size_um,
+                        grid,
+                        backend,
+                        |cells, backend| {
+                            if self.params.io.scan_film {
+                                stages::scanning::capture_linear(
+                                    cells,
+                                    &self.film,
+                                    &self.params,
+                                    backend,
+                                    color_ref,
+                                )
+                            } else {
+                                stages::printing::expose_linear_calibrated(
+                                    cells,
+                                    &self.film,
+                                    &self.print,
+                                    &self.params,
+                                    backend,
+                                    &self.print_illuminant,
+                                    self.print_exposure_factor,
+                                    self.preflash_raw,
+                                    color_ref.printing_exposure_correction,
+                                )
+                            }
+                        },
+                    )?;
+                    pixel_size_um = requested_pitch_um;
+                    if self.params.io.scan_film {
+                        let observation = stages::StageObservation::new(backend, "scanning");
+                        cur = stages::scanning::finish_capture(
+                            cur,
+                            &self.film,
+                            &self.params,
+                            observation.backend(backend),
+                            color_ref,
+                            &self.output_gamut,
+                        )?;
+                        i = order.iter().position(|tap| *tap == Tap::RgbOut).unwrap();
+                    } else {
+                        cur.data.par_iter_mut().for_each(|value| {
+                            *value = from_f64(to_f64(*value).log10());
+                        });
+                        dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &cur);
+                        i = order.iter().position(|tap| *tap == Tap::LogEPrint).unwrap();
+                    }
+                    print_stage_timing(stage_timings_enabled(), "grain_v3_cell_spectral", t);
+                    record_stage_timing(&mut stage_timings, "grain_v3_cell_spectral", t);
+                    continue;
+                }
                 cur = stages::grain_v3::readout(
                     &cur,
                     &self.film,
@@ -642,6 +714,23 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
+        if stages::grain_v3::active(&self.params) {
+            let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
+            let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+            if cell_spectral {
+                stages::grain_v3::validate_supported(&self.film, &self.params)?;
+                if aperture_factor.is_some() {
+                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
+                }
+                if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm)
+                    || !(collect == Tap::RgbOut
+                        || (!self.params.io.scan_film
+                            && matches!(collect, Tap::LogEPrint | Tap::CmyPrint)))
+                {
+                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
+                }
+            }
+        }
         if let Some(context) = backend.observation_context()
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
         {

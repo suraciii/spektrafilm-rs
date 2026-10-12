@@ -19,6 +19,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Magazine print color.** The optional finishing treatment applies a bundled RGB appearance to any supported base workflow — a scanned negative or a finished RGB input — after the base workflow and its scanner-domain effects: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. `magazine_print_color.active` and one appearance Strength from 0 to 1 enable it independently of the base workflow; there is no magazine route. It remains RGB-only and does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 - **Selectable grain engines.** V1 remains the default emulsion model. V2 provides procedural Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls. V3 conditions a film-coordinate dye field controlled by its film-space support `v3_dye_support_um` and event area `v3_event_area_um2`.
+- **Grain V3 experiments.** Opt-in formed-cell spectral readout and compensated fixed/two-class/Gamma event-mass comparisons are available through diagnostic environment selectors. See [experiment scope](specs/film-grain/v3/experiments.md); the default field and readout remain unchanged.
 
 ## Build
 
