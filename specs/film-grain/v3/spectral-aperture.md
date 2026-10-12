@@ -6,9 +6,9 @@ The probe measures the effect of reading formed Grain V3 density through a finer
 
 ## Scope
 
-The probe is enabled only when `SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR` is set to an integer from `2` through `24`.
+The probe is enabled for active Grain V3 when `SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR` is set to an integer from `2` through `24`. Other grain engines and inactive Grain V3 ignore the variable.
 
-The probe supports the `input > film > print > scan` route with `io.scan_film = false` and collection at `rgb_out`. It rejects `input > film > scan`, collection at `cmy_film`, and active enlarger diffusion. It may retain the existing scanner-domain stages after the print route has returned to the requested output grid.
+The probe supports the `input > film > print > scan` route with `io.scan_film = false`, injection at or before `log_e_film`, and collection at `rgb_out`. It rejects film scans, later injection taps, and other collection taps. Enlarger diffusion, scanner blur, unsharp mask, and print glare must be inactive.
 
 The default path remains the existing density readout when the variable is absent.
 
@@ -32,7 +32,7 @@ The factor comparison must use one fixed input and one fixed seed. Report linear
 
 The probe must fail before field allocation when its route or stage conditions are unsupported. It must reject non-integer, non-finite, zero, negative, or out-of-range factors. It must preserve the existing error behavior when disabled.
 
-The probe must restore the requested output pitch before scanner-domain spatial processing. Crop and full-film downstream processing must retain the existing global geometry and crop-after-spatial behavior.
+The probe restores the requested output pitch after exposure averaging. Crops select fine-grid readout footprints in the same global film coordinates. The probe does not run downstream spatial optics.
 
 ## Promotion boundary
 

@@ -449,6 +449,13 @@ impl Pipeline {
                 collect, inject
             ));
         }
+        let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+        if aperture_factor.is_some()
+            && (collect != Tap::RgbOut
+                || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap())
+        {
+            return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires injection at or before log_e_film and collect=rgb_out".to_owned());
+        }
         let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
             stages::grain_v3::validate_supported(&self.film, &self.params)?;
             let image = self.expose_full_input(image, backend);
@@ -474,10 +481,6 @@ impl Pipeline {
             context.set_working_dimensions(cur.width, cur.height);
         }
         let mut stage_timings = stage_timings;
-        let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
-        if aperture_factor.is_some() && collect != Tap::RgbOut {
-            return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires collect=rgb_out".to_owned());
-        }
         let mut aperture_output_pitch_um = None;
         let mut i = ip;
         if inject == Tap::RgbIn && cp > ip {
@@ -537,17 +540,17 @@ impl Pipeline {
                 record_stage_timing(&mut stage_timings, "grain_v3_readout", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
             }
-            if order[i] == Tap::CmyFilm {
-                if let Some(factor) = aperture_factor {
-                    let t = Instant::now();
-                    cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
-                    pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
-                        "film grain V3 aperture: missing requested output pitch".to_owned()
-                    })?;
-                    print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
-                    record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
-                    tracing::info!(factor, "film grain V3: collapsed linear print exposure");
-                }
+            if order[i] == Tap::CmyFilm
+                && let Some(factor) = aperture_factor
+            {
+                let t = Instant::now();
+                cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
+                pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
+                    "film grain V3 aperture: missing requested output pitch".to_owned()
+                })?;
+                print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
+                record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
+                tracing::info!(factor, "film grain V3: collapsed linear print exposure");
             }
             i += 1;
         }

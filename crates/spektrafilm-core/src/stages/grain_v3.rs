@@ -278,12 +278,12 @@ pub fn aperture_grid(geometry: &Geometry, factor: u32) -> Result<ReadoutGrid, St
         height,
     })
 }
-/// Average a factor-upscaled linear RGB-like exposure back to the requested grid.
-pub fn collapse_linear_blocks(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
+/// Average fine print log exposure in linear light, then return to log space.
+pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
     let factor = factor as usize;
     let width = fine.width as usize;
     let height = fine.height as usize;
-    if factor == 0 || width % factor != 0 || height % factor != 0 {
+    if factor == 0 || !width.is_multiple_of(factor) || !height.is_multiple_of(factor) {
         return Err(
             "film grain V3 aperture: fine image dimensions must be divisible by the factor"
                 .to_owned(),
@@ -304,29 +304,17 @@ pub fn collapse_linear_blocks(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, 
                 let row = (oy * factor + dy) * width;
                 for dx in 0..factor {
                     let src = (row + ox * factor + dx) * 3;
-                    for c in 0..3 {
-                        sum[c] += fine.data[src + c] as f64;
+                    for (c, value) in sum.iter_mut().enumerate() {
+                        *value +=
+                            10.0f64.powf(spektrafilm_math::precision::to_f64(fine.data[src + c]));
                     }
                 }
             }
-            for c in 0..3 {
-                dst[c] = spektrafilm_math::precision::from_f64(sum[c] / block_area);
+            for (value, sum) in dst.iter_mut().zip(sum) {
+                *value = spektrafilm_math::precision::from_f64((sum / block_area).log10());
             }
         });
     Ok(out)
-}
-/// Collapse fine print log exposure through linear light, then return to log space.
-pub fn collapse_log_exposure(fine: &ImageBuf, factor: u32) -> Result<ImageBuf, String> {
-    let mut linear = fine.clone();
-    linear.data.par_iter_mut().for_each(|value| {
-        *value = spektrafilm_math::precision::from_f64(10.0f64.powf(*value as f64));
-    });
-    let linear = collapse_linear_blocks(&linear, factor)?;
-    let mut output = linear;
-    output.data.par_iter_mut().for_each(|value| {
-        *value = spektrafilm_math::precision::from_f64((*value as f64).max(0.0).log10());
-    });
-    Ok(output)
 }
 
 /// Per-channel event-area scale `k_c` resolved from the stock granularity
@@ -455,6 +443,45 @@ mod tests {
     use super::*;
     use crate::params::RuntimeParams;
     use spektrafilm_math::precision::from_f64;
+
+    #[test]
+    fn aperture_averages_linear_exposure_per_output_block() {
+        // Adjacent blocks contain exposures 1/100 and 10/1000. Averaging
+        // their logs would yield 1 and 2 instead of log10(50.5/505).
+        let fine = ImageBuf::from_data(
+            4,
+            2,
+            [0.0, 2.0, 1.0, 3.0, 0.0, 2.0, 1.0, 3.0]
+                .into_iter()
+                .flat_map(|v| [from_f64(v); 3])
+                .collect(),
+        );
+        let out = collapse_log_exposure(&fine, 2).unwrap();
+        assert_eq!((out.width, out.height), (2, 1));
+        for (pixel, expected) in out.data.chunks_exact(3).zip([50.5_f64, 505.0]) {
+            for &value in pixel {
+                assert!(
+                    (spektrafilm_math::precision::to_f64(value) - expected.log10()).abs()
+                        < read_tolerance()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn aperture_rejects_partial_output_blocks() {
+        let fine = ImageBuf::new(3, 2);
+        assert!(
+            collapse_log_exposure(&fine, 2)
+                .unwrap_err()
+                .contains("divisible")
+        );
+        assert!(
+            collapse_log_exposure(&fine, 0)
+                .unwrap_err()
+                .contains("divisible")
+        );
+    }
 
     fn data_dir() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
