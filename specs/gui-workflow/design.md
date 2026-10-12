@@ -10,3 +10,6 @@
 - Pipeline and viewer workers share immutable native images. Prepared display pixels use one cache identity rule: source allocation, display settings, and preview size must match.
 - Persistent startup state and transient viewer state use separate stores and invalidation rules.
 - Export work runs outside the UI event loop. Completion, failure, and cancellation are explicit states; temporary output is never presented as completed output.
+- Numeric editors associate visible labels with their text inputs. Tuple editors identify each component. Profile and development-time selectors associate their visible labels with the selection control.
+- Native Save and Export actions select a path before entering the shared output operation. Headless acceptance enters at that path boundary and executes the same worker and writer.
+- Headless App acceptance exercises production controls and real CPU workers. It waits for operation completion and checks accepted output identities. Offscreen layout checks and native desktop acceptance have separate evidence scopes, as defined in the [acceptance guide](../../scripts/parity/README.md#headless-gui-acceptance).

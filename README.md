@@ -66,6 +66,13 @@ Therefore its package status covers CLI/RAW/IO/LUT/OCIO/QA and provenance, not
 native desktop interaction. GUI evidence is maintained separately and is not
 silently counted as a release pass.
 
+The workspace tests include headless GUI acceptance with the real App, CPU
+workers, and image writer. Run `just gui-headless` for the focused scenarios.
+Run `just gui-layout` separately for offscreen layout checks with a usable WGPU
+adapter. See [GUI acceptance scopes](scripts/parity/README.md#headless-gui-acceptance)
+for coverage, image artifacts, and the native desktop gate retained for platform
+integration and release evidence.
+
 Historical Linux native GUI acceptance used the debug GUI and a separate f64 export child under Xvfb. Its five-tab shell, viewer, state, RAW and output records remain under `gui_evidence` in `docs/parity/parity_matrix.json`, including local Rust `8bdd7fe` and CI workflow `37226896580`. Those records describe the earlier worker and viewport implementation and do not establish acceptance of the current direct Pipeline Export, extension-based Save or full-resolution viewport. Historical Windows package smoke also passed; historical macOS native acceptance failed the Reveal-frame assertion. Fresh GUI results must identify the current executable and exercised workflow.
 
 Quarter-turn actions rotate the in-memory pipeline input and preserve source metadata. Export captures those pixels directly together with the simulation parameters; it does not stage input for a CLI child. The metadata writer normalizes orientation and dimensions. Cancel sets a worker signal: an active Pipeline computation or native write may finish before the next cancellation boundary, where its result is discarded before publication. Closing the GUI signals cancellation and joins the worker.
