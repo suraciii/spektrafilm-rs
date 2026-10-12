@@ -8,4 +8,21 @@
 - PNG and JPEG require 8-bit output. TIFF supports 8-bit, 16-bit, and float output; OpenEXR supports half and float output. Integer output clips to [0,1]; float output preserves negative and super-white values.
 - JPEG quality is 1–100 with 4:4:4 or 4:2:0 sampling. TIFF and OpenEXR support ZIP or no compression where the format allows it.
 - Invalid format, bit depth, compression, color, or geometry combinations fail before final publication.
-- Export publication is atomic. Cancellation or failure leaves no completed destination file.
+- Image publication must be atomic for CLI processing, GUI Save, and Export. A failed write or publication must leave an existing destination unchanged. Failure must leave no completed destination when none existed. GUI cancellation must provide the same guarantees. Successful CLI `process` may replace an existing destination only after the new image is complete.
+
+## Publication
+
+The writer must keep rendered samples, container finalization, and retained metadata work on a temporary file beside the destination. It must publish only after all required writes and close operations succeed. A temporary file must use the selected image container even when its name has a temporary suffix. It must not be visible at the final image path during rendering or writing.
+
+A failed or short native write, failed container finalization, or failed atomic replacement must propagate as a command failure. The writer must remove its unpublished temporary file on handled failure or cancellation. It must not report a damaged or incomplete image as saved. A metadata warning permitted by the existing metadata contract may remain a warning only when the image container is complete and readable. This contract does not guarantee cleanup after forced process termination, power-loss durability, or a transaction across image, `--raw-out`, and diagnostic files.
+
+CLI image completion notices and published dimensions must be recorded only after final image publication. A later auxiliary-file failure may return a failed command with an already committed image; it must not produce an overall-success notice. Existing telemetry-report persistence exceptions remain owned by [telemetry](../telemetry/spec.md#local-surfaces).
+
+## Publication acceptance
+
+Run the real `process` entry point for PNG, JPEG, TIFF, and OpenEXR. Verify readable output, dimensions, sample storage, and retained metadata after successful publication. Test successful replacement of an existing destination.
+
+Inject write failures during image data and container finalization. On POSIX, a controlled file-size limit may exercise the native short-write path. Use an isolated failure mechanism on other platforms. Test a failed atomic replacement separately. Repeat each failure with an absent destination and an existing byte-for-byte sentinel. The command must fail, leave the final destination absent or unchanged, and remove its unpublished temporary file. Stderr must report the failed boundary without an image completion notice. Normal stdout must remain empty. A parser error or an invalid destination rejected before writing does not prove native write failure handling.
+
+Exercise metadata retention through the temporary-file path. Preserve an existing permitted metadata-warning case without treating an unreadable image as a metadata-only failure. Repeat GUI cancellation acceptance when changing the shared writer. Exercise platform-native atomic replacement on Linux, Windows, and macOS before claiming cross-platform acceptance.
+

@@ -58,6 +58,6 @@ JSON and TOML discovery, dry-run, render, and inspect output must remain parseab
 
 ## Implementation gap
 
-Current CLI arguments reject separate negative tint and exposure values. Data selection falls back after an explicit invalid path. Profile listing can report a missing directory and return success. Help lacks several descriptions, groups, and examples. Version flags are absent. Domain errors outside preset selection lack candidate or discovery guidance. LUT README examples use unsupported `--out`, and LUT stage notices use stdout. Preset listing now supports source selection and reads the shared preset library directory.
+The image-processing language extensions and their current gaps are owned by the [CLI parameter specification](../cli-parameters/spec.md#implementation-gap). Native image publication requirements and failure scenarios are owned by [photo export](../photo-export/spec.md#publication). Help and examples must migrate with those changes. Previous help, version, signed-number, and data-selection gaps must not be treated as current failures without evidence from the current executable.
 
 LUT QA exit semantics, bundle replacement protection, and multi-print naming collisions require a separate behavioral investigation before a publication or quality contract is changed. They are not acceptance criteria for this implementation.
