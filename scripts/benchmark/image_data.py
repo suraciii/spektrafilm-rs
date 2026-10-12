@@ -5,6 +5,7 @@ import json
 import hashlib
 
 import numpy as np
+import png
 from PIL import Image, ImageCms
 
 try:
@@ -138,7 +139,16 @@ def load_image(source):
             if path.stat().st_size != expected:
                 raise ImageDataError("invalid_image_layout", "Raw file length differs from declaration")
             arr = np.fromfile(path, dtype=dtype).reshape(height, width, 3)
-        elif suffix in (".png", ".jpg", ".jpeg", ".webp"):
+        elif suffix == ".png":
+            with path.open("rb") as source_file:
+                width, height, rows, info = png.Reader(file=source_file).read()
+                if info["greyscale"] or info["alpha"] or info["planes"] != 3:
+                    raise ImageDataError("unsupported_image_layout", "Raster must have three native RGB channels")
+                dtype = np.uint16 if info["bitdepth"] > 8 else np.uint8
+                arr = np.empty((height, width, 3), dtype=dtype)
+                for y, row in enumerate(rows):
+                    arr[y] = np.asarray(row, dtype=dtype).reshape(width, 3)
+        elif suffix in (".jpg", ".jpeg", ".webp"):
             with Image.open(path) as im:
                 if im.mode != "RGB":
                     raise ImageDataError("unsupported_image_layout", "Raster must have three native RGB channels")
@@ -163,7 +173,7 @@ def load_image(source):
         return ImageData(arr, space, transfer, str(path), metadata)
     except ImageDataError:
         raise
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, png.Error) as exc:
         raise ImageDataError("image_load_failed", str(exc)) from exc
 
 

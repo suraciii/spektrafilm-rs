@@ -18,6 +18,8 @@ The native domain must retain the renderer's declared color space, transfer stat
 
 The protocol must record the floating master format and precision. A channel-interleaved raw dump must include dimensions, channel order, endianness, numeric type, color space, and transfer state in its run record. File length must match those declarations. Expanding f32 computations into f64 storage must not imply f64 computation.
 
+Raster decoding must preserve the container's native channel precision before normalization. RGB16 PNG inputs and references must retain all 16 bits, including filtered and interlaced external files.
+
 ### Common display domain
 
 The standard appearance protocol must convert both sides to encoded sRGB with D65 white through a fixed, versioned color transform. It must decode the source transfer function before color conversion. It must record chromatic adaptation and rendering intent where applicable. An ICC-managed reference must use its identified profile. An untagged reference must require an explicit declaration.

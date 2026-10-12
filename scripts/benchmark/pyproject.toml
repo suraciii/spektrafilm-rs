@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.2,<3",
   "Pillow>=11,<13",
+  "pypng>=0.20220715.0,<1",
   "scipy>=1.15,<2",
   "colour-science>=0.4.6,<0.5",
   "tifffile>=2025.1",

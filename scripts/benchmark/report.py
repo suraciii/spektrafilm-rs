@@ -194,9 +194,16 @@ class _Artifacts:
             elif path.suffix == ".json":
                 value = _json(path)
                 if isinstance(value, dict):
-                    x = value.get("x", value.get("coordinates", value.get("exposure", [])))
-                    keys = [k for k in value if k not in ("x", "coordinates", "exposure", "units", "x_units", "y_units")]
-                    series = [(x, value[k], str(k)) for k in keys if isinstance(value[k], list)]
+                    if entry.get("role") == "reference_regional_statistics":
+                        x = value["lightness_quantile_probabilities"]
+                        series = [(x, curve, side) for side, curve in value["lightness_quantiles"].items()]
+                    elif entry.get("role") == "reference_material_curve":
+                        x = value["coordinates"]
+                        series = [(x, value[side], side) for side in ("baseline", "candidate", "reference")]
+                    else:
+                        x = value.get("x", value.get("coordinates", value.get("exposure", [])))
+                        keys = [k for k in value if k not in ("x", "coordinates", "exposure", "units", "x_units", "y_units")]
+                        series = [(x, value[k], str(k)) for k in keys if isinstance(value[k], list)]
                 elif isinstance(value, list) and value and all(isinstance(row, list) and len(row) >= 2 for row in value):
                     series = [([row[0] for row in value], [row[1] for row in value], label)]
                 else:
@@ -502,9 +509,16 @@ def build_report(comparison_dir, out_dir):
         for region, method in regions:
             mask_entry = None
             if isinstance(region.get("geometry"), dict) and "path" in region["geometry"]:
+                mask_path = region["geometry"]["path"]
+                if case.get("status") != "completed" and mask_path not in assets.index:
+                    parts.append(f'<p class="unavailable">{_text(region.get("label", region.get("id")))}：渲染失败，区域掩膜证据不可用。</p>')
+                    continue
                 import numpy as np
                 from PIL import Image
-                mask_entry = assets.copy(region["geometry"]["path"])
+                mask_entry = assets.copy(mask_path)
+                if not mask_entry or mask_entry.get("availability") != "available":
+                    parts.append(f'<p class="unavailable">{_text(region.get("label", region.get("id")))}：区域掩膜证据不可用。</p>')
+                    continue
                 path = out / mask_entry["path"]
                 if path.suffix == ".npy": mask = np.load(path, allow_pickle=False)
                 else:
@@ -531,7 +545,7 @@ def build_report(comparison_dir, out_dir):
         parts.append('<details><summary>来源输入与参考图</summary><div class="grid">' + ''.join(_image(images[role], {"source": "来源输入", "reference": "参考图"}[role]) for role in ("source", "reference") if images[role]) + '</div>' + ('<pre>' + _text(case.get("reference", "参考范围和来源限制不可用")) + '</pre>' if images["reference"] or case.get("reference") else '') + '</details>')
         parts.append('<details><summary>差异图与显示元数据</summary>' + _image(images["difference"], "差异图") + '<pre>' + _text({key: (images["difference"] or {}).get(key, "不可用") for key in ("metric", "units", "scale", "clipping", "amplification", "palette")}) + '</pre></details>')
         evidence_plots = []
-        plot_roles = {"tone_response", "grain_radial_spectrum", "halation_profile", "halation_edge_spill_profile", "edge_response", "edge_sfr", "reference_curve", "reference_distribution"}
+        plot_roles = {"tone_response", "grain_radial_spectrum", "halation_profile", "halation_edge_spill_profile", "edge_response", "edge_sfr", "reference_material_curve", "reference_regional_statistics"}
         for artifact in case.get("artifacts", []):
             if artifact.get("role") not in plot_roles:
                 continue

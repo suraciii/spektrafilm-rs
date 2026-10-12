@@ -91,6 +91,9 @@ def tree_inventory(root):
 
 def file_dependencies(suite, suite_path, target, target_path):
     paths = {resolve_path(target["renderer"]["path"], target_path): "renderer"}
+    for sample in suite["protocol"].get("probe", {}).get("tone_response", []):
+        if isinstance(sample["geometry"], dict):
+            paths[resolve_path(sample["geometry"]["path"], suite_path)] = "mask"
     for case in suite["cases"]:
         paths[resolve_path(case["input"]["path"], suite_path)] = "input"
         config = case["configuration"]
@@ -186,16 +189,28 @@ def run_case(case, seed, suite_path, target, target_path, root, evidence):
         if result.returncode:
             fail("renderer_configuration", result.stderr[-2000:], case_id=case["id"])
         resolved = json.loads(result.stdout)
+        data_dir = resolve_path(target["data_dir"], target_path)
+        for field in ("film_profile", "print_profile"):
+            name = resolved[field]
+            if not isinstance(name, str) or not name or "\0" in name:
+                fail("profile_dependency", f"renderer resolved an invalid {field}", case_id=case["id"])
+            profile_path = (data_dir / "profiles" / f"{name}.json").resolve()
+            if not profile_path.is_relative_to(data_dir) or not profile_path.is_file():
+                fail("profile_dependency", f"resolved {field} must select a file inside target data_dir: {name}", case_id=case["id"])
         if target["changes"]["set"] or target["changes"]["set_files"] or target.get("case_changes", {}).get(case["id"]):
             case_target = {**target, "changes": {"set": [], "set_files": []}, "case_changes": {}}
             base_command = render_command(case, suite_path, case_target, target_path, folder) + ["--seed", str(seed), "--dry-run"]
             base_result, _ = invoke(base_command, environment, folder, "case-configuration", evidence)
             if base_result.returncode:
                 fail("renderer_configuration", base_result.stderr[-2000:], case_id=case["id"])
-            base_io = json.loads(base_result.stdout)["parameters"]["io"]
-            for name in ("input_color_space", "input_cctf_decoding", "crop", "crop_center", "crop_size", "upscale_factor"):
-                if resolved["parameters"]["io"].get(name) != base_io.get(name):
-                    fail("target_geometry", f"target must not change case-owned input field: {name}", case_id=case["id"])
+            base_parameters = json.loads(base_result.stdout)["parameters"]
+            for section, names in (
+                ("io", ("input_color_space", "input_cctf_decoding", "crop", "crop_center", "crop_size", "upscale_factor")),
+                ("settings", ("preview_mode", "preview_max_size")),
+            ):
+                for name in names:
+                    if resolved["parameters"][section].get(name) != base_parameters[section].get(name):
+                        fail("target_geometry", f"target must not change case-owned input field: {section}.{name}", case_id=case["id"])
         path = folder / "resolved.json"
         dump(path, resolved)
         row["resolved"] = evidence.add(path, "resolved_configuration", "application/json")
@@ -364,6 +379,9 @@ def retain_metrics(measured, folder, evidence, case_id, seed):
 def retained_case(case, run, run_root, comparison_root, evidence):
     """Resolve only immutable retained dependencies, never original source files."""
     clone = json.loads(json.dumps(case))
+    protocol_probe = run["protocol"].get("probe", {})
+    if "tone_response" in protocol_probe and "tone_response" not in clone.get("probe", {}):
+        clone.setdefault("probe", {})["tone_response"] = json.loads(json.dumps(protocol_probe["tone_response"]))
     authored = Path(run["suite"]["source_path"])
     dependencies = {row["source_path"]: row for row in run["dependencies"] if "source_path" in row}
 
@@ -471,10 +489,13 @@ def condition_differences(baseline, candidate, left_root, right_root):
         difference("precision", rows[0].get("precision"), rows[1].get("precision"), explicit_renderer or targets[0]["backend"] != targets[1]["backend"], **context)
         parameters = [load_json_document(root / row["resolved"]["path"])["parameters"] for root, row in zip((left_root, right_root), rows)]
         difference("resolved_parameters", *parameters, explicit_changes or explicit_renderer or explicit_data, **context)
-        inputs = [parameter["io"] for parameter in parameters]
-        for name in ("input_color_space", "input_cctf_decoding", "crop", "crop_center", "crop_size", "upscale_factor"):
-            if inputs[0].get(name) != inputs[1].get(name):
-                fail("incompatible_geometry", f"target changed case-owned input field: {name}", **context)
+        for section, names in (
+            ("io", ("input_color_space", "input_cctf_decoding", "crop", "crop_center", "crop_size", "upscale_factor")),
+            ("settings", ("preview_mode", "preview_max_size")),
+        ):
+            for name in names:
+                if parameters[0][section].get(name) != parameters[1][section].get(name):
+                    fail("incompatible_geometry", f"target changed case-owned input field: {section}.{name}", **context)
         difference("dimensions", rows[0].get("dimensions"), rows[1].get("dimensions"), False, **context)
     return result
 

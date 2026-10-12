@@ -179,7 +179,41 @@ def geometry(value, document):
             error("invalid_mask", "mask must use a lossless binary image or NPY")
 
 
+def inline_assignments(source, document):
+    """Check renderer assignment syntax without interpreting parameter values."""
+    start, depth, quoted, escaped = 0, 0, False, False
+    equals = None
+    for index, char in enumerate(source + ","):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth < 0:
+                error("inline_assignment", "set contains an unbalanced array", document)
+        elif char == "=" and depth == 0 and equals is None:
+            equals = index
+        elif char == "," and depth == 0:
+            if (equals is None
+                    or not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*", source[start:equals].strip())
+                    or not source[equals + 1:index].strip()):
+                error("inline_assignment", "set requires PATH=VALUE assignments; file paths belong in set_files", document)
+            start, equals = index + 1, None
+    if quoted or depth:
+        error("inline_assignment", "set contains an unterminated string or array", document)
+
+
 def config_files(configuration, document):
+    for assignment in configuration.get("set", []):
+        inline_assignments(assignment, document)
     for key in ("presets", "set_files"):
         for path in configuration.get(key, []):
             sha256_file(resolve_path(path, document))
@@ -191,6 +225,8 @@ def load_suite(path):
     value = load_json_document(path)
     validate_schema("suite", value)
     unique(value["cases"])
+    for sample in value["protocol"].get("probe", {}).get("tone_response", []):
+        geometry(sample["geometry"], path)
     for case in value["cases"]:
         declaration = case["input"]
         dependency(declaration, path)

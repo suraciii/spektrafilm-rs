@@ -14,12 +14,13 @@ from PIL import Image, ImageCms
 
 MODULES = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULES))
-from documents import DocumentError, load_json_document, safe_artifact_path, protocol_digest
-from image_data import ImageData, display_rgb
+from documents import DocumentError, load_json_document, safe_artifact_path, protocol_digest, document_digest
+from image_data import ImageData, display_rgb, load_image
 from metrics import aggregate_seed_measurements, ciede2000, compare_images
 from references import compare_reference
 from spektrafilm_bench import rule_result
 import png16
+from report import build_report
 
 
 class BenchmarkTests(unittest.TestCase):
@@ -52,6 +53,60 @@ class BenchmarkTests(unittest.TestCase):
         rows = np.frombuffer(zlib.decompress(compressed), dtype=np.uint8).reshape(4, 31)
         recovered = rows[:, 1:].copy().view(">u2").reshape(4, 5, 3)
         np.testing.assert_array_equal(recovered, values[2:6, 3:8])
+
+    def test_rgb16_png_low_bits_affect_numeric_comparison(self):
+        first = np.full((24, 32, 3), 30000, dtype=np.uint16)
+        second = first.copy()
+        second[..., 0] += 1
+        png16.save(self.root / "first.png", first)
+        png16.save(self.root / "second.png", second)
+        images = [load_image({"path": self.root / name, "color_space": "sRGB", "transfer": "srgb"})
+                  for name in ("first.png", "second.png")]
+        np.testing.assert_array_equal(images[0].samples, first / 65535.)
+        result = compare_images(*images, [], {**self.protocol, "measurements": ["numeric"]}, self.root / "lowbits")
+        rows = {row["metric"]: row for row in result["measurements"]}
+        self.assertAlmostEqual(rows["numeric.max_abs_difference"]["value"], 1 / 65535., places=14)
+        self.assertAlmostEqual(rows["numeric.rmse"]["value"], 1 / (65535. * np.sqrt(3)), places=14)
+
+    def build_review(self, case, artifacts):
+        comparison = {"schema_version": 1, "execution_status": "failed" if case["status"] == "failed" else "completed",
+                      "evaluation_status": "not_evaluated", "baseline": {}, "candidate": {}, "protocol": {},
+                      "selection": {}, "condition_differences": [], "cases": [case], "findings": [],
+                      "summary": {}, "artifacts": artifacts}
+        comparison["id"] = document_digest(comparison)
+        (self.root / "comparison.json").write_text(json.dumps(comparison))
+        build_report(self.root, self.root / "review")
+        return (self.root / "review/index.html").read_text()
+
+    def test_failed_render_with_unretained_mask_remains_reviewable(self):
+        case = {"case_id": "failed_case", "seed": 0, "status": "failed", "review": {}, "measurements": [],
+                "regions": [{"id": "patch", "label": "Patch", "geometry": {"path": "/original/mask.png"}}]}
+        self.build_review(case, [])
+        retained = json.loads((self.root / "review/comparison.json").read_text())
+        self.assertEqual(retained["cases"], [case])
+        self.assertFalse((self.root / "review/original/mask.png").exists())
+
+    def test_reference_response_and_quantiles_appear_in_report(self):
+        artifacts = []
+        values = {
+            "reference_material_curve": {"coordinates": [-1, 0, 1], "baseline": [0.1, 0.2, 0.3],
+                                         "candidate": [0.12, 0.25, 0.4], "reference": [0.15, 0.3, 0.5],
+                                         "regions": ["shadow", "mid", "highlight"]},
+            "reference_regional_statistics": {"lightness_quantile_probabilities": [0, 0.5, 1],
+                                              "lightness_quantiles": {"baseline": [10, 20, 30],
+                                                                      "candidate": [12, 25, 40], "reference": [15, 30, 50]}}}
+        for role, value in values.items():
+            path = self.root / (role + ".json")
+            path.write_text(json.dumps(value))
+            artifacts.append({"path": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                              "role": role, "media_type": "application/json"})
+        case = {"case_id": "reference", "seed": 0, "status": "completed", "review": {},
+                "measurements": [], "regions": [], "artifacts": artifacts}
+        html = self.build_review(case, artifacts)
+        self.assertEqual(html.count('<svg class="evidence-plot"'), 2)
+        self.assertEqual(html.count('<polyline '), 6)
+        self.assertIn("x [-1,1] · y [0.1,0.5]", html)
+        self.assertIn("x [0,1] · y [10,50]", html)
 
     def test_duplicate_and_nonfinite_json_rejected(self):
         for text, code in (("{\"x\":1,\"x\":2}", "duplicate_key"), ("{\"x\":NaN}", "nonfinite_number"), ("{\"x\":1e999}", "nonfinite_number")):
