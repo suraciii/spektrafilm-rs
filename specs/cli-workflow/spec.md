@@ -56,8 +56,7 @@ A misspelled known field or preset name must fail and suggest its nearby canonic
 
 JSON and TOML discovery, dry-run, render, and inspect output must remain parseable with stderr captured separately. LUT bake and quality messages must use stderr. Normal image rendering must preserve its stdout behavior and output pixels.
 
-## Implementation gap
-
-The image-processing language extensions and their current gaps are owned by the [CLI parameter specification](../cli-parameters/spec.md#implementation-gap). Native image publication requirements and failure scenarios are owned by [photo export](../photo-export/spec.md#publication). Help and examples must migrate with those changes. Previous help, version, signed-number, and data-selection gaps must not be treated as current failures without evidence from the current executable.
+## Implementation status
+The current executable implements the help, version, signed-number, data-selection, discovery, dry-run, and stderr/stdout separation described above. Native image publication requirements and failure scenarios remain owned by [photo export](../photo-export/spec.md#publication). LUT QA exit semantics, bundle replacement protection, and multi-print naming collisions remain separate behavioral investigations; they are not inferred from this CLI workflow contract.
 
 LUT QA exit semantics, bundle replacement protection, and multi-print naming collisions require a separate behavioral investigation before a publication or quality contract is changed. They are not acceptance criteria for this implementation.
