@@ -37,7 +37,7 @@ impl Condition {
             Self::Spektra => "film_render.grain.engine = spektra",
             Self::Procedural => "film_render.grain.engine = procedural",
             Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
-            Self::SpektraOrDye => "film_render.grain.engine = spektra or v3",
+            Self::SpektraOrDye => "film_render.grain.engine = spektra or dye",
             Self::Custom => {
                 "film_render.grain.v2_profile = custom; select custom to use this control"
             }
