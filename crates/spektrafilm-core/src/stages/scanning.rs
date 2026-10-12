@@ -58,6 +58,38 @@ fn scanner_lut_bounds(profile: &Profile, params: &RuntimeParams) -> ([f64; 3], [
     (dm, dx)
 }
 
+struct PreparedScannerLut {
+    pchip: spektrafilm_math::pchip3d::PreparedPchip3d,
+    minimum: [f64; 3],
+    inverse_step: [f64; 3],
+}
+
+fn prepare_scanner_lut(
+    channel_density: &[[f64; 3]],
+    base_density: &[f64],
+    color: &crate::chain_prep::ScanColorContext,
+    minimum: [f64; 3],
+    maximum: [f64; 3],
+    steps: usize,
+) -> PreparedScannerLut {
+    let grid = build_lut_grid(steps, minimum, maximum);
+    // log_xyz LUT — same function Python LUTs.
+    let log_xyz = spektrafilm_gpu::cpu_backend::scan_log_xyz_cpu(
+        &grid,
+        channel_density,
+        base_density,
+        &color.illuminant,
+        color.normalization,
+    );
+    let pchip = prepare_pchip_3d(log_xyz, steps);
+    let scale = (steps - 1) as f64;
+    PreparedScannerLut {
+        pchip,
+        minimum,
+        inverse_step: std::array::from_fn(|c| scale / (maximum[c] - minimum[c])),
+    }
+}
+
 /// Build a 17³ log_xyz LUT (matching Python's `cmy_to_log_xyz`),
 /// PCHIP-interpolate per pixel, then apply `10^log_xyz → CAT →
 /// xyz_to_rgb` to get RGB. Glare is added after this returns in RGB
@@ -74,10 +106,7 @@ fn scan_spectral_via_lut(
     density_cmy: &ImageBuf,
     channel_density: &[[f64; 3]],
     base_density: &[f64],
-    illuminant: &[f64],
-    normalization: f64,
-    cat: &[[f64; 3]; 3],
-    xyz_to_rgb: &[[f64; 3]; 3],
+    color: &crate::chain_prep::ScanColorContext,
     _backend: &dyn ComputeBackend,
     data_min: [f64; 3],
     data_max: [f64; 3],
@@ -89,31 +118,25 @@ fn scan_spectral_via_lut(
         "scanner_lut",
         spektrafilm_gpu::telemetry::CpuReason::SpectralLut,
     );
-    let grid = build_lut_grid(steps, data_min, data_max);
-    // log_xyz LUT — same function Python LUTs.
-    let lut_log_xyz = spektrafilm_gpu::cpu_backend::scan_log_xyz_cpu(
-        &grid,
+    let prepared = prepare_scanner_lut(
         channel_density,
         base_density,
-        illuminant,
-        normalization,
+        color,
+        data_min,
+        data_max,
+        steps,
     );
-    let prepared = prepare_pchip_3d(lut_log_xyz, steps);
-    let scale = (steps - 1) as f64;
-    let inv = [
-        scale / (data_max[0] - data_min[0]),
-        scale / (data_max[1] - data_min[1]),
-        scale / (data_max[2] - data_min[2]),
-    ];
+    let cat = &color.adapt;
+    let xyz_to_rgb = &color.base_xyz_to_rgb;
     let mut out = density_cmy.clone();
     out.data
         .par_chunks_exact_mut(3)
         .zip(density_cmy.data.par_chunks_exact(3))
         .for_each(|(dst, src)| {
-            let r = (src[0] as f64 - data_min[0]) * inv[0];
-            let g = (src[1] as f64 - data_min[1]) * inv[1];
-            let b = (src[2] as f64 - data_min[2]) * inv[2];
-            let log_xyz = pchip_interp(&prepared, r, g, b);
+            let r = (src[0] as f64 - prepared.minimum[0]) * prepared.inverse_step[0];
+            let g = (src[1] as f64 - prepared.minimum[1]) * prepared.inverse_step[1];
+            let b = (src[2] as f64 - prepared.minimum[2]) * prepared.inverse_step[2];
+            let log_xyz = pchip_interp(&prepared.pchip, r, g, b);
             // Post-LUT: 10^log_xyz → CAT → xyz_to_rgb, mirroring Python's
             // `_density_to_rgb` AFTER the LUT call. bw_correction and
             // glare run after this returns (RGB space).
@@ -186,10 +209,7 @@ fn scan_spectral_rgb(
             density_cmy,
             channel_density,
             base_density,
-            &color.illuminant,
-            color.normalization,
-            &color.adapt,
-            &color.base_xyz_to_rgb,
+            color,
             backend,
             data_min,
             data_max,
@@ -218,9 +238,7 @@ pub(crate) struct ForwardCapture<'a> {
     base_density: &'a [f64],
     color: &'a crate::chain_prep::ScanColorContext,
     color_ref: &'a crate::color_reference::ColorReference,
-    lut: Option<spektrafilm_math::pchip3d::PreparedPchip3d>,
-    minimum: [f64; 3],
-    inverse_step: [f64; 3],
+    lut: Option<PreparedScannerLut>,
 }
 
 impl<'a> ForwardCapture<'a> {
@@ -237,15 +255,12 @@ impl<'a> ForwardCapture<'a> {
         let lut = if color.receiver.is_none()
             && (params.settings.use_scanner_lut || color_ref.has_remap())
         {
-            let grid = build_lut_grid(steps, minimum, maximum);
-            Some(prepare_pchip_3d(
-                spektrafilm_gpu::cpu_backend::scan_log_xyz_cpu(
-                    &grid,
-                    channel_density,
-                    base_density,
-                    &color.illuminant,
-                    color.normalization,
-                ),
+            Some(prepare_scanner_lut(
+                channel_density,
+                base_density,
+                color,
+                minimum,
+                maximum,
                 steps,
             ))
         } else {
@@ -257,8 +272,6 @@ impl<'a> ForwardCapture<'a> {
             color,
             color_ref,
             lut,
-            minimum,
-            inverse_step: std::array::from_fn(|c| (steps - 1) as f64 / (maximum[c] - minimum[c])),
         }
     }
 
@@ -277,8 +290,8 @@ impl<'a> ForwardCapture<'a> {
         }
         let mut xyz = if let Some(lut) = &self.lut {
             let position: [f64; 3] =
-                std::array::from_fn(|c| (density[c] - self.minimum[c]) * self.inverse_step[c]);
-            pchip_interp(lut, position[0], position[1], position[2]).map(|v| 10.0f64.powf(v))
+                std::array::from_fn(|c| (density[c] - lut.minimum[c]) * lut.inverse_step[c]);
+            pchip_interp(&lut.pchip, position[0], position[1], position[2]).map(|v| 10.0f64.powf(v))
         } else {
             let mut xyz = [0.0; 3];
             for i in 0..self.color.n_wl {

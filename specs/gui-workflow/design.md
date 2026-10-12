@@ -2,6 +2,9 @@
 
 - The GUI is an adapter over `core::runtime`; it does not implement a second film pipeline or color model.
 - UI edits serialize to the runtime parameter model. Preview and Scan use the same model with different geometry limits.
+- Cached preview preparation and independent export preparation must share parameter digestion, scanned-medium selection, and channel-swap rules. Cache reuse and operation observation scopes remain separate.
+- The private render preparation module owns captured render inputs and runtime construction without depending on the App or GUI widgets. The application owns source-revision tracking, worker scheduling, and result publication.
+- The render worker's runtime cache owns its entry, preparation, and setup attachment. A present entry contains a valid runtime. Setup failure leaves the entry unchanged; parameter-update failure clears it; failed preparation for a different key retains the previous entry.
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
 - Viewer presentation uses disposable display rasters. Save and Export consume retained native output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.
