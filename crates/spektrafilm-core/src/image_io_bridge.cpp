@@ -198,7 +198,6 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         const bool flushed = std::fflush(file.get()) == 0;
         const bool stream_failed = std::ferror(file.get()) != 0;
         proxy.close();
-        file.release();
         if (proxy.failed || !flushed || stream_failed) {
             if (!message.empty()) message += "; ";
             message += "Native image file write/finalization failed";
