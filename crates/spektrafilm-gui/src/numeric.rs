@@ -6,6 +6,7 @@ use egui::{TextEdit, Ui};
 struct NumericEditState {
     text: String,
     last_value: f64,
+    edit_start: f64,
     focused: bool,
 }
 
@@ -77,6 +78,35 @@ where
     T: egui::emath::Numeric,
     Id: Hash,
 {
+    numeric_field_validated(
+        ui,
+        id_salt,
+        value,
+        min,
+        max,
+        step,
+        decimals,
+        tooltip,
+        |_| true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn numeric_field_validated<T, Id>(
+    ui: &mut Ui,
+    id_salt: Id,
+    value: &mut T,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
+    tooltip: &str,
+    valid: impl Fn(T) -> bool,
+) -> bool
+where
+    T: egui::emath::Numeric,
+    Id: Hash,
+{
     let decimals = if T::INTEGRAL { 0 } else { decimals };
     let current = value.to_f64();
     let id = ui.make_persistent_id(("numeric-field", id_salt));
@@ -86,6 +116,7 @@ where
         .unwrap_or_else(|| NumericEditState {
             text: format_value(current, T::INTEGRAL, decimals),
             last_value: current,
+            edit_start: current,
             focused: false,
         });
 
@@ -102,25 +133,52 @@ where
                 .desired_width(72.0),
         )
         .on_hover_text(tooltip);
+    if response.gained_focus() {
+        state.edit_start = current;
+    }
 
     let mut changed = false;
     if response.changed()
         && let Some(parsed) = parse_value::<T>(&state.text, min, max)
     {
         let next = T::from_f64(parsed);
-        if *value != next {
+        if valid(next)
+            && (T::INTEGRAL || state.text.trim() != "0" || response.lost_focus())
+            && *value != next
+        {
             *value = next;
             changed = true;
         }
     }
-
-    let wheel_changed = wheel_adjust(ui, &response, value, min, max, step);
+    let mut wheel_value = *value;
+    let wheel_changed =
+        wheel_adjust(ui, &response, &mut wheel_value, min, max, step) && valid(wheel_value);
+    if wheel_changed {
+        *value = wheel_value;
+    }
     if wheel_changed {
         state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
         changed = true;
     }
 
     if response.lost_focus() {
+        let final_value = parse_value::<T>(&state.text, min, max).map(T::from_f64);
+        let target = match final_value {
+            // Commit a valid draft deferred while focused (e.g. a bare "0").
+            Some(next) if valid(next) => Some(next),
+            // Roll back to the focus-start value only while it still passes
+            // validation; a paired field may have moved since focus started.
+            _ => {
+                let start = T::from_f64(state.edit_start);
+                valid(start).then_some(start)
+            }
+        };
+        if let Some(next) = target
+            && *value != next
+        {
+            *value = next;
+            changed = true;
+        }
         state.text = format_value(value.to_f64(), T::INTEGRAL, decimals);
     }
     state.last_value = value.to_f64();
@@ -326,5 +384,211 @@ mod tests {
             },
         );
         assert_eq!(value, 1.25);
+    }
+
+    fn run_numeric_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        value: &mut f64,
+        changed: &mut bool,
+        rect: &std::cell::Cell<egui::Rect>,
+    ) {
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(300.0, 200.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let id = ui.make_persistent_id(("numeric-field", "exposure"));
+                    if ctx.input(|input| {
+                        input.events.iter().any(|event| {
+                            matches!(event, egui::Event::Text(_) | egui::Event::Key { .. })
+                        })
+                    }) {
+                        ctx.memory_mut(|memory| memory.request_focus(id));
+                    }
+                    *changed = numeric_field(ui, "exposure", value, 0.0, 1.0, 0.05, 3, "tip");
+                    rect.set(ctx.read_response(id).unwrap().rect);
+                });
+            },
+        );
+    }
+
+    fn focus_events(position: egui::Pos2) -> Vec<Vec<egui::Event>> {
+        vec![
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        ]
+    }
+
+    fn enter_events() -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    fn replace_events(text: &str) -> Vec<egui::Event> {
+        vec![
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                },
+            },
+            egui::Event::Text(text.into()),
+        ]
+    }
+
+    #[test]
+    fn zero_text_edit_commits_on_focus_loss() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for events in focus_events(rect.get().center()) {
+            run_numeric_frame(&ctx, events, &mut value, &mut changed, &rect);
+        }
+        run_numeric_frame(&ctx, replace_events("0"), &mut value, &mut changed, &rect);
+        assert!(!changed);
+        assert_eq!(value, 0.5);
+        run_numeric_frame(&ctx, enter_events(), &mut value, &mut changed, &rect);
+        assert!(changed);
+        assert_eq!(value, 0.0);
+    }
+
+    #[test]
+    fn invalid_draft_rollback_reports_change() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        run_numeric_frame(&ctx, vec![], &mut value, &mut changed, &rect);
+        for events in focus_events(rect.get().center()) {
+            run_numeric_frame(&ctx, events, &mut value, &mut changed, &rect);
+        }
+        run_numeric_frame(
+            &ctx,
+            replace_events("0.25"),
+            &mut value,
+            &mut changed,
+            &rect,
+        );
+        assert!(changed);
+        assert_eq!(value, 0.25);
+        run_numeric_frame(&ctx, replace_events("abc"), &mut value, &mut changed, &rect);
+        assert!(!changed);
+        assert_eq!(value, 0.25);
+        run_numeric_frame(&ctx, enter_events(), &mut value, &mut changed, &rect);
+        assert!(changed);
+        assert_eq!(value, 0.5);
+    }
+
+    #[test]
+    fn rollback_skips_invalid_edit_start_after_pair_shift() {
+        // Reviewer scenario: the paired white point moves while the black
+        // field keeps focus, so the focus-start value no longer validates.
+        let ctx = egui::Context::default();
+        let other = std::cell::Cell::new(0.8);
+        let mut value = 0.7;
+        let mut changed = false;
+        let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        let run = |events: Vec<egui::Event>,
+                   value: &mut f64,
+                   changed: &mut bool,
+                   other: &std::cell::Cell<f64>,
+                   rect: &std::cell::Cell<egui::Rect>| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 200.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let id = ui.make_persistent_id(("numeric-field", "black"));
+                        if ctx.input(|input| {
+                            input.events.iter().any(|event| {
+                                matches!(event, egui::Event::Text(_) | egui::Event::Key { .. })
+                            })
+                        }) {
+                            ctx.memory_mut(|memory| memory.request_focus(id));
+                        }
+                        *changed = super::numeric_field_validated(
+                            ui,
+                            "black",
+                            value,
+                            0.0,
+                            1.0,
+                            0.05,
+                            3,
+                            "tip",
+                            |next| next < other.get(),
+                        );
+                        rect.set(ctx.read_response(id).unwrap().rect);
+                    });
+                },
+            );
+        };
+        run(vec![], &mut value, &mut changed, &other, &rect);
+        for events in focus_events(rect.get().center()) {
+            run(events, &mut value, &mut changed, &other, &rect);
+        }
+        run(
+            replace_events("0.1"),
+            &mut value,
+            &mut changed,
+            &other,
+            &rect,
+        );
+        assert!(changed);
+        assert_eq!(value, 0.1);
+        // The paired field moves below the focus-start value without taking focus.
+        other.set(0.5);
+        run(
+            replace_events("0.6"),
+            &mut value,
+            &mut changed,
+            &other,
+            &rect,
+        );
+        assert!(!changed);
+        assert_eq!(value, 0.1);
+        run(enter_events(), &mut value, &mut changed, &other, &rect);
+        assert!(!changed);
+        assert_eq!(value, 0.1);
     }
 }

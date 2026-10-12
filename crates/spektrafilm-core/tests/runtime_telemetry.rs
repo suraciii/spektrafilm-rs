@@ -199,3 +199,69 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
         report.summary().cpu_stage_reasons
     );
 }
+
+#[test]
+fn slide_reference_batches_are_calibration_not_image_work() {
+    let Some(backend) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+        eprintln!("WGPU adapter unavailable; calibration batch accounting not exercised");
+        return;
+    };
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.camera.auto_exposure = false;
+    params.film_render.grain.active = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    params.settings.use_scanner_lut = false;
+    params.scanner.black_point = [0.04; 3];
+    params.scanner.white_point = [0.96; 3];
+    let runtime =
+        Runtime::from_stocks("fujifilm_provia_100f", "kodak_portra_endura", params, &data).unwrap();
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(3, 2);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    runtime
+        .process_observed(
+            ImageBuf::from_data(3, 2, vec![from_f64(0.18); 18]),
+            &backend,
+            simulation.context(),
+        )
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    let calibration = report
+        .stages
+        .iter()
+        .find(|stage| stage.name == "scanner_film_points" && stage.purpose == Purpose::Calibration)
+        .expect("slide reference calibration scope");
+    let references: Vec<_> = report
+        .gpu_batches
+        .iter()
+        .filter(|batch| batch.parent_id == calibration.id)
+        .collect();
+    assert_eq!(
+        references.len(),
+        1,
+        "one two-reference spectral capture batch"
+    );
+    assert_eq!(references[0].purpose, Purpose::Calibration);
+    assert_eq!(references[0].work.dispatch_count, Some(1));
+    assert_eq!(references[0].work.readback_count, Some(1));
+    assert!(
+        report
+            .gpu_batches
+            .iter()
+            .any(|batch| batch.name == references[0].name
+                && batch.purpose == Purpose::Image
+                && batch.parent_id != calibration.id),
+        "bulk spectral capture retains image attribution"
+    );
+}

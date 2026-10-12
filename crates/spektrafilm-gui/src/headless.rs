@@ -290,10 +290,10 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.state().params.scanner.positive_balance_ev,
         [0.25, -0.125, 0.5]
     );
-    edit(h, "white level", "0.95");
-    edit(h, "black level", "0.025");
-    assert!((h.state().params.scanner.white_level - 0.95).abs() < 1e-6);
-    assert!((h.state().params.scanner.black_level - 0.025).abs() < 1e-6);
+    edit(h, "white point 0", "0.95");
+    edit(h, "black point 0", "0.025");
+    assert_eq!(h.state().params.scanner.white_point, [0.95, 1.0, 1.0]);
+    assert_eq!(h.state().params.scanner.black_point, [0.025, 0.0, 0.0]);
     edit(h, "positive density ev", "not-a-number");
     assert_eq!(h.state().params.scanner.positive_density_ev, 1.0);
     assert_eq!(
@@ -307,6 +307,14 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.state().status.starts_with("Saved retained.png"),
         "{}",
         h.state().status
+    );
+    let dialog_dirs: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(s.directory.path().join("dialog_dirs.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        dialog_dirs["save_output"].as_str(),
+        s.directory.path().to_str()
     );
     let expected_saved = image_io::convert_image(
         &preview,
@@ -413,6 +421,8 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         [0.25, -0.125, 0.5]
     );
     assert_eq!(restored.film_name, "kodak_portra_400");
+    assert_eq!(restored.params.scanner.white_point, [0.95, 1.0, 1.0]);
+    assert_eq!(restored.params.scanner.black_point, [0.025, 0.0, 0.0]);
     eframe::App::on_exit(&mut restored, None);
     choose(h, "workflow", "Finished RGB");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");

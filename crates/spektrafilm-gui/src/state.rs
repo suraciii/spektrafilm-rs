@@ -181,6 +181,14 @@ impl GuiState {
                     .remove(section);
             }
         }
+        // States saved before scanner.scan_output became canonical keep the
+        // selection only in the Rust runtime extension; promote it so the
+        // factory default cannot clobber a persisted positive_scan.
+        if normalized["scanner"].get("scan_output").is_none()
+            && let Some(mode) = value["rust"]["runtime"]["scanner"]["scan_output"].as_str()
+        {
+            normalized["scanner"]["scan_output"] = json!(mode);
+        }
         // Older Rust states stored bit depth before export format existed.
         // Infer only an absent format; explicit combinations still face validation.
         if let Some(rust) = normalized.get_mut("rust").and_then(Value::as_object_mut)
@@ -438,6 +446,11 @@ impl GuiState {
         for group in ["camera", "scanner"] {
             merge(&mut s[group], &runtime[group]);
         }
+        s["scanner"]["scan_output"] = json!(
+            runtime["scanner"]["scan_output"]
+                .as_str()
+                .unwrap_or("direct_scan")
+        );
         merge(
             &mut s["magazine_print_color"],
             &runtime["magazine_print_color"],
@@ -587,10 +600,13 @@ mod tests {
         // independently generated Python factory-state oracle.
         let scanner = shared["scanner"].as_object_mut().unwrap();
         for key in [
+            "scan_output",
             "positive_density_ev",
             "positive_balance_ev",
             "positive_contrast",
             "positive_dmax",
+            "black_point",
+            "white_point",
         ] {
             scanner.remove(key);
         }
@@ -1039,6 +1055,8 @@ mod tests {
         let mut params = factory.runtime_params().unwrap();
         params.workflow.route = "input > convert-film > scan".into();
         params.scanner.scan_output = "positive_scan".into();
+        params.scanner.black_point = [0.1, 0.2, 0.3];
+        params.scanner.white_point = [0.7, 0.8, 0.9];
         let saved =
             GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)?;
         assert_eq!(
@@ -1049,8 +1067,38 @@ mod tests {
         let restored = loaded.runtime_params()?;
         assert_eq!(restored.workflow.route, "input > convert-film > scan");
         assert_eq!(restored.scanner.scan_output, "positive_scan");
+        assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
+        assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
         Ok(())
     }
+    #[test]
+    fn legacy_runtime_extension_scan_output_survives_state_load() {
+        // States saved before scanner.scan_output became canonical carry the
+        // selection only under the Rust runtime extension.
+        let state = GuiState::from_value(json!({
+            "simulation": {"route": "input > convert-film > scan"},
+            "rust": {"version": 1, "runtime": {"scanner": {"scan_output": "positive_scan"}}}
+        }))
+        .unwrap();
+        let params = state.runtime_params().unwrap();
+        assert_eq!(params.scanner.scan_output, "positive_scan");
+        assert_eq!(state.sections["scanner"]["scan_output"], "positive_scan");
+    }
+    #[test]
+    fn invalid_scan_points_are_rejected_on_state_load() {
+        let factory = GuiState::factory();
+        for (black, white) in [
+            ([0.5; 3], [0.5; 3]),
+            ([0.0, -0.1, 0.0], [1.0; 3]),
+            ([0.0; 3], [1.0, 1.1, 1.0]),
+        ] {
+            let mut sections = factory.sections.clone();
+            sections["scanner"]["black_point"] = json!(black);
+            sections["scanner"]["white_point"] = json!(white);
+            assert!(GuiState::from_value(sections).is_err());
+        }
+    }
+
     #[test]
     fn factory_enlarger_neutral_filters_survive_state_conversion() {
         let factory = GuiState::factory();

@@ -10,7 +10,13 @@ fn scanner_params() -> RuntimeParams {
 }
 
 fn scanner(ui: &mut egui::Ui, params: &mut RuntimeParams) {
-    super::show(ui, params, &mut serde_json::Value::Null, "Scanner");
+    super::show(
+        ui,
+        params,
+        &mut serde_json::Value::Null,
+        "Scanner",
+        super::ScanMedium::Negative,
+    );
 }
 
 #[cfg(test)]
@@ -188,10 +194,12 @@ mod layout_snapshots {
                 "positive contrast",
                 "positive dmax",
                 "lens blur",
-                "white correction",
-                "white level",
-                "black correction",
-                "black level",
+                "black point 0",
+                "black point 1",
+                "black point 2",
+                "white point 0",
+                "white point 1",
+                "white point 2",
                 "unsharp mask 0",
                 "unsharp mask 1",
             ];

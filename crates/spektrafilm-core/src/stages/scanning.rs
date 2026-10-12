@@ -156,9 +156,11 @@ fn scan_spectral_rgb(
     channel_density: &[[f64; 3]],
     base_density: &[f64],
     color: &crate::chain_prep::ScanColorContext,
+    defer_correction: bool,
 ) -> ImageBuf {
     if color_ref.has_remap() || params.settings.use_scanner_lut {
         let (data_min, data_max) = scanner_lut_bounds(profile, params);
+        let identity = crate::color_reference::ColorReference::identity();
         scan_spectral_via_lut(
             density_cmy,
             channel_density,
@@ -171,7 +173,11 @@ fn scan_spectral_rgb(
             data_min,
             data_max,
             params.settings.lut_resolution as usize,
-            color_ref,
+            if defer_correction {
+                &identity
+            } else {
+                color_ref
+            },
         )
     } else {
         backend.scan_spectral(
@@ -188,6 +194,48 @@ fn scan_spectral_rgb(
 
 fn positive_scan_requested(params: &RuntimeParams) -> bool {
     params.scanner.scan_output == "positive_scan"
+}
+
+fn points_active(params: &RuntimeParams) -> bool {
+    params.scanner.black_point != [0.0; 3] || params.scanner.white_point != [1.0; 3]
+}
+
+/// One shared axis, with independent channel windows. Keep identity arithmetic
+/// out of the historical path, including channels left at their defaults.
+struct PointMap {
+    start: f64,
+    span: f64,
+    black: [f64; 3],
+    scale: [f64; 3],
+}
+
+impl PointMap {
+    fn new(start: f64, end: f64, params: &RuntimeParams) -> Result<Self, String> {
+        let scale = std::array::from_fn(|c| {
+            1.0 / (params.scanner.white_point[c] - params.scanner.black_point[c])
+        });
+        if scale
+            .iter()
+            .any(|v: &f64| !v.is_finite() || !from_f64(*v).is_finite())
+        {
+            return Err("film-scan point window reciprocal is not representable; widen the black/white point window".into());
+        }
+        Ok(Self {
+            start,
+            span: end - start,
+            black: params.scanner.black_point,
+            scale,
+        })
+    }
+
+    fn apply(&self, value: f64, channel: usize) -> f64 {
+        if self.black[channel] == 0.0 && self.scale[channel] == 1.0 {
+            value
+        } else {
+            self.start
+                + (value - self.start - self.black[channel] * self.span) * self.scale[channel]
+        }
+    }
 }
 
 struct PositiveChannel {
@@ -234,6 +282,7 @@ impl PositiveCalibration {
             channel_density,
             base_density,
             color,
+            false,
         );
         let mut channels = Vec::with_capacity(3);
         for channel in 0..3 {
@@ -302,6 +351,21 @@ impl PositiveCalibration {
                 clear: clear.unwrap(),
             });
         }
+        if points_active(params) {
+            let start = channels
+                .iter()
+                .map(|c| c.log_exposure[0])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let end = channels
+                .iter()
+                .map(|c| *c.log_exposure.last().unwrap())
+                .fold(f64::INFINITY, f64::min);
+            if !start.is_finite() || !end.is_finite() || start >= end {
+                return Err(
+                    "positive_scan points require a finite shared log-exposure interval".into(),
+                );
+            }
+        }
         Ok(Self {
             channels: channels
                 .try_into()
@@ -327,7 +391,7 @@ fn interpret_negative_capture(
     mut rgb: ImageBuf,
     calibration: &PositiveCalibration,
     params: &RuntimeParams,
-) -> ImageBuf {
+) -> Result<ImageBuf, String> {
     let contrast = params.scanner.positive_contrast;
     let dmax = params.scanner.positive_dmax;
     let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
@@ -336,7 +400,19 @@ fn interpret_negative_capture(
     } else {
         0.0
     };
+    let start = calibration
+        .channels
+        .iter()
+        .map(|c| c.log_exposure[0])
+        .fold(f64::NEG_INFINITY, f64::max);
+    let end = calibration
+        .channels
+        .iter()
+        .map(|c| *c.log_exposure.last().unwrap())
+        .fold(f64::INFINITY, f64::min);
+    let points = PointMap::new(start, end, params)?;
     let tone = |log_e: f64, channel: usize| {
+        let log_e = points.apply(log_e, channel);
         let e = log_e / std::f64::consts::LOG10_2 - camera_ev
             + params.scanner.positive_density_ev
             + params.scanner.positive_balance_ev[channel];
@@ -356,7 +432,8 @@ fn interpret_negative_capture(
             * t
             * (1.0 - t)
             * (-std::f64::consts::LN_10 * density).exp()
-            / (denominator * std::f64::consts::LOG10_2);
+            / (denominator * std::f64::consts::LOG10_2)
+            * points.scale[channel];
         (output, derivative)
     };
     let endpoints: [[(f64, f64, f64); 2]; 3] = std::array::from_fn(|c| {
@@ -387,7 +464,170 @@ fn interpret_negative_capture(
             px[channel] = from_f64(output);
         }
     });
-    rgb
+    Ok(rgb)
+}
+
+/// Slide points use effective output-RGB density, not the dye-density axes.
+struct SlidePoints {
+    clear: [f64; 3],
+    dense: [f64; 3],
+    points: PointMap,
+    endpoints: [[(f64, f64); 2]; 3],
+}
+
+impl SlidePoints {
+    #[allow(clippy::too_many_arguments)]
+    fn from_profile(
+        profile: &Profile,
+        params: &RuntimeParams,
+        backend: &dyn ComputeBackend,
+        color_ref: &crate::color_reference::ColorReference,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
+        color: &crate::chain_prep::ScanColorContext,
+    ) -> Result<Self, String> {
+        let calibration_scope = backend
+            .observation_context()
+            .filter(|c| c.enabled())
+            .map(|c| {
+                c.scope(
+                    "scanner_film_points",
+                    spektrafilm_gpu::telemetry::ObservationKind::Stage,
+                    spektrafilm_gpu::telemetry::Purpose::Calibration,
+                )
+            });
+        let calibration_backend = calibration_scope
+            .as_ref()
+            .map(|scope| spektrafilm_gpu::bind_backend(backend, scope.context().clone()));
+        let backend = calibration_backend.as_deref().unwrap_or(backend);
+        let mut maximum = [f64::NEG_INFINITY; 3];
+        for row in &profile.data.density_curves {
+            for c in 0..3 {
+                if row[c].is_finite() {
+                    maximum[c] = maximum[c].max(row[c]);
+                }
+            }
+        }
+        let references = ImageBuf::from_data(
+            2,
+            1,
+            [0.0, 0.0, 0.0, maximum[0], maximum[1], maximum[2]]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let captured = scan_spectral_rgb(
+            &references,
+            profile,
+            params,
+            backend,
+            color_ref,
+            channel_density,
+            base_density,
+            color,
+            true,
+        );
+        let clear = std::array::from_fn(|c| to_f64(captured.data[c]));
+        let maximum_capture: [f64; 3] = std::array::from_fn(|c| to_f64(captured.data[3 + c]));
+        if clear
+            .iter()
+            .chain(&maximum_capture)
+            .any(|v| !v.is_finite() || *v <= 0.0)
+        {
+            return Err("slide points require finite positive zero and maximum dye captures in every output RGB channel".into());
+        }
+        let density = (0..3)
+            .map(|c| -(maximum_capture[c] / clear[c]).log10())
+            .fold(f64::NEG_INFINITY, f64::max);
+        if !density.is_finite() || density <= 0.0 {
+            return Err(
+                "slide points require a finite positive shared scanned-density interval".into(),
+            );
+        }
+        let dense = clear.map(|v| v * 10.0f64.powf(-density));
+        if dense.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+            return Err(
+                "slide points require representable positive shared-density endpoints".into(),
+            );
+        }
+        Self::new(clear, dense, PointMap::new(-density, 0.0, params)?)
+    }
+
+    fn new(clear: [f64; 3], dense: [f64; 3], points: PointMap) -> Result<Self, String> {
+        let endpoints: [[(f64, f64); 2]; 3] = std::array::from_fn(|c| {
+            std::array::from_fn(|side| {
+                let capture = if side == 0 { clear[c] } else { dense[c] };
+                let mapped = clear[c] * 10.0f64.powf(points.apply((capture / clear[c]).log10(), c));
+                let slope = points.scale[c] * mapped / capture;
+                (mapped, slope)
+            })
+        });
+        if endpoints.iter().flatten().any(|&(output, slope)| {
+            !output.is_finite()
+                || !slope.is_finite()
+                || !from_f64(output).is_finite()
+                || !from_f64(slope).is_finite()
+                || output <= 0.0
+                || slope <= 0.0
+                || to_f64(from_f64(output)) <= 0.0
+                || to_f64(from_f64(slope)) <= 0.0
+        }) {
+            return Err("slide point endpoint output or tangent is not representable; widen the black/white point window".into());
+        }
+        Ok(Self {
+            clear,
+            dense,
+            points,
+            endpoints,
+        })
+    }
+
+    fn map(&self, value: f64, c: usize) -> f64 {
+        if self.points.black[c] == 0.0 && self.points.scale[c] == 1.0 {
+            return value;
+        }
+        if value >= self.clear[c] {
+            let (output, slope) = self.endpoints[c][0];
+            return output + (value - self.clear[c]) * slope;
+        }
+        if value <= self.dense[c] {
+            let (output, slope) = self.endpoints[c][1];
+            return output + (value - self.dense[c]) * slope;
+        }
+        self.clear[c] * 10.0f64.powf(self.points.apply((value / self.clear[c]).log10(), c))
+    }
+
+    fn apply(&self, rgb: &mut ImageBuf) {
+        rgb.data.par_chunks_exact_mut(3).for_each(|px| {
+            for (c, value) in px.iter_mut().enumerate() {
+                *value = from_f64(self.map(to_f64(*value), c));
+            }
+        });
+    }
+}
+
+/// Recover pre-adaptation XYZ Y with the exact inverse of the actual scan
+/// matrix. Stored RGB-to-XYZ matrices are rounded and are not its inverse.
+fn scan_rgb_to_y(color: &crate::chain_prep::ScanColorContext) -> Result<[f64; 3], String> {
+    let m: [[f64; 3]; 3] = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            (0..3)
+                .map(|k| color.base_xyz_to_rgb[i][k] * color.adapt[k][j])
+                .sum()
+        })
+    });
+    let cofactors = [
+        m[1][2] * m[2][0] - m[1][0] * m[2][2],
+        m[0][0] * m[2][2] - m[0][2] * m[2][0],
+        m[0][2] * m[1][0] - m[0][0] * m[1][2],
+    ];
+    let determinant = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        + m[0][1] * cofactors[0]
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    if !determinant.is_finite() || determinant == 0.0 {
+        return Err("slide points require an invertible scan color transform".into());
+    }
+    Ok(cofactors.map(|v| v / determinant))
 }
 
 // Scan options preserve the existing stage interface.
@@ -403,11 +643,19 @@ pub fn scan_with_options(
     include_base: bool,
 ) -> Result<ImageBuf, String> {
     let positive_scan = positive_scan_requested(params);
+    let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
     let _positive_scan = positive_scan.then(|| {
         super::StageObservation::cpu(
             backend,
             "positive_scan",
             spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+        )
+    });
+    let _slide_points = slide_points.then(|| {
+        super::StageObservation::cpu(
+            backend,
+            "scanner_film_points",
+            spektrafilm_gpu::telemetry::CpuReason::ScannerFilmPoints,
         )
     });
     let cpu_fallback = positive_scan
@@ -464,11 +712,12 @@ pub fn scan_with_options(
         &channel_density,
         base_density,
         scan_context,
+        slide_points,
     );
 
-    // White/black correction is fully handled by color_ref's XYZ luminance
-    // remap (applied inside the scan paths above). For the combos where no
-    // remap is built we apply nothing: scan_film+negative because upstream
+    // Historical white/black correction stays inside the scan LUT. Active
+    // slide points defer only that remap until after capture blur and points.
+    // When no remap is built we apply nothing: scan_film+negative because upstream
     // Python explicitly skips it (`black_white_xyz_correction`: "do not
     // correct negative film scans"), and a positive print paper because
     // upstream crashes there (its printing exposure correction returns None)
@@ -507,6 +756,33 @@ pub fn scan_with_options(
         );
         spektrafilm_model::glare::add_glare_with_amount(&mut rgb, &glare_amount, glare_rgb_offset);
     }
+    if slide_points {
+        let points = SlidePoints::from_profile(
+            profile,
+            params,
+            backend,
+            color_ref,
+            &channel_density,
+            base_density,
+            scan_context,
+        )?;
+        if params.scanner.lens_blur > 0.0 {
+            rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
+        }
+        points.apply(&mut rgb);
+        if color_ref.has_remap() {
+            let to_y = scan_rgb_to_y(scan_context)?;
+            rgb.data.par_chunks_exact_mut(3).for_each(|px| {
+                let y = (0..3).map(|c| to_y[c] * to_f64(px[c])).sum();
+                let scale = color_ref.xyz_scale(y);
+                if scale != 1.0 {
+                    for value in px {
+                        *value = from_f64(to_f64(*value) * scale);
+                    }
+                }
+            });
+        }
+    }
 
     // Positive interpretation is scanner-domain: optical capture and lens
     // blur happen before the calibrated negative endpoint inversion.
@@ -523,7 +799,7 @@ pub fn scan_with_options(
             base_density,
             scan_context,
         )?;
-        rgb = interpret_negative_capture(rgb, &calibration, params);
+        rgb = interpret_negative_capture(rgb, &calibration, params)?;
     }
 
     // Output gamut compression — direct scans preserve the historical
@@ -544,7 +820,7 @@ pub fn scan_with_options(
 
     // Direct scans apply optical blur after gamut compression, preserving
     // the established direct-scan behavior.
-    if !positive_scan && params.scanner.lens_blur > 0.0 {
+    if !positive_scan && !slide_points && params.scanner.lens_blur > 0.0 {
         rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
     }
 
@@ -681,7 +957,7 @@ mod tests {
                 .flat_map(|v| [from_f64(v); 3])
                 .collect(),
         );
-        let output = interpret_negative_capture(input, &calibration(), &params);
+        let output = interpret_negative_capture(input, &calibration(), &params).unwrap();
         let values: Vec<f64> = output.data.iter().step_by(3).map(|v| to_f64(*v)).collect();
         assert!(values.windows(2).all(|w| w[1] > w[0]));
         assert!(values[0] < 0.0 && values[4] > 1.0);
@@ -691,13 +967,13 @@ mod tests {
     fn density_and_balance_controls_change_only_requested_channels() {
         let input = ImageBuf::from_data(1, 1, vec![from_f64(0.1); 3]);
         let mut params = RuntimeParams::default();
-        let baseline = interpret_negative_capture(input.clone(), &calibration(), &params);
+        let baseline = interpret_negative_capture(input.clone(), &calibration(), &params).unwrap();
         params.scanner.positive_density_ev += 1.0;
-        let brighter = interpret_negative_capture(input.clone(), &calibration(), &params);
+        let brighter = interpret_negative_capture(input.clone(), &calibration(), &params).unwrap();
         assert!(brighter.data.iter().zip(&baseline.data).all(|(a, b)| a > b));
         params.scanner.positive_density_ev -= 1.0;
         params.scanner.positive_balance_ev = [1.0, 0.0, -1.0];
-        let balanced = interpret_negative_capture(input, &calibration(), &params);
+        let balanced = interpret_negative_capture(input, &calibration(), &params).unwrap();
         assert!(balanced.data[0] > baseline.data[0]);
         assert_eq!(balanced.data[1], baseline.data[1]);
         assert!(balanced.data[2] < baseline.data[2]);
@@ -715,8 +991,334 @@ mod tests {
                 .map(from_f64)
                 .collect(),
         );
-        let output = interpret_negative_capture(input, &calibration(), &params);
+        let output = interpret_negative_capture(input, &calibration(), &params).unwrap();
         assert!(output.data.iter().all(|v| v.is_finite()));
         assert!(output.data[3] > output.data[0]);
+    }
+
+    #[test]
+    fn negative_points_share_axis_and_preserve_neutrality() {
+        let mut params = RuntimeParams::default();
+        params.scanner.black_point = [0.2; 3];
+        params.scanner.white_point = [0.8; 3];
+        let mut calibration = calibration();
+        calibration.channels[1].density = vec![0.0, 0.5, 1.0];
+        calibration.channels[2].density = vec![0.0, 1.5, 3.0];
+        let input = ImageBuf::from_data(
+            3,
+            1,
+            [-0.7, 0.0, 0.5]
+                .into_iter()
+                .flat_map(|e| {
+                    [
+                        10.0f64.powf(-(e + 1.0)),
+                        10.0f64.powf(-0.5 * (e + 1.0)),
+                        10.0f64.powf(-1.5 * (e + 1.0)),
+                    ]
+                    .map(from_f64)
+                })
+                .collect(),
+        );
+        let equal = interpret_negative_capture(input.clone(), &calibration, &params).unwrap();
+        for px in equal.data.as_chunks::<3>().0 {
+            assert!((to_f64(px[0]) - to_f64(px[1])).abs() < 2e-6);
+            assert!((to_f64(px[0]) - to_f64(px[2])).abs() < 2e-6);
+        }
+        params.scanner.black_point[0] = 0.1;
+        let independent = interpret_negative_capture(input, &calibration, &params).unwrap();
+        for (a, b) in independent
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(equal.data.as_chunks::<3>().0)
+        {
+            assert_ne!(a[0], b[0]);
+            assert_eq!(&a[1..], &b[1..]);
+        }
+    }
+
+    #[test]
+    fn active_negative_endpoint_tangents_chain_point_derivative() {
+        let mut params = RuntimeParams::default();
+        params.scanner.black_point = [0.15; 3];
+        params.scanner.white_point = [0.85; 3];
+        for endpoint in [1.0, 0.01] {
+            let h = endpoint * 1e-3;
+            let input = ImageBuf::from_data(
+                3,
+                1,
+                [endpoint - h, endpoint, endpoint + h]
+                    .into_iter()
+                    .flat_map(|v| [from_f64(v); 3])
+                    .collect(),
+            );
+            let output = interpret_negative_capture(input, &calibration(), &params).unwrap();
+            let left = (to_f64(output.data[3]) - to_f64(output.data[0])) / h;
+            let right = (to_f64(output.data[6]) - to_f64(output.data[3])) / h;
+            assert!((left - right).abs() < 0.02 * left.abs());
+        }
+        let signed = ImageBuf::from_data(
+            2,
+            1,
+            [-1.0, -1.0, -1.0, 2.0, 2.0, 2.0]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        assert!(
+            interpret_negative_capture(signed, &calibration(), &params)
+                .unwrap()
+                .data
+                .iter()
+                .all(|v| v.is_finite())
+        );
+    }
+
+    #[test]
+    fn slide_points_share_density_map_and_extend_signed_headroom() {
+        let mut params = RuntimeParams::default();
+        params.scanner.black_point = [0.2; 3];
+        params.scanner.white_point = [0.8; 3];
+        let mut points = SlidePoints::new(
+            [1.0, 2.0, 0.5],
+            [0.01, 0.02, 0.005],
+            PointMap::new(-2.0, 0.0, &params).unwrap(),
+        )
+        .unwrap();
+        for fraction in [0.1, 0.4, 0.7] {
+            let mapped = std::array::from_fn::<_, 3, _>(|c| {
+                points.map(points.clear[c] * fraction, c) / points.clear[c]
+            });
+            assert!((mapped[0] - mapped[1]).abs() < 1e-12);
+            assert!((mapped[0] - mapped[2]).abs() < 1e-12);
+        }
+        for endpoint in [0.01, 1.0] {
+            let h = endpoint * 1e-5;
+            let left = (points.map(endpoint, 0) - points.map(endpoint - h, 0)) / h;
+            let right = (points.map(endpoint + h, 0) - points.map(endpoint, 0)) / h;
+            assert!((left - right).abs() < 1e-3 * left.abs());
+        }
+        assert!(points.map(-1.0, 0).is_finite());
+        assert!(points.map(-1.0, 0) < 0.0);
+        assert!(points.map(10.0, 0) > points.clear[0]);
+        let unchanged = points.map(0.2, 1);
+        points.points.black[0] = 0.1;
+        assert_eq!(points.map(0.2, 1), unchanged);
+        let identity = PointMap::new(-2.0, 0.0, &RuntimeParams::default()).unwrap();
+        points.points = identity;
+        for value in [-100.0, -0.0, 0.2, 1.0, 100.0] {
+            assert_eq!(points.map(value, 0).to_bits(), value.to_bits());
+        }
+    }
+
+    fn profile(name: &str) -> Profile {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        crate::profile::load_profile_by_name(&data, name).unwrap()
+    }
+
+    #[test]
+    fn slide_points_run_after_blur_before_original_correction() {
+        let film = profile("kodak_ektachrome_100");
+        let print = profile("kodak_portra_endura");
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.io.output_cctf_encoding = false;
+        params.film_render.grain.active = false;
+        params.scanner.unsharp_mask = [0.0; 2];
+        params.scanner.lens_blur = 0.7;
+        params.scanner.white_correction = true;
+        params.scanner.black_correction = true;
+        params.scanner.black_point = [0.1, 0.2, 0.15];
+        params.scanner.white_point = [0.9, 0.85, 0.95];
+        let correction = crate::color_reference::ColorReference::compute(
+            &film,
+            &print,
+            &params,
+            &[],
+            1.0,
+            [0.0; 3],
+        );
+        let context = crate::chain_prep::PreparedChain::for_scan(&film, &params, None);
+        let channel = crate::chain_prep::channel_density(&film);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let input = ImageBuf::from_data(
+            3,
+            1,
+            [0.1, 0.2, 0.3, 1.0, 1.2, 1.4, 2.0, 1.8, 1.6]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let capture = scan_spectral_rgb(
+            &input,
+            &film,
+            &params,
+            &backend,
+            &correction,
+            &channel,
+            &film.data.base_density,
+            &context.scan,
+            true,
+        );
+        let points = SlidePoints::from_profile(
+            &film,
+            &params,
+            &backend,
+            &correction,
+            &channel,
+            &film.data.base_density,
+            &context.scan,
+        )
+        .unwrap();
+        let mut expected = backend.gaussian_blur(&capture, params.scanner.lens_blur);
+        points.apply(&mut expected);
+        let y = scan_rgb_to_y(&context.scan).unwrap();
+        for px in expected.data.as_chunks_mut::<3>().0 {
+            let scale = correction.xyz_scale((0..3).map(|c| y[c] * to_f64(px[c])).sum());
+            for value in px {
+                *value = from_f64(to_f64(*value) * scale);
+            }
+        }
+        let actual = process(
+            &input,
+            &film,
+            &params,
+            &backend,
+            &correction,
+            &crate::gamut_compression::OutputGamutCompress::identity(),
+        )
+        .unwrap();
+        assert_eq!(actual.data, expected.data);
+        let mut wrong_order = capture;
+        points.apply(&mut wrong_order);
+        wrong_order = backend.gaussian_blur(&wrong_order, params.scanner.lens_blur);
+        assert!(
+            wrong_order
+                .data
+                .iter()
+                .zip(&actual.data)
+                .any(|(a, b)| (to_f64(*a) - to_f64(*b)).abs() > 1e-5)
+        );
+    }
+
+    #[test]
+    fn default_slide_points_preserve_historical_capture_and_blur() {
+        let film = profile("kodak_ektachrome_100");
+        let print = profile("kodak_portra_endura");
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.io.output_cctf_encoding = false;
+        params.film_render.grain.active = false;
+        params.scanner.unsharp_mask = [0.0; 2];
+        params.scanner.lens_blur = 0.7;
+        params.scanner.white_correction = true;
+        params.scanner.black_correction = true;
+        let correction = crate::color_reference::ColorReference::compute(
+            &film,
+            &print,
+            &params,
+            &[],
+            1.0,
+            [0.0; 3],
+        );
+        let context = crate::chain_prep::PreparedChain::for_scan(&film, &params, None);
+        let channel = crate::chain_prep::channel_density(&film);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let input = ImageBuf::from_data(
+            3,
+            1,
+            [0.1, 0.2, 0.3, 1.0, 1.2, 1.4, 2.0, 1.8, 1.6]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let historical_capture = scan_spectral_rgb(
+            &input,
+            &film,
+            &params,
+            &backend,
+            &correction,
+            &channel,
+            &film.data.base_density,
+            &context.scan,
+            false,
+        );
+        let expected = backend.gaussian_blur(&historical_capture, params.scanner.lens_blur);
+        let actual = process(
+            &input,
+            &film,
+            &params,
+            &backend,
+            &correction,
+            &crate::gamut_compression::OutputGamutCompress::identity(),
+        )
+        .unwrap();
+        assert_eq!(actual.data, expected.data);
+    }
+
+    #[test]
+    fn paper_and_direct_negative_ignore_stored_points() {
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let correction = crate::color_reference::ColorReference::identity();
+        let gamut = crate::gamut_compression::OutputGamutCompress::identity();
+        let input = ImageBuf::from_data(1, 1, vec![from_f64(0.5); 3]);
+        for (name, scan_film) in [("kodak_portra_endura", false), ("kodak_portra_400", true)] {
+            let profile = profile(name);
+            let mut params = RuntimeParams::default();
+            params.io.scan_film = scan_film;
+            params.film_render.grain.active = false;
+            let baseline =
+                process(&input, &profile, &params, &backend, &correction, &gamut).unwrap();
+            params.scanner.black_point = [0.2; 3];
+            params.scanner.white_point = [0.8; 3];
+            let active = process(&input, &profile, &params, &backend, &correction, &gamut).unwrap();
+            assert_eq!(active.data, baseline.data);
+        }
+    }
+
+    #[test]
+    fn public_slide_scan_rejects_unrepresentable_endpoint_window() {
+        let film = profile("kodak_ektachrome_100");
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.film_render.grain.active = false;
+        params.scanner.white_point = [0.001; 3];
+        let result = process(
+            &ImageBuf::from_data(1, 1, vec![from_f64(0.5); 3]),
+            &film,
+            &params,
+            &spektrafilm_gpu::cpu_backend::CpuBackend,
+            &crate::color_reference::ColorReference::identity(),
+            &crate::gamut_compression::OutputGamutCompress::identity(),
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .contains("endpoint output or tangent is not representable")
+        );
+    }
+
+    #[test]
+    fn public_positive_scan_rejects_unrepresentable_window_reciprocal() {
+        let film = profile("kodak_portra_400");
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "positive_scan".into();
+        params.film_render.grain.active = false;
+        params.scanner.white_point = [1e-320; 3];
+        let result = process(
+            &ImageBuf::from_data(1, 1, vec![from_f64(0.5); 3]),
+            &film,
+            &params,
+            &spektrafilm_gpu::cpu_backend::CpuBackend,
+            &crate::color_reference::ColorReference::identity(),
+            &crate::gamut_compression::OutputGamutCompress::identity(),
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .contains("point window reciprocal is not representable")
+        );
     }
 }

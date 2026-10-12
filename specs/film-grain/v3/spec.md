@@ -24,7 +24,7 @@ The output pixel is a readout sample. It is not a grain-generation unit. At a vi
 
 ## Supported condition
 
-V3 supports still color-negative film profiles (`info.type = "negative"`, `info.use = "still"`, `info.support = "film"`, `info.stage = "filming"`, `info.channel_model = "color"`) at the resolved global `camera.film_format_mm` film long edge. V3 must consume this parameter as the only film-format source and must not impose a second format whitelist.
+V3 supports still and cine color-negative film profiles (`info.type = "negative"`, `info.support = "film"`, `info.stage = "filming"`, `info.channel_model = "color"`) at the resolved global `camera.film_format_mm` film long edge. The profile usage label must not restrict V3. V3 must consume this parameter as the only film-format source and must not impose a second format whitelist.
 
 Changing film format must keep the requested output raster dimensions. It may change visible grain through the physical sampling defined in the [film geometry](design.md#film-geometry). V3 must not compensate this change with an automatic grain-size or strength adjustment.
 
@@ -34,7 +34,9 @@ V3 must also run on the film-scan route `input > film > scan` with `io.scan_film
 
 Each stock must resolve its grain through its granularity preset, so that a coarser stock renders stronger grain than a finer one at the same density. The reference stock `kodak_portra_800` keeps the absolute event area validated for it. Other stocks move relative to that anchor.
 
-Active V3 on another film chemistry, another usage (including `cine`), the convert-film route, or the passthrough route must fail with an actionable unsupported-condition error. A different `camera.film_format_mm` value must not fail only because it differs from 36 mm. Each additional format requires numerical, resource, and photographic evidence before it is described as validated support.
+Cine profiles must use the existing V3 model and their resolved stock controls without a separate engine or retuned defaults. Cine availability does not establish stock-specific photographic calibration or a passed spectral readout gate. The known optical approximation limits are recorded in the [design](design.md#evidence-and-limits).
+
+Active V3 on another film chemistry, the convert-film route, or the passthrough route must fail with an actionable unsupported-condition error. A different `camera.film_format_mm` value must not fail only because it differs from 36 mm. Each additional format requires numerical, resource, and photographic evidence before it is described as validated support.
 
 The acceptance record must identify exposure where known, development, scanner or scan source, processing, output dimensions, film format, film area, film pitch, field pitch, and viewing size. Unknown conditions must remain explicit. Incomplete references may guide appearance. They must not establish stock-specific physical calibration.
 
@@ -122,7 +124,7 @@ The record must distinguish exercised geometry, full-frame execution, and photog
 
 This release does not require microscopic crystal reconstruction, correlated or shared CMY fields, multiple texture scales, Dehancer Film Resolution, or a hard grain-diameter resolution cutoff. It does not promise V1 or Dehancer pixel parity.
 
-Print-paper grain, scanner chroma noise reduction, cine stocks, semantic skin protection, and GPU optimization are outside this release. Arbitrary final-RGB noise, JPEG tuning, and display sharpening must not substitute for the declared model.
+Print-paper grain, scanner chroma noise reduction, semantic skin protection, and GPU optimization are outside this release. Arbitrary final-RGB noise, JPEG tuning, and display sharpening must not substitute for the declared model.
 
 ## References
 

@@ -391,6 +391,7 @@ impl App {
             match selected.preset.kind()? {
                 PresetKind::Look => {
                     let resolved = selected.preset.resolve(&self.data_dir, &current)?;
+                    self.film_medium = crate::scan_medium(&resolved.film);
                     self.film_name = resolved.film_name;
                     self.print_name = resolved.print_name;
                     self.params = resolved.params;
@@ -408,6 +409,7 @@ impl App {
                     )
                     .map_err(|error| error.to_string())?;
                     self.params = selected.preset.apply_section(&current, &film)?;
+                    self.film_medium = crate::scan_medium(&film);
                 }
             }
             self.invalidate_look_render();
@@ -972,6 +974,114 @@ mod tests {
             "{}",
             app.status
         );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn scanner_transitions_preserve_points_and_reset_illegal_output() {
+        let (mut app, directory) = test_app("scanner-transitions");
+        app.params.scanner.black_point = [0.1, 0.2, 0.3];
+        app.params.scanner.white_point = [0.7, 0.8, 0.9];
+        app.params.workflow.route = "input > film > scan".into();
+        app.params.scanner.scan_output = "positive_scan".into();
+        app.dirty = false;
+        let revision = app.parameter_revision;
+        app.params.workflow.route = "input > film > print > scan".into();
+        app.finish_route_change();
+        assert_eq!(app.params.scanner.scan_output, "direct_scan");
+        assert!(app.dirty);
+        assert_eq!(app.parameter_revision, revision.wrapping_add(1));
+        app.params.workflow.route = "input > convert-film > scan".into();
+        app.finish_route_change();
+        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.white_correction = false;
+        app.params.scanner.black_correction = false;
+        let revision = app.parameter_revision;
+        app.toggle_scan_for_print();
+        assert!(app.scan_for_print_snapshot.is_none());
+        assert!(!app.params.scanner.white_correction);
+        assert!(!app.params.scanner.black_correction);
+        assert_eq!(app.parameter_revision, revision);
+        app.select_film_profile("kodak_ektachrome_100".into());
+        assert_eq!(app.film_medium, crate::controls::ScanMedium::Slide);
+        assert_eq!(app.params.scanner.scan_output, "direct_scan");
+        let restored = app.current_state().unwrap().runtime_params().unwrap();
+        assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
+        assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn slide_startup_normalizes_positive_output_without_resetting_points() {
+        let (app, directory) = test_app("slide-startup");
+        let mut params = app.params.clone();
+        params.workflow.route = "input > film > scan".into();
+        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.white_correction = false;
+        params.scanner.black_correction = false;
+        params.scanner.black_point = [0.1, 0.2, 0.3];
+        let state = state::GuiState::from_runtime(
+            &params,
+            "kodak_ektachrome_100",
+            &app.print_name,
+            &app.gui_state.sections,
+        )
+        .unwrap();
+        let path = directory.join("slide.json");
+        state.save(&path).unwrap();
+        let restarted = App::new_with_browser_path(
+            std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            None,
+            Some(path),
+            None,
+            directory.join("preset_browser_state.json"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        );
+        assert_eq!(restarted.film_medium, crate::controls::ScanMedium::Slide);
+        assert_eq!(restarted.params.scanner.scan_output, "direct_scan");
+        assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn scanner_points_survive_section_preset_and_restart() {
+        let (mut app, directory) = test_app("scanner-points");
+        app.params.scanner.black_point = [0.1, 0.2, 0.3];
+        app.params.scanner.white_point = [0.7, 0.8, 0.9];
+        let preset =
+            Preset::capture_section("Film points", Section::Scanner, &app.params, provenance())
+                .unwrap();
+        app.presets
+            .library
+            .save_new(&preset, &app.data_dir)
+            .unwrap();
+        app.presets.refresh();
+        let entry = app
+            .presets
+            .entries
+            .iter()
+            .find(|entry| entry.name == "Film points")
+            .unwrap()
+            .clone();
+        app.params.scanner.black_point = [0.0; 3];
+        app.params.scanner.white_point = [1.0; 3];
+        app.load_preset(entry.group, &entry.name);
+        assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+        let path = directory.join("saved.json");
+        app.current_state().unwrap().save(&path).unwrap();
+        let mut restarted = App::new_with_browser_path(
+            std::sync::Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            None,
+            Some(path),
+            None,
+            directory.join("preset_browser_state.json"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        );
+        assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
+        assert_eq!(restarted.params.scanner.white_point, [0.7, 0.8, 0.9]);
+        restarted.params.scanner.black_point = [0.0; 3];
+        restarted.apply_state(app.current_state().unwrap()).unwrap();
+        assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
