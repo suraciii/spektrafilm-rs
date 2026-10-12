@@ -81,7 +81,7 @@ A serialized `route` or `workflow` field is unknown and rejected.
 
 ### Look ownership
 
-A look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, glare, base, chemistry, and scanner look controls; a section preset owns exactly the controls of its section. A preset preserves enabled states and f64 values. It does not own workflow, image/input, RAW/source correction, geometry, viewer/display, output encoding, export destination, preview limits, cache, debug/taps, startup state, dialog directories, or random seed.
+A look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, glare, base, chemistry, and scanner look controls; a section preset owns exactly the controls of its section. Scanner look controls include the receiver profile, positive interpretation method, scanner finish, finish strength, and scanner acquisition and interpretation controls exposed by the film-chain contract. A preset preserves enabled states and f64 values. Receiver and finish provenance must remain attached when a preset carries those controls. It does not own workflow, image/input, RAW/source correction, geometry, viewer/display, output encoding, export destination, preview limits, cache, debug/taps, startup state, dialog directories, or random seed.
 
 ### Implementation rules
 
