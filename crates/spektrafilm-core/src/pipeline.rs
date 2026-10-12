@@ -474,6 +474,11 @@ impl Pipeline {
             context.set_working_dimensions(cur.width, cur.height);
         }
         let mut stage_timings = stage_timings;
+        let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+        if aperture_factor.is_some() && collect != Tap::RgbOut {
+            return Err("SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR requires collect=rgb_out".to_owned());
+        }
+        let mut aperture_output_pitch_um = None;
         let mut i = ip;
         if inject == Tap::RgbIn && cp > ip {
             i += 1;
@@ -500,7 +505,9 @@ impl Pipeline {
                 let print_spatial = !self.params.io.scan_film
                     && collect != Tap::CmyFilm
                     && self.params.enlarger.diffusion_filter.active;
-                let grid = if self.params.io.crop && (scan_spatial || print_spatial) {
+                let grid = if let Some(factor) = aperture_factor {
+                    stages::grain_v3::aperture_grid(&geometry, factor)?
+                } else if self.params.io.crop && (scan_spatial || print_spatial) {
                     let (grid, crop) = geometry.full_film_grid(&cur)?;
                     output_crop = Some(crop);
                     grid
@@ -511,6 +518,7 @@ impl Pipeline {
                 // on the full source's long axis. Rounding may make the other
                 // axis differ; the field itself retains both exact pitches.
                 let long_axis = usize::from(cur.height > cur.width);
+                let requested_pitch_um = geometry.output_pitch_um[long_axis];
                 cur = stages::grain_v3::readout(
                     &cur,
                     &self.film,
@@ -519,10 +527,27 @@ impl Pipeline {
                     grid,
                     backend,
                 )?;
-                pixel_size_um = geometry.output_pitch_um[long_axis];
+                pixel_size_um = if let Some(factor) = aperture_factor {
+                    aperture_output_pitch_um = Some(requested_pitch_um);
+                    requested_pitch_um / factor as f64
+                } else {
+                    requested_pitch_um
+                };
                 print_stage_timing(stage_timings_enabled(), "grain_v3_readout", t);
                 record_stage_timing(&mut stage_timings, "grain_v3_readout", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
+            }
+            if order[i] == Tap::CmyFilm {
+                if let Some(factor) = aperture_factor {
+                    let t = Instant::now();
+                    cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
+                    pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
+                        "film grain V3 aperture: missing requested output pitch".to_owned()
+                    })?;
+                    print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
+                    record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
+                    tracing::info!(factor, "film grain V3: collapsed linear print exposure");
+                }
             }
             i += 1;
         }
