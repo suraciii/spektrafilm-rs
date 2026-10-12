@@ -85,6 +85,29 @@ impl ColorReference {
             None => 1.0,
         }
     }
+    /// Replace only scan luminance references. Film/print exposure factors
+    /// retain their historical calibration independent of receiver selection.
+    pub(crate) fn with_scan_references(
+        self,
+        y_white: f64,
+        y_black: f64,
+        params: &RuntimeParams,
+    ) -> Self {
+        if !self.has_remap() {
+            return self;
+        }
+        let (m, q, _) = build_remap(
+            y_white,
+            y_black,
+            params,
+            params.scanner.white_correction,
+            params.scanner.black_correction,
+        );
+        Self {
+            xyz_remap: Some((m, q)),
+            ..self
+        }
+    }
 
     /// Build the correction for the current stocks + params. Identity unless
     /// scanner white/black correction is on AND one of the two faithful

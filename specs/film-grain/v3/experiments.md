@@ -12,7 +12,7 @@ Exactness refers to the piecewise-constant formed field. It does not recover wit
 
 The initial reader supports color-negative print exposure and direct film capture, including positive scan interpretation after integration. Print collection may stop at `log_e_print`, `cmy_print` or `rgb_out`; film scanning collects `rgb_out`. Injection must occur at or before `log_e_film`. Density-only collection at `cmy_film` is rejected for an optical request.
 
-The reader rejects simultaneous supersampling (`SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR`), enlarger/scanner LUTs, scanner luminance remap, spatial optics, scanner point/white/black corrections, and magazine finishing. Rejections occur before field allocation. Zero spatial optics is an explicit experiment limit, not evidence for the production routes with optical filtering.
+The reader rejects simultaneous supersampling (`SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR`), enlarger/scanner LUTs, scanner luminance remap, spatial optics, scanner point/white/black corrections, per-frame automatic scanner setup, and magazine finishing. Rejections occur before field allocation. Zero spatial optics is an explicit experiment limit, not evidence for the production routes with optical filtering.
 
 The optical reader bounds each band to at most 1,048,576 field or source cells. Existing spectral backends may allocate wavelength tensors within a band; this bound does not establish acceptable full-frame time or peak memory.
 

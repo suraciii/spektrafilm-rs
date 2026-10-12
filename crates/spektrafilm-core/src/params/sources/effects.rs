@@ -24,6 +24,8 @@ pub(super) enum Condition {
     Crop,
     ScannerPoints,
     PositiveScan,
+    LabScanFinish,
+    FilmScan,
     MagazineActive,
     MagazineStrength,
 }
@@ -65,6 +67,8 @@ impl Condition {
                 "slide film scan or negative film scan with scanner.scan_output = positive_scan; ignored for paper and direct negative scans"
             }
             Self::PositiveScan => "scanner.scan_output = positive_scan",
+            Self::LabScanFinish => "scanner.finish = lab_scan",
+            Self::FilmScan => "film-scan route",
             Self::MagazineActive => "magazine_print_color.active = true",
             Self::MagazineStrength => "magazine_print_color.strength > 0",
         }
@@ -110,6 +114,8 @@ impl Condition {
                     && (film.is_positive() || p.scanner.scan_output == "positive_scan")
             }
             Self::PositiveScan => p.scanner.scan_output == "positive_scan",
+            Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
+            Self::FilmScan => p.io.scan_film || p.workflow.route == "input > convert-film > scan",
             Self::MagazineActive => p.magazine_print_color.active,
             Self::MagazineStrength => p.magazine_print_color.strength > 0.0,
         }
@@ -185,7 +191,13 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(Crop);
     } else if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push(ScannerPoints);
-    } else if path.starts_with("scanner.positive_") {
+    } else if path == "scanner.finish_strength" {
+        out.extend([PositiveScan, LabScanFinish]);
+    } else if path == "scanner.receiver_profile" {
+        out.push(FilmScan);
+    } else if path.starts_with("scanner.positive_")
+        || matches!(path, "scanner.auto_setup" | "scanner.finish")
+    {
         out.push(PositiveScan);
     } else if path.starts_with("magazine_print_color.") {
         out.push(if path.ends_with(".strength") {

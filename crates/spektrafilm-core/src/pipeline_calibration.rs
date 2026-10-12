@@ -269,7 +269,7 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
     Ok(())
 }
 
-pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
+pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
     validate_scan_output_route(params)?;
     if params.scanner.scan_output != "positive_scan" {
         return Ok(());

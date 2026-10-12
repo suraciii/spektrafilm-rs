@@ -30,6 +30,8 @@ pub struct ProfileRef {
 pub struct Provenance {
     pub implementation_version: String,
     pub model_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanner: Option<Value>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -177,7 +179,11 @@ impl Preset {
                 validate_content_identity(kind, reference)?;
             }
         }
+        // Presets do not carry workflow routing. Validate scanner-owned values
+        // in their supported film-scan context; applying checks the actual route.
         let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
         match &self.parameters {
             PresetParameters::Look(look) => {
                 params.enlarger = look.enlarger.clone();
@@ -187,6 +193,17 @@ impl Preset {
                 params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
             }
             PresetParameters::Section(payload) => parameter_edits(payload)?.apply(&mut params)?,
+        }
+        if let Some(scanner) = &self.provenance.scanner {
+            let expected = serde_json::to_value(
+                crate::scan_receiver::ScannerProvenance::from_params(&params),
+            )
+            .map_err(|e| e.to_string())?;
+            if scanner != &expected {
+                return Err(
+                    "scanner provenance does not match the typed scanner parameters".into(),
+                );
+            }
         }
         crate::params::sources::validate_finite(&params)?;
         params.validate()
@@ -260,6 +277,16 @@ impl Preset {
             )
         {
             params.scanner.scan_output = "direct_scan".into();
+            params.scanner.positive_interpretation =
+                crate::params::PositiveInterpretation::default();
+            params.scanner.auto_setup = crate::params::ScannerAutoSetup::default();
+            params.scanner.finish = crate::params::ScannerFinish::default();
+        }
+        if !matches!(
+            params.workflow.route.as_str(),
+            "input > film > scan" | "input > convert-film > scan"
+        ) {
+            params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
         }
         crate::pipeline_calibration::validate_scan_output_route(&params)?;
         params.validate()?;
@@ -277,8 +304,12 @@ impl Preset {
         film: impl Into<String>,
         print: impl Into<String>,
         params: &RuntimeParams,
-        provenance: Provenance,
+        mut provenance: Provenance,
     ) -> Self {
+        provenance.scanner = Some(
+            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(params))
+                .expect("built-in provenance is serializable"),
+        );
         Self {
             schema_version: 2,
             name: name.into(),
@@ -302,8 +333,17 @@ impl Preset {
         name: impl Into<String>,
         section: Section,
         params: &RuntimeParams,
-        provenance: Provenance,
+        mut provenance: Provenance,
     ) -> Result<Self, String> {
+        let payload = extract_section(section, params)?;
+        let mut captured = RuntimeParams::default();
+        parameter_edits(&payload)?.apply(&mut captured)?;
+        provenance.scanner = Some(
+            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(
+                &captured,
+            ))
+            .map_err(|e| e.to_string())?,
+        );
         let preset = Self {
             schema_version: 2,
             name: name.into(),
@@ -311,7 +351,7 @@ impl Preset {
             description: None,
             film_profile: None,
             print_profile: None,
-            parameters: PresetParameters::Section(extract_section(section, params)?),
+            parameters: PresetParameters::Section(payload),
             provenance,
         };
         preset.validate()?;

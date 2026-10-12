@@ -6,8 +6,8 @@ mod validator;
 
 pub use configuration::{
     BitDepth, ColorSpaceRole, Compression, GamutAlgorithm, GrainConfiguration, GrainEngine,
-    GrainMode, OutputFormat, RenderConfiguration, RgbToRawAlgorithm, SavingConfiguration,
-    SpatialConfiguration, StockId, WorkflowRoute,
+    GrainMode, OutputFormat, PositiveInterpretation, ReceiverConfiguration, RenderConfiguration,
+    RgbToRawAlgorithm, SavingConfiguration, SpatialConfiguration, StockId, WorkflowRoute,
 };
 pub use operation::Operation;
 pub use persistence::{PersistenceError, ReportDestination, validate_report_destination};

@@ -191,6 +191,10 @@ bundle_native_licenses() {
     local roots=() seen
     mkdir -p "$output"
     cp LICENSE "$output/Spektrafilm-LICENSE"
+    [[ -s licenses/Apache-2.0.txt ]] || fail "Fotufilm Apache-2.0 license missing"
+    [[ -s attribution/NOTICE ]] || fail "Fotufilm attribution notice missing"
+    cp licenses/Apache-2.0.txt "$output/Fotufilm-Apache-2.0.txt"
+    cp attribution/NOTICE "$output/Fotufilm-NOTICE.txt"
     for source in ${bundled_sources[@]+"${bundled_sources[@]}"}; do
         case "$source" in
             */Cellar/*)
