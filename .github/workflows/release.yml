@@ -88,7 +88,7 @@ jobs:
           & $env:PKG_CONFIG --atleast-version=0.22.0 libraw
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
           & $env:PKG_CONFIG --exists lcms2
-          if ($LASTEXITCODE -ne 0) { throw "LittleCMS development package is required" }
+          $env:RUST_TEST_THREADS = "1"
           cargo test --workspace --features precision-f64 --no-fail-fast
           if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
