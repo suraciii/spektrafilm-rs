@@ -23,11 +23,11 @@ flowchart LR
 
 ## Chosen boundary options
 
-A renderer-integrated benchmark would avoid subprocess setup, but it would couple evaluation releases to the simulation runtime, duplicate CLI contracts, and make independent metric updates harder. A standalone Python benchmark CLI keeps the first implementation deep: it can use established image and color libraries while treating the existing renderer as a stable process boundary. The target design therefore chooses a standalone executable with a renderer adapter.
+A renderer-integrated benchmark would remove subprocess setup but would bind evaluation to the current simulation runtime. A standalone Rust CLI preserves comparisons across historical renderer executables and retained artifacts. The target design chooses the standalone CLI with the existing renderer process boundary. A pinned Python implementation supplies migration acceptance evidence outside the delivered runtime.
 
 The benchmark must not add a second parameter DSL. Suite and target documents may reference the renderer's existing `--preset`, `--params`, and `--set` carriers. The benchmark validates their shape and passes them to the renderer in the renderer's defined precedence order. Benchmark-only settings use typed JSON fields and have no shell or expression evaluation.
 
-The first implementation may use a Python package and console entry point. Its artifact and JSON contracts must remain language-neutral so a later Rust implementation can consume the same documents without changing evaluation meaning.
+The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters. The executable must not require the Python benchmark at runtime.
 
 ## Component responsibilities
 
@@ -91,8 +91,6 @@ The pipeline must distinguish configuration failure, renderer failure, measureme
 
 A comparison can complete with `insufficient_evidence`, but a qualified pass requires all required measurements, compatible conditions, calibrated policy, and successful artifact validation. Human approval can add a review decision but cannot rewrite the measured result.
 
-## First safe implementation slice
+## Migration and delivery
 
-The first implementation should support one controlled suite and one natural-scene suite, CPU f64 rendering through the existing CLI, floating masters, deterministic numeric/color/tone metrics, fixed semantic regions, automatic FLIP hotspots, JSON comparison output, and an offline report. It should use a fixed protocol identity and require explicit policies before gating.
-
-The next slice can add multi-seed grain statistics and dedicated halation probes. Reference alignment should follow after correspondence and provenance records are available. GPU comparison, HDR metrics, and additional learned metrics must not enter the initial qualified path without a separately versioned protocol.
+[Rust delivery](rust-delivery.md) defines migration scope, numerical acceptance, resource measurements, supported-platform packaging, and cutover. The delivered implementation is the Rust workspace crate. The pinned Python reference and acceptance evidence remain outside the repository after cutover.

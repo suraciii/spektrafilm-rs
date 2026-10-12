@@ -44,9 +44,9 @@ test:
 test-f64:
     cargo test --locked --workspace --features precision-f64
 
-# Run the appearance benchmark regressions with locked Python dependencies.
+# Run the native appearance benchmark regressions.
 benchmark-test:
-    uv run --project scripts/benchmark --locked python -m unittest discover -s scripts/benchmark/tests
+    cargo test --locked -p spektrafilm-benchmark
 
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
 gui-headless:

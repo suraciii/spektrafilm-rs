@@ -378,30 +378,30 @@ transform with native input headroom.
 
 The external `spektrafilm-bench` CLI renders immutable evidence, compares versions, and creates an offline review. It reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. It preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations. The [benchmark specification](specs/benchmark/README.md) defines reference scopes and qualification rules.
 
-Install the locked Python dependencies with `uv`. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
+Build the native benchmark tools. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
 
 ```bash
 just build-f64
-uv sync --project scripts/benchmark --locked
-scripts/benchmark/.venv/bin/python scripts/benchmark/fixtures.py \
+cargo build --locked --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures
+./target/release/spektrafilm-bench-fixtures \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --out /tmp/spektrafilm-benchmark-fixtures --download-natural
 
-scripts/benchmark/spektrafilm-bench validate --kind suite \
+./target/release/spektrafilm-bench validate --kind suite \
     --file /tmp/spektrafilm-benchmark-fixtures/complete.json
-scripts/benchmark/spektrafilm-bench run \
+./target/release/spektrafilm-bench run \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --out /tmp/spektrafilm-benchmark-baseline
-scripts/benchmark/spektrafilm-bench run \
+./target/release/spektrafilm-bench run \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/candidate.json \
     --out /tmp/spektrafilm-benchmark-candidate
-scripts/benchmark/spektrafilm-bench compare \
+./target/release/spektrafilm-bench compare \
     --baseline /tmp/spektrafilm-benchmark-baseline \
     --candidate /tmp/spektrafilm-benchmark-candidate \
     --out /tmp/spektrafilm-benchmark-comparison
-scripts/benchmark/spektrafilm-bench report \
+./target/release/spektrafilm-bench report \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --out /tmp/spektrafilm-benchmark-review
 just benchmark-test

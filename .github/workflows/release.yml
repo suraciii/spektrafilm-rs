@@ -87,9 +87,21 @@ jobs:
           $env:SPEKTRAFILM_RELEASE_SUBDIR = "x86_64-pc-windows-gnu\release"
           & $env:PKG_CONFIG --atleast-version=0.22.0 libraw
           if ($LASTEXITCODE -ne 0) { throw "Release RAW decoder requires LibRaw >= 0.22.0" }
+          & $env:PKG_CONFIG --exists lcms2
+          if ($LASTEXITCODE -ne 0) { throw "LittleCMS development package is required" }
           cargo test --workspace --features precision-f64 --no-fail-fast
           if ($LASTEXITCODE -ne 0) { throw "Workspace tests failed" }
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
+          $benchmarkPackage = (Resolve-Path 'dist\spektrafilm-windows-x64').Path
+          Push-Location $env:RUNNER_TEMP
+          try {
+            & "$benchmarkPackage\spektrafilm-bench.exe" --help
+            if ($LASTEXITCODE -ne 0) { throw "Packaged benchmark help failed" }
+            & "$benchmarkPackage\spektrafilm-bench-fixtures.exe" --help
+            if ($LASTEXITCODE -ne 0) { throw "Packaged fixture help failed" }
+          } finally { Pop-Location }
+          if (-not (Test-Path -LiteralPath "dist\spektrafilm-windows-x64\licenses\nvlabs-flip-bsd-3-clause.txt")) { throw "FLIP license missing from package" }
+          if (-not (Test-Path -LiteralPath "dist\spektrafilm-windows-x64\licenses\littlecms-mit.txt")) { throw "LittleCMS license missing from package" }
           & "$env:pythonLocation\python.exe" scripts/parity/package_smoke.py --cli dist/spektrafilm-windows-x64/spektrafilm.exe --exporter dist/spektrafilm-windows-x64/spektrafilm-f64.exe --raw-helper dist/spektrafilm-windows-x64/decode_raw_gui.exe --package-root dist/spektrafilm-windows-x64 --data-dir dist/spektrafilm-windows-x64/data --evidence-dir "$env:RUNNER_TEMP/package-smoke"
           if ($LASTEXITCODE -ne 0) { throw "Package smoke failed" }
 
@@ -167,7 +179,7 @@ jobs:
             build-essential patchelf pkg-config curl ca-certificates \
             libgtk-3-dev libudev-dev libxkbcommon-dev libxkbcommon-x11-0 \
             liblensfun-dev libexiv2-dev libglib2.0-dev libopenimageio-dev \
-            libjpeg-dev zlib1g-dev libopenblas-dev \
+            liblcms2-dev libjpeg-dev zlib1g-dev libopenblas-dev \
             libvulkan1 mesa-vulkan-drivers
 
       - name: Build pinned LibRaw 0.22.0
@@ -205,6 +217,7 @@ jobs:
           cargo build --release -p spektrafilm-gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
+          cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" cargo test --workspace --features precision-f64 --no-fail-fast
           LD_LIBRARY_PATH="$RUNNER_TEMP/libraw-022/lib:${LD_LIBRARY_PATH:-}" \
             cargo build --manifest-path "$SPEKTRAFILM_RUNTIME_REPO/Cargo.toml" \
@@ -257,6 +270,7 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           BUILD_TARGET_DIR=target RELEASE_SUBDIR=release \
             bash scripts/package_linux_app.sh
+          bash scripts/package_unix.sh
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --package-root dist/spektrafilm-linux-x64 --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence
@@ -300,14 +314,18 @@ jobs:
       - name: Install native dependencies
         shell: bash
         run: |
-          brew install libraw lensfun exiv2 glib openimageio pkg-config
+          brew install libraw lensfun exiv2 glib openimageio little-cms2 pkg-config
           pkg-config --atleast-version=0.22.0 libraw
+          pkg-config --exists lcms2
 
       - name: Package app bundle
         shell: bash
         run: |
+          cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures
           cargo test --workspace --features precision-f64 --no-fail-fast
           bash scripts/package_macos_app.sh
+          ./target/release/spektrafilm-bench --help
+          ./target/release/spektrafilm-bench-fixtures --help
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm --exporter dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/spektrafilm-f64 --raw-helper dist/spektrafilm-macos/Spektrafilm.app/Contents/MacOS/decode_raw_gui --package-root dist/spektrafilm-macos --data-dir dist/spektrafilm-macos/Spektrafilm.app/Contents/Resources/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence

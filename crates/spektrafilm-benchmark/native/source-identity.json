@@ -1,0 +1,12 @@
+{
+  "implementation": "NVlabs FLIP CPU",
+  "version": "1.7",
+  "source_url": "https://files.pythonhosted.org/packages/00/dc/39cc51468562899883b43d04b9754c634798e6f7f8ffcd3b984743da041c/flip_evaluator-1.7.tar.gz",
+  "source_distribution_sha256": "88204ec5000fa90b26e00f6f21e8d73f18e5afac7e8a23cb0803b117b3da081b",
+  "header_path_in_distribution": "flip-evaluator-1.7/src/cpp/FLIP.h",
+  "header_sha256": "412b118db343a3a0d030104f17f46c1e3edc7455d2b83a7398a42e25befed104",
+  "build": "C++17 CPU, CUDA disabled, -fno-fast-math where supported",
+  "input": "Encoded sRGB clipped [0,1], cast float32, official float32 sRGBToLinearRGB",
+  "output": "Raw official LDR FLIP scalar map, applyMagma=false, row-major",
+  "license": "licenses/nvlabs-flip-bsd-3-clause.txt"
+}
