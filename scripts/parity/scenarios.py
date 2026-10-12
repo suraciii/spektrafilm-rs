@@ -267,8 +267,8 @@ def build_scenarios():
         "kodak_portra_400", "kodak_portra_endura", "gradient4x4",
         _bare_with({"settings.use_scanner_lut": True}),
         PRINT_TAPS, "lut_reduction", "expected_parity", None,
-        "Rust scanning.rs:243 routes through scan_spectral_via_lut when "
-        "use_scanner_lut is set.",
+        "Rust scanning/spectral.rs::scan_spectral_rgb routes through "
+        "scan_spectral_via_lut when use_scanner_lut is set.",
     ))
 
     # ---- color spaces ------------------------------------------------------
@@ -414,7 +414,7 @@ def build_scenarios():
         "scan_film_glare",
         "Direct film scan with default glare flags — Python passes "
         "glare=None on the scan_film path (scanning.py:54-55); Rust applies "
-        "film_render.glare (scanning.rs:284-288) with a fixed seed 42.",
+        "film_render.glare (scanning.rs::scan_with_capture) with a fixed seed 42.",
         "kodak_portra_400", "kodak_portra_400", "gradient32x32",
         _bare_with({
             "io.scan_film": True,
