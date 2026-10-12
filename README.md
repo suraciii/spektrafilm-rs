@@ -396,7 +396,7 @@ scripts/benchmark/spektrafilm-bench compare \
 scripts/benchmark/spektrafilm-bench report \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --out /tmp/spektrafilm-benchmark-review
-scripts/benchmark/.venv/bin/python -m unittest discover -s scripts/benchmark/tests
+just benchmark-test
 ```
 
 Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time, prioritizes `color_chart_30mp` when present, and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows synchronized baseline/candidate imagery, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither a renderer nor the original run directories. Reference artifacts with unknown or denied redistribution permission remain omitted and identified in the report manifest.

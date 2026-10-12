@@ -36,9 +36,17 @@ check-f64:
 clippy:
     cargo clippy --locked --workspace --all-targets -- -D warnings
 
-# Run the workspace test suite in the f64 reference configuration.
+# Run the workspace test suite with the default f32 configuration.
 test:
+    cargo test --locked --workspace
+
+# Run the workspace test suite in the f64 reference configuration.
+test-f64:
     cargo test --locked --workspace --features precision-f64
+
+# Run the appearance benchmark regressions with locked Python dependencies.
+benchmark-test:
+    uv run --project scripts/benchmark --locked python -m unittest discover -s scripts/benchmark/tests
 
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
 gui-headless:
@@ -53,8 +61,7 @@ check-python-cache:
     python3 scripts/check_python_cache.py
 
 # Full local gate. PR CI runs this same command.
-ci: check-python-cache fmt check check-f64 clippy test
-
+ci: check-python-cache fmt check check-f64 clippy test test-f64 benchmark-test
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
     python3 scripts/verify.py {{quote(evidence_dir)}}
