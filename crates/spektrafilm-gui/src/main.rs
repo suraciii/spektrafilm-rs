@@ -252,12 +252,12 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
     }
 }
 
-/// Effective backend label for Scan and Export reports. An active V3 field
+/// Effective backend label for Scan and Export reports. An active Dye field
 /// resolves on the CPU and never enters the resident chain, so the selected
 /// backend name alone would misreport the executed path.
 fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {
-        format!("{selected} · grain V3 on CPU")
+        format!("{selected} · grain Dye on CPU")
     } else {
         selected.to_owned()
     }
@@ -1650,7 +1650,7 @@ impl App {
                 return;
             }
         };
-        // Report the V3 field's effective CPU route next to the selected backend.
+        // Report the Dye field's effective CPU route next to the selected backend.
         let backend_name = effective_backend_name(self.backend.name(), &params);
         let parameter_revision = self.parameter_revision;
         let snapshot = self.render_snapshot(params);

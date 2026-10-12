@@ -1,4 +1,4 @@
-//! Numerical primitives shared by Grain V2 host paths.
+//! Numerical primitives shared by Grain Procedural host paths.
 
 use rand_mt::Mt;
 

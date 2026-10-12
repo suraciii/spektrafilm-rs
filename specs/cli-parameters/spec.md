@@ -72,7 +72,7 @@ The following TOML document is a sparse parameter file:
 
 ```toml
 [film_render.grain]
-engine = "v2"
+engine = "procedural"
 v2_profile = "35mm250"
 v2_amount = 25.0
 
@@ -102,7 +102,7 @@ Boolean fields must accept `true` or `false`. Numeric fields must accept finite 
 The following source is valid:
 
 ```text
-film_render.grain.engine=v2,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=25,camera.auto_exposure=false
+film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=25,camera.auto_exposure=false
 ```
 
 For a POSIX shell, quote a source containing brackets, spaces, or shell-significant characters:
@@ -111,7 +111,7 @@ For a POSIX shell, quote a source containing brackets, spaces, or shell-signific
 spektrafilm process input.png --output output.tif \
   --preset 'Kodak Portra 400' \
   --input-color-space sRGB --input-cctf-decoding true \
-  --set film_render.grain.engine=v2 \
+  --set film_render.grain.engine=procedural \
   --set 'io.output_color_space=ProPhoto RGB' \
   --set camera.exposure_compensation_ev=0.5
 ```
@@ -127,7 +127,7 @@ Paths must use the runtime parameter vocabulary, such as `film_render.grain.v2_a
 
 `workflow.route` must use `--route`; `io.scan_film` must remain derived from the selected workflow. Neither path may appear in a parameter file or inline assignment. Random seed must remain outside this language. Pipeline-derived `film_render.grain.monochrome` and the legacy non-exported `particle_scale_layers` field must not be editable paths. Other runtime controls must use the shared editable parameter description.
 
-Controls for inactive effects or engines may be stored without affecting output. [Grain V2](../film-grain/v2/spec.md) must retain its named-profile and Custom behavior. V1 RMS granularity and V2 Amount must remain distinct controls. A parameter-file leaf or inline assignment must not change another control to make itself effective.
+Controls for inactive effects or engines may be stored without affecting output. [Procedural grain](../film-grain/v2/spec.md) must retain its named-profile and Custom behavior. Spektra RMS granularity and Procedural Amount must remain distinct controls. A parameter-file leaf or inline assignment must not change another control to make itself effective.
 
 ## Composition
 
@@ -200,9 +200,9 @@ Both dry-run formats must report scanner receiver provenance and calibration sta
 
 Both formats must state that pixel decoding, compute-device availability, metered exposure, and final pixel geometry remain unchecked. JSON must add `unchecked` with the stable values `pixel_decode`, `compute_device`, `metered_exposure`, and `output_geometry`. Dry run must not claim these outcomes. A configuration valid in dry run may still fail on decoding, resource availability, rendering, or publication.
 
-Normal processing and dry run must warn on stderr for winning `--set` edits with non-active status. Each warning must name the canonical path, source, and reason. Known corrective choices must be explained without applying them. Unedited inactive defaults and preset controls must not produce these warnings. Feedback must not enable effects, select a grain engine, change a V2 profile to `custom`, or turn a valid stored inactive value into a configuration error.
+Normal processing and dry run must warn on stderr for winning `--set` edits with non-active status. Each warning must name the canonical path, source, and reason. Known corrective choices must be explained without applying them. Unedited inactive defaults and preset controls must not produce these warnings. Feedback must not enable effects, select a grain engine, change a Procedural profile to `custom`, or turn a valid stored inactive value into a configuration error.
 
-Field discovery must explain input versus scanner versus saving color, exposure compensation in EV versus print exposure, and film format as the source long-edge dimension in millimeters. Crop discovery must state that both `io.crop_size` components are fractions of the uncropped source long edge, not of independent width and height. V2 Size discovery must identify its `custom` profile condition. V2 Amount must remain applicable to named and custom V2 profiles. Both controls must remain distinct from V1 RMS granularity. Text and selected-field/module JSON must use the same descriptions and effect conditions. Selector-free JSON must retain its existing render contract.
+Field discovery must explain input versus scanner versus saving color, exposure compensation in EV versus print exposure, and film format as the source long-edge dimension in millimeters. Crop discovery must state that both `io.crop_size` components are fractions of the uncropped source long edge, not of independent width and height. Procedural Size discovery must identify its `custom` profile condition. Procedural Amount must remain applicable to named and custom Procedural profiles. Both controls must remain distinct from Spektra RMS granularity. Text and selected-field/module JSON must use the same descriptions and effect conditions. Selector-free JSON must retain its existing render contract.
 
 The file `adjustments.toml` used below must contain:
 
@@ -214,7 +214,7 @@ film_format_mm = 36.0
 
 [film_render.grain]
 active = true
-engine = "v2"
+engine = "procedural"
 v2_profile = "custom"
 v2_size = 12.0
 v2_amount = 25.0
@@ -251,8 +251,8 @@ Legacy `--params` must retain its existing decoding and relationship to stock in
 2. Run linear prepared TIFF and OpenEXR with explicit declarations. Retained ICC bytes and an integer or float container must not change those declarations. Run a real RAW fixture through all supported white-balance modes. Compatible declarations must preserve RAW pixels; incompatible flags and early incompatible edits must fail before decode. Use RAW provenance from existing acceptance fixtures.
 3. Exercise fixed layers with reordered unrelated flags, repeated presets, repeated files, duplicate inline edits, mixed declaration sources, and dedicated input overrides. An explicit value equal to its default must remain explicit. Legacy baseline leaves must not acquire new stock/calibration protection. Invalid earlier sources must still fail.
 4. Reject `--route` with `--scan-film` at argument parsing in dry run and normal processing. Resolve each supported route with and without a no-op `--set` source. Route, `io.scan_film`, and runtime print-profile selection must agree. Exercise positive-scan compatibility through the real CLI.
-5. Render stochastic V1, V2, and V3 with seeds `0` and `4294967295` under each engine's admitted configuration. Repeating a render with the same seed must match its raw output in the same executable/backend. Exercise seed `42` through `--iters`. Verify that `42` and another seed change a known stochastic fixture under the owning grain contract. Negative, fractional, malformed, and overflowing seeds must fail. This evidence must not be presented as cross-backend numerical identity.
-6. Compare JSON and text dry run for raster, RAW, preview constraints, dedicated overrides, and V2 custom versus named-profile controls. Verify typed requested/effective values and winning sources. Only winning non-active explicit edits may warn. Warning output must leave JSON parseable. Default dry run must remain JSON when redirected or attached to a terminal. Both formats must preserve image and raw-output sentinels and report unchecked outcomes.
+5. Render stochastic Spektra, Procedural, and Dye with seeds `0` and `4294967295` under each engine's admitted configuration. Repeating a render with the same seed must match its raw output in the same executable/backend. Exercise seed `42` through `--iters`. Verify that `42` and another seed change a known stochastic fixture under the owning grain contract. Negative, fractional, malformed, and overflowing seeds must fail. This evidence must not be presented as cross-backend numerical identity.
+6. Compare JSON and text dry run for raster, RAW, preview constraints, dedicated overrides, and Procedural custom versus named-profile controls. Verify typed requested/effective values and winning sources. Only winning non-active explicit edits may warn. Warning output must leave JSON parseable. Default dry run must remain JSON when redirected or attached to a terminal. Both formats must preserve image and raw-output sentinels and report unchecked outcomes.
 7. Run field discovery without profiles or a device. Verify the long-edge crop convention, input transfer meaning, and grain conditions. Exercise a crop on a non-square input through normal processing; verify dimensions against the existing geometry contract.
 8. Run help and parser scenarios on separately built default-feature `spektrafilm` and `precision-f64` `spektrafilm-f64`. Exercise normal CPU image output with stdout empty. Run explicit WGPU image processing where a usable adapter is available, and distinguish hardware from software execution. Apply [photo-publication acceptance](../photo-export/spec.md#publication-acceptance) to `process`.
 

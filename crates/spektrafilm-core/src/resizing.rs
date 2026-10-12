@@ -147,7 +147,7 @@ fn crop_rect(
 /// Source rectangle of the requested film region: the upstream crop
 /// rectangle when `io.crop` is set, the whole image otherwise.
 ///
-/// The grain V3 readout reads the requested film region out of the full
+/// The grain Dye readout reads the requested film region out of the full
 /// source, so it needs the rectangle as geometry rather than as a cropped
 /// image ([`crop_image`]) or a cropped-and-rescaled working image
 /// ([`crop_and_rescale`]).

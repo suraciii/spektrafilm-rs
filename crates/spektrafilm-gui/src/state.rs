@@ -841,7 +841,7 @@ mod tests {
         let mut params = factory.runtime_params().unwrap();
         params.io.output_cctf_encoding = false;
         params.film_render.development_time = Some(9.0);
-        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
+        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
         params.film_render.grain.v3_dye_support_um = 4.5;
         params.film_render.grain.v3_event_area_um2 = 0.6;
         params.film_render.grain.v2_profile = "8mm500".into();
@@ -853,7 +853,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             saved.sections["rust"]["runtime"]["film_render"]["grain"]["engine"],
-            "v3"
+            "dye"
         );
         assert_eq!(
             saved.sections["rust"]["runtime"]["film_render"]["grain"]["v3_dye_support_um"],
@@ -866,7 +866,7 @@ mod tests {
         assert_eq!(restored.film_render.development_time, Some(9.0));
         assert_eq!(
             restored.film_render.grain.engine,
-            spektrafilm_core::params::GrainEngine::V3
+            spektrafilm_core::params::GrainEngine::Dye
         );
         assert_eq!(restored.film_render.grain.v3_dye_support_um, 4.5);
         assert_eq!(restored.film_render.grain.v3_event_area_um2, 0.6);
@@ -936,7 +936,7 @@ mod tests {
         let factory = GuiState::factory();
         let mut params = factory.runtime_params().unwrap();
         let grain = &mut params.film_render.grain;
-        grain.engine = spektrafilm_core::params::GrainEngine::V2;
+        grain.engine = spektrafilm_core::params::GrainEngine::Procedural;
         grain.v2_profile = "custom".into();
         grain.v2_resolution_type = 0;
         grain.v2_timer = 0.375;

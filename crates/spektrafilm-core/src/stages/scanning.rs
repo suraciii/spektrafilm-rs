@@ -1255,7 +1255,7 @@ fn scan_with_capture(
         && params.settings.rgb_to_raw_method != "mallett2019"
         && matches!(
             params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::V2
+            crate::params::grain::GrainEngine::Procedural
         );
     // Magazine appearance is optional finishing, not a route: it applies to
     // any scanned base workflow after the scanner-domain effects.
