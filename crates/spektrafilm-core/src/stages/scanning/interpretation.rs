@@ -1,6 +1,7 @@
 use super::{
     ForwardCapture,
     coupled::{CoupledBounds, CoupledInverse},
+    developed_density_curves,
 };
 use crate::{params::RuntimeParams, profile::Profile};
 
@@ -10,24 +11,17 @@ struct DensityAxis {
 }
 
 impl DensityAxis {
-    fn prepare(profile: &Profile, channel: usize) -> Result<Self, String> {
-        if profile.data.log_exposure.len() < 2
-            || profile.data.log_exposure.len() != profile.data.density_curves.len()
-            || profile
-                .data
-                .log_exposure
+    fn prepare(log_exposure: &[f64], curves: &[[f64; 3]], channel: usize) -> Result<Self, String> {
+        if log_exposure.len() < 2
+            || log_exposure.len() != curves.len()
+            || log_exposure
                 .windows(2)
                 .any(|w| !w[0].is_finite() || !w[1].is_finite() || w[0] >= w[1])
         {
             return Err("coupled inverse requires finite increasing film exposure knots and matching density samples".into());
         }
         let mut blocks: Vec<(f64, f64, usize)> = Vec::new();
-        for (&e, row) in profile
-            .data
-            .log_exposure
-            .iter()
-            .zip(&profile.data.density_curves)
-        {
+        for (&e, row) in log_exposure.iter().zip(curves) {
             let d = row[channel];
             if !d.is_finite() || !e.is_finite() {
                 continue;
@@ -94,6 +88,19 @@ impl DensityAxis {
     }
 }
 
+/// The three record axes, read from the developed curves: the film stage
+/// emits densities over each record's minimum, so the inverse uses the same
+/// origin.
+fn prepare_axes(profile: &Profile) -> Result<[DensityAxis; 3], String> {
+    let curves = developed_density_curves(profile);
+    let log_exposure = &profile.data.log_exposure;
+    (0..3)
+        .map(|channel| DensityAxis::prepare(log_exposure, &curves, channel))
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .map_err(|_| "three film axes required".into())
+}
+
 /// The coupled receiver inverse recovers dye densities; the film's monotone
 /// characteristic curves then recover relative exposure without toe singularities.
 pub(super) struct CoupledCalibration {
@@ -103,11 +110,7 @@ pub(super) struct CoupledCalibration {
 
 impl CoupledCalibration {
     pub(super) fn prepare(profile: &Profile, forward: &ForwardCapture<'_>) -> Result<Self, String> {
-        let axes: [DensityAxis; 3] = (0..3)
-            .map(|c| DensityAxis::prepare(profile, c))
-            .collect::<Result<Vec<_>, _>>()?
-            .try_into()
-            .map_err(|_| "three film axes required")?;
+        let axes = prepare_axes(profile)?;
         let minimum = std::array::from_fn(|c| axes[c].density[0]);
         let maximum = std::array::from_fn(|c| *axes[c].density.last().unwrap());
         let inverse = CoupledInverse::prepare(
@@ -173,12 +176,9 @@ pub(super) struct DensityCalibration {
 
 impl DensityCalibration {
     pub(super) fn prepare(profile: &Profile) -> Result<Self, String> {
-        let axes: [DensityAxis; 3] = (0..3)
-            .map(|channel| DensityAxis::prepare(profile, channel))
-            .collect::<Result<Vec<_>, _>>()?
-            .try_into()
-            .map_err(|_| "three film axes required")?;
-        Ok(Self { axes })
+        Ok(Self {
+            axes: prepare_axes(profile)?,
+        })
     }
 
     /// Relative log-exposure range that all three record inverses cover.

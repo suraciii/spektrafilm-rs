@@ -25,6 +25,12 @@ fn points_active(params: &RuntimeParams) -> bool {
     params.scanner.black_point != [0.0; 3] || params.scanner.white_point != [1.0; 3]
 }
 
+/// The film profile curves in the density domain the film stage emits: each
+/// record measured over its own minimum.
+fn developed_density_curves(profile: &Profile) -> Vec<[f64; 3]> {
+    spektrafilm_model::density_curves::normalize_density_curves_f64(&profile.density_curves_f64())
+}
+
 /// One shared axis, with independent channel windows. Keep identity arithmetic
 /// out of the historical path, including channels left at their defaults.
 struct PointMap {
@@ -91,9 +97,7 @@ impl PositiveCalibration {
         let rows = ImageBuf::from_data(
             axis.len() as u32,
             1,
-            profile
-                .data
-                .density_curves
+            developed_density_curves(profile)
                 .iter()
                 .flat_map(|row| row.iter().copied().map(from_f64))
                 .collect(),
@@ -569,7 +573,7 @@ impl SlidePoints {
             .map(|scope| spektrafilm_gpu::bind_backend(backend, scope.context().clone()));
         let backend = calibration_backend.as_deref().unwrap_or(backend);
         let mut maximum = [f64::NEG_INFINITY; 3];
-        for row in &profile.data.density_curves {
+        for row in &developed_density_curves(profile) {
             for c in 0..3 {
                 if row[c].is_finite() {
                     maximum[c] = maximum[c].max(row[c]);
