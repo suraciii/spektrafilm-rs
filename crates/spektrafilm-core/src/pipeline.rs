@@ -478,6 +478,26 @@ impl Pipeline {
             Tap::RgbOut => unreachable!("RgbOut is terminal — run_from stops before it"),
         }
     }
+    fn validate_grain_v3_taps(
+        cell_spectral: bool,
+        aperture_factor: Option<u32>,
+        inject: Tap,
+        collect: Tap,
+        scan_film: bool,
+    ) -> Result<(), String> {
+        if !cell_spectral {
+            return Ok(());
+        }
+        if aperture_factor.is_some() {
+            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
+        }
+        let supported_collect = collect == Tap::RgbOut
+            || (!scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
+        if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm) || !supported_collect {
+            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
+        }
+        Ok(())
+    }
 
     /// Run the topology from the value at `inject` to the value at
     /// `collect` (both inclusive bounds in [`Pipeline::tap_order`]).
@@ -515,21 +535,18 @@ impl Pipeline {
         }
         let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
         let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
-        if cell_spectral {
-            if aperture_factor.is_some() {
-                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
-            }
-            let supported_collect = collect == Tap::RgbOut
-                || (!self.params.io.scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
-            if !supported_collect || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap() {
-                return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
-            }
-            if color_ref.has_remap() {
-                return Err(
-                    "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
-                        .to_owned(),
-                );
-            }
+        Self::validate_grain_v3_taps(
+            cell_spectral,
+            aperture_factor,
+            inject,
+            collect,
+            self.params.io.scan_film,
+        )?;
+        if cell_spectral && color_ref.has_remap() {
+            return Err(
+                "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
+                    .to_owned(),
+            );
         }
         if aperture_factor.is_some()
             && (collect != Tap::RgbOut
@@ -800,17 +817,14 @@ impl Pipeline {
             let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
             if cell_spectral {
                 stages::grain_v3::validate_supported(&self.film, &self.params)?;
-                if aperture_factor.is_some() {
-                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
-                }
-                if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm)
-                    || !(collect == Tap::RgbOut
-                        || (!self.params.io.scan_film
-                            && matches!(collect, Tap::LogEPrint | Tap::CmyPrint)))
-                {
-                    return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
-                }
             }
+            Self::validate_grain_v3_taps(
+                cell_spectral,
+                aperture_factor,
+                inject,
+                collect,
+                self.params.io.scan_film,
+            )?;
         }
         if let Some(context) = backend.observation_context()
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
