@@ -216,8 +216,10 @@ impl Evidence {
         media_type: &str,
         metadata: Value,
     ) -> Result<Value> {
-        let relative = path
-            .strip_prefix(&self.root)
+        let canonical_root = self.root.canonicalize()?;
+        let canonical_path = path.canonicalize()?;
+        let relative = canonical_path
+            .strip_prefix(&canonical_root)
             .map_err(|_| Error::new("unsafe_artifact_path", "Artifact is outside destination"))?
             .to_str()
             .ok_or_else(|| Error::new("invalid_path", "Artifact path must be UTF-8"))?
