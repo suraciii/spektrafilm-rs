@@ -100,7 +100,7 @@ def protocol_digest(suite):
     return document_digest({"protocol": suite["protocol"], "cases": cases,
                             "metric_version": METRIC_VERSION, "reference_version": reference_version,
                             "color_transform": COLOR_TRANSFORM, "icc_adapter": icc_identity,
-                            "dependencies": {name: version(name) for name in ("numpy", "scipy", "colour-science", "flip-evaluator", "Pillow", "tifffile")}})
+                            "dependencies": {name: version(name) for name in ("numpy", "scipy", "colour-science", "flip-evaluator", "Pillow", "pypng", "tifffile")}})
 
 
 def sha256_file(path):
