@@ -5,40 +5,47 @@
 // the central viewer owns the input/output/paper-back presentation.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::thread::JoinHandle;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use eframe::egui;
-use parking_lot::{Condvar, Mutex};
 use spektrafilm_core::image_io::{self, BitDepth, ImageMetadata, LoadedImage, SaveOptions};
-use spektrafilm_core::params::RuntimeParams;
+use spektrafilm_core::params::{RuntimeParams, ScannerAutoSetup};
 use spektrafilm_core::presets::{Section, workflow_default};
 use spektrafilm_core::profile;
-use spektrafilm_core::runtime::{DigestMode, Runtime, RuntimePhotoParams};
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRender};
 use spektrafilm_gpu::ComputeBackend;
-use spektrafilm_gpu::telemetry::{
-    CollectionMode, ObservationContext, ObservationKind, ObservationScope, Purpose,
-};
+use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
+mod calibration;
 mod controls;
 mod diagnostics;
 mod display;
 mod export;
+mod export_job;
 #[cfg(test)]
 mod headless;
 mod numeric;
 mod presets;
 mod profiles;
+mod render;
+mod render_worker;
 mod routes;
 mod state;
-use export::{ExportBackend, ExportDialog, ExportOptions};
+mod ui;
+use calibration::CalibrationJob;
+#[cfg(test)]
+use export::ExportBackend;
+use export::{ExportDialog, ExportOptions};
+use export_job::ExportJob;
 use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
+#[cfg(test)]
+use render::RuntimeCache;
+use render::{RenderSnapshot, SharedScannerSetup, build_runtime_observed};
+use render_worker::{RenderJob, RenderKind, RenderRequest, RenderWorker, observed_result};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(120);
 
@@ -252,44 +259,14 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
     }
 }
 
-/// Effective backend label for Scan and Export reports. An active V3 field
+/// Effective backend label for Scan and Export reports. An active Dye field
 /// resolves on the CPU and never enters the resident chain, so the selected
 /// backend name alone would misreport the executed path.
 fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {
-        format!("{selected} · grain V3 on CPU")
+        format!("{selected} · grain Dye on CPU")
     } else {
         selected.to_owned()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum GuiTab {
-    #[default]
-    Main,
-    Film,
-    Print,
-    Advanced,
-    Config,
-}
-
-impl GuiTab {
-    const ALL: [Self; 5] = [
-        Self::Main,
-        Self::Film,
-        Self::Print,
-        Self::Advanced,
-        Self::Config,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Main => "MAIN",
-            Self::Film => "FILM",
-            Self::Print => "PRINT",
-            Self::Advanced => "ADVANCED",
-            Self::Config => "CONFIG",
-        }
     }
 }
 
@@ -328,13 +305,14 @@ struct App {
     export_options: ExportOptions,
     export_dialog: ExportDialog,
     input_epoch: u64,
+    scanner_setup: Option<((u64, u64), SharedScannerSetup)>,
     /// Latest accepted floating output, shared with background viewing workers.
     output_image: Option<Arc<ImageBuf>>,
     output_metadata: Option<ImageMetadata>,
     source_render: Option<SourceRender>,
     diagnostics: diagnostics::Diagnostics,
     viewer: display::Viewer,
-    gui_tab: GuiTab,
+    gui_tab: ui::GuiTab,
     output_color_space: String,
     output_cctf_encoding: bool,
     last_render_ms: f32,
@@ -368,530 +346,6 @@ struct App {
     parameter_revision: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RenderKind {
-    Preview,
-    Scan,
-}
-
-impl RenderKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Preview => "Preview",
-            Self::Scan => "Scan",
-        }
-    }
-}
-
-#[derive(Clone)]
-struct RenderJob {
-    input_epoch: u64,
-    parameter_revision: u64,
-    request_id: u64,
-    kind: RenderKind,
-    animate: bool,
-    backend_name: String,
-    collection_mode: CollectionMode,
-}
-
-impl RenderJob {
-    fn matches(
-        &self,
-        latest: Option<&RenderJob>,
-        input_epoch: u64,
-        parameter_revision: u64,
-    ) -> bool {
-        latest.is_some_and(|job| job.request_id == self.request_id)
-            && self.input_epoch == input_epoch
-            && self.parameter_revision == parameter_revision
-    }
-}
-
-struct RenderRequest {
-    job: RenderJob,
-    image: Arc<ImageBuf>,
-    input_clone_ms: f32,
-    snapshot: RenderSnapshot,
-    backend: Arc<dyn ComputeBackend>,
-    source_metadata: Option<ImageMetadata>,
-    display_enabled: bool,
-    display_profile: Option<PathBuf>,
-    ctx: egui::Context,
-    operation: Operation,
-    worker_wait: ObservationScope,
-}
-
-struct RenderWorker {
-    state: Arc<(Mutex<Option<RenderRequest>>, Condvar)>,
-    active: Arc<Mutex<Option<(u64, RenderKind, CollectionMode)>>>,
-    rx: mpsc::Receiver<(RenderJob, Operation, Result<RenderResult, String>)>,
-    shutdown: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-    next_request_id: u64,
-}
-struct RenderResult {
-    output: ImageBuf,
-    preview: display::DisplayRaster,
-    display_status: String,
-    display_enabled: bool,
-    display_profile: Option<PathBuf>,
-    display_max_size: u32,
-    output_color_space: String,
-    output_cctf_encoding: bool,
-    source_metadata: Option<ImageMetadata>,
-    input_clone_ms: f32,
-    scale_ms: f32,
-    pipeline_build_ms: f32,
-    render_ms: f32,
-    preview_ms: f32,
-    worker_total_ms: f32,
-}
-#[derive(Clone)]
-struct RenderSnapshot {
-    params: RuntimeParams,
-    film_name: String,
-    print_name: String,
-    data_dir: PathBuf,
-    special: serde_json::Value,
-}
-#[derive(Clone, PartialEq)]
-struct RuntimeCacheKey {
-    data_dir: PathBuf,
-    film_name: String,
-    digest_print_name: String,
-    runtime_print_name: String,
-    special: serde_json::Value,
-}
-
-struct RuntimeCache {
-    key: RuntimeCacheKey,
-    film: spektrafilm_core::profile::Profile,
-    digest_print: spektrafilm_core::profile::Profile,
-    neutral: spektrafilm_core::neutral_filters::NeutralFilters,
-    runtime: Option<Runtime>,
-}
-
-impl RenderWorker {
-    fn new() -> Self {
-        let state = Arc::new((Mutex::new(None::<RenderRequest>), Condvar::new()));
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let active = Arc::new(Mutex::new(None));
-        let active_for_worker = active.clone();
-        let (tx, rx) = mpsc::channel();
-        let state_for_worker = state.clone();
-        let shutdown_for_worker = shutdown.clone();
-        let handle = std::thread::Builder::new()
-            .name("spektrafilm-render".into())
-            .spawn(move || {
-                let mut runtime_cache: Option<RuntimeCache> = None;
-                loop {
-                    let request = {
-                        let (lock, wake) = &*state_for_worker;
-                        let mut queued = lock.lock();
-                        while queued.is_none() && !shutdown_for_worker.load(Ordering::SeqCst) {
-                            wake.wait(&mut queued);
-                        }
-                        if shutdown_for_worker.load(Ordering::SeqCst) {
-                            return;
-                        }
-                        queued.take().expect("render request signaled")
-                    };
-                    drop(request.worker_wait);
-                    let mut operation = request.operation;
-                    let attempt = operation.attempt(1);
-                    let observation = attempt.context().clone();
-                    let job = request.job;
-                    *active_for_worker.lock() =
-                        Some((job.request_id, job.kind, job.collection_mode));
-                    let ctx = request.ctx.clone();
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let t_total = Instant::now();
-                        let t_pipeline = Instant::now();
-                        let pipeline_template = prepare_runtime_observed(
-                            &mut runtime_cache,
-                            &request.snapshot,
-                            job.kind == RenderKind::Preview,
-                            &observation,
-                        )?;
-                        if operation.enabled() {
-                            operation.set_render_configuration(
-                                pipeline_template.telemetry_configuration(),
-                            );
-                        }
-                        let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
-                        let runtime_params = pipeline_template.params();
-                        let t_scale = Instant::now();
-                        let input_prepare = observation.scope(
-                            "input_prepare",
-                            ObservationKind::Phase,
-                            Purpose::Image,
-                        );
-                        let working_image = if runtime_params.settings.preview_mode {
-                            spektrafilm_core::params_builder::resize_for_preview(
-                                &request.image,
-                                runtime_params.settings.preview_max_size,
-                            )
-                        } else {
-                            (*request.image).clone()
-                        };
-                        let scale_ms = t_scale.elapsed().as_secs_f32() * 1000.0;
-                        drop(input_prepare);
-                        let t = Instant::now();
-                        let simulation =
-                            observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-                        let processed = pipeline_template.process_observed(
-                            working_image,
-                            request.backend.as_ref(),
-                            simulation.context(),
-                        );
-                        let output = observed_result(
-                            simulation,
-                            processed,
-                            IssueCategory::Simulation,
-                            IssueBoundary::Simulation,
-                        )?;
-                        let render_ms = t.elapsed().as_secs_f32() * 1000.0;
-                        let t_preview = Instant::now();
-                        let display_prepare = observation.scope(
-                            "display_prepare",
-                            ObservationKind::Phase,
-                            Purpose::Image,
-                        );
-                        let display_result = display::output_display_raster(
-                            &output,
-                            &runtime_params.io.output_color_space,
-                            runtime_params.io.output_cctf_encoding,
-                            request.display_enabled,
-                            request.display_profile.as_deref(),
-                            runtime_params.settings.preview_max_size as usize,
-                        );
-                        let (preview, display_status) = observed_result(
-                            display_prepare,
-                            display_result,
-                            IssueCategory::Backend,
-                            IssueBoundary::DisplayPrepare,
-                        )?;
-                        let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
-                        Ok(RenderResult {
-                            source_metadata: request.source_metadata,
-                            output_color_space: runtime_params.io.output_color_space.clone(),
-                            output_cctf_encoding: runtime_params.io.output_cctf_encoding,
-                            output,
-                            preview,
-                            display_status,
-                            display_enabled: request.display_enabled,
-                            display_profile: request.display_profile,
-                            display_max_size: runtime_params.settings.preview_max_size,
-                            input_clone_ms: request.input_clone_ms,
-                            scale_ms,
-                            pipeline_build_ms,
-                            render_ms,
-                            preview_ms,
-                            worker_total_ms: t_total.elapsed().as_secs_f32() * 1000.0,
-                        })
-                    }))
-                    .unwrap_or_else(|panic| Err(panic_message(&panic)));
-                    attempt.finish(if result.is_ok() {
-                        Outcome::Succeeded
-                    } else {
-                        Outcome::Failed
-                    });
-                    let _ = tx.send((job, operation, result));
-                    *active_for_worker.lock() = None;
-                    ctx.request_repaint();
-                }
-            });
-        Self {
-            state,
-            active,
-            rx,
-            shutdown,
-            handle: Some(handle.expect("OS thread spawn")),
-            next_request_id: 0,
-        }
-    }
-
-    fn submit(&mut self, mut request: RenderRequest) -> (RenderJob, Option<Operation>) {
-        self.next_request_id = self.next_request_id.wrapping_add(1);
-        request.job.request_id = self.next_request_id;
-        let job = request.job.clone();
-        let (lock, wake) = &*self.state;
-        let replaced = lock.lock().replace(request).map(|request| {
-            drop(request.worker_wait);
-            request.operation
-        });
-        wake.notify_one();
-        (job, replaced)
-    }
-
-    fn shutdown(&mut self) -> Option<Operation> {
-        let cancelled;
-        {
-            let (lock, wake) = &*self.state;
-            let mut queued = lock.lock();
-            self.shutdown.store(true, Ordering::SeqCst);
-            cancelled = queued.take().map(|request| {
-                drop(request.worker_wait);
-                request.operation
-            });
-            wake.notify_one();
-        }
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-        cancelled
-    }
-}
-
-impl Drop for RenderWorker {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
-
-fn prepare_runtime_observed<'a>(
-    cache: &'a mut Option<RuntimeCache>,
-    snapshot: &RenderSnapshot,
-    preview: bool,
-    context: &ObservationContext,
-) -> Result<&'a mut Runtime, String> {
-    let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
-    let result = prepare_runtime_cached(cache, snapshot, preview, prepare.context());
-    observed_result(
-        prepare,
-        result,
-        IssueCategory::Configuration,
-        IssueBoundary::RuntimePrepare,
-    )
-}
-
-fn prepare_runtime_cached<'a>(
-    cache: &'a mut Option<RuntimeCache>,
-    snapshot: &RenderSnapshot,
-    preview: bool,
-    context: &ObservationContext,
-) -> Result<&'a mut Runtime, String> {
-    let mut params = snapshot.params.clone();
-    params.settings.preview_mode = preview;
-
-    if let Some(mut cached) = cache.take() {
-        let digested = spektrafilm_core::runtime::digest_params_with_neutral(
-            params.clone(),
-            &cached.film,
-            &cached.digest_print,
-            &cached.neutral,
-            DigestMode::PreserveUserEdits,
-        );
-        let runtime_print_name = if digested.io.scan_film {
-            snapshot.film_name.as_str()
-        } else {
-            snapshot.print_name.as_str()
-        };
-        let key = RuntimeCacheKey {
-            data_dir: snapshot.data_dir.clone(),
-            film_name: snapshot.film_name.clone(),
-            digest_print_name: snapshot.print_name.clone(),
-            runtime_print_name: runtime_print_name.to_owned(),
-            special: snapshot.special.clone(),
-        };
-        if cached.key == key {
-            let runtime = cached
-                .runtime
-                .take()
-                .expect("runtime cache entry without runtime");
-            let runtime = runtime.with_params(digested)?;
-            cached.runtime = Some(runtime);
-            *cache = Some(cached);
-            return Ok(cache
-                .as_mut()
-                .expect("runtime cache restored")
-                .runtime
-                .as_mut()
-                .expect("runtime cache runtime restored"));
-        }
-        *cache = Some(cached);
-    }
-
-    let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-        .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
-    let digest_print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
-        .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
-    let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(&snapshot.data_dir)
-        .map_err(|e| format!("neutral filters: {e}"))?;
-    let digested = spektrafilm_core::runtime::digest_params_with_neutral(
-        params,
-        &film,
-        &digest_print,
-        &neutral,
-        DigestMode::PreserveUserEdits,
-    );
-    let runtime_print_name = if digested.io.scan_film {
-        snapshot.film_name.as_str()
-    } else {
-        snapshot.print_name.as_str()
-    };
-    let mut runtime_film = film.clone();
-    let mut runtime_print = if digested.io.scan_film {
-        film.clone()
-    } else {
-        digest_print.clone()
-    };
-    for (profile, key) in [
-        (&mut runtime_film, "film_channel_swap"),
-        (&mut runtime_print, "print_channel_swap"),
-    ] {
-        if let Some(order) = snapshot.special[key].as_array() {
-            for row in &mut profile.data.channel_density {
-                if row.len() >= 3 {
-                    let original = [row[0], row[1], row[2]];
-                    for ch in 0..3 {
-                        row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
-                    }
-                }
-            }
-        }
-    }
-    let runtime = Runtime::new_observed(
-        runtime_film,
-        runtime_print,
-        digested,
-        &snapshot.data_dir,
-        context,
-    )
-    .map_err(|e| format!("runtime build: {e}"))?;
-    *cache = Some(RuntimeCache {
-        key: RuntimeCacheKey {
-            data_dir: snapshot.data_dir.clone(),
-            film_name: snapshot.film_name.clone(),
-            digest_print_name: snapshot.print_name.clone(),
-            runtime_print_name: runtime_print_name.to_owned(),
-            special: snapshot.special.clone(),
-        },
-        film,
-        digest_print,
-        neutral,
-        runtime: Some(runtime),
-    });
-    Ok(cache
-        .as_mut()
-        .expect("runtime cache inserted")
-        .runtime
-        .as_mut()
-        .expect("runtime cache runtime inserted"))
-}
-
-fn build_runtime_observed(
-    snapshot: &RenderSnapshot,
-    preview: bool,
-    context: &ObservationContext,
-) -> Result<Runtime, String> {
-    let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
-    let result = (|| {
-        let mut params = snapshot.params.clone();
-        params.settings.preview_mode = preview;
-        let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
-        let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)
-            .map_err(|e| format!("print profile '{}': {e}", snapshot.print_name))?;
-        let photo = RuntimePhotoParams {
-            film,
-            print,
-            params,
-            data_dir: snapshot.data_dir.clone(),
-        };
-        let params = photo
-            .digested_params(DigestMode::PreserveUserEdits)
-            .map_err(|e| format!("parameter digest: {e}"))?;
-        let mut film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
-            .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
-        let effective_print_name = if params.io.scan_film {
-            snapshot.film_name.as_str()
-        } else {
-            snapshot.print_name.as_str()
-        };
-        let mut print = profile::load_profile_by_name(&snapshot.data_dir, effective_print_name)
-            .map_err(|e| format!("print profile '{effective_print_name}': {e}"))?;
-        for (profile, key) in [
-            (&mut film, "film_channel_swap"),
-            (&mut print, "print_channel_swap"),
-        ] {
-            if let Some(order) = snapshot.special[key].as_array() {
-                for row in &mut profile.data.channel_density {
-                    if row.len() >= 3 {
-                        let original = [row[0], row[1], row[2]];
-                        for ch in 0..3 {
-                            row[ch] = original[order[ch].as_u64().unwrap_or(ch as u64) as usize];
-                        }
-                    }
-                }
-            }
-        }
-        Runtime::new_observed(film, print, params, &snapshot.data_dir, prepare.context())
-            .map_err(|e| format!("runtime build: {e}"))
-    })();
-    observed_result(
-        prepare,
-        result,
-        IssueCategory::Configuration,
-        IssueBoundary::RuntimePrepare,
-    )
-}
-
-fn observed_result<T, E>(
-    scope: ObservationScope,
-    result: Result<T, E>,
-    category: IssueCategory,
-    boundary: IssueBoundary,
-) -> Result<T, E> {
-    let outcome = if result.is_ok() {
-        Outcome::Succeeded
-    } else {
-        scope.context().issue(category, boundary);
-        Outcome::Failed
-    };
-    scope.finish(outcome);
-    result
-}
-
-/// One in-flight export owning an immutable input, pipeline and option snapshot.
-/// Cancellation discards its staged file once the current operation completes.
-/// The UI alone publishes successful, uncancelled work.
-struct ExportJob {
-    rx: mpsc::Receiver<Result<ExportResult, String>>,
-    handle: Option<JoinHandle<()>>,
-    cancel: Arc<AtomicBool>,
-    started_at: Instant,
-    configuration: Option<Arc<Mutex<Option<spektrafilm_core::telemetry::RenderConfiguration>>>>,
-    backend: ExportBackend,
-    operation: Operation,
-}
-
-struct ExportResult {
-    elapsed: f32,
-    filename: String,
-    backend_name: String,
-    size: [u32; 2],
-    staged: image_io::PreparedImageOutput,
-}
-
-enum CalibrationResult {
-    Base {
-        params: spektrafilm_core::params::FilmBaseParams,
-        exposure_ev: f64,
-    },
-    BlindCalibration(String),
-    NeutralizeFilters {
-        m_shift: f32,
-        y_shift: f32,
-    },
-}
-
-struct CalibrationJob {
-    epoch: u64,
-    rx: mpsc::Receiver<Result<CalibrationResult, String>>,
-    handle: Option<JoinHandle<()>>,
-}
-
 fn scan_medium(film: &profile::Profile) -> controls::ScanMedium {
     if film.is_film() && film.is_negative() {
         controls::ScanMedium::Negative
@@ -903,11 +357,7 @@ fn scan_medium(film: &profile::Profile) -> controls::ScanMedium {
 }
 
 fn normalize_scan_output(params: &mut RuntimeParams, film_medium: controls::ScanMedium) {
-    if !film_medium.positive_output_eligible(&params.workflow.route)
-        && params.scanner.scan_output != "direct_scan"
-    {
-        params.scanner.scan_output = "direct_scan".into();
-    }
+    controls::normalize_scanner_selections(params, film_medium);
 }
 
 impl App {
@@ -946,7 +396,9 @@ impl App {
             // A startup state the runtime cannot accept (a removed workflow
             // route, an unsupported combination) must fall back to the factory
             // state with a visible reason instead of failing at construction.
-            state.runtime_params()?;
+            let params = state.runtime_params()?;
+            let film = profile::load_profile_by_name(&data_dir, state.film())?;
+            spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
             Ok(state)
         })
         .unwrap_or_else(|error| {
@@ -1021,12 +473,13 @@ impl App {
             export_options,
             export_dialog: ExportDialog::default(),
             input_epoch: 0,
+            scanner_setup: None,
             output_image: None,
             output_metadata: None,
             source_render: None,
             diagnostics: diagnostics::Diagnostics::default(),
             viewer: display::Viewer::new(),
-            gui_tab: GuiTab::default(),
+            gui_tab: ui::GuiTab::default(),
             output_color_space: "sRGB".into(),
             output_cctf_encoding: true,
             last_render_ms: 0.0,
@@ -1087,6 +540,7 @@ impl App {
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;
         profile::load_profile_by_name(&self.data_dir, state.paper())?;
+        spektrafilm_core::validate_scan_output(&params, &film).map_err(anyhow::Error::msg)?;
         let film_medium = scan_medium(&film);
         normalize_scan_output(&mut params, film_medium);
         self.film_name = state.film().to_owned();
@@ -1142,403 +596,29 @@ impl App {
         }
     }
 
-    fn refresh_viewing_artifacts(&mut self) {
-        self.viewer.set_input_display_source(
-            &self.params.io.input_color_space,
-            self.params.io.input_cctf_decoding,
-        );
-        self.viewer.set_output_display_source(
-            &self.output_color_space,
-            self.output_cctf_encoding,
-            self.viewer.settings.use_display_transform,
-            self.gui_state.sections["rust"]["display_profile"]
-                .as_str()
-                .map(Path::new),
-        );
-        self.viewer.invalidate_display();
-    }
-
-    fn diagnostics_panel(&mut self, ui: &mut egui::Ui) {
-        let active = *self.render_worker.active.lock();
-        let render = active.map(|(_, kind, mode)| (kind.label(), mode));
-        let queued = self
-            .render_job
+    fn render_snapshot(&mut self, params: RuntimeParams) -> RenderSnapshot {
+        let key = (self.input_epoch, self.parameter_revision);
+        if self
+            .scanner_setup
             .as_ref()
-            .filter(|job| active.is_none_or(|(id, _, _)| id != job.request_id))
-            .map(|job| (job.kind.label(), job.collection_mode));
-        let export = self
-            .export_job
-            .as_ref()
-            .map(|job| ("Export", job.operation.mode()));
-        let save_report = self.diagnostics.show(ui, render, queued, export);
-        if save_report
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("JSON report", &["json"])
-                .set_file_name("spektrafilm-report.json")
-                .save_file()
+            .is_none_or(|(cached, _)| *cached != key)
         {
-            self.status = match self.diagnostics.save_selected(&path) {
-                Ok(()) => "Saved diagnostic report.".into(),
-                Err(error) => format!("Diagnostic report save error: {error}"),
-            };
+            self.scanner_setup = Some((key, Arc::new(OnceLock::new())));
         }
-    }
-
-    fn state_toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked()
-                && let Some(path) = self
-                    .file_dialog("state")
-                    .set_file_name("gui_state.json")
-                    .add_filter("JSON", &["json"])
-                    .save_file()
-            {
-                self.remember_dialog("state", &path);
-                let result = self.current_state().and_then(|s| s.save(&path));
-                self.status = match result {
-                    Ok(()) => format!("Saved GUI state to {}", path.display()),
-                    Err(e) => format!("State save error: {e:#}"),
-                };
-            }
-            if ui.button("Load from file").clicked()
-                && let Some(path) = self
-                    .file_dialog("state")
-                    .add_filter("JSON", &["json"])
-                    .pick_file()
-            {
-                self.remember_dialog("state", &path);
-                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-                self.status = match result {
-                    Ok(()) => format!("Loaded GUI state from {}", path.display()),
-                    Err(e) => format!("State load error: {e:#}"),
-                };
-            }
-            if ui.button("Save current as default").clicked() {
-                let result = self
-                    .current_state()
-                    .and_then(|s| s.save(&state::default_path()));
-                self.status = match result {
-                    Ok(()) => "Saved current GUI state as startup default".into(),
-                    Err(e) => format!("Startup save error: {e:#}"),
-                };
-            }
-            if ui.button("Restore factory default").clicked() {
-                let result = state::reset_factory().and_then(|s| self.apply_state(s));
-                self.status = match result {
-                    Ok(()) => "Restored factory default GUI state".into(),
-                    Err(e) => format!("Factory reset error: {e:#}"),
-                };
-            }
-        });
-    }
-
-    fn toggle_scan_for_print(&mut self) {
-        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
-            self.params.scanner.white_correction = white;
-            self.params.scanner.black_correction = black;
-            self.params.print_render.glare.active = glare;
-        } else {
-            if !self
-                .film_medium
-                .for_route(&self.params.workflow.route)
-                .correction_eligible()
-            {
-                return;
-            }
-            self.scan_for_print_snapshot = Some((
-                self.params.scanner.white_correction,
-                self.params.scanner.black_correction,
-                self.params.print_render.glare.active,
-            ));
-            self.params.scanner.white_correction = true;
-            self.params.scanner.black_correction = true;
-            self.params.print_render.glare.active = false;
-        }
-        self.dirty = true;
-        self.parameter_revision = self.parameter_revision.wrapping_add(1);
-        self.force_preview = true;
-    }
-
-    fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
-            if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
-                let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-                if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
-                    self.toggle_scan_for_print();
-                }
-            }
-        });
-        ui.horizontal(|ui| {
-            if controls::choice_tip_entries(
-                ui,
-                "workflow",
-                &mut self.params.workflow.route,
-                routes::entries(),
-                routes::tooltip(),
-            ) {
-                self.finish_route_change();
-            }
-            if ui
-                .checkbox(
-                    &mut self.params.magazine_print_color.active,
-                    "Magazine print",
-                )
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
-                .changed()
-            {
-                self.dirty = true;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
-            }
-        });
-        ui.horizontal(|ui| {
-            let busy = self.render_job.is_some()
-                || self.export_job.is_some()
-                || self.calibration_job.is_some();
-            let ready = self.image.is_some() && !busy;
-            if ui
-                .add_enabled(ready, egui::Button::new("PREVIEW"))
-                .on_hover_text("run the simulation on a small preview and deactivates grain, halation, blurs, unsharp mask (diffusion filters are active)")
-                .clicked()
-            {
-                self.dirty = true;
-                self.force_preview = true;
-                self.full_scan_requested = false;
-            }
-            if ui.add_enabled(ready, egui::Button::new("SCAN")).on_hover_text("Run the full simulation on the full-resolution input").clicked() {
-                self.dirty = true;
-                self.force_preview = true;
-                self.full_scan_requested = true;
-            }
-            if ui
-                .add_enabled(
-                    self.output_image.is_some() && !busy,
-                    egui::Button::new("SAVE"),
-                )
-                .on_hover_text("Save the current output layer to an image file")
-                .clicked()
-            {
-                self.save_dialog();
-            }
-        });
-    }
-
-    fn file_dialog(&self, key: &str) -> rfd::FileDialog {
-        let dialog = rfd::FileDialog::new();
-        match self.gui_state.sections["rust"]["dialog_dirs"][key].as_str() {
-            Some(path) => dialog.set_directory(path),
-            None => dialog,
-        }
-    }
-    fn remember_dialog(&mut self, key: &str, path: &Path) {
-        if let Some(parent) = path.parent() {
-            if !self.gui_state.sections["rust"].is_object() {
-                self.gui_state.sections["rust"] = serde_json::json!({"version":1,"dialog_dirs":{}});
-            }
-            if !self.gui_state.sections["rust"]["dialog_dirs"].is_object() {
-                self.gui_state.sections["rust"]["dialog_dirs"] = serde_json::json!({});
-            }
-            self.gui_state.sections["rust"]["dialog_dirs"][key] =
-                serde_json::json!(parent.to_string_lossy());
-            let directory = self.browser_state_path.parent().unwrap_or(Path::new("."));
-            let path = directory.join("dialog_dirs.json");
-            if let Err(e) = std::fs::create_dir_all(directory).and_then(|_| {
-                std::fs::write(
-                    path,
-                    self.gui_state.sections["rust"]["dialog_dirs"].to_string(),
-                )
-            }) {
-                self.status = format!("Dialog directory persistence error: {e}");
-            }
-        }
-    }
-
-    fn finish_route_change(&mut self) {
-        if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
-            self.params.scanner.white_correction = white;
-            self.params.scanner.black_correction = black;
-            self.params.print_render.glare.active = glare;
-        }
-        self.params.io.scan_film = self.params.workflow.route == "input > film > scan";
-        normalize_scan_output(&mut self.params, self.film_medium);
-        self.invalidate_look_render();
-    }
-
-    fn invalidate_look_render(&mut self) {
-        self.scan_for_print_snapshot = None;
-        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-        self.parameter_revision = self.parameter_revision.wrapping_add(1);
-        self.dirty = true;
-    }
-
-    fn select_film_profile(&mut self, selected: String) {
-        let film = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_film() && profile.is_filming() => profile,
-            Ok(_) => {
-                self.status =
-                    format!("Profile selection error: '{selected}' is not a film profile");
-                return;
-            }
-            Err(error) => {
-                self.status = format!("Profile selection error: {error:#}");
-                return;
-            }
-        };
-        self.film_name = selected;
-        self.film_dev_times = film.data.development_time.clone();
-        self.film_medium = scan_medium(&film);
-        self.params.workflow.route = workflow_default(&film);
-        self.params.io.scan_film = film.is_positive();
-        self.params.scanner.scan_output = "direct_scan".into();
-        self.invalidate_look_render();
-    }
-
-    fn select_print_profile(&mut self, selected: String) {
-        let print = match profile::load_profile_by_name(&self.data_dir, &selected) {
-            Ok(profile) if profile.is_print_stock() => profile,
-            Ok(_) => {
-                self.status =
-                    format!("Profile selection error: '{selected}' is not a print profile");
-                return;
-            }
-            Err(error) => {
-                self.status = format!("Profile selection error: {error:#}");
-                return;
-            }
-        };
-        self.print_name = selected;
-        self.print_dev_times = print.data.development_time.clone();
-        self.invalidate_look_render();
-    }
-
-    fn load_image_from_path(&mut self, path: &Path) {
-        let t = Instant::now();
-        let raw = image_io::is_raw(path);
-        let mut raw_lens_info = None;
-        let loaded = if raw {
-            let settings = &self.gui_state.sections["load_raw"];
-            let options = spektrafilm_raw::RawOptions {
-                white_balance: match settings["white_balance"].as_str().unwrap_or("as_shot") {
-                    "daylight" => spektrafilm_raw::WhiteBalance::Daylight,
-                    "tungsten" => spektrafilm_raw::WhiteBalance::Tungsten,
-                    "custom" => spektrafilm_raw::WhiteBalance::Custom,
-                    _ => spektrafilm_raw::WhiteBalance::AsShot,
-                },
-                temperature: settings["temperature"].as_f64(),
-                tint: settings["tint"].as_f64(),
-                lens_correction: settings["lens_correction"].as_bool().unwrap_or(false),
-            };
-            spektrafilm_raw::load(path, &options)
-                .map(|result| {
-                    raw_lens_info = Some(result.lens_info);
-                    LoadedImage {
-                        image: result.image,
-                        metadata: image_io::read_metadata(path),
-                    }
-                })
-                .map_err(anyhow::Error::msg)
-        } else {
-            image_io::load(path).map_err(anyhow::Error::from)
-        };
-        match loaded {
-            Ok(LoadedImage {
-                image: img,
-                metadata,
-            }) => {
-                if raw {
-                    self.params.io.input_color_space = "ACES2065-1".into();
-                    self.params.io.input_cctf_decoding = false;
-                }
-                self.source_metadata = metadata;
-                self.input_rotation = 0;
-                self.status = format!(
-                    "Loaded {} × {} ({:.1} MP) in {:.0} ms",
-                    img.width,
-                    img.height,
-                    (img.pixel_count() as f64 / 1e6),
-                    t.elapsed().as_secs_f32() * 1000.0
-                );
-                self.raw_lens_info = raw_lens_info;
-                if raw {
-                    match self.raw_lens_info.as_deref() {
-                        Some(info) if !info.is_empty() => self
-                            .status
-                            .push_str(&format!("; Lens correction applied ({info})")),
-                        _ => self.status.push_str("; Lens correction not applied"),
-                    }
-                }
-                self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-                self.input_epoch = self.input_epoch.wrapping_add(1);
-                self.full_scan_requested = false;
-                self.image = Some(Arc::new(img));
-                self.refresh_input_viewer();
-                self.image_path = Some(path.to_path_buf());
-                self.output_image = None;
-                self.output_metadata = None;
-                self.source_render = None;
-                self.dirty = true;
-            }
-            Err(e) => {
-                self.status = format!("Load error: {e:#}");
-            }
-        }
-    }
-
-    fn rotate_input_image(&mut self, clockwise: bool) {
-        let Some(image) = self.image.as_ref() else {
-            self.status = "Load an image before rotating.".into();
-            return;
-        };
-        let quarter_turns = if clockwise { -1 } else { 1 };
-        let rotated = image.rotated_quarter_turns(quarter_turns);
-        self.image = Some(Arc::new(rotated));
-        self.input_rotation = (self.input_rotation + quarter_turns).rem_euclid(4);
-        self.input_epoch = self.input_epoch.wrapping_add(1);
-        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-        self.full_scan_requested = false;
-        self.output_image = None;
-        self.output_metadata = None;
-        self.source_render = None;
-        self.refresh_input_viewer();
-        self.dirty = true;
-        self.force_preview = true;
-        self.status = format!("Rotated input {}°", self.input_rotation * 90);
-    }
-
-    /// Hand the current input image to the viewer: capped input raster, its
-    /// display source, and the full-resolution source the viewer later prepares
-    /// display rasters from. Every path that replaces `image` ends here, so a
-    /// new handoff step cannot land in only one of them.
-    fn refresh_input_viewer(&mut self) {
-        let Some(image) = self.image.as_ref() else {
-            return;
-        };
-        match display::input_display_raster(
-            image,
-            &self.params.io.input_color_space,
-            self.params.io.input_cctf_decoding,
-            self.params.settings.preview_max_size as usize,
-        ) {
-            Ok(raster) => {
-                self.viewer
-                    .set_input(raster, [image.width as usize, image.height as usize]);
-                self.viewer.set_input_display_source(
-                    &self.params.io.input_color_space,
-                    self.params.io.input_cctf_decoding,
-                );
-                self.viewer
-                    .seed_prepared_input(image.clone(), self.params.settings.preview_max_size);
-            }
-            Err(e) => self.status = format!("Viewer input error: {e}"),
-        }
-    }
-
-    fn rotate_input_image_clockwise(&mut self) {
-        self.rotate_input_image(true);
-    }
-
-    fn rotate_input_image_counterclockwise(&mut self) {
-        self.rotate_input_image(false);
+        let scanner_setup = self
+            .scanner_setup
+            .as_ref()
+            .expect("scanner setup slot inserted")
+            .1
+            .clone();
+        RenderSnapshot::new(
+            params,
+            self.film_name.clone(),
+            self.print_name.clone(),
+            self.data_dir.clone(),
+            self.gui_state.sections["special"].clone(),
+            scanner_setup,
+        )
     }
 
     /// Submit the latest snapshot without waiting for active computation.
@@ -1576,9 +656,10 @@ impl App {
                 return;
             }
         };
-        // Report the V3 field's effective CPU route next to the selected backend.
+        // Report the Dye field's effective CPU route next to the selected backend.
         let backend_name = effective_backend_name(self.backend.name(), &params);
         let parameter_revision = self.parameter_revision;
+        let snapshot = self.render_snapshot(params);
         let request = RenderRequest {
             job: RenderJob {
                 input_epoch,
@@ -1593,13 +674,7 @@ impl App {
             },
             image,
             input_clone_ms,
-            snapshot: RenderSnapshot {
-                params,
-                film_name: self.film_name.clone(),
-                print_name: self.print_name.clone(),
-                data_dir: self.data_dir.clone(),
-                special: self.gui_state.sections["special"].clone(),
-            },
+            snapshot,
             backend: self.backend.clone(),
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
@@ -1863,944 +938,6 @@ impl App {
             }
         }
     }
-
-    /// Render an immutable snapshot of the loaded full input independently of Save.
-    fn start_export(&mut self, ctx: &egui::Context, mut options: ExportOptions) {
-        if self.export_input().is_none() {
-            return;
-        }
-        options.normalize();
-        let stem = self
-            .image_path
-            .as_ref()
-            .and_then(|p| p.file_stem())
-            .and_then(|s| s.to_str())
-            .unwrap_or("spektrafilm");
-        let default_name = format!(
-            "{stem}_{}_spektra_{}.{}",
-            self.film_name,
-            options.backend.argument(),
-            options.format.extension()
-        );
-        let Some(chosen_path) = self
-            .file_dialog("export")
-            .add_filter(options.format.label(), options.format.extensions())
-            .set_file_name(&default_name)
-            .save_file()
-        else {
-            return;
-        };
-        self.start_export_to_path(ctx, options, &chosen_path);
-    }
-
-    fn export_input(&mut self) -> Option<Arc<ImageBuf>> {
-        if self.export_job.is_some() || self.calibration_job.is_some() {
-            self.status = "Wait for the current operation before exporting.".into();
-            return None;
-        }
-        match self.image.as_ref().cloned() {
-            Some(image) => Some(image),
-            None => {
-                self.status = "Load an image before exporting.".into();
-                None
-            }
-        }
-    }
-
-    /// Render to the native chooser's confirmed path, preserving overwrite checks.
-    fn start_export_to_path(
-        &mut self,
-        ctx: &egui::Context,
-        mut options: ExportOptions,
-        chosen_path: &Path,
-    ) {
-        let Some(image) = self.export_input() else {
-            return;
-        };
-        options.normalize();
-        let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
-        operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
-        operation.set_input_dimensions(image.width, image.height);
-        operation.set_backend_requested(match options.backend {
-            ExportBackend::Cpu => diagnostics::BackendRequested::Cpu,
-            ExportBackend::Gpu => diagnostics::BackendRequested::Wgpu,
-        });
-        if operation.enabled() {
-            operation.set_saving_configuration(
-                spektrafilm_core::telemetry::SavingConfiguration::from_save_options(
-                    options.image_format(),
-                    &options.save_options(),
-                ),
-            );
-        }
-        let out_path = options.format.output_path(chosen_path);
-        if out_path != chosen_path && out_path.exists() {
-            self.status = format!(
-                "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
-                out_path.display()
-            );
-            operation.issue(IssueCategory::Publication, IssueBoundary::Operation);
-            self.diagnostics.finish(operation, Outcome::Failed);
-            return;
-        }
-        let params = match self
-            .current_state()
-            .and_then(|state| state.runtime_params())
-        {
-            Ok(params) => params,
-            Err(error) => {
-                self.status = format!("Export state error: {error:#}");
-                operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
-                self.diagnostics.finish(operation, Outcome::Failed);
-                return;
-            }
-        };
-        let snapshot = RenderSnapshot {
-            params,
-            film_name: self.film_name.clone(),
-            print_name: self.print_name.clone(),
-            data_dir: self.data_dir.clone(),
-            special: self.gui_state.sections["special"].clone(),
-        };
-        self.remember_dialog("export", &out_path);
-        self.export_options = options.clone();
-        let metadata = self.source_metadata.clone();
-        let export_backend = options.backend;
-        let selected_backend = self.backend.clone();
-        let (tx, rx) = mpsc::channel();
-        let ctx_for_worker = ctx.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let cancel_for_worker = Arc::clone(&cancel);
-        let started_at = Instant::now();
-        let configuration = operation.enabled().then(|| Arc::new(Mutex::new(None)));
-        let worker_configuration = configuration.clone();
-        let attempt = operation.attempt(1);
-        if operation.enabled() {
-            operation.set_saved_attempt(attempt.id());
-        }
-        let observation = attempt.context().clone();
-        let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
-        let handle = std::thread::Builder::new()
-            .name("spektrafilm-export".into())
-            .spawn(move || {
-                drop(worker_wait);
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                    || -> Result<ExportResult> {
-                        if cancel_for_worker.load(Ordering::SeqCst) {
-                            anyhow::bail!("cancelled");
-                        }
-                        let pipeline = build_runtime_observed(&snapshot, false, &observation)
-                            .map_err(anyhow::Error::msg)?;
-                        if let Some(slot) = &worker_configuration {
-                            *slot.lock() = Some(pipeline.telemetry_configuration());
-                        }
-                        if cancel_for_worker.load(Ordering::SeqCst) {
-                            anyhow::bail!("cancelled");
-                        }
-                        let backend_init = observation.scope(
-                            "backend_init",
-                            ObservationKind::Phase,
-                            Purpose::Image,
-                        );
-                        let backend_result: Result<Arc<dyn ComputeBackend>> = match export_backend {
-                            ExportBackend::Cpu => {
-                                Ok(Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend))
-                            }
-                            ExportBackend::Gpu if selected_backend.is_gpu() => Ok(selected_backend),
-                            ExportBackend::Gpu => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-                                .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
-                                .context("GPU export requested but no WGPU adapter is available"),
-                        };
-                        let backend = observed_result(
-                            backend_init,
-                            backend_result,
-                            IssueCategory::Backend,
-                            IssueBoundary::BackendInit,
-                        )?;
-                        let input_prepare = observation.scope(
-                            "input_prepare",
-                            ObservationKind::Phase,
-                            Purpose::Image,
-                        );
-                        let working_image = (*image).clone();
-                        drop(input_prepare);
-                        let simulation =
-                            observation.scope("simulation", ObservationKind::Phase, Purpose::Image);
-                        let processed = pipeline
-                            .process_observed(working_image, backend.as_ref(), simulation.context())
-                            .map_err(anyhow::Error::msg);
-                        let output = observed_result(
-                            simulation,
-                            processed,
-                            IssueCategory::Simulation,
-                            IssueBoundary::Simulation,
-                        )?;
-                        if cancel_for_worker.load(Ordering::SeqCst) {
-                            anyhow::bail!("cancelled");
-                        }
-                        let saving_convert = observation.scope(
-                            "saving_convert",
-                            ObservationKind::Phase,
-                            Purpose::Image,
-                        );
-                        let converted = image_io::convert_image(
-                            &output,
-                            &pipeline.params().io.output_color_space,
-                            pipeline.params().io.output_cctf_encoding,
-                            &options.saving_color_space,
-                            options.saving_cctf_encoding,
-                        );
-                        let converted = observed_result(
-                            saving_convert,
-                            converted,
-                            IssueCategory::Writing,
-                            IssueBoundary::SavingConvert,
-                        )?;
-                        let file_write =
-                            observation.scope("file_write", ObservationKind::Phase, Purpose::Image);
-                        let staged = image_io::prepare_save_observed(
-                            &out_path,
-                            &converted,
-                            options.save_options(),
-                            metadata.as_ref(),
-                            file_write.context(),
-                        );
-                        let staged = observed_result(
-                            file_write,
-                            staged,
-                            IssueCategory::Writing,
-                            IssueBoundary::FileWrite,
-                        )?;
-                        if cancel_for_worker.load(Ordering::SeqCst) {
-                            anyhow::bail!("cancelled");
-                        }
-                        Ok(ExportResult {
-                            elapsed: started_at.elapsed().as_secs_f32(),
-                            filename: out_path
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("(file)")
-                                .to_owned(),
-                            backend_name: effective_backend_name(backend.name(), pipeline.params()),
-                            size: [output.width, output.height],
-                            staged,
-                        })
-                    },
-                ))
-                .unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
-                attempt.finish(if res.is_ok() {
-                    Outcome::Succeeded
-                } else if cancel_for_worker.load(Ordering::SeqCst) {
-                    Outcome::Cancelled
-                } else {
-                    Outcome::Failed
-                });
-                let msg = res.map_err(|e| format!("{e:#}"));
-                let _ = tx.send(msg);
-                ctx_for_worker.request_repaint();
-            })
-            .expect("OS thread spawn");
-        self.status = format!("Exporting with {}…", export_backend.label());
-        self.export_job = Some(ExportJob {
-            rx,
-            handle: Some(handle),
-            cancel,
-            started_at,
-            backend: export_backend,
-            operation,
-            configuration,
-        });
-    }
-
-    /// Cancellation discards the staged file after the current pipeline operation.
-    fn cancel_export(&mut self) {
-        let Some(job) = self.export_job.as_ref() else {
-            return;
-        };
-        if !job.cancel.swap(true, Ordering::SeqCst) {
-            self.status = "Cancelling export…".into();
-        }
-    }
-
-    /// Called once per `update()`. If the export is still in-flight,
-    /// refreshes the status with elapsed time and requests a repaint a
-    /// second from now (so the timer ticks without us busy-looping).
-    /// If the job finished, drains the result into the status bar and
-    /// joins the worker thread.
-    fn poll_export_job(&mut self, ctx: &egui::Context) {
-        let Some(job) = self.export_job.as_mut() else {
-            return;
-        };
-        let msg = match job.rx.try_recv() {
-            Ok(m) => m,
-            Err(mpsc::TryRecvError::Empty) => {
-                let secs = job.started_at.elapsed().as_secs();
-                self.status = if job.cancel.load(Ordering::SeqCst) {
-                    format!("Cancelling export… ({secs}s)")
-                } else {
-                    format!("Exporting with {}… ({secs}s)", job.backend.label())
-                };
-                ctx.request_repaint_after(Duration::from_secs(1));
-                return;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.status = "Export error: worker thread vanished".into();
-                let mut job = self.export_job.take().expect("export job exists");
-                if let Some(handle) = job.handle.take() {
-                    let _ = handle.join();
-                }
-                if let Some(configuration) = job
-                    .configuration
-                    .as_ref()
-                    .and_then(|slot| slot.lock().take())
-                {
-                    job.operation.set_render_configuration(configuration);
-                }
-                job.operation
-                    .issue(IssueCategory::Backend, IssueBoundary::Operation);
-                self.diagnostics.finish(job.operation, Outcome::Failed);
-                return;
-            }
-        };
-        let mut job = self.export_job.take().expect("export job exists");
-        if let Some(h) = job.handle.take() {
-            let _ = h.join();
-        }
-        let cancelled = job.cancel.load(Ordering::SeqCst);
-        let mut operation = job.operation;
-        if let Some(configuration) = job
-            .configuration
-            .as_ref()
-            .and_then(|slot| slot.lock().take())
-        {
-            operation.set_render_configuration(configuration);
-        }
-        let mut outcome = if cancelled {
-            Outcome::Cancelled
-        } else {
-            Outcome::Failed
-        };
-        self.status = match msg {
-            Ok(_) if cancelled => "Export cancelled.".into(),
-            Ok(result) => {
-                let publication =
-                    operation.scope("publication", ObservationKind::Phase, Purpose::Image);
-                let published = result.staged.publish(true);
-                let published = observed_result(
-                    publication,
-                    published,
-                    IssueCategory::Publication,
-                    IssueBoundary::Publication,
-                );
-                match published {
-                    Ok(report) => {
-                        outcome = Outcome::Succeeded;
-                        operation.set_published_dimensions(result.size[0], result.size[1]);
-                        let mut status = format!(
-                            "Exported ({}) {} · {} × {} in {:.1} s",
-                            result.backend_name,
-                            result.filename,
-                            result.size[0],
-                            result.size[1],
-                            result.elapsed
-                        );
-                        if let Some(warning) = report.metadata_warning {
-                            status.push_str(&format!(" — Metadata warning: {warning}"));
-                        }
-                        status
-                    }
-                    Err(e) => format!("Export error: {e:#}"),
-                }
-            }
-            Err(_) if cancelled => "Export cancelled.".into(),
-            Err(e) => format!("Export error: {e}"),
-        };
-        if cancelled {
-            operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
-        }
-        self.diagnostics.finish(operation, outcome);
-    }
-
-    fn start_calibration(&mut self, action: controls::CalibrationAction) {
-        if self.calibration_job.is_some() || self.render_job.is_some() || self.export_job.is_some()
-        {
-            self.status = "Wait for the current operation before running a Convert action.".into();
-            return;
-        }
-        let Some(image) = self.image.as_ref().map(|image| (**image).clone()) else {
-            self.status = "Load an input image before running a Convert action.".into();
-            return;
-        };
-        let mut params = match self
-            .current_state()
-            .and_then(|state| state.runtime_params())
-        {
-            Ok(params) => params,
-            Err(error) => {
-                self.status = format!("Calibration state error: {error:#}");
-                return;
-            }
-        };
-        let film = match profile::load_profile_by_name(&self.data_dir, &self.film_name) {
-            Ok(profile) => profile,
-            Err(error) => {
-                self.status = format!("Calibration film error: {error:#}");
-                return;
-            }
-        };
-        let print = match profile::load_profile_by_name(&self.data_dir, &self.print_name) {
-            Ok(profile) => profile,
-            Err(error) => {
-                self.status = format!("Calibration print error: {error:#}");
-                return;
-            }
-        };
-        let data_dir = self.data_dir.clone();
-        let backend = Arc::clone(&self.backend);
-        let epoch = self.calibration_epoch.wrapping_add(1);
-        self.calibration_epoch = epoch;
-        let (tx, rx) = mpsc::channel();
-        let action_name = match action {
-            controls::CalibrationAction::DetectBase => "Detecting film base…",
-            controls::CalibrationAction::BlindCalibration => "Fitting blind calibration…",
-            controls::CalibrationAction::NeutralizeFilters => "Neutralizing print filters…",
-        };
-        self.status = action_name.into();
-        let handle = std::thread::Builder::new()
-            .name("spektrafilm-calibration".into())
-            .spawn(move || {
-                params.workflow.route = "input > convert-film > scan".into();
-                let result = match action {
-                    controls::CalibrationAction::DetectBase => {
-                        spektrafilm_core::stages::converting::detect_base(&image, &film, &params)
-                            .map(|(params, exposure_ev)| CalibrationResult::Base {
-                                params,
-                                exposure_ev,
-                            })
-                    }
-                    controls::CalibrationAction::BlindCalibration => {
-                        spektrafilm_core::stages::converting::blind_calibration(
-                            &image, &film, &params,
-                        )
-                        .map(CalibrationResult::BlindCalibration)
-                    }
-                    controls::CalibrationAction::NeutralizeFilters => {
-                        spektrafilm_core::stages::converting::neutralize_filters(
-                            &film,
-                            &print,
-                            &params,
-                            &data_dir,
-                            backend.as_ref(),
-                        )
-                        .map(|(m_shift, y_shift)| {
-                            CalibrationResult::NeutralizeFilters { m_shift, y_shift }
-                        })
-                    }
-                };
-                let _ = tx.send(result);
-            })
-            .map_err(|error| error.to_string());
-        match handle {
-            Ok(handle) => {
-                self.calibration_job = Some(CalibrationJob {
-                    epoch,
-                    rx,
-                    handle: Some(handle),
-                });
-            }
-            Err(error) => {
-                self.status = format!("Calibration worker error: {error}");
-            }
-        }
-    }
-
-    fn poll_calibration_job(&mut self, ctx: &egui::Context) {
-        let Some(job) = self.calibration_job.as_ref() else {
-            return;
-        };
-        let result = match job.rx.try_recv() {
-            Ok(result) => result,
-            Err(mpsc::TryRecvError::Empty) => {
-                ctx.request_repaint_after(Duration::from_millis(16));
-                return;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                let mut job = self.calibration_job.take().expect("calibration job exists");
-                if let Some(handle) = job.handle.take() {
-                    let _ = handle.join();
-                }
-                self.status = "Calibration worker vanished.".into();
-                return;
-            }
-        };
-        let mut job = self.calibration_job.take().expect("calibration job exists");
-        let epoch = job.epoch;
-        if let Some(handle) = job.handle.take() {
-            let _ = handle.join();
-        }
-        if epoch != self.calibration_epoch {
-            self.status = "Discarded stale Convert calibration result.".into();
-            return;
-        }
-        match result {
-            Ok(CalibrationResult::Base {
-                params,
-                exposure_ev,
-            }) => {
-                self.params.film_render.base = params;
-                self.params.film_render.convert.exposure_compensation_ev = exposure_ev;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
-                self.dirty = true;
-                self.force_preview = true;
-                self.status =
-                    format!("Film base detected; exposure compensation {exposure_ev:+.2} EV.");
-            }
-            Ok(CalibrationResult::BlindCalibration(calibration)) => {
-                self.params.film_render.convert.calibration = calibration;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
-                self.dirty = true;
-                self.force_preview = true;
-                self.status = "Blind calibration fitted.".into();
-            }
-            Ok(CalibrationResult::NeutralizeFilters { m_shift, y_shift }) => {
-                self.params.enlarger.m_filter_shift = m_shift;
-                self.params.enlarger.y_filter_shift = y_shift;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
-                self.dirty = true;
-                self.force_preview = true;
-                self.status =
-                    format!("Print filters neutralized: M {m_shift:+.2}, Y {y_shift:+.2}.");
-            }
-            Err(error) => {
-                self.status = format!("Calibration failed: {error}");
-            }
-        }
-        ctx.request_repaint();
-    }
-
-    fn parameter_section(&mut self, ui: &mut egui::Ui, section: &str) {
-        let preset_section = match section {
-            "Film base" => Some((Section::Base, "Base", false)),
-            "Grain" => Some((Section::Grain, "Grain", true)),
-            "Halation" => Some((Section::Halation, "Halation", false)),
-            "Couplers" => Some((Section::Couplers, "Couplers", false)),
-            "Convert" => Some((Section::Convert, "Convert", false)),
-            "Camera diffusion" => Some((Section::CameraFilter, "Diffusion", false)),
-            "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
-            "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
-            "Scanner" => Some((Section::Scanner, "Scanner", false)),
-            _ => None,
-        };
-        if let Some((kind, label, default_open)) = preset_section {
-            let mut label_clicked = false;
-            let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                ui.make_persistent_id(("preset-section", section)),
-                default_open,
-            )
-            .show_header(ui, |ui| {
-                label_clicked = ui
-                    .add(egui::Label::new(label).sense(egui::Sense::click()))
-                    .clicked();
-                self.section_preset_menu(ui, kind);
-            });
-            if label_clicked {
-                header.toggle();
-            }
-            header.body(|ui| self.parameter_section_controls(ui, section));
-        } else {
-            self.parameter_section_controls(ui, section);
-        }
-    }
-
-    fn parameter_section_controls(&mut self, ui: &mut egui::Ui, section: &str) {
-        let changes = controls::show(
-            ui,
-            &mut self.params,
-            &mut self.gui_state.sections,
-            section,
-            self.film_medium,
-        );
-        if changes.runtime_changed {
-            self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-            self.parameter_revision = self.parameter_revision.wrapping_add(1);
-            self.dirty = true;
-        }
-        if let Some(action) = changes.action {
-            self.start_calibration(action);
-        }
-        if changes.preview_requested {
-            self.dirty = true;
-            self.force_preview = true;
-        }
-        if changes.raw_reload
-            && let Some(path) = self.image_path.clone()
-        {
-            self.load_image_from_path(&path);
-        }
-    }
-
-    fn import_section(&mut self, ui: &mut egui::Ui, raw: bool) {
-        ui.collapsing(if raw { "Import Raw" } else { "Import RGB" }, |ui| {
-            if ui.button("select file").on_hover_text(if raw {
-                "Load and process a raw file with the selected white balance and lens correction settings."
-            } else {
-                "Select an input image"
-            }).clicked()
-                && let Some(path) = self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()).pick_file() {
-                    self.remember_dialog("load", &path);
-                    self.load_image_from_path(&path);
-                }
-            if raw {
-                self.parameter_section(ui, "Import Raw");
-            }
-            if let Some(p) = &self.image_path {
-                ui.label(egui::RichText::new(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).small());
-            }
-            ui.add_space(4.0);
-        });
-    }
-
-    fn export_actions(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("Export options")
-            .default_open(false)
-            .show(ui, |ui| {
-                if self.export_job.is_some() {
-                    if ui.button("Cancel")
-                        .on_hover_text("Cancel export; the current operation finishes before its output is discarded.")
-                        .clicked()
-                    {
-                        self.cancel_export();
-                    }
-                } else {
-                    let enabled = self.image.is_some()
-                        && self.calibration_job.is_none()
-                        && !self.export_dialog.is_open();
-                    if ui.add_enabled(enabled, egui::Button::new("Export…"))
-                        .on_hover_text("Choose settings and render the full image independently of Save.")
-                        .clicked()
-                    {
-                        self.export_dialog.open(&self.export_options);
-                    }
-                }
-            });
-    }
-    fn chemistry_section(&mut self, ui: &mut egui::Ui, film: bool) {
-        let mut label_clicked = false;
-        let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
-            ui.ctx(),
-            ui.make_persistent_id(("chemistry", film)),
-            false,
-        )
-        .show_header(ui, |ui| {
-            label_clicked = ui
-                .add(egui::Label::new("Chemistry").sense(egui::Sense::click()))
-                .clicked();
-            self.section_preset_menu(ui, if film { Section::Film } else { Section::Print });
-        });
-        if label_clicked {
-            header.toggle();
-        }
-        header.body(|ui| {
-            let (times, selected) = if film {
-                (
-                    &self.film_dev_times,
-                    &mut self.params.film_render.development_time,
-                )
-            } else {
-                (
-                    &self.print_dev_times,
-                    &mut self.params.print_render.development_time,
-                )
-            };
-            if dev_time_combo(
-                ui,
-                if film { "film-time" } else { "print-time" },
-                "development time",
-                times,
-                selected,
-            ) {
-                self.dirty = true;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
-            }
-            self.parameter_section(
-                ui,
-                if film {
-                    "Film chemistry"
-                } else {
-                    "Print chemistry"
-                },
-            );
-        });
-    }
-
-    fn controls_panel(&mut self, ui: &mut egui::Ui) {
-        let input_view_before = (
-            self.params.io.input_color_space.clone(),
-            self.params.io.input_cctf_decoding,
-            self.params.settings.preview_max_size,
-        );
-        match self.gui_tab {
-            GuiTab::Main => {
-                self.import_section(ui, false);
-                self.import_section(ui, true);
-                for section in ["Crop and upscale", "Input", "Camera"] {
-                    self.parameter_section(ui, section);
-                }
-                ui.collapsing("Profiles", |ui| {
-                    if self.params.workflow.route == "input" {
-                        ui.weak(
-                            "Finished RGB ignores these profiles: it only colour-manages the \
-                             input to the output space.",
-                        );
-                    }
-                    if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
-                        let selected = self.film_name.clone();
-                        self.params.film_render.development_time = None;
-                        self.select_film_profile(selected);
-                    }
-                    if profile_combo(
-                        ui,
-                        "paper",
-                        "print profile",
-                        &self.papers,
-                        &mut self.print_name,
-                    ) {
-                        let selected = self.print_name.clone();
-                        self.params.print_render.development_time = None;
-                        self.select_print_profile(selected);
-                    }
-                });
-                for section in ["Enlarger", "Scanner"] {
-                    self.parameter_section(ui, section);
-                }
-                egui::CollapsingHeader::new("Output")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        self.parameter_section(ui, "Output");
-                        self.export_actions(ui);
-                    });
-            }
-            GuiTab::Film => {
-                self.chemistry_section(ui, true);
-                for section in [
-                    "Film base",
-                    "Halation",
-                    "Couplers",
-                    "Grain",
-                    "Camera diffusion",
-                    "Convert",
-                ] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Print => {
-                self.chemistry_section(ui, false);
-                for section in ["Print base", "Preflash", "Glare", "Enlarger diffusion"] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Advanced => {
-                for section in [
-                    "Spectral upsampling",
-                    "Magazine print color",
-                    "Input gamut compress",
-                    "Output gamut compress",
-                    "Experimental",
-                ] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Config => {
-                self.diagnostics_panel(ui);
-                ui.collapsing("GUI parameters", |ui| {
-                    self.state_toolbar(ui);
-                });
-                ui.collapsing("Display", |ui| {
-                    let display_transform_before = self.viewer.settings.use_display_transform;
-                    self.viewer.controls(ui);
-                    self.parameter_section(ui, "Display");
-                    self.viewer.interpolation_control(ui);
-                    if display_transform_before != self.viewer.settings.use_display_transform {
-                        self.refresh_viewing_artifacts();
-                    }
-                });
-                ui.collapsing("napari layers", |ui| {
-                    self.viewer.layer_controls(ui);
-                });
-            }
-        }
-        ui.label(egui::RichText::new(&self.status).small());
-        if input_view_before
-            != (
-                self.params.io.input_color_space.clone(),
-                self.params.io.input_cctf_decoding,
-                self.params.settings.preview_max_size,
-            )
-        {
-            self.refresh_viewing_artifacts();
-        }
-    }
-}
-
-impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // First-paint hook: tag the wgpu Metal layer's colorspace as sRGB.
-        // Has to happen here (not in `App::new`) because the CAMetalLayer
-        // isn't wired up at construction time.
-        #[cfg(target_os = "macos")]
-        if !self.metal_colorspace_tagged
-            && raw_window_handle::HasWindowHandle::window_handle(frame).is_ok()
-        {
-            match tag_metal_layer_srgb(frame) {
-                Ok(()) => {
-                    eprintln!("[spektrafilm] CAMetalLayer.colorspace = sRGB — tagged OK");
-                    self.metal_colorspace_tagged = true;
-                }
-                Err(e) => {
-                    eprintln!("[spektrafilm] colorspace tag attempt: {e}");
-                }
-            }
-        }
-        let _ = frame;
-
-        if self.dirty
-            && self.image.is_some()
-            && self.calibration_job.is_none()
-            && !self.export_dialog.is_open()
-            && (self.gui_state.auto_preview() || self.force_preview)
-        {
-            let now = Instant::now();
-            let dirty_since = *self.dirty_since.get_or_insert(now);
-            let elapsed = now.saturating_duration_since(dirty_since);
-            if elapsed >= PREVIEW_DEBOUNCE {
-                self.dispatch_render(ctx);
-                self.force_preview = false;
-                self.dirty = false;
-                self.dirty_since = None;
-            } else {
-                ctx.request_repaint_after(PREVIEW_DEBOUNCE - elapsed);
-            }
-        }
-        self.poll_render_job(ctx);
-        self.poll_calibration_job(ctx);
-        self.poll_export_job(ctx);
-        if let Some(options) = self.export_dialog.show(ctx) {
-            self.start_export(ctx, options);
-        }
-        self.preset_panel(ctx);
-        egui::SidePanel::right("controls")
-            .resizable(false)
-            .exact_width(420.0)
-            .show(ctx, |ui| {
-                ui.heading("spektrafilm");
-                ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    for tab in GuiTab::ALL {
-                        ui.selectable_value(&mut self.gui_tab, tab, tab.label());
-                    }
-                });
-                ui.separator();
-                let scroll_height = (ui.available_height() - 95.0).max(1.0);
-                ui.allocate_ui(egui::vec2(ui.available_width(), scroll_height), |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("controls-scroll")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| self.controls_panel(ui));
-                });
-                ui.separator();
-                self.simulation_action_bar(ui);
-            });
-        self.persist_browser_state(false);
-        if self.browser_state_changed_at.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(300));
-        }
-        if let Some(error) = self.diagnostics.take_publication_error() {
-            self.status = format!("Diagnostic report publication error: {error}");
-        }
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::TopBottomPanel::bottom("viewer-footer").show_inside(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("ccw rotate").clicked() {
-                        self.rotate_input_image_counterclockwise();
-                        ui.ctx().request_repaint();
-                    }
-                    if ui.button("cw rotate").clicked() {
-                        self.rotate_input_image_clockwise();
-                        ui.ctx().request_repaint();
-                    }
-                    for (label, percent) in [("100%", 100.0), ("200%", 200.0), ("400%", 400.0)] {
-                        if ui.button(label).clicked() {
-                            self.viewer.set_zoom_percent(percent);
-                            ui.ctx().request_repaint();
-                        }
-                    }
-                    if ui.button("reset view").clicked() {
-                        self.viewer.reset_view();
-                        ui.ctx().request_repaint();
-                    }
-                    let zoom = self.viewer.zoom_percent().map_or_else(
-                        || format!("{:.0}% fit", self.viewer.zoom * 100.0),
-                        |percent| format!("{percent:.0}%"),
-                    );
-                    ui.label(format!("{} · zoom {zoom}", self.status));
-                });
-            });
-            self.viewer.layer_controls(ui);
-            self.viewer
-                .set_display_max_size(self.params.settings.preview_max_size);
-            self.viewer
-                .show(ui, self.image.as_ref(), self.output_image.as_ref());
-        });
-
-        // Accept drag-and-dropped image files.
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .filter_map(|f| f.path.clone())
-                .collect()
-        });
-        if let Some(path) = dropped.into_iter().next() {
-            self.load_image_from_path(&path);
-        }
-    }
-
-    /// Cancel pending export publication and drain its worker before exiting.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.persist_browser_state(true);
-        if let Some(mut job) = self.export_job.take() {
-            job.cancel.store(true, Ordering::SeqCst);
-            if let Some(h) = job.handle.take() {
-                let _ = h.join();
-            }
-            if let Some(configuration) = job
-                .configuration
-                .as_ref()
-                .and_then(|slot| slot.lock().take())
-            {
-                job.operation.set_render_configuration(configuration);
-            }
-            let _ = job.rx.try_recv();
-            job.operation
-                .issue(IssueCategory::Cancelled, IssueBoundary::Operation);
-            self.diagnostics.finish(job.operation, Outcome::Cancelled);
-        }
-        if let Some(mut operation) = self.render_worker.shutdown() {
-            operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
-            self.diagnostics.finish(operation, Outcome::Cancelled);
-        }
-        while let Ok((_, mut operation, _)) = self.render_worker.rx.try_recv() {
-            operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
-            self.diagnostics.finish(operation, Outcome::Cancelled);
-        }
-        if let Some(mut job) = self.calibration_job.take()
-            && let Some(handle) = job.handle.take()
-        {
-            let _ = handle.join();
-        }
-        self.diagnostics.clear();
-    }
 }
 
 /// Extract the human-readable payload from a caught panic. Panics carry
@@ -2951,6 +1088,321 @@ fn tag_metal_layer_srgb<H: raw_window_handle::HasWindowHandle>(h: &H) -> Result<
 #[cfg(test)]
 mod telemetry_lifecycle_tests {
     use super::*;
+    use spektrafilm_gpu::telemetry::ObservationContext;
+
+    fn scanner_app() -> App {
+        let mut app = App::new_with_browser_path(
+            Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend),
+            None,
+            None,
+            None,
+            std::env::temp_dir().join(format!(
+                "scanner-snapshots-{}-{}.json",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+        );
+        app.film_name = "kodak_portra_400".into();
+        app.print_name = "kodak_portra_endura".into();
+        app.params.workflow.route = "input > film > scan".into();
+        app.params.io.scan_film = true;
+        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        app.params.scanner.white_correction = false;
+        app.params.scanner.black_correction = false;
+        app.params.film_render.grain.active = false;
+        app.params.camera.auto_exposure = false;
+        app.params.print_render.glare.active = false;
+        app.params.settings.preview_max_size = 4;
+        app.image = Some(Arc::new(ImageBuf::from_data(
+            24,
+            8,
+            (0..24 * 8 * 3)
+                .map(|i| {
+                    spektrafilm_math::precision::from_f64(if i / 3 % 24 < 5 { 0.01 } else { 0.7 })
+                })
+                .collect(),
+        )));
+        app
+    }
+
+    #[test]
+    fn app_source_remeasurement_and_manual_scanner_edits_preserve_user_brightness() {
+        let mut app = scanner_app();
+        let context = ObservationContext::default();
+        let original = app.render_snapshot(app.params.clone());
+        let initial = original
+            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
+            .unwrap()
+            .unwrap();
+        let mut changed_input = (**app.image.as_ref().unwrap()).clone();
+        for (index, sample) in changed_input.data.iter_mut().enumerate() {
+            *sample *= spektrafilm_math::precision::from_f64([0.18, 0.45, 0.8][index % 3]);
+        }
+        app.image = Some(Arc::new(changed_input));
+        app.input_epoch = app.input_epoch.wrapping_add(1);
+        let source = app.render_snapshot(app.params.clone());
+        let source_setup = source
+            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            initial, source_setup,
+            "new chromatic source must change measured scanner setup"
+        );
+        app.params.scanner.positive_density_ev += 1.0;
+        app.parameter_revision = app.parameter_revision.wrapping_add(1);
+        let edited = app.render_snapshot(app.params.clone());
+        assert!(!Arc::ptr_eq(source.scanner_setup(), edited.scanner_setup()));
+        assert!(
+            edited.scanner_setup().get().is_none(),
+            "parameter revision must create a fresh measurement slot"
+        );
+        let edited_setup = edited
+            .prepare_scanner_setup(app.image.as_ref().unwrap(), &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            source_setup, edited_setup,
+            "derived setup must preserve the user's additional brightness"
+        );
+        let input = app.image.as_ref().unwrap();
+        let source_runtime = build_runtime_observed(&source, false, &context)
+            .unwrap()
+            .with_scanner_setup(source_setup);
+        let edited_runtime = build_runtime_observed(&edited, false, &context)
+            .unwrap()
+            .with_scanner_setup(edited_setup);
+        assert_eq!(
+            edited_runtime.params().scanner.positive_density_ev
+                - source_runtime.params().scanner.positive_density_ev,
+            1.0
+        );
+        let before = source_runtime
+            .process((**input).clone(), app.backend.as_ref())
+            .unwrap();
+        let after = edited_runtime
+            .process((**input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert!(
+            after
+                .data
+                .iter()
+                .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
+        );
+        let brightness = |image: &ImageBuf| {
+            image
+                .data
+                .iter()
+                .map(|sample| spektrafilm_math::precision::to_f64(*sample))
+                .sum::<f64>()
+        };
+        assert!(
+            brightness(&after) > brightness(&before),
+            "manual +1 EV must increase rendered brightness with the measured setup retained"
+        );
+        assert_eq!(original.scanner_setup().get().unwrap(), &Ok(initial));
+        assert_eq!(source.scanner_setup().get().unwrap(), &Ok(source_setup));
+    }
+
+    #[test]
+    fn app_preview_scan_and_export_measure_canonical_full_source_once() {
+        for first in [Some(true), Some(false), None] {
+            let mut app = scanner_app();
+            let snapshot = app.render_snapshot(app.params.clone());
+            let context = ObservationContext::default();
+            let input = app.image.as_ref().unwrap().clone();
+            let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
+            let expected = canonical.prepare_scanner_setup(&input).unwrap();
+            let mut cache = RuntimeCache::default();
+            if let Some(preview_first) = first {
+                let runtime = cache
+                    .prepare_observed(&snapshot, preview_first, &input, &context)
+                    .unwrap();
+                let working = if preview_first {
+                    spektrafilm_core::params_builder::resize_for_preview(
+                        &input,
+                        runtime.params().settings.preview_max_size,
+                    )
+                } else {
+                    (*input).clone()
+                };
+                let rendered = runtime.process(working, app.backend.as_ref()).unwrap();
+                assert!(
+                    rendered
+                        .data
+                        .iter()
+                        .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
+                );
+                assert_eq!(runtime.params().settings.preview_mode, preview_first);
+            } else {
+                assert_eq!(
+                    snapshot.prepare_scanner_setup(&input, &context).unwrap(),
+                    Some(expected)
+                );
+            }
+            assert_eq!(snapshot.scanner_setup().get().unwrap(), &Ok(expected));
+            let original_params = serde_json::to_value(snapshot.params()).unwrap();
+            let export = app.render_snapshot(app.params.clone());
+            assert_eq!(
+                export.prepare_scanner_setup(&input, &context).unwrap(),
+                Some(expected)
+            );
+            let mut alternative_input = (*input).clone();
+            for (index, sample) in alternative_input.data.iter_mut().enumerate() {
+                *sample *= spektrafilm_math::precision::from_f64([0.18, 0.45, 0.8][index % 3]);
+            }
+            assert_ne!(
+                canonical.prepare_scanner_setup(&alternative_input).unwrap(),
+                expected
+            );
+            assert_eq!(
+                export
+                    .prepare_scanner_setup(&alternative_input, &context)
+                    .unwrap(),
+                Some(expected),
+                "initialized snapshot must reuse its measured full source rather than remeasure another raster"
+            );
+            let scan_runtime = cache
+                .prepare_observed(&export, false, &input, &context)
+                .unwrap();
+            let scan = scan_runtime
+                .process((*input).clone(), app.backend.as_ref())
+                .unwrap();
+            let export_runtime = build_runtime_observed(&export, false, &context)
+                .unwrap()
+                .with_scanner_setup(expected);
+            let exported = export_runtime
+                .process((*input).clone(), app.backend.as_ref())
+                .unwrap();
+            assert_eq!(
+                scan.data, exported.data,
+                "shared full setup must produce the same Scan and Export raster"
+            );
+            let preview_runtime = cache
+                .prepare_observed(&export, true, &input, &context)
+                .unwrap();
+            let working = spektrafilm_core::params_builder::resize_for_preview(
+                &input,
+                preview_runtime.params().settings.preview_max_size,
+            );
+            let preview = preview_runtime
+                .process(working, app.backend.as_ref())
+                .unwrap();
+            assert_eq!(preview.width.max(preview.height), 4);
+            assert!(
+                preview
+                    .data
+                    .iter()
+                    .all(|sample| spektrafilm_math::precision::to_f64(*sample).is_finite())
+            );
+            assert!(Arc::ptr_eq(
+                snapshot.scanner_setup(),
+                export.scanner_setup()
+            ));
+            assert_eq!(
+                serde_json::to_value(snapshot.params()).unwrap(),
+                original_params
+            );
+        }
+    }
+
+    #[test]
+    fn app_real_negative_setup_ignores_virtual_camera_metering() {
+        let mut app = scanner_app();
+        app.params.workflow.route = "input > convert-film > scan".into();
+        let context = ObservationContext::default();
+        let input = app.image.as_ref().unwrap().clone();
+        app.params.camera.auto_exposure = false;
+        let first = app.render_snapshot(app.params.clone());
+        let expected = first.prepare_scanner_setup(&input, &context).unwrap();
+        app.parameter_revision = app.parameter_revision.wrapping_add(1);
+        app.params.camera.auto_exposure = true;
+        app.params.camera.exposure_compensation_ev += 3.0;
+        let changed = app.render_snapshot(app.params.clone());
+        assert_eq!(
+            changed.prepare_scanner_setup(&input, &context).unwrap(),
+            expected
+        );
+        let first_runtime = build_runtime_observed(&first, false, &context)
+            .unwrap()
+            .with_scanner_setup(expected.unwrap());
+        let changed_runtime = build_runtime_observed(&changed, false, &context)
+            .unwrap()
+            .with_scanner_setup(expected.unwrap());
+        let first_output = first_runtime
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        let changed_output = changed_runtime
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert_eq!(
+            first_output.data, changed_output.data,
+            "real negative render must bypass virtual camera metering"
+        );
+    }
+
+    #[test]
+    fn app_channel_swaps_use_identical_canonical_and_render_calibration() {
+        let mut app = scanner_app();
+        app.gui_state.sections["special"]["film_channel_swap"] = serde_json::json!([2, 0, 1]);
+        app.gui_state.sections["special"]["print_channel_swap"] = serde_json::json!([1, 2, 0]);
+        let snapshot = app.render_snapshot(app.params.clone());
+        let input = app.image.as_ref().unwrap().clone();
+        let context = ObservationContext::default();
+        let canonical = build_runtime_observed(&snapshot, false, &context).unwrap();
+        let mut cache = RuntimeCache::default();
+        let actual = cache
+            .prepare_without_setup(&snapshot, false, &context)
+            .unwrap();
+        let expected = canonical.prepare_scanner_setup(&input).unwrap();
+        assert_eq!(
+            actual.prepare_scanner_setup(&input).unwrap(),
+            expected,
+            "full setup and cached runtime must apply the same film and print channel swaps"
+        );
+        let canonical_output = canonical
+            .with_scanner_setup(expected)
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        let actual = cache
+            .prepare_observed(&snapshot, false, &input, &context)
+            .unwrap();
+        let actual_output = actual
+            .process((*input).clone(), app.backend.as_ref())
+            .unwrap();
+        assert_eq!(actual_output.data, canonical_output.data);
+    }
+
+    #[test]
+    fn imported_positive_slide_state_fails_without_mutating_current_scan() {
+        let mut app = scanner_app();
+        let original = app.params.clone();
+        let revision = app.parameter_revision;
+        let mut invalid = app.current_state().unwrap();
+        invalid.sections["simulation"]["film_stock"] = "fujifilm_provia_100f".into();
+        invalid.sections["scanner"]["positive_interpretation"] = "coupled".into();
+        invalid.sections["scanner"]["auto_setup"] = "per_frame".into();
+        invalid.sections["scanner"]["finish"] = "lab_scan".into();
+        let error = app.apply_state(invalid).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("negative filming-stage film profile")
+        );
+        assert_eq!(app.params, original);
+        assert_eq!(app.parameter_revision, revision);
+        assert_eq!(app.film_name, "kodak_portra_400");
+        app.image_path = None;
+        let valid = app.current_state().unwrap();
+        app.apply_state(valid).unwrap();
+        assert_eq!(app.params.scanner.scan_output, "positive_scan");
+        assert_eq!(app.params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
+    }
 
     fn job(request_id: u64) -> RenderJob {
         RenderJob {

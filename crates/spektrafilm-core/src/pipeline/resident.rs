@@ -6,13 +6,14 @@ use spektrafilm_math::image::ImageBuf;
 enum ResidentFallbackReason {
     WorkflowRoute,
     PositiveScanOutput,
+    ScannerReceiver,
     ScannerFilmPoints,
     LangmuirChemistry,
     InputTransferDecoding,
     RequestedSpectralLut,
     ActiveOpticalDiffusion,
     FaithfulGrainDistribution,
-    /// Active V3 resolves its film-coordinate field on the CPU; the
+    /// Active Dye resolves its film-coordinate field on the CPU; the
     /// resident chain has no equivalent readout.
     FilmGrainV3FieldCpu,
     UnsupportedOutputGamut,
@@ -56,6 +57,9 @@ impl Pipeline {
         if self.params.scanner.scan_output == "positive_scan" {
             reasons.push(ResidentFallbackReason::PositiveScanOutput);
         }
+        if self.params.scanner.receiver_profile == crate::params::ReceiverProfile::LabScanApprox {
+            reasons.push(ResidentFallbackReason::ScannerReceiver);
+        }
         if self.params.io.scan_film
             && self.film.is_positive()
             && (self.params.scanner.black_point != [0.0; 3]
@@ -92,12 +96,12 @@ impl Pipeline {
         if self.params.film_render.grain.active
             && matches!(
                 self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::V1
+                crate::params::grain::GrainEngine::Spektra
             )
         {
             reasons.push(ResidentFallbackReason::FaithfulGrainDistribution);
         }
-        // An active V3 field is resolved on the CPU from the full developed
+        // An active Dye field is resolved on the CPU from the full developed
         // film density; this decision is the capability authority for every
         // resident entry point.
         if crate::stages::grain_v3::active(&self.params) {
@@ -172,7 +176,7 @@ impl Pipeline {
     }
 
     /// Try the GPU-resident fast path. Builds all the per-stage data and
-    /// hands it to the backend's `try_run_film_chain`. Grain V2 returns native
+    /// hands it to the backend's `try_run_film_chain`. Grain Procedural returns native
     /// encoded RGB; other paths return linear RGB. `apply_post_scan` finalizes export.
     /// Pitch and metered EV come from the complete input before crop/rescale.
     pub(super) fn try_gpu_resident(
@@ -196,6 +200,7 @@ impl Pipeline {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
                             ResidentFallbackReason::PositiveScanOutput => R::PositiveScanOutput,
                             ResidentFallbackReason::ScannerFilmPoints => R::ScannerFilmPoints,
+                            ResidentFallbackReason::ScannerReceiver => R::ScannerReceiver,
                             ResidentFallbackReason::LangmuirChemistry => R::LangmuirChemistry,
                             ResidentFallbackReason::InputTransferDecoding => {
                                 R::InputTransferDecoding
@@ -428,7 +433,7 @@ impl Pipeline {
         let grain_v2 = if self.params.film_render.grain.active
             && matches!(
                 self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::V2
+                crate::params::grain::GrainEngine::Procedural
             ) {
             Some(self.params.film_render.grain.gpu_params(
                 self.params.random_seed,
@@ -509,7 +514,7 @@ impl Pipeline {
             && self.params.settings.rgb_to_raw_method != "mallett2019"
             && matches!(
                 self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::V2
+                crate::params::grain::GrainEngine::Procedural
             );
         if grain_v2_active {
             if !self.params.io.output_cctf_encoding {
@@ -566,7 +571,7 @@ mod tests {
         params.settings.use_scanner_lut = false;
         params.io.output_gamut_compress.algorithm = "off".into();
         params.film_render.grain.active = true;
-        params.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
         let mut pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
 
         assert!(matches!(
@@ -584,9 +589,9 @@ mod tests {
         );
         pipeline.params.settings.rgb_to_raw_method = "hanatos2025".into();
 
-        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::V1;
+        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
         let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("V1 grain must remain on the per-stage path");
+            panic!("Spektra grain must remain on the per-stage path");
         };
         assert!(
             reasons.iter().any(|reason| {
@@ -594,11 +599,11 @@ mod tests {
             })
         );
 
-        // V3 resolves its field on the CPU from the full developed density,
+        // Dye resolves its field on the CPU from the full developed density,
         // so no resident entry point may run it.
-        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::V3;
+        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
         let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("V3 grain must remain on the per-stage path");
+            panic!("Dye grain must remain on the per-stage path");
         };
         assert!(
             reasons

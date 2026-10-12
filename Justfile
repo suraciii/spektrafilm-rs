@@ -44,6 +44,22 @@ test:
 test-f64:
     cargo test --locked --workspace --features precision-f64
 
+# Run measured deterministic logic and isolated file tests in both precisions.
+test-fast: (test-fast-precision "") (test-fast-precision "--features precision-f64")
+
+# Positive module selection keeps new rendering/device tests in main by default.
+[private]
+test-fast-precision precision_args:
+    cargo test --locked -p spektrafilm-math --lib {{precision_args}}
+    cargo test --locked -p spektrafilm-model --lib {{precision_args}} -- density_curves:: illuminants:: couplers:: glare:: grain::v1:: diffusion::
+    cargo test --locked -p spektrafilm-core --lib {{precision_args}} -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: scan_receiver:: suggest:: stages::scanning::setup:: stages::scanning::coupled:: stages::scanning::finish:: magazine_print_color:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
+    cargo test --locked -p spektrafilm-core --test telemetry {{precision_args}}
+    cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui {{precision_args}} -- state::tests:: numeric::tests::
+
+# Run the appearance benchmark regressions with locked Python dependencies.
+benchmark-test:
+    uv run --project scripts/benchmark --locked python -m unittest discover -s scripts/benchmark/tests
+
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
 gui-headless:
     cargo test --locked -p spektrafilm-gui --features precision-f64 headless::
@@ -56,11 +72,18 @@ gui-layout:
 check-python-cache:
     python3 scripts/check_python_cache.py
 
-# Full local gate. PR CI runs this same command.
-ci: check-python-cache fmt check check-f64 clippy test test-f64
+# Fast PR gate. Clippy also type-checks every default-feature target.
+ci-pr: check-python-cache fmt clippy check-f64 test-fast benchmark-test
+
+# Full local and main-branch gate, including slow rendering and GPU tests.
+ci: check-python-cache fmt check check-f64 clippy test test-f64 benchmark-test
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
     python3 scripts/verify.py {{quote(evidence_dir)}}
+
+# Retain evidence for the fast PR gate using the same provenance checks.
+verify-pr evidence_dir:
+    python3 scripts/verify.py --gate ci-pr {{quote(evidence_dir)}}
 
 # Create a self-contained portable directory and archive under dist/.
 [unix]

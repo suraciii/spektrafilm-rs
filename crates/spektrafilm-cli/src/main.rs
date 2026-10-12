@@ -690,33 +690,55 @@ fn cmd_process(
         .iter()
         .map(|selector| preset::select(&library, selector).map(|selected| selected.preset))
         .collect::<Result<Vec<_>>>()?;
-    let resolved = spektrafilm_core::process_params::resolve(
-        spektrafilm_core::process_params::ProcessParamsRequest {
-            film: film_name,
-            paper: paper_name,
-            presets: &presets,
-            params_file,
-            sources,
-            route: workflow.route.as_deref(),
-            scan_film,
-            scan_output: workflow.scan_output.as_deref(),
-            input_is_raw,
-            input_color_space: args.input_color_space.as_deref(),
-            input_cctf_decoding: args.input_cctf_decoding,
-            require_input_declaration: std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+    let resolve_params = |canonical| {
+        let resolve = if canonical {
+            spektrafilm_core::process_params::resolve_scanner_setup
+        } else {
+            spektrafilm_core::process_params::resolve
+        };
+        resolve(
+            spektrafilm_core::process_params::ProcessParamsRequest {
+                film: film_name,
+                paper: paper_name,
+                presets: &presets,
+                params_file,
+                sources,
+                route: workflow.route.as_deref(),
+                scan_film,
+                scan_output: workflow.scan_output.as_deref(),
+                input_is_raw,
+                input_color_space: args.input_color_space.as_deref(),
+                input_cctf_decoding: args.input_cctf_decoding,
+                require_input_declaration: std::env::var_os(
+                    "SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS",
+                )
                 .as_deref()
-                != Some(std::ffi::OsStr::new("1")),
-            digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS").as_deref()
-                == Some(std::ffi::OsStr::new("1"))
-            {
-                DigestMode::PreserveUserEdits
-            } else {
-                DigestMode::ApplyStockSpecifics
+                    != Some(std::ffi::OsStr::new("1")),
+                digest_mode: if std::env::var_os("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+                    .as_deref()
+                    == Some(std::ffi::OsStr::new("1"))
+                {
+                    DigestMode::PreserveUserEdits
+                } else {
+                    DigestMode::ApplyStockSpecifics
+                },
             },
-        },
-        data_dir,
-    )
-    .map_err(anyhow::Error::msg)?;
+            data_dir,
+        )
+        .map_err(anyhow::Error::msg)
+    };
+    let resolved = resolve_params(false)?;
+    let canonical = if resolved.params.scanner.auto_setup
+        == spektrafilm_core::params::ScannerAutoSetup::PerFrame
+    {
+        let mut canonical = resolve_params(true)?;
+        canonical.params.random_seed = u64::from(args.seed.unwrap_or(0));
+        apply_channel_swap(&mut canonical.film, &workflow.film_channel_swap)?;
+        apply_channel_swap(&mut canonical.print, &workflow.print_channel_swap)?;
+        Some(canonical)
+    } else {
+        None
+    };
     let mut film = resolved.film;
     let mut print = resolved.print;
     apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
@@ -760,7 +782,7 @@ fn cmd_process(
         saving_space_resolved,
     );
     plan.validate_saving()?;
-    // Active V3 resolves its field on the CPU and never enters the resident
+    // Active Dye resolves its field on the CPU and never enters the resident
     // WGPU chain, whatever backend the surrounding stages use. Its supported
     // condition is validated here so the dry run reports and rejects exactly
     // what a render does, and the effective backend is reported next to the
@@ -774,7 +796,7 @@ fn cmd_process(
             spektrafilm_core::stages::grain_v3::effective_backend_note()
         );
     }
-    // An active V3 field resolves on the CPU whatever backend the rest of
+    // An active Dye field resolves on the CPU whatever backend the rest of
     // the chain uses, so the dry run reports the effective backend it did
     // not select.
     let grain_v3 = json!({
@@ -792,7 +814,8 @@ fn cmd_process(
             "film_profile": resolved.film_name,
             "print_profile": resolved.print_name,
             "parameters": params,
-            "film_grain_v3": grain_v3,
+            "scanner_provenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
+            "film_grain_dye": grain_v3,
             "data": {"path": data.path, "source": data.source},
             "input": {
                 "kind": if input_is_raw { "raw" } else { "raster" },
@@ -882,6 +905,29 @@ fn cmd_process(
     invocation
         .operation
         .set_input_dimensions(image.width, image.height);
+    let scanner_setup = if let Some(canonical) = canonical {
+        Some(invocation.phase(
+            "scanner_setup_prepare",
+            IssueCategory::Configuration,
+            IssueBoundary::RuntimePrepare,
+            &context,
+            |prepare_context| {
+                let canonical = Runtime::new_observed(
+                    canonical.film,
+                    canonical.print,
+                    canonical.params,
+                    data_dir,
+                    prepare_context,
+                )
+                .map_err(anyhow::Error::msg)?;
+                canonical
+                    .prepare_scanner_setup(&image)
+                    .map_err(anyhow::Error::msg)
+            },
+        )?)
+    } else {
+        None
+    };
     // Preview mode: bound the long edge before processing (upstream
     // `simulate_preview` + `resize_for_preview`).
     let image = invocation.phase(
@@ -933,6 +979,11 @@ fn cmd_process(
     })
         },
     )?;
+    let runtime = if let Some(setup) = scanner_setup {
+        runtime.with_scanner_setup(setup)
+    } else {
+        runtime
+    };
     if context.enabled() {
         invocation
             .operation

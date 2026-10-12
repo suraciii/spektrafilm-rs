@@ -195,7 +195,10 @@ cp LICENSE "$DIST_DIR/share/licenses/spektrafilm-GPL-3.0.txt"
 [[ -s licenses/lensfun-cc-by-sa-3.0.txt ]] || fail "full Lensfun database license missing"
 mkdir -p "$DIST_DIR/share/licenses/lensfun-database"
 cp licenses/lensfun-cc-by-sa-3.0.txt "$DIST_DIR/share/licenses/lensfun-database/LICENSE-CC-BY-SA-3.0.txt"
-
+[[ -s licenses/Apache-2.0.txt ]] || fail "Fotufilm Apache-2.0 license missing"
+[[ -s attribution/NOTICE ]] || fail "Fotufilm attribution notice missing"
+cp licenses/Apache-2.0.txt "$DIST_DIR/share/licenses/Fotufilm-Apache-2.0.txt"
+cp attribution/NOTICE "$DIST_DIR/share/licenses/Fotufilm-NOTICE.txt"
 libraw_prefix="$(pkg-config --variable=prefix libraw)"
 declare -A licensed_packages=()
 for dependency in "${!dependency_sources[@]}"; do

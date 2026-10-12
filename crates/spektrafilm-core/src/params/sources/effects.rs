@@ -6,13 +6,13 @@ use crate::profile::Profile;
 pub(super) enum Condition {
     NoOp,
     Grain,
-    V1,
-    V2,
-    V3,
-    V1OrV3,
+    Spektra,
+    Procedural,
+    Dye,
+    SpektraOrDye,
     Custom,
     Sublayers,
-    V1Sublayers,
+    SpektraSublayers,
     NoSublayers,
     Spatial,
     Diffusion(bool),
@@ -24,6 +24,8 @@ pub(super) enum Condition {
     Crop,
     ScannerPoints,
     PositiveScan,
+    LabScanFinish,
+    FilmScan,
     MagazineActive,
     MagazineStrength,
 }
@@ -32,18 +34,18 @@ impl Condition {
         match self {
             Self::NoOp => "preserved upstream no-op",
             Self::Grain => "film_render.grain.active = true; stochastic effects enabled",
-            Self::V1 => "film_render.grain.engine = v1",
-            Self::V2 => "film_render.grain.engine = v2",
-            Self::V3 => "film_render.grain.engine = v3; supported stock, format and route",
-            Self::V1OrV3 => "film_render.grain.engine = v1 or v3",
+            Self::Spektra => "film_render.grain.engine = spektra",
+            Self::Procedural => "film_render.grain.engine = procedural",
+            Self::Dye => "film_render.grain.engine = dye; supported stock, format and route",
+            Self::SpektraOrDye => "film_render.grain.engine = spektra or dye",
             Self::Custom => {
                 "film_render.grain.v2_profile = custom; select custom to use this control"
             }
             Self::Sublayers => {
                 "film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
             }
-            Self::V1Sublayers => {
-                "when engine = v1: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
+            Self::SpektraSublayers => {
+                "when engine = spektra: film_render.grain.sublayers_active = true; film profile supplies sublayer density curves"
             }
             Self::NoSublayers => "film_render.grain.sublayers_active = false",
             Self::Spatial => "spatial effects enabled",
@@ -65,6 +67,8 @@ impl Condition {
                 "slide film scan or negative film scan with scanner.scan_output = positive_scan; ignored for paper and direct negative scans"
             }
             Self::PositiveScan => "scanner.scan_output = positive_scan",
+            Self::LabScanFinish => "scanner.finish = lab_scan",
+            Self::FilmScan => "film-scan route",
             Self::MagazineActive => "magazine_print_color.active = true",
             Self::MagazineStrength => "magazine_print_color.strength > 0",
         }
@@ -74,14 +78,14 @@ impl Condition {
         match self {
             Self::NoOp => false,
             Self::Grain => g.active && !p.debug.deactivate_stochastic_effects,
-            Self::V1 => g.engine == GrainEngine::V1,
-            Self::V2 => g.engine == GrainEngine::V2,
-            Self::V3 => g.engine == GrainEngine::V3,
-            Self::V1OrV3 => matches!(g.engine, GrainEngine::V1 | GrainEngine::V3),
+            Self::Spektra => g.engine == GrainEngine::Spektra,
+            Self::Procedural => g.engine == GrainEngine::Procedural,
+            Self::Dye => g.engine == GrainEngine::Dye,
+            Self::SpektraOrDye => matches!(g.engine, GrainEngine::Spektra | GrainEngine::Dye),
             Self::Custom => g.v2_profile == "custom",
             Self::Sublayers => g.sublayers_active && !film.data.density_curves_layers.is_empty(),
-            Self::V1Sublayers => {
-                g.engine != GrainEngine::V1
+            Self::SpektraSublayers => {
+                g.engine != GrainEngine::Spektra
                     || (g.sublayers_active && !film.data.density_curves_layers.is_empty())
             }
             Self::NoSublayers => !g.sublayers_active,
@@ -110,6 +114,8 @@ impl Condition {
                     && (film.is_positive() || p.scanner.scan_output == "positive_scan")
             }
             Self::PositiveScan => p.scanner.scan_output == "positive_scan",
+            Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
+            Self::FilmScan => p.io.scan_film || p.workflow.route == "input > convert-film > scan",
             Self::MagazineActive => p.magazine_print_color.active,
             Self::MagazineStrength => p.magazine_print_color.strength > 0.0,
         }
@@ -130,7 +136,7 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         }
         out.push(Grain);
         if path.contains(".v2_") {
-            out.push(V2);
+            out.push(Procedural);
             if !["v2_profile", "v2_amount", "v2_timer", "v2_resolution_type"]
                 .iter()
                 .any(|f| path.ends_with(f))
@@ -138,17 +144,17 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
                 out.push(Custom);
             }
         } else if path.contains(".v3_") || path.ends_with(".rms_granularity") {
-            out.push(V3);
+            out.push(Dye);
         } else if ["density_min", "uniformity", "particle_scale_sublayers"]
             .iter()
             .any(|f| path.ends_with(f))
         {
-            out.push(V1OrV3);
+            out.push(SpektraOrDye);
             if path.ends_with(".particle_scale_sublayers") {
-                out.push(V1Sublayers);
+                out.push(SpektraSublayers);
             }
         } else {
-            out.push(V1);
+            out.push(Spektra);
             if path.ends_with(".n_sub_layers") {
                 out.push(NoSublayers);
             }
@@ -185,7 +191,13 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.push(Crop);
     } else if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push(ScannerPoints);
-    } else if path.starts_with("scanner.positive_") {
+    } else if path == "scanner.finish_strength" {
+        out.extend([PositiveScan, LabScanFinish]);
+    } else if path == "scanner.receiver_profile" {
+        out.push(FilmScan);
+    } else if path.starts_with("scanner.positive_")
+        || matches!(path, "scanner.auto_setup" | "scanner.finish")
+    {
         out.push(PositiveScan);
     } else if path.starts_with("magazine_print_color.") {
         out.push(if path.ends_with(".strength") {

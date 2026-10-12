@@ -540,6 +540,12 @@ pub fn neutralize_filters(
     p.workflow.route = "input > film > print > scan".into();
     p.io.scan_film = false;
     p.scanner.scan_output = "direct_scan".into();
+    // This local calibration scans paper, independently of film-scan controls.
+    p.scanner.receiver_profile = crate::params::ReceiverProfile::LegacyColorimetric;
+    p.scanner.positive_interpretation = crate::params::PositiveInterpretation::Separable;
+    p.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
+    p.scanner.finish = crate::params::ScannerFinish::Neutral;
+    p.scanner.finish_strength = 1.0;
     p.io.output_cctf_encoding = false;
     p.io.output_gamut_compress.algorithm = "off".into();
     p.settings.use_enlarger_lut = false;

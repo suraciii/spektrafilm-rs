@@ -622,6 +622,43 @@ fn film_scan_without_preset_keeps_legacy_print_selection() {
 }
 
 #[test]
+fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_pixels() {
+    let f = Fixture::new();
+    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "positive_scan", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled,scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
+    assert_eq!(
+        report["parameters"]["scanner"]["receiver_profile"],
+        "lab_scan_approx"
+    );
+    assert_eq!(
+        report["parameters"]["scanner"]["positive_interpretation"],
+        "coupled"
+    );
+    assert_eq!(report["parameters"]["scanner"]["auto_setup"], "per_frame");
+    assert_eq!(
+        report["scanner_provenance"]["receiver"]["calibration_status"],
+        "approximate_uncalibrated"
+    );
+    std::fs::write(&f.input, b"invalid-pixels").unwrap();
+    for selection in [
+        "scanner.positive_interpretation=coupled",
+        "scanner.auto_setup=per_frame",
+        "scanner.finish=lab_scan",
+        "scanner.receiver_profile=not_a_scanner",
+    ] {
+        for dry in [false, true] {
+            let mut args = vec!["--film", "kodak_portra_400", "--set", selection];
+            if dry {
+                args.push("--dry-run");
+            }
+            let result = f.process(&args);
+            assert!(!result.status.success(), "accepted {selection}");
+            assert!(String::from_utf8_lossy(&result.stderr).contains("scanner"));
+            assert!(!f.root.join("output.tif").exists());
+        }
+    }
+}
+
+#[test]
 fn exr_writer_constraints_fail_before_decoding_or_device_selection() {
     let f = Fixture::new();
     std::fs::write(&f.input, b"invalid-pixels").unwrap();
@@ -906,8 +943,8 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
         (
             "kodak_portra_400",
             "input > film > scan",
-            "film_render.grain.engine=\"v2\",film_render.grain.active=true,settings.preview_mode=true",
-            "active Grain V2",
+            "film_render.grain.engine=\"procedural\",film_render.grain.active=true,settings.preview_mode=true",
+            "active Grain Procedural",
         ),
     ];
     std::fs::write(f.root.join("output.tif"), b"retained output").unwrap();
@@ -1010,7 +1047,7 @@ fn inline_strings_and_enums_accept_normal_cli_values() {
         "--preset",
         "Kodak Portra 400",
         "--set",
-        "film_render.grain.engine=v2,film_render.grain.v2_profile=custom",
+        "film_render.grain.engine=procedural,film_render.grain.v2_profile=custom",
         "--set",
         "io.output_color_space=ProPhoto RGB",
         "--set",
@@ -1021,7 +1058,10 @@ fn inline_strings_and_enums_accept_normal_cli_values() {
         "film_render.grain.v2_amount=null",
         "--dry-run",
     ]);
-    assert_eq!(report["parameters"]["film_render"]["grain"]["engine"], "v2");
+    assert_eq!(
+        report["parameters"]["film_render"]["grain"]["engine"],
+        "procedural"
+    );
     assert_eq!(
         report["parameters"]["film_render"]["grain"]["v2_profile"],
         "custom"
@@ -1048,7 +1088,7 @@ fn invalid_plain_values_report_the_field_requirement() {
     for (source, requirement) in [
         ("camera.auto_exposure=yes", "true or false"),
         ("camera.exposure_compensation_ev=bright", "finite number"),
-        ("film_render.grain.engine=unknown", "v1"),
+        ("film_render.grain.engine=unknown", "spektra"),
     ] {
         let output = f.process(&["--preset", "Kodak Portra 400", "--set", source, "--dry-run"]);
         assert!(!output.status.success());

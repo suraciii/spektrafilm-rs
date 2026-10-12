@@ -9,7 +9,33 @@ fn provenance() -> Provenance {
     Provenance {
         implementation_version: "test".into(),
         model_version: "test".into(),
+        scanner: None,
     }
+}
+
+#[test]
+fn scanner_provenance_roundtrip_rejects_fabricated_calibration() {
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
+    let preset = Preset::capture_section(
+        "Approximate scanner",
+        Section::Scanner,
+        &params,
+        provenance(),
+    )
+    .unwrap();
+    let json = preset.to_json().unwrap();
+    let decoded = Preset::from_json_str(&json).unwrap();
+    assert_eq!(
+        decoded.provenance.scanner.as_ref().unwrap()["receiver"]["calibration_status"],
+        "approximate_uncalibrated"
+    );
+    let mut value: Value = serde_json::from_str(&json).unwrap();
+    value["provenance"]["scanner"]["receiver"]["calibration_status"] =
+        Value::String("measured".into());
+    assert!(Preset::from_json_str(&value.to_string()).is_err());
 }
 struct Temp(std::path::PathBuf);
 impl Temp {
@@ -475,6 +501,83 @@ fn look_resolution_normalizes_scan_output_for_film_and_route() {
 }
 
 #[test]
+fn look_resolution_normalizes_approximate_receiver_for_default_paper_route() {
+    let mut current = RuntimeParams::default();
+    current.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
+    current.scanner.finish = crate::params::ScannerFinish::LabScan;
+    current.scanner.finish_strength = 0.37;
+    current.scanner.scan_output = "positive_scan".into();
+    let preset = Preset::capture(
+        "Approximate scan look",
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+
+    let resolved = preset.resolve(&data(), &RuntimeParams::default()).unwrap();
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
+    assert_eq!(
+        resolved.params.scanner.receiver_profile,
+        crate::params::ReceiverProfile::LegacyColorimetric
+    );
+    assert_eq!(
+        resolved.params.scanner.finish,
+        crate::params::ScannerFinish::Neutral
+    );
+    assert_eq!(resolved.params.scanner.finish_strength, 0.37);
+}
+
+#[test]
+fn look_resolution_preserves_default_lab_scan_strength_on_explicit_film_scan_route() {
+    let mut current = RuntimeParams::default();
+    current.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
+    current.scanner.finish = crate::params::ScannerFinish::LabScan;
+    current.scanner.scan_output = "positive_scan".into();
+    let preset = Preset::capture(
+        "Lab scan look",
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+
+    let presets = [preset];
+    let resolved = crate::process_params::resolve(
+        crate::process_params::ProcessParamsRequest {
+            film: None,
+            paper: None,
+            presets: &presets,
+            params_file: None,
+            sources: &["scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan".into()],
+            route: Some("input > film > scan"),
+            scan_film: true,
+            scan_output: Some("positive_scan"),
+            input_is_raw: false,
+            input_color_space: Some("sRGB"),
+            input_cctf_decoding: Some(false),
+            require_input_declaration: true,
+            digest_mode: crate::runtime::DigestMode::ApplyStockSpecifics,
+        },
+        &data(),
+    )
+    .unwrap();
+    assert_eq!(resolved.params.workflow.route, "input > film > scan");
+    assert_eq!(
+        resolved.params.scanner.receiver_profile,
+        crate::params::ReceiverProfile::LabScanApprox
+    );
+    assert_eq!(
+        resolved.params.scanner.finish,
+        crate::params::ScannerFinish::LabScan
+    );
+    assert_eq!(resolved.params.scanner.finish_strength, 1.0);
+}
+
+#[test]
 fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() {
     let preset = Preset::from_json_str(r#"{"schema_version":2,"name":"Positive scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
     let mut current = RuntimeParams::default();
@@ -518,7 +621,7 @@ fn section_application_checks_film_corrections_and_grain_before_commit() {
     current.scanner.black_correction = false;
     current.film_render.grain.active = false;
     for payload in [
-        serde_json::json!({"film_render":{"grain":{"active":true,"engine":"v2"}}}),
+        serde_json::json!({"film_render":{"grain":{"active":true,"engine":"procedural"}}}),
         serde_json::json!({"scanner":{"white_correction":true}}),
         serde_json::json!({"scanner":{"black_correction":true}}),
     ] {

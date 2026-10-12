@@ -40,6 +40,9 @@ pub struct RenderRecipe {
     pub output: OutputContract,
     #[serde(default)]
     pub seed: Option<u64>,
+    /// Built-in derived scanner provenance. Optional for legacy recipes.
+    #[serde(default)]
+    pub scanner_provenance: Option<Value>,
 }
 
 pub fn default_output(format: &str) -> OutputContract {
@@ -86,6 +89,15 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
         bail!("filmProfile must not be empty");
     }
     validate_output(&recipe.output)?;
+    if let Some(provenance) = &recipe.scanner_provenance {
+        let params = normalize_parameters(recipe.parameters.clone())?;
+        let expected = serde_json::to_value(
+            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
+        )?;
+        if provenance != &expected {
+            bail!("scannerProvenance does not match the typed scanner parameters");
+        }
+    }
     Ok(recipe)
 }
 

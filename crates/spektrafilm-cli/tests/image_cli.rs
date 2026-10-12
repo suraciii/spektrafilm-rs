@@ -111,7 +111,7 @@ fn fixed_input_precedence_and_winning_edit_feedback_are_observable() {
     let report = f.report(&[
         "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
         "--set", "io.input_color_space=ProPhoto RGB,io.input_cctf_decoding=false",
-        "--set", "film_render.grain.engine=v2,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12",
+        "--set", "film_render.grain.engine=procedural,film_render.grain.v2_profile=35mm250,film_render.grain.v2_size=12",
         "--set", "film_render.grain.v2_size=15,film_render.grain.v2_amount=25", "--dry-run",
     ]);
     assert_eq!(report["parameters"]["io"]["input_color_space"], "sRGB");
@@ -186,7 +186,7 @@ fn seed_repeats_stochastic_pixels_and_benchmark_attempts() {
         let raw = f.0.join(format!("{index}.raw"));
         let result = f.run(&format!("{index}.tif"), &[
             "--input-color-space", "sRGB", "--input-cctf-decoding", "true",
-            "--set", "camera.auto_exposure=false,film_render.grain.engine=v2,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=75",
+            "--set", "camera.auto_exposure=false,film_render.grain.engine=procedural,film_render.grain.v2_profile=custom,film_render.grain.v2_amount=75",
             "--seed", seed, "--iters", iters, "--raw-out", raw.to_str().unwrap(),
         ]);
         assert!(
@@ -201,4 +201,137 @@ fn seed_repeats_stochastic_pixels_and_benchmark_attempts() {
     }
     assert_eq!(buffers[0], buffers[1]);
     assert_ne!(buffers[0], buffers[2]);
+}
+
+#[test]
+fn scanner_finish_feedback_and_text_report_follow_effective_mode() {
+    let f = Fixture::new();
+    for (finish, expected) in [("neutral", "inactive"), ("lab_scan", "active")] {
+        let settings = format!(
+            "scanner.receiver_profile=lab_scan_approx,scanner.finish={finish},scanner.finish_strength=0.5"
+        );
+        let result = f.run(
+            "output.tif",
+            &[
+                "--input-color-space",
+                "sRGB",
+                "--input-cctf-decoding",
+                "true",
+                "--route",
+                "input > film > scan",
+                "--scan-output",
+                "positive_scan",
+                "--set",
+                &settings,
+                "--dry-run",
+            ],
+        );
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+        let edit = report["edits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|edit| edit["path"] == "scanner.finish_strength")
+            .unwrap();
+        assert_eq!(edit["status"], expected);
+        assert_eq!(
+            String::from_utf8_lossy(&result.stderr).contains("scanner.finish_strength"),
+            finish == "neutral"
+        );
+    }
+    let result = f.run(
+        "output.tif",
+        &[
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--route",
+            "input > film > scan",
+            "--scan-output",
+            "positive_scan",
+            "--set",
+            "scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan",
+            "--dry-run",
+            "--dry-run-format",
+            "text",
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        text.contains("approximate_uncalibrated") && text.contains("fotufilm_lab_scan_approx_v1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn scanner_setup_uses_selected_seed_for_film_grain_measurement() {
+    use spektrafilm_core::{image_io, params::RuntimeParams, runtime::Runtime};
+    use spektrafilm_gpu::cpu_backend::CpuBackend;
+    use spektrafilm_math::precision::to_f64;
+
+    let f = Fixture::new();
+    let settings = "camera.auto_exposure=false,camera.film_format_mm=0.1,film_render.halation.active=false,film_render.dir_couplers.active=false,print_render.glare.active=false,film_render.grain.engine=spektra,film_render.grain.sublayers_active=false,film_render.grain.particle_area_um2=2,scanner.auto_setup=per_frame,io.output_gamut_compress.algorithm=off,scanner.unsharp_mask=[0,0],settings.use_enlarger_lut=false,settings.use_scanner_lut=false";
+    let args = [
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--route",
+        "input > film > scan",
+        "--scan-output",
+        "positive_scan",
+        "--set",
+        settings,
+        "--seed",
+        "42",
+    ];
+    let mut dry = args.to_vec();
+    dry.push("--dry-run");
+    let report = f.report(&dry);
+    let mut params: RuntimeParams = serde_json::from_value(report["parameters"].clone()).unwrap();
+    params.random_seed = report["seed"].as_u64().unwrap();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let runtime = Runtime::from_stocks(
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        params.clone(),
+        &data,
+    )
+    .unwrap();
+    let input = image_io::load(&f.0.join("input.png")).unwrap().image;
+    let setup = runtime.prepare_scanner_setup(&input).unwrap();
+    let mut wrong_seed = params;
+    wrong_seed.random_seed = 0;
+    let wrong =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", wrong_seed, &data).unwrap();
+    assert_ne!(setup, wrong.prepare_scanner_setup(&input).unwrap());
+    let expected = runtime
+        .with_scanner_setup(setup)
+        .process(input, &CpuBackend)
+        .unwrap();
+    let raw = f.0.join("seed.raw");
+    let mut render = args.to_vec();
+    render.extend(["--raw-out", raw.to_str().unwrap()]);
+    let result = f.run("seed.tif", &render);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let actual = std::fs::read(raw).unwrap();
+    assert_eq!(actual.len(), expected.data.len() * 8);
+    for (bytes, expected) in actual.as_chunks::<8>().0.iter().zip(expected.data) {
+        assert_eq!(f64::from_le_bytes(*bytes), to_f64(expected));
+    }
 }

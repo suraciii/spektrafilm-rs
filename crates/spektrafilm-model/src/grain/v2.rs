@@ -1,4 +1,4 @@
-//! Grain V2 accepts and returns native encoded RGB. Working-domain images and
+//! Grain Procedural accepts and returns native encoded RGB. Working-domain images and
 //! generated grain use half storage boundaries. The noise arithmetic is shared
 //! with WGSL; original OpenCL device transcendental results can still differ.
 use spektrafilm_math::{
@@ -959,7 +959,7 @@ mod tests {
     fn gpu_matches_cpu_reference_when_adapter_is_available() {
         use spektrafilm_gpu::wgpu_backend::WgpuBackend;
         let Some(gpu) = WgpuBackend::new() else {
-            eprintln!("Grain V2 GPU parity skipped: no adapter");
+            eprintln!("Grain Procedural GPU parity skipped: no adapter");
             return;
         };
         let image = ImageBuf::from_data(
@@ -1010,11 +1010,11 @@ mod tests {
                         let gpu_image = gpu.grain_v2_gpu(&image, &gpu_params);
                         assert!(
                             cpu.data.iter().all(|v| to_f32(*v).is_finite()),
-                            "CPU Grain V2 output contains non-finite samples"
+                            "CPU Grain Procedural output contains non-finite samples"
                         );
                         assert!(
                             gpu_image.data.iter().all(|v| to_f32(*v).is_finite()),
-                            "GPU Grain V2 output contains non-finite samples"
+                            "GPU Grain Procedural output contains non-finite samples"
                         );
                         let max_error = cpu
                             .data
@@ -1024,7 +1024,7 @@ mod tests {
                             .fold(0.0f32, f32::max);
                         assert!(
                             max_error < 5e-3,
-                            "CPU/GPU Grain V2 drift: {max_error}, profile={profile}, resolution_type={resolution_type}, mode={mode:?}, control={control}"
+                            "CPU/GPU Grain Procedural drift: {max_error}, profile={profile}, resolution_type={resolution_type}, mode={mode:?}, control={control}"
                         );
                     }
                 }

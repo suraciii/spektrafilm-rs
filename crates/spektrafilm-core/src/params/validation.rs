@@ -85,6 +85,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "io.input_gamut_compress.hull_detail" => Some((0.0, None)),
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         "scanner.black_point" | "scanner.white_point" => Some((0.0, Some(1.0))),
+        "scanner.finish_strength" => Some((0.0, Some(1.0))),
         "scanner.positive_density_ev" | "scanner.positive_balance_ev" => Some((-16.0, Some(16.0))),
         "scanner.positive_contrast" | "scanner.positive_dmax" => Some((0.0, Some(16.0))),
         _ => None,
@@ -160,7 +161,7 @@ pub(crate) fn validate_gamut_triplet(
     Ok((threshold, limit, power))
 }
 
-/// Grain V2 timer override sentinel: 0 selects the seed-derived phase;
+/// Grain Procedural timer override sentinel: 0 selects the seed-derived phase;
 /// otherwise the phase must be finite and strictly below 1.
 pub(crate) fn validate_v2_timer(value: f64) -> Result<(), String> {
     if value != 0.0 && (!value.is_finite() || !(0.0..1.0).contains(&value)) {
@@ -172,11 +173,27 @@ pub(crate) fn validate_v2_timer(value: f64) -> Result<(), String> {
 /// validated but not enumerable (for example `BB<kelvin>` blackbody sources).
 pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     let values: Vec<String> = match path {
+        "scanner.receiver_profile" => ["legacy_colorimetric", "lab_scan_approx"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
+        "scanner.positive_interpretation" => ["density", "separable", "coupled"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
+        "scanner.auto_setup" => ["off", "per_frame"].iter().map(|v| (*v).into()).collect(),
+        "scanner.finish" => ["neutral", "lab_scan"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
         "scanner.scan_output" => ["direct_scan", "positive_scan"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "film_render.grain.engine" => ["v1", "v2", "v3"].iter().map(|v| (*v).into()).collect(),
+        "film_render.grain.engine" => ["spektra", "procedural", "dye"]
+            .iter()
+            .map(|v| (*v).into())
+            .collect(),
         "film_render.grain.v2_mode" => ["analogue", "noise"].iter().map(|v| (*v).into()).collect(),
         "film_render.grain.v2_film_type" => ["negative", "positive"]
             .iter()
@@ -267,8 +284,12 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
 /// Per-leaf vocabulary validation, independent of cross-field state.
 pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
     let valid = match path {
+        "scanner.receiver_profile" => matches!(value, "legacy_colorimetric" | "lab_scan_approx"),
+        "scanner.positive_interpretation" => matches!(value, "density" | "separable" | "coupled"),
+        "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
+        "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
         "scanner.scan_output" => matches!(value, "direct_scan" | "positive_scan"),
-        "film_render.grain.engine" => matches!(value, "v1" | "v2" | "v3"),
+        "film_render.grain.engine" => matches!(value, "spektra" | "procedural" | "dye"),
         "film_render.grain.v2_mode" => matches!(value, "analogue" | "noise"),
         "film_render.grain.v2_film_type" => matches!(value, "negative" | "positive"),
         "film_render.grain.v2_profile" => {
@@ -462,6 +483,39 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     }
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     let scanner = &params.scanner;
+    if !scanner.finish_strength.is_finite() || !(0.0..=1.0).contains(&scanner.finish_strength) {
+        return Err("scanner.finish_strength: must be finite and in 0..=1".into());
+    }
+    if scanner.receiver_profile != super::ReceiverProfile::LegacyColorimetric
+        && !matches!(
+            params.workflow.route.as_str(),
+            "input > film > scan"
+                | "input > convert-film > scan"
+                | "input > convert-film > scan-minus-base"
+        )
+    {
+        return Err("scanner.receiver_profile=lab_scan_approx requires a film scan route".into());
+    }
+    if scanner.scan_output != "positive_scan" {
+        for (path, enabled) in [
+            (
+                "scanner.positive_interpretation=coupled",
+                scanner.positive_interpretation == super::PositiveInterpretation::Coupled,
+            ),
+            (
+                "scanner.auto_setup=per_frame",
+                scanner.auto_setup == super::ScannerAutoSetup::PerFrame,
+            ),
+            (
+                "scanner.finish=lab_scan",
+                scanner.finish == super::ScannerFinish::LabScan,
+            ),
+        ] {
+            if enabled {
+                return Err(format!("{path} requires scanner.scan_output=positive_scan"));
+            }
+        }
+    }
     for channel in 0..3 {
         let black = scanner.black_point[channel];
         let white = scanner.white_point[channel];

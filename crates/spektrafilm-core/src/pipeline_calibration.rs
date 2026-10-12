@@ -269,7 +269,7 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
     Ok(())
 }
 
-pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
+pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
     validate_scan_output_route(params)?;
     if params.scanner.scan_output != "positive_scan" {
         return Ok(());
@@ -297,11 +297,12 @@ pub(crate) fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Re
     if params.film_render.grain.active
         && matches!(
             params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::V2
+            crate::params::grain::GrainEngine::Procedural
         )
     {
         return Err(
-            "scanner.scan_output=positive_scan cannot be combined with active Grain V2".into(),
+            "scanner.scan_output=positive_scan cannot be combined with active Grain Procedural"
+                .into(),
         );
     }
     Ok(())
@@ -625,16 +626,28 @@ pub(crate) fn build(
 mod tests {
     use super::{validate_scan_output, validate_scan_output_route};
     use crate::params::{RuntimeParams, grain::GrainEngine};
-    use crate::profile;
-    use std::path::Path;
+    use crate::profile::Profile;
 
-    fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
+    fn profile(film_type: &str, support: &str, stage: &str) -> Profile {
+        serde_json::from_value(serde_json::json!({
+            "metadata": {},
+            "info": {
+                "stock": "test_stock",
+                "name": "Test profile",
+                "type": film_type,
+                "support": support,
+                "stage": stage
+            },
+            "data": {
+                "log_exposure": [-2.0, 0.0, 2.0],
+                "density_curves": [
+                    [0.1, 0.1, 0.1],
+                    [0.5, 0.5, 0.5],
+                    [1.0, 1.0, 1.0]
+                ]
+            }
+        }))
+        .unwrap()
     }
 
     #[test]
@@ -652,7 +665,7 @@ mod tests {
 
     #[test]
     fn positive_scan_accepts_only_a_direct_negative_film_route() {
-        let film = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let film = profile("negative", "film", "filming");
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
@@ -661,23 +674,35 @@ mod tests {
     }
 
     #[test]
-    fn positive_scan_rejects_positive_profiles_and_unsupported_effects() {
-        let film = profile::load_profile_by_name(&data_dir(), "fujifilm_provia_100f").unwrap();
+    fn positive_scan_rejects_profiles_outside_the_filming_negative_case() {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
         params.scanner.scan_output = "positive_scan".into();
-        assert!(validate_scan_output(&params, &film).is_err());
 
-        let paper = profile::load_profile_by_name(&data_dir(), "kodak_portra_endura").unwrap();
-        assert!(validate_scan_output(&params, &paper).is_err());
+        assert!(validate_scan_output(&params, &profile("positive", "film", "filming")).is_err());
+        assert!(validate_scan_output(&params, &profile("negative", "paper", "printing")).is_err());
+        assert!(validate_scan_output(&params, &profile("negative", "film", "printing")).is_err());
 
-        let film = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let film = profile("negative", "film", "filming");
         params.scanner.white_correction = true;
         assert!(validate_scan_output(&params, &film).is_err());
         params.scanner.white_correction = false;
         params.film_render.grain.active = true;
-        params.film_render.grain.engine = GrainEngine::V2;
+        params.film_render.grain.engine = GrainEngine::Procedural;
         assert!(validate_scan_output(&params, &film).is_err());
+    }
+
+    #[test]
+    fn positive_scan_rejects_nonfinite_density_curves() {
+        let mut film = profile("negative", "film", "filming");
+        film.data.density_curves[1][2] = f64::NAN;
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "positive_scan".into();
+        let error = validate_scan_output(&params, &film).unwrap_err();
+        assert!(error.contains("finite density curves"));
+        assert!(error.contains("channel 2"));
     }
 }

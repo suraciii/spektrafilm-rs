@@ -178,7 +178,7 @@ mod integration_tests {
                 };
                 let encoded_base = render(params.clone());
                 params.film_render.grain.active = true;
-                params.film_render.grain.engine = GrainEngine::V2;
+                params.film_render.grain.engine = GrainEngine::Procedural;
                 params.film_render.grain.select_custom_grain_v2();
                 for mode in [GrainV2Mode::Analogue, GrainV2Mode::Noise] {
                     params.film_render.grain.v2_mode = mode;
@@ -662,7 +662,7 @@ mod scan_semantics_tests {
         disabled.workflow.route = "input > film > scan".into();
         disabled.io.scan_film = true;
         disabled.film_render.grain.active = true;
-        disabled.film_render.grain.engine = crate::params::grain::GrainEngine::V2;
+        disabled.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
         disabled.io.output_cctf_encoding = true;
 
         let base = Pipeline::new(film.clone(), film.clone(), disabled.clone())
@@ -685,7 +685,7 @@ mod scan_semantics_tests {
         );
         assert!(
             max_diff(&output, &expected) < 1e-6,
-            "magazine color must run after V2 grain"
+            "magazine color must run after Procedural grain"
         );
 
         disabled.io.output_cctf_encoding = false;

@@ -99,9 +99,68 @@ pub struct Pipeline {
     /// when a sensitivity-affecting control changes instead of reusing a
     /// stale one.
     data_dir: Option<std::path::PathBuf>,
+    scanner_setup: Option<stages::scanning::ScannerSetup>,
 }
 
 impl Pipeline {
+    pub(crate) fn with_scanner_setup(mut self, setup: stages::scanning::ScannerSetup) -> Self {
+        self.scanner_setup = Some(setup);
+        self
+    }
+
+    pub(crate) fn has_scanner_setup(&self) -> bool {
+        self.scanner_setup.is_some()
+    }
+
+    pub(crate) fn prepare_scanner_setup(
+        &self,
+        full_input: &ImageBuf,
+    ) -> Result<stages::scanning::ScannerSetup, String> {
+        if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::Off {
+            return Ok(stages::scanning::ScannerSetup::IDENTITY);
+        }
+        stages::grain_v3::validate_cell_spectral(&self.params)?;
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut measurement = self.clone();
+        measurement.params.io.crop = false;
+        measurement.params.io.upscale_factor = 1.0;
+        measurement.params.settings.preview_mode = false;
+        measurement.params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
+        measurement.scanner_setup = None;
+        let color_ref = measurement.color_reference(&backend);
+        let converting = self.params.workflow.route == "input > convert-film > scan";
+        let density = if converting {
+            stages::converting::process(full_input, &measurement.film, &measurement.params)?
+        } else {
+            measurement.run_from(
+                full_input.clone(),
+                Tap::RgbIn,
+                Tap::CmyFilm,
+                &backend,
+                &color_ref,
+                None,
+                None,
+            )?
+        };
+        stages::scanning::prepare_setup(
+            &density,
+            &measurement.film,
+            &measurement.params,
+            &color_ref,
+            converting.then_some(self.params.film_render.convert.scan_illuminant.as_str()),
+        )
+    }
+
+    fn scan_params(&self) -> std::borrow::Cow<'_, RuntimeParams> {
+        match self.scanner_setup {
+            Some(setup) => {
+                let mut params = self.params.clone();
+                setup.apply(&mut params);
+                std::borrow::Cow::Owned(params)
+            }
+            None => std::borrow::Cow::Borrowed(&self.params),
+        }
+    }
     /// Accessor for the pre-computed TC LUT (used by parity tests).
     pub fn tc_lut(&self) -> Option<&TcLut> {
         self.tc_lut.as_ref()
@@ -166,6 +225,9 @@ impl Pipeline {
             &params.io.output_gamut_compress,
             &params.io.output_color_space,
         )?;
+        if self.params != params {
+            self.scanner_setup = None;
+        }
         self.params = params;
         Ok(self)
     }
@@ -236,6 +298,7 @@ impl Pipeline {
             preflash_raw: [0.0; 3],
             output_gamut,
             data_dir: None,
+            scanner_setup: None,
         }
     }
 
@@ -259,6 +322,7 @@ impl Pipeline {
             preflash_raw: calibrated.preflash_raw,
             output_gamut: calibrated.output_gamut,
             data_dir: calibrated.data_dir,
+            scanner_setup: None,
         })
     }
 
@@ -357,7 +421,7 @@ impl Pipeline {
                     let out = stages::scanning::process(
                         &image,
                         &self.film,
-                        &self.params,
+                        &self.scan_params(),
                         backend,
                         color_ref,
                         &self.output_gamut,
@@ -414,6 +478,26 @@ impl Pipeline {
             Tap::RgbOut => unreachable!("RgbOut is terminal — run_from stops before it"),
         }
     }
+    fn validate_grain_v3_taps(
+        cell_spectral: bool,
+        aperture_factor: Option<u32>,
+        inject: Tap,
+        collect: Tap,
+        scan_film: bool,
+    ) -> Result<(), String> {
+        if !cell_spectral {
+            return Ok(());
+        }
+        if aperture_factor.is_some() {
+            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL conflicts with SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR".to_owned());
+        }
+        let supported_collect = collect == Tap::RgbOut
+            || (!scan_film && matches!(collect, Tap::LogEPrint | Tap::CmyPrint));
+        if !matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm) || !supported_collect {
+            return Err("SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL requires injection at or before log_e_film and optical collection (print log_e_print/cmy_print/rgb_out, film rgb_out); cmy_film is a density diagnostic".to_owned());
+        }
+        Ok(())
+    }
 
     /// Run the topology from the value at `inject` to the value at
     /// `collect` (both inclusive bounds in [`Pipeline::tap_order`]).
@@ -450,6 +534,20 @@ impl Pipeline {
             ));
         }
         let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+        let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
+        Self::validate_grain_v3_taps(
+            cell_spectral,
+            aperture_factor,
+            inject,
+            collect,
+            self.params.io.scan_film,
+        )?;
+        if cell_spectral && color_ref.has_remap() {
+            return Err(
+                "SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL does not support scanner luminance remap"
+                    .to_owned(),
+            );
+        }
         if aperture_factor.is_some()
             && (collect != Tap::RgbOut
                 || ip > order.iter().position(|t| *t == Tap::LogEFilm).unwrap())
@@ -522,6 +620,61 @@ impl Pipeline {
                 // axis differ; the field itself retains both exact pitches.
                 let long_axis = usize::from(cur.height > cur.width);
                 let requested_pitch_um = geometry.output_pitch_um[long_axis];
+                if cell_spectral {
+                    cur = stages::grain_v3::readout_with_response(
+                        &cur,
+                        &self.film,
+                        &self.params,
+                        pixel_size_um,
+                        grid,
+                        backend,
+                        |cells, backend| {
+                            if self.params.io.scan_film {
+                                stages::scanning::capture_linear(
+                                    cells,
+                                    &self.film,
+                                    &self.params,
+                                    backend,
+                                    color_ref,
+                                )
+                            } else {
+                                stages::printing::expose_linear_calibrated(
+                                    cells,
+                                    &self.film,
+                                    &self.print,
+                                    &self.params,
+                                    backend,
+                                    &self.print_illuminant,
+                                    self.print_exposure_factor,
+                                    self.preflash_raw,
+                                    color_ref.printing_exposure_correction,
+                                )
+                            }
+                        },
+                    )?;
+                    pixel_size_um = requested_pitch_um;
+                    if self.params.io.scan_film {
+                        let observation = stages::StageObservation::new(backend, "scanning");
+                        cur = stages::scanning::finish_capture(
+                            cur,
+                            &self.film,
+                            &self.params,
+                            observation.backend(backend),
+                            color_ref,
+                            &self.output_gamut,
+                        )?;
+                        i = order.iter().position(|tap| *tap == Tap::RgbOut).unwrap();
+                    } else {
+                        cur.data.par_iter_mut().for_each(|value| {
+                            *value = from_f64(to_f64(*value).log10());
+                        });
+                        dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &cur);
+                        i = order.iter().position(|tap| *tap == Tap::LogEPrint).unwrap();
+                    }
+                    print_stage_timing(stage_timings_enabled(), "grain_v3_cell_spectral", t);
+                    record_stage_timing(&mut stage_timings, "grain_v3_cell_spectral", t);
+                    continue;
+                }
                 cur = stages::grain_v3::readout(
                     &cur,
                     &self.film,
@@ -546,11 +699,11 @@ impl Pipeline {
                 let t = Instant::now();
                 cur = stages::grain_v3::collapse_log_exposure(&cur, factor)?;
                 pixel_size_um = aperture_output_pitch_um.ok_or_else(|| {
-                    "film grain V3 aperture: missing requested output pitch".to_owned()
+                    "film grain Dye aperture: missing requested output pitch".to_owned()
                 })?;
                 print_stage_timing(stage_timings_enabled(), "grain_v3_aperture", t);
                 record_stage_timing(&mut stage_timings, "grain_v3_aperture", t);
-                tracing::info!(factor, "film grain V3: collapsed linear print exposure");
+                tracing::info!(factor, "film grain Dye: collapsed linear print exposure");
             }
             i += 1;
         }
@@ -599,6 +752,34 @@ impl Pipeline {
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        let inject = match inject {
+            Some(tap) => tap,
+            None => self
+                .params
+                .taps
+                .inject
+                .as_deref()
+                .map(Tap::parse)
+                .transpose()?
+                .unwrap_or(Tap::RgbIn),
+        };
+        if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::PerFrame
+            && self.scanner_setup.is_none()
+        {
+            if inject != Tap::RgbIn {
+                return Err("per_frame scanner setup requires the full rgb_in input".into());
+            }
+            let setup = self.prepare_scanner_setup(&image)?;
+            let mut prepared = self.clone();
+            prepared.scanner_setup = Some(setup);
+            return prepared.process_with_taps_timed(
+                image,
+                backend,
+                Some(inject),
+                collect,
+                timings,
+            );
+        }
         let cpu_fallback = if self.params.scanner.scan_output == "positive_scan" {
             backend
                 .observation_context()
@@ -620,17 +801,6 @@ impl Pipeline {
         let backend = cpu_fallback
             .as_deref()
             .unwrap_or_else(|| self.effective_backend(backend));
-        let inject = match inject {
-            Some(tap) => tap,
-            None => self
-                .params
-                .taps
-                .inject
-                .as_deref()
-                .map(Tap::parse)
-                .transpose()?
-                .unwrap_or(Tap::RgbIn),
-        };
         let collect = match collect {
             Some(tap) => tap,
             None => self
@@ -642,6 +812,20 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
+        if stages::grain_v3::active(&self.params) {
+            let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
+            let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
+            if cell_spectral {
+                stages::grain_v3::validate_supported(&self.film, &self.params)?;
+            }
+            Self::validate_grain_v3_taps(
+                cell_spectral,
+                aperture_factor,
+                inject,
+                collect,
+                self.params.io.scan_film,
+            )?;
+        }
         if let Some(context) = backend.observation_context()
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
         {
@@ -682,7 +866,7 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
-        // Active V3 outside its supported condition fails here, before any
+        // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
         // never reach a grain stage.
         stages::grain_v3::validate_supported(&self.film, &self.params)?;
@@ -815,7 +999,7 @@ impl Pipeline {
                 &self.output_gamut,
             )?)
         } else {
-            let mut scan_params = self.params.clone();
+            let mut scan_params = self.scan_params().into_owned();
             scan_params.io.scan_film = true;
             let scanning = stages::StageObservation::new(backend, "scanning");
             let backend = scanning.backend(backend);
@@ -860,7 +1044,7 @@ impl Pipeline {
         // buffer — one upload + one readback total. WGSL runs the
         // extended resident chain, including camera/scanner lens blur and
         // highlight boost. Unsupported effects select the faithful per-stage
-        // path; backends without resident support return `None`. Active V3
+        // path; backends without resident support return `None`. Active Dye
         // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
             && let Some(out) =
@@ -1001,6 +1185,14 @@ impl Pipeline {
     /// scope. Both owned-image entry points apply the metered EV immediately,
     /// so the EV itself stays internal.
     fn expose_full_input(&self, image: ImageBuf, backend: &dyn ComputeBackend) -> ImageBuf {
+        if self
+            .params
+            .workflow
+            .route
+            .starts_with("input > convert-film")
+        {
+            return image;
+        }
         let metering = stages::StageObservation::cpu(
             backend,
             "metering",
@@ -1025,7 +1217,7 @@ impl Pipeline {
             "geometry",
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
-        // V3 develops the full source; its field readout owns the crop and
+        // Dye develops the full source; its field readout owns the crop and
         // output grid so that overlapping reads keep the same film coordinates.
         let resized = if stages::grain_v3::active(&self.params) {
             Ok((
@@ -1483,7 +1675,7 @@ mod spectral_invalidation_tests {
             for scale in [1.0, 1.5] {
                 let mut params = RuntimeParams::default();
                 params.camera.film_format_mm = 36.0;
-                params.film_render.grain.engine = crate::params::GrainEngine::V3;
+                params.film_render.grain.engine = crate::params::GrainEngine::Dye;
                 params.film_render.dir_couplers.active = false;
                 params.film_render.halation.active = false;
                 params.workflow.route = if scan_film {

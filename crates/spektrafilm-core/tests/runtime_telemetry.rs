@@ -10,6 +10,47 @@ use spektrafilm_gpu::{
 use spektrafilm_math::{image::ImageBuf, precision::from_f64};
 
 #[test]
+fn telemetry_scanner_configuration_roundtrips_actual_approximate_selection() {
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.workflow.route = "input > film > scan".into();
+    params.io.scan_film = true;
+    params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
+    params.scanner.scan_output = "positive_scan".into();
+    params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
+    params.scanner.finish_strength = 0.5;
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    runtime
+        .process_observed(
+            ImageBuf::from_data(2, 1, vec![from_f64(0.18); 6]),
+            &CpuBackend,
+            simulation.context(),
+        )
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    let decoded =
+        spektrafilm_core::telemetry::Report::from_json(&report.to_json().unwrap()).unwrap();
+    let actual = decoded.configuration.render.unwrap();
+    assert_eq!(actual.receiver.profile, "lab_scan_approx");
+    assert_eq!(
+        actual.receiver.calibration_status,
+        "approximate_uncalibrated"
+    );
+    assert!(actual.receiver.approximate);
+    assert_eq!(actual.finish, "lab_scan");
+    assert_eq!(actual.finish_strength, 0.5);
+}
+
+#[test]
 fn concurrent_runtime_calls_preserve_pixels_and_operation_ownership() {
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
@@ -151,7 +192,7 @@ fn positive_scan_cpu_override_preserves_stage_reports() {
 
 #[test]
 fn active_v3_field_reports_its_cpu_stage_reason() {
-    // The supported V3 condition on a 2% crop: the readout region stays a few
+    // The supported Dye condition on a 2% crop: the readout region stays a few
     // film millimetres, so the field allocation is small while the pipeline
     // still resolves the engine, the plan and the report.
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
@@ -163,7 +204,7 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
     params.io.scan_film = true;
     params.io.crop = true;
     params.io.crop_size = [0.02, 0.02];
-    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
+    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
     params.film_render.grain.v3_dye_support_um = 8.0;
     let runtime =
         Runtime::from_stocks("kodak_portra_800", "kodak_portra_endura", params, &data).unwrap();
@@ -195,7 +236,7 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
             .summary()
             .cpu_stage_reasons
             .contains(&("grain_v3_field".to_owned(), CpuReason::GrainV3FieldCpu)),
-        "V3 field stage missing from the report: {:?}",
+        "Dye field stage missing from the report: {:?}",
         report.summary().cpu_stage_reasons
     );
 }

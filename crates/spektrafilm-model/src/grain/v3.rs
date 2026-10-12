@@ -1,4 +1,4 @@
-//! Film-coordinate conditional dye-mass grain (V3).
+//! Film-coordinate conditional dye-mass grain (Dye).
 //!
 //! The model realizes independent conditional Poisson dye masses on a global
 //! film-cell grid, forms the complete realization with a normalized truncated
@@ -11,6 +11,11 @@ use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_math::stats::FastStatsRng;
+
+mod experiment_mass;
+use experiment_mass::MassLaw;
+
+type CellResponse<'a> = &'a (dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + Sync);
 
 /// Production field pitch as a fraction of the support sigma (`h = sigma/2`).
 const CELLS_PER_SIGMA: f64 = 2.0;
@@ -34,7 +39,7 @@ pub struct ReadoutGrid {
     pub height: u32,
 }
 
-/// Resolved V3 inputs. Plain data — no profile or runtime types.
+/// Resolved Dye inputs. Plain data — no profile or runtime types.
 #[derive(Debug, Clone)]
 pub struct GrainV3Params {
     /// Gaussian sigma of the dye support in micrometers.
@@ -82,6 +87,23 @@ pub fn apply(
     apply_with_budget(target, pitch_um, grid, params, MAX_BAND_CELLS)
 }
 
+/// Experimental optical readout of the same formed field. The route owner
+/// converts each bounded CMY band (base offset already subtracted) into a
+/// linear response. Exact cell overlaps average that response, before any
+/// nonlinear development or output encoding. Exactness is relative to the
+/// piecewise-constant field; it does not recover within-cell fluctuations.
+pub fn apply_with_response(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &GrainV3Params,
+    response: impl Fn(&ImageBuf) -> Result<ImageBuf, String> + Sync,
+) -> Result<ImageBuf, String> {
+    // Existing spectral backends may materialize wavelength tensors. Bound
+    // the band rather than allocate them for a full film canvas.
+    apply_impl(target, pitch_um, grid, params, 1 << 20, Some(&response))
+}
+
 fn apply_with_budget(
     target: &ImageBuf,
     pitch_um: f64,
@@ -89,11 +111,22 @@ fn apply_with_budget(
     params: &GrainV3Params,
     max_band_cells: u64,
 ) -> Result<ImageBuf, String> {
+    apply_impl(target, pitch_um, grid, params, max_band_cells, None)
+}
+
+fn apply_impl(
+    target: &ImageBuf,
+    pitch_um: f64,
+    grid: ReadoutGrid,
+    params: &GrainV3Params,
+    max_band_cells: u64,
+    response: Option<CellResponse<'_>>,
+) -> Result<ImageBuf, String> {
     let model = Model::new(params, pitch_um)?;
     let src_w = target.width as usize;
     let src_h = target.height as usize;
     if src_w == 0 || src_h == 0 {
-        return Err("film grain V3: source dimensions must be positive".to_owned());
+        return Err("film grain Dye: source dimensions must be positive".to_owned());
     }
     let out_width = grid.width;
     let out_height = grid.height;
@@ -101,12 +134,12 @@ fn apply_with_budget(
         || grid.pitch_um.iter().any(|v| !v.is_finite() || *v <= 0.0)
     {
         return Err(
-            "film grain V3: readout origin must be finite and readout pitch finite and positive"
+            "film grain Dye: readout origin must be finite and readout pitch finite and positive"
                 .to_owned(),
         );
     }
     if out_width == 0 || out_height == 0 {
-        return Err("film grain V3: output dimensions must be positive".to_owned());
+        return Err("film grain Dye: output dimensions must be positive".to_owned());
     }
     check_target_range(target, &model)?;
 
@@ -128,7 +161,7 @@ fn apply_with_budget(
         || !(src_w as f64 * pitch_um).is_finite()
         || !(src_h as f64 * pitch_um).is_finite()
     {
-        return Err("film grain V3: film coordinates and support halo exceed the signed 32-bit cell address range; reduce camera.film_format_mm or move the requested region closer to the film origin".to_owned());
+        return Err("film grain Dye: film coordinates and support halo exceed the signed 32-bit cell address range; reduce camera.film_format_mm or move the requested region closer to the film origin".to_owned());
     }
     let inner_i0 = (x0 / h).floor() as i64;
     let inner_i1 = (x1 / h).ceil() as i64 - 1;
@@ -143,7 +176,7 @@ fn apply_with_budget(
         || x1 - col_w == x1
         || y1 - row_w == y1
     {
-        return Err("film grain V3: output footprints are below film-coordinate precision; reduce the output dimensions".to_owned());
+        return Err("film grain Dye: output footprints are below film-coordinate precision; reduce the output dimensions".to_owned());
     }
     // Every output row must fit before any readout/source stencils or output
     // storage are built. Ceil(width/h)+1 bounds cell coverage at any phase.
@@ -156,7 +189,7 @@ fn apply_with_budget(
     let band_pixels = source_cols * source_rows;
     if band_cells > max_band_cells || band_pixels > max_band_cells {
         return Err(format!(
-            "film grain V3: one output row needs up to {band_cells} field cells and {band_pixels} source pixels, above the {max_band_cells} limit; reduce the requested film region or increase the output size"
+            "film grain Dye: one output row needs up to {band_cells} field cells and {band_pixels} source pixels, above the {max_band_cells} limit; reduce the requested film region or increase the output size"
         ));
     }
     let output_bytes = (out_width as u64)
@@ -165,10 +198,10 @@ fn apply_with_budget(
             n.checked_mul(3 * std::mem::size_of::<spektrafilm_math::precision::Scalar>() as u64)
         });
     if output_bytes.is_none_or(|bytes| bytes > isize::MAX as u64) {
-        return Err("film grain V3: output storage exceeds the addressable allocation size; reduce the output dimensions".to_owned());
+        return Err("film grain Dye: output storage exceeds the addressable allocation size; reduce the output dimensions".to_owned());
     }
     if out_width as u64 + out_height as u64 > MAX_BAND_CELLS {
-        return Err("film grain V3: output-axis stencil storage exceeds the allocation budget; reduce the output dimensions".to_owned());
+        return Err("film grain Dye: output-axis stencil storage exceeds the allocation budget; reduce the output dimensions".to_owned());
     }
     // Readout stencils repeat along the other axis, so build each once.
     let x_read: Vec<Vec<(i64, f64)>> = (0..out_width)
@@ -218,7 +251,7 @@ fn apply_with_budget(
             }
             if band_rows == 1 {
                 return Err(format!(
-                    "film grain V3: one output row needs {band_cells} field cells and \
+                    "film grain Dye: one output row needs {band_cells} field cells and \
                      {band_pixels} source pixels, above the {max_band_cells} limit; reduce the \
                      requested film region or increase the output size"
                 ));
@@ -293,10 +326,17 @@ fn apply_with_budget(
 
         hbuf.resize(ext_rows * cols, 0.0);
         fbuf.resize(rows * cols, 0.0);
+        let mut formed = response.map(|_| ImageBuf::new(cols as u32, rows as u32));
         for (c, s) in src.iter().enumerate() {
             horizontal_pass(s, &mut hbuf, ext_rows, ext_cols, cols, dr, &model.taps);
             vertical_pass(&hbuf, &mut fbuf, ext_rows, cols, rows, dr, &model.taps);
             let min = model.channels[c].min;
+            if let Some(formed) = &mut formed {
+                for (pixel, &density) in formed.data.as_chunks_mut::<3>().0.iter_mut().zip(&fbuf) {
+                    pixel[c] = from_f64(density - min);
+                }
+                continue;
+            }
             let band = &mut out.data[py * out_w * 3..band_end * out_w * 3];
             band.par_chunks_mut(out_w * 3)
                 .enumerate()
@@ -311,6 +351,36 @@ fn apply_with_budget(
                             }
                         }
                         data[px * 3 + c] = from_f64(acc - min);
+                    }
+                });
+        }
+        if let (Some(response), Some(formed)) = (response, formed) {
+            let linear = response(&formed)?;
+            if linear.width != formed.width
+                || linear.height != formed.height
+                || linear.data.len() != formed.data.len()
+                || linear.data.iter().any(|&value| !to_f64(value).is_finite())
+            {
+                return Err("film grain Dye: cell response must preserve band dimensions and return finite linear values".to_owned());
+            }
+            out.data[py * out_w * 3..band_end * out_w * 3]
+                .par_chunks_mut(out_w * 3)
+                .enumerate()
+                .for_each(|(r, data)| {
+                    for (px, xst) in x_read.iter().enumerate() {
+                        let mut sum = [0.0; 3];
+                        for &(cj, wy) in &y_read[py + r] {
+                            for &(ci, wx) in xst {
+                                let index =
+                                    ((cj - j_lo) as usize * cols + (ci - inner_i0) as usize) * 3;
+                                for (c, value) in sum.iter_mut().enumerate() {
+                                    *value += wy * wx * to_f64(linear.data[index + c]);
+                                }
+                            }
+                        }
+                        for c in 0..3 {
+                            data[px * 3 + c] = from_f64(sum[c]);
+                        }
                     }
                 });
         }
@@ -329,6 +399,7 @@ struct Model {
     channels: [Channel; 3],
     seed: u64,
     expectation: bool,
+    mass_law: MassLaw,
 }
 
 /// Per-channel layer state and composite-axis lookup.
@@ -375,31 +446,31 @@ impl Model {
     fn new(params: &GrainV3Params, pitch_um: f64) -> Result<Self, String> {
         if !params.support_um.is_finite() || params.support_um <= 0.0 {
             return Err(format!(
-                "film grain V3: v3_dye_support_um must be finite and > 0 (got {})",
+                "film grain Dye: v3_dye_support_um must be finite and > 0 (got {})",
                 params.support_um
             ));
         }
         if !pitch_um.is_finite() || pitch_um <= 0.0 {
             return Err(format!(
-                "film grain V3: the film pitch must be finite and > 0 (got {pitch_um})"
+                "film grain Dye: the film pitch must be finite and > 0 (got {pitch_um})"
             ));
         }
         let production_cell = params.support_um / CELLS_PER_SIGMA;
         let cell_um = params.cell_um.unwrap_or(production_cell);
         if !cell_um.is_finite() || cell_um <= 0.0 || cell_um > production_cell {
             return Err(format!(
-                "film grain V3: the field pitch must be finite and at most {} um (got {cell_um})",
+                "film grain Dye: the field pitch must be finite and at most {} um (got {cell_um})",
                 production_cell
             ));
         }
         let radius_value = (SUPPORT_SIGMAS * (params.support_um / cell_um)).ceil() + 1.0;
         // Even the smallest output footprint needs the full square halo.
         if !radius_value.is_finite() || (2.0 * radius_value + 1.0).powi(2) > MAX_BAND_CELLS as f64 {
-            return Err("film grain V3: support halo exceeds the single-row field-cell budget; increase the field pitch".to_owned());
+            return Err("film grain Dye: support halo exceeds the single-row field-cell budget; increase the field pitch".to_owned());
         }
         let cell_area = cell_um * cell_um;
         if !cell_area.is_finite() || cell_area <= 0.0 {
-            return Err("film grain V3: squared field pitch must be finite and > 0; reduce the dye support or increase the field pitch".to_owned());
+            return Err("film grain Dye: squared field pitch must be finite and > 0; reduce the dye support or increase the field pitch".to_owned());
         }
         let mut channels = Vec::with_capacity(3);
         for c in 0..3 {
@@ -411,8 +482,10 @@ impl Model {
                 std::array::from_fn(|l| params.layer_curves.iter().map(|row| row[l][c]).collect()),
             )?);
         }
+        let mass_law = MassLaw::from_env()?;
         for (c, channel) in channels.iter().enumerate() {
             channel.check_sampling_bounds(c, cell_area)?;
+            channel.check_sampling_bounds(c, cell_area * mass_law.rate_multiplier())?;
         }
         Ok(Self {
             taps: support_taps(params.support_um, cell_um),
@@ -420,9 +493,10 @@ impl Model {
             cell_um,
             channels: channels
                 .try_into()
-                .map_err(|_| "film grain V3: channel state".to_owned())?,
+                .map_err(|_| "film grain Dye: channel state".to_owned())?,
             seed: params.seed,
             expectation: params.expectation,
+            mass_law,
         })
     }
 
@@ -477,9 +551,14 @@ impl Model {
                     lambda
                 } else {
                     let mut rng = FastStatsRng::stream(self.seed, (c * 3 + l) as u64, index);
-                    poisson_exact(&mut rng, lambda)? as f64
+                    self.mass_law.sample(&mut rng, lambda)?
                 };
                 density += mass * count / cell_area;
+                if !density.is_finite() {
+                    return Err(
+                        "film grain Dye: sampled dye mass exceeds finite density range".to_owned(),
+                    );
+                }
             }
             out[c] = density;
         }
@@ -498,7 +577,7 @@ impl Channel {
     ) -> Result<Self, String> {
         if composite.len() < 2 || composite.len() != params.layer_curves.len() {
             return Err(format!(
-                "film grain V3: channel {c} needs at least two composite knots shared with the \
+                "film grain Dye: channel {c} needs at least two composite knots shared with the \
                  layer curves (got {} knots and {} layer rows)",
                 composite.len(),
                 params.layer_curves.len()
@@ -506,61 +585,61 @@ impl Channel {
         }
         if layers.iter().any(|column| column.len() != composite.len()) {
             return Err(format!(
-                "film grain V3: channel {c} layer curves must share the composite knot count"
+                "film grain Dye: channel {c} layer curves must share the composite knot count"
             ));
         }
         let sign = if params.positive_film { -1.0 } else { 1.0 };
         let knots: Vec<f64> = composite.iter().map(|&v| v * sign).collect();
         if knots.iter().any(|v| !v.is_finite()) {
             return Err(format!(
-                "film grain V3: channel {c} composite curve contains a non-finite value"
+                "film grain Dye: channel {c} composite curve contains a non-finite value"
             ));
         }
         let range = knots[knots.len() - 1] - knots[0];
         if !range.is_finite() || range <= 0.0 {
             return Err(format!(
-                "film grain V3: channel {c} composite density axis must have positive range \
+                "film grain Dye: channel {c} composite density axis must have positive range \
                  (got {range})"
             ));
         }
         for window in knots.windows(2) {
             if window[1] < window[0] {
                 return Err(format!(
-                    "film grain V3: channel {c} composite density axis must be nondecreasing"
+                    "film grain Dye: channel {c} composite density axis must be nondecreasing"
                 ));
             }
         }
         for (l, column) in layers.iter().enumerate() {
             if column.iter().any(|v| !v.is_finite() || *v < 0.0) {
                 return Err(format!(
-                    "film grain V3: channel {c} layer {l} curve must be finite and nonnegative"
+                    "film grain Dye: channel {c} layer {l} curve must be finite and nonnegative"
                 ));
             }
         }
         let min = params.density_min[c];
         if !min.is_finite() || min < 0.0 {
             return Err(format!(
-                "film grain V3: density_min[{c}] must be finite and nonnegative (got {min})"
+                "film grain Dye: density_min[{c}] must be finite and nonnegative (got {min})"
             ));
         }
         let uniformity = params.uniformity[c];
         if !uniformity.is_finite() || !(0.0..=1.0).contains(&uniformity) {
             return Err(format!(
-                "film grain V3: uniformity[{c}] must be finite in [0, 1] (got {uniformity})"
+                "film grain Dye: uniformity[{c}] must be finite in [0, 1] (got {uniformity})"
             ));
         }
         let mut max_total = 0.0f64;
         for &value in &maxima {
             if !value.is_finite() || value < 0.0 {
                 return Err(format!(
-                    "film grain V3: channel {c} layer maxima must be finite and nonnegative"
+                    "film grain Dye: channel {c} layer maxima must be finite and nonnegative"
                 ));
             }
             max_total += value;
         }
         if !max_total.is_finite() || max_total <= 0.0 {
             return Err(format!(
-                "film grain V3: channel {c} has no positive layer capacity; the resolved profile \
+                "film grain Dye: channel {c} has no positive layer capacity; the resolved profile \
                  must provide nonnegative sublayer curves with a positive sum"
             ));
         }
@@ -580,7 +659,7 @@ impl Channel {
                 || effective_area <= 0.0
             {
                 return Err(format!(
-                    "film grain V3: event_area_um2 * channel_scale[{c}] * \
+                    "film grain Dye: event_area_um2 * channel_scale[{c}] * \
                      particle_scale_sublayers[{l}] must be finite and > 0 (got {} * {scale})",
                     params.event_area_um2
                 ));
@@ -610,7 +689,7 @@ impl Channel {
     fn check_sampling_bounds(&self, c: usize, cell_area: f64) -> Result<(), String> {
         if !self.cap_total.is_finite() || self.cap_total <= 0.0 {
             return Err(format!(
-                "film grain V3: channel {c} total capacity must be finite and positive"
+                "film grain Dye: channel {c} total capacity must be finite and positive"
             ));
         }
         let s_min = 1.0 - self.uniformity * (1.0 - 1e-6);
@@ -641,7 +720,7 @@ impl Channel {
                 || max_density > spektrafilm_math::precision::Scalar::MAX as f64 / 3.0
             {
                 return Err(format!(
-                    "film grain V3: channel {c} layer {l} event area, capacity and field pitch produce an unrepresentable rate or dye mass (maximum rate {max_rate}, mass {max_mass}); adjust event area or field pitch; maximum supported rate is {}",
+                    "film grain Dye: channel {c} layer {l} event area, capacity and field pitch produce an unrepresentable rate or dye mass (maximum rate {max_rate}, mass {max_mass}); adjust event area or field pitch; maximum supported rate is {}",
                     1u64 << 52
                 ));
             }
@@ -672,7 +751,7 @@ fn check_target_range(target: &ImageBuf, model: &Model) -> Result<(), String> {
         let ceiling = model.channels[c].cap_total - model.channels[c].min + TOLERANCE;
         if low[c] < floor || high[c] > ceiling {
             return Err(format!(
-                "film grain V3: channel {c} developed density spans [{:.6}, {:.6}], outside the \
+                "film grain Dye: channel {c} developed density spans [{:.6}, {:.6}], outside the \
                  supported [{:.6}, {:.6}] set by density_min {:.6} and the resolved layer \
                  capacities {:?}",
                 low[c], high[c], floor, ceiling, model.channels[c].min, model.channels[c].cap
@@ -972,7 +1051,7 @@ fn poisson_ptrs(rng: &mut FastStatsRng, lambda: f64) -> Result<u64, String> {
             continue;
         }
         if !k.is_finite() || k >= (1u64 << 53) as f64 {
-            return Err("film grain V3: Poisson proposal exceeds the exact f64 integer range; increase event area or reduce field pitch".to_owned());
+            return Err("film grain Dye: Poisson proposal exceeds the exact f64 integer range; increase event area or reduce field pitch".to_owned());
         }
         if us >= 0.07 && v <= vr {
             return Ok(k as u64);
@@ -1036,6 +1115,95 @@ mod tests {
             positive_film: false,
             seed,
             expectation,
+        }
+    }
+
+    #[test]
+    fn cell_response_matches_independent_fractional_optical_integral() {
+        let p = params(None, false, 1234, 1.28);
+        let target = ImageBuf::from_data(16, 16, vec![from_f64(0.15); 16 * 16 * 3]);
+        let h = SIGMA / 2.0;
+        let coarse = ReadoutGrid {
+            origin_um: [9.13, 8.27],
+            pitch_um: [5.31, 4.73],
+            width: 6,
+            height: 5,
+        };
+        let optical = |density: &ImageBuf| {
+            let mut out = density.clone();
+            for pixel in out.data.as_chunks_mut::<3>().0 {
+                let cmy = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
+                for (c, value) in pixel.iter_mut().enumerate() {
+                    *value = from_f64(10.0f64.powf(-cmy[c] - 0.4 * cmy[(c + 1) % 3]));
+                }
+            }
+            Ok(out)
+        };
+        let actual = apply_with_response(&target, PITCH, coarse, &p, optical).unwrap();
+        let fine_grid = ReadoutGrid {
+            origin_um: [7.0, 7.0],
+            pitch_um: [h; 2],
+            width: 24,
+            height: 20,
+        };
+        let cells = apply(&target, PITCH, fine_grid, &p).unwrap();
+        let light = optical(&cells).unwrap();
+        for y in 0..coarse.height as usize {
+            for x in 0..coarse.width as usize {
+                let lo = [
+                    coarse.origin_um[0] + x as f64 * coarse.pitch_um[0],
+                    coarse.origin_um[1] + y as f64 * coarse.pitch_um[1],
+                ];
+                let hi = [lo[0] + coarse.pitch_um[0], lo[1] + coarse.pitch_um[1]];
+                let mut expected = [0.0; 3];
+                for j in 0..fine_grid.height as usize {
+                    let cy = fine_grid.origin_um[1] + j as f64 * h;
+                    let dy = (hi[1].min(cy + h) - lo[1].max(cy)).max(0.0);
+                    for i in 0..fine_grid.width as usize {
+                        let cx = fine_grid.origin_um[0] + i as f64 * h;
+                        let dx = (hi[0].min(cx + h) - lo[0].max(cx)).max(0.0);
+                        for (c, value) in expected.iter_mut().enumerate() {
+                            *value += dx
+                                * dy
+                                * to_f64(light.data[(j * fine_grid.width as usize + i) * 3 + c])
+                                / (coarse.pitch_um[0] * coarse.pitch_um[1]);
+                        }
+                    }
+                }
+                for (c, value) in expected.iter().enumerate() {
+                    assert!(
+                        (to_f64(actual.data[(y * coarse.width as usize + x) * 3 + c]) - value)
+                            .abs()
+                            < 2e-7
+                    );
+                }
+            }
+        }
+        let narrow = apply_impl(&target, PITCH, coarse, &p, 1_100, Some(&optical)).unwrap();
+        for (&a, &b) in actual.data.iter().zip(&narrow.data) {
+            assert!((to_f64(a) - to_f64(b)).abs() < 2e-7);
+        }
+        let crop = ReadoutGrid {
+            origin_um: [
+                coarse.origin_um[0] + coarse.pitch_um[0],
+                coarse.origin_um[1] + coarse.pitch_um[1],
+            ],
+            width: 3,
+            height: 2,
+            ..coarse
+        };
+        let cropped = apply_with_response(&target, PITCH, crop, &p, optical).unwrap();
+        for y in 0..2 {
+            for x in 0..3 {
+                for c in 0..3 {
+                    assert!(
+                        (to_f64(cropped.data[(y * 3 + x) * 3 + c])
+                            - to_f64(actual.data[((y + 1) * 6 + x + 1) * 3 + c]))
+                        .abs()
+                            < 2e-7
+                    );
+                }
+            }
         }
     }
 
@@ -1106,7 +1274,7 @@ mod tests {
     }
 
     fn render(p: &GrainV3Params, image: &ImageBuf, rect: SourceRect, out: (u32, u32)) -> ImageBuf {
-        apply_region(image, PITCH, rect, out.0, out.1, p).expect("V3 render")
+        apply_region(image, PITCH, rect, out.0, out.1, p).expect("Dye render")
     }
 
     fn pixel(image: &ImageBuf, px: usize, py: usize) -> [f64; 3] {

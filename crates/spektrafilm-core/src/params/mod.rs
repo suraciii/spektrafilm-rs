@@ -118,9 +118,89 @@ impl Default for EnlargerParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiverProfile {
+    #[default]
+    LegacyColorimetric,
+    LabScanApprox,
+}
+impl ReceiverProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LegacyColorimetric => "legacy_colorimetric",
+            Self::LabScanApprox => "lab_scan_approx",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PositiveInterpretation {
+    /// Read record densities directly: the film's own monotone characteristic
+    /// curves, with no synthetic capture in the loop.
+    #[default]
+    Density,
+    /// Interpret a receiver capture through a per-channel monotone inverse.
+    Separable,
+    /// Interpret a receiver capture through the three-channel coupled inverse.
+    Coupled,
+}
+impl PositiveInterpretation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Density => "density",
+            Self::Separable => "separable",
+            Self::Coupled => "coupled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScannerAutoSetup {
+    #[default]
+    Off,
+    PerFrame,
+}
+impl ScannerAutoSetup {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::PerFrame => "per_frame",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScannerFinish {
+    #[default]
+    Neutral,
+    LabScan,
+}
+impl ScannerFinish {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::LabScan => "lab_scan",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScannerParams {
+    #[serde(default)]
+    pub receiver_profile: ReceiverProfile,
+    #[serde(default)]
+    pub positive_interpretation: PositiveInterpretation,
+    #[serde(default)]
+    pub auto_setup: ScannerAutoSetup,
+    #[serde(default)]
+    pub finish: ScannerFinish,
+    #[serde(default = "default_finish_strength")]
+    pub finish_strength: f64,
     #[serde(default)]
     pub lens_blur: f32,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
@@ -155,6 +235,11 @@ pub struct ScannerParams {
 impl Default for ScannerParams {
     fn default() -> Self {
         Self {
+            receiver_profile: ReceiverProfile::default(),
+            positive_interpretation: PositiveInterpretation::default(),
+            auto_setup: ScannerAutoSetup::default(),
+            finish: ScannerFinish::default(),
+            finish_strength: default_finish_strength(),
             lens_blur: 0.0,
             scan_output: default_direct_scan(),
             white_correction: false,
@@ -170,6 +255,10 @@ impl Default for ScannerParams {
             positive_dmax: default_positive_dmax(),
         }
     }
+}
+
+fn default_finish_strength() -> f64 {
+    1.0
 }
 
 fn default_scanner_white_point() -> [f64; 3] {
@@ -889,6 +978,43 @@ fn default_route() -> String {
 #[cfg(test)]
 mod tests {
     use super::{CameraParams, RuntimeParams};
+    #[test]
+    fn scanner_selector_defaults_and_sparse_edits_are_compatible() {
+        let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            legacy.receiver_profile,
+            super::ReceiverProfile::LegacyColorimetric
+        );
+        assert_eq!(
+            legacy.positive_interpretation,
+            super::PositiveInterpretation::Density
+        );
+        assert_eq!(legacy.auto_setup, super::ScannerAutoSetup::Off);
+        assert_eq!(legacy.finish, super::ScannerFinish::Neutral);
+        assert_eq!(legacy.finish_strength, 1.0);
+        for (path, allowed) in [
+            (
+                "scanner.receiver_profile",
+                &["legacy_colorimetric", "lab_scan_approx"][..],
+            ),
+            (
+                "scanner.positive_interpretation",
+                &["density", "separable", "coupled"][..],
+            ),
+            ("scanner.auto_setup", &["off", "per_frame"][..]),
+            ("scanner.finish", &["neutral", "lab_scan"][..]),
+        ] {
+            for value in allowed {
+                assert!(super::sources::ParameterEdits::parse(&format!("{path}={value}")).is_ok());
+            }
+            assert!(super::sources::ParameterEdits::parse(&format!("{path}=unknown")).is_err());
+        }
+        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=1.1").is_err());
+        assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=-0.1").is_err());
+        let encoded = serde_json::to_value(&legacy).unwrap();
+        assert_eq!(encoded["receiver_profile"], "legacy_colorimetric");
+        assert_eq!(encoded["positive_interpretation"], "density");
+    }
 
     #[test]
     fn null_or_missing_camera_color_filter_uses_no_filter() {
@@ -1016,15 +1142,15 @@ mod tests {
     #[test]
     fn v3_engine_and_controls_round_trip() {
         let mut value = serde_json::to_value(super::RuntimeParams::default()).unwrap();
-        // V1 stays the default for existing recipes.
+        // Spektra stays the default for existing recipes.
         let default: super::RuntimeParams = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
             default.film_render.grain.engine,
-            super::grain::GrainEngine::V1
+            super::grain::GrainEngine::Spektra
         );
         assert_eq!(default.film_render.grain.v3_dye_support_um, 3.5);
         assert_eq!(default.film_render.grain.v3_event_area_um2, 1.28);
-        // A recipe saved before the V3 event area existed gets its default.
+        // A recipe saved before the Dye event area existed gets its default.
         let mut legacy = value.clone();
         legacy["film_render"]["grain"]
             .as_object_mut()
@@ -1032,14 +1158,14 @@ mod tests {
             .remove("v3_event_area_um2");
         let legacy: super::RuntimeParams = serde_json::from_value(legacy).unwrap();
         assert_eq!(legacy.film_render.grain.v3_event_area_um2, 1.28);
-        value["film_render"]["grain"]["engine"] = serde_json::json!("v3");
+        value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
         value["film_render"]["grain"]["v3_dye_support_um"] = serde_json::json!(4.5);
         value["film_render"]["grain"]["v3_event_area_um2"] = serde_json::json!(0.6);
         let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
         let reparsed: super::RuntimeParams =
             serde_json::from_value(serde_json::to_value(&params).unwrap()).unwrap();
         for grain in [&params.film_render.grain, &reparsed.film_render.grain] {
-            assert_eq!(grain.engine, super::grain::GrainEngine::V3);
+            assert_eq!(grain.engine, super::grain::GrainEngine::Dye);
             assert_eq!(grain.v3_dye_support_um, 4.5);
             assert_eq!(grain.v3_event_area_um2, 0.6);
         }
@@ -1048,7 +1174,7 @@ mod tests {
     #[test]
     fn v3_controls_must_be_finite_and_positive() {
         let mut params = super::RuntimeParams::default();
-        params.film_render.grain.engine = super::grain::GrainEngine::V3;
+        params.film_render.grain.engine = super::grain::GrainEngine::Dye;
         params.validate().unwrap();
         for value in [0.0, -0.5, f32::NAN, f32::INFINITY] {
             let mut bad = params.clone();
@@ -1066,9 +1192,9 @@ mod tests {
                 "unexpected error for {value}: {error}"
             );
         }
-        // V1 ignores the controls, but stored values stay validated so a
-        // later switch to V3 cannot render from an invalid recipe.
-        params.film_render.grain.engine = super::grain::GrainEngine::V1;
+        // Spektra ignores the controls, but stored values stay validated so a
+        // later switch to Dye cannot render from an invalid recipe.
+        params.film_render.grain.engine = super::grain::GrainEngine::Spektra;
         params.film_render.grain.v3_event_area_um2 = -1.0;
         assert!(params.validate().is_err());
     }
@@ -1078,9 +1204,9 @@ mod tests {
         let mut params = super::RuntimeParams::default();
         assert_eq!(params.camera.film_format_mm, 35.0);
         for engine in [
-            super::GrainEngine::V1,
-            super::GrainEngine::V2,
-            super::GrainEngine::V3,
+            super::GrainEngine::Spektra,
+            super::GrainEngine::Procedural,
+            super::GrainEngine::Dye,
         ] {
             params.film_render.grain.engine = engine;
             for mm in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {

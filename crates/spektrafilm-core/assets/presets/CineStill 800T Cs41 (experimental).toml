@@ -75,7 +75,7 @@ developer_exhaustion = 0.0
 
 [parameters.film_render.grain]
 active = false
-engine = "v3"
+engine = "dye"
 v2_profile = "35mm250"
 v2_film_type = "negative"
 v2_mode = "analogue"

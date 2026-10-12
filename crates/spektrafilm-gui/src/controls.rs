@@ -3,7 +3,7 @@ use crate::numeric::{numeric, numeric_field};
 use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::{
-    RuntimeParams,
+    PositiveInterpretation, ReceiverProfile, RuntimeParams, ScannerAutoSetup, ScannerFinish,
     diffusion::DiffusionFilterParams,
     grain::{GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
@@ -71,6 +71,47 @@ impl ScanMedium {
     }
 }
 
+/// Normalize only GUI transitions; imported states and recipes retain validation errors.
+pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medium: ScanMedium) {
+    let medium = film_medium.for_route(&params.workflow.route);
+    if !matches!(medium, ScanMedium::Slide | ScanMedium::Negative) {
+        params.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
+    }
+    if !film_medium.positive_output_eligible(&params.workflow.route) {
+        params.scanner.scan_output = "direct_scan".into();
+    }
+    if params.scanner.scan_output != "positive_scan" {
+        params.scanner.positive_interpretation = PositiveInterpretation::default();
+        params.scanner.auto_setup = ScannerAutoSetup::Off;
+        params.scanner.finish = ScannerFinish::Neutral;
+    }
+}
+
+fn enum_choice<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    choices: &[(T, &str)],
+    tooltip: &str,
+) -> bool {
+    let selected = choices
+        .iter()
+        .find(|(option, _)| *option == *value)
+        .map(|(_, label)| *label)
+        .unwrap_or("");
+    let mut changed = false;
+    egui::ComboBox::from_label(label)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for &(option, label) in choices {
+                changed |= ui.selectable_value(value, option, label).changed();
+            }
+        })
+        .response
+        .on_hover_text(tooltip);
+    changed
+}
+
 pub(crate) fn show(
     ui: &mut Ui,
     params: &mut RuntimeParams,
@@ -90,7 +131,7 @@ pub(crate) fn show(
             egui::CollapsingHeader::new("Camera").default_open(true).show(ui, |ui| {
                 flags.runtime_changed |= numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, -100.0, 100.0, 0.25, 2, "Add a bias to the auto-exposure of the camera.");
                 flags.runtime_changed |= toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera.");
-                flags.runtime_changed |= numeric(ui, "film format mm", &mut params.camera.film_format_mm, 1.0, 1000.0, 0.5, 2, "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain V3, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
+                flags.runtime_changed |= numeric(ui, "film format mm", &mut params.camera.film_format_mm, 1.0, 1000.0, 0.5, 2, "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain Dye, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
                 flags.runtime_changed |= choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure.");
                 flags.runtime_changed |= choice_tip(ui, "color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter.");
             });
@@ -110,6 +151,12 @@ pub(crate) fn show(
                 if medium == ScanMedium::None {
                     return;
                 }
+                if matches!(medium, ScanMedium::Slide | ScanMedium::Negative) {
+                    flags.runtime_changed |= enum_choice(ui, "receiver profile", &mut params.scanner.receiver_profile, &[
+                        (ReceiverProfile::LegacyColorimetric, "legacy colorimetric"),
+                        (ReceiverProfile::LabScanApprox, "lab scan (approximate)"),
+                    ], "Receiver response for film acquisition. Lab scan uses an approximate, uncalibrated receiver.");
+                }
                 if positive_route && choice_tip(
                     ui,
                     "scan output",
@@ -122,8 +169,25 @@ pub(crate) fn show(
                         params.scanner.black_correction = false;
                     }
                     flags.runtime_changed = true;
+                    normalize_scanner_selections(params, film_medium);
                 }
                 if positive_route && params.scanner.scan_output == "positive_scan" {
+                    flags.runtime_changed |= enum_choice(ui, "positive interpretation", &mut params.scanner.positive_interpretation, &[
+                        (PositiveInterpretation::Density, "density"),
+                        (PositiveInterpretation::Separable, "separable"),
+                        (PositiveInterpretation::Coupled, "coupled"),
+                    ], "Method used to recover positive color: density reads the film's own record densities without a receiver capture; separable and coupled interpret the receiver capture.");
+                    flags.runtime_changed |= enum_choice(ui, "scanner auto setup", &mut params.scanner.auto_setup, &[
+                        (ScannerAutoSetup::Off, "off"),
+                        (ScannerAutoSetup::PerFrame, "per_frame"),
+                    ], "Derive scanner exposure, balance, and contrast placement from the full input frame.");
+                    flags.runtime_changed |= enum_choice(ui, "scanner finish", &mut params.scanner.finish, &[
+                        (ScannerFinish::Neutral, "neutral"),
+                        (ScannerFinish::LabScan, "lab_scan"),
+                    ], "Optional scanner finish after positive interpretation.");
+                    if params.scanner.finish == ScannerFinish::LabScan {
+                        flags.runtime_changed |= numeric(ui, "finish strength", &mut params.scanner.finish_strength, 0.0, 1.0, 0.01, 3, "Scanner finish strength. Zero returns the calibrated scan before finishing.");
+                    }
                     flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Positive scan brightness offset in stops.");
                     flags.runtime_changed |= tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, -16.0, 16.0, 0.05, 3, "Independent red, green, and blue positive scan exposure offsets in stops.");
                     flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Positive scan logistic contrast; strictly positive.");
@@ -272,13 +336,13 @@ pub(crate) fn show(
                 let grain = &mut params.film_render.grain;
                 flags.runtime_changed |= toggle(ui, "active", &mut grain.active, "Add grain to the negative");
                 egui::ComboBox::from_label("Engine")
-                    .selected_text(match grain.engine { GrainEngine::V1 => "V1 — emulsion grain", GrainEngine::V2 => "V2 — procedural grain", GrainEngine::V3 => "V3 — film-coordinate dye field" })
+                    .selected_text(match grain.engine { GrainEngine::Spektra => "Spektra", GrainEngine::Procedural => "Procedural", GrainEngine::Dye => "Dye" })
                     .show_ui(ui, |ui| {
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V1, "V1 — emulsion grain").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V2, "V2 — procedural grain").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::V3, "V3 — film-coordinate dye field").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Spektra, "Spektra").on_hover_text("Original upstream experimental density-domain grain.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Procedural, "Procedural").on_hover_text("Dehancer-derived procedural grain in encoded RGB.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Dye, "Dye").on_hover_text("Self-developed grain formed in a film-coordinate dye field.").changed();
                     });
-                if grain.engine == GrainEngine::V2 {
+                if grain.engine == GrainEngine::Procedural {
                     let mut profile = grain.v2_profile.clone();
                     egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
                         for name in PROFILE_NAMES { ui.selectable_value(&mut profile, (*name).to_owned(), name); }
@@ -310,10 +374,10 @@ pub(crate) fn show(
                         flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, 0.0, 100.0, 1.0, 1, "Chromatic grain amount.");
                     }
                     flags.runtime_changed |= numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, 0.0, 1.0, 1.0, 0, "Film resolution implementation: 0 = Optical Resolution; 1 = Fast Blur.");
-                    flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain V2 phase timer; 0 uses the seed-derived phase.");
+                    flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase.");
                     let resolved = grain.resolved_grain_v2();
                     flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
-                } else if grain.engine == GrainEngine::V3 {
+                } else if grain.engine == GrainEngine::Dye {
                     flags.runtime_changed |= numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, 1.0, 32.0, 0.5, 1, "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
                     flags.runtime_changed |= numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, 0.1, 8.0, 0.05, 2, "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
                     flags.runtime_changed |= tuple(ui, "rms granularity", &mut grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
@@ -801,6 +865,171 @@ mod acceptance;
 mod tests {
     use super::*;
 
+    fn scanner_frame(
+        ctx: &egui::Context,
+        params: &mut RuntimeParams,
+        medium: ScanMedium,
+        events: Vec<egui::Event>,
+    ) -> (ChangeFlags, egui::FullOutput) {
+        let mut flags = ChangeFlags::default();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 1600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    flags = show(ui, params, &mut serde_json::json!({}), "Scanner", medium);
+                });
+            },
+        );
+        (flags, output)
+    }
+
+    fn has_text(output: &egui::FullOutput, text: &str) -> bool {
+        output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(shape) if shape.galley.job.text == text))
+    }
+
+    #[test]
+    fn scanner_controls_follow_route_medium_and_output() {
+        for (route, medium, positive) in [
+            ("input", ScanMedium::Negative, false),
+            ("input > film > print > scan", ScanMedium::Negative, false),
+            ("input > film > scan", ScanMedium::Slide, false),
+            ("input > film > scan", ScanMedium::Negative, false),
+            ("input > film > scan", ScanMedium::Negative, true),
+            ("input > convert-film > scan", ScanMedium::Negative, true),
+            (
+                "input > convert-film > scan-minus-base",
+                ScanMedium::Negative,
+                false,
+            ),
+        ] {
+            let ctx = egui::Context::default();
+            let mut params = RuntimeParams::default();
+            params.workflow.route = route.into();
+            params.scanner.scan_output = if positive {
+                "positive_scan"
+            } else {
+                "direct_scan"
+            }
+            .into();
+            params.scanner.finish = if positive {
+                ScannerFinish::LabScan
+            } else {
+                ScannerFinish::Neutral
+            };
+            let (_, output) = scanner_frame(&ctx, &mut params, medium, vec![]);
+            assert_eq!(
+                has_text(&output, "receiver profile"),
+                route != "input" && !route.contains(" > print > "),
+                "{route}"
+            );
+            for label in [
+                "positive interpretation",
+                "scanner auto setup",
+                "scanner finish",
+                "finish strength",
+            ] {
+                assert_eq!(has_text(&output, label), positive, "{route}: {label}");
+            }
+            assert_eq!(
+                has_text(&output, "scan output"),
+                medium.positive_output_eligible(route),
+                "{route}"
+            );
+            if positive {
+                params.scanner.finish = ScannerFinish::Neutral;
+                let (_, output) = scanner_frame(&ctx, &mut params, medium, vec![]);
+                assert!(!has_text(&output, "finish strength"));
+            }
+        }
+    }
+
+    #[test]
+    fn approximate_receiver_and_coupled_choices_are_clickable() {
+        let ctx = egui::Context::default();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.scanner.scan_output = "positive_scan".into();
+        for (selected, next) in [
+            ("legacy colorimetric", "lab scan (approximate)"),
+            ("density", "separable"),
+            ("separable", "coupled"),
+            ("off", "per_frame"),
+            ("neutral", "lab_scan"),
+        ] {
+            let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+            let position = text_position(&output, selected);
+            scanner_frame(
+                &ctx,
+                &mut params,
+                ScanMedium::Negative,
+                click(position, true),
+            );
+            scanner_frame(
+                &ctx,
+                &mut params,
+                ScanMedium::Negative,
+                click(position, false),
+            );
+            // Popup areas lay out their first frame before becoming visible and hittable.
+            let (_, output) = scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+            let position = text_position(&output, next);
+            scanner_frame(
+                &ctx,
+                &mut params,
+                ScanMedium::Negative,
+                click(position, true),
+            );
+            let (flags, _) = scanner_frame(
+                &ctx,
+                &mut params,
+                ScanMedium::Negative,
+                click(position, false),
+            );
+            assert!(flags.runtime_changed, "{next}");
+            scanner_frame(&ctx, &mut params, ScanMedium::Negative, vec![]);
+        }
+        assert_eq!(
+            params.scanner.receiver_profile,
+            ReceiverProfile::LabScanApprox
+        );
+        assert_eq!(
+            params.scanner.positive_interpretation,
+            PositiveInterpretation::Coupled
+        );
+        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
+        assert_eq!(params.scanner.finish, ScannerFinish::LabScan);
+    }
+
+    #[test]
+    fn direct_scan_selection_resets_positive_only_selectors() {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.scanner.receiver_profile = ReceiverProfile::LabScanApprox;
+        params.scanner.positive_interpretation = PositiveInterpretation::Coupled;
+        params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
+        params.scanner.finish = ScannerFinish::LabScan;
+        params.scanner.finish_strength = 0.0;
+        normalize_scanner_selections(&mut params, ScanMedium::Negative);
+        assert_eq!(
+            params.scanner.receiver_profile,
+            ReceiverProfile::LabScanApprox
+        );
+        assert_eq!(
+            params.scanner.positive_interpretation,
+            PositiveInterpretation::Density
+        );
+        assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Off);
+        assert_eq!(params.scanner.finish, ScannerFinish::Neutral);
+        assert_eq!(params.scanner.finish_strength, 0.0);
+    }
+
     fn click(position: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
         vec![
             egui::Event::PointerMoved(position),
@@ -823,7 +1052,7 @@ mod tests {
                 }
                 _ => None,
             })
-            .expect("rendered numeric text")
+            .unwrap_or_else(|| panic!("rendered control text {text:?}"))
     }
     fn replace_text(text: &str) -> Vec<egui::Event> {
         vec![

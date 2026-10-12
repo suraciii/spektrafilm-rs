@@ -119,10 +119,26 @@ fn canonicalize_grain_state(section: &mut Value) {
 
 impl GuiState {
     pub fn factory() -> Self {
-        Self {
-            sections: serde_json::from_str(include_str!("factory_state.json"))
-                .expect("pinned factory JSON"),
+        let mut sections: Value =
+            serde_json::from_str(include_str!("factory_state.json")).expect("pinned factory JSON");
+        let scanner = serde_json::to_value(RuntimeParams::default().scanner)
+            .expect("scanner defaults serialize");
+        for key in [
+            "receiver_profile",
+            "positive_interpretation",
+            "auto_setup",
+            "finish",
+            "finish_strength",
+        ] {
+            sections["scanner"][key] = scanner[key].clone();
         }
+        sections["rust"]["scanner_provenance"] = serde_json::to_value(
+            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(
+                &RuntimeParams::default(),
+            ),
+        )
+        .expect("scanner provenance serializes");
+        Self { sections }
     }
     pub fn from_value(value: Value) -> Result<Self> {
         if !value.is_object() {
@@ -181,13 +197,23 @@ impl GuiState {
                     .remove(section);
             }
         }
-        // States saved before scanner.scan_output became canonical keep the
-        // selection only in the Rust runtime extension; promote it so the
-        // factory default cannot clobber a persisted positive_scan.
-        if normalized["scanner"].get("scan_output").is_none()
-            && let Some(mode) = value["rust"]["runtime"]["scanner"]["scan_output"].as_str()
-        {
-            normalized["scanner"]["scan_output"] = json!(mode);
+        // Promote extension-only controls before canonical factory defaults merge.
+        for key in [
+            "scan_output",
+            "receiver_profile",
+            "positive_interpretation",
+            "auto_setup",
+            "finish",
+            "finish_strength",
+        ] {
+            if normalized["scanner"].get(key).is_none()
+                && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)
+            {
+                if !normalized["scanner"].is_object() {
+                    normalized["scanner"] = json!({});
+                }
+                normalized["scanner"][key] = selection.clone();
+            }
         }
         // Older Rust states stored bit depth before export format existed.
         // Infer only an absent format; explicit combinations still face validation.
@@ -212,7 +238,11 @@ impl GuiState {
                 }
             }
         }
-        state.runtime_params()?;
+        let params = state.runtime_params()?;
+        // Metadata is derived from the selected built-ins, never trusted from an import.
+        state.sections["rust"]["scanner_provenance"] = serde_json::to_value(
+            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
+        )?;
         if normalized.get("rust").is_none() {
             state
                 .sections
@@ -490,6 +520,9 @@ impl GuiState {
         }
         s["rust"]["version"] = json!(1);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
+        s["rust"]["scanner_provenance"] = serde_json::to_value(
+            spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),
+        )?;
         // Route owns the derived scan decision; do not persist the legacy
         // `scan_film` flag or a second workflow owner in the Rust snapshot.
         runtime["io"]
@@ -607,6 +640,11 @@ mod tests {
             "positive_dmax",
             "black_point",
             "white_point",
+            "receiver_profile",
+            "positive_interpretation",
+            "auto_setup",
+            "finish",
+            "finish_strength",
         ] {
             scanner.remove(key);
         }
@@ -649,6 +687,15 @@ mod tests {
     fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
         use spektrafilm_core::presets::{Preset, Provenance, Section};
 
+        fn negative_film_profile() -> spektrafilm_core::profile::Profile {
+            // This test exercises preset/state projection, so keep the profile
+            // small while satisfying positive-scan profile validation.
+            serde_json::from_str(
+                r#"{"metadata":{},"info":{"stock":"test-negative","type":"negative","support":"film","stage":"filming","use":"still"},"data":{"density_curves":[[0.0,0.0,0.0]]}}"#,
+            )
+            .unwrap()
+        }
+
         let factory = GuiState::factory();
         let baseline = GuiState::from_runtime(
             &factory.runtime_params().unwrap(),
@@ -668,17 +715,14 @@ mod tests {
             Provenance {
                 implementation_version: "test".into(),
                 model_version: "test".into(),
+                scanner: None,
             },
         )
         .unwrap();
         // Monochrome is derived from the film, so sections preserve the target's value.
         let mut target = factory.runtime_params().unwrap();
         target.film_render.grain.monochrome = true;
-        let film = spektrafilm_core::profile::load_profile_by_name(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
-            factory.film(),
-        )
-        .unwrap();
+        let film = negative_film_profile();
         let applied = preset.apply_section(&target, &film).unwrap();
         let saved =
             GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
@@ -802,7 +846,7 @@ mod tests {
         let mut params = factory.runtime_params().unwrap();
         params.io.output_cctf_encoding = false;
         params.film_render.development_time = Some(9.0);
-        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::V3;
+        params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
         params.film_render.grain.v3_dye_support_um = 4.5;
         params.film_render.grain.v3_event_area_um2 = 0.6;
         params.film_render.grain.v2_profile = "8mm500".into();
@@ -814,7 +858,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             saved.sections["rust"]["runtime"]["film_render"]["grain"]["engine"],
-            "v3"
+            "dye"
         );
         assert_eq!(
             saved.sections["rust"]["runtime"]["film_render"]["grain"]["v3_dye_support_um"],
@@ -827,7 +871,7 @@ mod tests {
         assert_eq!(restored.film_render.development_time, Some(9.0));
         assert_eq!(
             restored.film_render.grain.engine,
-            spektrafilm_core::params::GrainEngine::V3
+            spektrafilm_core::params::GrainEngine::Dye
         );
         assert_eq!(restored.film_render.grain.v3_dye_support_um, 4.5);
         assert_eq!(restored.film_render.grain.v3_event_area_um2, 0.6);
@@ -897,7 +941,7 @@ mod tests {
         let factory = GuiState::factory();
         let mut params = factory.runtime_params().unwrap();
         let grain = &mut params.film_render.grain;
-        grain.engine = spektrafilm_core::params::GrainEngine::V2;
+        grain.engine = spektrafilm_core::params::GrainEngine::Procedural;
         grain.v2_profile = "custom".into();
         grain.v2_resolution_type = 0;
         grain.v2_timer = 0.375;
@@ -1057,11 +1101,34 @@ mod tests {
         params.scanner.scan_output = "positive_scan".into();
         params.scanner.black_point = [0.1, 0.2, 0.3];
         params.scanner.white_point = [0.7, 0.8, 0.9];
+        params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
+        params.scanner.positive_interpretation =
+            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
+        params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
+        params.scanner.finish_strength = 0.0;
         let saved =
             GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)?;
         assert_eq!(
             saved.sections["simulation"]["route"],
             "input > convert-film > scan"
+        );
+        assert_eq!(
+            saved.sections["rust"]["scanner_provenance"]["receiver"]["calibration_status"],
+            "approximate_uncalibrated"
+        );
+        assert_eq!(
+            saved.sections["rust"]["scanner_provenance"]["receiver"]["version"],
+            "fotufilm_lab_scan_approx_v1"
+        );
+        assert_eq!(
+            saved.sections["rust"]["scanner_provenance"]["finish"],
+            "lab_scan"
+        );
+        assert!(
+            saved.sections["rust"]["scanner_provenance"]["finish_version"]
+                .as_str()
+                .is_some()
         );
         let loaded = GuiState::from_value(saved.sections)?;
         let restored = loaded.runtime_params()?;
@@ -1069,6 +1136,17 @@ mod tests {
         assert_eq!(restored.scanner.scan_output, "positive_scan");
         assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
         assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
+        assert_eq!(
+            restored.scanner.receiver_profile,
+            params.scanner.receiver_profile
+        );
+        assert_eq!(
+            restored.scanner.positive_interpretation,
+            params.scanner.positive_interpretation
+        );
+        assert_eq!(restored.scanner.auto_setup, params.scanner.auto_setup);
+        assert_eq!(restored.scanner.finish, params.scanner.finish);
+        assert_eq!(restored.scanner.finish_strength, 0.0);
         Ok(())
     }
     #[test]
@@ -1077,13 +1155,83 @@ mod tests {
         // selection only under the Rust runtime extension.
         let state = GuiState::from_value(json!({
             "simulation": {"route": "input > convert-film > scan"},
-            "rust": {"version": 1, "runtime": {"scanner": {"scan_output": "positive_scan"}}}
+            "rust": {"version": 1, "runtime": {"scanner": {
+                "scan_output": "positive_scan", "receiver_profile": "lab_scan_approx",
+                "positive_interpretation": "coupled", "auto_setup": "per_frame",
+                "finish": "lab_scan", "finish_strength": 0.0
+            }}}
         }))
         .unwrap();
         let params = state.runtime_params().unwrap();
         assert_eq!(params.scanner.scan_output, "positive_scan");
         assert_eq!(state.sections["scanner"]["scan_output"], "positive_scan");
+        for (key, expected) in [
+            ("receiver_profile", json!("lab_scan_approx")),
+            ("positive_interpretation", json!("coupled")),
+            ("auto_setup", json!("per_frame")),
+            ("finish", json!("lab_scan")),
+            ("finish_strength", json!(0.0)),
+        ] {
+            assert_eq!(state.sections["scanner"][key], expected);
+            assert_eq!(
+                serde_json::to_value(&params.scanner).unwrap()[key],
+                expected
+            );
+        }
     }
+    #[test]
+    fn scanner_defaults_and_invalid_combinations_use_runtime_contract() {
+        let state = GuiState::from_value(json!({})).unwrap();
+        let runtime_defaults = serde_json::to_value(RuntimeParams::default().scanner).unwrap();
+        for key in [
+            "receiver_profile",
+            "positive_interpretation",
+            "auto_setup",
+            "finish",
+            "finish_strength",
+        ] {
+            assert_eq!(state.sections["scanner"][key], runtime_defaults[key]);
+        }
+        for scanner in [
+            json!({"receiver_profile": "lab_scan_approx"}),
+            json!({"positive_interpretation": "coupled"}),
+            json!({"auto_setup": "per_frame"}),
+            json!({"finish": "lab_scan"}),
+            json!({"finish_strength": -0.01}),
+            json!({"finish_strength": 1.01}),
+        ] {
+            assert!(GuiState::from_value(json!({"scanner": scanner})).is_err());
+        }
+    }
+
+    #[test]
+    fn scanner_provenance_is_rederived_from_builtin_selection() {
+        let state = GuiState::from_value(json!({
+            "simulation": {"route": "input > film > scan"},
+            "scanner": {"receiver_profile": "lab_scan_approx"},
+            "rust": {"version": 1, "scanner_provenance": {
+                "receiver": {"source": "unavailable device", "calibration_status": "measured"},
+                "finish": "unavailable finish"
+            }}
+        }))
+        .unwrap();
+        assert_eq!(
+            state.sections["rust"]["scanner_provenance"]["receiver"]["calibration_status"],
+            "approximate_uncalibrated"
+        );
+        assert_eq!(
+            state.sections["rust"]["scanner_provenance"]["finish"],
+            "neutral"
+        );
+        assert!(
+            GuiState::from_value(json!({
+                "simulation": {"route": "input > film > scan"},
+                "scanner": {"receiver_profile": "unavailable_device"}
+            }))
+            .is_err()
+        );
+    }
+
     #[test]
     fn invalid_scan_points_are_rejected_on_state_load() {
         let factory = GuiState::factory();

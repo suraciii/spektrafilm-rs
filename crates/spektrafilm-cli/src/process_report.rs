@@ -72,6 +72,12 @@ pub(crate) fn print_text(report: &Value) {
         value(&params["scanner"]["scan_output"])
     );
     println!("  seed: {}", value(&report["seed"]));
+    record("SCANNER", &params["scanner"]);
+    record(
+        "SCANNER RECEIVER",
+        &report["scanner_provenance"]["receiver"],
+    );
+    record("SCANNER PROVENANCE", &report["scanner_provenance"]);
     println!(
         "  camera exposure: {} EV",
         value(&params["camera"]["exposure_compensation_ev"])
@@ -88,7 +94,7 @@ pub(crate) fn print_text(report: &Value) {
         "GRAIN (effective controls; conditions from describe --module film_render.grain)",
         &params["film_render"]["grain"],
     );
-    record("GRAIN V3 ROUTING", &report["film_grain_v3"]);
+    record("GRAIN DYE ROUTING", &report["film_grain_dye"]);
     record(
         "BACKEND (requested, not device availability)",
         &report["backend"],

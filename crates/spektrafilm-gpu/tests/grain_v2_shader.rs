@@ -9,13 +9,13 @@ fn grain_v2_shader_compiles() {
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()));
     let Some(adapter) = adapter else {
         eprintln!(
-            "Grain V2 GPU smoke skipped: no WGPU adapter; CPU behavior tests remain available"
+            "Grain Procedural GPU smoke skipped: no WGPU adapter; CPU behavior tests remain available"
         );
         return;
     };
     let (device, _) =
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .expect("open Grain V2 smoke device");
+            .expect("open Grain Procedural smoke device");
     device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("grain_v2_smoke"),
@@ -32,6 +32,6 @@ fn grain_v2_shader_compiles() {
     let error = pollster::block_on(device.pop_error_scope());
     assert!(
         error.is_none(),
-        "Grain V2 WGSL validation failed: {error:?}"
+        "Grain Procedural WGSL validation failed: {error:?}"
     );
 }

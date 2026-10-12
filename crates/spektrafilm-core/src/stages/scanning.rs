@@ -11,6 +11,11 @@ use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
 use super::build_lut_grid;
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
+mod coupled;
+mod finish;
+mod interpretation;
+mod setup;
+pub use setup::ScannerSetup;
 
 /// Scanner LUT bounds. When scan_film=true: `-grain.density_min` to
 /// `nanmax(film.density_curves)`. Else: `nanmin..nanmax` of
@@ -53,6 +58,38 @@ fn scanner_lut_bounds(profile: &Profile, params: &RuntimeParams) -> ([f64; 3], [
     (dm, dx)
 }
 
+struct PreparedScannerLut {
+    pchip: spektrafilm_math::pchip3d::PreparedPchip3d,
+    minimum: [f64; 3],
+    inverse_step: [f64; 3],
+}
+
+fn prepare_scanner_lut(
+    channel_density: &[[f64; 3]],
+    base_density: &[f64],
+    color: &crate::chain_prep::ScanColorContext,
+    minimum: [f64; 3],
+    maximum: [f64; 3],
+    steps: usize,
+) -> PreparedScannerLut {
+    let grid = build_lut_grid(steps, minimum, maximum);
+    // log_xyz LUT — same function Python LUTs.
+    let log_xyz = spektrafilm_gpu::cpu_backend::scan_log_xyz_cpu(
+        &grid,
+        channel_density,
+        base_density,
+        &color.illuminant,
+        color.normalization,
+    );
+    let pchip = prepare_pchip_3d(log_xyz, steps);
+    let scale = (steps - 1) as f64;
+    PreparedScannerLut {
+        pchip,
+        minimum,
+        inverse_step: std::array::from_fn(|c| scale / (maximum[c] - minimum[c])),
+    }
+}
+
 /// Build a 17³ log_xyz LUT (matching Python's `cmy_to_log_xyz`),
 /// PCHIP-interpolate per pixel, then apply `10^log_xyz → CAT →
 /// xyz_to_rgb` to get RGB. Glare is added after this returns in RGB
@@ -69,10 +106,7 @@ fn scan_spectral_via_lut(
     density_cmy: &ImageBuf,
     channel_density: &[[f64; 3]],
     base_density: &[f64],
-    illuminant: &[f64],
-    normalization: f64,
-    cat: &[[f64; 3]; 3],
-    xyz_to_rgb: &[[f64; 3]; 3],
+    color: &crate::chain_prep::ScanColorContext,
     _backend: &dyn ComputeBackend,
     data_min: [f64; 3],
     data_max: [f64; 3],
@@ -84,31 +118,25 @@ fn scan_spectral_via_lut(
         "scanner_lut",
         spektrafilm_gpu::telemetry::CpuReason::SpectralLut,
     );
-    let grid = build_lut_grid(steps, data_min, data_max);
-    // log_xyz LUT — same function Python LUTs.
-    let lut_log_xyz = spektrafilm_gpu::cpu_backend::scan_log_xyz_cpu(
-        &grid,
+    let prepared = prepare_scanner_lut(
         channel_density,
         base_density,
-        illuminant,
-        normalization,
+        color,
+        data_min,
+        data_max,
+        steps,
     );
-    let prepared = prepare_pchip_3d(lut_log_xyz, steps);
-    let scale = (steps - 1) as f64;
-    let inv = [
-        scale / (data_max[0] - data_min[0]),
-        scale / (data_max[1] - data_min[1]),
-        scale / (data_max[2] - data_min[2]),
-    ];
+    let cat = &color.adapt;
+    let xyz_to_rgb = &color.base_xyz_to_rgb;
     let mut out = density_cmy.clone();
     out.data
         .par_chunks_exact_mut(3)
         .zip(density_cmy.data.par_chunks_exact(3))
         .for_each(|(dst, src)| {
-            let r = (src[0] as f64 - data_min[0]) * inv[0];
-            let g = (src[1] as f64 - data_min[1]) * inv[1];
-            let b = (src[2] as f64 - data_min[2]) * inv[2];
-            let log_xyz = pchip_interp(&prepared, r, g, b);
+            let r = (src[0] as f64 - prepared.minimum[0]) * prepared.inverse_step[0];
+            let g = (src[1] as f64 - prepared.minimum[1]) * prepared.inverse_step[1];
+            let b = (src[2] as f64 - prepared.minimum[2]) * prepared.inverse_step[2];
+            let log_xyz = pchip_interp(&prepared.pchip, r, g, b);
             // Post-LUT: 10^log_xyz → CAT → xyz_to_rgb, mirroring Python's
             // `_density_to_rgb` AFTER the LUT call. bw_correction and
             // glare run after this returns (RGB space).
@@ -158,6 +186,22 @@ fn scan_spectral_rgb(
     color: &crate::chain_prep::ScanColorContext,
     defer_correction: bool,
 ) -> ImageBuf {
+    if let Some(receiver) = &color.receiver {
+        let mut capture = receiver.capture(density_cmy, channel_density, base_density);
+        if color_ref.has_remap() && !defer_correction {
+            let to_y = receiver.luminance_weights();
+            capture.data.par_chunks_exact_mut(3).for_each(|px| {
+                let y = (0..3).map(|c| to_y[c] * to_f64(px[c])).sum();
+                let scale = color_ref.xyz_scale(y);
+                if scale != 1.0 {
+                    for value in px {
+                        *value = from_f64(to_f64(*value) * scale);
+                    }
+                }
+            });
+        }
+        return capture;
+    }
     if color_ref.has_remap() || params.settings.use_scanner_lut {
         let (data_min, data_max) = scanner_lut_bounds(profile, params);
         let identity = crate::color_reference::ColorReference::identity();
@@ -165,10 +209,7 @@ fn scan_spectral_rgb(
             density_cmy,
             channel_density,
             base_density,
-            &color.illuminant,
-            color.normalization,
-            &color.adapt,
-            &color.base_xyz_to_rgb,
+            color,
             backend,
             data_min,
             data_max,
@@ -189,6 +230,104 @@ fn scan_spectral_rgb(
             &color.adapt,
             &color.base_xyz_to_rgb,
         )
+    }
+}
+/// Prepared CPU f64 forward capture for inverse-table calibration.
+pub(crate) struct ForwardCapture<'a> {
+    channel_density: &'a [[f64; 3]],
+    base_density: &'a [f64],
+    color: &'a crate::chain_prep::ScanColorContext,
+    color_ref: &'a crate::color_reference::ColorReference,
+    lut: Option<PreparedScannerLut>,
+}
+
+impl<'a> ForwardCapture<'a> {
+    pub(crate) fn prepare(
+        profile: &Profile,
+        params: &RuntimeParams,
+        channel_density: &'a [[f64; 3]],
+        base_density: &'a [f64],
+        color: &'a crate::chain_prep::ScanColorContext,
+        color_ref: &'a crate::color_reference::ColorReference,
+    ) -> Self {
+        let (minimum, maximum) = scanner_lut_bounds(profile, params);
+        let steps = params.settings.lut_resolution as usize;
+        let lut = if color.receiver.is_none()
+            && (params.settings.use_scanner_lut || color_ref.has_remap())
+        {
+            Some(prepare_scanner_lut(
+                channel_density,
+                base_density,
+                color,
+                minimum,
+                maximum,
+                steps,
+            ))
+        } else {
+            None
+        };
+        Self {
+            channel_density,
+            base_density,
+            color,
+            color_ref,
+            lut,
+        }
+    }
+
+    pub(crate) fn capture(&self, density: [f64; 3]) -> [f64; 3] {
+        if let Some(receiver) = &self.color.receiver {
+            let mut rgb = receiver.capture_f64(density, self.channel_density, self.base_density);
+            if self.color_ref.has_remap() {
+                let to_y = receiver.luminance_weights();
+                let y = (0..3).map(|c| to_y[c] * rgb[c]).sum();
+                let scale = self.color_ref.xyz_scale(y);
+                for value in &mut rgb {
+                    *value *= scale;
+                }
+            }
+            return rgb;
+        }
+        let mut xyz = if let Some(lut) = &self.lut {
+            let position: [f64; 3] =
+                std::array::from_fn(|c| (density[c] - lut.minimum[c]) * lut.inverse_step[c]);
+            pchip_interp(&lut.pchip, position[0], position[1], position[2]).map(|v| 10.0f64.powf(v))
+        } else {
+            let mut xyz = [0.0; 3];
+            for i in 0..self.color.n_wl {
+                let dye = self.channel_density[i];
+                let d = density[0] * dye[0]
+                    + density[1] * dye[1]
+                    + density[2] * dye[2]
+                    + if self.base_density.len() >= self.color.n_wl {
+                        self.base_density[i]
+                    } else {
+                        0.0
+                    };
+                let light =
+                    if d.is_nan() { 0.0 } else { 10.0f64.powf(-d) } * self.color.illuminant[i];
+                xyz[0] += light * spektrafilm_math::spectral::CMF_X_F64[i];
+                xyz[1] += light * spektrafilm_math::spectral::CMF_Y_F64[i];
+                xyz[2] += light * spektrafilm_math::spectral::CMF_Z_F64[i];
+            }
+            xyz.map(|v| 10.0f64.powf(((v / self.color.normalization).max(0.0) + 1e-10).log10()))
+        };
+        let scale = self.color_ref.xyz_scale(xyz[1]);
+        if scale != 1.0 {
+            for value in &mut xyz {
+                *value *= scale;
+            }
+        }
+        let adapted: [f64; 3] = std::array::from_fn(|c| {
+            self.color.adapt[c][0] * xyz[0]
+                + self.color.adapt[c][1] * xyz[1]
+                + self.color.adapt[c][2] * xyz[2]
+        });
+        std::array::from_fn(|c| {
+            self.color.base_xyz_to_rgb[c][0] * adapted[0]
+                + self.color.base_xyz_to_rgb[c][1] * adapted[1]
+                + self.color.base_xyz_to_rgb[c][2] * adapted[2]
+        })
     }
 }
 
@@ -238,10 +377,10 @@ impl PointMap {
     }
 }
 
-/// Monotone inverse of one record's density curve.
 struct PositiveChannel {
     density: Vec<f64>,
     log_exposure: Vec<f64>,
+    clear: f64,
 }
 
 struct PositiveCalibration {
@@ -249,33 +388,68 @@ struct PositiveCalibration {
 }
 
 impl PositiveCalibration {
-    /// A lab scanner reads each dye record through its own narrow band, so the
-    /// inverse works per record density. Inverting colorimetric output RGB
-    /// through neutral calibration rows instead lets the output matrix mix
-    /// records (sRGB blue carries a negative Y lobe), which pushes saturated
-    /// negatives past the dense end.
-    fn from_profile(profile: &Profile, params: &RuntimeParams) -> Result<Self, String> {
+    #[allow(clippy::too_many_arguments)]
+    fn from_profile(
+        profile: &Profile,
+        params: &RuntimeParams,
+        backend: &dyn ComputeBackend,
+        color_ref: &crate::color_reference::ColorReference,
+        channel_density: &[[f64; 3]],
+        base_density: &[f64],
+        color: &crate::chain_prep::ScanColorContext,
+    ) -> Result<Self, String> {
         let axis = &profile.data.log_exposure;
-        let curves = &profile.data.density_curves;
-        if axis.len() < 2 || curves.len() != axis.len() {
+        if axis.len() < 2 || profile.data.density_curves.len() != axis.len() {
             return Err("positive_scan requires matching profile calibration curves with at least two samples".into());
         }
-        let tolerance = if std::mem::size_of::<Scalar>() == 4 {
-            2e-6
-        } else {
-            1e-12
-        };
+        let rows = ImageBuf::from_data(
+            axis.len() as u32,
+            1,
+            profile
+                .data
+                .density_curves
+                .iter()
+                .flat_map(|row| row.iter().copied().map(from_f64))
+                .collect(),
+        );
+        let captured = scan_spectral_rgb(
+            &rows,
+            profile,
+            params,
+            backend,
+            color_ref,
+            channel_density,
+            base_density,
+            color,
+            false,
+        );
         let mut channels = Vec::with_capacity(3);
         for channel in 0..3 {
-            // Pool adjacent violations so the inverse is monotone without
-            // changing the forward film curves.
-            let mut blocks: Vec<(f64, f64, usize)> = Vec::with_capacity(axis.len());
-            for (row, &log_e) in curves.iter().zip(axis) {
-                let d = row[channel];
-                if !log_e.is_finite() || !d.is_finite() {
+            let mut density: Vec<f64> = Vec::with_capacity(axis.len());
+            let mut exposure = Vec::with_capacity(axis.len());
+            let mut clear = None;
+            let mut ended = false;
+            for (i, &log_e) in axis.iter().enumerate() {
+                let value = to_f64(captured.data[i * 3 + channel]);
+                if !log_e.is_finite() || !value.is_finite() || value <= 0.0 {
+                    ended |= !density.is_empty();
                     continue;
                 }
-                blocks.push((d, log_e, 1));
+                if ended {
+                    return Err(format!(
+                        "positive_scan calibration has an invalid interior sample in channel {channel}"
+                    ));
+                }
+                let reference = *clear.get_or_insert(value);
+                let d = -(value / reference).log10();
+                density.push(d);
+                exposure.push(log_e);
+            }
+            // Pool adjacent violations to regularize measurement noise in the
+            // inverse calibration without changing the forward film curves.
+            let mut blocks: Vec<(f64, f64, usize)> = Vec::with_capacity(density.len());
+            for (&d, &e) in density.iter().zip(&exposure) {
+                blocks.push((d, e, 1));
                 while blocks.len() >= 2 {
                     let last = blocks.len() - 1;
                     let (left_sum, _, left_count) = blocks[last - 1];
@@ -290,62 +464,58 @@ impl PositiveCalibration {
                     left.2 += right.2;
                 }
             }
-            let mut density: Vec<f64> = Vec::with_capacity(blocks.len());
-            let mut log_exposure = Vec::with_capacity(blocks.len());
+            density.clear();
+            exposure.clear();
+            let tolerance = if std::mem::size_of::<Scalar>() == 4 {
+                2e-6
+            } else {
+                1e-12
+            };
             for (density_sum, exposure_sum, count) in blocks {
                 let d = density_sum / count as f64;
                 if density.last().is_some_and(|last| d - *last <= tolerance) {
                     continue;
                 }
                 density.push(d);
-                log_exposure.push(exposure_sum / count as f64);
+                exposure.push(exposure_sum / count as f64);
             }
             if density.len() < 2 {
                 return Err(format!(
-                    "positive_scan calibration has fewer than two distinct density samples in channel {channel}"
+                    "positive_scan calibration has fewer than two positive distinct samples in channel {channel}"
                 ));
             }
             channels.push(PositiveChannel {
                 density,
-                log_exposure,
+                log_exposure: exposure,
+                clear: clear.unwrap(),
             });
         }
-        let calibration = Self {
-            channels: channels
-                .try_into()
-                .map_err(|_| "positive_scan calibration requires three channels")?,
-        };
         if points_active(params) {
-            let (start, end) = calibration.shared_range();
+            let start = channels
+                .iter()
+                .map(|c| c.log_exposure[0])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let end = channels
+                .iter()
+                .map(|c| *c.log_exposure.last().unwrap())
+                .fold(f64::INFINITY, f64::min);
             if !start.is_finite() || !end.is_finite() || start >= end {
                 return Err(
                     "positive_scan points require a finite shared log-exposure interval".into(),
                 );
             }
         }
-        Ok(calibration)
-    }
-
-    /// Relative log-exposure range that all three record inverses cover.
-    fn shared_range(&self) -> (f64, f64) {
-        let start = self
-            .channels
-            .iter()
-            .map(|c| c.log_exposure[0])
-            .fold(f64::NEG_INFINITY, f64::max);
-        let end = self
-            .channels
-            .iter()
-            .map(|c| *c.log_exposure.last().unwrap())
-            .fold(f64::INFINITY, f64::min);
-        (start, end)
+        Ok(Self {
+            channels: channels
+                .try_into()
+                .map_err(|_| "positive_scan calibration requires three channels")?,
+        })
     }
 }
 
 impl PositiveChannel {
-    /// Relative log exposure; outside the curve range the end tangents keep
-    /// the estimate finite and monotone.
-    fn estimate(&self, d: f64) -> f64 {
+    fn estimate(&self, value: f64) -> f64 {
+        let d = -(value / self.clear).log10();
         let upper = self
             .density
             .partition_point(|x| *x < d)
@@ -356,60 +526,327 @@ impl PositiveChannel {
     }
 }
 
+fn positive_tone(
+    log_e: f64,
+    channel: usize,
+    points: &PointMap,
+    params: &RuntimeParams,
+) -> (f64, f64) {
+    let contrast = params.scanner.positive_contrast;
+    let dmax = params.scanner.positive_dmax;
+    let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
+    let log_e = points.apply(log_e, channel);
+    let e = log_e / std::f64::consts::LOG10_2 - interpretation::camera_ev(params)
+        + params.scanner.positive_density_ev
+        + params.scanner.positive_balance_ev[channel];
+    let z = contrast * e;
+    let t = if z >= 0.0 {
+        1.0 / (1.0 + (-z).exp())
+    } else {
+        let a = z.exp();
+        a / (1.0 + a)
+    };
+    let density = dmax * (1.0 - t);
+    let positive = (-std::f64::consts::LN_10 * density).exp_m1();
+    let output = (positive + denominator) / denominator;
+    let derivative = std::f64::consts::LN_10
+        * dmax
+        * contrast
+        * t
+        * (1.0 - t)
+        * (-std::f64::consts::LN_10 * density).exp()
+        / (denominator * std::f64::consts::LOG10_2)
+        * points.scale[channel];
+    (output, derivative)
+}
+
+fn interpret_negative_capture(
+    mut rgb: ImageBuf,
+    calibration: &PositiveCalibration,
+    params: &RuntimeParams,
+) -> Result<ImageBuf, String> {
+    let start = calibration
+        .channels
+        .iter()
+        .map(|c| c.log_exposure[0])
+        .fold(f64::NEG_INFINITY, f64::max);
+    let end = calibration
+        .channels
+        .iter()
+        .map(|c| *c.log_exposure.last().unwrap())
+        .fold(f64::INFINITY, f64::min);
+    let points = PointMap::new(start, end, params)?;
+    let tone = |log_e: f64, channel: usize| positive_tone(log_e, channel, &points, params);
+    let endpoints: [[(f64, f64, f64); 2]; 3] = std::array::from_fn(|c| {
+        let k = &calibration.channels[c];
+        let last = k.density.len() - 1;
+        std::array::from_fn(|side| {
+            let i = if side == 0 { 0 } else { last };
+            let (a, b) = if side == 0 { (0, 1) } else { (last - 1, last) };
+            let capture = k.clear * 10.0f64.powf(-k.density[i]);
+            let (output, derivative) = tone(k.log_exposure[i], c);
+            let slope = -derivative * (k.log_exposure[b] - k.log_exposure[a])
+                / ((k.density[b] - k.density[a]) * std::f64::consts::LN_10 * capture);
+            (capture, output, slope)
+        })
+    });
+    rgb.data.par_chunks_exact_mut(3).for_each(|px| {
+        for channel in 0..3 {
+            let value = to_f64(px[channel]);
+            let (clear, low, low_slope) = endpoints[channel][0];
+            let (dense, high, high_slope) = endpoints[channel][1];
+            let output = if value >= clear {
+                low + (value - clear) * low_slope
+            } else if value <= dense {
+                high + (value - dense) * high_slope
+            } else {
+                tone(calibration.channels[channel].estimate(value), channel).0
+            };
+            px[channel] = from_f64(output);
+        }
+    });
+    Ok(rgb)
+}
+
+/// Record-density interpretation: the narrowband lab-scanner inverse of the
+/// film's own characteristic curves. Scanner optics blur transmitted light
+/// record by record, before the sensor reads density, so the blur runs here in
+/// the density domain and the capture never enters the loop.
 fn interpret_negative_density(
     density_cmy: &ImageBuf,
-    calibration: &PositiveCalibration,
+    calibration: &interpretation::DensityCalibration,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
 ) -> Result<ImageBuf, String> {
-    let (start, end) = calibration.shared_range();
+    let [start, end] = calibration.range();
     let points = PointMap::new(start, end, params)?;
-    // Scanner optics blur transmitted light record by record, before the
-    // sensor reads density.
     let mut rgb = if params.scanner.lens_blur > 0.0 {
         let mut transmitted = density_cmy.clone();
         transmitted
             .data
             .par_iter_mut()
-            .for_each(|v| *v = from_f64(10.0f64.powf(-to_f64(*v))));
+            .for_each(|value| *value = from_f64(10.0f64.powf(-to_f64(*value))));
         let mut blurred = backend.gaussian_blur(&transmitted, params.scanner.lens_blur);
         blurred
             .data
             .par_iter_mut()
-            .for_each(|v| *v = from_f64(-to_f64(*v).log10()));
+            .for_each(|value| *value = from_f64(-to_f64(*value).log10()));
         blurred
     } else {
         density_cmy.clone()
     };
-    let contrast = params.scanner.positive_contrast;
-    let dmax = params.scanner.positive_dmax;
-    let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
-    let camera_ev = if params.workflow.route == "input > film > scan" {
-        params.camera.exposure_compensation_ev as f64
-    } else {
-        0.0
-    };
-    let offset: [f64; 3] = std::array::from_fn(|channel| {
-        params.scanner.positive_density_ev + params.scanner.positive_balance_ev[channel] - camera_ev
-    });
-    rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-        for channel in 0..3 {
-            let log_e = points.apply(
-                calibration.channels[channel].estimate(to_f64(px[channel])),
-                channel,
-            );
-            let z = contrast * (log_e / std::f64::consts::LOG10_2 + offset[channel]);
-            let t = if z >= 0.0 {
-                1.0 / (1.0 + (-z).exp())
-            } else {
-                let a = z.exp();
-                a / (1.0 + a)
-            };
-            let positive = (-std::f64::consts::LN_10 * dmax * (1.0 - t)).exp_m1();
-            px[channel] = from_f64((positive + denominator) / denominator);
-        }
-    });
+    rgb.data
+        .par_chunks_exact_mut(3)
+        .try_for_each(|px| -> Result<(), String> {
+            let density = [to_f64(px[0]), to_f64(px[1]), to_f64(px[2])];
+            let exposure = calibration.estimate(density)?;
+            for channel in 0..3 {
+                px[channel] = from_f64(positive_tone(exposure[channel], channel, &points, params).0);
+                if !px[channel].is_finite() {
+                    return Err(
+                        "density interpretation output is not representable in the selected precision"
+                            .into(),
+                    );
+                }
+            }
+            Ok(())
+        })?;
     Ok(rgb)
+}
+
+enum ExposureCalibration {
+    Density(interpretation::DensityCalibration),
+    Separable(PositiveCalibration),
+    Coupled(interpretation::CoupledCalibration),
+    Monochrome(PositiveCalibration),
+}
+
+impl ExposureCalibration {
+    fn range(&self) -> [f64; 2] {
+        match self {
+            Self::Density(c) => c.range(),
+            Self::Coupled(c) => c.range(),
+            Self::Separable(c) | Self::Monochrome(c) => [
+                c.channels
+                    .iter()
+                    .map(|k| k.log_exposure[0])
+                    .fold(f64::NEG_INFINITY, f64::max),
+                c.channels
+                    .iter()
+                    .map(|k| *k.log_exposure.last().unwrap())
+                    .fold(f64::INFINITY, f64::min),
+            ],
+        }
+    }
+
+    fn estimate(&self, capture: [f64; 3]) -> Result<[f64; 3], String> {
+        let estimate = |k: &PositiveChannel, value: f64| {
+            let last = k.density.len() - 1;
+            let clear = k.clear * 10.0f64.powf(-k.density[0]);
+            let dense = k.clear * 10.0f64.powf(-k.density[last]);
+            let endpoint = if value >= clear {
+                Some((0, 1, clear))
+            } else if value <= dense {
+                Some((last, last - 1, dense))
+            } else {
+                None
+            };
+            match endpoint {
+                Some((i, j, reference)) => {
+                    k.log_exposure[i]
+                        - (value - reference) * (k.log_exposure[j] - k.log_exposure[i])
+                            / ((k.density[j] - k.density[i]) * std::f64::consts::LN_10 * reference)
+                }
+                None => k.estimate(value),
+            }
+        };
+        let values = match self {
+            Self::Density(_) => {
+                return Err("density interpretation reads record densities, not a capture".into());
+            }
+            Self::Coupled(c) => c.estimate(capture)?,
+            Self::Separable(c) => std::array::from_fn(|i| estimate(&c.channels[i], capture[i])),
+            Self::Monochrome(c) => [estimate(&c.channels[0], capture[0]); 3],
+        };
+        if values.iter().any(|v| !v.is_finite()) {
+            return Err("scanner inverse produced nonfinite relative exposure".into());
+        }
+        Ok(values)
+    }
+
+    /// Relative log exposure from record densities. Only the density
+    /// interpretation takes densities; the capture methods convert first.
+    fn estimate_density(&self, density: [f64; 3]) -> Result<[f64; 3], String> {
+        match self {
+            Self::Density(c) => c.estimate(density),
+            _ => Err("capture interpretation requires a scanner capture".into()),
+        }
+    }
+}
+
+fn prepare_exposure_calibration(
+    profile: &Profile,
+    params: &RuntimeParams,
+    color_ref: &crate::color_reference::ColorReference,
+    color: &crate::chain_prep::ScanColorContext,
+    channel_density: &[[f64; 3]],
+    base: &[f64],
+    forward: &ForwardCapture<'_>,
+) -> Result<ExposureCalibration, String> {
+    if params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density {
+        return Ok(ExposureCalibration::Density(
+            interpretation::DensityCalibration::prepare(profile)?,
+        ));
+    }
+    let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
+    if params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Coupled
+        && !profile.is_bw()
+    {
+        Ok(ExposureCalibration::Coupled(
+            interpretation::CoupledCalibration::prepare(profile, forward)?,
+        ))
+    } else {
+        let c = PositiveCalibration::from_profile(
+            profile,
+            params,
+            &cpu,
+            color_ref,
+            channel_density,
+            base,
+            color,
+        )?;
+        Ok(
+            if profile.is_bw()
+                && params.scanner.positive_interpretation
+                    == crate::params::PositiveInterpretation::Coupled
+            {
+                ExposureCalibration::Monochrome(c)
+            } else {
+                ExposureCalibration::Separable(c)
+            },
+        )
+    }
+}
+
+pub(crate) fn prepare_setup(
+    density: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    color_ref: &crate::color_reference::ColorReference,
+    illuminant: Option<&str>,
+) -> Result<ScannerSetup, String> {
+    let mut params = params.clone();
+    params.io.scan_film = true;
+    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, &params, illuminant);
+    let dyes = crate::chain_prep::channel_density(profile);
+    let base = profile.data.base_density.as_slice();
+    let forward = ForwardCapture::prepare(profile, &params, &dyes, base, &prepared.scan, color_ref);
+    let calibration = prepare_exposure_calibration(
+        profile,
+        &params,
+        color_ref,
+        &prepared.scan,
+        &dyes,
+        base,
+        &forward,
+    )?;
+    let samples: Vec<[f64; 3]> = density
+        .data
+        .par_chunks_exact(3)
+        .map(|p| {
+            let values = [to_f64(p[0]), to_f64(p[1]), to_f64(p[2])];
+            match &calibration {
+                ExposureCalibration::Density(_) => calibration.estimate_density(values),
+                _ => calibration.estimate(forward.capture(values)),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    ScannerSetup::from_samples(
+        &samples,
+        interpretation::camera_ev(&params),
+        calibration.range(),
+        &params.scanner,
+    )
+}
+
+fn interpret_coupled_capture(
+    rgb: &mut ImageBuf,
+    calibration: &ExposureCalibration,
+    params: &RuntimeParams,
+) -> Result<(), String> {
+    let [start, end] = calibration.range();
+    let points = PointMap::new(start, end, params)?;
+    rgb.data.par_chunks_exact_mut(3).try_for_each(|px| -> Result<(),String> {
+        let capture = [to_f64(px[0]), to_f64(px[1]), to_f64(px[2])];
+        let (e, anchor) = match calibration {
+            ExposureCalibration::Coupled(c) => c.estimate_with_anchor(capture)?,
+            ExposureCalibration::Monochrome(c) => {
+                let k = &c.channels[0];
+                let last = k.density.len()-1;
+                let clear = k.clear*10.0f64.powf(-k.density[0]);
+                let dense = k.clear*10.0f64.powf(-k.density[last]);
+                let anchor = if capture[0] >= clear { Some([k.log_exposure[0];3]) }
+                    else if capture[0] <= dense { Some([k.log_exposure[last];3]) }
+                    else { None };
+                (calibration.estimate(capture)?,anchor)
+            }
+            _ => (calibration.estimate(capture)?, None),
+        };
+        for c in 0..3 {
+            let output = if let Some(anchor) = anchor {
+                let (value, slope) = positive_tone(anchor[c], c, &points, params);
+                value + slope * (e[c] - anchor[c])
+            } else {
+                positive_tone(e[c], c, &points, params).0
+            };
+            px[c] = from_f64(output);
+            if !px[c].is_finite() {
+                return Err("coupled scan endpoint output is not representable in the selected precision".into());
+            }
+        }
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// Slide points use effective output-RGB density, not the dye-density axes.
@@ -575,49 +1012,187 @@ fn scan_rgb_to_y(color: &crate::chain_prep::ScanColorContext) -> Result<[f64; 3]
     Ok(cofactors.map(|v| v / determinant))
 }
 
-/// Colorimetric scan of film or print density, with viewing glare on print
-/// scans and slide points on positive film scans.
-#[allow(clippy::too_many_arguments)]
-fn spectral_scan(
+/// Linear optical capture before inversion, gamut compression and encoding.
+pub fn capture_linear(
     density_cmy: &ImageBuf,
     profile: &Profile,
     params: &RuntimeParams,
     backend: &dyn ComputeBackend,
     color_ref: &crate::color_reference::ColorReference,
+) -> Result<ImageBuf, String> {
+    if color_ref.has_remap() || params.settings.use_scanner_lut {
+        return Err(
+            "exact-cell scanning requires direct spectral capture without luminance remap or LUT"
+                .to_owned(),
+        );
+    }
+    let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, None);
+    Ok(scan_spectral_rgb(
+        density_cmy,
+        profile,
+        params,
+        backend,
+        color_ref,
+        &crate::chain_prep::channel_density(profile),
+        &profile.data.base_density,
+        &prepared.scan,
+        false,
+    ))
+}
+
+/// Finish an area-averaged capture in the scanner's original stage order.
+pub fn finish_capture(
+    rgb: ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+) -> Result<ImageBuf, String> {
+    let unused_density = ImageBuf::new(0, 0);
+    scan_with_capture(
+        &unused_density,
+        profile,
+        params,
+        backend,
+        color_ref,
+        gamut,
+        None,
+        true,
+        Some(rgb),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn scan_with_options(
+    density_cmy: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
     scan_illuminant: Option<&str>,
     include_base: bool,
-    slide_points: bool,
 ) -> Result<ImageBuf, String> {
+    scan_with_capture(
+        density_cmy,
+        profile,
+        params,
+        backend,
+        color_ref,
+        gamut,
+        scan_illuminant,
+        include_base,
+        None,
+    )
+}
+
+// Scan options preserve the existing stage interface.
+#[allow(clippy::too_many_arguments)]
+fn scan_with_capture(
+    density_cmy: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+    scan_illuminant: Option<&str>,
+    include_base: bool,
+    captured_rgb: Option<ImageBuf>,
+) -> Result<ImageBuf, String> {
+    let positive_scan = positive_scan_requested(params);
+    // The density reading acquires no capture, so the spectral scan and the
+    // receiver correction it feeds are skipped entirely. Where a capture does
+    // arrive, `density` behaves as `separable`.
+    let density_reading = positive_scan
+        && params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density
+        && captured_rgb.is_none();
+    let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
+    let _positive_scan = positive_scan.then(|| {
+        super::StageObservation::cpu(
+            backend,
+            "positive_scan",
+            spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+        )
+    });
+    let _slide_points = slide_points.then(|| {
+        super::StageObservation::cpu(
+            backend,
+            "scanner_film_points",
+            spektrafilm_gpu::telemetry::CpuReason::ScannerFilmPoints,
+        )
+    });
+    let cpu_fallback = positive_scan
+        .then(|| {
+            backend
+                .observation_context()
+                .filter(|context| context.enabled())
+                .map(|context| {
+                    spektrafilm_gpu::bind_cpu_fallback(
+                        context.clone(),
+                        spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+                    )
+                })
+        })
+        .flatten();
+    let backend = if positive_scan {
+        static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
+            spektrafilm_gpu::cpu_backend::CpuBackend;
+        cpu_fallback
+            .as_deref()
+            .unwrap_or(&CPU_BACKEND as &dyn ComputeBackend)
+    } else {
+        backend
+    };
     let channel_density = crate::chain_prep::channel_density(profile);
     let base_density = if include_base {
         std::borrow::Cow::Borrowed(profile.data.base_density.as_slice())
     } else {
         std::borrow::Cow::Owned(vec![0.0; profile.data.base_density.len()])
     };
+
+    let output_space = colorspace::resolve(&params.io.output_color_space)
+        .expect("output color space must be validated before scanning");
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, scan_illuminant);
     let scan_context = &prepared.scan;
     let base_density = base_density.as_ref();
+    let receiver_reference = if density_reading {
+        None
+    } else {
+        scan_context.receiver.as_ref().map(|receiver| {
+            receiver.correction(profile, params, color_ref, &channel_density, base_density)
+        })
+    };
+    let color_ref = receiver_reference.as_ref().unwrap_or(color_ref);
 
     // Dispatch spectral integration to backend (GPU or CPU). The backend
     // applies the two matrices in sequence — we pass them separately.
     //
     // `use_scanner_lut` path: evaluate `scan_spectral` on a 17³ CMY
     // grid and PCHIP-interpolate per pixel. Glare is added in RGB
-    // space after this returns, so swapping to the LUT path is
-    // glare-safe. The path selection (including the faithful B&W/slide
-    // luminance remap) lives in `scan_spectral_rgb` so the slide-point
-    // reference samples cannot diverge from this bulk scan.
-    let mut rgb = scan_spectral_rgb(
-        density_cmy,
-        profile,
-        params,
-        backend,
-        color_ref,
-        &channel_density,
-        base_density,
-        scan_context,
-        slide_points,
-    );
+    // space after this returns (the existing post-step at the bottom
+    // of this function), so swapping to the LUT path is glare-safe.
+    // The path selection (including the faithful B&W/slide luminance
+    // remap) lives in `scan_spectral_rgb` so the reference samples
+    // below cannot diverge from this bulk scan.
+    let mut rgb = if density_reading {
+        let calibration = interpretation::DensityCalibration::prepare(profile)?;
+        interpret_negative_density(density_cmy, &calibration, params, backend)?
+    } else {
+        captured_rgb.unwrap_or_else(|| {
+            scan_spectral_rgb(
+                density_cmy,
+                profile,
+                params,
+                backend,
+                color_ref,
+                &channel_density,
+                base_density,
+                scan_context,
+                slide_points,
+            )
+        })
+    };
 
     // Historical white/black correction stays inside the scan LUT. Active
     // slide points defer only that remap until after capture blur and points.
@@ -675,7 +1250,10 @@ fn spectral_scan(
         }
         points.apply(&mut rgb);
         if color_ref.has_remap() {
-            let to_y = scan_rgb_to_y(scan_context)?;
+            let to_y = match &scan_context.receiver {
+                Some(receiver) => receiver.luminance_weights(),
+                None => scan_rgb_to_y(scan_context)?,
+            };
             rgb.data.par_chunks_exact_mut(3).for_each(|px| {
                 let y = (0..3).map(|c| to_y[c] * to_f64(px[c])).sum();
                 let scale = color_ref.xyz_scale(y);
@@ -687,79 +1265,64 @@ fn spectral_scan(
             });
         }
     }
-    Ok(rgb)
-}
 
-// Scan options preserve the existing stage interface.
-#[allow(clippy::too_many_arguments)]
-pub fn scan_with_options(
-    density_cmy: &ImageBuf,
-    profile: &Profile,
-    params: &RuntimeParams,
-    backend: &dyn ComputeBackend,
-    color_ref: &crate::color_reference::ColorReference,
-    gamut: &crate::gamut_compression::OutputGamutCompress,
-    scan_illuminant: Option<&str>,
-    include_base: bool,
-) -> Result<ImageBuf, String> {
-    let positive_scan = positive_scan_requested(params);
-    let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
-    let _positive_scan = positive_scan.then(|| {
-        super::StageObservation::cpu(
+    // Positive interpretation is scanner-domain for the capture methods:
+    // optical capture and lens blur happen before the calibrated negative
+    // endpoint inversion. The density reading ran above, where it blurred
+    // transmitted light record by record instead.
+    if positive_scan && !density_reading {
+        if params.scanner.lens_blur > 0.0 {
+            rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
+        }
+        if params.scanner.positive_interpretation != crate::params::PositiveInterpretation::Coupled
+        {
+            // `separable`, and `density` where the incoming image is a
+            // capture: the capture converts to density per channel before
+            // the inverse.
+            let calibration = PositiveCalibration::from_profile(
+                profile,
+                params,
+                backend,
+                color_ref,
+                &channel_density,
+                base_density,
+                scan_context,
+            )?;
+            rgb = interpret_negative_capture(rgb, &calibration, params)?;
+        } else {
+            let forward = ForwardCapture::prepare(
+                profile,
+                params,
+                &channel_density,
+                base_density,
+                scan_context,
+                color_ref,
+            );
+            let calibration = prepare_exposure_calibration(
+                profile,
+                params,
+                color_ref,
+                scan_context,
+                &channel_density,
+                base_density,
+                &forward,
+            )?;
+            interpret_coupled_capture(&mut rgb, &calibration, params)?;
+        }
+    }
+    if positive_scan && params.scanner.finish == crate::params::ScannerFinish::LabScan {
+        let _finish = super::StageObservation::cpu(
             backend,
-            "positive_scan",
+            "scanner_finish",
             spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
-        )
-    });
-    let _slide_points = slide_points.then(|| {
-        super::StageObservation::cpu(
-            backend,
-            "scanner_film_points",
-            spektrafilm_gpu::telemetry::CpuReason::ScannerFilmPoints,
-        )
-    });
-    let cpu_fallback = positive_scan
-        .then(|| {
-            backend
-                .observation_context()
-                .filter(|context| context.enabled())
-                .map(|context| {
-                    spektrafilm_gpu::bind_cpu_fallback(
-                        context.clone(),
-                        spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
-                    )
-                })
-        })
-        .flatten();
-    let backend = if positive_scan {
-        static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
-            spektrafilm_gpu::cpu_backend::CpuBackend;
-        cpu_fallback
-            .as_deref()
-            .unwrap_or(&CPU_BACKEND as &dyn ComputeBackend)
-    } else {
-        backend
-    };
-    let output_space = colorspace::resolve(&params.io.output_color_space)
-        .expect("output color space must be validated before scanning");
-    // Positive interpretation reads record densities like a narrowband lab
-    // scanner; it needs no colorimetric capture, and direct film scans get
-    // no viewing glare.
-    let mut rgb = if positive_scan {
-        let calibration = PositiveCalibration::from_profile(profile, params)?;
-        interpret_negative_density(density_cmy, &calibration, params, backend)?
-    } else {
-        spectral_scan(
-            density_cmy,
-            profile,
-            params,
-            backend,
-            color_ref,
-            scan_illuminant,
-            include_base,
-            slide_points,
-        )?
-    };
+        );
+        finish::apply(
+            &mut rgb,
+            output_space,
+            params.scanner.finish_strength,
+            !profile.is_bw(),
+        );
+    }
 
     // Output gamut compression — direct scans preserve the historical
     // capture order; positive scans compress only after interpretation.
@@ -795,7 +1358,7 @@ pub fn scan_with_options(
         && params.settings.rgb_to_raw_method != "mallett2019"
         && matches!(
             params.film_render.grain.engine,
-            crate::params::grain::GrainEngine::V2
+            crate::params::grain::GrainEngine::Procedural
         );
     // Magazine appearance is optional finishing, not a route: it applies to
     // any scanned base workflow after the scanner-domain effects.
@@ -900,37 +1463,36 @@ mod tests {
             channels: std::array::from_fn(|_| PositiveChannel {
                 density: vec![0.0, 1.0, 2.0],
                 log_exposure: vec![-1.0, 0.0, 1.0],
+                clear: 1.0,
             }),
         }
     }
 
-    fn interpret_with(
-        density: &[f64],
-        calibration: &PositiveCalibration,
-        params: &RuntimeParams,
-    ) -> Vec<f64> {
+    fn density_calibration() -> interpretation::DensityCalibration {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let profile = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        interpretation::DensityCalibration::prepare(&profile).unwrap()
+    }
+
+    fn interpret_density(density: &[f64], params: &RuntimeParams) -> Vec<f64> {
         let input = ImageBuf::from_data(
             (density.len() / 3) as u32,
             1,
             density.iter().copied().map(from_f64).collect(),
         );
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
-        interpret_negative_density(&input, calibration, params, &backend)
+        interpret_negative_density(&input, &density_calibration(), params, &backend)
             .unwrap()
             .data
             .iter()
-            .map(|v| to_f64(*v))
+            .map(|value| to_f64(*value))
             .collect()
-    }
-
-    fn interpret(density: &[f64], params: &RuntimeParams) -> Vec<f64> {
-        interpret_with(density, &calibration(), params)
     }
 
     #[test]
     fn denser_negative_reads_brighter_and_stays_finite_beyond_the_curves() {
         let params = RuntimeParams::default();
-        let values = interpret(
+        let values = interpret_density(
             &[-100.0, 0.01, 1.0, 1.9, 100.0]
                 .into_iter()
                 .flat_map(|v| [v; 3])
@@ -949,35 +1511,94 @@ mod tests {
     #[test]
     fn each_output_channel_reads_only_its_own_record() {
         let params = RuntimeParams::default();
-        let neutral = interpret(&[1.0, 1.0, 1.0], &params);
-        let low_magenta = interpret(&[1.0, 0.2, 1.0], &params);
+        let neutral = interpret_density(&[1.0, 1.0, 1.0], &params);
+        let low_magenta = interpret_density(&[1.0, 0.2, 1.0], &params);
         assert_eq!(low_magenta[0], neutral[0]);
         assert!(low_magenta[1] < neutral[1]);
         assert_eq!(low_magenta[2], neutral[2]);
     }
 
     #[test]
-    fn density_and_balance_controls_change_only_requested_channels() {
+    fn density_reading_ignores_the_receiver_and_the_capture() {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let profile = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let density = ImageBuf::from_data(
+            3,
+            1,
+            [0.2, 0.4, 0.6, 0.9, 0.9, 0.9, 1.5, 1.2, 1.1]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let color_ref = crate::color_reference::ColorReference::identity();
+        let gamut = crate::gamut_compression::OutputGamutCompress::identity();
         let mut params = RuntimeParams::default();
-        let baseline = interpret(&[1.0; 3], &params);
+        params.io.scan_film = true;
+        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Density;
+        params.scanner.receiver_profile = crate::params::ReceiverProfile::LegacyColorimetric;
+        let legacy = scan_with_capture(
+            &density, &profile, &params, &backend, &color_ref, &gamut, None, true, None,
+        )
+        .unwrap();
+        params.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
+        let lab_scan = scan_with_capture(
+            &density, &profile, &params, &backend, &color_ref, &gamut, None, true, None,
+        )
+        .unwrap();
+        assert_eq!(legacy.data, lab_scan.data);
+        assert!(legacy.data.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn calibrated_response_preserves_polarity_and_unbounded_headroom() {
+        let params = RuntimeParams::default();
+        let input = ImageBuf::from_data(
+            5,
+            1,
+            [100.0, 1.0, 0.1, 0.01, -100.0]
+                .into_iter()
+                .flat_map(|v| [from_f64(v); 3])
+                .collect(),
+        );
+        let output = interpret_negative_capture(input, &calibration(), &params).unwrap();
+        let values: Vec<f64> = output.data.iter().step_by(3).map(|v| to_f64(*v)).collect();
+        assert!(values.windows(2).all(|w| w[1] > w[0]));
+        assert!(values[0] < 0.0 && values[4] > 1.0);
+    }
+
+    #[test]
+    fn density_and_balance_controls_change_only_requested_channels() {
+        let input = ImageBuf::from_data(1, 1, vec![from_f64(0.1); 3]);
+        let mut params = RuntimeParams::default();
+        let baseline = interpret_negative_capture(input.clone(), &calibration(), &params).unwrap();
         params.scanner.positive_density_ev += 1.0;
-        let brighter = interpret(&[1.0; 3], &params);
-        assert!(brighter.iter().zip(&baseline).all(|(a, b)| a > b));
+        let brighter = interpret_negative_capture(input.clone(), &calibration(), &params).unwrap();
+        assert!(brighter.data.iter().zip(&baseline.data).all(|(a, b)| a > b));
         params.scanner.positive_density_ev -= 1.0;
         params.scanner.positive_balance_ev = [1.0, 0.0, -1.0];
-        let balanced = interpret(&[1.0; 3], &params);
-        assert!(balanced[0] > baseline[0]);
-        assert_eq!(balanced[1], baseline[1]);
-        assert!(balanced[2] < baseline[2]);
+        let balanced = interpret_negative_capture(input, &calibration(), &params).unwrap();
+        assert!(balanced.data[0] > baseline.data[0]);
+        assert_eq!(balanced.data[1], baseline.data[1]);
+        assert!(balanced.data[2] < baseline.data[2]);
     }
 
     #[test]
     fn very_small_output_density_stays_finite_and_ordered() {
         let mut params = RuntimeParams::default();
         params.scanner.positive_dmax = 1e-18;
-        let output = interpret(&[0.5, 0.5, 0.5, 1.5, 1.5, 1.5], &params);
-        assert!(output.iter().all(|v| v.is_finite()));
-        assert!(output[3] > output[0]);
+        let input = ImageBuf::from_data(
+            2,
+            1,
+            [0.5, 0.5, 0.5, 0.1, 0.1, 0.1]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let output = interpret_negative_capture(input, &calibration(), &params).unwrap();
+        assert!(output.data.iter().all(|v| v.is_finite()));
+        assert!(output.data[3] > output.data[0]);
     }
 
     #[test]
@@ -988,37 +1609,75 @@ mod tests {
         let mut calibration = calibration();
         calibration.channels[1].density = vec![0.0, 0.5, 1.0];
         calibration.channels[2].density = vec![0.0, 1.5, 3.0];
-        // A neutral ramp off the window center: each record at its own density
-        // for the same exposure.
-        let neutral: Vec<f64> = [-0.7, 0.2, 0.5]
-            .into_iter()
-            .flat_map(|e: f64| [e + 1.0, 0.5 * (e + 1.0), 1.5 * (e + 1.0)])
-            .collect();
-        let baseline = interpret_with(&neutral, &calibration, &RuntimeParams::default());
-        let equal = interpret_with(&neutral, &calibration, &params);
-        for (px, base) in equal
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .zip(baseline.as_chunks::<3>().0)
-        {
-            assert!((px[0] - px[1]).abs() < 2e-6);
-            assert!((px[0] - px[2]).abs() < 2e-6);
-            assert_ne!(px[0], base[0]);
+        let input = ImageBuf::from_data(
+            3,
+            1,
+            [-0.7, 0.0, 0.5]
+                .into_iter()
+                .flat_map(|e| {
+                    [
+                        10.0f64.powf(-(e + 1.0)),
+                        10.0f64.powf(-0.5 * (e + 1.0)),
+                        10.0f64.powf(-1.5 * (e + 1.0)),
+                    ]
+                    .map(from_f64)
+                })
+                .collect(),
+        );
+        let equal = interpret_negative_capture(input.clone(), &calibration, &params).unwrap();
+        for px in equal.data.as_chunks::<3>().0 {
+            assert!((to_f64(px[0]) - to_f64(px[1])).abs() < 2e-6);
+            assert!((to_f64(px[0]) - to_f64(px[2])).abs() < 2e-6);
         }
-        // Narrowing the window spreads the ramp: darker shadows, brighter highlights.
-        assert!(equal[0] < baseline[0] && equal[6] > baseline[6]);
         params.scanner.black_point[0] = 0.1;
-        let independent = interpret_with(&neutral, &calibration, &params);
+        let independent = interpret_negative_capture(input, &calibration, &params).unwrap();
         for (a, b) in independent
+            .data
             .as_chunks::<3>()
             .0
             .iter()
-            .zip(equal.as_chunks::<3>().0)
+            .zip(equal.data.as_chunks::<3>().0)
         {
             assert_ne!(a[0], b[0]);
             assert_eq!(&a[1..], &b[1..]);
         }
+    }
+
+    #[test]
+    fn active_negative_endpoint_tangents_chain_point_derivative() {
+        let mut params = RuntimeParams::default();
+        params.scanner.black_point = [0.15; 3];
+        params.scanner.white_point = [0.85; 3];
+        for endpoint in [1.0, 0.01] {
+            let h = endpoint * 1e-3;
+            let input = ImageBuf::from_data(
+                3,
+                1,
+                [endpoint - h, endpoint, endpoint + h]
+                    .into_iter()
+                    .flat_map(|v| [from_f64(v); 3])
+                    .collect(),
+            );
+            let output = interpret_negative_capture(input, &calibration(), &params).unwrap();
+            let left = (to_f64(output.data[3]) - to_f64(output.data[0])) / h;
+            let right = (to_f64(output.data[6]) - to_f64(output.data[3])) / h;
+            assert!((left - right).abs() < 0.02 * left.abs());
+        }
+        let signed = ImageBuf::from_data(
+            2,
+            1,
+            [-1.0, -1.0, -1.0, 2.0, 2.0, 2.0]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        assert!(
+            interpret_negative_capture(signed, &calibration(), &params)
+                .unwrap()
+                .data
+                .iter()
+                .all(|v| v.is_finite())
+        );
     }
 
     #[test]
@@ -1265,6 +1924,38 @@ mod tests {
             result
                 .unwrap_err()
                 .contains("point window reciprocal is not representable")
+        );
+    }
+
+    #[test]
+    fn monochrome_coupled_preserves_signed_endpoint_headroom() {
+        let params = RuntimeParams::default();
+        let calibration = ExposureCalibration::Monochrome(calibration());
+        let mut image = ImageBuf::from_data(
+            5,
+            1,
+            [100.0, 1.0, 0.1, 0.01, -100.0]
+                .into_iter()
+                .flat_map(|v| [from_f64(v); 3])
+                .collect(),
+        );
+        interpret_coupled_capture(&mut image, &calibration, &params).unwrap();
+        let values: Vec<_> = image
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| to_f64(p[0]))
+            .collect();
+        assert!(values.windows(2).all(|w| w[0] < w[1]));
+        assert!(values[0] < 0.0 && values[4] > 1.0);
+        assert!(
+            image
+                .data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .all(|p| p[0] == p[1] && p[1] == p[2])
         );
     }
 }
