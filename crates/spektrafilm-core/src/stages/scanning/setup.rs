@@ -167,7 +167,7 @@ fn quantile(sorted: &[f64], fraction: f64) -> f64 {
 /// Logistic coordinate `contrast * exposure_ev` for the density tone output.
 fn tone_coordinate(output: f64, dmax: f64) -> f64 {
     let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
-    let density = -(1.0 - denominator * (1.0 - output)).ln() / std::f64::consts::LN_10;
+    let density = -(-denominator * (1.0 - output)).ln_1p() / std::f64::consts::LN_10;
     let t = 1.0 - density / dmax;
     (t / (1.0 - t)).ln()
 }
@@ -182,6 +182,26 @@ mod tests {
 
     fn ramp() -> Vec<[f64; 3]> {
         (0..101).map(|i| [(i as f64 - 50.0) * 0.02; 3]).collect()
+    }
+
+    #[test]
+    fn small_positive_density_places_flat_frame_at_mid_output() {
+        let mut params = RuntimeParams::default();
+        params.scanner.positive_dmax = 1e-18;
+        let samples = [[0.4; 3]; 16];
+        let measured =
+            ScannerSetup::from_samples(&samples, 0.0, [-2.0, 2.0], &params.scanner).unwrap();
+        measured.apply(&mut params);
+        let exposure = 0.4 / std::f64::consts::LOG10_2 + params.scanner.positive_density_ev;
+        let coordinate = params.scanner.positive_contrast * exposure;
+        let t = 1.0 / (1.0 + (-coordinate).exp());
+        let dmax = params.scanner.positive_dmax;
+        let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
+        let positive = (-std::f64::consts::LN_10 * dmax * (1.0 - t)).exp_m1();
+        let output = (positive + denominator) / denominator;
+        assert!((output - MID_OUTPUT).abs() < 1e-12);
+        assert_eq!(measured.contrast_scale, 1.0);
+        assert_eq!(measured.balance_ev, [0.0; 3]);
     }
 
     #[test]

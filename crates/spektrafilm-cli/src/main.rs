@@ -723,6 +723,7 @@ fn cmd_process(
         == spektrafilm_core::params::ScannerAutoSetup::PerFrame
     {
         let mut canonical = resolve_params(true)?;
+        canonical.params.random_seed = u64::from(args.seed.unwrap_or(0));
         apply_channel_swap(&mut canonical.film, &workflow.film_channel_swap)?;
         apply_channel_swap(&mut canonical.print, &workflow.print_channel_swap)?;
         Some(canonical)

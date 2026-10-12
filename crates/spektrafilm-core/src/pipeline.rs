@@ -108,6 +108,10 @@ impl Pipeline {
         self
     }
 
+    pub(crate) fn has_scanner_setup(&self) -> bool {
+        self.scanner_setup.is_some()
+    }
+
     pub(crate) fn prepare_scanner_setup(
         &self,
         full_input: &ImageBuf,
@@ -658,23 +662,33 @@ impl Pipeline {
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
     ) -> Result<ImageBuf, String> {
+        let inject = match inject {
+            Some(tap) => tap,
+            None => self
+                .params
+                .taps
+                .inject
+                .as_deref()
+                .map(Tap::parse)
+                .transpose()?
+                .unwrap_or(Tap::RgbIn),
+        };
         if self.params.scanner.auto_setup == crate::params::ScannerAutoSetup::PerFrame
             && self.scanner_setup.is_none()
         {
-            if inject.is_some_and(|tap| tap != Tap::RgbIn)
-                || self
-                    .params
-                    .taps
-                    .inject
-                    .as_deref()
-                    .is_some_and(|tap| tap != "rgb_in")
-            {
+            if inject != Tap::RgbIn {
                 return Err("per_frame scanner setup requires the full rgb_in input".into());
             }
             let setup = self.prepare_scanner_setup(&image)?;
             let mut prepared = self.clone();
             prepared.scanner_setup = Some(setup);
-            return prepared.process_with_taps_timed(image, backend, inject, collect, timings);
+            return prepared.process_with_taps_timed(
+                image,
+                backend,
+                Some(inject),
+                collect,
+                timings,
+            );
         }
         let cpu_fallback = if self.params.scanner.scan_output == "positive_scan" {
             backend
@@ -697,17 +711,6 @@ impl Pipeline {
         let backend = cpu_fallback
             .as_deref()
             .unwrap_or_else(|| self.effective_backend(backend));
-        let inject = match inject {
-            Some(tap) => tap,
-            None => self
-                .params
-                .taps
-                .inject
-                .as_deref()
-                .map(Tap::parse)
-                .transpose()?
-                .unwrap_or(Tap::RgbIn),
-        };
         let collect = match collect {
             Some(tap) => tap,
             None => self

@@ -173,6 +173,7 @@ executable.
 
 # Inspect effective scanner selections without decoding or writing output
 ./target/release/spektrafilm process input.tif -o positive.tif --film kodak_portra_400 --scan-film \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --scan-output positive_scan --set scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan --dry-run --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)

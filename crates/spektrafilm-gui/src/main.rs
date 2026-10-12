@@ -2507,6 +2507,35 @@ impl App {
         {
             self.load_image_from_path(&path);
         }
+        if section == "Scanner" && self.params.scanner.scan_output == "positive_scan" {
+            match self.params.scanner.auto_setup {
+                ScannerAutoSetup::Off => {
+                    ui.label("Scanner setup: disabled");
+                }
+                ScannerAutoSetup::PerFrame if self.image.is_none() => {
+                    ui.label("Scanner setup: awaiting input");
+                }
+                ScannerAutoSetup::PerFrame => {
+                    let key = (self.input_epoch, self.parameter_revision);
+                    match self
+                        .scanner_setup
+                        .as_ref()
+                        .filter(|(cached, _)| *cached == key)
+                        .and_then(|(_, setup)| setup.get())
+                    {
+                        None => {
+                            ui.label("Scanner setup: pending for current input revision");
+                        }
+                        Some(Ok(_)) => {
+                            ui.label("Scanner setup: derived for current input revision");
+                        }
+                        Some(Err(reason)) => {
+                            ui.label(format!("Scanner setup: failed — {reason}"));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn import_section(&mut self, ui: &mut egui::Ui, raw: bool) {
@@ -3035,8 +3064,8 @@ mod telemetry_lifecycle_tests {
                     .unwrap()
                     .as_nanos()
             )),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
         );
-        app.data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data");
         app.film_name = "kodak_portra_400".into();
         app.print_name = "kodak_portra_endura".into();
         app.params.workflow.route = "input > film > scan".into();

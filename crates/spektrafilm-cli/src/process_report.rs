@@ -72,6 +72,12 @@ pub(crate) fn print_text(report: &Value) {
         value(&params["scanner"]["scan_output"])
     );
     println!("  seed: {}", value(&report["seed"]));
+    record("SCANNER", &params["scanner"]);
+    record(
+        "SCANNER RECEIVER",
+        &report["scanner_provenance"]["receiver"],
+    );
+    record("SCANNER PROVENANCE", &report["scanner_provenance"]);
     println!(
         "  camera exposure: {} EV",
         value(&params["camera"]["exposure_compensation_ev"])
