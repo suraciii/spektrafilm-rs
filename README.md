@@ -95,6 +95,7 @@ The `just` command surface also covers packaging and per-user installation:
 just build
 just check
 just test
+just test-f64
 just ci
 just package
 just install
@@ -162,18 +163,11 @@ executable.
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
 
-# Positive scanner interpretation with explicit receiver, inverse, setup and finish
+# Direct negative-film scan interpreted as a positive image
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
-    --set scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled \
-    --set scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
     --scan-output positive_scan --data-dir data
-
-# Inspect effective scanner selections without decoding or writing output
-./target/release/spektrafilm process input.tif -o positive.tif --film kodak_portra_400 --scan-film \
-    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --scan-output positive_scan --set scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan --dry-run --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json
@@ -186,7 +180,9 @@ executable.
 
 The material profile computes developed dye amounts and spectral density before printing or scanning. It does not provide measured CineStill spectral sensitivity, dye spectra, grain or halation. Its fitted CDF components are mathematical terms, not measured emulsion layers. Keep grain disabled for material comparisons, and compare halation separately. The chart reference of -1.535 defines the chosen model exposure origin; it does not establish absolute ISO or prove that the manufacturer's reference is an 18% gray exposure. Metadata records the sources, approximations and attribution. The derivative retains Andrea Volpato's CC BY-SA 4.0 asset license.
 
-The built-in `CineStill 800T Cs41 (experimental)` look uses RGB halation strengths `[0.30, 0.01, 0.005]` from [Andrea Volpato's PIXLS airplane example](https://discuss.pixls.us/t/spectral-film-simulations-from-scratch/48209/778), with the first sigma reduced from 200 to 65 micrometers in all channels and the bounce count reduced from five to three. Fixed-input comparisons across a cafe, two night scenes and a portrait showed less shadow spill while retaining bright-edge halation. These are unmeasured appearance parameters, not a calibrated CineStill PSF. Grain, scattering, DIR couplers, glare, sharpening, and highlight boost are disabled. The look preserves the caller's camera exposure and input color interpretation. Its optional Portra Endura settings balance synthetic linear-sRGB midgray; they do not change the film material. Select the workflow separately.
+The built-in `CineStill 800T Cs41 (experimental)` look fits halation and Grain V3 controls to public lab scans of CineStill 800T from [PhotonFolly](https://photonfolly.com/analog/examples/Cinestill_800T/Cinestill_800T.html). Halation uses RGB strengths `[0.15, 0.045, 0.005]`, a 160-micrometer first sigma in all channels, and three bounces. Around lamps in the print route, this setting places the red-excess peak at 150–280 micrometers and its half-height at 330–470 micrometers. The three reviewed scans measure 240–370 and 270–530 micrometers. The previous PIXLS-derived 65-micrometer kernel peaked at 120–170 micrometers. The real lamps have unknown overexposure, and the print compresses their highlights, so the fit uses profile shape and red-to-green hue rather than peak height. Grain uses `rms_granularity = [13.1, 19.2, 24.4]` with `particle_scale_sublayers = [4.0, 0.15, 0.03]`. On seven tone-matched flat windows at the scans' film pitch, mean high-passed RGB grain RMS is within 5% of the scans, and the simulated-to-real ratio has no luminance trend. Simulated grain remains finer, with a half-autocorrelation radius of 6.1–6.2 micrometers versus 6.9–7.7. It is also more chromatic, with a chroma-to-luma ratio of 1.29–1.42 versus 0.97–1.15. None of these values is a measured CineStill PSF or granularity. Grain V3 requires a 36 mm frame, so the look keeps grain off; enable it with `camera.film_format_mm=36,film_render.grain.active=true`. Scattering, DIR couplers, glare, sharpening, and highlight boost are disabled. The look preserves the caller's camera exposure and input color interpretation. Its optional Portra Endura settings balance synthetic linear-sRGB midgray; they do not change the film material. Select the workflow separately.
+
+The film chain normalizes spectral upsampling to the profile's reference illuminant, so a neutral input pixel means white under that light. For this tungsten profile, that light is `T` (CIE xy 0.4507, 0.4081; about 2812 K). An as-shot white-balanced input therefore hides the film's color balance. To evaluate tungsten balance, adapt the input from its capture light to `T`: decode RAW with `--raw-white-balance custom --raw-temperature 2812`; adapt rendered input with CAT02 from its known capture white. Daylight scenes then render blue, and lamps warmer than `T` render orange.
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
@@ -369,6 +365,48 @@ For Rust consumers, `BundleBuilder::build` returns typed `Bundle`, `Lut`, and
 `(r * resolution + g) * resolution + b`; format writers reorder at serialization.
 `export-lut` calls the same baker for a single combined ProPhoto RGB to sRGB
 transform with native input headroom.
+
+### Appearance benchmark
+
+The external `spektrafilm-bench` CLI renders immutable evidence, compares versions, and creates an offline review. It reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. It preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations. The [benchmark specification](specs/benchmark/README.md) defines reference scopes and qualification rules.
+
+Install the locked Python dependencies with `uv`. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
+
+```bash
+just build-f64
+uv sync --project scripts/benchmark --locked
+scripts/benchmark/.venv/bin/python scripts/benchmark/fixtures.py \
+    --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
+    --out /tmp/spektrafilm-benchmark-fixtures --download-natural
+
+scripts/benchmark/spektrafilm-bench validate --kind suite \
+    --file /tmp/spektrafilm-benchmark-fixtures/complete.json
+scripts/benchmark/spektrafilm-bench run \
+    --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
+    --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
+    --out /tmp/spektrafilm-benchmark-baseline
+scripts/benchmark/spektrafilm-bench run \
+    --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
+    --target /tmp/spektrafilm-benchmark-fixtures/candidate.json \
+    --out /tmp/spektrafilm-benchmark-candidate
+scripts/benchmark/spektrafilm-bench compare \
+    --baseline /tmp/spektrafilm-benchmark-baseline \
+    --candidate /tmp/spektrafilm-benchmark-candidate \
+    --out /tmp/spektrafilm-benchmark-comparison
+scripts/benchmark/spektrafilm-bench report \
+    --comparison /tmp/spektrafilm-benchmark-comparison \
+    --out /tmp/spektrafilm-benchmark-review
+scripts/benchmark/.venv/bin/python -m unittest discover -s scripts/benchmark/tests
+```
+
+Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time, prioritizes `color_chart_30mp` when present, and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows synchronized baseline/candidate imagery, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither a renderer nor the original run directories. Reference artifacts with unknown or denied redistribution permission remain omitted and identified in the report manifest.
+
+The viewer opens in split mode: drag the divider on the image, use the range control, or move the focused divider with arrow keys (Shift for larger steps; Home/End for endpoints). Display copies use 16-bit RGB sRGB PNG without dither. Fit views resize floating samples before 16-bit quantization; native 100%, 200%, and 400% views switch to the full-size image, and detail crops preserve its 16-bit samples. Browser and screen precision still limit the displayed result. Preview resampling never feeds measurements.
+
+Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied policy is exploratory and cannot qualify a release. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
+
+The generated quick and complete suites include the natural scene when acquired. Without `--natural-input` or `--download-natural`, they contain controlled probes only. The packaged scene covers shadows and texture; broader skin, foliage, mixed-light, and real film-scan coverage requires explicitly declared assets and regions. Synthetic probes and rendered reference fixtures do not establish physical film fidelity.
+
 ### LUT delivery
 
 LUT bundles carry their stock, transport, exposure, topology, wire constants and parameter snapshots in `bundle.json`, with consumer instructions, the canonical upstream `SPEKTRAFILM_LICENSE.txt`, and derivative notices. Directory and ZIP delivery use portable relative artifact paths. The only active camera target is `lumix_realtime_vlog`: Panasonic V-Log input, sRGB/Rec.709/Rec.2020 output, and the minimal `#LUMIXPHOTOSTYLE VLOG` header. Upstream field verification covers the 33³ grid; other exporter-accepted resolutions have no camera compatibility claim.
@@ -419,9 +457,13 @@ V1 grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (default, m
 
 Both V1 composite and layered grain use the CPU sampler during preview and export; no resident WGPU V1 grain shader is maintained. Active V1 grain rendering selects the faithful per-stage path. The separate Grain V2 implementation remains available.
 
-Grain V3 is selected with `film_render.grain.engine: "v3"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (Gaussian sigma in micrometers, default `3.5`; the field-cell pitch is `support / 2`) and realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers` (square micrometers, default `1.28`), using the resolved `density_min` and `uniformity` and forming every channel from the film's three sublayers. Both controls must be finite and strictly positive. The channel scale is `k_c = (rms_granularity_c / 6)²`, where `6` is the preset of the reference stock `kodak_portra_800`. It is the only per-channel strength input: V3 does not read V1's `particle_area_um2` or `particle_scale`, whose blue-heavy default would double a coarser blue record. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. V3 supports still color-negative profiles (`info.type = "negative"`, `info.use = "still"`) using the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`; it is not a roll-width designation. The reference validation remains a 36 mm long edge on `input > film > print > scan` with `io.scan_film = false`. Format changes alter physical footprints and workload, while crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound. The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `positive_scan` and `direct_scan`. Another chemistry or usage (including cine), or an unsupported route, fails with an actionable unsupported-condition error. V3 resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the V3 specification](specs/film-grain/v3/spec.md).
+Grain V3 is selected with `film_render.grain.engine: "v3"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (Gaussian sigma in micrometers, default `3.5`; the field-cell pitch is `support / 2`) and realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers` (square micrometers, default `1.28`), using the resolved `density_min` and `uniformity` and forming every channel from the film's three sublayers. Both controls must be finite and strictly positive. The channel scale is `k_c = (rms_granularity_c / 6)²`, where `6` is the preset of the reference stock `kodak_portra_800`. It is the only per-channel strength input: V3 does not read V1's `particle_area_um2` or `particle_scale`, whose blue-heavy default would double a coarser blue record. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. V3 supports still and cine color-negative filming profiles using the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`; it is not a roll-width designation. The reference validation remains a 36 mm long edge on `input > film > print > scan` with `io.scan_film = false`. Format changes alter physical footprints and workload, while crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound. The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `positive_scan` and `direct_scan`. Another chemistry or an unsupported route, fails with an actionable unsupported-condition error. V3 resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the V3 specification](specs/film-grain/v3/spec.md).
 
 When downstream spatial processing is active, V3 extends the output grid to cover the full film before those stages and extracts the requested crop afterward. Physical optical controls use the actual output pitch; scanner blur and unsharp masking remain pixel controls. See [film geometry](specs/film-grain/v3/design.md#film-geometry) for rounded and anisotropic output limits. The final V3 cell-address mapping changes the realization of prototype seeds while preserving the probability law. V3 sublayer scales must be positive; the GUI editing minimum is `0.01`.
+
+Cine profiles such as Kodak VISION3 500T can use V3 with their existing stock controls. This availability does not establish cine photographic calibration. The current density-average readout exceeds the spectral aperture gate for the measured 500T-to-2383 condition; see [known optical limits](specs/film-grain/v3/design.md#evidence-and-limits).
+
+Set `SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR=6` to try the [spectral aperture probe](specs/film-grain/v3/spectral-aperture.md) on an active V3 print route. It reads a finer lattice and averages linear print exposure before print development. Disable enlarger diffusion, scanner blur, unsharp mask, and print glare for this probe. The default path remains unchanged when the variable is absent. Supersampling does not establish cine calibration or replace exact fractional-overlap integration.
 
 The LUT path (`use_enlarger_lut` + `use_scanner_lut`) ports Python's PCHIP 3D interpolation (`crates/spektrafilm-math/src/pchip3d.rs` ↔ `spektrafilm/utils/fast_interp_lut.py`). The executed f64 LUT-reduction scenarios passed the **1e-5** maximum absolute-error budget; the 265 delivered LUT stock/topology/transport cases passed independent Python comparisons.
 
@@ -501,5 +543,3 @@ Claude code for being this awesome.
 ## License
 
 The Rust program is GPL-3.0; see [LICENSE](LICENSE). Andrea Volpato's spectral profiles and their LUT derivatives retain CC BY-SA 4.0; see [the canonical asset license](data/license/SPEKTRAFILM_LICENSE.txt).
-
-The optional LabScan scanner finish adapts Fotufilm project-authored `Sources/FotufilmCore/LabScanFinish.swift` under Apache-2.0, pinned at research revision `59d43471dbef45c85ae442e507a291fdefb2ec5` (source SHA-256 `fd2352193a8c91232729e51cc83cf748236b3a4b3cfaed07e703f5ae0943fe73`). The approximate narrow-band receiver follows Fotufilm's `PrintPaperTables.swift` sensitivity approximation; it is not a measured or calibrated scanner device. Receiver and finish source/version metadata is retained in scanner provenance.

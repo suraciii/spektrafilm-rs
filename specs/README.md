@@ -14,5 +14,6 @@ Capabilities:
 - [Look presets](presets/spec.md) — portable film and print looks and GUI state compatibility.
 - [CLI parameters](cli-parameters/spec.md) — preset selection, sparse parameter overrides, and parameter discovery.
 - [CLI workflow](cli-workflow/spec.md) — help, version identity, data selection, command status, and human feedback.
+- [Film simulation benchmark](benchmark/README.md) — agent-facing version comparison, reference alignment, measurements, and visual review artifacts.
 
 Each capability owns its contract. Cross-capability rules are stated once in the owning document and linked elsewhere.
