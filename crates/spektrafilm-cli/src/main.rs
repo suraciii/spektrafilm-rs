@@ -16,7 +16,6 @@ use spektrafilm_core::pipeline::Pipeline;
 use spektrafilm_core::profile;
 use spektrafilm_math::image::ImageBuf;
 
-
 use std::time::Instant;
 #[derive(Parser)]
 #[command(
@@ -334,10 +333,9 @@ fn main() -> Result<()> {
             report,
             data_dir,
         } => cmd_parity(&corpus, &report, &data_dir)?,
-
     }
     Ok(())
-    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn cmd_process(
@@ -392,7 +390,14 @@ fn cmd_process(
     params
         .validate()
         .map_err(anyhow::Error::msg)
-        .with_context(|| format!("invalid params{}", params_file.map(|p| format!(" file {}", p.display())).unwrap_or_default()))?;
+        .with_context(|| {
+            format!(
+                "invalid params{}",
+                params_file
+                    .map(|p| format!(" file {}", p.display()))
+                    .unwrap_or_default()
+            )
+        })?;
     params.io.scan_film = scan_film;
 
     // RAW supplies linear ACES; prepared images retain their samples.
@@ -434,13 +439,19 @@ fn cmd_process(
                 "custom" => spektrafilm_raw::WhiteBalance::Custom,
                 _ => spektrafilm_raw::WhiteBalance::AsShot,
             },
-            temperature: workflow.raw_temperature, tint: workflow.raw_tint,
+            temperature: workflow.raw_temperature,
+            tint: workflow.raw_tint,
             lens_correction: workflow.lens_correction,
         };
-        (spektrafilm_raw::load(input, &options).map_err(anyhow::Error::msg)?.image, image_io::read_metadata(input))
+        (
+            spektrafilm_raw::load(input, &options)
+                .map_err(anyhow::Error::msg)?
+                .image,
+            image_io::read_metadata(input),
+        )
     } else {
-        let loaded = image_io::load(input)
-            .with_context(|| format!("loading image: {}", input.display()))?;
+        let loaded =
+            image_io::load(input).with_context(|| format!("loading image: {}", input.display()))?;
         (loaded.image, loaded.metadata)
     };
     // Preview mode: bound the long edge before processing (upstream
@@ -482,12 +493,14 @@ fn cmd_process(
             "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
              removed; check that the profiles/data directory contains the spectral LUTs \
              (looked under {})",
-             data_dir.display()
+            data_dir.display()
         )
     })?;
     let run_once = |image: ImageBuf| -> Result<ImageBuf> {
         let out = if inject.is_none() && collect.is_none() {
-            pipeline.process(image, backend.as_ref()).map_err(anyhow::Error::msg)?
+            pipeline
+                .process(image, backend.as_ref())
+                .map_err(anyhow::Error::msg)?
         } else {
             pipeline
                 .process_with_taps(image, backend.as_ref(), inject, collect)
@@ -520,9 +533,20 @@ fn cmd_process(
 
     // Save output
     let t = Instant::now();
-    let saving_space = workflow.saving_color_space.as_deref().unwrap_or(&output_color_space);
-    let saving_encoded = workflow.saving_cctf_encoding.unwrap_or(output_cctf_encoding);
-    let saving_image = image_io::convert_image(&result, &output_color_space, output_cctf_encoding, saving_space, saving_encoded)?;
+    let saving_space = workflow
+        .saving_color_space
+        .as_deref()
+        .unwrap_or(&output_color_space);
+    let saving_encoded = workflow
+        .saving_cctf_encoding
+        .unwrap_or(output_cctf_encoding);
+    let saving_image = image_io::convert_image(
+        &result,
+        &output_color_space,
+        output_cctf_encoding,
+        saving_space,
+        saving_encoded,
+    )?;
     let report = image_io::save(
         output,
         &saving_image,
@@ -625,11 +649,17 @@ fn render_recipe(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("output has no parent directory"))?;
     fs::create_dir_all(parent)?;
-    let extension = output.extension().and_then(|value| value.to_str()).unwrap_or("tmp");
+    let extension = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("tmp");
     let temporary = parent.join(format!(
         ".spektrafilm-{}-{}.{}",
         std::process::id(),
-        format!("{:x}", Sha256::digest(output.as_os_str().as_encoded_bytes())),
+        format!(
+            "{:x}",
+            Sha256::digest(output.as_os_str().as_encoded_bytes())
+        ),
         extension
     ));
     if temporary.exists() {
@@ -678,8 +708,8 @@ fn inspect(input: &Path) -> Result<Value> {
         bail!("input is not a regular file: {}", input.display());
     }
     let bytes = fs::read(input)?;
-    let loaded = image_io::load(input)
-        .with_context(|| format!("inspecting image {}", input.display()))?;
+    let loaded =
+        image_io::load(input).with_context(|| format!("inspecting image {}", input.display()))?;
     let format = image_io::ImageFormat::detect(input)?;
     let precision_bits = match format {
         image_io::ImageFormat::Png | image_io::ImageFormat::Jpeg => Some(8),
@@ -728,7 +758,10 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         corpus.parent().unwrap_or_else(|| Path::new("."))
     };
     let documents = if corpus.is_file() {
-        vec![(corpus.to_path_buf(), serde_json::from_slice::<Value>(&fs::read(corpus)?)?)]
+        vec![(
+            corpus.to_path_buf(),
+            serde_json::from_slice::<Value>(&fs::read(corpus)?)?,
+        )]
     } else if corpus.is_dir() {
         let mut paths = fs::read_dir(corpus)?
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -737,26 +770,28 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         paths.sort();
         paths
             .into_iter()
-            .map(|path| Ok((path.clone(), serde_json::from_slice::<Value>(&fs::read(&path)?)?)))
+            .map(|path| {
+                Ok((
+                    path.clone(),
+                    serde_json::from_slice::<Value>(&fs::read(&path)?)?,
+                ))
+            })
             .collect::<Result<Vec<_>>>()?
     } else {
-        bail!("corpus is neither a file nor a directory: {}", corpus.display());
+        bail!(
+            "corpus is neither a file nor a directory: {}",
+            corpus.display()
+        );
     };
     let mut cases = Vec::new();
     for (source, document) in documents {
-        let entries = document.as_array().cloned().unwrap_or_else(|| vec![document]);
+        let entries = document
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![document]);
         for (index, entry) in entries.into_iter().enumerate() {
-            let name = entry
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("case");
-            let result = run_parity_case(
-                base,
-                &entry,
-                data_dir,
-                report,
-                cases.len() + index,
-            );
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or("case");
+            let result = run_parity_case(base, &entry, data_dir, report, cases.len() + index);
             let case = match result {
                 Ok(case) => case,
                 Err(error) => json!({
@@ -771,7 +806,9 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         }
     }
     let passed = !cases.is_empty()
-        && cases.iter().all(|case| case["passed"].as_bool() == Some(true));
+        && cases
+            .iter()
+            .all(|case| case["passed"].as_bool() == Some(true));
     let document = json!({
         "implementation": contract::IMPLEMENTATION,
         "adapterVersion": contract::ADAPTER_VERSION,
@@ -782,7 +819,10 @@ fn cmd_parity(corpus: &Path, report: &Path, data_dir: &Path) -> Result<()> {
         "cases": cases,
         "dataDir": data_dir,
     });
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(report)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(report)?;
     file.write_all(serde_json::to_string_pretty(&document)?.as_bytes())?;
     file.write_all(b"\n")?;
     Ok(())
@@ -843,10 +883,11 @@ fn run_parity_case(
             let passed = if let Some(diff) = &image_diff {
                 diff["dimensionsMatch"].as_bool() == Some(true)
                     && diff["maxAbs"].as_f64().is_some_and(|value| {
-                        value <= entry
-                            .get("pixelTolerance")
-                            .and_then(Value::as_f64)
-                            .unwrap_or(0.02)
+                        value
+                            <= entry
+                                .get("pixelTolerance")
+                                .and_then(Value::as_f64)
+                                .unwrap_or(0.02)
                     })
             } else {
                 reference_digest == facts["output"]["sha256"].as_str().map(ToOwned::to_owned)
@@ -881,7 +922,11 @@ fn resolve_case_path(base: &Path, value: Option<&Value>) -> Result<PathBuf> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("parity case requires a string path"))?;
     let path = PathBuf::from(value);
-    Ok(if path.is_absolute() { path } else { base.join(path) })
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    })
 }
 
 fn compare_images(reference: &Path, output: &Path, tolerance: f64) -> Result<Value> {
@@ -971,8 +1016,13 @@ fn cmd_describe(format: DiscoveryFormat, module: Option<&str>, field: Option<&st
 }
 
 fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {
-    if selection == "none" { return Ok(()); }
-    let order: Vec<usize> = selection.split(',').map(str::parse).collect::<std::result::Result<_, _>>()
+    if selection == "none" {
+        return Ok(());
+    }
+    let order: Vec<usize> = selection
+        .split(',')
+        .map(str::parse)
+        .collect::<std::result::Result<_, _>>()
         .with_context(|| "channel swap must contain three indices such as 2,1,0")?;
     if order.len() != 3 || order.iter().any(|&channel| channel > 2) {
         bail!("channel swap must contain three indices in 0..2");
@@ -980,7 +1030,9 @@ fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result
     for row in &mut profile.data.channel_density {
         if row.len() >= 3 {
             let original = [row[0], row[1], row[2]];
-            for channel in 0..3 { row[channel] = original[order[channel]]; }
+            for channel in 0..3 {
+                row[channel] = original[order[channel]];
+            }
         }
     }
     Ok(())
