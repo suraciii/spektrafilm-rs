@@ -109,7 +109,6 @@ fn fresh_backend(
                 ObservedQueue {
                     raw: queue.clone(),
                     context: ObservationContext::default(),
-                    batch: None,
                 },
                 Arc::new(PipelineCache::default()),
             ),
@@ -121,7 +120,6 @@ fn fresh_backend(
             queue: ObservedQueue {
                 raw: queue,
                 context: ObservationContext::default(),
-                batch: None,
             },
             pipeline_cache: Arc::new(PipelineCache::default()),
             name: "telemetry_test".into(),
@@ -433,16 +431,14 @@ fn failed_and_pending_query_callbacks_preserve_completed_image() {
         if reason == AvailabilityReason::QueryFailed {
             tx.send(Err(wgpu::BufferAsyncError)).unwrap();
         }
-        scoped
-            .device
-            .batch
-            .as_ref()
-            .unwrap()
-            .lock()
-            .queries
-            .as_mut()
-            .unwrap()
-            .receiver = Some(rx);
+        // The batch boundary only requests the readback map when it has not
+        // been requested yet; this test injects the callback result directly,
+        // so it declares the request as made.
+        let mut state = scoped.device.batch.as_ref().unwrap().lock();
+        let queries = state.queries.as_mut().unwrap();
+        queries.map_requested = true;
+        queries.receiver = Some(rx);
+        drop(state);
         // Keeping tx alive makes NotReady an empty live callback channel, not a disconnection.
         drop(guard);
         drop(tx);

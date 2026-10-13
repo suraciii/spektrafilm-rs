@@ -311,6 +311,68 @@ fn active_v3_field_fence_reports_its_cpu_stage_reason() {
 }
 
 #[test]
+fn gpu_timing_collection_survives_a_host_fence() {
+    // A host fence splits the resident chain into several submissions inside
+    // one batch. The timestamp readback is mapped at the batch boundary, so
+    // the submission that follows the fence must not see a mapped buffer
+    // (wgpu rejects that submit with a validation error), and the collected
+    // passes stay complete.
+    let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.workflow.route = "input > film > scan".to_owned();
+    params.io.scan_film = true;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    // The default Spektra engine runs as the assembled density fence.
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let (width, height) = (32u32, 32u32);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..(width * height * 3) as usize)
+            .map(|index| from_f64(0.05 + 0.9 * (index % 97) as f64 / 97.0))
+            .collect(),
+    );
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::GpuTiming);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(width, height);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let output = runtime
+        .process_observed(image, &gpu, simulation.context())
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    assert_eq!(
+        report.summary().path,
+        Some(ExecutionPath::GpuResident),
+        "the fenced chain must stay resident"
+    );
+    let chain = report
+        .gpu_batches
+        .iter()
+        .find(|batch| batch.name == "film_chain")
+        .expect("the resident chain records its batch");
+    assert!(
+        chain.work.submit_count > Some(1),
+        "the fence must split the chain into several submissions: {:?}",
+        chain.work.submit_count
+    );
+    assert_eq!(chain.work.timed_pass_count, chain.work.executed_pass_count);
+    assert_eq!(chain.work.valid_pass_count, chain.work.executed_pass_count);
+    assert_eq!((output.width, output.height), (width, height));
+}
+
+#[test]
 fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
     // The grain engine resolves on the CPU from the developed film density, so
     // a report must name the stage and the CPU reason that declined the
