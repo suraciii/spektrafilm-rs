@@ -70,11 +70,12 @@ impl Pipeline {
         {
             reasons.push(ResidentFallbackReason::NegativeToPositiveOutput);
         }
-        if self.params.scanner.receiver_profile
-            != crate::params::ReceiverProfile::LegacyColorimetric
-        {
-            reasons.push(ResidentFallbackReason::ScannerReceiver);
-        }
+        // A modeled scanner receiver (LabScanApprox) no longer declines:
+        // the receiver capture replaces the GPU spectral integration as
+        // the assembled acquisition fence (see `scan_acquisition_cpu_stage`
+        // in `try_gpu_resident`). Digital Reference still declines through
+        // NegativeToPositiveOutput above (it replaces the acquisition with
+        // runtime-prepared spectral assets).
         // Slide points still decline: the positive-film resident chain has
         // a known divergence (first exposed by the scan-tail fence parity
         // probe) and the slide remap's y→0 gain amplifies the f32
@@ -650,14 +651,15 @@ impl Pipeline {
                 crate::params::PositiveInterpretation::Separable
                     | crate::params::PositiveInterpretation::Coupled
             );
-        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition on
-        // the CPU route; the resident chain runs the same CPU LUT as an
-        // assembled acquisition fence (pipe architecture, capability
-        // class). The luminance-remap condition never reaches here — it
-        // declines above until the positive-film chain reaches parity.
-        let scan_lut_requested = self.params.settings.use_scanner_lut;
+        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition and a
+        // modeled receiver selects the receiver capture; both replace the
+        // GPU spectral integration on the CPU route, and the resident chain
+        // runs the same CPU acquisition as an assembled fence (pipe
+        // architecture, capability class). The luminance-remap condition
+        // never reaches here — it declines above until the positive-film
+        // chain reaches parity (issue #163).
         let scan_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> =
-            if scan_lut_requested && scan_context.receiver.is_none() {
+            if scan_context.receiver.is_some() || self.params.settings.use_scanner_lut {
                 let profile = scan_profile;
                 let params = &self.params;
                 let color_ref = color_ref;
@@ -1026,6 +1028,59 @@ mod tests {
             max_diff < 5e-1,
             "scanner LUT fence max divergence: {max_diff}"
         );
+    }
+
+    /// A modeled scanner receiver (LabScanApprox) no longer demotes the
+    /// route: the receiver capture runs as the assembled acquisition fence
+    /// replacing the GPU spectral integration, matching the CPU reference
+    /// under the standard fence budget.
+    #[test]
+    fn scanner_receiver_acquisition_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = false;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "receiver fence mean divergence: {mean}");
+        assert!(max_diff < 5e-1, "receiver fence max divergence: {max_diff}");
     }
 
     /// Negative-to-positive capture interpretation (separable inverse) runs
