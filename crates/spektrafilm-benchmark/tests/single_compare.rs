@@ -230,6 +230,65 @@ fn add_reference(root: &Path, scope: &str, color: Value, histogram_matching: &st
     save_manifest(root, "run.json", run);
 }
 
+#[test]
+fn cli_report_opens_unaligned_reference_as_side_views() {
+    let temp = tempfile::tempdir().unwrap();
+    let run = temp.path().join("run");
+    retained_run(&run, 0.4, false);
+    add_reference(
+        &run,
+        "visual",
+        json!({"color_space":"sRGB","cctf_decoding":true}),
+        "none",
+    );
+    let comparison = temp.path().join("comparison");
+    let report = temp.path().join("report");
+    for (command, source_option, source, destination) in [
+        ("compare", "--run", &run, &comparison),
+        ("report", "--comparison", &comparison, &report),
+    ] {
+        let mut cli = std::process::Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
+        cli.arg(command)
+            .arg(source_option)
+            .arg(source)
+            .arg("--out")
+            .arg(destination);
+        if command == "compare" {
+            cli.args(["--against", "reference"]);
+        }
+        let output = cli.output().unwrap();
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let snapshot = documents::load_json_document(&report.join("comparison.json")).unwrap();
+    assert_eq!(snapshot["default_pair"], "reference");
+    assert_eq!(snapshot["cases"][0]["pairs"][0]["pixel_aligned"], false);
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    let main = html
+        .split_once("<div data-review-full>")
+        .expect("unaligned reference still needs an image-first main view")
+        .1
+        .split_once("<div data-review-difference")
+        .unwrap()
+        .0;
+    assert!(main.contains("class=\"viewer\" data-mode=\"side\" data-aligned=\"false\""));
+    assert!(!main.contains("<option value=\"split\">"));
+    assert!(main.contains("class=\"side-pane\" data-side=\"baseline\""));
+    assert!(main.contains("class=\"side-pane\" data-side=\"candidate\""));
+    let mut images = 0;
+    for image in main.split("data-native=\"").skip(1) {
+        let path = image.split_once('"').unwrap().0;
+        let pixels = image::open(report.join(path)).unwrap();
+        assert_eq!((pixels.width(), pixels.height()), (4, 4));
+        images += 1;
+    }
+    assert!(images >= 2);
+}
+
 fn assert_local_artifact(root: &Path, manifest: &Value, artifact: &Value) {
     let path = artifact["path"].as_str().unwrap();
     assert!(
