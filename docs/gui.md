@@ -22,6 +22,8 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 **Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Selecting a film keeps the current paper; applying a look preset selects the paper that the look resolves.
 
+MAIN → Enlarger applies Yellow and Magenta filtration shifts in Kodak CC units from the paper's calibrated neutral pack. A direct negative-film conversion uses its own Scanner controls for the same per-channel density quantity. See [scanning and negative conversion](scanning.md) for the unit relation and why the two parameter sets stay separate.
+
 **Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the sidebar. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field.
 
 The GUI shows scanner controls for the scanned medium:
