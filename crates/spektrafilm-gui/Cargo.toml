@@ -19,6 +19,7 @@ gui-snapshots = ["egui_kittest/wgpu"]
 
 [dependencies]
 spektrafilm-core.workspace = true
+spektrafilm-fotufilm = { path = "../spektrafilm-fotufilm" }
 spektrafilm-gpu.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-model.workspace = true

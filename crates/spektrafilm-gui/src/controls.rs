@@ -529,7 +529,9 @@ pub(crate) fn show(
             });
         }
         if section == "Output" {
-            flags.runtime_changed |= numeric(ui, "Overall effect amount", &mut params.output_mix.amount, 0.0, 1.0, 0.01, 3, "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
+            if params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm {
+                flags.runtime_changed |= numeric(ui, "Overall effect amount", &mut params.output_mix.amount, 0.0, 1.0, 0.01, 3, "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
+            }
             flags.runtime_changed |= choice_tip(ui, "output color space", &mut params.io.output_color_space, COLOR_SPACES, "Output color space of the simulation");
             extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
             extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");

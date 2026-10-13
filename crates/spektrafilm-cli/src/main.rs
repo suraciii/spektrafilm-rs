@@ -146,6 +146,14 @@ enum Commands {
         /// One canonical editable parameter leaf.
         #[arg(long, conflicts_with = "module")]
         field: Option<String>,
+        /// Simulation engine whose authoritative control catalogue is shown.
+        #[arg(long, value_enum)]
+        engine: Option<EngineArg>,
+        /// Original Fotufilm stock ID used for control availability.
+        #[arg(long, default_value = "portra400")]
+        fotufilm_stock: String,
+        #[arg(long, default_value = "data")]
+        data_dir: PathBuf,
     },
     /// Render one structured recipe under the fork runner contract.
     Render {
@@ -155,6 +163,9 @@ enum Commands {
         /// RenderRecipe JSON file.
         #[arg(long)]
         recipe: PathBuf,
+        /// Override the engine stored in the recipe.
+        #[arg(long, value_enum)]
+        engine: Option<EngineArg>,
         /// Destination image path.
         #[arg(long)]
         output: PathBuf,
@@ -196,6 +207,19 @@ enum Commands {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum EngineArg {
+    Spektrafilm,
+    Fotufilm,
+}
+impl EngineArg {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Spektrafilm => "spektrafilm",
+            Self::Fotufilm => "fotufilm",
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Backend {
     Cpu,
@@ -318,13 +342,77 @@ fn main() -> Result<()> {
             format,
             module,
             field,
+            engine,
+            fotufilm_stock,
+            data_dir,
         } => {
-            cmd_describe(format, module.as_deref(), field.as_deref())?;
+            if engine == Some(EngineArg::Fotufilm) {
+                let data = select_data_dir(data_dir, command_matches)?;
+                let mut value = spektrafilm_fotufilm::catalogue(&data.path, &fotufilm_stock)
+                    .map_err(anyhow::Error::msg)?;
+                value["stocks"] = serde_json::to_value(
+                    spektrafilm_fotufilm::stocks(&data.path).map_err(anyhow::Error::msg)?,
+                )?;
+                if let Some(field) = field.as_deref() {
+                    if let Some(native) = field.strip_prefix("fotufilm.native.") {
+                        let (group, member) = native
+                            .split_once('.')
+                            .map_or((native, None), |(group, member)| (group, Some(member)));
+                        let descriptor = value["nativeExtensions"].get(group).cloned()
+                            .or_else(|| value["nativeDefaults"].get(group).cloned())
+                            .with_context(|| format!("unknown Fotufilm native option {native}; describe --engine fotufilm lists original native fields"))?;
+                        if let Some(member) = member {
+                            if !descriptor.as_array().is_some_and(|fields| {
+                                fields.iter().any(|field| field.as_str() == Some(member))
+                            }) {
+                                bail!("unknown Fotufilm native option {native}");
+                            }
+                            value = json!({"path":field,"group":group,"field":member,"example":value["nativeDefaults"][group][member]});
+                        } else {
+                            value = json!({"path":field,"descriptor":descriptor,"example":value["nativeDefaults"][group]});
+                        }
+                    } else {
+                        let name = field.strip_prefix("fotufilm.controls.").unwrap_or(field);
+                        let descriptor = value["manifest"]["controls"]
+                            .as_array()
+                            .and_then(|controls| {
+                                controls
+                                    .iter()
+                                    .find(|control| control["field"].as_str() == Some(name))
+                            })
+                            .cloned()
+                            .with_context(|| format!("unknown Fotufilm control {name}"))?;
+                        value = json!({"control":descriptor,"available":value["stockApplicability"][name],
+                            "simulation":value["simulationControls"].as_array().is_some_and(|fields| fields.iter().any(|field| field.as_str()==Some(name)))});
+                    }
+                }
+                if let Some(module) = module.as_deref() {
+                    value = match module {
+                        "fotufilm" => value,
+                        "fotufilm.controls" => {
+                            json!({"manifest":value["manifest"],"menus":value["menus"],"simulationControls":value["simulationControls"],"stockApplicability":value["stockApplicability"]})
+                        }
+                        "fotufilm.native" => {
+                            json!({"extensions":value["nativeExtensions"],"structured":value["nativeStructured"],"examples":value["nativeDefaults"]})
+                        }
+                        _ => bail!(
+                            "unknown Fotufilm module {module}; use fotufilm, fotufilm.controls or fotufilm.native"
+                        ),
+                    };
+                }
+                match format {
+                    DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&value)?),
+                    DiscoveryFormat::Text => print_metadata_record(&value),
+                }
+            } else {
+                cmd_describe(format, module.as_deref(), field.as_deref())?;
+            }
         }
         Commands::Render {
             input,
             recipe,
             output,
+            engine: _,
             data_dir,
             diagnostics,
             gpu_timings,

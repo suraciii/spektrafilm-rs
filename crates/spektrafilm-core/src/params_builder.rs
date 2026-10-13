@@ -64,6 +64,9 @@ pub fn digest_params(
     database: Option<&NeutralFilters>,
     apply_stocks_specifics: bool,
 ) -> RuntimeParams {
+    if params.engine == crate::params::SimulationEngine::Fotufilm {
+        return params;
+    }
     params = apply_database_neutral_print_filters(params, film, print, database);
     apply_preview_constraints(&mut params);
 

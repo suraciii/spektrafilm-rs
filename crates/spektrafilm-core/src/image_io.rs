@@ -410,6 +410,17 @@ fn prepare_inner(
         ImageFormat::Tiff => "TIFF",
         ImageFormat::Exr => "EXR",
     };
+    let record_density = options.color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE;
+    if record_density
+        && (options.cctf_encoding
+            || options.depth != BitDepth::ThirtyTwo
+            || !matches!(format, ImageFormat::Tiff | ImageFormat::Exr))
+    {
+        return Err(ImageIoError::InvalidExport {
+            format: format_name,
+            reason: "Fotufilm record densities require unencoded 32-bit TIFF or EXR",
+        });
+    }
     match format {
         ImageFormat::Jpeg | ImageFormat::Png if options.depth != BitDepth::Eight => {
             return Err(ImageIoError::InvalidExport {
@@ -439,6 +450,7 @@ fn prepare_inner(
     }
     if !rendered_output
         && format == ImageFormat::Exr
+        && !record_density
         && !matches!(options.color_space, "sRGB" | "ACES2065-1")
     {
         return Err(ImageIoError::InvalidExport {

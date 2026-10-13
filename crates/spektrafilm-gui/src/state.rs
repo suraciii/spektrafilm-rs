@@ -132,6 +132,16 @@ fn overlay_runtime(target: &mut Value, source: &Value) {
         }
     }
 }
+fn model_version(params: &RuntimeParams) -> &'static str {
+    match params.engine {
+        spektrafilm_core::params::SimulationEngine::Spektrafilm => {
+            spektrafilm_core::runtime::MODEL_VERSION
+        }
+        spektrafilm_core::params::SimulationEngine::Fotufilm => {
+            spektrafilm_fotufilm::SOURCE_REVISION
+        }
+    }
+}
 
 fn validate_state_parameters(value: &mut Value, legacy: bool) -> Result<()> {
     if value.get("output_mix").is_some() {
@@ -272,7 +282,7 @@ impl GuiState {
             ),
         )
         .expect("scanner provenance serializes");
-        sections["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
+        sections["rust"]["model_version"] = json!(model_version(&RuntimeParams::default()));
         Self { sections }
     }
     pub fn from_value(mut value: Value) -> Result<Self> {
@@ -388,9 +398,9 @@ impl GuiState {
                 }
             }
         }
-        state.sections["rust"]["version"] = json!(2);
-        state.sections["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         let params = state.runtime_params()?;
+        state.sections["rust"]["version"] = json!(2);
+        state.sections["rust"]["model_version"] = json!(model_version(&params));
         // Metadata is derived from the selected built-ins, never trusted from an import.
         state.sections["rust"]["scanner_provenance"] = serde_json::to_value(
             spektrafilm_core::scan_receiver::ScannerProvenance::from_params(&params),
@@ -491,6 +501,11 @@ impl GuiState {
         }
         let mut params: RuntimeParams =
             serde_json::from_value(runtime).context("Invalid GUI control value")?;
+        if let Some(seed) = s["rust"].get("simulation_seed") {
+            params.random_seed = seed
+                .as_u64()
+                .context("Invalid simulation seed: expected UInt64")?;
+        }
         if let Some(preparation) = s["rust"].get("render_preparation") {
             let preparation = serde_json::from_value(preparation.clone())
                 .context("Invalid render preparation ownership")?;
@@ -672,7 +687,8 @@ impl GuiState {
             }
         }
         s["rust"]["version"] = json!(2);
-        s["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
+        s["rust"]["model_version"] = json!(model_version(params));
+        s["rust"]["simulation_seed"] = json!(params.random_seed);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(
             spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),

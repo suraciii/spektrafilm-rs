@@ -48,6 +48,13 @@ for module in libraw lensfun exiv2 glib-2.0 OpenImageIO lcms2; do
     directory="$(pkg-config --variable=libdir "$module" 2>/dev/null || true)"
     [[ -z "$directory" ]] || library_dirs+=("$directory")
 done
+if [[ -n "${HALIDE_ROOT:-}" ]]; then
+    library_dirs+=("${HALIDE_LIB_DIR:-$HALIDE_ROOT/lib}" "$HALIDE_ROOT/lib64")
+fi
+for module in Halide halide; do
+    directory="$(pkg-config --variable=libdir "$module" 2>/dev/null || true)"
+    [[ -z "$directory" ]] || library_dirs+=("$directory")
+done
 flip_library_dir="${FLIP_LIBRARY_DIR:-}"
 [[ -z "$flip_library_dir" ]] || library_dirs+=("$flip_library_dir")
 
@@ -238,6 +245,13 @@ for dependency in "${!dependency_sources[@]}"; do
         continue
     fi
     case "$dependency" in
+        libHalide*)
+            halide_root="${HALIDE_ROOT:-$(pkg-config --variable=prefix Halide 2>/dev/null || pkg-config --variable=prefix halide 2>/dev/null || true)}"
+            [[ -s "$halide_root/share/doc/Halide/LICENSE.txt" ]] || fail "official Halide notices missing; set HALIDE_ROOT"
+            mkdir -p "$DIST_DIR/share/licenses/native/Halide"
+            cp "$halide_root/share/doc/Halide/LICENSE.txt" "$DIST_DIR/share/licenses/native/Halide/LICENSE.txt"
+            [[ ! -f "$halide_root/Halide-provenance.txt" ]] || cp "$halide_root/Halide-provenance.txt" "$DIST_DIR/share/licenses/native/Halide/"
+            ;;
         libraw*)
             documentation="${SPEKTRAFILM_LIBRAW_DOCS:-$libraw_prefix/share/doc/libraw}"
             for license in COPYRIGHT LICENSE.CDDL LICENSE.LGPL; do
@@ -250,7 +264,7 @@ for dependency in "${!dependency_sources[@]}"; do
     esac
 done
 
-for required in libraw lensfun exiv2 glib openimageio; do
+for required in libraw lensfun exiv2 glib openimageio halide; do
     found=0
     for dependency in "${!dependency_sources[@]}"; do
         [[ "${dependency,,}" == *"$required"* ]] && { found=1; break; }

@@ -152,34 +152,36 @@ impl App {
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
-            if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
+            if self.params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm && self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
                 let mut scan_for_print = self.scan_for_print_snapshot.is_some();
                 if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
                     self.toggle_scan_for_print();
                 }
             }
         });
-        ui.horizontal(|ui| {
-            if controls::choice_tip_entries(
-                ui,
-                "workflow",
-                &mut self.params.workflow.route,
-                routes::entries(),
-                routes::tooltip(),
-            ) {
-                self.finish_route_change();
-            }
-            if ui
-                .checkbox(
-                    &mut self.params.magazine_print_color.active,
-                    "Magazine print",
-                )
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
-                .changed()
-            {
-                self.mark_parameters_changed();
-            }
-        });
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm {
+            ui.horizontal(|ui| {
+                if controls::choice_tip_entries(
+                    ui,
+                    "workflow",
+                    &mut self.params.workflow.route,
+                    routes::entries(),
+                    routes::tooltip(),
+                ) {
+                    self.finish_route_change();
+                }
+                if ui
+                    .checkbox(
+                        &mut self.params.magazine_print_color.active,
+                        "Magazine print",
+                    )
+                    .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                    .changed()
+                {
+                    self.mark_parameters_changed();
+                }
+            });
+        }
         ui.horizontal(|ui| {
             let busy = self.render_job.is_some()
                 || self.export_job.is_some()
@@ -187,7 +189,9 @@ impl App {
             let ready = self.image.is_some() && !busy;
             if ui
                 .add_enabled(ready, egui::Button::new("PREVIEW"))
-                .on_hover_text("run the simulation on a small preview and deactivates grain, halation, blurs, unsharp mask (diffusion filters are active)")
+                .on_hover_text(if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+                    "Run the complete original simulation on the full source, then resize for preview."
+                } else { "Run the small preview with grain, halation, blurs and unsharp mask disabled." })
                 .clicked()
             {
                 self.dirty = true;
@@ -439,7 +443,12 @@ impl App {
             "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
             "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
             "Scanner" => Some((Section::Scanner, "Scanner", false)),
-            "Output" => Some((Section::OutputMix, "Output", true)),
+            "Output"
+                if self.params.engine
+                    == spektrafilm_core::params::SimulationEngine::Spektrafilm =>
+            {
+                Some((Section::OutputMix, "Output", true))
+            }
             _ => None,
         };
         if let Some((kind, label, default_open)) = preset_section {
@@ -459,6 +468,10 @@ impl App {
                 header.toggle();
             }
             header.body(|ui| self.parameter_section_controls(ui, section));
+        } else if section == "Output" {
+            egui::CollapsingHeader::new("Output")
+                .default_open(true)
+                .show(ui, |ui| self.parameter_section_controls(ui, section));
         } else {
             self.parameter_section_controls(ui, section);
         }
@@ -558,7 +571,12 @@ impl App {
                         .on_hover_text("Choose settings and render the full image independently of Save.")
                         .clicked()
                     {
-                        self.export_dialog.open(&self.export_options);
+                        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+                            let density = self.params.fotufilm_output_is_density();
+                            self.export_dialog.open_fotufilm(&self.export_options, density);
+                        } else {
+                            self.export_dialog.open(&self.export_options);
+                        }
                     }
                 }
             });
@@ -617,90 +635,145 @@ impl App {
             self.params.io.input_cctf_decoding,
             self.params.settings.preview_max_size,
         );
-        match self.gui_tab {
-            GuiTab::Main => {
-                self.import_section(ui, false);
-                self.import_section(ui, true);
-                for section in ["Crop and upscale", "Input", "Camera"] {
-                    self.parameter_section(ui, section);
-                }
-                ui.collapsing("Profiles", |ui| {
-                    if self.params.workflow.route == "input" {
-                        ui.weak(
-                            "Finished RGB ignores these profiles: it only colour-manages the \
+        let mut engine_changed = false;
+        egui::ComboBox::from_label("Simulation engine")
+            .selected_text(match self.params.engine {
+                spektrafilm_core::params::SimulationEngine::Spektrafilm => "SpektraFilm",
+                spektrafilm_core::params::SimulationEngine::Fotufilm => "Fotufilm",
+            })
+            .show_ui(ui, |ui| {
+                engine_changed |= ui
+                    .selectable_value(
+                        &mut self.params.engine,
+                        spektrafilm_core::params::SimulationEngine::Spektrafilm,
+                        "SpektraFilm",
+                    )
+                    .changed();
+                engine_changed |= ui
+                    .selectable_value(
+                        &mut self.params.engine,
+                        spektrafilm_core::params::SimulationEngine::Fotufilm,
+                        "Fotufilm",
+                    )
+                    .changed();
+            });
+        if engine_changed {
+            self.mark_parameters_changed_invalidating_calibration();
+            self.scanner_setup = None;
+        }
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm
+            && self.gui_tab != GuiTab::Config
+        {
+            self.import_section(ui, false);
+            self.import_section(ui, true);
+            self.parameter_section(ui, "Input");
+            self.section_preset_menu(ui, Section::Fotufilm);
+            if fotufilm::show(
+                ui,
+                &mut self.params,
+                &self.data_dir,
+                &mut self.fotufilm_catalogue,
+            ) {
+                self.mark_parameters_changed();
+            }
+            self.parameter_section(ui, "Output");
+            self.export_actions(ui);
+        } else {
+            match self.gui_tab {
+                GuiTab::Main => {
+                    self.import_section(ui, false);
+                    self.import_section(ui, true);
+                    for section in ["Crop and upscale", "Input", "Camera"] {
+                        self.parameter_section(ui, section);
+                    }
+                    ui.collapsing("Profiles", |ui| {
+                        if self.params.workflow.route == "input" {
+                            ui.weak(
+                                "Finished RGB ignores these profiles: it only colour-manages the \
                              input to the output space.",
-                        );
+                            );
+                        }
+                        if profile_combo(
+                            ui,
+                            "film",
+                            "film profile",
+                            &self.films,
+                            &mut self.film_name,
+                        ) {
+                            let selected = self.film_name.clone();
+                            self.params.film_render.development_time = None;
+                            self.select_film_profile(selected);
+                        }
+                        if profile_combo(
+                            ui,
+                            "paper",
+                            "print profile",
+                            &self.papers,
+                            &mut self.print_name,
+                        ) {
+                            let selected = self.print_name.clone();
+                            self.params.print_render.development_time = None;
+                            self.select_print_profile(selected);
+                        }
+                    });
+                    for section in ["Enlarger", "Scanner"] {
+                        self.parameter_section(ui, section);
                     }
-                    if profile_combo(ui, "film", "film profile", &self.films, &mut self.film_name) {
-                        let selected = self.film_name.clone();
-                        self.params.film_render.development_time = None;
-                        self.select_film_profile(selected);
+                    egui::CollapsingHeader::new("Output")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            self.parameter_section(ui, "Output");
+                            self.export_actions(ui);
+                        });
+                }
+                GuiTab::Film => {
+                    self.chemistry_section(ui, true);
+                    for section in [
+                        "Film base",
+                        "Halation",
+                        "Couplers",
+                        "Grain",
+                        "Camera diffusion",
+                        "Convert",
+                    ] {
+                        self.parameter_section(ui, section);
                     }
-                    if profile_combo(
-                        ui,
-                        "paper",
-                        "print profile",
-                        &self.papers,
-                        &mut self.print_name,
-                    ) {
-                        let selected = self.print_name.clone();
-                        self.params.print_render.development_time = None;
-                        self.select_print_profile(selected);
+                }
+                GuiTab::Print => {
+                    self.chemistry_section(ui, false);
+                    for section in ["Print base", "Preflash", "Glare", "Enlarger diffusion"] {
+                        self.parameter_section(ui, section);
                     }
-                });
-                for section in ["Enlarger", "Scanner"] {
-                    self.parameter_section(ui, section);
                 }
-                self.parameter_section(ui, "Output");
-                self.export_actions(ui);
-            }
-            GuiTab::Film => {
-                self.chemistry_section(ui, true);
-                for section in [
-                    "Film base",
-                    "Halation",
-                    "Couplers",
-                    "Grain",
-                    "Camera diffusion",
-                    "Convert",
-                ] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Print => {
-                self.chemistry_section(ui, false);
-                for section in ["Print base", "Glare", "Enlarger diffusion"] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Advanced => {
-                for section in [
-                    "Spectral upsampling",
-                    "Magazine print color",
-                    "Input gamut compress",
-                    "Output gamut compress",
-                    "Experimental",
-                ] {
-                    self.parameter_section(ui, section);
-                }
-            }
-            GuiTab::Config => {
-                self.diagnostics_panel(ui);
-                ui.collapsing("GUI parameters", |ui| {
-                    self.state_toolbar(ui);
-                });
-                ui.collapsing("Display", |ui| {
-                    let display_transform_before = self.viewer.settings.use_display_transform;
-                    self.viewer.controls(ui);
-                    self.parameter_section(ui, "Display");
-                    self.viewer.interpolation_control(ui);
-                    if display_transform_before != self.viewer.settings.use_display_transform {
-                        self.refresh_viewing_artifacts();
+                GuiTab::Advanced => {
+                    for section in [
+                        "Spectral upsampling",
+                        "Magazine print color",
+                        "Input gamut compress",
+                        "Output gamut compress",
+                        "Experimental",
+                    ] {
+                        self.parameter_section(ui, section);
                     }
-                });
-                ui.collapsing("napari layers", |ui| {
-                    self.viewer.layer_controls(ui);
-                });
+                }
+                GuiTab::Config => {
+                    self.diagnostics_panel(ui);
+                    ui.collapsing("GUI parameters", |ui| {
+                        self.state_toolbar(ui);
+                    });
+                    ui.collapsing("Display", |ui| {
+                        let display_transform_before = self.viewer.settings.use_display_transform;
+                        self.viewer.controls(ui);
+                        self.parameter_section(ui, "Display");
+                        self.viewer.interpolation_control(ui);
+                        if display_transform_before != self.viewer.settings.use_display_transform {
+                            self.refresh_viewing_artifacts();
+                        }
+                    });
+                    ui.collapsing("napari layers", |ui| {
+                        self.viewer.layer_controls(ui);
+                    });
+                }
             }
         }
         ui.label(egui::RichText::new(&self.status).small());

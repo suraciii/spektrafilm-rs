@@ -38,6 +38,32 @@ See [source declarations](../specs/cli/spec.md#input-declaration) and the [image
 RAW examples retain automatic linear ACES2065-1 declaration.
 See [RAW input](raw.md) for decoding details and [scanning](scanning.md) for negative conversion.
 
+## Original Fotufilm simulation
+
+`engine=fotufilm` selects the complete pinned original model independently of the adapted Fotufilm grain appearance inside SpektraFilm. Original stock, grain, optics, layered transport, print or scan medium, and source controls run through original preparation and the Halide CPU graph. It retains CPU f32 arithmetic even in `spektrafilm-f64`. See the [source-engine contract](../specs/film-chain/spec.md#original-fotufilm-engine).
+
+```bash
+# Inspect original controls, stock applicability, native options, and defaults.
+./target/release/spektrafilm describe --engine fotufilm --data-dir data
+
+# Complete original simulation with an explicit raster input interpretation.
+./target/release/spektrafilm process input.png -o output.png \
+    --engine fotufilm --fotufilm-stock portra400 \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --backend cpu --seed 1179208781 --data-dir data
+
+# Select the original crystal-population grain model.
+./target/release/spektrafilm process input.png -o film.png \
+    --engine fotufilm --fotufilm-stock portra400 \
+    --fotufilm-native 'grainModel="film"' \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --backend cpu --seed 1179208781 --data-dir data
+```
+
+Native `stage="negative"` and the `cmy_film` collection tap return gross C/M/Y optical record densities. Save and Export require unencoded 32-bit TIFF or EXR. Density output preserves source geometry even with preview settings enabled; crop and resize belong after print or RGB readout. Collecting `rgb_in` retains the declared input color space and transfer state for display and saving.
+
+`--fotufilm-native` accepts inline JSON objects and arrays, including nested objects. Unknown fields in structured options are rejected before rendering. Input declarations, parameter-source occurrence numbers, and RAW declaration rejection follow the shared CLI parameter contract. Original simulation seeds support the full UInt64 range. See [building](building.md) for Halide dependencies and preparation-module rebuilds, and [the GUI guide](gui.md#original-fotufilm-engine) for interactive operation.
+
 ## Backend and precision
 
 `process --backend cpu|gpu` overrides `SPEKTRAFILM_BACKEND`.

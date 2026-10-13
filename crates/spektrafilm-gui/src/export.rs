@@ -198,12 +198,23 @@ impl ExportOptions {
                 }
                 self.compression = ExportCompression::Zip;
                 self.saving_cctf_encoding = false;
-                if !EXR_COLOR_SPACES.contains(&self.saving_color_space.as_str()) {
+                if self.saving_color_space != spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+                    && !EXR_COLOR_SPACES.contains(&self.saving_color_space.as_str())
+                {
                     self.saving_color_space = "sRGB".into();
                 }
             }
             ExportFormat::Tiff => {}
         }
+    }
+
+    /// A density marker belongs to one output domain, not subsequent RGB exports.
+    pub(crate) fn reset_density_saving_contract(&mut self) {
+        if self.saving_color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE {
+            self.saving_color_space = "sRGB".into();
+            self.saving_cctf_encoding = true;
+        }
+        self.normalize();
     }
 
     /// Container the writer receives for this format.
@@ -250,20 +261,47 @@ impl ExportOptions {
         });
         rust["export_compression"] = json!(self.compression.argument());
         rust["export_backend"] = json!(self.backend.argument());
-        rust["export_saving_color_space"] = json!(self.saving_color_space);
-        rust["export_saving_cctf_encoding"] = json!(self.saving_cctf_encoding);
+        let density = self.saving_color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE;
+        rust["export_saving_color_space"] = json!(if density {
+            "sRGB"
+        } else {
+            &self.saving_color_space
+        });
+        rust["export_saving_cctf_encoding"] = json!(if density {
+            self.format != ExportFormat::Exr
+        } else {
+            self.saving_cctf_encoding
+        });
     }
 }
 
 #[derive(Default)]
 pub(crate) struct ExportDialog {
     draft: Option<ExportOptions>,
+    fotufilm: bool,
+    density: bool,
 }
 impl ExportDialog {
     pub(crate) fn open(&mut self, committed: &ExportOptions) {
+        self.fotufilm = false;
+        self.density = false;
         let mut draft = committed.clone();
-        draft.normalize();
+        draft.reset_density_saving_contract();
         self.draft = Some(draft);
+    }
+    pub(crate) fn open_fotufilm(&mut self, committed: &ExportOptions, density: bool) {
+        self.open(committed);
+        self.fotufilm = true;
+        self.density = density;
+        if let Some(draft) = &mut self.draft {
+            draft.backend = ExportBackend::Cpu;
+            if density {
+                draft.format = ExportFormat::Tiff;
+                draft.depth = BitDepth::ThirtyTwo;
+                draft.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+                draft.saving_cctf_encoding = false;
+            }
+        }
     }
     pub(crate) fn is_open(&self) -> bool {
         self.draft.is_some()
@@ -279,16 +317,26 @@ impl ExportDialog {
             .id(egui::Id::new("full_render_export_options"))
             .open(&mut open).collapsible(false).resizable(false)
             .show(ctx, |ui| {
+                if self.fotufilm { ui.label("Fotufilm original CPU (f32)"); } else {
                 egui::ComboBox::from_label("Backend").selected_text(draft.backend.label()).show_ui(ui, |ui| {
                     for backend in [ExportBackend::Cpu, ExportBackend::Gpu] {
                         ui.selectable_value(&mut draft.backend, backend, backend.label());
                     }
                 });
+                }
                 egui::ComboBox::from_label("Format").selected_text(draft.format.label()).show_ui(ui, |ui| {
                     for format in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Exr] {
+                        if self.density && !matches!(format, ExportFormat::Tiff | ExportFormat::Exr) { continue; }
                         ui.selectable_value(&mut draft.format, format, format.label());
                     }
                 });
+                if self.density {
+                    draft.depth = BitDepth::ThirtyTwo;
+                    draft.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+                    draft.saving_cctf_encoding = false;
+                    if draft.format == ExportFormat::Exr { draft.compression = ExportCompression::Zip; }
+                    ui.label("Gross record density · 32-bit float · no RGB encoding or ICC profile");
+                } else {
                 draft.normalize();
                 egui::ComboBox::from_label("Bit depth").selected_text(format!("{} bit", draft.depth.bits())).show_ui(ui, |ui| {
                     for &depth in draft.format.depths() {
@@ -320,6 +368,7 @@ impl ExportDialog {
                     ExportFormat::Exr => { ui.label("EXR uses linear color and ZIP compression."); }
                     ExportFormat::Jpeg | ExportFormat::Png => { ui.label("JPEG and PNG use encoded color."); }
                     ExportFormat::Tiff => { ui.checkbox(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding"); }
+                }
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
