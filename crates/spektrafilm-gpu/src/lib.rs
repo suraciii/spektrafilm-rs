@@ -366,12 +366,6 @@ pub struct FilmChainParams<'a> {
     /// the grained image, which is written back to the same device
     /// buffer.
     pub density_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
-    /// Optional CPU stage replacing the GPU DIR couplers pass when the
-    /// Langmuir chemistry uses non-default coefficients (pipe
-    /// architecture, capability class). Receives the developed density and
-    /// the log-raw exposure buffers; returns the corrected density, which
-    /// is written back in place.
-    pub dir_cpu_stage: Option<Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + 'a>>,
     /// Optional CPU stage on the scanner readout buffer between glare and
     /// output gamut compression — the assembled fence for the scanner
     /// readout interpretation (slide points, the faithful luminance remap,
@@ -457,9 +451,13 @@ impl FilmChainParams<'_> {
             && self.scanner_lens_blur_px.is_none_or(supports)
             && self.unsharp.is_none_or(|p| supports(p.sigma_px))
             && self.glare.is_none_or(|p| supports(p.blur_px))
-            && self
-                .dir_couplers
-                .is_none_or(|p| supports(p.diffusion_size_px) && supports(p.diffusion_tail_px))
+            && self.dir_couplers.is_none_or(|p| {
+                let max_tail_ratio = spektrafilm_math::gaussian::EXPONENTIAL_GAUSSIAN_FITS
+                    .iter()
+                    .map(|(_, ratio)| *ratio as f32)
+                    .fold(0.0_f32, f32::max);
+                supports(p.diffusion_size_px) && supports(p.diffusion_tail_px * max_tail_ratio)
+            })
             && self.halation.is_none_or(|p| {
                 supports(p.scatter_core_px)
                     && supports(p.scatter_tail_px)
@@ -505,6 +503,19 @@ pub struct DirCouplersGpuParams<'a> {
     pub diffusion_size_px: f32,
     pub diffusion_tail_px: f32,
     pub diffusion_tail_weight: f32,
+    /// Donor Langmuir knee per channel (`langmuir_donor_k * d_max`) —
+    /// `Some` for negative films. `None` leaves the developed silver
+    /// linear.
+    pub donor_k: Option<[f32; 3]>,
+    /// Donor amplitude-match point per channel (`d_max / 2`), meaningful
+    /// only when `donor_k` is `Some`.
+    pub donor_ref: [f32; 3],
+    /// Receiver Langmuir knee per channel — `Some` for positive films;
+    /// applied to the arrived inhibitor after spatial diffusion.
+    pub receiver_knee: Option<[f32; 3]>,
+    /// Receiver operating-point inhibitor per channel, meaningful only
+    /// when `receiver_knee` is `Some`.
+    pub receiver_ref: [f32; 3],
     /// "Density curves before DIR" — re-interpolated by the final shader
     /// pass with the corrected log-exposure.
     pub density_curves_0: &'a [[f64; 3]],
