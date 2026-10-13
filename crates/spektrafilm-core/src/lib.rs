@@ -25,6 +25,7 @@ mod pipeline_calibration;
 pub use pipeline_calibration::validate_scan_output;
 pub mod digital_reference;
 pub mod presets;
+pub mod print_filtration;
 pub mod print_morph;
 pub mod process_params;
 pub mod profile;

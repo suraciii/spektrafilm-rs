@@ -1,6 +1,11 @@
 {
     "fujifilm_crystal_archive_typeii": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                43.6281,
+                53.2099
+            ],
             "fujifilm_c200": [
                 0.0,
                 88.428,
@@ -115,6 +120,11 @@
     },
     "kodak_2302": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                119.9363,
+                79.235
+            ],
             "fujifilm_c200": [
                 0.0,
                 44.5047,
@@ -229,6 +239,11 @@
     },
     "kodak_2383": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                45.7042,
+                54.841
+            ],
             "fujifilm_c200": [
                 0.0,
                 79.773,
@@ -343,6 +358,11 @@
     },
     "kodak_2393": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                45.5803,
+                54.8626
+            ],
             "fujifilm_c200": [
                 0.0,
                 80.2536,
@@ -457,6 +477,11 @@
     },
     "kodak_ektacolor_edge": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                32.2594,
+                37.7161
+            ],
             "fujifilm_c200": [
                 0.0,
                 72.3216,
@@ -571,6 +596,11 @@
     },
     "kodak_endura_premier": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                39.5251,
+                44.7029
+            ],
             "fujifilm_c200": [
                 0.0,
                 75.7517,
@@ -685,6 +715,11 @@
     },
     "kodak_portra_endura": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                29.7772,
+                34.9323
+            ],
             "fujifilm_c200": [
                 0.0,
                 70.2223,
@@ -799,6 +834,11 @@
     },
     "kodak_supra_endura": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                30.1901,
+                34.6153
+            ],
             "fujifilm_c200": [
                 0.0,
                 70.6298,
@@ -913,6 +953,11 @@
     },
     "kodak_ultra_endura": {
         "TH-KG3": {
+            "cinestill_800t_cs41_approx": [
+                0.0,
+                39.2114,
+                44.661
+            ],
             "fujifilm_c200": [
                 0.0,
                 75.5708,

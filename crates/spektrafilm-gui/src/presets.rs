@@ -1477,18 +1477,35 @@ mod tests {
     }
     #[test]
     fn section_explicitness_survives_state_roundtrip() {
+        // A section owns the M/Y shifts; the neutral baseline is not section
+        // content. The caller's own parameter source marks the axis it names,
+        // and that ownership survives the GUI state roundtrip.
         let mut params = RuntimeParams::default();
         params.enlarger.m_filter_neutral = 31.0;
+        params.restore_render_preparation_state(
+            &spektrafilm_core::params::RenderPreparationState {
+                explicit_section_paths: Vec::new(),
+                neutral_print_filters_protected: [false, true, false],
+            },
+        );
+        params.enlarger.m_filter_shift = 12.0;
         let preset =
             Preset::capture_section("Filters", Section::Enlarger, &params, provenance()).unwrap();
+        assert!(!preset.to_toml().unwrap().contains("filter_neutral"));
         let film = spektrafilm_core::profile::load_profile_by_name(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
             "kodak_gold_200",
         )
         .unwrap();
-        let applied = preset
-            .apply_section(&RuntimeParams::default(), &film)
-            .unwrap();
+        let applied = preset.apply_section(&params, &film).unwrap();
+        assert_eq!(applied.enlarger.m_filter_shift, 12.0);
+        assert_eq!(applied.enlarger.m_filter_neutral, 31.0);
+        assert_eq!(
+            applied
+                .render_preparation_state()
+                .neutral_print_filters_protected,
+            [false, true, false]
+        );
         let state = state::GuiState::from_runtime(
             &applied,
             "kodak_gold_200",
@@ -1504,6 +1521,7 @@ mod tests {
             restored.render_preparation_state(),
             applied.render_preparation_state()
         );
+        assert_eq!(restored.enlarger.m_filter_shift, 12.0);
         assert_eq!(restored.enlarger.m_filter_neutral, 31.0);
         assert_eq!(
             restored.settings.neutral_print_filters_from_database,

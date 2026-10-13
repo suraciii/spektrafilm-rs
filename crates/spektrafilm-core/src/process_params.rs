@@ -729,21 +729,34 @@ mod tests {
     }
 
     #[test]
-    fn preset_neutral_axes_remain_explicit_after_later_controls() {
+    fn look_does_not_pin_neutral_axes_across_illuminant_changes() {
         let sources = vec!["enlarger.illuminant=\"D65\"".into()];
         let mut req = request(&sources);
         req.film = None;
         let documents = vec![presets::load_selector("Kodak Portra 400", &data_dir()).unwrap()];
         req.presets = &documents;
         let result = resolve(req, &data_dir()).unwrap();
-        let look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
+        // The look carries shifts, not a baseline, so the fitted values of its
+        // own illuminant never leak into a different one.
+        assert_eq!(result.params.neutral_print_filters_protected, [false; 3]);
+        assert_eq!(result.params.enlarger.illuminant, "D65");
+        let neutral = NeutralFilters::load(&data_dir()).unwrap();
+        let own_illuminant = neutral
+            .lookup("kodak_portra_endura", "TH-KG3", "kodak_portra_400")
+            .expect("the look's own triple carries a calibration entry");
+        assert_ne!(
+            result.params.enlarger.m_filter_neutral,
+            own_illuminant[1] as f32
+        );
+        // No D65 entry exists for this triple, so the runtime default stands.
+        let baseline = RuntimeParams::default();
         assert_eq!(
             result.params.enlarger.m_filter_neutral,
-            look.look_parameters().unwrap().enlarger.m_filter_neutral
+            baseline.enlarger.m_filter_neutral
         );
         assert_eq!(
             result.params.enlarger.y_filter_neutral,
-            look.look_parameters().unwrap().enlarger.y_filter_neutral
+            baseline.enlarger.y_filter_neutral
         );
         assert!(result.params.settings.neutral_print_filters_from_database);
     }
@@ -888,50 +901,56 @@ mod tests {
     }
 
     #[test]
-    fn preset_resolver_protects_actual_runtime_axes_for_all_consumers() {
-        let mut look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
-        look.look_parameters_mut()
-            .unwrap()
-            .enlarger
-            .c_filter_neutral = 12.0;
-        look.look_parameters_mut()
-            .unwrap()
-            .enlarger
-            .m_filter_neutral = 34.0;
-        look.look_parameters_mut()
-            .unwrap()
-            .enlarger
-            .y_filter_neutral = 56.0;
+    fn look_application_leaves_neutral_axes_to_the_paper_database() {
+        let look = presets::load_selector("Kodak Portra 400", &data_dir()).unwrap();
+        let neutral = NeutralFilters::load(&data_dir()).unwrap();
+        let expected = neutral
+            .lookup("kodak_portra_endura", "TH-KG3", "kodak_portra_400")
+            .expect("the look's triple carries a calibration entry");
         let mut context = RuntimeParams::default();
         context.settings.rgb_to_raw_method = "mallett2019".into();
-        let resolved = look.resolve(&data_dir(), &context).unwrap();
-        let runtime = crate::runtime::Runtime::new(
-            resolved.film,
-            resolved.print,
-            resolved.params,
-            &data_dir(),
-        )
-        .unwrap();
-        assert_eq!(runtime.params().enlarger.c_filter_neutral, 12.0);
-        assert_eq!(runtime.params().enlarger.m_filter_neutral, 34.0);
-        assert_eq!(runtime.params().enlarger.y_filter_neutral, 56.0);
-        assert!(
-            runtime
-                .params()
-                .settings
-                .neutral_print_filters_from_database
+        let prepare = || {
+            let resolved = look.resolve(&data_dir(), &context).unwrap();
+            // A look carries shifts, not baselines: resolution leaves the axes
+            // as the caller had them and protects none of them.
+            assert_eq!(resolved.params.neutral_print_filters_protected, [false; 3]);
+            assert_eq!(
+                resolved.params.enlarger.m_filter_neutral,
+                context.enlarger.m_filter_neutral
+            );
+            let params = crate::params_builder::apply_database_neutral_print_filters(
+                resolved.params,
+                &resolved.film,
+                &resolved.print,
+                Some(&neutral),
+            );
+            (params, resolved.film, resolved.print)
+        };
+        let (params, film, print) = prepare();
+        // Preparation supplies the resolved paper's own entry.
+        assert_eq!(params.enlarger.c_filter_neutral, expected[0] as f32);
+        assert_eq!(params.enlarger.m_filter_neutral, expected[1] as f32);
+        assert_eq!(params.enlarger.y_filter_neutral, expected[2] as f32);
+        assert!(params.settings.neutral_print_filters_from_database);
+        let runtime = crate::runtime::Runtime::new(film, print, params, &data_dir()).unwrap();
+        assert_eq!(
+            runtime.params().enlarger.m_filter_neutral,
+            expected[1] as f32
         );
-        let resolved = look.resolve(&data_dir(), &context).unwrap();
+        assert_eq!(runtime.params().neutral_print_filters_protected, [false; 3]);
+        let (params, film, print) = prepare();
         let photo = crate::runtime::RuntimePhotoParams {
-            film: resolved.film,
-            print: resolved.print,
-            params: resolved.params,
+            film,
+            print,
+            params,
             data_dir: data_dir(),
         };
         let runtime = photo.into_runtime(DigestMode::PreserveUserEdits).unwrap();
-        assert_eq!(runtime.params().enlarger.c_filter_neutral, 12.0);
-        assert_eq!(runtime.params().enlarger.m_filter_neutral, 34.0);
-        assert_eq!(runtime.params().enlarger.y_filter_neutral, 56.0);
+        assert_eq!(
+            runtime.params().enlarger.m_filter_neutral,
+            expected[1] as f32
+        );
+        assert_eq!(runtime.params().neutral_print_filters_protected, [false; 3]);
         assert!(
             runtime
                 .params()

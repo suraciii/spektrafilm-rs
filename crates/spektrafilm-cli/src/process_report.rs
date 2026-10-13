@@ -110,6 +110,19 @@ pub(crate) fn print_text(report: &Value) {
         "  full-source long edge: {} mm",
         value(&params["camera"]["film_format_mm"])
     );
+    println!("PRINT FILTRATION (effective CC = neutral baseline + shift)");
+    if let Some(axes) = report["print_filtration"].as_array() {
+        for axis in axes {
+            println!(
+                "  {}: baseline {} CC [{}], shift {} CC, effective {} CC",
+                value(&axis["axis"]),
+                value(&axis["baseline"]),
+                value(&axis["source"]),
+                value(&axis["shift"]),
+                value(&axis["effective"]),
+            );
+        }
+    }
     record(
         "GRAIN (effective controls; conditions from describe --module film_render.grain)",
         &params["film_render"]["grain"],

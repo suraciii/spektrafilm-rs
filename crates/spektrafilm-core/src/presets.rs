@@ -43,7 +43,7 @@ pub struct LookParameters {
         deserialize_with = "deserialize_present_camera"
     )]
     pub camera: Option<LookCameraParams>,
-    pub enlarger: EnlargerParams,
+    pub enlarger: LookEnlargerParams,
     pub scanner: ScannerParams,
     pub film_render: FilmRenderingParams,
     pub print_render: PrintRenderingParams,
@@ -89,6 +89,73 @@ impl LookCameraParams {
         self.exposure_compensation_ev == params.camera.exposure_compensation_ev
             && self.auto_exposure == params.camera.auto_exposure
             && self.auto_exposure_method == params.camera.auto_exposure_method
+    }
+}
+/// Look-owned enlarger controls: the runtime enlarger group without the three
+/// neutral filter baselines.
+///
+/// A neutral baseline belongs to the print profile, resolved from
+/// `data/filters/neutral_print_filters.json` for the (print stock, illuminant,
+/// film stock) triple. A look therefore neither carries nor writes it: a
+/// document that places one under `enlarger` is rejected, and applying a look
+/// leaves the resolved baseline in place. See the [print filtration
+/// contract](../../../../specs/presets/spec.md#print-filtration).
+///
+/// The M and Y shifts stay look-owned: they are offsets from whatever baseline
+/// the resolved paper supplies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct LookEnlargerParams {
+    pub illuminant: String,
+    pub print_exposure: f32,
+    pub print_exposure_compensation: bool,
+    pub normalize_print_exposure: bool,
+    pub y_filter_shift: f32,
+    pub m_filter_shift: f32,
+    pub lens_blur: f32,
+    pub diffusion_filter: DiffusionFilterParams,
+    pub preflash_exposure: f32,
+    pub preflash_y_filter_shift: f32,
+    pub preflash_m_filter_shift: f32,
+}
+impl Default for LookEnlargerParams {
+    fn default() -> Self {
+        Self::capture(&EnlargerParams::default())
+    }
+}
+impl LookEnlargerParams {
+    fn capture(enlarger: &EnlargerParams) -> Self {
+        Self {
+            illuminant: enlarger.illuminant.clone(),
+            print_exposure: enlarger.print_exposure,
+            print_exposure_compensation: enlarger.print_exposure_compensation,
+            normalize_print_exposure: enlarger.normalize_print_exposure,
+            y_filter_shift: enlarger.y_filter_shift,
+            m_filter_shift: enlarger.m_filter_shift,
+            lens_blur: enlarger.lens_blur,
+            diffusion_filter: enlarger.diffusion_filter.clone(),
+            preflash_exposure: enlarger.preflash_exposure,
+            preflash_y_filter_shift: enlarger.preflash_y_filter_shift,
+            preflash_m_filter_shift: enlarger.preflash_m_filter_shift,
+        }
+    }
+    /// Replace the look-owned leaves. The neutral baselines keep their values
+    /// because the resolved paper, not the look, owns them.
+    fn apply_to(&self, enlarger: &mut EnlargerParams) {
+        enlarger.illuminant.clone_from(&self.illuminant);
+        enlarger.print_exposure = self.print_exposure;
+        enlarger.print_exposure_compensation = self.print_exposure_compensation;
+        enlarger.normalize_print_exposure = self.normalize_print_exposure;
+        enlarger.y_filter_shift = self.y_filter_shift;
+        enlarger.m_filter_shift = self.m_filter_shift;
+        enlarger.lens_blur = self.lens_blur;
+        enlarger.diffusion_filter.clone_from(&self.diffusion_filter);
+        enlarger.preflash_exposure = self.preflash_exposure;
+        enlarger.preflash_y_filter_shift = self.preflash_y_filter_shift;
+        enlarger.preflash_m_filter_shift = self.preflash_m_filter_shift;
+    }
+    fn matches(&self, enlarger: &EnlargerParams) -> bool {
+        *self == Self::capture(enlarger)
     }
 }
 /// Look-owned processing settings (subset of `SettingsParams`, same defaults).
@@ -158,7 +225,7 @@ impl LookParameters {
     pub fn capture(params: &RuntimeParams) -> Self {
         Self {
             camera: Some(LookCameraParams::capture(params)),
-            enlarger: params.enlarger.clone(),
+            enlarger: LookEnlargerParams::capture(&params.enlarger),
             scanner: params.scanner.clone(),
             film_render: params.film_render.clone(),
             print_render: params.print_render.clone(),
@@ -181,12 +248,16 @@ impl LookParameters {
     ///
     /// The look owns virtual exposure when present, enlarger, scanner, film
     /// and print rendering, camera diffusion, and look processing settings.
-    /// Every other parameter section keeps its value.
+    /// Every other parameter section keeps its value, including the enlarger
+    /// neutral baselines, which the resolved paper owns.
     pub fn apply_to(&self, params: &mut RuntimeParams) {
         if let Some(camera) = &self.camera {
             camera.apply_to(params);
         }
-        params.enlarger = self.enlarger.clone();
+        self.enlarger.apply_to(&mut params.enlarger);
+        // The three neutral axes stay untouched. A baseline belongs to the
+        // resolved paper, or to a user's own parameter source; a preset carries
+        // only the M and Y shifts and never protects an axis.
         params.scanner = self.scanner.clone();
         params.film_render = self.film_render.clone();
         params.print_render = self.print_render.clone();
@@ -195,11 +266,14 @@ impl LookParameters {
         self.settings.apply_to(&mut params.settings);
     }
     /// Compare only carried controls; legacy presets do not own exposure.
+    ///
+    /// The resolved enlarger neutral baselines are derived state, not look
+    /// state, so a paper change never makes an applied look read modified.
     pub fn matches(&self, params: &RuntimeParams) -> bool {
         self.camera
             .as_ref()
             .is_none_or(|camera| camera.matches(params))
-            && self.enlarger == params.enlarger
+            && self.enlarger.matches(&params.enlarger)
             && self.scanner == params.scanner
             && self.film_render == params.film_render
             && self.print_render == params.print_render
@@ -290,11 +364,13 @@ impl Preset {
                     "output_mix".into(),
                     serde_json::to_value(OutputMixParams::default()).map_err(|e| e.to_string())?,
                 );
+                crate::print_filtration::strip_enlarger_baseline(parameters);
             }
             object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
         }
         let wire: Wire =
             serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
+        crate::print_filtration::reject_neutral_axes(&wire.parameters)?;
         let parameters = if wire.film_profile.is_some() || wire.print_profile.is_some() {
             PresetParameters::Look(
                 serde_json::from_value(wire.parameters)
@@ -420,7 +496,11 @@ impl Preset {
         let mut params = current.clone();
         apply_film_specifics(&mut params, &film);
         look.apply_to(&mut params);
-        params.neutral_print_filters_protected = [true; 3];
+        // A look carries shifts, not baselines: the three neutral axes stay
+        // unresolved here so preparation resolves them from the database for
+        // the (print stock, illuminant, film stock) triple this look resolved
+        // to. Protecting them would freeze one paper's filtration onto every
+        // other paper.
         let default_route = workflow_default(&film);
         params.workflow.route = default_route.clone();
         params.io.scan_film = film.is_positive();

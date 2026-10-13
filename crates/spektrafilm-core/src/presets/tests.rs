@@ -96,7 +96,7 @@ fn version_one_maps_name_and_materializes_controls() {
     assert_eq!(p.schema_version, 3);
     assert_eq!(p.name, "Portable");
     assert!(!p.to_json().unwrap().contains("\"id\""));
-    assert!(p.to_toml().unwrap().contains("y_filter_neutral"));
+    assert!(!p.to_toml().unwrap().contains("filter_neutral"));
     let mut v = serde_json::to_value(p).unwrap();
     v["id"] = "invalid".into();
     assert!(Preset::from_json_str(&v.to_string()).is_err());
@@ -368,8 +368,28 @@ fn carrier_validation_and_precision() {
     assert!(Preset::from_json_str(&v.to_string()).is_err());
 }
 #[test]
-fn sparse_section_roundtrip_and_database_protection() {
+fn neutral_axes_are_not_preset_content() {
+    // A neutral baseline is the resolved paper's, so a document that carries
+    // one is rejected instead of reusing it on every other paper.
     let document = serde_json::json!({"schema_version":2,"name":"Neutral cyan","parameters":{"enlarger":{"c_filter_neutral":12.0}},"provenance":{"implementation_version":"test","model_version":"test"}});
+    let error = Preset::from_json_str(&document.to_string()).unwrap_err();
+    assert!(
+        error.contains("parameters.enlarger.c_filter_neutral"),
+        "{error}"
+    );
+    assert!(error.contains("resolved paper"), "{error}");
+    let mut document = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    document["parameters"]["enlarger"]["m_filter_neutral"] = serde_json::json!(34.0);
+    let error = Preset::from_json_str(&document.to_string()).unwrap_err();
+    assert!(
+        error.contains("parameters.enlarger.m_filter_neutral"),
+        "{error}"
+    );
+    assert!(error.contains("resolved paper"), "{error}");
+}
+#[test]
+fn sparse_section_roundtrip_keeps_its_own_paths() {
+    let document = serde_json::json!({"schema_version":2,"name":"Magenta shift","parameters":{"enlarger":{"m_filter_shift":12.0}},"provenance":{"implementation_version":"test","model_version":"test"}});
     let preset = Preset::from_json_str(&document.to_string()).unwrap();
     assert_eq!(
         preset.kind().unwrap(),
@@ -384,23 +404,29 @@ fn sparse_section_roundtrip_and_database_protection() {
         preset
     );
     let mut current = RuntimeParams::default();
-    current.enlarger.m_filter_neutral = 34.0;
-    current.neutral_print_filters_protected = [false, true, false];
+    current.enlarger.m_filter_shift = 1.0;
     let applied = preset.apply_section(&current, &test_film()).unwrap();
-    assert_eq!(applied.enlarger.m_filter_neutral, 34.0);
-    assert_eq!(applied.neutral_print_filters_protected, [true, true, false]);
-    let film = profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap();
-    let print = profile::load_profile_by_name(&data(), "kodak_portra_endura").unwrap();
-    let database = crate::neutral_filters::NeutralFilters::load(&data()).unwrap();
-    let prepared = crate::params_builder::apply_database_neutral_print_filters(
-        applied,
-        &film,
-        &print,
-        Some(&database),
+    assert_eq!(applied.enlarger.m_filter_shift, 12.0);
+    assert_eq!(applied.neutral_print_filters_protected, [false; 3]);
+}
+#[test]
+fn legacy_whole_looks_drop_carried_neutral_baselines() {
+    let mut document = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    let parameters = document["parameters"].as_object_mut().unwrap();
+    parameters.remove("output_mix");
+    parameters.remove("camera");
+    document["schema_version"] = 2.into();
+    document["parameters"]["enlarger"]["m_filter_neutral"] = serde_json::json!(23.48);
+    document["parameters"]["enlarger"]["y_filter_neutral"] = serde_json::json!(27.97);
+    let migrated = Preset::from_json_str(&document.to_string()).unwrap();
+    assert_eq!(migrated.schema_version, 3);
+    let exported = serde_json::to_value(&migrated).unwrap();
+    assert!(
+        exported["parameters"]["enlarger"]
+            .get("m_filter_neutral")
+            .is_none()
     );
-    assert_eq!(prepared.enlarger.c_filter_neutral, 12.0);
-    assert_eq!(prepared.enlarger.m_filter_neutral, 34.0);
-    assert!(prepared.settings.neutral_print_filters_from_database);
+    assert!(!migrated.to_toml().unwrap().contains("filter_neutral"));
 }
 #[test]
 fn explicit_null_is_json_only_and_never_discarded() {
