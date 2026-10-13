@@ -218,18 +218,20 @@ pub fn incomplete_destination(mut error: Error, root: &Path, manifest: &str) -> 
     error
 }
 
-pub struct Progress {
+pub struct Progress<'a> {
     operation: &'static str,
+    active: Option<(&'a str, u64, std::time::Instant)>,
     started: std::time::Instant,
     completed: usize,
     failed: usize,
     summarized: bool,
 }
 
-impl Progress {
+impl<'a> Progress<'a> {
     pub fn new(operation: &'static str) -> Self {
         Self {
             operation,
+            active: None,
             started: std::time::Instant::now(),
             completed: 0,
             failed: 0,
@@ -237,12 +239,15 @@ impl Progress {
         }
     }
 
-    pub fn start(&self, case_id: &str, seed: u64) -> std::time::Instant {
+    pub fn start(&mut self, case_id: &'a str, seed: u64) -> std::time::Instant {
         eprintln!("Starting {} {} seed {}", self.operation, case_id, seed);
-        std::time::Instant::now()
+        let started = std::time::Instant::now();
+        self.active = Some((case_id, seed, started));
+        started
     }
 
     pub fn finish(&mut self, case_id: &str, seed: u64, status: &str, started: std::time::Instant) {
+        self.active = None;
         if matches!(status, "completed" | "validated") {
             self.completed += 1;
         } else {
@@ -285,9 +290,12 @@ impl Progress {
     }
 }
 
-impl Drop for Progress {
+impl Drop for Progress<'_> {
     fn drop(&mut self) {
-        if !self.summarized && (self.completed != 0 || self.failed != 0) {
+        if let Some((case_id, seed, started)) = self.active.take() {
+            self.finish(case_id, seed, "failed", started);
+        }
+        if !self.summarized {
             self.summary();
         }
     }

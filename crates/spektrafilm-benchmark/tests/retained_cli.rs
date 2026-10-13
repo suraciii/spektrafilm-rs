@@ -417,6 +417,49 @@ fn failed_render_comparison_keeps_execution_finding_and_progress() {
 }
 
 #[test]
+fn undecodable_master_reports_failed_progress_and_retains_incomplete_destination() {
+    let temp = TempDir::new().unwrap();
+    let run = temp.path().join("run");
+    retained_run(&run, 0.2, false);
+    let mut manifest = read(&run.join("run.json"));
+    fs::rename(run.join("master.f64"), run.join("master.npy")).unwrap();
+    manifest["cases"][0]["raw"]["path"] = json!("master.npy");
+    for artifact in manifest["artifacts"].as_array_mut().unwrap() {
+        if artifact["path"] == "master.f64" {
+            artifact["path"] = json!("master.npy");
+        }
+    }
+    save_manifest(&run, "run.json", manifest);
+    let out = temp.path().join("comparison");
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+        .arg("compare")
+        .arg("--baseline")
+        .arg(&run)
+        .arg("--candidate")
+        .arg(&run)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["execution_status"], "failed");
+    assert!(
+        result["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("incomplete")
+    );
+    assert!(out.is_dir());
+    assert!(!out.join("comparison.json").exists());
+    progress::assert_case_seed_progress(
+        &output.stderr,
+        "compare",
+        &json!({"cases":[{"case_id":"probe","seed":0,"status":"failed"}]}),
+    );
+}
+
+#[test]
 fn exploratory_policy_cannot_qualify_and_wrong_protocol_creates_no_output() {
     let temp = TempDir::new().unwrap();
     let a = temp.path().join("a");

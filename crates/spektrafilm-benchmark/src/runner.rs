@@ -781,12 +781,12 @@ struct RenderContext<'a> {
     root: &'a Path,
     evidence: &'a mut Evidence,
 }
-fn render_cases(
-    suite: &Value,
+fn render_cases<'a>(
+    suite: &'a Value,
     selected: &[String],
     context: &mut RenderContext,
     rows: &mut Vec<Value>,
-    progress: &mut Progress,
+    progress: &mut Progress<'a>,
 ) -> Result<()> {
     for case in array(suite, "cases")? {
         let case_id = text(case, "id")?;
@@ -844,12 +844,12 @@ pub fn preflight_suite(
     execute_suite(suite, suite_path, target_path, out, selections, true)
 }
 
-fn preflight_cases(
-    suite: &Value,
+fn preflight_cases<'a>(
+    suite: &'a Value,
     selected: &[String],
     context: &mut RenderContext,
     rows: &mut Vec<Value>,
-    progress: &mut Progress,
+    progress: &mut Progress<'a>,
 ) -> Result<()> {
     for case in array(suite, "cases")? {
         let case_id = text(case, "id")?;
