@@ -94,6 +94,8 @@ An editor must reject input that the validator would reject, before the value en
 
 `camera.film_format_mm` is the model for this rule: its editor holds a 1-1000 mm editing range and clamps typed values to it, while recipes, presets, CLI parameters, and saved state carry any strictly positive value under [Film geometry](../film-grain/v3/design.md#film-geometry).
 
+The editor range is declared once per parameter path in a single table. The GUI editor reads that table; a missing entry is a defect, not a silent default to the machine range. The same table is the source for the CLI discovery `minimum`/`maximum` output. The editor range must be contained within the validator's accepted range and must be wide enough to reach the parameter's documented usable values. Where the validator bound is unbounded above, the editor must still declare a finite maximum derived from the parameter's typical operating range.
+
 ## Viewer presentation
 
 The viewer presents the retained input, the retained output, or the paper back. Its presentation state is viewer-only under the [GUI workflow design](design.md).
@@ -105,6 +107,7 @@ The development animation is fixed viewer behaviour. It must not have an editor,
 The viewer must let the user select a display ICC profile. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly.
 
 The viewer must expose a tonal-distribution readout of the retained output. It must be viewer-only: it must not alter saved or exported pixels.
+- The readout is a fixed strip at the top of the control panel, above the tab row. It is co-visible with the controls, does not occlude the image, and does not compete for width with the 420px panel. It is default-on, collapsible, and its visibility state is persisted. It is viewer-only and never affects saved or exported pixels.
 
 The readout must derive from the retained output. It must not require a second render.
 
@@ -118,6 +121,8 @@ The GUI must not expose these controls. Their parameters remain valid document f
 - The input gamut-compression algorithm selector. The GUI fixes the input algorithm to `xy`. The parameter remains a document field.
 - The Spektra `rms granularity` control. The Spektra stage does not read it.
 - The `Experimental` section, including its channel-swap controls. A channel swap is a quality-control operation, not a GUI control.
+
+The channel-swap validator must reject a non-permutation. A value such as `[0, 0, 0]` currently passes validation and silently duplicates one density channel while dropping the other two. The shared renderer applies the swap to `profile.data.channel_density`, so a non-permutation corrupts the profile at render time. The validator must require exactly three indices in `0..2` that form a permutation of `0, 1, 2`.
 - A `reveal` or `crossfade` editor.
 
 The GUI must not present a selector that offers one choice.
