@@ -47,7 +47,7 @@ Select both `scanner.positive_interpretation=digital_reference` and `scanner.rec
 
 `scanner.reference_exposure_ev` adjusts output exposure in stops. `scanner.reference_balance_ev` supplies independent linear-sRGB RGB gains before output-space conversion. Both default to zero. Optional `scanner.finish=lab_scan` applies after conversion.
 
-See the [Digital Reference contract](../specs/film-chain/digital-reference.md) for scope. See the [reference model](../specs/film-chain/digital-reference-design.md#numerical-reference-model) for spectral sources, normalization, response, and provenance.
+See the [Digital Reference contract](../specs/film-chain/digital-reference/spec.md) for scope. See the [reference model](../specs/film-chain/digital-reference/design.md#numerical-reference-model) for spectral sources, normalization, response, and provenance.
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o reference.tif \
@@ -111,5 +111,5 @@ The look's `negative_to_positive` tone assumes scene-linear input. Its tone valu
 - [Grain](grain.md)
 - [Attribution](attribution.md)
 - [Film-chain specification](../specs/film-chain/spec.md)
-- [Digital Reference contract](../specs/film-chain/digital-reference.md)
+- [Digital Reference contract](../specs/film-chain/digital-reference/spec.md)
 - [Project context](../CONTEXT.md)

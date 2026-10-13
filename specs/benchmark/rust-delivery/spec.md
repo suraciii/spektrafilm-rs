@@ -2,7 +2,7 @@
 
 ## Scope and authority
 
-This document defines the Rust migration and its acceptance criteria. The [product specification](spec.md) owns evaluation meaning and human review. The [machine interface](interface.md) owns commands and documents. The [measurement protocol](metrics.md) owns measurement semantics. The [system design](design.md) owns runtime boundaries.
+This document defines the Rust migration and its acceptance criteria. The [product specification](../spec.md) owns evaluation meaning and human review. The [machine interface](../interface.md) owns commands and documents. The [measurement protocol](../metrics.md) owns measurement semantics. The [system design](../design.md) owns runtime boundaries.
 
 The delivered implementation must provide the complete benchmark as a Rust CLI. A Rust launcher that requires the Python benchmark does not satisfy this contract. All existing command families, reference scopes, measurement families, failure states, and review capabilities must remain supported.
 
@@ -10,7 +10,7 @@ The migration must not change film simulation algorithms, add measurement famili
 
 ## Installation and distribution
 
-The release must include `spektrafilm-bench` and the existing `spektrafilm-bench-fixtures` entry point. The fixture entry point must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](interface.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. Both entry points must run without Python, uv, pip, or Python packages.
+The release must include `spektrafilm-bench` and the existing `spektrafilm-bench-fixtures` entry point. The fixture entry point must retain its current options and source attribution behavior, and it must answer the [standard configuration generation](../interface.md#standard-configuration-generation) contract by invoking the selected renderer's preset export command. Both entry points must run without Python, uv, pip, or Python packages.
 
 Release archives must provide binaries for the platforms supported by the application's packaging workflows. Every non-system runtime dependency must be bundled or linked into the delivered executable. The release must identify required system libraries and third-party licenses. A Rust executable with C or C++ dependencies satisfies this requirement; a pure-Rust dependency graph is not required.
 

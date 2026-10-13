@@ -8,7 +8,7 @@ Reference Exposure is the supported placement. Graded Print and Auto Levels are 
 
 Real negative import, `convert-film`, Telecine, photographic-paper scanning, and reversal-film normalization are outside this addition. Their existing behavior must remain available.
 
-Terms follow the [Film simulation language](../../CONTEXT.md). Existing scanner behavior follows the [Film chain contract](spec.md).
+Terms follow the [Film simulation language](../../../CONTEXT.md). Existing scanner behavior follows the [Film chain contract](../spec.md).
 
 ## Reference conversion
 
@@ -48,13 +48,13 @@ A reference conversion must use its matching reference receiver and response. An
 
 Reconstruction brightness, balance, contrast, and maximum-density controls do not parameterize this model. Nondefault reconstruction controls must fail validation with reference conversion. Reference manual controls must remain neutral with other conversion methods.
 
-Selection must not change film exposure, development, grain, halation, camera exposure compensation, or the developed negative. Lens blur remains a readout operation. Scanner finishing remains an optional operation after conversion under the [scanner finishing contract](spec.md#scanner-receiver-and-interpretation).
+Selection must not change film exposure, development, grain, halation, camera exposure compensation, or the developed negative. Lens blur remains a readout operation. Scanner finishing remains an optional operation after conversion under the [scanner finishing contract](../spec.md#scanner-receiver-and-interpretation).
 
 Neutral finishing must expose the reference conversion before shared output processing. An explicitly selected Lab Scan finish may style that result, but it must not replace its receiver or conversion. Reports must distinguish the reference conversion from the enabled finish.
 
 Existing film-scan black and white points use an exposure-reconstruction axis. Until reference-axis semantics are specified, Digital Reference must accept only their identity values. A nonidentity point window must fail validation rather than being ignored or reinterpreted.
 
-The conversion must integrate with Preview, Scan, Save, and Export. Complete state and recipes must retain the accepted treatment, reference placement, manual controls, and model declaration. Render diagnostics must retain the prepared spectral source identities. Static state must not claim prepared asset identities. Preset ownership remains governed by the [preset contract](../presets/spec.md#look-ownership).
+The conversion must integrate with Preview, Scan, Save, and Export. Complete state and recipes must retain the accepted treatment, reference placement, manual controls, and model declaration. Render diagnostics must retain the prepared spectral source identities. Static state must not claim prepared asset identities. Preset ownership remains governed by the [preset contract](../../presets/spec.md#look-ownership).
 
 GUI, CLI dry run, parameter-file resolution, and rendering must apply the same capability rules. Invalid imports must retain accepted GUI parameters and retained images. Existing settings and defaults must keep their previous meaning.
 
@@ -71,4 +71,4 @@ GUI, CLI dry run, parameter-file resolution, and rendering must apply the same c
 
 ## Delivery status
 
-Digital Reference is available through the paired `digital_reference` receiver and conversion selectors. The implemented Reference Exposure model and its source conventions are defined in the [design](digital-reference-design.md#numerical-reference-model). Graded Print and Auto Levels remain outside this addition.
+Digital Reference is available through the paired `digital_reference` receiver and conversion selectors. The implemented Reference Exposure model and its source conventions are defined in the [design](design.md#numerical-reference-model). Graded Print and Auto Levels remain outside this addition.

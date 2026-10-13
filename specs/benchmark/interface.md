@@ -20,7 +20,7 @@ spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ..
 spektrafilm-bench target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
 ```
 
-Every option must have help. Help, version, and schema discovery must work without a renderer, image decoder, input assets, or graphics device. Version must identify the benchmark implementation and supported document versions. The executable and fixture entry point must satisfy [Rust delivery](rust-delivery.md).
+Every option must have help. Help, version, and schema discovery must work without a renderer, image decoder, input assets, or graphics device. Version must identify the benchmark implementation and supported document versions. The executable and fixture entry point must satisfy [Rust delivery](rust-delivery/spec.md).
 
 `schema` must emit the authoritative JSON Schema for one document kind. It must describe the required nested records and explain fields whose units, coordinate space, or applicability are not evident from their type. `validate` must validate a document and resolve the local dependencies needed for that kind. It must not render images. Its existing `unchecked` list must identify checks that require another document or runtime observations. Standalone policy validation must not imply that selectors, measurement selection, or protocol binding have been checked against a suite. A valid target document must not imply that a GPU is available.
 
@@ -120,7 +120,7 @@ The runner must isolate user preset configuration and remove inherited simulatio
 
 A policy must contain `schema_version`, `id`, `protocol_digest`, `calibration`, and `rules`. It must bind to the resolved measurement protocol. `calibration` must identify hashed evidence, its case population, reviewed labels, observation scale, and scope. An uncalibrated exploratory policy must identify that state and must not produce `passed` qualification.
 
-The resolved protocol digest must include case source declarations and hashes, selected measurement families, probe definitions, region geometry and mask hashes, reference dependencies, and seed populations. It must also include the benchmark implementation revision, metric and color-transform versions, relevant numerical dependency versions, and the LittleCMS version and transform settings for ICC references. `validate --kind suite` must expose this digest for policy authors. Cross-implementation evidence and policy handling must follow [Rust delivery](rust-delivery.md#existing-evidence-and-protocol-identity).
+The resolved protocol digest must include case source declarations and hashes, selected measurement families, probe definitions, region geometry and mask hashes, reference dependencies, and seed populations. It must also include the benchmark implementation revision, metric and color-transform versions, relevant numerical dependency versions, and the LittleCMS version and transform settings for ICC references. `validate --kind suite` must expose this digest for policy authors. Cross-implementation evidence and policy handling must follow [Rust delivery](rust-delivery/spec.md#existing-evidence-and-protocol-identity).
 
 Each rule must contain `id`, `purpose`, `selector`, `metric`, and its constraints. `purpose` must be `protect`, `expect`, or `reference`. `selector` must identify exact case and region identities or the explicit full-image region. Wildcards, expressions, and implicit aggregate selectors must not be accepted.
 
@@ -180,7 +180,7 @@ spektrafilm-bench-fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY 
 
 `--natural-input` and `--download-natural` must be mutually exclusive. The generator must preserve the existing pinned natural-source validation and attribution rules.
 
-Every invocation must generate the existing probe assets, suites, targets, exploratory policy, and provenance. It must also generate `look.toml`, `color-tone.json`, and `appearance.json`. `look.toml` must use the renderer's portable preset schema. The two JSON files must contain the existing standalone `configuration` object, not a new document envelope. The [standard configuration product contract](standard-configurations.md) defines their rendering purposes and suite coverage.
+Every invocation must generate the existing probe assets, suites, targets, exploratory policy, and provenance. It must also generate `look.toml`, `color-tone.json`, and `appearance.json`. `look.toml` must use the renderer's portable preset schema. The two JSON files must contain the existing standalone `configuration` object, not a new document envelope. The [standard configuration product contract](standard-configurations/spec.md) defines their rendering purposes and suite coverage.
 
 Both configurations must reference `look.toml` through `presets: ["look.toml"]`. They must use existing `route`, `set_files`, and `set` carriers. Their paths must resolve relative to the containing configuration file. Generated suite cases must carry the equivalent configuration objects because the suite schema has no configuration include field.
 

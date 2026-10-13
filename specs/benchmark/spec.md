@@ -10,7 +10,7 @@ The benchmark must expose measurements and their evidence before an interpretati
 
 This capability owns appearance comparison, evaluation decisions, and review artifacts. [CLI parameters](../cli-parameters/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
 
-The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery.md) defines distribution and migration acceptance. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
+The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution and migration acceptance. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
 
 ## Terms
 
@@ -94,7 +94,7 @@ Missing assets and unsupported cases must remain visible. The report must state 
 
 ## Standard configuration entry point
 
-[Standard benchmark configurations](standard-configurations.md) define reusable isolated color-and-tone and full-appearance setups. They extend fixture generation and support the existing local-image and suite workflows. They must not introduce a film profile, preset kind, implicit baseline, or universal quality score.
+[Standard benchmark configurations](standard-configurations/spec.md) define reusable isolated color-and-tone and full-appearance setups. They extend fixture generation and support the existing local-image and suite workflows. They must not introduce a film profile, preset kind, implicit baseline, or universal quality score.
 
 
 ## Reproducible rendering
