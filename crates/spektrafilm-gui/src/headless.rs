@@ -734,3 +734,267 @@ mod layout_snapshots {
         }
     }
 }
+
+#[test]
+fn digital_reference_real_app_selection_render_transactions_and_outputs() {
+    use spektrafilm_core::params::{PositiveInterpretation, ReceiverProfile, ScannerAutoSetup};
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "Profiles");
+    let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    choose(h, "workflow", "input > film > scan");
+    click(h, "Scanner");
+    choose(h, "scan output", "Negative to positive");
+    choose(h, "scanner auto setup", "per_frame");
+    edit(h, "positive density ev", "1");
+    edit(h, "positive contrast", "1.5");
+    edit(h, "black point 0", "0.05");
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    let scanner = &h.state().params.scanner;
+    assert_eq!(
+        scanner.positive_interpretation,
+        PositiveInterpretation::DigitalReference
+    );
+    assert_eq!(scanner.receiver_profile, ReceiverProfile::DigitalReference);
+    assert_eq!(scanner.auto_setup, ScannerAutoSetup::Off);
+    assert_eq!(scanner.black_point, [0.0; 3]);
+    assert_eq!(scanner.white_point, [1.0; 3]);
+    let defaults = spektrafilm_core::params::ScannerParams::default();
+    assert_eq!(scanner.positive_density_ev, defaults.positive_density_ev);
+    assert_eq!(scanner.positive_contrast, defaults.positive_contrast);
+    assert!(
+        h.query_by_label("Reference Exposure: 18% neutral (fixed)")
+            .is_some()
+    );
+    for label in [
+        "receiver profile",
+        "scanner auto setup",
+        "positive density ev",
+        "positive balance ev 0",
+        "positive contrast",
+        "positive dmax",
+        "black point 0",
+        "white point 0",
+    ] {
+        assert!(
+            h.query_by_label(label).is_none(),
+            "incompatible control {label}"
+        );
+    }
+    let neutral = render(h, "PREVIEW");
+    assert!(neutral.data.iter().all(|x| x.is_finite()));
+    assert!(edge_difference(&neutral) > 0.0);
+    edit(h, "Reference exposure EV", "1");
+    let brighter = render(h, "PREVIEW");
+    assert!(mean(&brighter) > mean(&neutral));
+    edit(h, "Reference balance EV 0", "0.25");
+    edit(h, "Reference balance EV 1", "-0.125");
+    let balanced = render(h, "PREVIEW");
+    assert_ne!(balanced.data, brighter.data);
+    let accepted = h.state().current_state().unwrap();
+    let accepted_params = h.state().params.clone();
+    let accepted_input = h.state().image.as_ref().unwrap().clone();
+    let accepted_output = h.state().output_image.as_ref().unwrap().clone();
+    let revision = h.state().parameter_revision;
+    let epoch = h.state().calibration_epoch;
+    for (key, value) in [
+        ("receiver_profile", serde_json::json!("legacy_colorimetric")),
+        ("auto_setup", serde_json::json!("per_frame")),
+        ("black_point", serde_json::json!([0.1, 0.0, 0.0])),
+        ("positive_contrast", serde_json::json!(1.5)),
+    ] {
+        let mut invalid = accepted.sections.clone();
+        invalid["scanner"][key] = value;
+        let result =
+            state::GuiState::from_value(invalid).and_then(|state| h.state_mut().apply_state(state));
+        assert!(result.is_err(), "accepted incompatible {key}");
+        assert_eq!(h.state().params, accepted_params);
+        assert_eq!(
+            h.state().current_state().unwrap().sections,
+            accepted.sections
+        );
+        assert_eq!(h.state().parameter_revision, revision);
+        assert_eq!(h.state().calibration_epoch, epoch);
+        assert!(Arc::ptr_eq(
+            h.state().image.as_ref().unwrap(),
+            &accepted_input
+        ));
+        assert!(Arc::ptr_eq(
+            h.state().output_image.as_ref().unwrap(),
+            &accepted_output
+        ));
+        assert_eq!(
+            h.get_by_label("Reference exposure EV").value().as_deref(),
+            Some("1.000")
+        );
+    }
+    for (section, key, value) in [
+        ("simulation", "route", "input > convert-film > scan"),
+        ("simulation", "film_stock", "kodak_ektachrome_100"),
+    ] {
+        let mut invalid = accepted.sections.clone();
+        invalid[section][key] = serde_json::json!(value);
+        let result =
+            state::GuiState::from_value(invalid).and_then(|state| h.state_mut().apply_state(state));
+        assert!(result.is_err(), "accepted incompatible {key}");
+        assert_eq!(h.state().params, accepted_params);
+        assert_eq!(h.state().parameter_revision, revision);
+        assert_eq!(h.state().calibration_epoch, epoch);
+        assert!(Arc::ptr_eq(
+            h.state().image.as_ref().unwrap(),
+            &accepted_input
+        ));
+        assert!(Arc::ptr_eq(
+            h.state().output_image.as_ref().unwrap(),
+            &accepted_output
+        ));
+    }
+    let persisted = s.directory.path().join("reference-state.json");
+    accepted.save(&persisted).unwrap();
+    let mut restored = app(
+        persisted,
+        s.directory.path().join("asymmetric-ramp.png"),
+        s.directory.path().join("reference-browser.json"),
+    );
+    assert_eq!(restored.params.scanner, accepted_params.scanner);
+    eframe::App::on_exit(&mut restored, None);
+    let mut extension_only = accepted.sections.clone();
+    for key in [
+        "receiver_profile",
+        "positive_interpretation",
+        "reference_exposure_ev",
+        "reference_balance_ev",
+    ] {
+        extension_only["scanner"]
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+    }
+    let extension_state = state::GuiState::from_value(extension_only).unwrap();
+    assert_eq!(
+        extension_state.runtime_params().unwrap().scanner,
+        accepted_params.scanner
+    );
+    h.state_mut().apply_state(extension_state).unwrap();
+    h.run_steps(3);
+    choose(h, "scanner finish", "lab_scan");
+    edit(h, "finish strength", "0");
+    let unfinished = render(h, "PREVIEW");
+    assert_eq!(unfinished.data, balanced.data);
+    choose(h, "scanner finish", "neutral");
+    let save_path = s.directory.path().join("reference-preview.png");
+    h.state_mut().save_to_path(&save_path);
+    let expected = image_io::convert_image(
+        &balanced,
+        &h.state().output_color_space,
+        h.state().output_cctf_encoding,
+        "sRGB",
+        true,
+    )
+    .unwrap();
+    assert_png(&save_path, &expected);
+    let scan = render(h, "SCAN");
+    assert_eq!((scan.width, scan.height), (160, 80));
+    render(h, "PREVIEW");
+    let export_path = s.directory.path().join("reference-full.png");
+    let ctx = h.ctx.clone();
+    let options = h.state().export_options.clone();
+    h.state_mut()
+        .start_export_to_path(&ctx, options, &export_path);
+    wait_until(h, |a| a.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    let expected = image_io::convert_image(
+        &scan,
+        &h.state().output_color_space,
+        h.state().output_cctf_encoding,
+        "sRGB",
+        true,
+    )
+    .unwrap();
+    assert_png(&export_path, &expected);
+    choose(h, "Negative conversion method", "density");
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    assert_eq!(h.state().params.scanner.reference_exposure_ev, 0.0);
+    assert_eq!(h.state().params.scanner.reference_balance_ev, [0.0; 3]);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "receiver profile")
+            .is_some()
+    );
+    assert!(h.query_by_label("Reference exposure EV").is_none());
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    choose(h, "workflow", "input > convert-film > scan");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
+    );
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    h.get_by_role_and_label(
+        egui::accesskit::Role::ComboBox,
+        "Negative conversion method",
+    )
+    .simulate_click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Digital Reference (modeled)").is_none());
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+    choose(h, "workflow", "input > film > scan");
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    choose(h, "workflow", "Finished RGB");
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
+    );
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    render(h, "PREVIEW");
+    choose(h, "workflow", "input > film > scan");
+    choose(h, "scan output", "Negative to positive");
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+        .is_none()
+    {
+        click(h, "Profiles");
+    }
+    let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
+    choose(h, "film profile", slide.info.name.as_deref().unwrap());
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
+    );
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    render(h, "PREVIEW");
+}

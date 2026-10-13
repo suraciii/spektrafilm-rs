@@ -129,6 +129,8 @@ impl GuiState {
             "auto_setup",
             "finish",
             "finish_strength",
+            "reference_exposure_ev",
+            "reference_balance_ev",
         ] {
             sections["scanner"][key] = scanner[key].clone();
         }
@@ -213,6 +215,8 @@ impl GuiState {
             "auto_setup",
             "finish",
             "finish_strength",
+            "reference_exposure_ev",
+            "reference_balance_ev",
         ] {
             if normalized["scanner"].get(key).is_none()
                 && let Some(selection) = value["rust"]["runtime"]["scanner"].get(key)
@@ -653,6 +657,8 @@ mod tests {
             "auto_setup",
             "finish",
             "finish_strength",
+            "reference_exposure_ev",
+            "reference_balance_ev",
         ] {
             scanner.remove(key);
         }
