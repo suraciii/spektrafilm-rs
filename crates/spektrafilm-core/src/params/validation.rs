@@ -67,6 +67,9 @@ pub(crate) fn rgb_to_raw_names() -> [&'static str; 7] {
 /// maximum means unbounded above.
 pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
     match path {
+        "output_mix.amount" => Some((0.0, Some(1.0))),
+        "film_render.chemistry.developer_exhaustion"
+        | "print_render.density_curves_morph.developer_exhaustion" => Some((0.0, Some(1.0))),
         "film_render.grain.fotufilm.amount" | "film_render.grain.fotufilm.layers" => {
             Some((0.0, Some(4.0)))
         }
@@ -247,9 +250,9 @@ const GAMUT_COMPONENT_DOMAINS: [GamutComponentDomain; 3] = [
 
 pub(crate) fn gamut_component_domains(path: &str) -> Option<&'static [GamutComponentDomain; 3]> {
     match path {
-        "io.input_gamut_compress.knee"
-        | "io.output_gamut_compress.knee"
-        | "io.output_gamut_compress.lightness_compression" => Some(&GAMUT_COMPONENT_DOMAINS),
+        "io.input_gamut_compress.knee" | "io.output_gamut_compress.knee" => {
+            Some(&GAMUT_COMPONENT_DOMAINS)
+        }
         _ => None,
     }
 }
@@ -519,6 +522,7 @@ pub(crate) fn validate_film_format_mm(value: f64) -> Result<(), String> {
 /// Validate cross-field runtime vocabulary before producing a pipeline artifact.
 pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     validate_film_format_mm(f64::from(params.camera.film_format_mm))?;
+    params.output_mix.validate()?;
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
         return Err(
             "workflow.route: the magazine route was removed; use input > film > scan and set \
@@ -621,6 +625,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             params.camera.color_filter
         ));
     }
+    validate_enum_value(
+        "camera.auto_exposure_method",
+        &params.camera.auto_exposure_method,
+    )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     let scanner = &params.scanner;
     let reference =
@@ -830,5 +838,20 @@ mod tests {
         let error = validate(&params).unwrap_err();
         assert!(error.contains("spektrafilm process --help"));
         assert!(!error.contains("did you mean"));
+    }
+
+    #[test]
+    fn camera_metering_method_must_match_the_dispatch_vocabulary() {
+        for method in enum_values("camera.auto_exposure_method").unwrap() {
+            let mut params = RuntimeParams::default();
+            params.camera.auto_exposure = true;
+            params.camera.auto_exposure_method = method;
+            validate(&params).unwrap();
+        }
+        let mut params = RuntimeParams::default();
+        params.camera.auto_exposure_method = "typo".into();
+        let error = validate(&params).unwrap_err();
+        assert!(error.starts_with("camera.auto_exposure_method:"));
+        assert!(error.contains("average"));
     }
 }

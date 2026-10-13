@@ -37,13 +37,8 @@ pub(super) fn build_gamut_state(
         n_l: u32,
         n_h: u32,
         knee: [f32; 4],
-        lightness: [f32; 4],
         lspace: [f32; 4],
     }
-    let lightness = match gp.lightness {
-        Some([t, l, p]) => [t, l, p, 1.0],
-        None => [0.0, 1.0, 1.0, 0.0],
-    };
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("gamut_params"),
         contents: bytemuck::bytes_of(&GamutParams {
@@ -52,8 +47,7 @@ pub(super) fn build_gamut_state(
             n_l: gp.n_l,
             n_h: gp.n_h,
             knee: [gp.knee[0], gp.knee[1], gp.knee[2], 0.0],
-            lightness,
-            lspace: [gp.l_white, gp.l_min, gp.l_max, 0.0],
+            lspace: [gp.l_min, gp.l_max, 0.0, 0.0],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });

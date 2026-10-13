@@ -92,6 +92,11 @@ A quick suite must contain fixed controlled probes and a named subset of scenes.
 
 Missing assets and unsupported cases must remain visible. The report must state selected, completed, failed, and unavailable case counts. Empty selection must fail. A subset must remain identified as a subset and must not receive the complete suite's qualification.
 
+## Standard configuration entry point
+
+[Standard benchmark configurations](standard-configurations.md) define reusable isolated color-and-tone and full-appearance setups. They extend fixture generation and support the existing local-image and suite workflows. They must not introduce a film profile, preset kind, implicit baseline, or universal quality score.
+
+
 ## Reproducible rendering
 
 Raster cases must provide the [source declaration](../cli-parameters/spec.md#input-declaration). Embedded ICC data must remain recorded as provenance and must not silently override the renderer's explicit declaration. An external reference's color interpretation must be resolved separately before comparison.
@@ -128,12 +133,12 @@ A review report must work offline with relative local artifact links. Report gen
 
 The report must show source input, baseline, candidate, and a reference when applicable. It must label each role, rendering configuration, geometry, and reference limitation. Different scene captures must not be presented as exact A/B correspondence.
 
-The report must provide synchronized pan and zoom for pixel-aligned A/B images. It must support manual A/B alternation and default to a split view with a directly draggable divider. The divider must also support a range control and keyboard movement. An unaligned reference must use labeled side-by-side views instead of an exact-match slider.
+The report must provide synchronized pan and zoom for pixel-aligned A/B images. It must support manual A/B alternation and default to a split view with a directly draggable divider. The divider must also support a range control and keyboard movement. An unaligned reference must use labeled side-by-side views instead of an exact-match slider and identify each crop's left and right dimensions independently. A full-screen control must be available for the selected image view and remain keyboard operable. Narrow layouts must not introduce horizontal page overflow.
 
-Detail sections must include fixed semantic regions and automatically selected difference regions. Each region must have a full-image locator, its exact coordinates, its selection method, matching A/B crops, applicable findings, and individual image links.
+Detail sections must include fixed semantic regions and automatically selected difference regions. User-selected crops and automatically selected difference crops must appear as directly clickable thumbnails below the main view. Activating a crop must update the large image and expose that region's full-image locator, exact coordinates, selection method, matching A/B crops, applicable findings, and individual image links. When no crop is available, the report must show an explicit empty state rather than a broken control.
 
 Native detail must map one source image pixel to one device pixel at 100%. The viewer must account for device pixel ratio. The report must also offer 200% and 400% nearest-neighbor views. A fit-to-container view must not be labeled 100%.
-A generated human review report SHOULD open with one selected case and seed in request order, followed by accessible navigation for every other case and seed, including failures. A single-run report must open input/simulation when no reference pair is selected and reference/simulation when that pair is selected. Reports with multiple pairs must provide a pair selector. Version reports must open baseline/candidate. Labels, measurements, difference maps, and detail crops must belong to the selected pair. The initial view SHOULD show the selected imagery, a short retained-condition summary, and at most four rounded full-image metrics with their units, domains, and direction. Supporting evidence SHOULD remain folded.
+A generated human review report must open with the selected case and seed's image-first main view in request order, followed by accessible navigation for every other case and seed, including failures. A single-run report must open input/simulation when no reference pair is selected and reference/simulation when that pair is selected. Reports with multiple pairs must provide a pair selector. Version reports must open baseline/candidate. Labels, measurements, difference maps, and detail crops must belong to the selected pair. The initial view must show the selected imagery before supporting evidence. It SHOULD include a short retained-condition summary and at most four rounded full-image metrics with their units, domains, and direction. Supporting evidence SHOULD remain folded.
 
 Detail crops must use lossless files. Reduced full-image previews may use lossy files if their role is explicit. Previews must not replace the numerical masters or lossless detail evidence.
 
@@ -141,7 +146,7 @@ Display copies must use 16-bit RGB sRGB PNG without quantization dither. Fit pre
 
 Comparisons with different source resolutions must separate a declared common observation scale from native-pixel inspection. Every resampling operation must be identified. Registered color-comparison copies must remain separate from unwarped grain and sharpness inspection copies.
 
-Difference maps must show their units, scale, clipping, and any amplification factor. Comparable panels must use the same scale. A per-image automatically stretched map must not be presented as a comparable magnitude scale. Normal images must remain available beside difference maps.
+Difference maps must show their units, scale, clipping, and amplification factor, and provide a distinct difference-map mode alongside normal images. Comparable panels must use the same scale. A per-image automatically stretched map must not be presented as a comparable magnitude scale. Normal images must remain available beside difference maps.
 
 Automatic regions must identify their ranking measurement and merge overlapping detections. They must not displace fixed critical regions. Ties and region ordering must be deterministic. The report must retain rejected or unavailable comparisons rather than hiding them behind attractive examples.
 
@@ -157,7 +162,7 @@ Source attribution and redistribution restrictions must accompany external refer
 6. Supply an unaligned scene reference and a tone-matched reference. Enforce each reference's allowed measurement scope.
 7. Request GPU rendering and observe CPU execution. Retain the actual route and prevent an unqualified GPU result.
 8. Fail a required case or measurement. Preserve its evidence and prevent a qualified gate pass. Reject an empty suite.
-9. Generate a review from existing results with the renderer unavailable. Inspect full-image location, synchronized native detail, lossless crops, and labeled difference maps on desktop and narrow layouts.
+9. Generate a review from existing results with the renderer unavailable. Open directly on the selected images, activate user-selected and automatic crop thumbnails, inspect full-image location and synchronized native detail, toggle labeled difference maps and full-screen mode, and retain lossless crops on desktop and narrow layouts without horizontal page overflow.
 10. Reuse a run and then change a renderer or data dependency. Reject stale cached evidence. Refuse replacement of an existing completed result.
 11. Evaluate a protected skin region and an expected highlight change. Keep the skin failure visible despite the expected change.
 12. Validate machine documents and execute CLI examples through the implemented interface. Reject unknown fields, invalid bounds, nonfinite values, unsafe artifact paths, and missing evidence references.

@@ -8,11 +8,13 @@ pub enum Section {
     Couplers,
     Base,
     Convert,
+    Camera,
     CameraFilter,
     EnlargerFilter,
     Enlarger,
     Scanner,
     Print,
+    OutputMix,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "section", rename_all = "snake_case")]
@@ -27,11 +29,13 @@ pub const SECTIONS: &[Section] = &[
     Section::Couplers,
     Section::Base,
     Section::Convert,
+    Section::Camera,
     Section::CameraFilter,
     Section::EnlargerFilter,
     Section::Enlarger,
     Section::Scanner,
     Section::Print,
+    Section::OutputMix,
 ];
 impl Section {
     pub fn name(self) -> &'static str {
@@ -42,11 +46,13 @@ impl Section {
             Self::Couplers => "couplers",
             Self::Base => "base",
             Self::Convert => "convert",
+            Self::Camera => "camera",
             Self::CameraFilter => "camera filter",
             Self::EnlargerFilter => "enlarger filter",
             Self::Enlarger => "enlarger",
             Self::Scanner => "scanner",
             Self::Print => "print",
+            Self::OutputMix => "output",
         }
     }
     pub fn paths(self) -> &'static [&'static str] {
@@ -61,11 +67,17 @@ impl Section {
             Self::Couplers => &["film_render.dir_couplers"],
             Self::Base => &["film_render.base"],
             Self::Convert => &["film_render.convert"],
+            Self::Camera => &[
+                "camera.exposure_compensation_ev",
+                "camera.auto_exposure",
+                "camera.auto_exposure_method",
+            ],
             Self::CameraFilter => &["camera_diffusion_filter"],
             Self::EnlargerFilter => &["enlarger.diffusion_filter"],
             Self::Enlarger => &["enlarger"],
             Self::Scanner => &["scanner"],
             Self::Print => &["print_render"],
+            Self::OutputMix => &["output_mix"],
         }
     }
     fn owns(self, path: &str) -> bool {

@@ -148,6 +148,14 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
 }
 
 fn render(h: &mut Harness<'_, App>, button: &str) -> Arc<ImageBuf> {
+    // State loading can schedule a preview even with auto-preview off. Drain it
+    // before clicking: a disabled action does not enqueue the requested render.
+    wait_until(h, |a| {
+        a.render_job.is_none()
+            && a.export_job.is_none()
+            && a.calibration_job.is_none()
+            && !a.force_preview
+    });
     let previous = h.state().output_image.clone();
     click(h, button);
     wait_until(h, |a| {
@@ -997,4 +1005,44 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         ReceiverProfile::LegacyColorimetric
     );
     render(h, "PREVIEW");
+}
+
+#[test]
+fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().params.camera.exposure_compensation_ev = -1.0;
+    h.state_mut().params.camera.auto_exposure = true;
+    click(h, "▶");
+    click(h, "American Reminiscence");
+    assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.5);
+    assert!(!h.state().params.camera.auto_exposure);
+    assert!(
+        h.query_by_label("American Reminiscence • applied")
+            .is_some()
+    );
+    let initial = render(h, "PREVIEW");
+    assert!(edge_difference(&initial) > 0.01);
+    edit(h, "exposure compensation ev", "-1.0");
+    assert!(
+        h.query_by_label("American Reminiscence • modified")
+            .is_some()
+    );
+    let changed = render(h, "PREVIEW");
+    assert!(
+        initial
+            .data
+            .iter()
+            .zip(&changed.data)
+            .any(|(a, b)| (*a as f64 - *b as f64).abs() > 0.001)
+    );
+    click(h, "American Reminiscence • modified");
+    let restored = render(h, "PREVIEW");
+    assert!(
+        h.query_by_label("American Reminiscence • applied")
+            .is_some()
+    );
+    for (a, b) in initial.data.iter().zip(&restored.data) {
+        assert!((*a as f64 - *b as f64).abs() < 1e-6);
+    }
 }

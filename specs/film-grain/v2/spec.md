@@ -1,6 +1,8 @@
 # Procedural grain
 ## Contract
 - Procedural consumes and returns native display-encoded scanner RGB. It does not apply an internal transfer curve or primaries conversion.
+- Procedural is a post-scan grain appearance. It runs after scanner interpretation, optional scanner finish, output gamut processing, digital unsharp mask, and scanner encoding, before Magazine appearance and overall output mixing. It must not change film or print density or be exposed to subsequent photographic printing as if it were developed grain.
+- The selector values, parameter paths, named profiles, and algorithm remain unchanged. This clarification must not move the existing RGB algorithm into density space or automatically map it to Spektra or Dye. Film Resolution belongs to this appearance model, not the scanner's optical blur.
 - `Analogue` samples the encoded source as a virtual grain texture and composites it over the Film Resolution result.
 - `Noise` is a single-pass image-resolution path. It generates procedural grain from the prepared input and does not execute Film Resolution; `v2_resolution_factor` and `v2_resolution_type` therefore do not alter Noise output.
 - Film type is profile metadata and does not select the filter. `v2_resolution_type` (`0` OpticalResolution, `1` FastBlur) selects Film Resolution for Analogue; mode and film type remain independent controls.
@@ -9,3 +11,4 @@
 - `custom` exposes Size, Amount, Shadows, Midtones, Highlights, Chroma, and Film Resolution overrides within the shared bounds.
 - The seed and resolved controls determine a repeatable realization. CPU and WGPU may differ by normal floating-point device arithmetic.
 - The photo Procedural API has no overscan or damage-mask input; mask-modulated grain is outside this contract.
+- With fixed input, seed, and controls, this placement clarification must preserve existing Procedural output within the engine's established precision budgets. Integration acceptance must show unchanged upstream material-density taps when only Procedural controls change, while material-grain controls can affect those taps. GUI and CLI descriptions must identify the different domains.

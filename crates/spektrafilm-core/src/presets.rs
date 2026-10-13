@@ -3,8 +3,8 @@ mod library;
 mod sections;
 use crate::params::sources::{ParameterEdits, parse_carrier};
 use crate::params::{
-    DiffusionFilterParams, EnlargerParams, FilmRenderingParams, PrintRenderingParams,
-    RuntimeParams, ScannerParams, SettingsParams,
+    DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
+    PrintRenderingParams, RuntimeParams, ScannerParams, SettingsParams,
 };
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
@@ -15,7 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const PRESET_SCHEMA_VERSION: u32 = 2;
+pub const PRESET_SCHEMA_VERSION: u32 = 3;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
@@ -36,16 +36,60 @@ pub struct Provenance {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LookParameters {
+    /// Absent in legacy presets, which preserve the current virtual exposure.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_camera"
+    )]
+    pub camera: Option<LookCameraParams>,
     pub enlarger: EnlargerParams,
     pub scanner: ScannerParams,
     pub film_render: FilmRenderingParams,
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
+    pub output_mix: OutputMixParams,
     /// Spectral-reconstruction switches that shape the rendered look. This is
     /// deliberately a subset of `SettingsParams`: preview limits, performance
     /// toggles, and the working wavelength grid are not look content.
     #[serde(default)]
     pub settings: LookSettingsParams,
+}
+/// Virtual film exposure and metering, separate from RAW and input correction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LookCameraParams {
+    pub exposure_compensation_ev: f32,
+    pub auto_exposure: bool,
+    pub auto_exposure_method: String,
+}
+fn deserialize_present_camera<'de, D>(deserializer: D) -> Result<Option<LookCameraParams>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    LookCameraParams::deserialize(deserializer).map(Some)
+}
+impl LookCameraParams {
+    fn capture(params: &RuntimeParams) -> Self {
+        Self {
+            exposure_compensation_ev: params.camera.exposure_compensation_ev,
+            auto_exposure: params.camera.auto_exposure,
+            auto_exposure_method: params.camera.auto_exposure_method.clone(),
+        }
+    }
+    fn apply_to(&self, params: &mut RuntimeParams) {
+        params.camera.exposure_compensation_ev = self.exposure_compensation_ev;
+        params.camera.auto_exposure = self.auto_exposure;
+        params
+            .camera
+            .auto_exposure_method
+            .clone_from(&self.auto_exposure_method);
+    }
+    fn matches(&self, params: &RuntimeParams) -> bool {
+        self.exposure_compensation_ev == params.camera.exposure_compensation_ev
+            && self.auto_exposure == params.camera.auto_exposure
+            && self.auto_exposure_method == params.camera.auto_exposure_method
+    }
 }
 /// Look-owned processing settings (subset of `SettingsParams`, same defaults).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,11 +157,13 @@ pub struct ResolvedPreset {
 impl LookParameters {
     pub fn capture(params: &RuntimeParams) -> Self {
         Self {
+            camera: Some(LookCameraParams::capture(params)),
             enlarger: params.enlarger.clone(),
             scanner: params.scanner.clone(),
             film_render: params.film_render.clone(),
             print_render: params.print_render.clone(),
             camera_diffusion_filter: params.camera.diffusion_filter.clone(),
+            output_mix: params.output_mix.clone(),
             settings: LookSettingsParams {
                 apply_hanatos2025_adaptation_window: params
                     .settings
@@ -133,16 +179,38 @@ impl LookParameters {
 
     /// Replace every look-owned parameter of `params` with this look.
     ///
-    /// The look owns the enlarger, scanner, film-render and print-render
-    /// sections, the camera diffusion filter, and the look-owned processing
-    /// settings. Every other parameter section keeps its value.
+    /// The look owns virtual exposure when present, enlarger, scanner, film
+    /// and print rendering, camera diffusion, and look processing settings.
+    /// Every other parameter section keeps its value.
     pub fn apply_to(&self, params: &mut RuntimeParams) {
+        if let Some(camera) = &self.camera {
+            camera.apply_to(params);
+        }
         params.enlarger = self.enlarger.clone();
         params.scanner = self.scanner.clone();
         params.film_render = self.film_render.clone();
         params.print_render = self.print_render.clone();
         params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
+        params.output_mix = self.output_mix.clone();
         self.settings.apply_to(&mut params.settings);
+    }
+    /// Compare only carried controls; legacy presets do not own exposure.
+    pub fn matches(&self, params: &RuntimeParams) -> bool {
+        self.camera
+            .as_ref()
+            .is_none_or(|camera| camera.matches(params))
+            && self.enlarger == params.enlarger
+            && self.scanner == params.scanner
+            && self.film_render == params.film_render
+            && self.print_render == params.print_render
+            && self.camera_diffusion_filter == params.camera.diffusion_filter
+            && self.output_mix == params.output_mix
+            && self.settings.apply_hanatos2025_adaptation_window
+                == params.settings.apply_hanatos2025_adaptation_window
+            && self.settings.apply_hanatos2025_adaptation_surface
+                == params.settings.apply_hanatos2025_adaptation_surface
+            && self.settings.spectral_gaussian_blur == params.settings.spectral_gaussian_blur
+            && self.settings.use_cat16 == params.settings.use_cat16
     }
 }
 impl LookSettingsParams {
@@ -187,10 +255,43 @@ impl Preset {
             parameters: Value,
             provenance: Provenance,
         }
-        if value["schema_version"] == 1 {
+        if matches!(value["schema_version"].as_u64(), Some(1 | 2)) {
+            let version = value["schema_version"].as_u64().unwrap();
             let object = value.as_object_mut().ok_or("preset must be an object")?;
-            object.remove("id");
-            object.insert("schema_version".into(), 2.into());
+            if version == 1 {
+                object.remove("id");
+            }
+            if object
+                .get("parameters")
+                .and_then(|p| p.get("output_mix"))
+                .is_some()
+            {
+                return Err(
+                    "legacy preset parameters.output_mix is unknown; use schema_version 3".into(),
+                );
+            }
+            if object
+                .get("parameters")
+                .and_then(|p| p.get("camera"))
+                .is_some()
+            {
+                return Err(
+                    "legacy preset parameters.camera is unknown; use schema_version 3".into(),
+                );
+            }
+            if object.get("film_profile").is_some_and(|v| !v.is_null())
+                || object.get("print_profile").is_some_and(|v| !v.is_null())
+            {
+                let parameters = object
+                    .get_mut("parameters")
+                    .and_then(Value::as_object_mut)
+                    .ok_or("preset parameters must be an object")?;
+                parameters.insert(
+                    "output_mix".into(),
+                    serde_json::to_value(OutputMixParams::default()).map_err(|e| e.to_string())?,
+                );
+            }
+            object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
         }
         let wire: Wire =
             serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
@@ -379,7 +480,7 @@ impl Preset {
                 .expect("built-in provenance is serializable"),
         );
         Self {
-            schema_version: 2,
+            schema_version: PRESET_SCHEMA_VERSION,
             name: name.into(),
             author: None,
             description: None,
@@ -413,7 +514,7 @@ impl Preset {
             .map_err(|e| e.to_string())?,
         );
         let preset = Self {
-            schema_version: 2,
+            schema_version: PRESET_SCHEMA_VERSION,
             name: name.into(),
             author: None,
             description: None,
@@ -631,5 +732,7 @@ pub(crate) fn restore_explicit_stock_values(
             .expect("retaining validated explicit controls");
     }
 }
+#[cfg(test)]
+mod camera_tests;
 #[cfg(test)]
 mod tests;

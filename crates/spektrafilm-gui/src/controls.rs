@@ -124,6 +124,18 @@ fn enum_choice<T: Copy + PartialEq>(
     changed
 }
 
+fn preflash_controls(ui: &mut Ui, params: &mut RuntimeParams, flags: &mut ChangeFlags) {
+    let active = params.workflow.route.contains(" > print > ");
+    if !active {
+        ui.label("Preflash inactive on this route; stored values are retained.");
+    }
+    ui.add_enabled_ui(active, |ui| {
+        flags.runtime_changed |= numeric(ui, "preflash exposure", &mut params.enlarger.preflash_exposure, 0.0, 1000000.0, 0.005, 2, "Linear multiplier of the integrated spectral flash, not EV. Zero disables flash and retains its filters. For negative-to-photographic-paper printing, flash can bring weak highlight exposure differences into a responsive part of the paper curve; it cannot recover absent detail. Excess may lower paper white, add fog, alter midtones and change color. Other print materials retain their own polarity.");
+        flags.runtime_changed |= numeric(ui, "preflash y filter shift", &mut params.enlarger.preflash_y_filter_shift, -1000000.0, 1000000.0, 1.0, 2, "Independent preflash Yellow shift around the calibrated neutral filter pack, in Kodak CC units.");
+        flags.runtime_changed |= numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, -1000000.0, 1000000.0, 1.0, 2, "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
+    });
+}
+
 pub(crate) fn show(
     ui: &mut Ui,
     params: &mut RuntimeParams,
@@ -140,7 +152,7 @@ pub(crate) fn show(
             });
         }
         if section == "Camera" {
-            egui::CollapsingHeader::new("Camera").default_open(true).show(ui, |ui| {
+            ui.scope(|ui| {
                 flags.runtime_changed |= numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, -100.0, 100.0, 0.25, 2, "Add a bias to the auto-exposure of the camera.");
                 flags.runtime_changed |= toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera.");
                 flags.runtime_changed |= numeric(ui, "film format mm", &mut params.camera.film_format_mm, 1.0, 1000.0, 0.5, 2, "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain Dye, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
@@ -149,11 +161,16 @@ pub(crate) fn show(
             });
         }
         if section == "Enlarger" {
-            ui.scope(|ui| {
+            let print_active = params.workflow.route.contains(" > print > ");
+            if !print_active {
+                ui.label("Enlarger inactive on this route; stored values are retained.");
+            }
+            ui.add_enabled_ui(print_active, |ui| {
                 flags.runtime_changed |= numeric(ui, "print exposure", &mut params.enlarger.print_exposure, 0.0, 1000000.0, 0.02, 2, "Changes the exposure time set in the virtual enlarger");
                 flags.runtime_changed |= toggle(ui, "print auto compensation", &mut params.enlarger.print_exposure_compensation, "Auto adjust the print exposure for the camera exposure compensation ev");
                 flags.runtime_changed |= numeric(ui, "print y filter shift", &mut params.enlarger.y_filter_shift, -200.0, 1000000.0, 1.0, 2, "Y filter shift of the color enlarger from a neutral position, in Kodak CC units");
                 flags.runtime_changed |= numeric(ui, "print m filter shift", &mut params.enlarger.m_filter_shift, -200.0, 1000000.0, 1.0, 2, "M filter shift of the color enlarger from a neutral position, in Kodak CC units");
+                preflash_controls(ui, params, &mut flags);
             });
         }
         if section == "Scanner" {
@@ -245,14 +262,14 @@ pub(crate) fn show(
                 {
                     flags.runtime_changed |= scan_points(ui, &mut params.scanner.black_point, &mut params.scanner.white_point);
                 }
-                flags.runtime_changed |= numeric(ui, "lens blur", &mut params.scanner.lens_blur, 0.0, 1000000.0, 0.05, 2, "Sigma of gaussian filter in pixel for the scanner lens blur.");
+                flags.runtime_changed |= numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, 0.0, 1000000.0, 0.05, 2, "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, points, correction, finishing, gamut processing, sharpening and encoding. Identity points retain this optical order.");
                 if medium.correction_eligible() {
                     flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable white point correction applied to the scanner output.");
                     flags.runtime_changed |= numeric(ui, "white level", &mut params.scanner.white_level, 0.0, 1.0, 0.005, 3, "Target white level applied when white correction is enabled.");
                     flags.runtime_changed |= toggle(ui, "black correction", &mut params.scanner.black_correction, "Enable black point correction applied to the scanner output.");
                     flags.runtime_changed |= numeric(ui, "black level", &mut params.scanner.black_level, 0.0, 1.0, 0.005, 3, "Target black level applied when black correction is enabled.");
                 }
-                flags.runtime_changed |= tuple(ui, "unsharp mask", &mut params.scanner.unsharp_mask, 0.0, 1000000.0, 0.05, 2, "Apply unsharp mask to the scan, [sigma in pixel, amount].");
+                flags.runtime_changed |= tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, 0.0, 1000000.0, 0.05, 2, "Digital scan sharpening after interpretation, scanner finish and output gamut processing: [sigma in pixels, amount].");
             });
         }
         if section == "Film chemistry" {
@@ -275,17 +292,10 @@ pub(crate) fn show(
             flags.runtime_changed |= numeric(ui, "gamma factor blue", &mut params.print_render.density_curves_morph.gamma_factor_blue, 0.25, 4.0, 0.02, 2, "Per-channel gamma factor applied to the blue channel.");
             flags.runtime_changed |= numeric(ui, "developer exhaustion", &mut params.print_render.density_curves_morph.developer_exhaustion, 0.0, 1.0, 0.02, 2, "Blend all three print sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset.");
         }
-        if section == "Preflash" {
-            egui::CollapsingHeader::new("Preflash").default_open(false).show(ui, |ui| {
-                flags.runtime_changed |= numeric(ui, "exposure", &mut params.enlarger.preflash_exposure, 0.0, 1000000.0, 0.005, 2, "Preflash exposure value in ev for the print");
-                flags.runtime_changed |= numeric(ui, "y filter shift", &mut params.enlarger.preflash_y_filter_shift, -1000000.0, 1000000.0, 1.0, 2, "Shift the Y filter of the enlarger from the neutral position for the preflash, typical values (-20-20), in Kodak CC units");
-                flags.runtime_changed |= numeric(ui, "m filter shift", &mut params.enlarger.preflash_m_filter_shift, -1000000.0, 1000000.0, 1.0, 2, "Shift the M filter of the enlarger from the neutral position for the preflash, typical values (-20-20), in Kodak CC units");
-            });
-        }
         if section == "Glare" {
-            egui::CollapsingHeader::new("Glare").default_open(false).show(ui, |ui| {
+            egui::CollapsingHeader::new("Print viewing glare").default_open(false).show(ui, |ui| {
                 ui.add_enabled_ui(params.workflow.route.contains(" > print > "), |ui| {
-                    flags.runtime_changed |= toggle(ui, "active", &mut params.print_render.glare.active, "Add glare to the print");
+                    flags.runtime_changed |= toggle(ui, "active", &mut params.print_render.glare.active, "Add readout stray light after lens blur and before scanner correction. This does not change print exposure or developed density.");
                     flags.runtime_changed |= numeric(ui, "percent", &mut params.print_render.glare.percent, 0.0, 1.0, 0.01, 2, "Percentage of the glare light (typically 0.1-0.25)");
                     flags.runtime_changed |= numeric(ui, "roughness", &mut params.print_render.glare.roughness, 0.0, 1.0, 0.05, 2, "Roughness of the glare light (0-1)");
                     flags.runtime_changed |= numeric(ui, "blur", &mut params.print_render.glare.blur, 0.0, 1000000.0, 0.1, 2, "Sigma of gaussian blur in pixels for the glare");
@@ -385,9 +395,9 @@ pub(crate) fn show(
                 egui::ComboBox::from_label("Engine")
                     .selected_text(match grain.engine { GrainEngine::Spektra => "Spektra", GrainEngine::Procedural => "Procedural", GrainEngine::Dye => "Dye", GrainEngine::Fotufilm => "Fotufilm Film" })
                     .show_ui(ui, |ui| {
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Spektra, "Spektra").on_hover_text("Original upstream experimental density-domain grain.").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Procedural, "Procedural").on_hover_text("Dehancer-derived procedural grain in encoded RGB.").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Dye, "Dye").on_hover_text("Self-developed grain formed in a film-coordinate dye field.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Spektra, "Spektra").on_hover_text("Material grain in developed film density.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Procedural, "Procedural").on_hover_text("Post-scan grain appearance in encoded RGB.").changed();
+                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Dye, "Dye").on_hover_text("Material grain formed in a film-coordinate dye field.").changed();
                         flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Fotufilm, "Fotufilm Film").on_hover_text("Effective-appearance film population grain model.").changed();
                     });
                 if grain.engine == GrainEngine::Procedural {
@@ -418,10 +428,10 @@ pub(crate) fn show(
                         flags.runtime_changed |= optional_numeric(ui, "Shadows", &mut grain.v2_shadows, resolved.shadows * 100.0, 0.0, 100.0, 1.0, 1, "Shadow grain amount.");
                         flags.runtime_changed |= optional_numeric(ui, "Midtones", &mut grain.v2_midtones, resolved.midtones * 100.0, 0.0, 100.0, 1.0, 1, "Midtone grain amount.");
                         flags.runtime_changed |= optional_numeric(ui, "Highlights", &mut grain.v2_highlights, resolved.highlights * 100.0, 0.0, 100.0, 1.0, 1, "Highlight grain amount.");
-                        flags.runtime_changed |= optional_numeric(ui, "Film Resolution", &mut grain.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0, 1.0, 1, "Film resolution factor.");
+                        flags.runtime_changed |= optional_numeric(ui, "Film Resolution", &mut grain.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0, 1.0, 1, "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution.");
                         flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, 0.0, 100.0, 1.0, 1, "Chromatic grain amount.");
                     }
-                    flags.runtime_changed |= numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, 0.0, 1.0, 1.0, 0, "Film resolution implementation: 0 = Optical Resolution; 1 = Fast Blur.");
+                    flags.runtime_changed |= numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, 0.0, 1.0, 1.0, 0, "Post-scan Procedural appearance resolution method: 0 = Optical Resolution; 1 = Fast Blur. This does not change scanner readout optics.");
                     flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase.");
                     let resolved = grain.resolved_grain_v2();
                     flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
@@ -519,6 +529,7 @@ pub(crate) fn show(
             });
         }
         if section == "Output" {
+            flags.runtime_changed |= numeric(ui, "Overall effect amount", &mut params.output_mix.amount, 0.0, 1.0, 0.01, 3, "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
             flags.runtime_changed |= choice_tip(ui, "output color space", &mut params.io.output_color_space, COLOR_SPACES, "Output color space of the simulation");
             extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
             extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");

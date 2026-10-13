@@ -293,6 +293,10 @@ pub struct RenderConfiguration {
     pub reference_exposure_ev: f64,
     #[serde(default)]
     pub reference_balance_ev: [f64; 3],
+    #[serde(default = "default_finish_strength")]
+    pub output_mix_amount: f64,
+    #[serde(default)]
+    pub model_version: String,
     pub gamut_algorithm: GamutAlgorithm,
     pub grain: GrainConfiguration,
     pub spatial: SpatialConfiguration,
@@ -351,6 +355,8 @@ impl RenderConfiguration {
             reference: None,
             reference_exposure_ev: params.scanner.reference_exposure_ev,
             reference_balance_ev: params.scanner.reference_balance_ev,
+            output_mix_amount: params.output_mix.amount,
+            model_version: crate::runtime::MODEL_VERSION.into(),
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
                 active: grain_active,

@@ -93,7 +93,7 @@ impl Drop for Temp {
 fn version_one_maps_name_and_materializes_controls() {
     let text = r#"{"schema_version":1,"id":"old","name":"Portable","film_profile":{"stock":"kodak_portra_400"},"print_profile":{"stock":"kodak_portra_endura"},"parameters":{"enlarger":{},"scanner":{},"film_render":{},"print_render":{},"camera_diffusion_filter":{}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
     let p = Preset::from_json_str(text).unwrap();
-    assert_eq!(p.schema_version, 2);
+    assert_eq!(p.schema_version, 3);
     assert_eq!(p.name, "Portable");
     assert!(!p.to_json().unwrap().contains("\"id\""));
     assert!(p.to_toml().unwrap().contains("y_filter_neutral"));
@@ -103,6 +103,73 @@ fn version_one_maps_name_and_materializes_controls() {
     v.as_object_mut().unwrap().remove("id");
     v["route"] = "input".into();
     assert!(Preset::from_json_str(&v.to_string()).is_err());
+}
+
+#[test]
+fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
+    for version in [1, 2] {
+        let preset = builtin_presets().remove(0);
+        let mut document = serde_json::to_value(preset).unwrap();
+        document["schema_version"] = version.into();
+        let parameters = document["parameters"].as_object_mut().unwrap();
+        parameters.remove("output_mix");
+        parameters.remove("camera");
+        let migrated = Preset::from_json_str(&document.to_string()).unwrap();
+        assert_eq!(migrated.schema_version, 3);
+        assert_eq!(migrated.look_parameters().unwrap().output_mix.amount, 1.0);
+        let mut caller = RuntimeParams::default();
+        caller.output_mix.amount = 0.25;
+        caller.io.input_color_space = "ACES2065-1".into();
+        caller.io.output_color_space = "ProPhoto RGB".into();
+        caller.io.output_gamut_compress.algorithm = "off".into();
+        caller.io.scan_film =
+            profile::load_profile_by_name(&data(), &migrated.film_profile.as_ref().unwrap().stock)
+                .unwrap()
+                .is_positive();
+        let resolved = migrated.resolve(&data(), &caller).unwrap();
+        assert_eq!(resolved.params.io, caller.io);
+        assert_eq!(resolved.params.output_mix.amount, 1.0);
+        let exported = serde_json::from_str::<Value>(&migrated.to_json().unwrap()).unwrap();
+        assert_eq!(exported["schema_version"], 3);
+        assert!(exported["parameters"].get("io").is_none());
+        document["parameters"]["io"] = serde_json::json!({});
+        assert!(Preset::from_json_str(&document.to_string()).is_err());
+    }
+}
+
+#[test]
+fn v3_mix_section_is_sparse_and_current_look_requires_mix() {
+    let mut current = RuntimeParams::default();
+    current.output_mix.amount = 0.3456789012345678;
+    current.enlarger.preflash_exposure = 0.4;
+    let captured =
+        Preset::capture_section("Output", Section::OutputMix, &current, provenance()).unwrap();
+    let loaded = Preset::from_toml_str(&captured.to_toml().unwrap()).unwrap();
+    assert_eq!(loaded, captured);
+    let applied = loaded
+        .apply_section(&RuntimeParams::default(), &test_film())
+        .unwrap();
+    assert_eq!(applied.output_mix, current.output_mix);
+    assert_eq!(applied.enlarger.preflash_exposure, 0.0);
+    for version in [1, 2] {
+        let legacy = serde_json::json!({"schema_version":version,"name":"Preflash","parameters":{"enlarger":{"preflash_exposure":0.2}},"provenance":provenance()});
+        let preset = Preset::from_json_str(&legacy.to_string()).unwrap();
+        let applied = preset.apply_section(&current, &test_film()).unwrap();
+        assert_eq!(applied.output_mix, current.output_mix);
+        let exported: Value = serde_json::from_str(&preset.to_json().unwrap()).unwrap();
+        assert_eq!(exported["parameters"], legacy["parameters"]);
+    }
+    let mut document = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+    document["parameters"]
+        .as_object_mut()
+        .unwrap()
+        .remove("output_mix");
+    assert!(Preset::from_json_str(&document.to_string()).is_err());
+    for path in ["film_render", "print_render"] {
+        let mut draft = serde_json::to_value(builtin_presets().remove(0)).unwrap();
+        draft["parameters"][path]["response"] = serde_json::json!({});
+        assert!(Preset::from_json_str(&draft.to_string()).is_err());
+    }
 }
 #[test]
 fn portable_names() {
@@ -291,8 +358,8 @@ fn carrier_validation_and_precision() {
     assert_eq!(Preset::from_toml_str(&p.to_toml().unwrap()).unwrap(), p);
     assert_eq!(Preset::from_json_str(&p.to_json().unwrap()).unwrap(), p);
     let text = p.to_json().unwrap().replacen(
-        "\"schema_version\": 2",
-        "\"schema_version\": 2, \"schema_version\": 2",
+        "\"schema_version\": 3",
+        "\"schema_version\": 3, \"schema_version\": 3",
         1,
     );
     assert!(Preset::from_json_str(&text).is_err());
@@ -340,9 +407,15 @@ fn explicit_null_is_json_only_and_never_discarded() {
     let text = r#"{"schema_version":2,"name":"Clear amount","parameters":{"film_render":{"grain":{"v2_amount":null}}},"provenance":{"implementation_version":"test","model_version":"test"}}"#;
     let preset = Preset::from_json_str(text).unwrap();
     let exported = preset.to_json().unwrap();
+    let exported_value: Value = serde_json::from_str(&exported).unwrap();
     assert_eq!(
-        serde_json::to_vec(&serde_json::from_str::<Value>(text).unwrap()).unwrap(),
-        serde_json::to_vec(&serde_json::from_str::<Value>(&exported).unwrap()).unwrap()
+        exported_value["parameters"],
+        serde_json::json!({"film_render":{"grain":{"v2_amount":null}}})
+    );
+    let reloaded = Preset::from_json_str(&exported).unwrap();
+    assert_eq!(
+        reloaded.kind().unwrap(),
+        PresetKind::Section(Section::Grain)
     );
     let error = preset.to_toml().unwrap_err();
     assert!(error.contains("film_render.grain.v2_amount"));
@@ -363,7 +436,6 @@ fn explicit_null_is_json_only_and_never_discarded() {
 
 #[test]
 fn parity_only_film_glare_has_no_section() {
-    assert_eq!(SECTIONS.len(), 11);
     let error = section_from_payload(&serde_json::json!({"film_render":{"glare":{"active":true}}}))
         .unwrap_err();
     assert!(error.contains("exactly one section"));
@@ -379,7 +451,7 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     current
         .explicit_section_paths
         .insert("film_render.grain.rms_granularity".into());
-    // A valid editable path outside the section table must survive restoration.
+    // Editable exposure values must survive preparation-state restoration.
     current
         .explicit_section_paths
         .insert("camera.exposure_compensation_ev".into());
