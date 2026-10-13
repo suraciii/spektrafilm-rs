@@ -13,9 +13,9 @@ struct Args {
     data_dir: PathBuf,
     #[arg(long)]
     out: PathBuf,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "download_natural")]
     natural_input: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "natural_input")]
     download_natural: bool,
 }
 fn main() {

@@ -437,7 +437,9 @@ The external `spektrafilm-bench` CLI renders immutable evidence, compares versio
 
 Build the native benchmark tools. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
 
-The generated grain probe selects `procedural` in custom Noise mode with three explicit seeds. Generate fresh fixtures for the current renderer; suites generated before the engine rename still contain the rejected `v2` selector.
+The generator exports the explicit built-in `Kodak Gold 200` look as portable `look.toml`. `color-tone.json` isolates color and tone by disabling spatial effects, stochastic effects, and grain. `appearance.json` preserves the look's effect controls and enables spatial and stochastic processing. Both configurations use manual exposure, a 35 mm film-format scale, neutral scanner finishing, and encoded sRGB on `input > film > print > scan`. They preserve the supplied input resolution without preview reduction, automatic crop, or resize. Their preset paths resolve relative to each configuration file. The generated `provenance.json` retains the renderer and bundle file hashes.
+
+The generated grain probe selects `procedural` in custom Noise mode with three explicit seeds. Suites generated before the engine rename still contain the rejected `v2` selector. Generating a new bundle must remain an explicit setup action. A version comparison must reuse the same exported preset and configuration bytes on both sides.
 
 ```bash
 just build-f64
@@ -503,6 +505,64 @@ JSON
     --out /tmp/spektrafilm-local-review
 ```
 
+Use the standard bundle to run a local raster without authoring simulation settings. This example generates one bundle in a new directory outside the repository and reuses its chart as a declared sRGB raster. For a photograph, replace `LOCAL_IMAGE` and both source declaration flags with the image's actual color interpretation. Set `CANDIDATE_RENDERER` to the path of an already-built renderer for the version to compare. Both targets use the same data directory; an intentional data revision must remain a declared comparison condition. Every output destination must be new.
+
+The exported look is a preset document of the renderer that generated it. A candidate renderer must be able to read that document. A renderer that predates a preset-schema field rejects the bundle with `invalid look`; the observed message for such a mismatch is `unknown field`, followed by the field name. Generate the bundle with the renderer that will read it, and treat a regenerated bundle as a declared comparison condition rather than a silent substitution.
+
+```bash
+just build-f64
+just build-benchmark
+: "${CANDIDATE_RENDERER:?Set CANDIDATE_RENDERER to the candidate renderer executable}"
+./target/release/spektrafilm-bench-fixtures \
+    --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
+    --out /tmp/spektrafilm-standard-bundle
+
+./target/release/spektrafilm-bench validate --kind configuration \
+    --file /tmp/spektrafilm-standard-bundle/color-tone.json
+./target/release/spektrafilm-bench validate --kind configuration \
+    --file /tmp/spektrafilm-standard-bundle/appearance.json
+./target/release/spektrafilm-bench target \
+    --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
+    --backend cpu --out /tmp/spektrafilm-standard-baseline-target.json
+
+LOCAL_IMAGE=/tmp/spektrafilm-standard-bundle/chart.png
+./target/release/spektrafilm-bench run \
+    --input "$LOCAL_IMAGE" \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --configuration /tmp/spektrafilm-standard-bundle/color-tone.json \
+    --target /tmp/spektrafilm-standard-baseline-target.json \
+    --seed 0 --out /tmp/spektrafilm-standard-color-tone
+./target/release/spektrafilm-bench run \
+    --input "$LOCAL_IMAGE" \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --configuration /tmp/spektrafilm-standard-bundle/appearance.json \
+    --target /tmp/spektrafilm-standard-baseline-target.json \
+    --seed 0 --seed 42 --seed 99 \
+    --out /tmp/spektrafilm-standard-appearance-baseline
+
+./target/release/spektrafilm-bench target \
+    --renderer "$CANDIDATE_RENDERER" --data-dir ./data \
+    --backend cpu --out /tmp/spektrafilm-standard-candidate-target.json
+./target/release/spektrafilm-bench run \
+    --input "$LOCAL_IMAGE" \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --configuration /tmp/spektrafilm-standard-bundle/appearance.json \
+    --target /tmp/spektrafilm-standard-candidate-target.json \
+    --seed 0 --seed 42 --seed 99 \
+    --out /tmp/spektrafilm-standard-appearance-candidate
+./target/release/spektrafilm-bench compare \
+    --baseline /tmp/spektrafilm-standard-appearance-baseline \
+    --candidate /tmp/spektrafilm-standard-appearance-candidate \
+    --out /tmp/spektrafilm-standard-comparison
+./target/release/spektrafilm-bench inspect \
+    --comparison /tmp/spektrafilm-standard-comparison --case image
+./target/release/spektrafilm-bench report \
+    --comparison /tmp/spektrafilm-standard-comparison \
+    --out /tmp/spektrafilm-standard-review
+```
+
+Open `/tmp/spektrafilm-standard-review/index.html` to review full images and native detail crops. A single seed may provide image-review evidence. It must not establish statistical grain acceptance. The standard look is an end-to-end rendering convention. It must not claim physical film fidelity.
+
 Add `--dry-run` to either run form with a new destination to resolve every selected case and seed without decoding or rendering. It retains `preflight.json`, configurations, and renderer logs; successful preflight reports `execution_status: validated`. Image decoding, device availability, observed geometry, and numerical results remain unchecked. Preflight is separate from completed render evidence and cannot be compared as a run. Ordinary execution repeats the same configuration checks.
 
 `inspect` reads a validated comparison without computing metrics. Repeat `--case`, `--region`, and `--metric` for exact selection; unknown selections report available identities. Its compact records preserve units, domains, unavailable reasons, and evidence links relative to `artifact_base`. Per-seed/pair `measurements` and cross-seed `seed_measurements` remain separate. The retained comparison's execution and evaluation states remain visible, including failures; inspection never produces a universal appearance score.
@@ -521,9 +581,9 @@ The viewer opens in split mode: drag the divider on the image, use the range con
 
 Case, pair, and region links preserve exact identities in the report fragment, for example `#case=color_chart&seed=0&pair=baseline%2Fcandidate&region=skin`. Opening or reloading a link selects the evidence and expands its requested detail offline. Detail buttons expose their names and expanded state to keyboard and browser agents. Invalid locations display an error instead of unrelated imagery.
 
-Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied policy is exploratory and cannot qualify a release. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
+Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied exploratory policy must not qualify acceptance. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
 
-The generated quick and complete suites include the natural scene when acquired. Without `--natural-input` or `--download-natural`, they contain controlled probes only. The packaged scene covers shadows and texture; broader skin, foliage, mixed-light, and real film-scan coverage requires explicitly declared assets and regions. Synthetic probes and rendered reference fixtures do not establish physical film fidelity.
+The generated complete suite adds `final_appearance`, which renders the chart with the full-appearance configuration and seeds `[0,42,99]`. Acquiring the pinned natural scene also adds `natural_appearance`, which uses that scene's RAW declaration and review regions with the full-appearance configuration and the same seeds. Both appearance cases select numeric, color, tone, and FLIP measurements. Dedicated grain, halation, and edge probes retain their effect-specific settings. The quick suite and `natural.json` retain isolated color-and-tone scene coverage when the natural scene is acquired. Without `--natural-input` or `--download-natural`, the generated suites contain controlled probes only. The `complete.json` filename must not imply comprehensive stock coverage, calibrated acceptance, or full-resolution photographic review. The packaged scene covers shadows and texture; broader skin, foliage, mixed-light, and real film-scan coverage requires explicitly declared assets and regions. A caller must use representative local photographs for native-resolution spatial review. Synthetic probes and rendered reference fixtures must not establish physical film fidelity.
 
 ### LUT delivery
 
