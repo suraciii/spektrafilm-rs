@@ -21,28 +21,15 @@ Every runtime parameter leaf carries one class. The class is a property of the l
 
 The parameter metadata must expose this class through `spektrafilm describe` and `spektrafilm describe --field`, so the accepted preset vocabulary is discoverable without reading a preset by trial.
 
-The look class is authoritative for preset validation. It must contain at least:
+The leaf table lives in [preset parameters](parameters.md). Counts from the current tree:
 
-| Group | Leaves | Class | Note |
-|---|---|---|---|
-| `film_render.base`, `.halation`, `.grain`, `.dir_couplers`, `.convert`, `.density_curve_gamma`, `.development_time`, `.chemistry` | 93 | `look` | grade, treat, coupler, and grain controls |
-| `print_render` | 19 | `look` | print chemistry, base, density-curve morph, viewing glare |
-| `enlarger` | 10 | `look` | print exposure and Magenta/Yellow shifts |
-| `enlarger.diffusion_filter` | 11 | `look` | enlarger diffusion |
-| `scanner` | 20 | `look` | receiver, conversion, finish, acquisition controls |
-| `output_mix.amount` | 1 | `look` | further output-mix controls follow the [output-mix contract](../output-mix/spec.md) |
-| `camera_diffusion_filter` | 11 | `look` | camera diffusion |
-| `film.stock`, `print.stock` | 2 | `look` | profile selection by stock name |
-| `camera.exposure_compensation_ev`, `camera.auto_exposure`, `camera.auto_exposure_method` | 3 | `look` | virtual film exposure and metering |
-| `settings.apply_hanatos2025_adaptation_surface`, `.apply_hanatos2025_adaptation_window`, `settings.spectral_gaussian_blur`, `settings.use_cat16` | 4 | `look` | look-relevant processing switches |
-| `magazine_print_color.active`, `.strength` | 2 | `look` | finishing controls that change the retained output |
-| `io.*` | 15 | `context` | input interpretation, crop, gamut processing |
-| `settings.*` other | 9 | `context` | preview limits, LUT wiring, wavelength grid, performance toggles |
-| `camera.*` other | 16 | `context` | virtual camera body and lens selection |
-| `debug.*` | 4 | `internal` | diagnostics |
-| `taps.*` | 2 | `internal` | spectral tap collection |
-| `film_render.glare.*` | 4 | `internal` | parity-only, never read, no control |
-| `enlarger.c_filter_neutral`, `.m_filter_neutral`, `.y_filter_neutral` | 3 | `internal` | measured paper neutral; a sparse source may still pin it |
+| Class | Leaves | A preset may carry it |
+|---|---|---|
+| `look` | 182 | yes |
+| `context` | 23 | no |
+| `internal` | 13 | no |
+
+A class must be checked per leaf, never per group: every `camera.*` leaf is taking-side style content (film format, taking filters, lens blur, diffusion), while `enlarger.*` carries three calibration baselines that no control edits. Thirteen leaves that change the rendered result are excluded by the shipped contract and need an owner decision before implementation; [preset parameters](parameters.md) lists them under Review items.
 
 The three `enlarger.*_filter_neutral` axes keep their command-line pin as the one documented exception: they are calibration baselines that no control edits, they must never be preset content, and a sparse parameter source may set them explicitly to pin a measured neutral.
 
