@@ -270,7 +270,6 @@ jobs:
           export PKG_CONFIG_PATH="$RUNNER_TEMP/libraw-022/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           BUILD_TARGET_DIR=target RELEASE_SUBDIR=release \
             bash scripts/package_linux_app.sh
-          bash scripts/package_unix.sh
           python scripts/parity/package_smoke.py --cli dist/spektrafilm-linux-x64/bin/spektrafilm --exporter dist/spektrafilm-linux-x64/bin/spektrafilm-f64 --raw-helper dist/spektrafilm-linux-x64/bin/decode_raw_gui --package-root dist/spektrafilm-linux-x64 --data-dir dist/spektrafilm-linux-x64/share/data --evidence-dir "$RUNNER_TEMP/package-smoke"
 
       - name: Preserve package smoke evidence

@@ -32,8 +32,6 @@ pub enum CalibrationAction {
 pub struct ChangeFlags {
     /// A simulation input changed. Invalidate the applicable pipeline cache.
     pub runtime_changed: bool,
-    /// Display, preview-size, or saving/auto-preview workflow state changed.
-    pub display_changed: bool,
     /// Reload the selected RAW with extras.load_raw before rendering it.
     pub raw_reload: bool,
     /// The preview-size Update button was pressed, independently of auto-preview.
@@ -522,13 +520,12 @@ pub(crate) fn show(
         }
         if section == "Output" {
             flags.runtime_changed |= choice_tip(ui, "output color space", &mut params.io.output_color_space, COLOR_SPACES, "Output color space of the simulation");
-            flags.display_changed |= extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
-            flags.display_changed |= extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");
+            extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
+            extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");
         }
         if section == "Display" {
             if numeric(ui, "preview max size", &mut params.settings.preview_max_size, 128.0, 1000000.0, 128.0, 2, "max size of the long edge of the preview image in pixels") {
                 set_extra(extras, "display", "preview_max_size", Value::from(params.settings.preview_max_size));
-                flags.display_changed = true;
             }
             flags.preview_requested |= ui.button("update").clicked();
         }

@@ -187,38 +187,19 @@ fn chain_for_print<'a>(
     meta: &'a BundleMeta,
     print: &str,
 ) -> io::Result<Vec<&'a LutFileMeta>> {
-    let stages: &[(&str, &str, &str, bool)] = match meta.topology {
-        Topology::One => &[("combined", "input_rgb", "output_rgb", false)],
-        Topology::Two => &[
-            ("film", "input_rgb", "cmy_film", true),
-            ("print", "cmy_film", "output_rgb", false),
-        ],
-        Topology::Three => &[
-            ("filming_expose", "input_rgb", "log_e_film", true),
-            ("filming_develop", "log_e_film", "cmy_film", true),
-            ("printing_combined", "cmy_film", "output_rgb", false),
-        ],
-        Topology::Four => &[
-            ("filming_expose", "input_rgb", "log_e_film", true),
-            ("filming_develop", "log_e_film", "cmy_film", true),
-            ("printing_expose", "cmy_film", "log_e_print", false),
-            ("printing_develop_scan", "log_e_print", "output_rgb", false),
-        ],
-    };
     let magazine = meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
-    for &(role, domain, range, shared) in stages {
-        let expected_role = if magazine && range == "output_rgb" {
-            format!("magazine_{role}")
-        } else {
-            role.to_owned()
-        };
+    for stage in meta.topology.stages() {
+        let role = stage.role.as_ref();
+        let domain = stage.domain();
+        let range = stage.range();
+        let expected_role = stage.effective_role(magazine);
         let candidates = meta
             .luts
             .iter()
             .filter(|lut| {
-                lut.role == expected_role
-                    && if shared {
+                lut.role == expected_role.as_ref()
+                    && if stage.shared {
                         lut.print_profile.is_none()
                     } else {
                         lut.print_profile.as_deref() == Some(print)
