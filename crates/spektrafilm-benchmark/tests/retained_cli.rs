@@ -232,7 +232,14 @@ fn offline_masked_comparison_preserves_native_linear_samples() {
                 })
         );
     }
-    assert!(report.join("index.html").is_file());
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    assert!(html.contains("data-case-id=\"probe\" data-seed=\"0\""));
+    assert!(html.contains("data-pair-id=\"baseline/candidate\" data-default-pair=\"true\""));
+    assert!(html.contains(
+        "href=\"#case=probe&amp;seed=0&amp;pair=baseline%2Fcandidate&amp;region=patch\""
+    ));
+    assert!(html.contains("data-region-id=\"patch\""));
+    assert!(html.contains("data-navigation-error role=\"alert\""));
 }
 
 #[test]
@@ -775,6 +782,9 @@ fn offline_pair_report_preserves_unavailable_maps_and_redistribution_omissions()
             .any(|entry| entry["role"] == "difference_display")
     );
     let html = fs::read_to_string(report.join("index.html")).unwrap();
+    assert!(html.contains("href=\"#case=image&amp;seed=0&amp;pair=input\""));
+    assert!(html.contains("href=\"#case=image&amp;seed=0&amp;pair=reference\""));
+    assert!(html.contains("data-pair-id=\"reference\" data-default-pair=\"true\""));
     let reference_panel = html.split_once("data-pair-panel=\"pair-0-1\"").unwrap().1;
     assert!(!reference_panel.contains("src=\"evidence/input.png\""));
     assert!(!reference_panel.contains("src=\"evidence/private.png\""));

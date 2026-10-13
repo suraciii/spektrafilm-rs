@@ -392,20 +392,130 @@ fn invoke(
     }
     Ok((result, logs))
 }
-fn renderer_success(output: &Output, code: &str) -> Result<()> {
+fn renderer_success(output: &Output, code: &str, folder: &Path, name: &str) -> Result<()> {
     if !output.status.success() {
         let bytes = &output.stderr;
         let from = bytes.len().saturating_sub(2000);
-        return Err(
-            Error::new(code, String::from_utf8_lossy(&bytes[from..]).into_owned())
-                .boundary("renderer"),
-        );
+        return Err(Error::new(
+            code,
+            format!(
+                "{}; stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&bytes[from..]),
+                folder.join(format!("{name}.stdout")).display(),
+                folder.join(format!("{name}.stderr")).display()
+            ),
+        )
+        .boundary("renderer"));
     }
     Ok(())
 }
 fn resolved_geometry(resolved: &Value, diagnostics: &Value) -> Value {
     let io = &resolved["parameters"]["io"];
     json!({"input_dimensions":diagnostics["configuration"]["input_dimensions"],"working_dimensions":diagnostics["configuration"]["working_dimensions"],"published_dimensions":diagnostics["configuration"]["published_dimensions"],"crop":io["crop"],"crop_center":io["crop_center"],"crop_size":io["crop_size"],"upscale_factor":io["upscale_factor"],"preview_mode":resolved["parameters"]["settings"]["preview_mode"],"preview_max_size":resolved["parameters"]["settings"]["preview_max_size"]})
+}
+
+fn check_configuration(
+    case: &Value,
+    seed: u64,
+    context: &mut RenderContext,
+    folder: &Path,
+    row: &mut Value,
+) -> Result<Value> {
+    let suite_path = context.suite_path;
+    let target = context.target;
+    let target_path = context.target_path;
+    let evidence = &mut *context.evidence;
+    let (environment, _) = renderer_environment(target, folder);
+    let mut dry = render_command(case, suite_path, target, target_path, folder)?;
+    dry.extend(["--seed".into(), seed.to_string(), "--dry-run".into()]);
+    row["configuration_command"] = json!(dry);
+    let (result, logs) = invoke(&dry, &environment, folder, "dry-run", evidence)?;
+    row["stdout"] = logs["stdout"].clone();
+    row["stderr"] = logs["stderr"].clone();
+    renderer_success(&result, "renderer_configuration", folder, "dry-run")?;
+    let resolved: Value = serde_json::from_slice(&result.stdout).map_err(|error| {
+        Error::new(
+            "renderer_configuration",
+            format!(
+                "Invalid renderer JSON: {error}; stdout: {}; stderr: {}",
+                folder.join("dry-run.stdout").display(),
+                folder.join("dry-run.stderr").display()
+            ),
+        )
+        .boundary("renderer")
+    })?;
+    let path = folder.join("resolved.json");
+    common::dump(&path, &resolved)?;
+    row["resolved"] = evidence.add(
+        &path,
+        "resolved_configuration",
+        "application/json",
+        json!({}),
+    )?;
+    let data_dir = documents::resolve_path(text(target, "data_dir")?, target_path)?;
+    for field in ["film_profile", "print_profile"] {
+        let name = text(&resolved, field)?;
+        let profile = data_dir.join("profiles").join(format!("{name}.json"));
+        let canonical = profile.canonicalize().map_err(|_| {
+            Error::new(
+                "profile_dependency",
+                format!("Resolved {field} must select a file inside target data_dir: {name}"),
+            )
+        })?;
+        if !canonical.starts_with(&data_dir) || !canonical.is_file() {
+            return Err(Error::new(
+                "profile_dependency",
+                format!("Resolved {field} escapes target data_dir: {name}"),
+            ));
+        }
+    }
+    let case_id = text(case, "id")?;
+    let changes = &target["changes"];
+    if changes["set"].as_array().is_some_and(|v| !v.is_empty())
+        || changes["set_files"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty())
+        || target["case_changes"].get(case_id).is_some()
+    {
+        let mut case_target = target.clone();
+        case_target["changes"] = json!({"set":[],"set_files":[]});
+        case_target["case_changes"] = json!({});
+        let mut base = render_command(case, suite_path, &case_target, target_path, folder)?;
+        base.extend(["--seed".into(), seed.to_string(), "--dry-run".into()]);
+        let (result, logs) = invoke(&base, &environment, folder, "case-configuration", evidence)?;
+        row["case_configuration_logs"] = logs;
+        renderer_success(
+            &result,
+            "renderer_configuration",
+            folder,
+            "case-configuration",
+        )?;
+        let base: Value = serde_json::from_slice(&result.stdout)?;
+        for (section, names) in [
+            (
+                "io",
+                &[
+                    "input_color_space",
+                    "input_cctf_decoding",
+                    "crop",
+                    "crop_center",
+                    "crop_size",
+                    "upscale_factor",
+                ][..],
+            ),
+            ("settings", &["preview_mode", "preview_max_size"][..]),
+        ] {
+            for name in names {
+                if resolved["parameters"][section][name] != base["parameters"][section][name] {
+                    return Err(Error::new(
+                        "target_geometry",
+                        format!("Target must not change case-owned input field: {section}.{name}"),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(resolved)
 }
 
 fn run_case(
@@ -442,79 +552,14 @@ fn run_case(
             "source_input",
             json!({"declaration":declaration}),
         )?;
-        let mut dry = command.clone();
-        dry.push("--dry-run".into());
-        let (result, logs) = invoke(&dry, &environment, &folder, "dry-run", evidence)?;
-        row["stdout"] = logs["stdout"].clone();
-        row["stderr"] = logs["stderr"].clone();
-        renderer_success(&result, "renderer_configuration")?;
-        let resolved: Value = serde_json::from_slice(&result.stdout)?;
-        let data_dir = documents::resolve_path(text(target, "data_dir")?, target_path)?;
-        for field in ["film_profile", "print_profile"] {
-            let name = text(&resolved, field)?;
-            let profile = data_dir.join("profiles").join(format!("{name}.json"));
-            let canonical = profile.canonicalize().map_err(|_| {
-                Error::new(
-                    "profile_dependency",
-                    format!("Resolved {field} must select a file inside target data_dir: {name}"),
-                )
-            })?;
-            if !canonical.starts_with(&data_dir) || !canonical.is_file() {
-                return Err(Error::new(
-                    "profile_dependency",
-                    format!("Resolved {field} escapes target data_dir: {name}"),
-                ));
-            }
-        }
-        let changes = &target["changes"];
-        if changes["set"].as_array().is_some_and(|v| !v.is_empty())
-            || changes["set_files"]
-                .as_array()
-                .is_some_and(|v| !v.is_empty())
-            || target["case_changes"].get(case_id).is_some()
-        {
-            let mut case_target = target.clone();
-            case_target["changes"] = json!({"set":[],"set_files":[]});
-            case_target["case_changes"] = json!({});
-            let mut base = render_command(case, suite_path, &case_target, target_path, &folder)?;
-            base.extend(["--seed".into(), seed.to_string(), "--dry-run".into()]);
-            let (result, _) = invoke(&base, &environment, &folder, "case-configuration", evidence)?;
-            renderer_success(&result, "renderer_configuration")?;
-            let base: Value = serde_json::from_slice(&result.stdout)?;
-            for (section, names) in [
-                (
-                    "io",
-                    &[
-                        "input_color_space",
-                        "input_cctf_decoding",
-                        "crop",
-                        "crop_center",
-                        "crop_size",
-                        "upscale_factor",
-                    ][..],
-                ),
-                ("settings", &["preview_mode", "preview_max_size"][..]),
-            ] {
-                for name in names {
-                    if resolved["parameters"][section][name] != base["parameters"][section][name] {
-                        return Err(Error::new(
-                            "target_geometry",
-                            format!(
-                                "Target must not change case-owned input field: {section}.{name}"
-                            ),
-                        ));
-                    }
-                }
-            }
-        }
-        let path = folder.join("resolved.json");
-        common::dump(&path, &resolved)?;
-        row["resolved"] = evidence.add(
-            &path,
-            "resolved_configuration",
-            "application/json",
-            json!({}),
-        )?;
+        let mut context = RenderContext {
+            suite_path,
+            target,
+            target_path,
+            root,
+            evidence: &mut *evidence,
+        };
+        let resolved = check_configuration(case, seed, &mut context, &folder, &mut row)?;
         let mut source_command = command.clone();
         if let Some(i) = source_command.iter().position(|s| s == "--route") {
             source_command[i + 1] = "input".into();
@@ -546,7 +591,7 @@ fn run_case(
             "source-dry-run",
             evidence,
         )?;
-        renderer_success(&result, "source_configuration")?;
+        renderer_success(&result, "source_configuration", &folder, "source-dry-run")?;
         let source_resolved: Value = serde_json::from_slice(&result.stdout)?;
         if source_resolved["parameters"]["workflow"]["route"] != "input"
             || source_resolved["parameters"]["io"]["output_color_space"] != "ACES2065-1"
@@ -574,7 +619,7 @@ fn run_case(
             "source-render",
             evidence,
         )?;
-        renderer_success(&result, "source_evidence")?;
+        renderer_success(&result, "source_evidence", &folder, "source-render")?;
         let source_diagnostics =
             documents::load_json_document(&folder.join("source-diagnostics.json"))?;
         let source_dimensions = &source_diagnostics["configuration"]["published_dimensions"];
@@ -644,7 +689,7 @@ fn run_case(
         let (result, logs) = invoke(&render, &environment, &folder, "render", evidence)?;
         row["stdout"] = logs["stdout"].clone();
         row["stderr"] = logs["stderr"].clone();
-        renderer_success(&result, "renderer_failed")?;
+        renderer_success(&result, "renderer_failed", &folder, "render")?;
         let diagnostics = documents::load_json_document(&folder.join("diagnostics.json"))?;
         let configuration = &diagnostics["configuration"];
         let dimensions = configuration["published_dimensions"]
@@ -771,6 +816,108 @@ fn render_cases(
     }
     Ok(())
 }
+/// Validate every selected case and seed through renderer dry-run without decoding or rendering.
+/// Requires a new output directory and retains configuration evidence in `preflight.json`.
+pub fn preflight(
+    suite_path: &Path,
+    target_path: &Path,
+    out: &Path,
+    selections: &[String],
+) -> Result<(Value, i32)> {
+    let suite_path = suite_path.canonicalize()?;
+    let suite = documents::load_suite(&suite_path)?;
+    preflight_suite(suite, &suite_path, target_path, out, selections)
+}
+
+/// Preflight an in-memory suite using `suite_path` as its dependency resolution anchor.
+/// Every seed is checked independently; the retained manifest cannot serve as a completed run.
+pub fn preflight_suite(
+    suite: Value,
+    suite_path: &Path,
+    target_path: &Path,
+    out: &Path,
+    selections: &[String],
+) -> Result<(Value, i32)> {
+    execute_suite(suite, suite_path, target_path, out, selections, true)
+}
+
+fn preflight_cases(
+    suite: &Value,
+    selected: &[String],
+    context: &mut RenderContext,
+    rows: &mut Vec<Value>,
+) -> Result<()> {
+    for case in array(suite, "cases")? {
+        let case_id = text(case, "id")?;
+        if !selected.iter().any(|id| id == case_id) {
+            continue;
+        }
+        for seed in array(case, "seeds")? {
+            let seed = seed
+                .as_u64()
+                .ok_or_else(|| Error::new("invalid_seed", "Seed must be unsigned"))?;
+            let folder = context
+                .root
+                .join("cases")
+                .join(case_id)
+                .join(format!("seed-{seed}"));
+            fs::create_dir_all(&folder)?;
+            let mut row = json!({"case_id":case_id,"seed":seed,"status":"failed","environment":renderer_environment(context.target,&folder).1});
+            match check_configuration(case, seed, context, &folder, &mut row) {
+                Ok(_) => row["status"] = json!("validated"),
+                Err(error) => row["error"] = error.at(case_id).to_value(),
+            }
+            rows.push(row);
+        }
+    }
+    Ok(())
+}
+
+fn preflight_errors(rows: &[Value], root: &Path) -> Result<Vec<Value>> {
+    let mut groups: Vec<(Value, String, Value)> = Vec::new();
+    for row in rows {
+        let Some(error) = row.get("error") else {
+            continue;
+        };
+        // Compare complete captured diagnostics, not path-bearing summaries. Every seed
+        // has already been checked, so grouping never implies unchecked seed validity.
+        let logs = if row["case_configuration_logs"].is_object() {
+            &row["case_configuration_logs"]
+        } else {
+            row
+        };
+        let diagnostic = if error["code"] == "renderer_configuration" {
+            let mut streams = Vec::new();
+            for stream in ["stdout", "stderr"] {
+                if let Some(path) = logs[stream]["path"].as_str() {
+                    streams.push(
+                        json!({"stream":stream,"sha256":common::sha256_file(&root.join(path))?}),
+                    );
+                }
+            }
+            if streams.is_empty() {
+                error["message"].to_string()
+            } else {
+                serde_json::to_string(&streams)?
+            }
+        } else {
+            error["message"].to_string()
+        };
+        if let Some((_, _, group)) = groups.iter_mut().find(|(identity, message, _)| {
+            *identity == json!([row["case_id"], error["code"]]) && *message == diagnostic
+        }) {
+            group["affected_seeds"]
+                .as_array_mut()
+                .expect("seed array")
+                .push(row["seed"].clone());
+            group["evidence"].as_array_mut().expect("evidence array").push(json!({"seed":row["seed"],"stdout":row["stdout"],"stderr":row["stderr"],"case_configuration_logs":row["case_configuration_logs"]}));
+        } else {
+            groups.push((json!([row["case_id"],error["code"]]),diagnostic,json!({"case_id":row["case_id"],"affected_seeds":[row["seed"]],"error":error,"evidence":[{"seed":row["seed"],"stdout":row["stdout"],"stderr":row["stderr"],"case_configuration_logs":row["case_configuration_logs"]}]})));
+        }
+    }
+    Ok(groups.into_iter().map(|(_, _, group)| group).collect())
+}
+
 pub fn run(
     suite_path: &Path,
     target_path: &Path,
@@ -790,6 +937,17 @@ pub fn run_suite(
     out: &Path,
     selections: &[String],
 ) -> Result<(Value, i32)> {
+    execute_suite(suite, suite_path, target_path, out, selections, false)
+}
+
+fn execute_suite(
+    suite: Value,
+    suite_path: &Path,
+    target_path: &Path,
+    out: &Path,
+    selections: &[String],
+    dry_run: bool,
+) -> Result<(Value, i32)> {
     let suite_path = absolute(suite_path)?;
     documents::validate_suite(&suite, &suite_path)?;
     let target_path = target_path.canonicalize()?;
@@ -805,13 +963,22 @@ pub fn run_suite(
         selections
     };
     let mut unique = std::collections::BTreeSet::new();
-    if requested
-        .iter()
-        .any(|id| !all_ids.contains(id) || !unique.insert(id))
-    {
+    let mut unknown = Vec::new();
+    let mut duplicate = Vec::new();
+    for id in requested {
+        if !all_ids.contains(id) {
+            unknown.push(id);
+        }
+        if !unique.insert(id) {
+            duplicate.push(id);
+        }
+    }
+    if !unknown.is_empty() || !duplicate.is_empty() {
         return Err(Error::new(
             "case_selection",
-            "Case selection must contain distinct known identities",
+            format!(
+                "Unknown case IDs: {unknown:?}; duplicate case IDs: {duplicate:?}; available case IDs: {all_ids:?}"
+            ),
         ));
     }
     let selected: Vec<_> = all_ids
@@ -880,10 +1047,14 @@ pub fn run_suite(
         root: &root,
         evidence: &mut evidence,
     };
-    render_cases(&suite, &selected, &mut context, &mut rows)?;
+    if dry_run {
+        preflight_cases(&suite, &selected, &mut context, &mut rows)?;
+    } else {
+        render_cases(&suite, &selected, &mut context, &mut rows)?;
+    }
     if let Err(error) = &inventory {
         for row in &mut rows {
-            if row["status"] == "completed" {
+            if row["status"] == "completed" || row["status"] == "validated" {
                 row["status"] = json!("failed");
                 row["error"] = error.to_value();
             }
@@ -907,6 +1078,25 @@ pub fn run_suite(
             row["status"] = json!("failed");
             row["error"] = json!({"code":"dependencies_changed","message":"Dependencies changed during rendering","paths":changed});
         }
+    }
+    if dry_run {
+        let valid = rows.iter().all(|row| row["status"] == "validated");
+        let errors = preflight_errors(&rows, &root)?;
+        let unchecked = json!([
+            {"check":"pixel_decode","status":"unchecked","reason":"Dry-run does not decode images"},
+            {"check":"gpu_execution","status":"unchecked","reason":"Dry-run does not initialize or execute a GPU"},
+            {"check":"output_write","status":"unchecked","reason":"Dry-run does not render or publish images"},
+            {"check":"observed_output_geometry","status":"unchecked","reason":"Dry-run does not decode or render images to observe output dimensions"},
+            {"check":"numerical_output","status":"unchecked","reason":"Dry-run produces no numerical image evidence"}
+        ]);
+        let mut manifest = json!({"schema_version":1,"mode":"dry_run","execution_status":if valid{"validated"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1,"errors":errors,"unchecked":unchecked});
+        manifest["id"] = json!(common::digest(&manifest)?);
+        common::dump(&root.join("preflight.json.tmp"), &manifest)?;
+        fs::rename(root.join("preflight.json.tmp"), root.join("preflight.json"))?;
+        return Ok((
+            json!({"schema_version":1,"command":"run","mode":"dry_run","execution_status":manifest["execution_status"],"artifact":root.join("preflight.json"),"preflight_id":manifest["id"],"errors":manifest["errors"],"unchecked":manifest["unchecked"]}),
+            if valid { 0 } else { 1 },
+        ));
     }
     let completed = rows.iter().all(|r| r["status"] == "completed");
     let errors:Vec<_>=rows.iter().filter_map(|r|r.get("error").map(|e|json!({"case_id":r["case_id"],"seed":r["seed"],"boundary":"renderer","error":e}))).collect();
