@@ -117,6 +117,138 @@ fn canonicalize_grain_state(section: &mut Value) {
     object.retain(|key, _| CANONICAL.contains(&key.as_str()));
 }
 
+/// Runtime snapshots preserve unknown keys until typed validation rejects them.
+fn overlay_runtime(target: &mut Value, source: &Value) {
+    if let (Some(dst), Some(src)) = (target.as_object_mut(), source.as_object()) {
+        for (key, value) in src {
+            if let Some(current) = dst.get_mut(key)
+                && current.is_object()
+                && value.is_object()
+            {
+                overlay_runtime(current, value);
+            } else {
+                dst.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+fn validate_state_parameters(value: &mut Value, legacy: bool) -> Result<()> {
+    if value.get("output_mix").is_some() {
+        bail!("output_mix belongs in rust.runtime.output_mix in GUI state");
+    }
+    let mut explicit = value["rust"]["runtime"].clone();
+    if explicit.is_null() {
+        explicit = json!({});
+    }
+    if legacy {
+        spektrafilm_core::params::sources::normalize_legacy_complete_params(value)
+            .map_err(anyhow::Error::msg)?;
+    } else if value["io"]["output_gamut_compress"]
+        .get("lightness_compression")
+        .is_some()
+    {
+        bail!(
+            "io.output_gamut_compress.lightness_compression is retired; explicitly remove this setting from the document"
+        );
+    }
+    if !legacy
+        && (explicit["io"]["output_gamut_compress"]
+            .get("lightness_compression")
+            .is_some()
+            || value["output_gamut_compress"]
+                .get("lightness_compression")
+                .is_some())
+    {
+        bail!(
+            "io.output_gamut_compress.lightness_compression is retired; explicitly remove this setting from the document"
+        );
+    }
+    if legacy {
+        spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut explicit)
+            .map_err(anyhow::Error::msg)?;
+    }
+    let _: RuntimeParams =
+        serde_json::from_value(explicit.clone()).context("Invalid GUI Rust runtime parameters")?;
+    for (section, group, leaf) in [
+        ("output_gamut_compress", "io", "output_gamut_compress"),
+        ("preflashing", "enlarger", ""),
+    ] {
+        if let Some(fields) = value.get(section) {
+            if !explicit[group].is_object() {
+                explicit[group] = json!({});
+            }
+            if leaf.is_empty() {
+                overlay_runtime(&mut explicit[group], fields);
+            } else {
+                explicit[group][leaf] = fields.clone();
+            }
+        }
+    }
+    for group in [
+        "film_render",
+        "print_render",
+        "enlarger",
+        "reproduction",
+        "io",
+    ] {
+        if let Some(fields) = value.get(group) {
+            explicit[group] = fields.clone();
+        }
+    }
+    if let Some(enlarger) = value["simulation"].get("enlarger") {
+        if !explicit["enlarger"].is_object() {
+            explicit["enlarger"] = json!({});
+        }
+        overlay_runtime(&mut explicit["enlarger"], enlarger);
+    }
+    if let Some(io) = value["simulation"].get("io") {
+        let mut projected = json!({"io": io});
+        if legacy {
+            spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut projected)
+                .map_err(anyhow::Error::msg)?;
+        } else if io["output_gamut_compress"]
+            .get("lightness_compression")
+            .is_some()
+        {
+            bail!(
+                "simulation.io.output_gamut_compress.lightness_compression is retired; explicitly remove this setting from the document"
+            );
+        }
+        let _: RuntimeParams = serde_json::from_value(projected.clone())
+            .context("Invalid GUI simulation.io parameters")?;
+        if legacy {
+            value["simulation"]["io"] = projected["io"].clone();
+        }
+    }
+    // Inspect both carriers independently so an ignored duplicate cannot hide a retired value.
+    if let Some(output) = value.get_mut("output_gamut_compress") {
+        let mut projected = json!({"io": {"output_gamut_compress": output.clone()}});
+        if legacy {
+            spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut projected)
+                .map_err(anyhow::Error::msg)?;
+        }
+        let _: RuntimeParams =
+            serde_json::from_value(projected).context("Invalid GUI io.output_gamut_compress")?;
+        if legacy {
+            output
+                .as_object_mut()
+                .map(|fields| fields.remove("lightness_compression"));
+        }
+    }
+    if legacy {
+        spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut explicit)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(runtime) = value["rust"].get_mut("runtime") {
+            spektrafilm_core::params::sources::normalize_legacy_complete_params(runtime)
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
+    let _: RuntimeParams =
+        serde_json::from_value(explicit).context("Invalid GUI runtime parameters")?;
+    Ok(())
+}
+
 impl GuiState {
     pub fn factory() -> Self {
         let mut sections: Value =
@@ -140,12 +272,18 @@ impl GuiState {
             ),
         )
         .expect("scanner provenance serializes");
+        sections["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         Self { sections }
     }
-    pub fn from_value(value: Value) -> Result<Self> {
+    pub fn from_value(mut value: Value) -> Result<Self> {
         if !value.is_object() {
             bail!("GUI state must be a JSON object");
         }
+        let version = value["rust"].get("version").and_then(Value::as_u64);
+        if value.get("rust").is_some() && !matches!(version, Some(1 | 2)) {
+            bail!("Unsupported Rust GUI state extension version");
+        }
+        validate_state_parameters(&mut value, version == Some(1))?;
         for scanner in [&value["scanner"], &value["rust"]["runtime"]["scanner"]] {
             if let Some(selection) = scanner.get("scan_output") {
                 spektrafilm_core::params::sources::ParameterEdits::parse(&format!(
@@ -241,7 +379,7 @@ impl GuiState {
         merge(&mut state.sections, &normalized);
         canonicalize_grain_state(&mut state.sections["grain"]);
         if let Some(extension) = normalized.get("rust") {
-            if extension["version"] != 1 {
+            if !matches!(extension["version"].as_u64(), Some(1 | 2)) {
                 bail!("Unsupported Rust GUI state extension version");
             }
             if let Some(fields) = extension.as_object() {
@@ -250,6 +388,8 @@ impl GuiState {
                 }
             }
         }
+        state.sections["rust"]["version"] = json!(2);
+        state.sections["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         let params = state.runtime_params()?;
         // Metadata is derived from the selected built-ins, never trusted from an import.
         state.sections["rust"]["scanner_provenance"] = serde_json::to_value(
@@ -293,10 +433,11 @@ impl GuiState {
             .unwrap_or(true)
     }
     pub fn runtime_params(&self) -> Result<RuntimeParams> {
+        validate_state_parameters(&mut self.sections.clone(), false)?;
         let s = &self.sections;
         let mut runtime = serde_json::to_value(RuntimeParams::default())?;
         if let Some(extra) = s["rust"].get("runtime") {
-            merge(&mut runtime, extra);
+            overlay_runtime(&mut runtime, extra);
         }
         for group in ["camera", "scanner"] {
             merge(&mut runtime[group], &s[group]);
@@ -530,7 +671,8 @@ impl GuiState {
                 }
             }
         }
-        s["rust"]["version"] = json!(1);
+        s["rust"]["version"] = json!(2);
+        s["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(
             spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),
@@ -589,13 +731,125 @@ pub fn reset_factory() -> Result<GuiState> {
 mod tests {
     use super::*;
     #[test]
+    fn output_mix_state_roundtrip_and_legacy_retirement_are_atomic() {
+        let factory = GuiState::factory();
+        let mut params = factory.runtime_params().unwrap();
+        params.output_mix.amount = 0.25;
+        let saved =
+            GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+                .unwrap();
+        assert_eq!(saved.sections["rust"]["version"], 2);
+        let restored = GuiState::from_value(saved.sections.clone()).unwrap();
+        assert_eq!(restored.runtime_params().unwrap().output_mix.amount, 0.25);
+        for version in [1, 2] {
+            for retired in [Value::Null, json!([0.95, 1.0, 1.6])] {
+                let mut candidate = saved.sections.clone();
+                candidate["rust"]["version"] = json!(version);
+                candidate["output_gamut_compress"]["lightness_compression"] = retired.clone();
+                let source = candidate.clone();
+                let result = GuiState::from_value(candidate.clone());
+                if version == 1 && retired.is_null() {
+                    assert!(
+                        result.unwrap().sections["output_gamut_compress"]
+                            .get("lightness_compression")
+                            .is_none()
+                    );
+                } else {
+                    assert!(
+                        format!("{:#}", result.unwrap_err())
+                            .contains("io.output_gamut_compress.lightness_compression")
+                    );
+                }
+                assert_eq!(candidate, source);
+                assert_eq!(restored.runtime_params().unwrap().output_mix.amount, 0.25);
+            }
+        }
+        for invalid in [
+            json!({"film_render":{"response":{}}}),
+            json!({"print_render":{"response":{}}}),
+            json!({"enlarger":{"c_filter_shift":0.0}}),
+            json!({"output_mix":{"amount":1.01}}),
+            json!({"output_mix":{"amount":-0.01}}),
+        ] {
+            let mut candidate = saved.sections.clone();
+            candidate["rust"]["runtime"] = invalid;
+            assert!(GuiState::from_value(candidate).is_err());
+        }
+    }
+
+    #[test]
+    fn state_carriers_reject_ignored_mix_and_nested_retired_io() {
+        for amount in [0.25, 1.01, -0.01] {
+            let error = GuiState::from_value(json!({"output_mix":{"amount":amount}})).unwrap_err();
+            assert!(error.to_string().contains("rust.runtime.output_mix"));
+        }
+        for version in [1, 2] {
+            for retired in [Value::Null, json!([0.95, 1.0, 1.6])] {
+                let source = json!({"rust":{"version":version},"simulation":{"io":{"output_gamut_compress":{"lightness_compression":retired}}}});
+                let result = GuiState::from_value(source.clone());
+                if version == 1 && retired.is_null() {
+                    let accepted = result.unwrap();
+                    assert!(
+                        accepted.sections["simulation"]["io"]["output_gamut_compress"]
+                            .get("lightness_compression")
+                            .is_none()
+                    );
+                    assert_eq!(accepted.runtime_params().unwrap().output_mix.amount, 1.0);
+                } else {
+                    assert!(
+                        format!("{:#}", result.unwrap_err())
+                            .contains("output_gamut_compress.lightness_compression")
+                    );
+                }
+            }
+            let error = GuiState::from_value(json!({"rust":{"version":version},"simulation":{"io":{"finished_rgb_output_processing":true}}})).unwrap_err();
+            assert!(format!("{error:#}").contains("finished_rgb_output_processing"));
+        }
+    }
+
+    #[test]
+    fn legacy_rust_grain_snapshot_preserves_supported_controls() {
+        for retired in [None, Some(Value::Null)] {
+            let mut source = json!({"rust":{"version":1,"runtime":{"film_render":{"grain":{"sublayers_active":false,"particle_area_um2":9.0,"particle_scale":[2.0,3.0,4.0],"n_sub_layers":3,"monochrome":true}}}}});
+            if let Some(retired) = retired {
+                source["rust"]["runtime"]["io"] =
+                    json!({"output_gamut_compress":{"lightness_compression":retired}});
+            }
+            let accepted = GuiState::from_value(source).unwrap();
+            let params = accepted.runtime_params().unwrap();
+            let grain = &params.film_render.grain;
+            assert!(!grain.sublayers_active);
+            assert_eq!(grain.particle_area_um2, 9.0);
+            assert_eq!(grain.particle_scale, [2.0, 3.0, 4.0]);
+            assert_eq!(grain.n_sub_layers, 3);
+            assert!(grain.monochrome);
+            let saved = GuiState::from_runtime(
+                &params,
+                accepted.film(),
+                accepted.paper(),
+                &accepted.sections,
+            )
+            .unwrap();
+            let reopened = GuiState::from_value(saved.sections).unwrap();
+            assert_eq!(
+                reopened.runtime_params().unwrap().film_render.grain,
+                params.film_render.grain
+            );
+        }
+    }
+
+    #[test]
     fn factory_matches_independently_generated_upstream_state() {
         // Generated from pinned Python PROJECT_DEFAULT_GUI_STATE with real
         // profile/preset loading; provenance lives beside this retained oracle.
-        let expected: Value = serde_json::from_str(include_str!(
+        let mut expected: Value = serde_json::from_str(include_str!(
             "../../../scripts/parity/fixtures/gui_28bf883/factory_state.json"
         ))
         .unwrap();
+        expected["output_gamut_compress"]
+            .as_object_mut()
+            .unwrap()
+            .remove("lightness_compression");
         fn compare(actual: &Value, expected: &Value, path: &str) -> usize {
             match (actual, expected) {
                 (Value::Object(actual), Value::Object(expected)) => {
@@ -662,7 +916,7 @@ mod tests {
         ] {
             scanner.remove(key);
         }
-        assert_eq!(compare(&shared, &expected, "factory"), 187);
+        assert_eq!(compare(&shared, &expected, "factory"), 186);
         let params = factory.runtime_params().unwrap();
         assert_eq!(params.film_render.grain.rms_granularity, [5.0; 3]);
         assert_eq!(params.io.upscale_factor, 1.0);

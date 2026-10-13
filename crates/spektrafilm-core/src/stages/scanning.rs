@@ -1237,18 +1237,20 @@ fn scan_with_reference(
                 &channel_density,
                 base_density,
                 scan_context,
-                slide_points,
+                !negative_to_positive,
             )
         })
     };
+    // Scanner readout optics operate on the linear acquisition before glare,
+    // points, negative inversion, finish, or output gamut correction. Density
+    // interpretation keeps its dedicated transmission-domain blur above.
+    if params.scanner.lens_blur > 0.0 && !density_reading && !reference_mode {
+        rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
+    }
 
-    // Historical white/black correction stays inside the scan LUT. Active
-    // slide points defer only that remap until after capture blur and points.
-    // When no remap is built we apply nothing: scan_film+negative because upstream
-    // Python explicitly skips it (`black_white_xyz_correction`: "do not
-    // correct negative film scans"), and a positive print paper because
-    // upstream crashes there (its printing exposure correction returns None)
-    // — unsupported, and unrepresentable with the shipped profiles anyway.
+    // Direct acquisition defers white/black correction until after scanner
+    // blur, print viewing glare, and slide points. Default points follow the
+    // same acquisition order; correction is applied only when a remap exists.
 
     // Viewing glare (Python: `add_glare(xyz, illuminant_xyz, glare)` between scan_spectral
     // and chromatic adapt + matrix). Since CAT+matrix is linear, we equivalently add
@@ -1293,25 +1295,22 @@ fn scan_with_reference(
             base_density,
             scan_context,
         )?;
-        if params.scanner.lens_blur > 0.0 {
-            rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
-        }
         points.apply(&mut rgb);
-        if color_ref.has_remap() {
-            let to_y = match &scan_context.receiver {
-                Some(receiver) => receiver.luminance_weights(),
-                None => scan_rgb_to_y(scan_context)?,
-            };
-            rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-                let y = (0..3).map(|c| to_y[c] * to_f64(px[c])).sum();
-                let scale = color_ref.xyz_scale(y);
-                if scale != 1.0 {
-                    for value in px {
-                        *value = from_f64(to_f64(*value) * scale);
-                    }
+    }
+    if !negative_to_positive && color_ref.has_remap() {
+        let to_y = match &scan_context.receiver {
+            Some(receiver) => receiver.luminance_weights(),
+            None => scan_rgb_to_y(scan_context)?,
+        };
+        rgb.data.par_chunks_exact_mut(3).for_each(|px| {
+            let y = (0..3).map(|c| to_y[c] * to_f64(px[c])).sum();
+            let scale = color_ref.xyz_scale(y);
+            if scale != 1.0 {
+                for value in px {
+                    *value = from_f64(to_f64(*value) * scale);
                 }
-            });
-        }
+            }
+        });
     }
 
     // Positive interpretation is scanner-domain for the capture methods:
@@ -1319,9 +1318,6 @@ fn scan_with_reference(
     // endpoint inversion. The density reading ran above, where it blurred
     // transmitted light record by record instead.
     if negative_to_positive && !density_reading && !reference_mode {
-        if params.scanner.lens_blur > 0.0 {
-            rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
-        }
         if params.scanner.positive_interpretation != crate::params::PositiveInterpretation::Coupled
         {
             // `separable`, and `density` where the incoming image is a
@@ -1388,11 +1384,7 @@ fn scan_with_reference(
         });
     }
 
-    // Direct scans apply optical blur after gamut compression, preserving
-    // the established direct-scan behavior.
-    if !negative_to_positive && !slide_points && params.scanner.lens_blur > 0.0 {
-        rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
-    }
+    // Scanner blur runs at the linear acquisition boundary above.
 
     // Unsharp mask
     let [usm_sigma, usm_amount] = params.scanner.unsharp_mask;
@@ -1871,7 +1863,7 @@ mod tests {
     }
 
     #[test]
-    fn default_slide_points_preserve_historical_capture_and_blur() {
+    fn default_slide_points_blur_acquisition_before_correction() {
         let film = profile("kodak_ektachrome_100");
         let print = profile("kodak_portra_endura");
         let mut params = RuntimeParams::default();
@@ -1910,9 +1902,16 @@ mod tests {
             &channel,
             &film.data.base_density,
             &context.scan,
-            false,
+            true,
         );
-        let expected = backend.gaussian_blur(&historical_capture, params.scanner.lens_blur);
+        let mut expected = backend.gaussian_blur(&historical_capture, params.scanner.lens_blur);
+        let y = scan_rgb_to_y(&context.scan).unwrap();
+        for px in expected.data.as_chunks_mut::<3>().0 {
+            let scale = correction.xyz_scale((0..3).map(|c| y[c] * to_f64(px[c])).sum());
+            for value in px {
+                *value = from_f64(to_f64(*value) * scale);
+            }
+        }
         let actual = process(
             &input,
             &film,
@@ -1923,6 +1922,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(actual.data, expected.data);
+    }
+
+    #[test]
+    fn zero_scanner_blur_preserves_linear_capture() {
+        let film = profile("kodak_portra_400");
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.io.output_cctf_encoding = false;
+        params.film_render.grain.active = false;
+        params.scanner.lens_blur = 0.0;
+        params.scanner.unsharp_mask = [0.0; 2];
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let correction = crate::color_reference::ColorReference::identity();
+        let context = crate::chain_prep::PreparedChain::for_scan(&film, &params, None);
+        let channel = crate::chain_prep::channel_density(&film);
+        let input = ImageBuf::from_data(
+            2,
+            1,
+            [0.1, 0.2, 0.3, 1.0, 1.2, 1.4]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let capture = scan_spectral_rgb(
+            &input,
+            &film,
+            &params,
+            &backend,
+            &correction,
+            &channel,
+            &film.data.base_density,
+            &context.scan,
+            false,
+        );
+        let actual = process(
+            &input,
+            &film,
+            &params,
+            &backend,
+            &correction,
+            &crate::gamut_compression::OutputGamutCompress::identity(),
+        )
+        .unwrap();
+        assert_eq!(actual.data, capture.data);
     }
 
     #[test]

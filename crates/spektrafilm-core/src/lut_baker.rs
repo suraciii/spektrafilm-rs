@@ -48,6 +48,12 @@ impl BundleBuilder {
         let mut spec = self.spec.clone();
         spec.normalize()?;
         if let Some(params) = self.base_params.as_ref() {
+            if params.output_mix.amount < 1.0 && spec.topology != Topology::One {
+                return Err(
+                    "output_mix.amount below 1 requires 1lut: segmented LUTs have no prepared source branch"
+                        .into(),
+                );
+            }
             validate_route_topology(spec.topology, params.workflow.route.as_str())?;
         }
 
@@ -149,6 +155,11 @@ impl BundleBuilder {
                 "included in the baked RGB final stage".into(),
             );
         }
+        provenance.insert(
+            "output_mix.amount".into(),
+            first.params().output_mix.amount.to_string(),
+        );
+        provenance.insert("model_version".into(), crate::runtime::MODEL_VERSION.into());
         let meta = BundleMeta {
             schema_version: 3,
             name: spec.name.clone(),
@@ -549,6 +560,23 @@ mod tests {
     }
 
     #[test]
+    fn mixed_segmented_bake_rejects_before_profile_loading() {
+        let mut params = RuntimeParams::default();
+        params.output_mix.amount = 0.5;
+        for topology in [Topology::Two, Topology::Three, Topology::Four] {
+            let mut spec = spec("srgb", "srgb");
+            spec.topology = topology;
+            let error = BundleBuilder::with_params(spec, params.clone())
+                .build(
+                    Path::new("missing-profile-directory"),
+                    &spektrafilm_gpu::cpu_backend::CpuBackend,
+                )
+                .expect_err("segmented mixing must fail");
+            assert!(error.contains("no prepared source branch"), "{error}");
+        }
+    }
+
+    #[test]
     #[cfg(feature = "precision-f64")]
     fn flog_bake_matches_independent_d65_compression_reference() {
         let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
@@ -561,9 +589,9 @@ mod tests {
             .build(&data, &spektrafilm_gpu::cpu_backend::CpuBackend)
             .unwrap();
         // Independent 28bf883 Python BundleBuilder, NumPy 2.5.3, float32
-        // transport input; resolution 4, gain 1, default runtime gamut knees.
-        // Saturated channels distinguish fixed-D65 compression from D55;
-        // the previous D55 center missed these references by up to 0.09195.
+        // transport input; resolution 4, gain 1, retained chroma knees with
+        // standalone lightness disabled. These samples are unchanged by its
+        // retirement and distinguish fixed-D65 input compression from D55.
         let reference = [
             (
                 1,

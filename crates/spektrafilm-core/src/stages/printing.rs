@@ -451,3 +451,102 @@ pub(crate) fn compute_single_pixel_raw(
     }
     raw
 }
+
+#[cfg(test)]
+mod diffusion_flash_tests {
+    use super::*;
+    use spektrafilm_math::precision::to_f64;
+
+    fn configured_diffusion() -> spektrafilm_model::diffusion::DiffusionFilter<'static> {
+        spektrafilm_model::diffusion::DiffusionFilter {
+            family: "black_pro_mist",
+            strength: 1.0,
+            spatial_scale: 0.05,
+            halo_warmth: 0.3,
+            core_intensity: 1.0,
+            core_size: 1.0,
+            halo_intensity: 1.0,
+            halo_size: 1.0,
+            bloom_intensity: 1.0,
+            bloom_size: 1.0,
+        }
+    }
+
+    #[test]
+    fn enlarger_diffusion_preserves_uniform_flash_at_reflected_edges() {
+        let n = 9u32;
+        let flash = 0.37f64;
+        let image = ImageBuf::from_data(n, n, vec![from_f64(flash); (n * n * 3) as usize]);
+        let out = spektrafilm_model::diffusion::apply_diffusion_filter_um(
+            &image,
+            &configured_diffusion(),
+            10.0,
+        )
+        .unwrap();
+        let max_error = out
+            .data
+            .iter()
+            .map(|v| (to_f64(*v) - flash).abs())
+            .fold(0.0, f64::max);
+        assert!(
+            max_error < 2e-5,
+            "uniform preflash changed at a reflected edge: {max_error}"
+        );
+    }
+
+    #[test]
+    fn enlarger_diffusion_is_affine_for_flash_plus_scene_raw() {
+        let n = 9u32;
+        let mut scene_data = Vec::with_capacity((n * n * 3) as usize);
+        for y in 0..n {
+            for x in 0..n {
+                let v = if x == n - 1 && y == 0 {
+                    1.0
+                } else {
+                    0.02 + 0.01 * (x + y) as f64
+                };
+                scene_data.extend([from_f64(v), from_f64(v * 0.8), from_f64(v * 0.6)]);
+            }
+        }
+        let scene = ImageBuf::from_data(n, n, scene_data);
+        let flash = ImageBuf::from_data(n, n, vec![from_f64(0.37); (n * n * 3) as usize]);
+        let combined = ImageBuf::from_data(
+            n,
+            n,
+            scene
+                .data
+                .iter()
+                .zip(&flash.data)
+                .map(|(a, b)| from_f64(to_f64(*a) + to_f64(*b)))
+                .collect(),
+        );
+        let zero = ImageBuf::from_data(n, n, vec![from_f64(0.0); (n * n * 3) as usize]);
+        let filter = configured_diffusion();
+        let scene_out =
+            spektrafilm_model::diffusion::apply_diffusion_filter_um(&scene, &filter, 10.0).unwrap();
+        let flash_out =
+            spektrafilm_model::diffusion::apply_diffusion_filter_um(&flash, &filter, 10.0).unwrap();
+        let combined_out =
+            spektrafilm_model::diffusion::apply_diffusion_filter_um(&combined, &filter, 10.0)
+                .unwrap();
+        let zero_out =
+            spektrafilm_model::diffusion::apply_diffusion_filter_um(&zero, &filter, 10.0).unwrap();
+        let max_error = combined_out
+            .data
+            .iter()
+            .zip(
+                scene_out
+                    .data
+                    .iter()
+                    .zip(flash_out.data.iter().zip(&zero_out.data)),
+            )
+            .map(|(actual, (scene, (flash, zero)))| {
+                (to_f64(*actual) - (to_f64(*scene) + to_f64(*flash) - to_f64(*zero))).abs()
+            })
+            .fold(0.0, f64::max);
+        assert!(
+            max_error < 4e-5,
+            "diffusion is not affine across flash addition: {max_error}"
+        );
+    }
+}

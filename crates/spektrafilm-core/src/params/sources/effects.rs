@@ -30,6 +30,10 @@ pub(super) enum Condition {
     DigitalReference,
     MagazineActive,
     MagazineStrength,
+    FilmDevelopment,
+    PrintDevelopment,
+    Preflash,
+    Chemistry(bool),
 }
 impl Condition {
     pub(super) fn description(self) -> &'static str {
@@ -75,6 +79,21 @@ impl Condition {
             Self::DigitalReference => "scanner.positive_interpretation = digital_reference",
             Self::MagazineActive => "magazine_print_color.active = true",
             Self::MagazineStrength => "magazine_print_color.strength > 0",
+            Self::FilmDevelopment => {
+                "actual Film development route; captured negatives and Finished RGB are not redeveloped"
+            }
+            Self::PrintDevelopment => {
+                "admitted print-development route, including recovered-negative printing"
+            }
+            Self::Preflash => {
+                "enlarger.preflash_exposure > 0; zero disables flash and retains filter settings"
+            }
+            Self::Chemistry(false) => {
+                "film_render.chemistry.active = true; supported fitted density_curves_model required"
+            }
+            Self::Chemistry(true) => {
+                "print_render.density_curves_morph.active = true; supported fitted density_curves_model required"
+            }
         }
     }
     fn holds(self, p: &RuntimeParams, film: &Profile) -> bool {
@@ -127,12 +146,49 @@ impl Condition {
             }
             Self::MagazineActive => p.magazine_print_color.active,
             Self::MagazineStrength => p.magazine_print_color.strength > 0.0,
+            Self::FilmDevelopment => matches!(
+                p.workflow.route.as_str(),
+                "input > film > scan" | "input > film > print > scan"
+            ),
+            Self::PrintDevelopment => matches!(
+                p.workflow.route.as_str(),
+                "input > film > print > scan" | "input > convert-film > print > scan"
+            ),
+            Self::Preflash => p.enlarger.preflash_exposure > 0.0,
+            Self::Chemistry(print) => {
+                if print {
+                    p.print_render.density_curves_morph.active
+                } else {
+                    p.film_render.chemistry.active
+                }
+            }
         }
     }
 }
 pub(super) fn conditions(path: &str) -> Vec<Condition> {
     use Condition::*;
     let mut out = Vec::new();
+    if path.starts_with("enlarger.preflash_") {
+        out.push(PrintDevelopment);
+        if path != "enlarger.preflash_exposure" {
+            out.push(Preflash);
+        }
+        return out;
+    }
+    if path.starts_with("film_render.chemistry.")
+        || path.starts_with("print_render.density_curves_morph.")
+    {
+        let print = path.starts_with("print_render.");
+        out.push(if print {
+            PrintDevelopment
+        } else {
+            FilmDevelopment
+        });
+        if !path.ends_with(".active") {
+            out.push(Chemistry(print));
+        }
+        return out;
+    }
     if path == "film_render.grain.micro_sublayers" || path == "debug.print_timings" {
         return vec![NoOp];
     }
@@ -225,9 +281,35 @@ pub(crate) fn inactive_reason(
     path: &str,
     params: &RuntimeParams,
     film: &Profile,
+    print: &Profile,
 ) -> Option<String> {
-    conditions(path)
+    if let Some(reason) = conditions(path)
         .into_iter()
         .find(|condition| !condition.holds(params, film))
         .map(|condition| condition.description().into())
+    {
+        return Some(reason);
+    }
+    let material = if path.starts_with("film_render.chemistry.") {
+        Some(film)
+    } else if path.starts_with("print_render.density_curves_morph.") {
+        Some(print)
+    } else {
+        None
+    };
+    if let Some(material) = material
+        && !material
+            .data
+            .density_curves_model
+            .as_ref()
+            .is_some_and(|model| {
+                matches!(
+                    model.model_type.as_str(),
+                    "cdfs" | "norm_cdfs" | "sept_norm_cdfs"
+                ) && model.n_layers() > 0
+            })
+    {
+        return Some("selected material has no supported fitted density_curves_model; chemistry values remain stored and inactive".into());
+    }
+    None
 }

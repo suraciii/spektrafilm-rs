@@ -248,6 +248,22 @@ impl Pipeline {
                 return None;
             }
         }
+        // The resident scan shader applies its nonlinear luminance remap
+        // during spectral acquisition. Corrected scans require that remap
+        // after optical blur and print glare, so use the faithful stage path.
+        if color_ref.has_remap() {
+            if let Some(context) = backend.observation_context() {
+                context.decline_resident(
+                    spektrafilm_gpu::telemetry::ResidentDeclineReason::ScannerFilmPoints,
+                );
+            }
+            tracing::info!(
+                target: "spektrafilm_core::pipeline",
+                reason = "scanner luminance correction must follow linear optical blur and glare",
+                "using faithful per-stage scanner correction"
+            );
+            return None;
+        }
         let front = self.resident_front_pass(color_ref, ae_ev)?;
 
         let film_curves = crate::chain_prep::FilmCurves::prepare(&self.film);
@@ -281,13 +297,12 @@ impl Pipeline {
         // GPU shaders take f32 — narrow the working-geometry pitch once.
         let pix_um = pixel_size_um as f32;
 
-        // print_exposure_factor × print_exposure, with the B&W printing
-        // exposure correction folded in (CPU applies it as a further raw
-        // multiply; print_spectral applies the whole product as one
-        // normalization). 1.0 except on a corrected print scan.
+        // Keep the two print exposure halves separate: preflash is added
+        // before the inner floor/log, while print exposure and BW correction
+        // multiply the recovered linear raw before the outer floor/log.
         let print_exposure_scale =
             self.params.enlarger.print_exposure as f64 * color_ref.printing_exposure_correction;
-        let print_norm_factor = self.print_exposure_factor * print_exposure_scale;
+        let print_norm_factor = self.print_exposure_factor;
 
         // Halation in the resident chain — only built when the halation
         // stage is active. Mirrors `apply_halation_um`: averages the
@@ -463,6 +478,7 @@ impl Pipeline {
             print_illuminant: &self.print_illuminant,
             print_sensitivity: &print_sens,
             print_normalization_factor: print_norm_factor,
+            print_exposure_scale,
             print_log_exposure: print_curves.log_exposure,
             print_density_curves: &print_curves.density,
             print_gamma: print_curves.gamma,
@@ -516,7 +532,11 @@ impl Pipeline {
     }
 
     /// Finalize the export transfer without applying the same-space matrix twice.
-    pub(super) fn apply_post_scan(&self, mut rgb: ImageBuf) -> ImageBuf {
+    pub(super) fn apply_post_scan(
+        &self,
+        mut rgb: ImageBuf,
+        backend: &dyn ComputeBackend,
+    ) -> ImageBuf {
         use rayon::prelude::*;
         use spektrafilm_math::precision::from_f64;
         let grain_v2_active = self.params.film_render.grain.active
@@ -525,23 +545,9 @@ impl Pipeline {
                 self.params.film_render.grain.engine,
                 crate::params::grain::GrainEngine::Procedural
             );
-        if grain_v2_active {
-            if !self.params.io.output_cctf_encoding {
-                let space =
-                    spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
-                        .expect("validated output colour space");
-                rgb.data.par_iter_mut().for_each(|value| {
-                    *value = from_f64(spektrafilm_math::colorspace::cctf_decode(
-                        *value as f64,
-                        space.cctf,
-                    ));
-                });
-            }
-            return rgb;
-        }
-        if self.params.io.output_cctf_encoding {
-            let space = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
-                .expect("validated output colour space");
+        let space = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
+            .expect("validated output colour space");
+        if !grain_v2_active && self.params.io.output_cctf_encoding {
             rgb.data.par_chunks_exact_mut(3).for_each(|px| {
                 let out = spektrafilm_math::colorspace::encode_rgb(
                     [px[0] as f64, px[1] as f64, px[2] as f64],
@@ -550,6 +556,29 @@ impl Pipeline {
                 for c in 0..3 {
                     px[c] = from_f64(out[c]);
                 }
+            });
+        }
+        if self.params.magazine_print_color.active
+            && self.params.magazine_print_color.strength > 0.0
+        {
+            let _magazine = super::stages::StageObservation::cpu(
+                backend,
+                "magazine_print_color",
+                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            );
+            crate::magazine_print_color::apply(
+                &mut rgb,
+                &self.params.magazine_print_color,
+                space,
+                self.params.io.output_cctf_encoding || grain_v2_active,
+            );
+        }
+        if grain_v2_active && !self.params.io.output_cctf_encoding {
+            rgb.data.par_iter_mut().for_each(|value| {
+                *value = from_f64(spektrafilm_math::colorspace::cctf_decode(
+                    *value as f64,
+                    space.cctf,
+                ));
             });
         }
         rgb

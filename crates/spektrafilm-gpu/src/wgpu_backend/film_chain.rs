@@ -32,7 +32,6 @@ impl WgpuBackend {
         let film_base_density = p.film_base_density;
         let print_illuminant = p.print_illuminant;
         let print_sensitivity = p.print_sensitivity;
-        let print_normalization_factor = p.print_normalization_factor;
         let print_log_exposure = p.print_log_exposure;
         let print_density_curves = p.print_density_curves;
         let print_gamma = p.print_gamma;
@@ -261,16 +260,20 @@ impl WgpuBackend {
             height: u32,
             n_wavelengths: u32,
             normalization_factor: f32,
+            exposure_scale: f32,
+            _pad: [f32; 3],
             preflash: [f32; 3],
-            _pad: f32,
+            _tail_pad: f32,
         }
         let print_params = PrintParams {
             width: image.width,
             height: image.height,
             n_wavelengths: film_channel_density.len() as u32,
-            normalization_factor: print_normalization_factor as f32,
+            normalization_factor: p.print_normalization_factor as f32,
+            exposure_scale: p.print_exposure_scale as f32,
+            _pad: [0.0; 3],
             preflash: [preflash[0] as f32, preflash[1] as f32, preflash[2] as f32],
-            _pad: 0.0,
+            _tail_pad: 0.0,
         };
         let print_params_buf = mk_uniform("print_params", bytemuck::bytes_of(&print_params));
 
@@ -335,7 +338,9 @@ impl WgpuBackend {
             ],
         );
         let print_pipe = self.cached_pipeline(
-            include_str!("../../../spektrafilm-shaders/wgsl/spectral/print_spectral.wgsl"),
+            include_str!(
+                "../../../spektrafilm-shaders/wgsl/spectral/print_spectral_calibrated.wgsl"
+            ),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -847,6 +852,13 @@ impl WgpuBackend {
             n_pixels,
             "scan_spectral",
         );
+        // 6a. Scanner readout optics operate on the linear acquisition,
+        // before glare, gamut correction, and unsharp mask. The blur state
+        // reads buf_b and copies its result back to buf_b after the pass.
+        if let Some(bs) = scanner_lens_blur_state.as_ref() {
+            let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
+            bs.encode_passes(&mut encoder, wg_xy, &buf_b);
+        }
         // 6b. Glare (in place on buf_b).
         if let Some(gs) = glare_state.as_ref() {
             let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
@@ -856,11 +868,6 @@ impl WgpuBackend {
         //     before unsharp, mirroring the CPU scanning order.
         if let Some(gs) = gamut_state.as_ref() {
             gs.encode_passes(&mut encoder, n_pixels);
-        }
-        // 6d. Scanner lens blur — after glare/gamut, before unsharp.
-        if let Some(bs) = scanner_lens_blur_state.as_ref() {
-            let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
-            bs.encode_passes(&mut encoder, wg_xy, &buf_b);
         }
         // 6d. Unsharp mask — last in-flight pass. Writes the final image
         //     back to buf_b so the readback path below is unchanged.
