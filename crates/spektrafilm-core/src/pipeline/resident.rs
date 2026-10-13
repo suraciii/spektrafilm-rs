@@ -79,9 +79,9 @@ impl Pipeline {
         if dir.active && coefficients.iter().any(|k| (k - 1.0).abs() > f64::EPSILON) {
             reasons.push(ResidentFallbackReason::LangmuirChemistry);
         }
-        if self.params.io.input_cctf_decoding {
-            reasons.push(ResidentFallbackReason::InputTransferDecoding);
-        }
+        // Input transfer decoding no longer declines: the resident route
+        // decodes the input before upload (pipe architecture, capability
+        // class — see `try_gpu_resident`).
         if self.params.settings.use_scanner_lut
             || (!self.params.io.scan_film && self.params.settings.use_enlarger_lut)
         {
@@ -191,6 +191,35 @@ impl Pipeline {
         if !backend.is_gpu() {
             return None;
         }
+        // Input transfer decoding is shared preprocessing for the resident
+        // route (pipe architecture, capability class): the front pass
+        // assumes linear RGB exactly like `expose` produces for the
+        // per-stage route. Same expression as `expose`, decoded once here
+        // so the per-stage `expose` never double-decodes.
+        let decoded;
+        let image = if self.params.io.input_cctf_decoding {
+            let _decode = super::stages::StageObservation::cpu(
+                backend,
+                "input_transfer",
+                spektrafilm_gpu::telemetry::CpuReason::InputTransferDecoding,
+            );
+            let input_space =
+                spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
+                    .expect("input color space must be validated before filming");
+            let mut rgb = image.clone();
+            use rayon::prelude::*;
+            use spektrafilm_math::precision::{from_f64, to_f64};
+            rgb.data.par_iter_mut().for_each(|v| {
+                *v = from_f64(spektrafilm_math::colorspace::cctf_decode(
+                    to_f64(*v),
+                    input_space.cctf,
+                ));
+            });
+            decoded = rgb;
+            &decoded
+        } else {
+            image
+        };
         match self.resident_decision() {
             ResidentDecision::UseResident => {}
             ResidentDecision::PerStage { reasons } => {
@@ -771,5 +800,51 @@ mod tests {
         let mean = sum / out_cpu.data.len() as f64;
         assert!(mean < 5e-2, "fence mean divergence: {mean}");
         assert!(max_diff < 5e-1, "fence max divergence: {max_diff}");
+    }
+
+    /// Input transfer decoding no longer demotes to per-stage: the resident
+    /// route decodes the input before upload with the same expression as
+    /// `expose`, so a decoded-input render must match the CPU reference
+    /// under the same Spektra-fence budget (the default engine still runs
+    /// as the density fence).
+    #[test]
+    fn input_transfer_decoding_resident_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.camera.auto_exposure = false;
+        params.io.input_cctf_decoding = true;
+        params.io.input_color_space = "sRGB".into();
+        params.io.output_gamut_compress.algorithm = "off".into();
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.02 + 0.96 * ((i * 31) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "decoded-input mean divergence: {mean}");
+        assert!(max_diff < 5e-1, "decoded-input max divergence: {max_diff}");
     }
 }
