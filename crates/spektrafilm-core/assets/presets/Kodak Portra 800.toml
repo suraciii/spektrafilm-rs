@@ -1,4 +1,4 @@
-schema_version = 2
+schema_version = 3
 name = "Kodak Portra 800"
 author = "SpektraFilm"
 description = "SpektraFilm Portra 800 look; the hanatos2025 adaptation surface and the positive-scan timing are fitted from Color Precision Portra 800 chart scans"
@@ -304,6 +304,9 @@ halo_intensity = 1.0
 halo_size = 1.0
 bloom_intensity = 1.0
 bloom_size = 1.0
+
+[parameters.output_mix]
+amount = 1.0
 
 [parameters.settings]
 # Fitted adaptation surface: smooth per-chromaticity log-exposure correction of

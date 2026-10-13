@@ -22,6 +22,28 @@ pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
     )]
 }
 
+/// Normalize the runtime-parameter subtree of a versioned legacy complete document.
+/// Rejection leaves the supplied document unchanged. Current complete documents
+/// and sparse sources must use their strict boundary without normalization.
+pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String> {
+    let Some(retired) = value.pointer("/io/output_gamut_compress/lightness_compression") else {
+        return Ok(());
+    };
+    if !retired.is_null() {
+        return Err(retired_lightness_error());
+    }
+    value
+        .pointer_mut("/io/output_gamut_compress")
+        .and_then(Value::as_object_mut)
+        .expect("retired field belongs to an object")
+        .remove("lightness_compression");
+    Ok(())
+}
+
+pub(crate) fn retired_lightness_error() -> String {
+    "io.output_gamut_compress.lightness_compression was retired; no automatic replacement exists; explicitly remove this field from the document".into()
+}
+
 /// Ordered sparse edits to runtime parameter leaves.
 #[derive(Debug, Clone, Default)]
 pub struct ParameterEdits {
@@ -628,6 +650,9 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
     Ok(out)
 }
 fn unknown_path(path: &str) -> String {
+    if path == "io.output_gamut_compress.lightness_compression" {
+        return retired_lightness_error();
+    }
     if let Some((_, reason)) = non_settable_leaves().iter().find(|(leaf, _)| *leaf == path) {
         return format!(
             "{path} is a runtime field outside the settable parameter surface; {reason}"
@@ -709,16 +734,11 @@ pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
         }
     }
     if params
-        .io
-        .output_gamut_compress
-        .lightness_compression
-        .is_some_and(|v| v.iter().any(|x| !x.is_finite()))
-        || params
-            .film_render
-            .grain
-            .particle_scale_layers
-            .iter()
-            .any(|x| !x.is_finite())
+        .film_render
+        .grain
+        .particle_scale_layers
+        .iter()
+        .any(|x| !x.is_finite())
         || params
             .film_render
             .grain
@@ -1127,7 +1147,6 @@ mod tests {
         for path in [
             "io.input_gamut_compress.knee",
             "io.output_gamut_compress.knee",
-            "io.output_gamut_compress.lightness_compression",
         ] {
             for invalid in [
                 "[-1,1,1]",
@@ -1160,7 +1179,6 @@ mod tests {
                     .unwrap();
             }
         }
-        ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").unwrap();
     }
 
     #[test]
@@ -1206,7 +1224,6 @@ mod tests {
         for path in [
             "io.input_gamut_compress.knee",
             "io.output_gamut_compress.knee",
-            "io.output_gamut_compress.lightness_compression",
         ] {
             let field = described_field(path);
             assert!(field["minimum"].is_null());
@@ -1224,5 +1241,143 @@ mod tests {
                 assert!(domain["maximum"].is_null());
             }
         }
+    }
+
+    #[test]
+    fn retired_lightness_migration_is_explicit_and_atomic() {
+        for algorithm in ["off", "aces_rgc", "oklch"] {
+            for retired in [serde_json::json!([0.95, 1.0, 1.6]), Value::Null] {
+                let mut value = serde_json::json!({"io":{"output_color_space":"ProPhoto RGB","output_gamut_compress":{"algorithm":algorithm,"lightness_compression":retired}}});
+                assert!(serde_json::from_value::<RuntimeParams>(value.clone()).is_err());
+                assert!(ParameterEdits::from_value(value.clone()).is_err());
+                let original = value.clone();
+                if retired.is_null() {
+                    normalize_legacy_complete_params(&mut value).unwrap();
+                    let params: RuntimeParams = serde_json::from_value(value).unwrap();
+                    assert_eq!(params.io.output_color_space, "ProPhoto RGB");
+                    assert_eq!(params.output_mix.amount, 1.0);
+                } else {
+                    let error = normalize_legacy_complete_params(&mut value).unwrap_err();
+                    assert!(error.contains("io.output_gamut_compress.lightness_compression"));
+                    assert!(error.contains("no automatic replacement"));
+                    assert!(error.contains("explicitly remove"));
+                    assert_eq!(value, original);
+                }
+            }
+        }
+        assert!(
+            ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").is_err()
+        );
+    }
+
+    #[test]
+    fn mix_sources_share_f64_domain_and_reject_withdrawn_paths() {
+        for value in [0.0, 0.1234567890123456, 1.0] {
+            let mut inline = RuntimeParams::default();
+            ParameterEdits::parse(&format!("output_mix.amount={value}"))
+                .unwrap()
+                .apply(&mut inline)
+                .unwrap();
+            for toml in [false, true] {
+                let text = if toml {
+                    format!("[output_mix]\namount = {value}")
+                } else {
+                    serde_json::json!({"output_mix":{"amount":value}}).to_string()
+                };
+                let mut params = RuntimeParams::default();
+                ParameterEdits::from_value(parse_carrier(&text, toml).unwrap())
+                    .unwrap()
+                    .apply(&mut params)
+                    .unwrap();
+                assert_eq!(params.output_mix.amount, inline.output_mix.amount);
+            }
+        }
+        for invalid in ["-0.01", "1.01", "null", "nan", "inf"] {
+            assert!(
+                ParameterEdits::parse(&format!("output_mix.amount={invalid},output_mix.amount=1"))
+                    .is_err()
+            );
+        }
+        for path in [
+            "film_render.response",
+            "print_render.response",
+            "enlarger.c_filter_shift",
+        ] {
+            assert!(ParameterEdits::parse(&format!("{path}=0")).is_err());
+        }
+        assert!(describe_field("io.output_gamut_compress.lightness_compression").is_err());
+        let field = describe_field("output_mix.amount").unwrap();
+        assert_eq!(field["type"], "f64");
+        assert_eq!(field["default"], 1.0);
+        assert_eq!(field["minimum"], 0.0);
+        assert_eq!(field["maximum"], 1.0);
+    }
+
+    #[test]
+    fn material_discovery_reports_actual_units_and_capabilities() {
+        let flash = describe_field("enlarger.preflash_exposure").unwrap();
+        assert_eq!(flash["default"], 0.0);
+        assert_eq!(flash["unit"], "linear exposure multiplier");
+        assert!(
+            flash["conditions"]
+                .to_string()
+                .contains("print-development")
+        );
+        for path in [
+            "enlarger.preflash_m_filter_shift",
+            "enlarger.preflash_y_filter_shift",
+        ] {
+            let field = describe_field(path).unwrap();
+            assert_eq!(field["unit"], "Kodak CC");
+            assert_eq!(field["default"], 0.0);
+            assert!(
+                field["conditions"]
+                    .to_string()
+                    .contains("preflash_exposure > 0")
+            );
+        }
+        for path in [
+            "film_render.chemistry.developer_exhaustion",
+            "print_render.density_curves_morph.developer_exhaustion",
+        ] {
+            let field = describe_field(path).unwrap();
+            assert_eq!(field["unit"], "dimensionless");
+            assert_eq!(field["default"], 0.0);
+            assert_eq!(field["minimum"], 0.0);
+            assert_eq!(field["maximum"], 1.0);
+            let conditions = field["conditions"].to_string();
+            assert!(conditions.contains("development"));
+            assert!(conditions.contains("active = true"));
+            assert!(conditions.contains("fitted density_curves_model"));
+        }
+    }
+
+    #[test]
+    fn typed_mix_validates_finite_endpoints_and_bounds() {
+        for amount in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01, 1.01] {
+            let mut params = RuntimeParams::default();
+            params.output_mix.amount = amount;
+            assert!(params.validate().unwrap_err().contains("output_mix.amount"));
+        }
+        for amount in [0.0, 1.0] {
+            let mut params = RuntimeParams::default();
+            params.output_mix.amount = amount;
+            params.validate().unwrap();
+        }
+        let params: RuntimeParams =
+            serde_json::from_value(serde_json::json!({"output_mix":{}})).unwrap();
+        assert_eq!(params.output_mix.amount, 1.0);
+        assert!(
+            serde_json::from_value::<RuntimeParams>(
+                serde_json::json!({"output_mix":{"amount":null}})
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<RuntimeParams>(
+                serde_json::json!({"output_mix":{"amount":1,"extra":0}})
+            )
+            .is_err()
+        );
     }
 }

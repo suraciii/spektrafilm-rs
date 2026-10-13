@@ -294,6 +294,8 @@ pub struct FilmChainParams<'a> {
     pub print_illuminant: &'a [f64],
     pub print_sensitivity: &'a [[f64; 3]],
     pub print_normalization_factor: f64,
+    /// Linear print exposure gain after the inner floor and logarithm.
+    pub print_exposure_scale: f64,
     pub print_log_exposure: &'a [f64],
     pub print_density_curves: &'a [[f64; 3]],
     pub print_gamma: f64,
@@ -343,8 +345,7 @@ pub struct FilmChainParams<'a> {
     /// Optional camera lens Gaussian blur on the raw film exposure buffer,
     /// before halation.
     pub camera_lens_blur_px: Option<f32>,
-    /// Optional scanner lens Gaussian blur on the final RGB buffer, after
-    /// glare/gamut compression and before unsharp.
+    /// Scanner blur on linear acquisition before glare and gamut correction.
     pub scanner_lens_blur_px: Option<f32>,
     /// Optional highlight reconstruction on the raw film exposure buffer,
     /// immediately after the front pass and before optical scatter.
@@ -430,10 +431,6 @@ pub struct GamutGpuParams<'a> {
     pub mode: u32,
     /// Reinhard knee on normalized chroma: (threshold, limit, power).
     pub knee: [f32; 3],
-    /// One-sided lightness compression (threshold, limit, power); `None` off.
-    pub lightness: Option<[f32; 3]>,
-    /// Perceptual lightness of the output white (1.0 OkLab, ~100 CAM16-UCS).
-    pub l_white: f32,
     /// Lightness-axis bounds of the `C_max` table grid.
     pub l_min: f32,
     pub l_max: f32,

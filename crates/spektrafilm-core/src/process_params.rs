@@ -421,7 +421,7 @@ fn resolve_with_preview_mode(
                 "runtime preparation changed the requested value for derived profile topology".into()
             } else { format!("runtime preparation changed the requested value with {} enabled; disable the applicable constraint to retain it", causes.join(", ")) };
             (EditStatus::Constrained, Some(reason))
-        } else if let Some(reason) = crate::params::sources::inactive_reason(&path, &params, &film) {
+        } else if let Some(reason) = crate::params::sources::inactive_reason(&path, &params, &film, &print) {
             (EditStatus::Inactive, Some(reason))
         } else { (EditStatus::Active, None) };
         EditFeedback { path, requested, effective, source, status, reason }
@@ -440,10 +440,26 @@ fn resolve_with_preview_mode(
 fn load_baseline(path: Option<&Path>) -> Result<RuntimeParams, String> {
     match path {
         Some(path) => {
-            let file = std::fs::File::open(path)
+            let text = std::fs::read_to_string(path)
                 .map_err(|e| format!("opening params file {}: {e}", path.display()))?;
-            let params: RuntimeParams = serde_json::from_reader(std::io::BufReader::new(file))
+            let value = crate::params::sources::parse_carrier(&text, false)
                 .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
+            if value
+                .pointer("/io/output_gamut_compress/lightness_compression")
+                .is_some()
+            {
+                return Err(format!(
+                    "params file {}: {}",
+                    path.display(),
+                    crate::params::sources::retired_lightness_error()
+                ));
+            }
+            let params: RuntimeParams = serde_json::from_value(value)
+                .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
+            params
+                .output_mix
+                .validate()
+                .map_err(|e| format!("params file {}: {e}", path.display()))?;
             crate::params::validation::validate_enum_value(
                 "scanner.scan_output",
                 &params.scanner.scan_output,
@@ -1134,5 +1150,117 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn material_feedback_retains_inactive_values_on_non_development_routes() {
+        for route in [
+            "input",
+            "input > convert-film > scan",
+            "input > film > scan",
+        ] {
+            let sources = vec!["enlarger.preflash_exposure=0.2,film_render.chemistry.developer_exhaustion=0.3,print_render.density_curves_morph.developer_exhaustion=0.4".into()];
+            let mut req = public_request(&sources);
+            req.route = Some(route);
+            let result = resolve(req, &data_dir()).unwrap();
+            assert_eq!(result.params.enlarger.preflash_exposure, 0.2);
+            assert_eq!(
+                result.params.film_render.chemistry.developer_exhaustion,
+                0.3
+            );
+            assert_eq!(
+                result
+                    .params
+                    .print_render
+                    .density_curves_morph
+                    .developer_exhaustion,
+                0.4
+            );
+            for edit in &result.edits {
+                if edit.path.starts_with("film_render.") && route == "input > film > scan" {
+                    continue;
+                }
+                assert_eq!(
+                    edit.status,
+                    EditStatus::Inactive,
+                    "{} on {route}",
+                    edit.path
+                );
+                assert!(edit.reason.as_ref().unwrap().contains("development"));
+            }
+        }
+    }
+
+    #[test]
+    fn current_params_reject_invalid_mix_and_retirement_before_overrides() {
+        let path = std::env::temp_dir().join(format!(
+            "spektrafilm-material-baseline-{}.json",
+            std::process::id()
+        ));
+        for value in [
+            serde_json::json!({"output_mix":{"amount":1.1}}),
+            serde_json::json!({"io":{"output_gamut_compress":{"algorithm":"off","lightness_compression":null}}}),
+        ] {
+            let text = value.to_string();
+            std::fs::write(&path, &text).unwrap();
+            let sources = vec!["output_mix.amount=1".into()];
+            let mut req = public_request(&sources);
+            req.params_file = Some(&path);
+            let error = resolve(req, &data_dir()).err().unwrap();
+            assert!(
+                error.contains("output_mix.amount")
+                    || error.contains("io.output_gamut_compress.lightness_compression")
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn chemistry_feedback_identifies_disabled_and_unsupported_models() {
+        let sources = vec![
+            "film_render.chemistry.active=false,film_render.chemistry.developer_exhaustion=0.3"
+                .into(),
+        ];
+        let result = resolve(public_request(&sources), &data_dir()).unwrap();
+        let exhaustion = result
+            .edits
+            .iter()
+            .find(|edit| edit.path.ends_with("developer_exhaustion"))
+            .unwrap();
+        assert_eq!(exhaustion.status, EditStatus::Inactive);
+        assert_eq!(
+            result.params.film_render.chemistry.developer_exhaustion,
+            0.3
+        );
+
+        let mut film = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+        let mut print = profile::load_profile_by_name(&data_dir(), "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.film_render.chemistry.active = true;
+        params.film_render.chemistry.developer_exhaustion = 0.3;
+        params.print_render.density_curves_morph.active = true;
+        params
+            .print_render
+            .density_curves_morph
+            .developer_exhaustion = 0.4;
+        let stored = serde_json::to_value(&params).unwrap();
+        let paths = [
+            "film_render.chemistry.developer_exhaustion",
+            "print_render.density_curves_morph.developer_exhaustion",
+        ];
+        for path in paths {
+            assert!(
+                crate::params::sources::inactive_reason(path, &params, &film, &print).is_none()
+            );
+        }
+        film.data.density_curves_model = None;
+        print.data.density_curves_model = None;
+        for path in paths {
+            assert!(
+                crate::params::sources::inactive_reason(path, &params, &film, &print).is_some()
+            );
+            assert_eq!(serde_json::to_value(&params).unwrap(), stored);
+        }
     }
 }

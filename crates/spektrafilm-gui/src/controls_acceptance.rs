@@ -97,7 +97,7 @@ mod headless {
                 .as_deref(),
             Some("NaN")
         );
-        harness.get_by_label("lens blur").focus();
+        harness.get_by_label("Lens blur (readout optics)").focus();
         harness.run();
         assert_eq!(
             harness
@@ -193,15 +193,15 @@ mod layout_snapshots {
                 "positive balance ev 2",
                 "positive contrast",
                 "positive dmax",
-                "lens blur",
+                "Lens blur (readout optics)",
                 "black point 0",
                 "black point 1",
                 "black point 2",
                 "white point 0",
                 "white point 1",
                 "white point 2",
-                "unsharp mask 0",
-                "unsharp mask 1",
+                "Unsharp mask (digital sharpening) 0",
+                "Unsharp mask (digital sharpening) 1",
             ];
             let mut bounds = Vec::new();
             for label in labels {

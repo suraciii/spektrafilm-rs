@@ -41,7 +41,6 @@ fn nullable_inner(path: &str) -> Option<&'static str> {
         | "film_render.grain.v2_highlights"
         | "film_render.grain.v2_chroma"
         | "film_render.grain.v2_resolution_factor" => "f32",
-        "io.output_gamut_compress.lightness_compression" => "[f32; 3]",
         "taps.inject" | "taps.collect" => "String",
         _ => return None,
     })
@@ -310,6 +309,18 @@ pub(super) fn metadata(path: &str, default: &Value) -> Value {
 }
 
 fn unit(path: &str) -> Option<&'static str> {
+    if path == "enlarger.preflash_exposure" {
+        return Some("linear exposure multiplier");
+    }
+    if matches!(
+        path,
+        "enlarger.preflash_y_filter_shift" | "enlarger.preflash_m_filter_shift"
+    ) {
+        return Some("Kodak CC");
+    }
+    if path == "output_mix.amount" || path.ends_with(".developer_exhaustion") {
+        return Some("dimensionless");
+    }
     if path.starts_with("film_render.grain.fotufilm.") && !path.ends_with(".material") {
         Some(if path.ends_with(".clump_radius_um") {
             "µm"
@@ -380,6 +391,27 @@ fn conditions(path: &str) -> Vec<String> {
 
 fn description(path: &str) -> Option<&'static str> {
     match path {
+        "output_mix.amount" => Some(
+            "Overall effect amount: blends the prepared source with the complete result in linear output RGB; zero retains a negative capture as negative, one retains the full effect.",
+        ),
+        "enlarger.preflash_exposure" => Some(
+            "Independent uniform material-plane exposure on admitted print-development routes; zero disables flash and retains its filter settings. Photographic-paper highlights may change, with possible fog, loss of paper white and color shifts; no fixed white or midgray is promised.",
+        ),
+        "enlarger.preflash_y_filter_shift" | "enlarger.preflash_m_filter_shift" => Some(
+            "Independent preflash filtration in Kodak CC units around the calibrated neutral pack, separate from main M/Y shifts; zero shift is the neutral-pack setting.",
+        ),
+        path if path.ends_with(".developer_exhaustion") => Some(
+            "Model-specific material development control; requires enabled chemistry, actual development and a supported fitted density-curve model. Does not provide universal highlight compression.",
+        ),
+        "scanner.lens_blur" => Some(
+            "Optical softness in linear scanner readout before interpretation, corrections, gamut processing and digital sharpening.",
+        ),
+        "scanner.unsharp_mask" => {
+            Some("Digital scan sharpening after optical readout and output processing.")
+        }
+        path if path.starts_with("print_render.glare.") => Some(
+            "Print viewing/readout stray light after optical blur; does not expose the paper or form material density.",
+        ),
         "film_render.grain.fotufilm.material" => Some(
             "Effective material; auto selects dye_reversal for positive films, silver for negative monochrome, and dye_negative for negative color. Override for chromogenic monochrome.",
         ),

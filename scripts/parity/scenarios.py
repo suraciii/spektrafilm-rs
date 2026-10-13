@@ -317,7 +317,6 @@ def build_scenarios():
         _bare_with({
             "io.output_gamut_compress.algorithm": "jzazbz",
             "io.output_gamut_compress.knee": [0.0, 1.0, 6.0],
-            "io.output_gamut_compress.lightness_compression": [0.7, 1.0, 2.2],
         }),
         ["rgb_out"], "arithmetic", "known_gap", 4,
         "Rust gamut_compression.rs:280 logs 'jzazbz not yet ported' and "

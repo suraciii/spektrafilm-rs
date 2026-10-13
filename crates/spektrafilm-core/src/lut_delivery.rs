@@ -367,6 +367,11 @@ pub fn bundle_readme_text(meta: &BundleMeta) -> String {
             Topology::Four => "Apply L1 → L2 → the chosen print's L3 → L4. L1 and L2 are shared; L3 and L4 are print-specific.\n",
         });
     }
+    if let Some(amount) = meta.provenance.get("output_mix.amount") {
+        s.push_str(&format!(
+            "\nOverall effect amount {amount} is already baked into the complete source-to-output transform when below 1. Do not blend the delivered LUT again. Its source endpoint preserves a negative capture's polarity.\n"
+        ));
+    }
     if meta.topology != Topology::One {
         s.push_str("\nEvery intermediate LUT carries [0,1] codes. Do not cross-chain LUTs from different bundles: stock-specific wire constants differ. Decode density using D = code * (d_max - d_min) + d_min; decode log exposure using log10(E) = code * (max - min) + min. Use the matching wire in bundle.json. Modify physical units, then re-encode using the same constants.\n\nFilm-density code reserves negative base+fog headroom for downstream grain. The log_e_film tap is appropriate for light-domain halation and diffusion. The 4-LUT topology additionally exposes log_e_print for enlarger manipulation; the 3-LUT topology collapses this tap.\n");
     }
