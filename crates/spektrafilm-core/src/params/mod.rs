@@ -137,13 +137,19 @@ impl ReceiverProfile {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PositiveInterpretation {
+    /// Read record densities directly: the film's own monotone characteristic
+    /// curves, with no synthetic capture in the loop.
     #[default]
+    Density,
+    /// Interpret a receiver capture through a per-channel monotone inverse.
     Separable,
+    /// Interpret a receiver capture through the three-channel coupled inverse.
     Coupled,
 }
 impl PositiveInterpretation {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Density => "density",
             Self::Separable => "separable",
             Self::Coupled => "coupled",
         }
@@ -198,7 +204,7 @@ pub struct ScannerParams {
     #[serde(default)]
     pub lens_blur: f32,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
-    /// `positive_scan` interprets a direct negative-film capture as a
+    /// `positive_scan` interprets each negative dye record's density as a
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
@@ -981,7 +987,7 @@ mod tests {
         );
         assert_eq!(
             legacy.positive_interpretation,
-            super::PositiveInterpretation::Separable
+            super::PositiveInterpretation::Density
         );
         assert_eq!(legacy.auto_setup, super::ScannerAutoSetup::Off);
         assert_eq!(legacy.finish, super::ScannerFinish::Neutral);
@@ -989,11 +995,14 @@ mod tests {
         for (path, allowed) in [
             (
                 "scanner.receiver_profile",
-                ["legacy_colorimetric", "lab_scan_approx"],
+                &["legacy_colorimetric", "lab_scan_approx"][..],
             ),
-            ("scanner.positive_interpretation", ["separable", "coupled"]),
-            ("scanner.auto_setup", ["off", "per_frame"]),
-            ("scanner.finish", ["neutral", "lab_scan"]),
+            (
+                "scanner.positive_interpretation",
+                &["density", "separable", "coupled"][..],
+            ),
+            ("scanner.auto_setup", &["off", "per_frame"][..]),
+            ("scanner.finish", &["neutral", "lab_scan"][..]),
         ] {
             for value in allowed {
                 assert!(super::sources::ParameterEdits::parse(&format!("{path}={value}")).is_ok());
@@ -1004,7 +1013,7 @@ mod tests {
         assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=-0.1").is_err());
         let encoded = serde_json::to_value(&legacy).unwrap();
         assert_eq!(encoded["receiver_profile"], "legacy_colorimetric");
-        assert_eq!(encoded["positive_interpretation"], "separable");
+        assert_eq!(encoded["positive_interpretation"], "density");
     }
 
     #[test]

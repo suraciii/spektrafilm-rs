@@ -1002,7 +1002,7 @@ mod tests {
         );
         assert_eq!(
             app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Separable
+            spektrafilm_core::params::PositiveInterpretation::Density
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1040,7 +1040,7 @@ mod tests {
         );
         assert_eq!(
             app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Separable
+            spektrafilm_core::params::PositiveInterpretation::Density
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1307,11 +1307,7 @@ mod tests {
         let p = builtin_presets().remove(0);
         let mut params = RuntimeParams::default();
         let look = p.look_parameters().unwrap();
-        params.enlarger = look.enlarger.clone();
-        params.scanner = look.scanner.clone();
-        params.film_render = look.film_render.clone();
-        params.print_render = look.print_render.clone();
-        params.camera.diffusion_filter = look.camera_diffusion_filter.clone();
+        look.apply_to(&mut params);
         let film = &p.film_profile.as_ref().unwrap().stock;
         let print = &p.print_profile.as_ref().unwrap().stock;
         let entries = vec![LibraryEntry {
