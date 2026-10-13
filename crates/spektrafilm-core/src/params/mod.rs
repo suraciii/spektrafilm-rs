@@ -622,9 +622,7 @@ impl Default for InputGamutCompressParams {
     }
 }
 
-/// Output gamut compression config — mirrors upstream `OutputGamutCompressSpec`.
-/// `"oklch"` (the upstream default) applies perceptual OkLab chroma reduction
-/// against the destination RGB cube plus one-sided lightness roll-off;
+/// Output gamut compression applies chroma reduction against the destination RGB cube.
 /// `"off"` passes RGB through unchanged.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -633,8 +631,6 @@ pub struct OutputGamutCompressParams {
     pub algorithm: String,
     #[serde(default = "default_gamut_knee")]
     pub knee: [f32; 3],
-    #[serde(default = "default_gamut_lightness")]
-    pub lightness_compression: Option<[f32; 3]>,
 }
 
 impl Default for OutputGamutCompressParams {
@@ -642,7 +638,6 @@ impl Default for OutputGamutCompressParams {
         Self {
             algorithm: "oklch".into(),
             knee: [0.95, 1.0, 1.6],
-            lightness_compression: Some([0.95, 1.0, 1.6]),
         }
     }
 }
@@ -665,8 +660,27 @@ fn default_input_gamut_knee() -> [f32; 3] {
 fn default_gamut_knee() -> [f32; 3] {
     [0.95, 1.0, 1.6]
 }
-fn default_gamut_lightness() -> Option<[f32; 3]> {
-    Some([0.95, 1.0, 1.6])
+
+/// Overall effect amount in the common linear output color space.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OutputMixParams {
+    pub amount: f64,
+}
+
+impl Default for OutputMixParams {
+    fn default() -> Self {
+        Self { amount: 1.0 }
+    }
+}
+
+impl OutputMixParams {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.amount.is_finite() || !(0.0..=1.0).contains(&self.amount) {
+            return Err("output_mix.amount: must be finite and in 0..=1".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -924,6 +938,8 @@ pub struct RuntimeParams {
     pub workflow: WorkflowParams,
     #[serde(default)]
     pub magazine_print_color: MagazinePrintColorParams,
+    #[serde(default)]
+    pub output_mix: OutputMixParams,
     #[serde(default)]
     pub settings: SettingsParams,
     #[serde(default)]

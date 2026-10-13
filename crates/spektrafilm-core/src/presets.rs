@@ -3,8 +3,8 @@ mod library;
 mod sections;
 use crate::params::sources::{ParameterEdits, parse_carrier};
 use crate::params::{
-    DiffusionFilterParams, EnlargerParams, FilmRenderingParams, PrintRenderingParams,
-    RuntimeParams, ScannerParams, SettingsParams,
+    DiffusionFilterParams, EnlargerParams, FilmRenderingParams, OutputMixParams,
+    PrintRenderingParams, RuntimeParams, ScannerParams, SettingsParams,
 };
 use crate::params_builder::apply_film_specifics;
 use crate::profile::{self, Profile};
@@ -15,7 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const PRESET_SCHEMA_VERSION: u32 = 2;
+pub const PRESET_SCHEMA_VERSION: u32 = 3;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
@@ -41,6 +41,7 @@ pub struct LookParameters {
     pub film_render: FilmRenderingParams,
     pub print_render: PrintRenderingParams,
     pub camera_diffusion_filter: DiffusionFilterParams,
+    pub output_mix: OutputMixParams,
     /// Spectral-reconstruction switches that shape the rendered look. This is
     /// deliberately a subset of `SettingsParams`: preview limits, performance
     /// toggles, and the working wavelength grid are not look content.
@@ -118,6 +119,7 @@ impl LookParameters {
             film_render: params.film_render.clone(),
             print_render: params.print_render.clone(),
             camera_diffusion_filter: params.camera.diffusion_filter.clone(),
+            output_mix: params.output_mix.clone(),
             settings: LookSettingsParams {
                 apply_hanatos2025_adaptation_window: params
                     .settings
@@ -142,6 +144,7 @@ impl LookParameters {
         params.film_render = self.film_render.clone();
         params.print_render = self.print_render.clone();
         params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
+        params.output_mix = self.output_mix.clone();
         self.settings.apply_to(&mut params.settings);
     }
 }
@@ -187,10 +190,34 @@ impl Preset {
             parameters: Value,
             provenance: Provenance,
         }
-        if value["schema_version"] == 1 {
+        if matches!(value["schema_version"].as_u64(), Some(1 | 2)) {
+            let version = value["schema_version"].as_u64().unwrap();
             let object = value.as_object_mut().ok_or("preset must be an object")?;
-            object.remove("id");
-            object.insert("schema_version".into(), 2.into());
+            if version == 1 {
+                object.remove("id");
+            }
+            if object
+                .get("parameters")
+                .and_then(|p| p.get("output_mix"))
+                .is_some()
+            {
+                return Err(
+                    "legacy preset parameters.output_mix is unknown; use schema_version 3".into(),
+                );
+            }
+            if object.get("film_profile").is_some_and(|v| !v.is_null())
+                || object.get("print_profile").is_some_and(|v| !v.is_null())
+            {
+                let parameters = object
+                    .get_mut("parameters")
+                    .and_then(Value::as_object_mut)
+                    .ok_or("preset parameters must be an object")?;
+                parameters.insert(
+                    "output_mix".into(),
+                    serde_json::to_value(OutputMixParams::default()).map_err(|e| e.to_string())?,
+                );
+            }
+            object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
         }
         let wire: Wire =
             serde_json::from_value(value).map_err(|e| format!("invalid preset: {e}"))?;
@@ -379,7 +406,7 @@ impl Preset {
                 .expect("built-in provenance is serializable"),
         );
         Self {
-            schema_version: 2,
+            schema_version: PRESET_SCHEMA_VERSION,
             name: name.into(),
             author: None,
             description: None,
@@ -417,7 +444,7 @@ impl Preset {
             )
         };
         let preset = Self {
-            schema_version: 2,
+            schema_version: PRESET_SCHEMA_VERSION,
             name: name.into(),
             author: None,
             description: None,

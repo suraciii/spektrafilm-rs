@@ -12,6 +12,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// Numerical model revision shared by image, recipe and LUT provenance.
+pub const MODEL_VERSION: &str = "material_controls_optical_v1";
+
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
 /// Parameters accepted by the upstream-style selective soft-update path.

@@ -326,6 +326,7 @@ fn render_recipe(
                 "implementation": contract::IMPLEMENTATION,
                 "adapterVersion": contract::ADAPTER_VERSION,
                 "parameterSchemaVersion": contract::PARAMETER_SCHEMA_VERSION,
+                "modelVersion": spektrafilm_core::runtime::MODEL_VERSION,
                 "parameterDigest": contract::parameter_digest(&recipe.parameters),
                 "scannerProvenance": (!fotufilm).then(|| spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params)),
                 "simulation": if fotufilm { json!({"engine":"fotufilm","sourceRevision":spektrafilm_fotufilm::SOURCE_REVISION,"precision":"binary32","request":params.fotufilm}) } else { json!({"engine":"spektrafilm"}) },

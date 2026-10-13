@@ -67,6 +67,9 @@ pub(crate) fn rgb_to_raw_names() -> [&'static str; 7] {
 /// maximum means unbounded above.
 pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
     match path {
+        "output_mix.amount" => Some((0.0, Some(1.0))),
+        "film_render.chemistry.developer_exhaustion"
+        | "print_render.density_curves_morph.developer_exhaustion" => Some((0.0, Some(1.0))),
         "film_render.grain.fotufilm.amount" | "film_render.grain.fotufilm.layers" => {
             Some((0.0, Some(4.0)))
         }
@@ -247,9 +250,9 @@ const GAMUT_COMPONENT_DOMAINS: [GamutComponentDomain; 3] = [
 
 pub(crate) fn gamut_component_domains(path: &str) -> Option<&'static [GamutComponentDomain; 3]> {
     match path {
-        "io.input_gamut_compress.knee"
-        | "io.output_gamut_compress.knee"
-        | "io.output_gamut_compress.lightness_compression" => Some(&GAMUT_COMPONENT_DOMAINS),
+        "io.input_gamut_compress.knee" | "io.output_gamut_compress.knee" => {
+            Some(&GAMUT_COMPONENT_DOMAINS)
+        }
         _ => None,
     }
 }
@@ -545,6 +548,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         return Ok(());
     }
     validate_film_format_mm(f64::from(params.camera.film_format_mm))?;
+    params.output_mix.validate()?;
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
         return Err(
             "workflow.route: the magazine route was removed; use input > film > scan and set \

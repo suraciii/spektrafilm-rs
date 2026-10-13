@@ -945,6 +945,12 @@ impl Pipeline {
                 .transpose()?
                 .unwrap_or(Tap::RgbOut),
         };
+        if collect == Tap::RgbOut && self.params.output_mix.amount < 1.0 && inject != Tap::RgbIn {
+            return Err(
+                "output_mix.amount below 1 requires rgb_in injection for final rgb_out collection"
+                    .into(),
+            );
+        }
         if stages::grain_v3::active(&self.params) {
             let cell_spectral = stages::grain_v3::validate_cell_spectral(&self.params)?;
             let aperture_factor = stages::grain_v3::validate_aperture(&self.params)?;
@@ -972,7 +978,13 @@ impl Pipeline {
             });
         }
         if inject == Tap::RgbIn && collect == Tap::RgbOut {
-            return self.process_full(image, backend, timings);
+            let source = if self.params.output_mix.amount < 1.0 {
+                Some(self.prepare_output_mix_source(&image)?)
+            } else {
+                None
+            };
+            let result = self.process_full(image, backend, timings.as_deref_mut())?;
+            return self.compose_output_mix(result, source, backend, timings);
         }
         tracing::info!(
             inject = inject.name(),
@@ -1006,7 +1018,11 @@ impl Pipeline {
         stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
         if self.params.workflow.route == "input" {
-            let (working, _) = self.rescale_working(&image, backend)?;
+            let (working, _) = crate::resizing::crop_and_rescale(
+                &image,
+                &self.params.io,
+                self.params.camera.film_format_mm,
+            )?;
             let image = match working {
                 std::borrow::Cow::Owned(working) => working,
                 std::borrow::Cow::Borrowed(_) => image,
@@ -1196,7 +1212,7 @@ impl Pipeline {
                 "post_scan",
                 spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
             );
-            return Ok(self.apply_post_scan(out));
+            return Ok(self.apply_post_scan(out, backend));
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
@@ -1252,6 +1268,12 @@ impl Pipeline {
             .map(Tap::parse)
             .transpose()?
             .unwrap_or(Tap::RgbOut);
+        if collect == Tap::RgbOut && self.params.output_mix.amount < 1.0 && inject != Tap::RgbIn {
+            return Err(
+                "output_mix.amount below 1 requires rgb_in injection for final rgb_out collection"
+                    .into(),
+            );
+        }
         if inject != Tap::RgbIn || collect != Tap::RgbOut {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
@@ -1272,6 +1294,11 @@ impl Pipeline {
             backend = backend.name(),
             "pipeline: borrowed resident start"
         );
+        let source = if self.params.output_mix.amount < 1.0 {
+            Some(self.prepare_output_mix_source(image)?)
+        } else {
+            None
+        };
         let metering = stages::StageObservation::cpu(
             backend,
             "metering",
@@ -1302,7 +1329,115 @@ impl Pipeline {
             "post_scan",
             spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
-        Ok(Some(self.apply_post_scan(out)))
+        Ok(Some(self.compose_output_mix(
+            self.apply_post_scan(out, backend),
+            source,
+            backend,
+            None,
+        )?))
+    }
+
+    /// Prepare the already decoded/RAW-corrected input before virtual camera
+    /// exposure. Decode its configured transport before spatial resampling;
+    /// Dye and Fotufilm defer result geometry but use this same requested grid.
+    fn prepare_output_mix_source(&self, image: &ImageBuf) -> Result<ImageBuf, String> {
+        use spektrafilm_math::colorspace::{cctf_decode, conversion_matrix, convert_rgb, resolve};
+        let input_space = resolve(&self.params.io.input_color_space)?;
+        let output_space = resolve(&self.params.io.output_color_space)?;
+        let decoded = if self.params.io.input_cctf_decoding {
+            let mut decoded = image.clone();
+            decoded.data.par_iter_mut().for_each(|value| {
+                *value = from_f64(cctf_decode(to_f64(*value), input_space.cctf));
+            });
+            Some(decoded)
+        } else {
+            None
+        };
+        let linear = decoded.as_ref().unwrap_or(image);
+        let (working, _) = crate::resizing::crop_and_rescale(
+            linear,
+            &self.params.io,
+            self.params.camera.film_format_mm,
+        )?;
+        let mut source = match working {
+            std::borrow::Cow::Owned(working) => working,
+            std::borrow::Cow::Borrowed(_) => decoded.unwrap_or_else(|| image.clone()),
+        };
+        let matrix = conversion_matrix(input_space, output_space);
+        source.data.par_chunks_exact_mut(3).for_each(|pixel| {
+            let converted = convert_rgb(
+                [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])],
+                input_space,
+                false,
+                output_space,
+                false,
+                &matrix,
+            );
+            for channel in 0..3 {
+                pixel[channel] = from_f64(converted[channel]);
+            }
+        });
+        Ok(source)
+    }
+
+    /// The only final mix: both operands use linear output primaries, and the
+    /// returned buffer uses the requested output transfer without clipping.
+    fn compose_output_mix(
+        &self,
+        mut result: ImageBuf,
+        source: Option<ImageBuf>,
+        backend: &dyn ComputeBackend,
+        mut timings: Option<&mut BTreeMap<String, f64>>,
+    ) -> Result<ImageBuf, String> {
+        let amount = self.params.output_mix.amount;
+        if amount == 1.0 {
+            return Ok(result);
+        }
+        let t = Instant::now();
+        let _mix = stages::StageObservation::cpu(
+            backend,
+            "output_mix",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        let mut source = source.ok_or_else(|| {
+            "output_mix.amount below 1 requires the prepared rgb_in source".to_owned()
+        })?;
+        if result.width != source.width || result.height != source.height {
+            return Err("output_mix source and final output geometry differ".into());
+        }
+        use spektrafilm_math::colorspace::{cctf_decode, cctf_encode, resolve};
+        let space = resolve(&self.params.io.output_color_space)?;
+        let encoded = self.params.io.output_cctf_encoding;
+        let output = if amount == 0.0 {
+            // Do not touch the processed operand at the exact source endpoint.
+            if encoded {
+                source.data.par_iter_mut().for_each(|value| {
+                    *value = from_f64(cctf_encode(to_f64(*value), space.cctf));
+                });
+            }
+            source
+        } else {
+            result
+                .data
+                .par_iter_mut()
+                .zip(source.data.par_iter())
+                .for_each(|(result, source)| {
+                    let result_linear = if encoded {
+                        cctf_decode(to_f64(*result), space.cctf)
+                    } else {
+                        to_f64(*result)
+                    };
+                    let linear = (1.0 - amount) * to_f64(*source) + amount * result_linear;
+                    *result = from_f64(if encoded {
+                        cctf_encode(linear, space.cctf)
+                    } else {
+                        linear
+                    });
+                });
+            result
+        };
+        record_stage_timing(&mut timings, "output_mix", t);
+        Ok(output)
     }
     fn apply_autoexposure(&self, mut image: ImageBuf, ev: f64) -> ImageBuf {
         if self.params.camera.auto_exposure {
@@ -2404,5 +2539,274 @@ mod spectral_invalidation_tests {
         let amount_first = render(base.clone().with_params(params.clone()).unwrap());
         let amount_repeat = render(base.with_params(params).unwrap());
         assert_eq!(amount_first, amount_repeat);
+    }
+    #[test]
+    fn output_mix_interpolates_complete_output_in_actual_linear_transport() {
+        use spektrafilm_math::colorspace::{cctf_decode, cctf_encode, resolve};
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let image = ImageBuf::from_data(
+            3,
+            1,
+            [-0.1, 0.2, 1.4, 0.1, 0.4, 0.8, 1.5, 0.8, 0.3]
+                .map(from_f64)
+                .to_vec(),
+        );
+        for encoded in [false, true] {
+            let mut pipeline = build();
+            pipeline.params.camera.auto_exposure = false;
+            pipeline.params.film_render.grain.active = true;
+            pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
+            pipeline.params.random_seed = 37;
+            pipeline.params.magazine_print_color.active = true;
+            pipeline.params.io.output_color_space = "sRGB".into();
+            pipeline.params.io.output_cctf_encoding = encoded;
+            let complete = pipeline.process(image.clone(), &backend).unwrap();
+            let complete_storage = complete.data.as_ptr();
+            let exact = pipeline
+                .compose_output_mix(complete, None, &backend, None)
+                .unwrap();
+            assert_eq!(exact.data.as_ptr(), complete_storage);
+            pipeline.params.output_mix.amount = 0.0;
+            let source = pipeline.process(image.clone(), &backend).unwrap();
+            pipeline.params.output_mix.amount = 0.35;
+            let mixed = pipeline.process(image.clone(), &backend).unwrap();
+            let space = resolve("sRGB").unwrap();
+            for ((source, result), actual) in source.data.iter().zip(&exact.data).zip(&mixed.data) {
+                let linear = |value| {
+                    if encoded {
+                        cctf_decode(to_f64(value), space.cctf)
+                    } else {
+                        to_f64(value)
+                    }
+                };
+                let expected = 0.65 * linear(*source) + 0.35 * linear(*result);
+                let expected = if encoded {
+                    cctf_encode(expected, space.cctf)
+                } else {
+                    expected
+                };
+                assert!((to_f64(*actual) - expected).abs() < 3e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn output_mix_zero_decodes_before_resampling_and_ignores_virtual_exposure() {
+        use spektrafilm_math::colorspace::{cctf_decode, conversion_matrix, convert_rgb, resolve};
+        let mut pipeline = build();
+        pipeline.params.workflow.route = "input > film > scan".into();
+        pipeline.params.io.scan_film = true;
+        pipeline.params.film_render.grain.active = false;
+        pipeline.params.io.input_color_space = "sRGB".into();
+        pipeline.params.io.output_color_space = "ACES2065-1".into();
+        pipeline.params.io.input_cctf_decoding = true;
+        pipeline.params.io.output_cctf_encoding = false;
+        pipeline.params.io.crop = true;
+        pipeline.params.io.crop_center = [0.5, 0.5];
+        pipeline.params.io.crop_size = [0.75, 0.5];
+        pipeline.params.io.upscale_factor = 1.5;
+        pipeline.params.camera.auto_exposure = true;
+        pipeline.params.camera.exposure_compensation_ev = 4.0;
+        pipeline.params.output_mix.amount = 0.0;
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(i as f64 / 80.0 - 0.15))
+                .collect(),
+        );
+        let input = resolve("sRGB").unwrap();
+        let output = resolve("ACES2065-1").unwrap();
+        let mut decoded = image.clone();
+        for value in &mut decoded.data {
+            *value = from_f64(cctf_decode(to_f64(*value), input.cctf));
+        }
+        let (expected, _) = crate::resizing::crop_and_rescale(
+            &decoded,
+            &pipeline.params.io,
+            pipeline.params.camera.film_format_mm,
+        )
+        .unwrap();
+        let mut expected = expected.into_owned();
+        let matrix = conversion_matrix(input, output);
+        for pixel in expected.data.as_chunks_mut::<3>().0 {
+            let converted = convert_rgb(
+                [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])],
+                input,
+                false,
+                output,
+                false,
+                &matrix,
+            );
+            for c in 0..3 {
+                pixel[c] = from_f64(converted[c]);
+            }
+        }
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let actual = pipeline.process(image, &backend).unwrap();
+        assert_eq!((actual.width, actual.height), (9, 6));
+        assert_eq!(actual.data, expected.data);
+    }
+
+    #[test]
+    fn output_mix_does_not_touch_density_taps_and_rejects_missing_final_source() {
+        let mut pipeline = build();
+        pipeline.params.film_render.grain.active = false;
+        pipeline.params.camera.auto_exposure = false;
+        let image = ImageBuf::from_data(2, 2, vec![from_f64(0.2); 12]);
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let baseline = pipeline
+            .process_with_taps(
+                image.clone(),
+                &backend,
+                Some(Tap::RgbIn),
+                Some(Tap::CmyFilm),
+            )
+            .unwrap();
+        pipeline.params.output_mix.amount = 0.0;
+        let diagnostic = pipeline
+            .process_with_taps(
+                image.clone(),
+                &backend,
+                Some(Tap::RgbIn),
+                Some(Tap::CmyFilm),
+            )
+            .unwrap();
+        assert_eq!(baseline.data, diagnostic.data);
+        for tap in [Tap::RgbPre, Tap::CmyFilm, Tap::RgbOut] {
+            let error = pipeline
+                .process_with_taps(image.clone(), &backend, Some(tap), Some(Tap::RgbOut))
+                .unwrap_err();
+            assert!(error.contains("requires rgb_in injection"));
+        }
+    }
+
+    #[test]
+    fn output_mix_source_endpoint_never_reads_processed_samples() {
+        let mut pipeline = build();
+        pipeline.params.output_mix.amount = 0.0;
+        pipeline.params.io.output_cctf_encoding = false;
+        let source = ImageBuf::from_data(1, 1, [-0.4, 0.2, 1.8].map(from_f64).to_vec());
+        let storage = source.data.as_ptr();
+        let expected = source.data.clone();
+        let poisoned = ImageBuf::from_data(1, 1, vec![from_f64(f64::NAN); 3]);
+        let output = pipeline
+            .compose_output_mix(
+                poisoned,
+                Some(source),
+                &spektrafilm_gpu::cpu_backend::CpuBackend,
+                None,
+            )
+            .unwrap();
+        assert_eq!(output.data.as_ptr(), storage);
+        assert_eq!(output.data, expected);
+    }
+
+    #[test]
+    fn output_mix_source_matches_deferred_field_crop_rounding() {
+        let mut pipeline = build();
+        let source = ImageBuf::from_data(
+            7,
+            5,
+            (0..7 * 5 * 3).map(|i| from_f64(i as f64 / 50.0)).collect(),
+        );
+        pipeline.params.io.crop = true;
+        pipeline.params.io.crop_size = [0.7, 0.4];
+        pipeline.params.io.input_cctf_decoding = false;
+        for engine in [
+            crate::params::GrainEngine::Dye,
+            crate::params::GrainEngine::Fotufilm,
+        ] {
+            pipeline.params.film_render.grain.engine = engine;
+            pipeline.params.film_render.grain.active = true;
+            for scale in [0.5, 1.5, 2.1] {
+                pipeline.params.io.upscale_factor = scale;
+                let geometry = stages::grain_v3::geometry(&source, &pipeline.params, 2.0).unwrap();
+                let prepared = pipeline.prepare_output_mix_source(&source).unwrap();
+                assert_eq!(
+                    (prepared.width, prepared.height),
+                    (geometry.width, geometry.height)
+                );
+                let (full, crop) = geometry.full_film_grid(&source).unwrap();
+                let cropped =
+                    stages::grain_v3::crop_output(ImageBuf::new(full.width, full.height), crop);
+                assert_eq!(
+                    (prepared.width, prepared.height),
+                    (cropped.width, cropped.height)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn output_mix_finished_rgb_keeps_magazine_only_in_result_branch() {
+        let mut pipeline = build();
+        pipeline.params.workflow.route = "input".into();
+        pipeline.params.film_render.grain.active = false;
+        pipeline.params.magazine_print_color.active = true;
+        pipeline.params.io.input_color_space = "ACES2065-1".into();
+        pipeline.params.io.output_color_space = "ACES2065-1".into();
+        pipeline.params.io.input_cctf_decoding = false;
+        pipeline.params.io.output_cctf_encoding = false;
+        let image = ImageBuf::from_data(1, 1, [-0.1, 0.4, 1.4].map(from_f64).to_vec());
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let complete = pipeline.process(image.clone(), &backend).unwrap();
+        pipeline.params.output_mix.amount = 0.0;
+        let source = pipeline.process(image.clone(), &backend).unwrap();
+        assert!(source.data[0] < from_f64(0.0));
+        assert!(source.data[2] > from_f64(1.0));
+        assert_ne!(complete.data, source.data);
+        pipeline.params.output_mix.amount = 0.5;
+        let mixed = pipeline.process(image, &backend).unwrap();
+        for ((s, r), actual) in source.data.iter().zip(&complete.data).zip(&mixed.data) {
+            assert_eq!(*actual, from_f64(0.5 * to_f64(*s) + 0.5 * to_f64(*r)));
+        }
+    }
+
+    #[test]
+    fn resident_finishing_applies_magazine_before_procedural_export_decode() {
+        use spektrafilm_math::colorspace::{cctf_decode, encode_rgb, resolve};
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let mut pipeline = build();
+        pipeline.params.io.output_color_space = "sRGB".into();
+        pipeline.params.magazine_print_color.active = true;
+        pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
+        let space = resolve("sRGB").unwrap();
+        for procedural in [false, true] {
+            pipeline.params.film_render.grain.active = procedural;
+            for encoded in [false, true] {
+                pipeline.params.io.output_cctf_encoding = encoded;
+                let native = ImageBuf::from_data(
+                    2,
+                    1,
+                    [0.07, 0.4, 0.8, 0.3, 0.5, 0.9].map(from_f64).to_vec(),
+                );
+                let mut expected = native.clone();
+                if !procedural && encoded {
+                    for pixel in expected.data.as_chunks_mut::<3>().0 {
+                        let rgb = encode_rgb(
+                            [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])],
+                            space,
+                        );
+                        for c in 0..3 {
+                            pixel[c] = from_f64(rgb[c]);
+                        }
+                    }
+                }
+                crate::magazine_print_color::apply(
+                    &mut expected,
+                    &pipeline.params.magazine_print_color,
+                    space,
+                    procedural || encoded,
+                );
+                if procedural && !encoded {
+                    for value in &mut expected.data {
+                        *value = from_f64(cctf_decode(to_f64(*value), space.cctf));
+                    }
+                }
+                let actual = pipeline.apply_post_scan(native, &backend);
+                assert_eq!(actual.data, expected.data);
+            }
+        }
     }
 }

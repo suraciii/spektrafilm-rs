@@ -14,6 +14,7 @@ pub enum Section {
     Enlarger,
     Scanner,
     Print,
+    OutputMix,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "section", rename_all = "snake_case")]
@@ -34,6 +35,7 @@ pub const SECTIONS: &[Section] = &[
     Section::Enlarger,
     Section::Scanner,
     Section::Print,
+    Section::OutputMix,
 ];
 impl Section {
     pub fn name(self) -> &'static str {
@@ -50,6 +52,7 @@ impl Section {
             Self::Enlarger => "enlarger",
             Self::Scanner => "scanner",
             Self::Print => "print",
+            Self::OutputMix => "output",
         }
     }
     pub fn paths(self) -> &'static [&'static str] {
@@ -70,6 +73,7 @@ impl Section {
             Self::Enlarger => &["enlarger"],
             Self::Scanner => &["scanner"],
             Self::Print => &["print_render"],
+            Self::OutputMix => &["output_mix"],
         }
     }
     fn owns(self, path: &str) -> bool {

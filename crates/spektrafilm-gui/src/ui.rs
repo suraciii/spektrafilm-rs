@@ -95,10 +95,12 @@ impl App {
                     .add_filter("JSON", &["json"])
                     .pick_file()
             {
-                self.remember_dialog("state", &path);
                 let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
                 self.status = match result {
-                    Ok(()) => format!("Loaded GUI state from {}", path.display()),
+                    Ok(()) => {
+                        self.remember_dialog("state", &path);
+                        format!("Loaded GUI state from {}", path.display())
+                    }
                     Err(e) => format!("State load error: {e:#}"),
                 };
             }
@@ -443,6 +445,12 @@ impl App {
             "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
             "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
             "Scanner" => Some((Section::Scanner, "Scanner", false)),
+            "Output"
+                if self.params.engine
+                    == spektrafilm_core::params::SimulationEngine::Spektrafilm =>
+            {
+                Some((Section::OutputMix, "Output", true))
+            }
             _ => None,
         };
         if let Some((kind, label, default_open)) = preset_section {
@@ -462,6 +470,10 @@ impl App {
                 header.toggle();
             }
             header.body(|ui| self.parameter_section_controls(ui, section));
+        } else if section == "Output" {
+            egui::CollapsingHeader::new("Output")
+                .default_open(true)
+                .show(ui, |ui| self.parameter_section_controls(ui, section));
         } else {
             self.parameter_section_controls(ui, section);
         }

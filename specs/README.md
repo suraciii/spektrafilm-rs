@@ -6,6 +6,7 @@ Capabilities:
 
 - [Film chain](film-chain/spec.md) — spectral film, print, and scan processing.
 - [Digital Reference scan](film-chain/digital-reference.md) — common modeled reference conversion within Scan, with fixed Reference Exposure placement.
+- [Material controls and output composition](material-response/spec.md) — final control scope: reuse preflash and chemistry, retire Output lightness compression, and mix the complete result with its prepared source.
 - [Magazine print color](magazine-print-color/spec.md) — optional magazine-style RGB finishing for scanned or completed images.
 - [Film grain](film-grain/spec.md) — shared grain contract and engine selection.
 - [Image input](image-input/spec.md) — raster and RAW ingestion.

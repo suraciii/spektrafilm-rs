@@ -1045,10 +1045,10 @@
         }
       },
       "output_gamut_compress.lightness_compression": {
-        "rust_status": "supported",
+        "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "crates/spektrafilm-core/src/params/; params_builder.rs; pipeline.rs; stages/; crates/spektrafilm-model/src/grain/",
-        "verification": "Implementation source and current differential/package evidence.",
+        "implementation_source": "specs/material-response/spec.md#output-boundary-and-retirement",
+        "verification": "Current model rejects this path; historical audit below is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",
           "notes": ""

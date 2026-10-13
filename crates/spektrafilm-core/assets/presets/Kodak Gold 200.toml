@@ -1,4 +1,4 @@
-schema_version = 2
+schema_version = 3
 name = "Kodak Gold 200"
 author = "SpektraFilm"
 description = "SpektraFilm classic stock look"
@@ -10,6 +10,9 @@ version = "0.3.4"
 [print_profile]
 stock = "kodak_portra_endura"
 version = "0.3.4"
+
+[parameters.output_mix]
+amount = 1.0
 
 [parameters.settings]
 apply_hanatos2025_adaptation_surface = true

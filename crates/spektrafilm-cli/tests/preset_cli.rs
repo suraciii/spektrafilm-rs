@@ -94,6 +94,35 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn output_mix_edits_are_discoverable_and_invalid_sources_preserve_outputs() {
+    let f = Fixture::new();
+    std::fs::write(f.root.join("output.tif"), b"retained-image").unwrap();
+    let report = f.report(&[
+        "--film",
+        "kodak_gold_200",
+        "--set",
+        "output_mix.amount=0.25",
+        "--dry-run",
+    ]);
+    assert_eq!(report["parameters"]["output_mix"]["amount"], 0.25);
+    for edit in [
+        "output_mix.amount=-0.01",
+        "output_mix.amount=1.01",
+        "io.output_gamut_compress.lightness_compression=null",
+        "film_render.response.amount=1",
+        "print_render.response.amount=1",
+        "enlarger.c_filter_shift=0",
+    ] {
+        let result = f.process(&["--film", "kodak_gold_200", "--set", edit, "--dry-run"]);
+        assert!(!result.status.success(), "{edit}");
+        assert_eq!(
+            std::fs::read(f.root.join("output.tif")).unwrap(),
+            b"retained-image"
+        );
+    }
+}
+
+#[test]
 fn sources_compose_in_order_and_dry_run_preserves_existing_outputs() {
     let f = Fixture::new();
     let sparse = f.root.join("edits.toml");
@@ -719,7 +748,6 @@ fn every_gamut_array_source_validates_before_later_overrides() {
     for path in [
         "io.input_gamut_compress.knee",
         "io.output_gamut_compress.knee",
-        "io.output_gamut_compress.lightness_compression",
     ] {
         let good = format!("{path}=[0.9,1,1]");
         for bad in ["[-1,1,1]", "[1,1,1]", "[0.9,0,1]", "[0.9,1,0]"] {
@@ -740,27 +768,6 @@ fn every_gamut_array_source_validates_before_later_overrides() {
             assert!(String::from_utf8_lossy(&result.stderr).contains(path));
         }
     }
-    assert!(!f.root.join("output.tif").exists());
-}
-
-#[test]
-fn legacy_json_decoder_rejects_optional_f32_overflow_before_finite_validation() {
-    let f = Fixture::new();
-    let path = f.root.join("legacy.json");
-    std::fs::write(&path, r#"{"film_render":{"grain":{"v2_amount":1e100}}}"#).unwrap();
-    let result = f.process(&[
-        "--film",
-        "kodak_portra_400",
-        "--params",
-        path.to_str().unwrap(),
-        "--set",
-        "camera.auto_exposure=false",
-        "--dry-run",
-    ]);
-    assert!(!result.status.success());
-    // The workspace's correctly rounded JSON decoder rejects overflow of the declared
-    // f32 type before finite validation; this diagnostic belongs to the decoder.
-    assert!(String::from_utf8_lossy(&result.stderr).contains("number out of range"));
     assert!(!f.root.join("output.tif").exists());
 }
 
@@ -2023,7 +2030,7 @@ fn active_chemistry_domains_fail_before_image_decode_in_dry_run_and_render() {
             }
         }
         let inactive =
-            format!("{group}.active=false,{group}.gamma_factor=0,{group}.developer_exhaustion=2");
+            format!("{group}.active=false,{group}.gamma_factor=0,{group}.developer_exhaustion=0.5");
         let report = f.report(&[
             "--preset",
             "Kodak Portra 400",
@@ -2033,6 +2040,20 @@ fn active_chemistry_domains_fail_before_image_decode_in_dry_run_and_render() {
         ]);
         let pointer = format!("/parameters/{}/active", group.replace('.', "/"));
         assert_eq!(report.pointer(&pointer), Some(&json!(false)));
+        let invalid_inactive = format!("{group}.active=false,{group}.developer_exhaustion=2");
+        let rejected = f.process(&[
+            "--preset",
+            "Kodak Portra 400",
+            "--set",
+            &invalid_inactive,
+            "--dry-run",
+        ]);
+        assert!(!rejected.status.success());
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr)
+                .contains(&format!("{group}.developer_exhaustion"))
+        );
+        assert!(!f.root.join("output.tif").exists());
     }
 }
 

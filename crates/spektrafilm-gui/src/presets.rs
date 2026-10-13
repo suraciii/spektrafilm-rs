@@ -460,6 +460,11 @@ impl App {
                 "custom".into()
             });
         ui.menu_button(format!("Preset: {label}"), |ui| {
+            if section == Section::OutputMix && ui.button("Reset to full effect").clicked() {
+                self.params.output_mix.amount = 1.0;
+                self.mark_parameters_changed();
+                ui.close_menu();
+            }
             if ui.button("Save as…").clicked() {
                 self.save_preset_as(Some(section));
                 ui.close_menu();
@@ -800,6 +805,7 @@ mod tests {
     #[test]
     fn failed_look_and_section_preserve_entire_application_transaction() {
         let (mut app, directory) = test_app("failed-transaction");
+        app.params.output_mix.amount = 0.25;
         let mut look = builtin_presets().remove(0);
         look.name = "Missing profile".into();
         look.film_profile.as_mut().unwrap().stock = "missing_profile".into();
@@ -859,6 +865,7 @@ mod tests {
             assert_eq!(app.calibration_epoch, epoch);
             assert_eq!(app.dirty, dirty);
             assert_eq!(app.dirty_since, dirty_since);
+            assert_eq!(app.params.output_mix.amount, 0.25);
             assert_eq!(app.force_preview, force_preview);
         }
         std::fs::remove_dir_all(directory).unwrap();

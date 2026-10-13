@@ -7,6 +7,7 @@
 - Optional magazine finishing must satisfy the [Magazine print color](../magazine-print-color/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → destination color transform and encoding → scanner-domain effects (including Procedural grain) → optional magazine finishing → output handoff.
+- [Material controls and output composition](../material-response/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
 - CPU f64 is the SpektraFilm reference path. WGPU f32 is an interactive or explicitly selected fast path; it may use CPU stages for unsupported effects and is not f64 reference output. The Fotufilm engine retains its original CPU binary32 arithmetic in both executable precision configurations.
@@ -76,8 +77,28 @@ The [Digital Reference contract](digital-reference.md) defines a common referenc
   and its controls belong to `negative_to_positive`. A photographic-paper scan and a
   slide film scan must not expose them. See
   [Direct negative-film scan output](#direct-negative-film-scan-output).
-- A look that must apply to both a photographic-paper scan and a film scan belongs to the finishing treatment, not to scanner acquisition or interpretation controls. The optional Fotufilm-derived scanner finish is a film-scan treatment.
+- An appearance applied to a completed paper or film scan belongs to finishing. Existing exposure and development controls belong to their material stage. The optional Fotufilm-derived scanner finish remains a film-scan treatment.
+- Scanner calibration, inverse curves, point ranges, correction references, and automatic setup retain their existing dependencies on profile and development settings. Material-control simplification must not add a second reference model or alter the real captured-negative recovery solve.
 - The product may model a scanner receiver response. A receiver profile must identify its spectral response, reference levels, source, and calibration status.
+
+## Scan optics and print viewing glare
+
+Scanner lens blur must model readout optics on linear transmitted or reflected light. It must run before nonlinear density or exposure interpretation, scanner points, white/black correction, scanner finishing, output gamut processing, unsharp mask, and transfer encoding. Direct scans and identity scanner points must not select a later blur position. The operation must not blur developed density or encoded RGB as a substitute for optical mixing.
+
+Spectral integration may precede blur when the receiver is linear and spatially uniform and the same achromatic spatial kernel applies to every channel. Otherwise blur must occur in the corresponding light domain before integration. Changing destination primaries must not change the optical kernel or where it runs. Scanner blur must not change the developed medium or the input recovery solve of a convert-film route.
+
+`print_render.glare` represents print viewing/readout stray light. It must be added in the linear readout-light domain after scanner lens blur and before scanner correction or nonlinear interpretation. It must not change print exposure, chemistry, or developed print density. It remains eligible only on the existing print-scan routes, with its existing controls and seed behavior. Film-scan routes must not acquire this effect through `film_render.glare` or another alias.
+
+Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation, optional scanner finish, and output gamut processing. Procedural grain retains its separate [post-scan boundary](../film-grain/v2/spec.md); it must not be moved into optical acquisition to make the grain engines appear equivalent.
+
+## Optical-order cutover
+
+The historical direct-scan sequence that blurs after output gamut processing must not remain as a compatibility mode. All admitted scan routes must obey [Scan optics and print viewing glare](#scan-optics-and-print-viewing-glare). Parameter names, units, and zero-blur meaning remain unchanged. Nonzero blur on a previously late-blur path may intentionally change pixels even with unchanged material settings and full output amount.
+
+The implementation must identify the new ordering in its render/model version and user-facing change notes. Recipe replay must report the model version used and must not claim historical pixel identity. It must not silently rescale blur or scanner points to emulate the old order. Existing before/after budgets and photographic evidence must isolate this cutover from preflash branch separation and output mixing.
+
+The [Print exposure composition](../material-response/design.md#print-exposure-composition) fixes the print optical boundary. Separating a uniform preflash must preserve the old result within its numerical budget where the old linear constant-preserving operator was equivalent, including existing exposure gains and finite-exposure floors. This separation is not a general exemption from numerical preservation.
+
 
 ## Scanner receiver and interpretation
 
@@ -128,7 +149,7 @@ The [Digital Reference contract](digital-reference.md) defines a common referenc
 - On a slide film scan, non-default points act on the scanner capture after
   scanner spectral capture and scanner lens blur, and before scanner white
   and black correction. The correction keeps its references and its levels.
-  Default points retain the existing capture, correction, and blur order.
+  Default points must bypass their mapping without changing the optical order.
   Captures outside the reference range use finite endpoint tangent
   extrapolation without taking a logarithm of clipped or nonpositive values.
 
@@ -173,7 +194,7 @@ The [Digital Reference contract](digital-reference.md) defines a common referenc
 
 ## Scanner acceptance
 
-- `legacy_colorimetric` with `separable`, `off`, and `neutral` must preserve the existing scan contract within the established CPU f64 reference budget.
+- `legacy_colorimetric` with `separable`, `off`, and `neutral` must preserve the existing scan contract within the established CPU f64 reference budget, except for the explicitly identified [optical-order cutover](#optical-order-cutover).
 - Changing `scanner.receiver_profile` must not change film density, film-domain grain, halation, print exposure, or camera exposure. It must change only the scan acquisition and the downstream interpretation of that capture.
 - `direct_scan` must preserve the native polarity of the selected medium. Scanner finishing must not run on a direct negative-film output.
 - Capture-based negative conversion must use one receiver capture for calibration and image pixels. It must not rebuild spectral calibration per pixel.
@@ -184,3 +205,6 @@ The [Digital Reference contract](digital-reference.md) defines a common referenc
 - Disabling scanner finishing must expose the calibrated scan result before finishing, subject to the shared output stages.
 - Approximate receiver profiles must be labeled approximate in GUI, CLI diagnostics, and serialized provenance. A measured-device label requires measured response data and calibration provenance.
 - Receiver, interpretation, setup, and finish combinations that the selected route or medium cannot support must fail before output publication and must produce the same validation result for GUI, CLI dry run, and rendering.
+- A nonuniform bright-edge capture and an active nonlinear downstream transform must distinguish blur-before-interpretation from blur-after-interpretation. Cover native negative, slide with identity and nonidentity points, print scan, and admitted positive interpretation. Zero blur must preserve the corresponding no-blur result; uniform fields must remain uniform with blur active.
+- Changing only print viewing glare must leave film and print density unchanged and alter the linear readout before downstream correction. With glare disabled, spatially varying glare must not leak into calibration or other routes.
+- CPU f64, native-f32, resident, per-stage, Preview, and Export must use the same optical order. Unsupported resident order must select a faithful route before dispatch, not append blur to an already interpreted image. Cropped and tiled readout must include the required optical context and match full-frame readout within measured budgets.
