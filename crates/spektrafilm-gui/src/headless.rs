@@ -148,6 +148,14 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
 }
 
 fn render(h: &mut Harness<'_, App>, button: &str) -> Arc<ImageBuf> {
+    // State loading can schedule a preview even with auto-preview off. Drain it
+    // before clicking: a disabled action does not enqueue the requested render.
+    wait_until(h, |a| {
+        a.render_job.is_none()
+            && a.export_job.is_none()
+            && a.calibration_job.is_none()
+            && !a.force_preview
+    });
     let previous = h.state().output_image.clone();
     click(h, button);
     wait_until(h, |a| {
