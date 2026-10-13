@@ -112,6 +112,34 @@
     },
     "policy": {
       "type": "object"
+    },
+    "mode": {
+      "enum": [
+        "single_run"
+      ]
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "id",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "default_pair": {
+      "enum": [
+        "input",
+        "reference"
+      ]
     }
   },
   "required": [
@@ -119,8 +147,6 @@
     "id",
     "execution_status",
     "evaluation_status",
-    "baseline",
-    "candidate",
     "protocol",
     "selection",
     "condition_differences",
@@ -131,5 +157,297 @@
   ],
   "additionalProperties": true,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SpektraFilm benchmark comparison version 1"
+  "title": "SpektraFilm benchmark comparison version 1",
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "const": "single_run"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "run",
+          "default_pair"
+        ],
+        "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "case_id",
+                "seed",
+                "status",
+                "pairs"
+              ],
+              "properties": {
+                "pairs": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "left_role",
+                      "right_role",
+                      "pixel_aligned",
+                      "status",
+                      "measurements",
+                      "review",
+                      "regions",
+                      "automatic_regions"
+                    ],
+                    "properties": {
+                      "id": {
+                        "enum": [
+                          "input",
+                          "reference"
+                        ]
+                      },
+                      "left_role": {
+                        "enum": [
+                          "input",
+                          "reference"
+                        ]
+                      },
+                      "right_role": {
+                        "const": "simulation"
+                      },
+                      "pixel_aligned": {
+                        "type": "boolean"
+                      },
+                      "status": {
+                        "enum": [
+                          "completed",
+                          "failed"
+                        ]
+                      },
+                      "measurements": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "pair_id",
+                            "metric",
+                            "availability"
+                          ],
+                          "properties": {
+                            "pair_id": {
+                              "enum": [
+                                "input",
+                                "reference"
+                              ]
+                            },
+                            "metric": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "availability": {
+                              "enum": [
+                                "available",
+                                "unavailable"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "review": {
+                        "type": "object",
+                        "properties": {
+                          "left": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "object",
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "path"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "display_artifact_id"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "artifact_id"
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          "right": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "object",
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "path"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "display_artifact_id"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "artifact_id"
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          "difference": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "object",
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "path"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "display_artifact_id"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "artifact_id"
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          "source": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "object",
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "path"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "display_artifact_id"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "artifact_id"
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          "reference": {
+                            "oneOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "object",
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "path"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "display_artifact_id"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "artifact_id"
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "regions": {
+                        "type": "array"
+                      },
+                      "automatic_regions": {
+                        "type": "array"
+                      }
+                    },
+                    "allOf": [
+                      {
+                        "if": {
+                          "properties": {
+                            "id": {
+                              "const": "input"
+                            }
+                          }
+                        },
+                        "then": {
+                          "properties": {
+                            "left_role": {
+                              "const": "input"
+                            }
+                          }
+                        },
+                        "else": {
+                          "properties": {
+                            "left_role": {
+                              "const": "reference"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "required": [
+          "baseline",
+          "candidate"
+        ]
+      }
+    }
+  ]
 }

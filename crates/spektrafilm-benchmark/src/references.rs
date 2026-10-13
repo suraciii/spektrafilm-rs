@@ -215,6 +215,8 @@ struct Comparison<'a> {
     artifacts: Vec<Value>,
     state: TerminalState,
     review: Value,
+    single: bool,
+    protocol: Value,
 }
 impl<'a> Comparison<'a> {
     fn new(reference: &'a Value, case: &Value, protocol: &Value, out: &'a Path) -> Result<Self> {
@@ -239,6 +241,8 @@ impl<'a> Comparison<'a> {
             artifacts: Vec::new(),
             state: TerminalState::Completed,
             review,
+            single: false,
+            protocol: protocol.clone(),
         })
     }
     fn limitation(&mut self, message: impl Into<String>) {
@@ -276,7 +280,7 @@ impl<'a> Comparison<'a> {
         units: &str,
         estimator: &str,
         count: usize,
-        values: Option<[f64; 2]>,
+        values: Option<Vec<f64>>,
         reason: Option<&str>,
         refs: &[String],
     ) {
@@ -288,15 +292,27 @@ impl<'a> Comparison<'a> {
                 self.finding(region, metric, "computation_failure", true, refs);
             }
             if reason.is_none() {
-                expanded = Some([v[0], v[1], v[1] - v[0]]);
+                expanded = Some(if self.single {
+                    v
+                } else {
+                    vec![v[0], v[1], v[1] - v[0]]
+                });
             }
         }
-        if expanded.is_some_and(|v| v.iter().any(|x| !x.is_finite())) {
+        if expanded
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|x| !x.is_finite()))
+        {
             reason = Some("computation_failure".into());
             expanded = None;
             self.finding(region, metric, "computation_failure", true, refs);
         }
-        for (i, side) in SIDES.iter().enumerate() {
+        let sides: &[&str] = if self.single {
+            &["simulation_distance"]
+        } else {
+            &SIDES
+        };
+        for (i, side) in sides.iter().enumerate() {
             self.measurements.push(Measurement {
                 case_id: self.case_id.clone(),
                 seed_population: self.seeds.clone(),
@@ -315,7 +331,7 @@ impl<'a> Comparison<'a> {
                 } else {
                     Availability::Unavailable
                 },
-                value: expanded.map(|v| v[i]),
+                value: expanded.as_ref().map(|v| v[i]),
                 reason: if expanded.is_some() {
                     None
                 } else {
@@ -324,7 +340,11 @@ impl<'a> Comparison<'a> {
             });
         }
         if let Some(v) = expanded {
-            self.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.distance_delta"),"decision":"measured","evidence":refs,"baseline_distance":v[0],"candidate_distance":v[1],"distance_delta":v[2],"interpretation":"Negative distance_delta means closer to this reference; no acceptance threshold is inferred."}));
+            if self.single {
+                self.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.simulation_distance"),"decision":"measured","evidence":refs,"simulation_distance":v[0],"interpretation":"Simulation distance to the selected reference; no acceptance threshold is inferred."}));
+            } else {
+                self.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.distance_delta"),"decision":"measured","evidence":refs,"baseline_distance":v[0],"candidate_distance":v[1],"distance_delta":v[2],"interpretation":"Negative distance_delta means closer to this reference; no acceptance threshold is inferred."}));
+            }
         } else {
             self.finding(
                 region,
@@ -619,13 +639,58 @@ impl FrozenTransform {
     }
 }
 
+pub(crate) fn validate_correspondence_documents(reference: &Value, base: &Path) -> Result<()> {
+    if reference["scope"] != "aligned_scene" {
+        return Ok(());
+    }
+    if reference.get("transform").is_some_and(truthy)
+        == reference.get("aligned_derivative").is_some_and(truthy)
+    {
+        return Err(err(
+            "invalid_correspondence",
+            "Provide exactly one frozen transform or aligned derivative",
+        ));
+    }
+    if let Some(transform) = reference.get("transform") {
+        FrozenTransform::parse(&read_json(transform, base)?)?;
+    }
+    let review = read_json(field(reference, "correspondence_review")?, base)?;
+    if review["status"] != "approved"
+        || review["reviewer"]
+            .as_str()
+            .is_none_or(|v| v.trim().is_empty())
+        || !review["limitations"].is_array()
+        || !review["excluded_regions"].is_array()
+    {
+        return Err(err(
+            "invalid_correspondence",
+            "Correspondence requires approved reviewer, exclusions and limitations",
+        ));
+    }
+    for exclusion in review["excluded_regions"].as_array().unwrap() {
+        if !["motion", "occlusion", "parallax", "invalid_border"]
+            .contains(&exclusion["reason"].as_str().unwrap_or(""))
+            || !exclusion
+                .get("geometry")
+                .is_some_and(|v| v.is_object() || v.is_array())
+        {
+            return Err(err(
+                "invalid_correspondence",
+                "Correspondence exclusion requires a supported reason and geometry",
+            ));
+        }
+    }
+    Ok(())
+}
+
 // Keep source/reference arrays and frozen comparison controls explicit at this boundary.
 #[allow(clippy::too_many_arguments)]
 fn aligned(
     c: &mut Comparison,
     source: &ImageData,
     encoded: &[[f64; 3]],
-    labs: &[Vec<[f64; 3]>; 2],
+    labs: &[Vec<[f64; 3]>],
+    rendered: &[Vec<[f64; 3]>],
     dims: [usize; 2],
     case: &Value,
     base: &Path,
@@ -765,20 +830,21 @@ fn aligned(
         .as_array_mut()
         .unwrap()
         .extend(limitations.iter().cloned());
-    let maps: [(Vec<f64>, Vec<f64>); 2] = std::array::from_fn(|s| {
-        (
-            labs[s]
-                .iter()
-                .zip(&ref_lab)
-                .map(|(a, b)| image_data::delta_e_2000(*a, *b))
-                .collect(),
-            labs[s]
-                .iter()
-                .zip(&ref_lab)
-                .map(|(a, b)| ((a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt())
-                .collect(),
-        )
-    });
+    let maps: Vec<(Vec<f64>, Vec<f64>)> = labs
+        .iter()
+        .map(|lab| {
+            (
+                lab.iter()
+                    .zip(&ref_lab)
+                    .map(|(a, b)| image_data::delta_e_2000(*a, *b))
+                    .collect(),
+                lab.iter()
+                    .zip(&ref_lab)
+                    .map(|(a, b)| ((a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt())
+                    .collect(),
+            )
+        })
+        .collect();
     if maps
         .iter()
         .flat_map(|(a, b)| a.iter().chain(b))
@@ -790,10 +856,12 @@ fn aligned(
         ));
     }
     let mut refs = vec![reference_id, valid_id];
-    for (s, role) in [ArtifactRole::BaselineMaps, ArtifactRole::CandidateMaps]
-        .into_iter()
-        .enumerate()
-    {
+    for s in 0..labs.len() {
+        let role = if c.single || s == 1 {
+            ArtifactRole::CandidateMaps
+        } else {
+            ArtifactRole::BaselineMaps
+        };
         let mut v = Vec::with_capacity(dims[0] * dims[1] * 4);
         for (i, lab) in labs[s].iter().enumerate() {
             v.extend_from_slice(&[maps[s].0[i], maps[s].1[i], lab[0], ref_lab[i][0]]);
@@ -805,6 +873,100 @@ fn aligned(
             DOMAIN,
             Some("DE00; Lab a*/b* distance; rendered L*; reference L*"),
         )?);
+    }
+    if c.single {
+        let (id, path) = c.next_artifact(ArtifactRole::CandidateMaps, "npy");
+        image_data::write_npy(&path, &maps[0].0, &[dims[1], dims[0]])?;
+        let mut row = c.artifact_row(&id, &path, "difference_map", "application/x-npy")?;
+        row["metric"] = json!("delta_e00");
+        row["dimensions"] = json!(dims);
+        row["valid_mask_artifact_id"] = json!(refs[1]);
+        row["availability"] = json!(if tone { "available" } else { "unavailable" });
+        if !tone {
+            row["reason"] = json!("tone_contaminated_reference");
+        }
+        c.artifacts.push(row);
+        c.review["difference_artifact_id"] = json!(id);
+        c.review_ref(&id);
+        if tone {
+            let ranked: Vec<_> = maps[0]
+                .0
+                .iter()
+                .zip(&valid)
+                .map(|(value, valid)| if *valid { *value } else { 0. })
+                .collect();
+            let mut hotspots = crate::metrics::select_hotspots(
+                &ranked,
+                dims[0],
+                dims[1],
+                &c.protocol["hotspots"],
+                "reference.delta_e00",
+                std::slice::from_ref(&id),
+            );
+            hotspots.retain(|region| {
+                let rectangle: Vec<_> = region["rectangle"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_u64().unwrap() as usize)
+                    .collect();
+                (rectangle[1]..rectangle[1] + rectangle[3]).all(|y| {
+                    (rectangle[0]..rectangle[0] + rectangle[2]).all(|x| valid[y * dims[0] + x])
+                })
+            });
+            c.review["automatic_regions"] = json!(hotspots);
+        }
+        let clean = ["none", "unmodified", "not_applied"];
+        let flip_allowed = tone
+            && ["compression", "sharpening", "noise_reduction", "resampling"]
+                .iter()
+                .all(|key| {
+                    reference["processing"][key]
+                        .as_str()
+                        .is_some_and(|v| clean.contains(&v.trim().to_lowercase().as_str()))
+                })
+            && valid.iter().all(|v| *v);
+        let reason = if flip_allowed {
+            None
+        } else {
+            Some("reference_processing_or_filter_support_unavailable")
+        };
+        let mut flip_refs = refs.clone();
+        let flip = if flip_allowed {
+            let map = image_data::official_flip(
+                &encoded,
+                &rendered[0],
+                dims[0],
+                dims[1],
+                c.protocol["pixels_per_degree"].as_f64().unwrap_or(60.),
+            )?;
+            let (id, path) = c.next_artifact(ArtifactRole::CandidateMaps, "npy");
+            image_data::write_npy(&path, &map, &[dims[1], dims[0]])?;
+            let mut row = c.artifact_row(&id, &path, "difference_map", "application/x-npy")?;
+            row["metric"] = json!("flip");
+            row["dimensions"] = json!(dims);
+            c.artifacts.push(row);
+            flip_refs.push(id);
+            Some(map)
+        } else {
+            None
+        };
+        for (name, q) in [("mean", None), ("p95", Some(0.95)), ("max", Some(1.))] {
+            let value = flip
+                .as_ref()
+                .map(|map| vec![q.map_or_else(|| mean(map), |q| percentile(map.clone(), q))]);
+            c.distances(
+                "full_image",
+                &format!("reference.flip.{name}"),
+                "bounded_encoded_srgb",
+                "FLIP error",
+                "official LDR-FLIP; complete valid filter support",
+                if flip_allowed { valid.len() } else { 0 },
+                value,
+                reason,
+                &flip_refs,
+            );
+        }
     }
     let full = json!({"id":"full_image"});
     for region in std::iter::once(&full).chain(optional_array(case, "regions")) {
@@ -823,7 +985,9 @@ fn aligned(
         let missing = (count == 0).then_some("empty_reference_population");
         for (name, q) in [("median", 0.5), ("p95", 0.95), ("p99", 0.99), ("max", 1.)] {
             let values = (count > 0 && tone).then(|| {
-                std::array::from_fn(|s| percentile(pop.iter().map(|i| maps[s].0[*i]).collect(), q))
+                maps.iter()
+                    .map(|map| percentile(pop.iter().map(|i| map.0[*i]).collect(), q))
+                    .collect()
             });
             c.distances(
                 id,
@@ -843,13 +1007,13 @@ fn aligned(
                     pop.iter().map(|i| ref_lab[*i][0]).collect(),
                     q as f64 / 100.,
                 );
-                std::array::from_fn(|s| {
-                    (percentile(
-                        pop.iter().map(|i| labs[s][*i][0]).collect(),
-                        q as f64 / 100.,
-                    ) - ref_q)
-                        .abs()
-                })
+                labs.iter()
+                    .map(|lab| {
+                        (percentile(pop.iter().map(|i| lab[*i][0]).collect(), q as f64 / 100.)
+                            - ref_q)
+                            .abs()
+                    })
+                    .collect()
             });
             c.distances(
                 id,
@@ -864,7 +1028,9 @@ fn aligned(
             );
         }
         let values = (count > 0 && chroma).then(|| {
-            std::array::from_fn(|s| percentile(pop.iter().map(|i| maps[s].1[*i]).collect(), 0.5))
+            maps.iter()
+                .map(|map| percentile(pop.iter().map(|i| map.1[*i]).collect(), 0.5))
+                .collect()
         });
         c.distances(
             id,
@@ -887,7 +1053,7 @@ fn regional(
     c: &mut Comparison,
     ref_lab: &[[f64; 3]],
     reference_dims: [usize; 2],
-    labs: &[Vec<[f64; 3]>; 2],
+    labs: &[Vec<[f64; 3]>],
     dims: [usize; 2],
     case: &Value,
     base: &Path,
@@ -933,56 +1099,73 @@ fn regional(
                 "Corresponding region has no eligible samples",
             ));
         }
-        let populations = [
-            (&labs[0][..], &render_pop),
-            (&labs[1][..], &render_pop),
-            (ref_lab, &ref_pop),
-        ];
-        let centers: [[f64; 3]; 3] = std::array::from_fn(|s| {
-            std::array::from_fn(|ch| {
-                percentile(
-                    populations[s]
-                        .1
-                        .iter()
-                        .map(|i| populations[s].0[*i][ch])
-                        .collect(),
-                    0.5,
-                )
-            })
-        });
-        let quantiles: [Vec<f64>; 3] = std::array::from_fn(|s| {
-            (0..=100)
-                .map(|q| {
+        let populations: Vec<_> = labs
+            .iter()
+            .map(|lab| (&lab[..], &render_pop))
+            .chain(std::iter::once((ref_lab, &ref_pop)))
+            .collect();
+        let centers: Vec<[f64; 3]> = populations
+            .iter()
+            .map(|population| {
+                std::array::from_fn(|ch| {
                     percentile(
-                        populations[s]
-                            .1
-                            .iter()
-                            .map(|i| populations[s].0[*i][0])
-                            .collect(),
-                        q as f64 / 100.,
+                        population.1.iter().map(|i| population.0[*i][ch]).collect(),
+                        0.5,
                     )
                 })
-                .collect()
-        });
-        let payload = json!({"region_id":id,"render_geometry":render["geometry"],"reference_geometry":region["geometry"],"render_sample_count":render_pop.len(),"reference_sample_count":ref_pop.len(),"lab_median":{"baseline":centers[0],"candidate":centers[1],"reference":centers[2]},"lightness_quantile_probabilities":(0..=100).map(|q|q as f64/100.).collect::<Vec<_>>(),"lightness_quantiles":{"baseline":quantiles[0],"candidate":quantiles[1],"reference":quantiles[2]},"domain":DOMAIN,"units":"L*,a*,b*"});
+            })
+            .collect();
+        let quantiles: Vec<Vec<f64>> = populations
+            .iter()
+            .map(|population| {
+                (0..=100)
+                    .map(|q| {
+                        percentile(
+                            population.1.iter().map(|i| population.0[*i][0]).collect(),
+                            q as f64 / 100.,
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let reference_index = labs.len();
+        let mut payload = json!({"region_id":id,"render_geometry":render["geometry"],"reference_geometry":region["geometry"],"render_sample_count":render_pop.len(),"reference_sample_count":ref_pop.len(),"lab_median":{"reference":centers[reference_index]},"lightness_quantile_probabilities":(0..=100).map(|q|q as f64/100.).collect::<Vec<_>>(),"lightness_quantiles":{"reference":quantiles[reference_index]},"domain":DOMAIN,"units":"L*,a*,b*"});
+        for s in 0..labs.len() {
+            let role = if c.single {
+                "simulation"
+            } else if s == 0 {
+                "baseline"
+            } else {
+                "candidate"
+            };
+            payload["lab_median"][role] = json!(centers[s]);
+            payload["lightness_quantiles"][role] = json!(quantiles[s]);
+        }
         let evidence = c.json_artifact(ArtifactRole::RegionalStatistics, &payload)?;
         c.review["regions"].as_array_mut().unwrap().push(payload);
         c.review_ref(&evidence);
         let refs = [evidence];
-        let de = std::array::from_fn(|s| image_data::delta_e_2000(centers[s], centers[2]));
-        let ld = std::array::from_fn(|s| {
-            mean(
-                &quantiles[s]
-                    .iter()
-                    .zip(&quantiles[2])
-                    .map(|(a, b)| (a - b).abs())
-                    .collect::<Vec<_>>(),
-            )
-        });
-        let ch = std::array::from_fn(|s| {
-            ((centers[s][1] - centers[2][1]).powi(2) + (centers[s][2] - centers[2][2]).powi(2))
+        let de: Vec<_> = (0..labs.len())
+            .map(|s| image_data::delta_e_2000(centers[s], centers[reference_index]))
+            .collect();
+        let ld: Vec<_> = (0..labs.len())
+            .map(|s| {
+                mean(
+                    &quantiles[s]
+                        .iter()
+                        .zip(&quantiles[reference_index])
+                        .map(|(a, b)| (a - b).abs())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        let ch: Vec<_> = (0..labs.len())
+            .map(|s| {
+                ((centers[s][1] - centers[reference_index][1]).powi(2)
+                    + (centers[s][2] - centers[reference_index][2]).powi(2))
                 .sqrt()
-        });
+            })
+            .collect();
         c.distances(
             id,
             "reference.patch_delta_e00",
@@ -1087,17 +1270,18 @@ fn unique_curves(curves: &[Value]) -> Result<()> {
 fn material_arrays(
     c: &mut Comparison,
     estimator: &ProbeEstimator,
-    images: [&ImageData; 2],
-) -> Result<[Vec<[f64; 3]>; 2]> {
+    images: &[&ImageData],
+) -> Result<Vec<Vec<[f64; 3]>>> {
     let reference = c.reference;
     let domain = text(reference, "domain")?;
     let units = text(reference, "units")?;
     match estimator.domain {
         ProbeDomain::Native => {
             if domain == "native_rgb" && units == "native channel value" {
-                if (images[0].color_space.as_str(), images[0].transfer.as_str())
-                    != (images[1].color_space.as_str(), images[1].transfer.as_str())
-                {
+                if images.iter().any(|image| {
+                    (image.color_space.as_str(), image.transfer.as_str())
+                        != (images[0].color_space.as_str(), images[0].transfer.as_str())
+                }) {
                     return Err(err(
                         "incompatible_material_conditions",
                         "Native RGB probe declarations differ",
@@ -1118,7 +1302,7 @@ fn material_arrays(
                     }
                 }
             }
-            Ok([images[0].samples.clone(), images[1].samples.clone()])
+            Ok(images.iter().map(|image| image.samples.clone()).collect())
         }
         ProbeDomain::Lab => {
             if domain != DOMAIN || !["L*", "a*", "b*"].contains(&units) {
@@ -1127,10 +1311,10 @@ fn material_arrays(
                     "Lab response requires declared D65 Lab domain and channel units",
                 ));
             }
-            Ok([
-                clipped_lab(&image_data::display_rgb(images[0])?),
-                clipped_lab(&image_data::display_rgb(images[1])?),
-            ])
+            images
+                .iter()
+                .map(|image| Ok(clipped_lab(&image_data::display_rgb(image)?)))
+                .collect()
         }
         ProbeDomain::Luminance => {
             if domain != "linear_srgb_relative_luminance" || units != "relative luminance" {
@@ -1153,20 +1337,14 @@ fn material_arrays(
                     })
                     .collect())
             };
-            Ok([convert(images[0])?, convert(images[1])?])
+            images.iter().map(|image| convert(image)).collect()
         }
     }
 }
 fn numeric_curve(v: Option<&Value>) -> Option<Vec<f64>> {
     v?.as_array()?.iter().map(Value::as_f64).collect()
 }
-fn material(
-    c: &mut Comparison,
-    baseline: &ImageData,
-    candidate: &ImageData,
-    case: &Value,
-    base: &Path,
-) -> Result<()> {
+fn material(c: &mut Comparison, images: &[&ImageData], case: &Value, base: &Path) -> Result<()> {
     let reference = c.reference;
     let source = read_json(field(reference, "path")?, base)?;
     let source_id = c.json_artifact(ArtifactRole::MaterialSource, &source)?;
@@ -1238,26 +1416,23 @@ fn material(
     }
     unique_curves(source_curves)?;
     unique_curves(response_curves)?;
-    if baseline.dimensions() != candidate.dimensions() {
-        return Err(err("dimension_mismatch", "Probe dimensions differ"));
+    for image in images {
+        if image.dimensions() != images[0].dimensions() {
+            return Err(err("dimension_mismatch", "Probe dimensions differ"));
+        }
+        finite_rgb(
+            &image.samples,
+            "nonfinite_samples",
+            "Material probe contains nonfinite samples",
+        )?;
     }
-    finite_rgb(
-        &baseline.samples,
-        "nonfinite_samples",
-        "Material probe contains nonfinite samples",
-    )?;
-    finite_rgb(
-        &candidate.samples,
-        "nonfinite_samples",
-        "Material probe contains nonfinite samples",
-    )?;
     let estimator = ProbeEstimator::parse(
         response
             .get("estimator")
             .and_then(Value::as_str)
             .unwrap_or(""),
     )?;
-    let arrays = material_arrays(c, &estimator, [baseline, candidate])?;
+    let arrays = material_arrays(c, &estimator, images)?;
     for a in &arrays {
         finite_rgb(
             a,
@@ -1354,13 +1529,13 @@ fn material(
                 "Probe coordinates must exactly match frozen source coordinates",
             ));
         }
-        let mut measured: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
+        let mut measured = vec![Vec::new(); images.len()];
         let mut pixel_counts = Vec::new();
         let mut regions = Vec::new();
         for sample in samples {
             let region_id = text(sample, "region_id")?;
             let pop = if region_id == "full_image" {
-                (0..baseline.samples.len()).collect()
+                (0..images[0].samples.len()).collect()
             } else {
                 let region = optional_array(case, "regions")
                     .iter()
@@ -1374,7 +1549,7 @@ fn material(
                     })?;
                 population(&mask(
                     field(region, "geometry")?,
-                    baseline.dimensions(),
+                    images[0].dimensions(),
                     base,
                 )?)
             };
@@ -1386,17 +1561,14 @@ fn material(
             }
             pixel_counts.push(pop.len());
             regions.push(region_id);
-            for s in 0..2 {
+            for s in 0..images.len() {
                 measured[s].push(estimator.reduce(pop.iter().map(|i| arrays[s][*i][ch]).collect()));
             }
         }
-        let residual: [Vec<f64>; 2] = std::array::from_fn(|s| {
-            measured[s]
-                .iter()
-                .zip(&values)
-                .map(|(a, b)| a - b)
-                .collect()
-        });
+        let residual: Vec<Vec<f64>> = measured
+            .iter()
+            .map(|samples| samples.iter().zip(&values).map(|(a, b)| a - b).collect())
+            .collect();
         if measured
             .iter()
             .chain(&residual)
@@ -1408,12 +1580,26 @@ fn material(
                 "Material response or residual estimation is nonfinite",
             ));
         }
-        let payload = json!({"curve_id":identity,"coordinates":coordinates,"coordinate":coordinate,"reference":values,"baseline":measured[0],"candidate":measured[1],"baseline_residual":residual[0],"candidate_residual":residual[1],"domain":reference["domain"],"units":reference["units"],"instrument":reference["instrument"],"conditions":reference["conditions"],"estimator":estimator.name,"region_pixel_counts":pixel_counts,"regions":regions});
+        let mut payload = json!({"curve_id":identity,"coordinates":coordinates,"coordinate":coordinate,"reference":values,"domain":reference["domain"],"units":reference["units"],"instrument":reference["instrument"],"conditions":reference["conditions"],"estimator":estimator.name,"region_pixel_counts":pixel_counts,"regions":regions});
+        for s in 0..images.len() {
+            let role = if c.single {
+                "simulation"
+            } else if s == 0 {
+                "baseline"
+            } else {
+                "candidate"
+            };
+            payload[role] = json!(measured[s]);
+            payload[format!("{role}_residual")] = json!(residual[s]);
+        }
         let evidence = c.json_artifact(ArtifactRole::MaterialCurve, &payload)?;
         c.review_ref(&evidence);
-        let rmse = std::array::from_fn(|s| {
-            (residual[s].iter().map(|x| x * x).sum::<f64>() / values.len() as f64).sqrt()
-        });
+        let rmse = residual
+            .iter()
+            .map(|samples| {
+                (samples.iter().map(|x| x * x).sum::<f64>() / values.len() as f64).sqrt()
+            })
+            .collect();
         c.distances(
             "full_image",
             &format!("reference.material.{identity}"),
@@ -1433,15 +1619,14 @@ fn material(
 }
 fn compare_scope(
     c: &mut Comparison,
-    baseline: &ImageData,
-    candidate: &ImageData,
+    images: &[&ImageData],
     case: &Value,
     base: &Path,
 ) -> Result<()> {
     let reference = c.reference;
     let scope = text(reference, "scope")?;
     if scope == "material" {
-        return material(c, baseline, candidate, case, base);
+        return material(c, images, case, base);
     }
     let source = read_reference(reference, base)?;
     finite_rgb(
@@ -1486,44 +1671,54 @@ fn compare_scope(
     };
     let display = c.preview(&encoded, source.dimensions(), color_reason.is_none())?;
     c.review["display_artifact_id"] = json!(display);
+    c.review["native_display_artifact_id"] = json!(display);
     c.review_ref(&display);
     if scope == "visual" {
         c.limitation(
             "Visual reference only; no numerical fidelity or exact scene correspondence claim.",
         );
+        if c.single {
+            c.distances(
+                "full_image",
+                "reference.visual",
+                "visual_review",
+                "not applicable",
+                "visual reference; numerical distance prohibited",
+                0,
+                None,
+                Some("visual_only_reference"),
+                &[display],
+            );
+        }
         return Ok(());
     }
-    if baseline.dimensions() != candidate.dimensions() {
-        return Err(err(
-            "dimension_mismatch",
-            "Baseline and candidate geometry differs",
-        ));
+    for image in images {
+        if image.dimensions() != images[0].dimensions() {
+            return Err(err("dimension_mismatch", "Rendered geometry differs"));
+        }
+        finite_rgb(
+            &image.samples,
+            "nonfinite_samples",
+            "Rendered evidence contains nonfinite samples",
+        )?;
     }
-    finite_rgb(
-        &baseline.samples,
-        "nonfinite_samples",
-        "Rendered evidence contains nonfinite samples",
-    )?;
-    finite_rgb(
-        &candidate.samples,
-        "nonfinite_samples",
-        "Rendered evidence contains nonfinite samples",
-    )?;
     if let Some(reason) = color_reason {
         return Err(err(
             &reason,
             "Reference color interpretation is unavailable",
         ));
     }
-    let mut labs: [Vec<[f64; 3]>; 2] = [Vec::new(), Vec::new()];
-    for (s, image) in [baseline, candidate].into_iter().enumerate() {
+    let mut rendered = Vec::with_capacity(images.len());
+    let mut labs = Vec::with_capacity(images.len());
+    for image in images {
         let rgb = image_data::display_rgb(image)?;
         finite_rgb(
             &rgb,
             "computation_failure",
             "Rendered display conversion contains nonfinite samples",
         )?;
-        labs[s] = clipped_lab(&rgb);
+        labs.push(clipped_lab(&rgb));
+        rendered.push(rgb);
     }
     let (tone, chroma) = processing_eligibility(reference)?;
     c.review["tone_target_eligible"] = json!(tone);
@@ -1537,7 +1732,8 @@ fn compare_scope(
             &source,
             &encoded,
             &labs,
-            baseline.dimensions(),
+            &rendered,
+            images[0].dimensions(),
             case,
             base,
             tone,
@@ -1548,7 +1744,7 @@ fn compare_scope(
             &clipped_lab(&encoded),
             source.dimensions(),
             &labs,
-            baseline.dimensions(),
+            images[0].dimensions(),
             case,
             base,
             tone,
@@ -1603,6 +1799,34 @@ pub fn compare_reference(
     out_dir: &Path,
     suite_base: &Path,
 ) -> Result<Value> {
+    compare_reference_population(
+        &[baseline, candidate],
+        case,
+        protocol,
+        out_dir,
+        suite_base,
+        false,
+    )
+}
+
+pub fn compare_reference_single(
+    simulation: &ImageData,
+    case: &Value,
+    protocol: &Value,
+    out_dir: &Path,
+    suite_base: &Path,
+) -> Result<Value> {
+    compare_reference_population(&[simulation], case, protocol, out_dir, suite_base, true)
+}
+
+fn compare_reference_population(
+    images: &[&ImageData],
+    case: &Value,
+    protocol: &Value,
+    out_dir: &Path,
+    suite_base: &Path,
+    single: bool,
+) -> Result<Value> {
     let Some(reference) = case.get("reference").filter(|v| !v.is_null()) else {
         return Ok(
             json!({"measurements":[],"findings":[],"artifacts":[],"execution_status":"completed","metric_version":METRIC_VERSION,"reference_review":null}),
@@ -1614,8 +1838,9 @@ pub fn compare_reference(
         json!({"id":protocol})
     };
     let mut c = Comparison::new(reference, case, &protocol, out_dir)?;
+    c.single = single;
     fs::create_dir_all(out_dir)?;
-    if let Err(error) = compare_scope(&mut c, baseline, candidate, case, suite_base) {
+    if let Err(error) = compare_scope(&mut c, images, case, suite_base) {
         // Python distinguishes typed image errors from generic I/O/document failures.
         let reason = if [
             "operation_failed",
@@ -1794,7 +2019,7 @@ mod tests {
             "native channel value",
             "test",
             2,
-            Some([-f64::MAX, f64::MAX]),
+            Some(vec![-f64::MAX, f64::MAX]),
             None,
             &[],
         );
@@ -1879,5 +2104,179 @@ mod tests {
         assert_eq!(c.review["regions"][0]["render_sample_count"], 2);
         assert_eq!(c.review["regions"][0]["reference_sample_count"], 3);
         assert_eq!(c.measurements.len(), 9);
+    }
+
+    #[test]
+    fn single_regional_distance_uses_simulation_without_baseline_fields() {
+        let temp = tempfile::tempdir().unwrap();
+        let reference =
+            json!({"id":"r","scope":"regional","regions":[{"id":"patch","geometry":[0,0,3,1]}]});
+        let case = json!({"id":"c","seeds":[7],"regions":[{"id":"patch","geometry":[0,0,2,1]}]});
+        let mut c = Comparison::new(&reference, &case, &json!({"id":"p"}), temp.path()).unwrap();
+        c.single = true;
+        regional(
+            &mut c,
+            &[[10., 0., 0.], [20., 0., 0.], [30., 0., 0.]],
+            [3, 1],
+            &[vec![[35., 0., 0.]; 2]],
+            [2, 1],
+            &case,
+            temp.path(),
+            true,
+            true,
+        )
+        .unwrap();
+        let out = c.finish();
+        assert_eq!(out["measurements"].as_array().unwrap().len(), 3);
+        assert!(out["measurements"].as_array().unwrap().iter().all(|m| {
+            m["metric"]
+                .as_str()
+                .unwrap()
+                .ends_with(".simulation_distance")
+        }));
+        assert!(out["measurements"][0]["value"].as_f64().unwrap() > 0.);
+        let statistics = &out["reference_review"]["regions"][0];
+        assert_eq!(statistics["lab_median"]["simulation"], json!([35., 0., 0.]));
+        assert!(statistics["lab_median"].get("baseline").is_none());
+        assert!(
+            out["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f.get("distance_delta").is_none() && f.get("baseline_distance").is_none())
+        );
+    }
+
+    #[test]
+    fn single_processing_limits_never_emit_numeric_unavailable_distance() {
+        let temp = tempfile::tempdir().unwrap();
+        let reference =
+            json!({"id":"r","scope":"regional","regions":[{"id":"patch","geometry":[0,0,1,1]}]});
+        let case = json!({"id":"c","regions":[{"id":"patch","geometry":[0,0,1,1]}]});
+        let mut c = Comparison::new(&reference, &case, &json!({"id":"p"}), temp.path()).unwrap();
+        c.single = true;
+        regional(
+            &mut c,
+            &[[20., 0., 0.]],
+            [1, 1],
+            &[vec![[35., 0., 0.]]],
+            [1, 1],
+            &case,
+            temp.path(),
+            false,
+            false,
+        )
+        .unwrap();
+        let out = c.finish();
+        assert!(
+            out["measurements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["availability"] == "unavailable"
+                    && m.get("value").is_none()
+                    && m["reason"].is_string())
+        );
+    }
+    #[test]
+    fn single_visual_retains_native_review_without_numeric_score() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("reference.png");
+        image_data::write_png16(&path, &[[0.2; 3]; 6], 3, 2).unwrap();
+        let case = json!({"id":"c","seeds":[0],"reference":{"id":"r","path":path,"sha256":common::sha256_file(&path).unwrap(),"scope":"visual","color":{"color_space":"sRGB","cctf_decoding":true}}});
+        let result = compare_reference_single(
+            &image(vec![[0.8; 3]; 4], 2, 2),
+            &case,
+            &json!({"id":"p"}),
+            &temp.path().join("out"),
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result["execution_status"], "completed");
+        assert_eq!(
+            result["reference_review"]["native_dimensions"],
+            json!([3, 2])
+        );
+        assert!(result["reference_review"]["native_display_artifact_id"].is_string());
+        assert_eq!(result["measurements"][0]["reason"], "visual_only_reference");
+        assert!(result["measurements"][0].get("value").is_none());
+    }
+
+    #[test]
+    fn single_aligned_respects_mask_and_reports_actual_distance_and_flip_limits() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("reference.png");
+        image_data::write_png16(&path, &[[0.2; 3]; 4], 2, 2).unwrap();
+        common::dump(
+            &temp.path().join("review.json"),
+            &json!({"status":"approved","reviewer":"test","excluded_regions":[],"limitations":[]}),
+        )
+        .unwrap();
+        let case = json!({"id":"c","seeds":[0],"regions":[],"reference":{"id":"r","path":path,"scope":"aligned_scene","color":{"color_space":"sRGB","cctf_decoding":true},"processing":{"grading":"none","histogram_matching":"none","compression":"none","sharpening":"none","noise_reduction":"none","resampling":"none"},"aligned_derivative":{"path":path},"correspondence_review":{"path":"review.json"},"common_area_mask":[0,0,1,2]}});
+        let result = compare_reference_single(
+            &image(vec![[0.8; 3]; 4], 2, 2),
+            &case,
+            &json!({"id":"p","pixels_per_degree":60,"hotspots":{"count":1,"min_area_px":1}}),
+            &temp.path().join("out"),
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result["reference_review"]["geometry"], "pixel_aligned");
+        let measurements = result["measurements"].as_array().unwrap();
+        let distance = measurements
+            .iter()
+            .find(|m| m["metric"] == "reference.delta_e00.median.simulation_distance")
+            .unwrap();
+        assert_eq!(distance["sample_count"], 2);
+        assert!(distance["value"].as_f64().unwrap() > 0.);
+        let flip = measurements
+            .iter()
+            .find(|m| m["metric"] == "reference.flip.mean.simulation_distance")
+            .unwrap();
+        assert_eq!(flip["availability"], "unavailable");
+        assert!(flip.get("value").is_none());
+        assert!(
+            result["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["role"] == "reference_common_area_mask")
+        );
+        assert!(
+            measurements
+                .iter()
+                .all(|m| !m["metric"].as_str().unwrap().contains("baseline"))
+        );
+    }
+
+    #[test]
+    fn single_material_curve_retains_real_simulation_residual_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let coordinate = json!({"name":"exposure","units":"stops"});
+        let conditions = json!({"temperature_c":20});
+        common::dump(&temp.path().join("material.json"),&json!({"schema_version":1,"domain":"native_rgb","units":"native channel value","instrument":"fixture","conditions":conditions,"coordinate":coordinate,"curves":[{"id":"red","channel":"R","coordinates":[0.,1.],"values":[0.,1.]}]})).unwrap();
+        let reference = json!({"id":"r","path":"material.json","scope":"material","domain":"native_rgb","units":"native channel value","instrument":"fixture","conditions":conditions});
+        let case = json!({"id":"c","seeds":[0],"reference":reference,"regions":[{"id":"left","geometry":[0,0,1,1]},{"id":"right","geometry":[1,0,1,1]}],"probe_response":{"domain":"native_rgb","units":"native channel value","instrument":"fixture","conditions":conditions,"coordinate":coordinate,"estimator":"native_channel_mean","curves":[{"id":"red","channel":"R","samples":[{"coordinate":0.,"region_id":"left"},{"coordinate":1.,"region_id":"right"}]}]}});
+        let output = temp.path().join("out");
+        let result = compare_reference_single(
+            &image(vec![[0.2; 3], [0.8; 3]], 2, 1),
+            &case,
+            &json!({"id":"p"}),
+            &output,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result["measurements"][0]["value"].as_f64().unwrap() > 0.);
+        let artifact = result["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["role"] == "reference_material_curve")
+            .unwrap();
+        let curve = documents::load_json_document(&output.join(artifact["path"].as_str().unwrap()))
+            .unwrap();
+        assert_eq!(curve["simulation"], json!([0.2, 0.8]));
+        assert!(curve.get("baseline").is_none());
+        assert!(curve.get("simulation_residual").is_some());
     }
 }

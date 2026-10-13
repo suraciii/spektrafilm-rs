@@ -206,6 +206,33 @@ fn offline_masked_comparison_preserves_native_linear_samples() {
         0,
     );
     assert_eq!(read(&report.join("comparison.json")), d);
+    let snapshot_hash = common::sha256_file(&out.join("comparison.json")).unwrap();
+    fs::remove_dir_all(&a).unwrap();
+    fs::remove_dir_all(&b).unwrap();
+    fs::remove_dir_all(&out).unwrap();
+    assert_eq!(
+        common::sha256_file(&report.join("comparison.json")).unwrap(),
+        snapshot_hash
+    );
+    validate(&report, "comparison.json", 0);
+    let manifest = read(&report.join("report.json"));
+    for artifact in d["artifacts"].as_array().unwrap() {
+        let path = artifact["path"].as_str().unwrap();
+        assert_eq!(
+            common::sha256_file(&report.join(path)).unwrap(),
+            artifact["sha256"].as_str().unwrap()
+        );
+        assert!(
+            manifest["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| {
+                    entry["path"] == artifact["path"] && entry["sha256"] == artifact["sha256"]
+                })
+        );
+    }
+    assert!(report.join("index.html").is_file());
 }
 
 #[test]
@@ -658,4 +685,100 @@ fn historical_parent_relative_and_current_directory_inputs_compare_offline() {
             0.0
         );
     }
+}
+
+#[test]
+fn offline_pair_report_preserves_unavailable_maps_and_redistribution_omissions() {
+    let temp = TempDir::new().unwrap();
+    let comparison = temp.path().join("comparison");
+    fs::create_dir_all(comparison.join("evidence")).unwrap();
+    let mut evidence = Evidence::new(&comparison);
+    let mut images = vec![];
+    for (name, role, color) in [
+        ("input", "baseline_review", [12, 34, 56]),
+        ("simulation", "simulation_review", [65, 43, 21]),
+        ("private", "reference_review", [90, 80, 70]),
+    ] {
+        let path = comparison.join(format!("evidence/{name}.png"));
+        RgbImage::from_pixel(4, 4, Rgb(color)).save(&path).unwrap();
+        images.push(
+            evidence
+                .add(
+                    &path,
+                    role,
+                    "image/png",
+                    json!({"case_id":"image","seed":0}),
+                )
+                .unwrap(),
+        );
+    }
+    let map_path = comparison.join("evidence/unavailable.npy");
+    fs::write(&map_path, b"Unavailable map: no numeric samples").unwrap();
+    let mut map = evidence.add(&map_path, "difference_map", "application/octet-stream", json!({"metric":"delta_e00","availability":"unavailable","reason":"visual_reference_only"})).unwrap();
+    map["pair_id"] = json!("reference");
+    let mut restricted = images[2].clone();
+    restricted["redistribution"] = json!("unknown");
+    restricted["attribution"] = json!("Private local reference");
+    let mut artifacts = evidence.values();
+    for artifact in &mut artifacts {
+        if artifact["path"] == restricted["path"] {
+            *artifact = restricted.clone();
+        } else if artifact["path"] == map["path"] {
+            *artifact = map.clone();
+        }
+    }
+    let unavailable = json!({"case_id":"image","pair_id":"reference","seed_population":[0],"region_id":"full_image","metric":"reference.visual","domain":"visual","units":"not applicable","estimator":"reference scope","sample_count":0,"availability":"unavailable","reason":"visual_reference_only","artifact_refs":[map["path"]]});
+    let input = json!({"id":"input","left_role":"input","right_role":"simulation","pixel_aligned":true,"status":"completed","measurements":[],"review":{"left":images[0],"right":images[1]},"regions":[],"automatic_regions":[]});
+    let reference = json!({"id":"reference","left_role":"reference","right_role":"simulation","pixel_aligned":false,"status":"completed","reference":{"scope":"visual","geometry":"side_by_side"},"measurements":[unavailable],"review":{"left":restricted,"right":images[1],"difference":map},"artifacts":[map],"regions":[],"automatic_regions":[]});
+    save_manifest(
+        &comparison,
+        "comparison.json",
+        json!({"schema_version":1,"mode":"single_run","execution_status":"completed","evaluation_status":"not_evaluated","run":{"id":"retained","manifest_sha256":"a".repeat(64)},"default_pair":"reference","protocol":{},"selection":{"case_ids":["image"],"full_suite":true},"condition_differences":[],"cases":[{"case_id":"image","seed":0,"status":"completed","pairs":[input,reference]}],"findings":[],"summary":{"selected_cases":1,"completed_results":1,"failed_results":0},"artifacts":artifacts}),
+    );
+    let snapshot = fs::read(comparison.join("comparison.json")).unwrap();
+    let report = temp.path().join("report");
+    invoke(
+        &["report"],
+        &[("--comparison", &comparison), ("--out", &report)],
+        0,
+    );
+    fs::remove_dir_all(&comparison).unwrap();
+    assert_eq!(fs::read(report.join("comparison.json")).unwrap(), snapshot);
+    let manifest = read(&report.join("report.json"));
+    let retained = manifest["artifacts"].as_array().unwrap();
+    let omitted = retained
+        .iter()
+        .find(|entry| entry["source_path"] == restricted["path"])
+        .unwrap();
+    assert!(omitted["path"].is_null());
+    assert_eq!(omitted["availability"], "unavailable");
+    assert_eq!(omitted["reason"], "redistribution_not_permitted");
+    assert_eq!(omitted["redistribution"], "unknown");
+    assert_eq!(omitted["attribution"], restricted["attribution"]);
+    assert!(!report.join(restricted["path"].as_str().unwrap()).exists());
+    let retained_map = retained
+        .iter()
+        .find(|entry| entry["source_path"] == map["path"])
+        .unwrap();
+    assert_eq!(retained_map["path"], map["path"]);
+    assert_eq!(retained_map["availability"], "unavailable");
+    assert_eq!(retained_map["reason"], "visual_reference_only");
+    for entry in retained.iter().filter(|entry| !entry["path"].is_null()) {
+        assert_eq!(
+            common::sha256_file(&report.join(entry["path"].as_str().unwrap())).unwrap(),
+            entry["sha256"].as_str().unwrap()
+        );
+    }
+    assert!(
+        !retained
+            .iter()
+            .any(|entry| entry["role"] == "difference_display")
+    );
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    let reference_panel = html.split_once("data-pair-panel=\"pair-0-1\"").unwrap().1;
+    assert!(!reference_panel.contains("src=\"evidence/input.png\""));
+    assert!(!reference_panel.contains("src=\"evidence/private.png\""));
+    assert!(!reference_panel.contains("src=\"evidence/unavailable.npy\""));
+    assert!(reference_panel.contains("src=\"evidence/simulation.png\""));
+    assert!(html.contains("redistribution_not_permitted"));
 }
