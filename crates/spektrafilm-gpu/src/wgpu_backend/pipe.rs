@@ -13,6 +13,7 @@ use super::{GpuBuffer, dispatch_linear};
 use crate::telemetry::*;
 use parking_lot::Mutex;
 /// A device-resident RGB f32 image: storage buffer, pixel count, byte size.
+#[allow(dead_code)]
 pub(super) struct DeviceImage {
     pub(super) buf: wgpu::Buffer,
     pub(super) n_pixels: u32,
@@ -150,8 +151,9 @@ impl GpuPipe {
 
     /// Upload host RGB f32 samples as a device image. One of the three pipe
     /// transfer points.
+    #[allow(dead_code)]
     pub(super) fn upload_image(&self, data: &[f32], n_pixels: u32) -> DeviceImage {
-        let bytes = (data.len() * std::mem::size_of::<f32>()) as u64;
+        let bytes = std::mem::size_of_val(data) as u64;
         let buf = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -170,6 +172,7 @@ impl GpuPipe {
     /// uploaded, the input image stays on the device, and the output is a
     /// fresh device image of the same size. No host materialization.
     /// Binding order is `resources..., input, output`.
+    #[allow(dead_code)]
     pub(super) fn dispatch_device(
         &self,
         shader_source: &'static str,
@@ -247,6 +250,7 @@ impl GpuPipe {
     /// Fence: materialize the device image, run the CPU stage on host
     /// samples, and re-upload its output. The two pipe transfer points an
     /// assembled `Cpu` node contributes.
+    #[allow(dead_code)]
     pub(super) fn fence(
         &self,
         input: &DeviceImage,
@@ -259,6 +263,7 @@ impl GpuPipe {
 
     /// Final readback of a device image. One of the three pipe transfer
     /// points.
+    #[allow(dead_code)]
     pub(super) fn readback_image(&self, image: &DeviceImage) -> Vec<f32> {
         let readback = self.take_readback(image.bytes);
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -309,12 +314,14 @@ impl GpuPipe {
     }
 }
 
+type CpuFenceFn<'a> = Box<dyn FnOnce(&GpuPipe) -> Result<(), String> + 'a>;
 /// One node of an assembled compute chain (pipe-architecture slices S2/S3).
 /// A `Gpu` node encodes passes into the current command buffer without
 /// host transfer. A `Cpu` node is an assembled fence: the executor submits
 /// pending passes, the closure materializes a device image, runs the CPU
 /// stage, and writes the result back to the device before the next nodes
 /// encode against it.
+#[allow(dead_code)]
 pub(super) enum ChainStage<'a> {
     Gpu {
         name: &'static str,
@@ -322,7 +329,7 @@ pub(super) enum ChainStage<'a> {
     },
     Cpu {
         name: &'static str,
-        fence: Box<dyn FnOnce(&GpuPipe) -> Result<(), String> + 'a>,
+        fence: CpuFenceFn<'a>,
     },
 }
 
@@ -337,10 +344,8 @@ impl GpuPipe {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         for stage in stages {
             match stage {
-                ChainStage::Gpu { name: _, encode } => encode(&mut encoder),
-                ChainStage::Cpu { name: _, fence } => {
-                    // The fence materializes device data, so all previously
-                    // encoded passes must complete first.
+                ChainStage::Gpu { encode, .. } => encode(&mut encoder),
+                ChainStage::Cpu { fence, .. } => {
                     self.queue.submit(Some(encoder.finish()));
                     fence(self)?;
                     encoder = self.device.create_command_encoder(&Default::default());
