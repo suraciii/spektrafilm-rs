@@ -688,6 +688,7 @@ impl GuiState {
         }
         s["rust"]["version"] = json!(2);
         s["rust"]["model_version"] = json!(model_version(params));
+        s["rust"]["simulation_seed"] = json!(params.random_seed);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(
             spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),

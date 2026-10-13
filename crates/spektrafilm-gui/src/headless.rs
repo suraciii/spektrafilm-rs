@@ -586,12 +586,14 @@ fn original_simulation_controls_persist_and_density_reaches_real_workers() {
     choose(h, "Simulation engine", "Fotufilm");
     assert_eq!(h.state().params.engine, SimulationEngine::Fotufilm);
     assert!(h.query_by_label("scan output").is_none());
-    click(h, "Output");
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "output color space")
+            .is_some()
+    );
     assert!(
         h.query_by_role_and_label(egui::accesskit::Role::TextInput, "Overall effect amount")
             .is_none()
     );
-    click(h, "Output");
     edit(h, "Simulation seed", "18446744073709551615");
     click(h, "Apply Simulation seed");
     assert_eq!(h.state().params.random_seed, u64::MAX);
