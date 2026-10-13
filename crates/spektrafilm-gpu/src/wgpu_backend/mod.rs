@@ -61,6 +61,7 @@ pub struct WgpuBackend {
     pipe: GpuPipe,
     name: String,
     adapter: AdapterDescription,
+    explicit: bool,
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -184,6 +185,17 @@ impl WgpuBackend {
             queue,
             pipeline_cache,
             adapter: description,
+            explicit: false,
+        })
+    }
+
+    /// Construct an explicitly requested backend
+    /// (`SPEKTRAFILM_BACKEND=wgpu`): capability-missing stages must fail
+    /// at assembly instead of silently demoting the route to CPU.
+    pub fn new_explicit() -> Option<Self> {
+        Self::new().map(|mut b| {
+            b.explicit = true;
+            b
         })
     }
 
@@ -299,6 +311,7 @@ impl ComputeBackend for WgpuBackend {
             pipeline_cache: self.pipeline_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            explicit: self.explicit,
         }))
     }
     fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf {
@@ -957,6 +970,10 @@ impl ComputeBackend for WgpuBackend {
 
     fn is_gpu(&self) -> bool {
         true
+    }
+
+    fn explicit_gpu_request(&self) -> bool {
+        self.explicit
     }
 
     fn name(&self) -> &str {

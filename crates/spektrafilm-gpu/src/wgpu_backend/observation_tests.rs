@@ -125,6 +125,7 @@ fn fresh_backend(
             },
             pipeline_cache: Arc::new(PipelineCache::default()),
             name: "telemetry_test".into(),
+            explicit: false,
             adapter: description,
         },
     ))

@@ -319,6 +319,7 @@ impl WgpuBackend {
             pipeline_cache: self.pipeline_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            explicit: self.explicit,
         };
         (backend, BatchGuard { scope, state })
     }

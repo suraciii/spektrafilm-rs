@@ -1195,7 +1195,7 @@ impl Pipeline {
         // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
             && let Some(out) =
-                self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)
+                self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)?
         {
             tracing::info!("pipeline: gpu-resident fast path complete");
             let _post = stages::StageObservation::cpu(
@@ -1311,7 +1311,7 @@ impl Pipeline {
             context.set_working_dimensions(working.width, working.height);
         }
         let color_ref = self.color_reference(backend);
-        let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0) {
+        let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0)? {
             Some(out) => out,
             None => return Ok(None),
         };
