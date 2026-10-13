@@ -1,4 +1,3 @@
-use super::ObservedEncoder;
 use super::{
     DensityParams, FrontParams, ImageBuf, ScanParams, WgpuBackend, build_dir_state,
     build_gamut_state, build_glare_state, build_grain_v2_state, build_halation_state,

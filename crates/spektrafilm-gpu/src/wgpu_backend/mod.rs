@@ -23,6 +23,10 @@ use cache::{CachedPipelineRef, PipelineCache};
 mod pipe;
 #[cfg(feature = "wgpu-backend")]
 use pipe::GpuPipe;
+#[cfg(feature = "wgpu-backend")]
+mod params;
+#[cfg(feature = "wgpu-backend")]
+use params::{DensityParams, FrontParams, ScanParams};
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a

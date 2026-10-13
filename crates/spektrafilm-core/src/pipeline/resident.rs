@@ -310,6 +310,14 @@ impl Pipeline {
         // faithful per-stage path until the positive-film resident chain
         // reaches parity (see the ScannerFilmPoints note above).
         if color_ref.has_remap() {
+            if backend.explicit_gpu_request() {
+                return Err(
+                    "explicit GPU request cannot run the scanner luminance correction on WGPU \
+                     (it must follow linear optical blur and glare on the faithful per-stage path); \
+                     retry with an explicit CPU request"
+                        .into(),
+                );
+            }
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
                     spektrafilm_gpu::telemetry::ResidentDeclineReason::ScannerFilmPoints,
