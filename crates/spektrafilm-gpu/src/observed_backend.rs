@@ -156,7 +156,7 @@ impl ComputeBackend for ObservedBackend<'_> {
         self.cpu();
         self.backend.grain_v2(i, p)
     }
-    fn try_run_film_chain(&self, p: &FilmChainParams<'_>) -> Option<ImageBuf> {
+    fn try_run_film_chain(&self, p: &FilmChainParams<'_>) -> Result<Option<ImageBuf>, String> {
         self.backend.try_run_film_chain(p)
     }
 }

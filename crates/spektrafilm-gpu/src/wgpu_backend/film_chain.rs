@@ -6,7 +6,7 @@ use super::{
 };
 
 impl WgpuBackend {
-    pub fn run_film_chain(&self, p: &crate::FilmChainParams<'_>) -> ImageBuf {
+    pub fn run_film_chain(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
         if !self.device.context.enabled() {
             return self.run_film_chain_inner(p);
         }
@@ -19,7 +19,7 @@ impl WgpuBackend {
     /// gamut compression, scanner lens blur,
     /// and unsharp as a single command buffer with ping-pong image storage.
     /// Only one upload at the start and one readback at the end.
-    fn run_film_chain_inner(&self, p: &crate::FilmChainParams<'_>) -> ImageBuf {
+    fn run_film_chain_inner(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
         let t_start = std::time::Instant::now();
         // Pull all references into locals so the existing body below
         // doesn't need a rewrite — only the param sources change.
@@ -782,9 +782,10 @@ impl WgpuBackend {
                         w,
                         h,
                         crate::gpu_helpers::f32_to_scalars(host),
-                    ));
+                    ))?;
                     let out_f32 = crate::gpu_helpers::scalars_to_f32(&diffused.data);
                     pipe.write_image_buffer(&buf_b, &out_f32);
+                    Ok(())
                 }),
             });
         }
@@ -846,9 +847,10 @@ impl WgpuBackend {
                         w,
                         h,
                         crate::gpu_helpers::f32_to_scalars(host),
-                    ));
+                    ))?;
                     let out_f32 = crate::gpu_helpers::scalars_to_f32(&grained.data);
                     pipe.write_image_buffer(&buf_a, &out_f32);
+                    Ok(())
                 }),
             });
         }
@@ -873,9 +875,10 @@ impl WgpuBackend {
                             w,
                             h,
                             crate::gpu_helpers::f32_to_scalars(density),
-                        ));
+                        ))?;
                         let out_f32 = crate::gpu_helpers::scalars_to_f32(&log_raw.data);
                         pipe.write_image_buffer(&buf_b, &out_f32);
+                        Ok(())
                     }),
                 });
             } else {
@@ -911,9 +914,10 @@ impl WgpuBackend {
                         w,
                         h,
                         crate::gpu_helpers::f32_to_scalars(density),
-                    ));
+                    ))?;
                     let out_f32 = crate::gpu_helpers::scalars_to_f32(&captured.data);
                     pipe.write_image_buffer(&buf_b, &out_f32);
+                    Ok(())
                 }),
             });
         } else {
@@ -953,9 +957,10 @@ impl WgpuBackend {
                         w,
                         h,
                         crate::gpu_helpers::f32_to_scalars(host),
-                    ));
+                    ))?;
                     let out_f32 = crate::gpu_helpers::scalars_to_f32(&interpreted.data);
                     pipe.write_image_buffer(&buf_b, &out_f32);
+                    Ok(())
                 }),
             });
         }
@@ -1185,7 +1190,7 @@ impl WgpuBackend {
         // Everything since function entry: CPU-side param prep, buffer
         // creation/uploads, and stage assembly.
         let cpu_setup_ms = t_start.elapsed().as_secs_f32() * 1000.0;
-        self.pipe.run_chain(stages);
+        self.pipe.run_chain(stages)?;
 
         // Single sync point at the end. Map buf_b directly on the zero-copy
         // path, or the staging buffer otherwise.
@@ -1204,6 +1209,6 @@ impl WgpuBackend {
             ),
             "film chain timings"
         );
-        out
+        Ok(out)
     }
 }

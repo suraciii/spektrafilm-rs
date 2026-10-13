@@ -322,7 +322,7 @@ pub(super) enum ChainStage<'a> {
     },
     Cpu {
         name: &'static str,
-        fence: Box<dyn FnOnce(&GpuPipe) + 'a>,
+        fence: Box<dyn FnOnce(&GpuPipe) -> Result<(), String> + 'a>,
     },
 }
 
@@ -330,8 +330,10 @@ impl GpuPipe {
     /// Execute an assembled stage list. Consecutive `Gpu` nodes share one
     /// command buffer and one submission, exactly like the former fused
     /// chain; a `Cpu` fence node flushes the submission, runs the closure,
-    /// and continues with a fresh command buffer.
-    pub(super) fn run_chain(&self, stages: Vec<ChainStage<'_>>) {
+    /// and continues with a fresh command buffer. A fence that cannot
+    /// calibrate its output returns the error) before anything else is
+    /// submitted or published.
+    pub(super) fn run_chain(&self, stages: Vec<ChainStage<'_>>) -> Result<(), String> {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         for stage in stages {
             match stage {
@@ -340,12 +342,13 @@ impl GpuPipe {
                     // The fence materializes device data, so all previously
                     // encoded passes must complete first.
                     self.queue.submit(Some(encoder.finish()));
-                    fence(self);
+                    fence(self)?;
                     encoder = self.device.create_command_encoder(&Default::default());
                 }
             }
         }
         self.queue.submit(Some(encoder.finish()));
+        Ok(())
     }
 
     /// Materialize a device image buffer through the pooled readback path.
