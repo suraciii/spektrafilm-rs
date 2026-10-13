@@ -446,9 +446,32 @@ just build-benchmark
 just benchmark-test
 ```
 
+For a local image, supply a configuration JSON with the same fields as a suite case's `configuration`; its preset and parameter-file paths resolve relative to that JSON. Reuse a target JSON that identifies the renderer executable, its SHA-256, data directory, and backend. Input files, prepared crops, runs, and reports may live anywhere outside the repository.
+
+```bash
+./target/release/spektrafilm-bench run \
+    --input /data/photos/photo.tif \
+    --input-color-space "ProPhoto RGB" --input-cctf-decoding false \
+    --configuration /data/benchmark/configuration.json \
+    --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
+    --out /tmp/spektrafilm-local-run
+./target/release/spektrafilm-bench compare \
+    --run /tmp/spektrafilm-local-run --against input \
+    --out /tmp/spektrafilm-local-comparison
+./target/release/spektrafilm-bench report \
+    --comparison /tmp/spektrafilm-local-comparison \
+    --out /tmp/spektrafilm-local-review
+```
+
+Use `--input-kind raw` for camera RAW and omit the raster color flags. Set dedicated RAW options in the configuration's `raw` object. The run retains the real renderer's decoded input with the same crop and resize as simulation, along with the original source dimensions. Set simulation crop and resize through the configuration's existing `set_files` or `set` carriers; fixed review regions use completed-render coordinates. An externally prepared crop is a separate input; optional `--preparation FILE` records its original path, SHA-256, and descriptive operations without executing them.
+
+Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `compare --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
+
+The decoded input route fixes its taps to RGB input/output, so simulation diagnostic taps cannot relabel film density as source RGB. Comparisons retain source configuration, decode metadata, and observed execution diagnostics. Reports preserve the comparison snapshot and its permitted dependency paths and hashes, allowing review after the original run and comparison directories are removed.
+
 `just benchmark-test` includes public CLI regressions for failed renders, nonfinite masters, evidence integrity, mask populations, RAW declaration applicability, policy qualification, and measurement availability. These tests use isolated retained artifacts and do not require network access or an external renderer.
 
-Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time, prioritizes `color_chart_30mp` when present, and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows synchronized baseline/candidate imagery, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither a renderer nor the original run directories. Reference artifacts with unknown or denied redistribution permission remain omitted and identified in the report manifest.
+Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time in request order and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows the selected comparison pair, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available for aligned pairs. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither the original input files nor the renderer.
 
 The viewer opens in split mode: drag the divider on the image, use the range control, or move the focused divider with arrow keys (Shift for larger steps; Home/End for endpoints). Display copies use 16-bit RGB sRGB PNG without dither. Fit views resize floating samples before 16-bit quantization; native 100%, 200%, and 400% views switch to the full-size image, and detail crops preserve its 16-bit samples. Browser and screen precision still limit the displayed result. Preview resampling never feeds measurements.
 

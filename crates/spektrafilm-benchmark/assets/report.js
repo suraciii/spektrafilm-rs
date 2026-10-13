@@ -12,6 +12,14 @@ if (caseNav) {
     refreshViewers();
   });
 }
+document.querySelectorAll('[data-pair-nav]').forEach(nav => {
+  nav.addEventListener('change', () => {
+    nav.closest('[data-case-panel]').querySelectorAll('[data-pair-panel]').forEach(panel => {
+      panel.hidden = panel.dataset.pairPanel !== nav.value;
+    });
+    refreshViewers();
+  });
+});
 document.querySelectorAll('details').forEach(detail => {
   detail.addEventListener('toggle', () => { if (detail.open) refreshViewers(); });
 });
@@ -114,7 +122,7 @@ document.querySelectorAll('.viewer').forEach(viewer => {
   });
   panes.forEach(pane => {
     pane.addEventListener('scroll', () => {
-      if (syncing) return;
+      if (syncing || viewer.dataset.aligned === 'false') return;
       syncing = true;
       panes.forEach(other => { if (other !== pane) { other.scrollLeft = pane.scrollLeft; other.scrollTop = pane.scrollTop; } });
       requestAnimationFrame(() => { syncing = false; });

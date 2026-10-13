@@ -32,7 +32,21 @@
     "cases": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "source_raw": {
+            "type": "object",
+            "description": "Observed floating decoded-input master from the renderer input route, linear ACES2065-1.",
+            "properties": { "path": {"type":"string","minLength":1}, "layout": {"type":"object"}, "color": {"type":"object"} },
+            "required": ["path", "layout", "color"]
+          },
+          "source_raw_metadata": {"type":"object","properties":{"path":{"type":"string","minLength":1}},"required":["path"]},
+          "source_dimensions": {"type":"array","description":"Observed original decoded input width and height before renderer geometry.","items":{"type":"integer","minimum":1},"minItems":2,"maxItems":2},
+          "source_geometry": {"type":"object","description":"Resolved source geometry and observed result dimensions."},
+          "simulation_geometry": {"type":"object","description":"Resolved simulation geometry and observed result dimensions."},
+          "source_pixel_aligned": {"type":"boolean","description":"Resolved correspondence, requiring geometry equality and no film-field readout geometry."},
+          "preparation": {"type":"object","description":"Passive original dependency and preparation operations; never executed."}
+        }
       },
       "minItems": 0,
       "uniqueItems": false

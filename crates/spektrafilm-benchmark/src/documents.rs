@@ -140,13 +140,17 @@ fn scan_duplicate(b: &[u8], mut i: usize) -> Result<usize> {
     }
 }
 
-pub fn load_json_document(path: &Path) -> Result<Value> {
+pub fn load_json_value(path: &Path) -> Result<Value> {
     let b = fs::read(path)
         .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
     scan_duplicate(&b, 0)?;
     let v: Value = serde_json::from_slice(&b)
         .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
     finite(&v)?;
+    Ok(v)
+}
+pub fn load_json_document(path: &Path) -> Result<Value> {
+    let v = load_json_value(path)?;
     if !v.is_object() {
         return Err(err("document_type", "document root must be an object"));
     }
@@ -369,6 +373,26 @@ fn config(v: &Value, doc: &Path) -> Result<()> {
 }
 
 pub fn schema_for(kind: &str) -> Result<Value> {
+    if matches!(
+        kind,
+        "configuration" | "reference" | "regions" | "preparation"
+    ) {
+        let suite = schema_for("suite")?;
+        let mut schema = suite["properties"]["cases"]["items"]["properties"][kind].clone();
+        if kind == "reference" {
+            schema["properties"].as_object_mut().unwrap().remove("path");
+            schema["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sha256");
+            schema["required"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|v| v != "path" && v != "sha256");
+        }
+        schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
+        return Ok(schema);
+    }
     let raw = match kind {
         "suite" => include_str!("../assets/suite.schema.json"),
         "target" => include_str!("../assets/target.schema.json"),
@@ -414,6 +438,98 @@ fn validate_schema(kind: &str, v: &Value) -> Result<()> {
     }
     Ok(())
 }
+pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -> Result<()> {
+    match kind {
+        "configuration" => config(value, document)?,
+        "regions" => {
+            let regions = value
+                .as_array()
+                .ok_or_else(|| err("schema_validation", "regions must be array"))?;
+            unique(regions, "id")?;
+            for region in regions {
+                if region["id"] == "full_image" {
+                    return Err(err("reserved_region", "full_image is reserved"));
+                }
+                geometry(&region["geometry"], document)?;
+            }
+        }
+        "preparation" => file_record(&value["original"], document)?,
+        "reference" => {
+            for key in [
+                "transform",
+                "aligned_derivative",
+                "correspondence_review",
+                "common_area_mask",
+            ] {
+                if let Some(record) = value.get(key) {
+                    file_record(record, document)?;
+                }
+            }
+            if let Some(icc) = value["color"].get("icc") {
+                file_record(icc, document)?;
+            }
+            for region in value["regions"].as_array().into_iter().flatten() {
+                geometry(&region["geometry"], document)?;
+            }
+            if value["scope"] == "aligned_scene"
+                && (value.get("correspondence_review").is_none()
+                    || value.get("common_area_mask").is_none()
+                    || (value.get("transform").is_none()
+                        && value.get("aligned_derivative").is_none()))
+            {
+                return Err(err(
+                    "missing_correspondence",
+                    "aligned scene requires transform/derivative, review, and mask",
+                ));
+            }
+            if value["scope"] == "aligned_scene" {
+                crate::references::validate_correspondence_documents(value, document)?;
+                let review_path = resolve_path(
+                    value["correspondence_review"]["path"].as_str().unwrap(),
+                    document,
+                )?;
+                let review = load_json_document(&review_path)?;
+                for region in review["excluded_regions"].as_array().into_iter().flatten() {
+                    geometry(&region["geometry"], &review_path)?;
+                }
+            }
+            if value["scope"] == "regional"
+                && value["regions"].as_array().is_none_or(|v| v.is_empty())
+            {
+                return Err(err(
+                    "missing_regions",
+                    "regional reference requires corresponding regions",
+                ));
+            }
+            if value["scope"] == "material" {
+                for key in ["domain", "units", "instrument", "conditions"] {
+                    if value.get(key).is_none() {
+                        return Err(err(
+                            "material_conditions",
+                            "material reference requires measurement conditions",
+                        ));
+                    }
+                }
+            }
+            if value["color"].get("icc").is_none()
+                && (value["color"].get("color_space").is_none()
+                    || value["color"].get("cctf_decoding").is_none())
+            {
+                return Err(err(
+                    "reference_color",
+                    "reference requires explicit color or hashed ICC",
+                ));
+            }
+        }
+        _ => return Err(err("unknown_document_kind", kind)),
+    }
+    Ok(())
+}
+
+pub fn validate_shape(kind: &str, value: &Value) -> Result<()> {
+    validate_authored(kind, value)
+}
+
 fn validate_authored(kind: &str, v: &Value) -> Result<()> {
     finite(v)?;
     validate_schema(kind, v)?;
@@ -422,7 +538,12 @@ fn validate_authored(kind: &str, v: &Value) -> Result<()> {
 
 pub fn load_suite(path: &Path) -> Result<Value> {
     let v = load_json_document(path)?;
-    validate_authored("suite", &v)?;
+    validate_suite(&v, path)?;
+    Ok(v)
+}
+
+pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
+    validate_authored("suite", v)?;
     let cases = v["cases"].as_array().unwrap();
     unique(cases, "id")?;
     for x in v["protocol"]["probe"]["tone_response"]
@@ -435,6 +556,9 @@ pub fn load_suite(path: &Path) -> Result<Value> {
     for c in cases {
         let parsed: CaseDocument = serde_json::from_value(c.clone())?;
         file_record(&c["input"], path)?;
+        if let Some(preparation) = c.get("preparation") {
+            file_record(&preparation["original"], path)?;
+        }
         let input = obj(&c["input"])?;
         let raw = input.get("kind").and_then(Value::as_str) == Some("raw");
         if raw {
@@ -497,12 +621,12 @@ pub fn load_suite(path: &Path) -> Result<Value> {
                             "aligned scene requires transform/derivative, review, and mask",
                         ));
                     }
-                    let review = load_json_document(&resolve_path(
-                        r["correspondence_review"]["path"].as_str().unwrap(),
-                        path,
-                    )?)?;
+                    crate::references::validate_correspondence_documents(r, path)?;
+                    let review_path =
+                        resolve_path(r["correspondence_review"]["path"].as_str().unwrap(), path)?;
+                    let review = load_json_document(&review_path)?;
                     for x in review["excluded_regions"].as_array().into_iter().flatten() {
-                        geometry(&x["geometry"], path)?
+                        geometry(&x["geometry"], &review_path)?
                     }
                 }
                 "regional" => {
@@ -558,7 +682,7 @@ pub fn load_suite(path: &Path) -> Result<Value> {
             }
         }
     }
-    Ok(v)
+    Ok(())
 }
 pub fn load_target(path: &Path) -> Result<Value> {
     let v = load_json_document(path)?;
@@ -995,6 +1119,90 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                         text(record, "path")?;
                         reference(req(ro, k)?)?
                     }
+                    if row.get("source_raw").is_some() || row.get("source_raw_metadata").is_some() {
+                        for key in [
+                            "source_raw",
+                            "source_raw_metadata",
+                            "source_resolved",
+                            "source_diagnostics",
+                            "source_master",
+                        ] {
+                            let record = obj(req(ro, key)?)?;
+                            text(record, "path")?;
+                            reference(req(ro, key)?)?;
+                        }
+                        let source = &row["source_raw"];
+                        let layout = &source["layout"];
+                        let width = layout["width"]
+                            .as_u64()
+                            .filter(|v| *v > 0)
+                            .ok_or_else(|| err("raw_layout", "Invalid source width"))?;
+                        let height = layout["height"]
+                            .as_u64()
+                            .filter(|v| *v > 0)
+                            .ok_or_else(|| err("raw_layout", "Invalid source height"))?;
+                        let bytes = width
+                            .checked_mul(height)
+                            .and_then(|v| v.checked_mul(24))
+                            .ok_or_else(|| err("raw_layout", "Source dimensions overflow"))?;
+                        if source["color"]
+                            != json!({"color_space":"ACES2065-1","transfer":"linear"})
+                            || layout["channels"] != 3
+                            || layout["dtype"] != "f64"
+                            || layout["channel_order"] != "RGB"
+                            || fs::metadata(safe_artifact_path(
+                                root,
+                                source["path"].as_str().unwrap(),
+                            )?)?
+                            .len()
+                                != bytes
+                        {
+                            return Err(err(
+                                "raw_layout",
+                                "Retained source layout, color, or byte count is invalid",
+                            ));
+                        }
+                        let metadata = load_json_document(&safe_artifact_path(
+                            root,
+                            row["source_raw_metadata"]["path"].as_str().unwrap(),
+                        )?)?;
+                        let mut expected = layout.clone();
+                        expected
+                            .as_object_mut()
+                            .unwrap()
+                            .extend(source["color"].as_object().unwrap().clone());
+                        let diagnostics = load_json_document(&safe_artifact_path(
+                            root,
+                            row["source_diagnostics"]["path"].as_str().unwrap(),
+                        )?)?;
+                        if metadata != expected
+                            || diagnostics["configuration"]["input_dimensions"]
+                                != row["source_dimensions"]
+                            || diagnostics["configuration"]["published_dimensions"]
+                                != json!([width, height])
+                            || row["source_geometry"]["published_dimensions"]
+                                != json!([width, height])
+                            || row["simulation_geometry"]["published_dimensions"]
+                                != row["dimensions"]
+                        {
+                            return Err(err(
+                                "source_geometry",
+                                "Source evidence metadata and observed geometry disagree",
+                            ));
+                        }
+                        let case = suite["cases"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|c| c["id"] == row["case_id"])
+                            .ok_or_else(|| err("run_selection", "Unknown retained case"))?;
+                        if case.get("preparation") != row.get("preparation") {
+                            return Err(err(
+                                "preparation_identity",
+                                "Run preparation differs from suite provenance",
+                            ));
+                        }
+                    }
                     let layout = &row["raw"]["layout"];
                     let w = layout["width"]
                         .as_u64()
@@ -1065,6 +1273,90 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
         }
         for case in v["cases"].as_array().unwrap() {
             measurements(&case["measurements"])?;
+            if v["mode"] == "single_run" {
+                let pairs = case["pairs"].as_array().ok_or_else(|| {
+                    err(
+                        "comparison_pair",
+                        "Single-run case requires comparison pairs",
+                    )
+                })?;
+                unique(pairs, "id")?;
+                if !pairs.iter().any(|pair| pair["id"] == v["default_pair"]) {
+                    return Err(err("comparison_pair", "Default pair is absent from case"));
+                }
+                for pair in pairs {
+                    if pair["left_role"] != pair["id"] || pair["right_role"] != "simulation" {
+                        return Err(err(
+                            "comparison_pair",
+                            "Pair roles must identify input/reference and simulation",
+                        ));
+                    }
+                    if case["status"] == "completed" && pair["status"] != "completed" {
+                        return Err(err(
+                            "comparison_status",
+                            "Completed case contains an incomplete pair",
+                        ));
+                    }
+                    if pair["id"] == "reference" && pair["status"] == "completed" {
+                        let scope = pair["reference"]["scope"].as_str().ok_or_else(|| {
+                            err("comparison_pair", "Reference pair requires retained scope")
+                        })?;
+                        let aligned = scope == "aligned_scene"
+                            && pair["reference"]["geometry"] == "pixel_aligned";
+                        if pair["pixel_aligned"] != aligned {
+                            return Err(err(
+                                "comparison_correspondence",
+                                "Pair alignment conflicts with retained reference correspondence",
+                            ));
+                        }
+                        if pair["measurements"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|row| {
+                                row["availability"] == "available"
+                                    && (scope == "visual"
+                                        || (scope == "aligned_scene" && !aligned)
+                                        || pair["reference"]["color_available"] == false)
+                            })
+                        {
+                            return Err(err(
+                                "measurement_applicability",
+                                "Available reference score conflicts with retained scope or interpretation",
+                            ));
+                        }
+                    }
+                    measurements(&pair["measurements"])?;
+                    for measurement in pair["measurements"].as_array().into_iter().flatten() {
+                        if measurement["case_id"] != case["case_id"]
+                            || measurement["pair_id"] != pair["id"]
+                        {
+                            return Err(err(
+                                "comparison_pair",
+                                "Measurement identity differs from its pair",
+                            ));
+                        }
+                    }
+                    for item in pair["review"]
+                        .as_object()
+                        .into_iter()
+                        .flat_map(|map| map.values())
+                    {
+                        reference(item)?;
+                    }
+                    for item in pair["artifacts"].as_array().into_iter().flatten() {
+                        reference(item)?;
+                    }
+                    if let Some(item) = pair.get("measurement_artifact") {
+                        reference(item)?;
+                    }
+                    for key in ["left_master", "right_master", "right_resolved"] {
+                        if let Some(item) = pair.get(key) {
+                            reference(item)?;
+                        }
+                    }
+                }
+            }
             for x in case["review"]
                 .as_object()
                 .into_iter()
