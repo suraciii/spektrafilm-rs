@@ -317,6 +317,9 @@ fn dry_run_reports_neutral_baseline_sources_shifts_and_a_paper_change() {
     use spektrafilm_core::neutral_filters::NeutralFilters;
     let f = Fixture::new();
     let neutral = NeutralFilters::load(&f.data).unwrap();
+    // The database is f64 and the runtime control is f32 by default, so the
+    // report round-trips the f32 value; compare with that headroom.
+    let close = |value: &Value, expected: f64| (value.as_f64().unwrap() - expected).abs() < 1e-3;
     let endura = neutral
         .lookup("kodak_portra_endura", "TH-KG3", "kodak_portra_400")
         .expect("the endura entry covers portra 400");
@@ -338,8 +341,8 @@ fn dry_run_reports_neutral_baseline_sources_shifts_and_a_paper_change() {
     .enumerate()
     {
         assert_eq!(filtration[axis]["axis"], *path);
-        assert_eq!(filtration[axis]["baseline"], endura[axis] as f32);
-        assert_eq!(filtration[axis]["effective"], endura[axis] as f32);
+        assert!(close(&filtration[axis]["baseline"], endura[axis]));
+        assert!(close(&filtration[axis]["effective"], endura[axis]));
         assert_eq!(filtration[axis]["source"], "database");
     }
     // The shift is the look's own offset, so the effective total adds it to
@@ -353,12 +356,15 @@ fn dry_run_reports_neutral_baseline_sources_shifts_and_a_paper_change() {
         "enlarger.m_filter_shift=5",
         "--dry-run",
     ]);
-    assert_eq!(shifted["print_filtration"][1]["baseline"], endura[1] as f32);
+    assert!(close(
+        &shifted["print_filtration"][1]["baseline"],
+        endura[1]
+    ));
     assert_eq!(shifted["print_filtration"][1]["shift"], 5.0);
-    assert_eq!(
-        shifted["print_filtration"][1]["effective"],
-        endura[1] as f32 + 5.0
-    );
+    assert!(close(
+        &shifted["print_filtration"][1]["effective"],
+        endura[1] + 5.0
+    ));
     // A deliberate leaf outranks the database for that axis only.
     let pinned = f.report(&[
         "--film",
@@ -372,7 +378,7 @@ fn dry_run_reports_neutral_baseline_sources_shifts_and_a_paper_change() {
     assert_eq!(pinned["print_filtration"][1]["baseline"], 34.0);
     assert_eq!(pinned["print_filtration"][1]["source"], "set");
     assert_eq!(pinned["print_filtration"][0]["source"], "database");
-    assert_eq!(pinned["print_filtration"][0]["baseline"], endura[0] as f32);
+    assert!(close(&pinned["print_filtration"][0]["baseline"], endura[0]));
     // A paper change moves the baseline instead of carrying the old one.
     let archive = neutral
         .lookup(
@@ -389,7 +395,7 @@ fn dry_run_reports_neutral_baseline_sources_shifts_and_a_paper_change() {
         "--dry-run",
     ]);
     assert_ne!(archive, endura);
-    assert_eq!(other["print_filtration"][1]["baseline"], archive[1] as f32);
+    assert!(close(&other["print_filtration"][1]["baseline"], archive[1]));
     assert_eq!(other["print_filtration"][1]["source"], "database");
     let text = f.process(&[
         "--film",
