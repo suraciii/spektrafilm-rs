@@ -114,12 +114,12 @@ fn resolve_configuration(
         .output()
         .map_err(|error| invalid(format!("{name} resolution failed to start: {error}")))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let from = stderr.len().saturating_sub(2000);
+        let bytes = &output.stderr;
+        let from = bytes.len().saturating_sub(2000);
         return Err(invalid(format!(
             "{name} resolution exited with {}; stderr: {}",
             output.status,
-            stderr[from..].trim()
+            String::from_utf8_lossy(&bytes[from..]).trim()
         )));
     }
     let resolved: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
@@ -694,7 +694,23 @@ mod tests {
         assert_eq!(error.code, "renderer_configuration");
         assert_eq!(error.path, Some(renderer.display().to_string()));
         assert!(error.message.contains("unsupported assignment"));
-        assert!(!out.join("provenance.json").exists());
         assert_eq!(fs::read(out.join("look.toml")).unwrap(), LOOK.as_bytes());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn long_multibyte_diagnostics_stay_inside_the_error_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let renderer = stub_renderer(
+            temp.path(),
+            &format!(
+                "case \"$1\" in\npreset)\nprintf '%s' '{LOOK}'\n;;\nprocess)\nprintf '%s' '{}' >&2\nexit 3\n;;\nesac",
+                "中".repeat(2000)
+            ),
+        );
+        let out = temp.path().join("fixtures");
+        let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
+        assert_eq!(error.code, "renderer_configuration");
+        assert!(error.message.contains("exit status: 3"));
+        assert!(!out.join("provenance.json").exists());
     }
 }
