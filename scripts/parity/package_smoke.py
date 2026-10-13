@@ -60,6 +60,57 @@ def _write_provenance(evidence, package_root, binaries, observations):
     (evidence / 'package_report.json').write_text(
         json.dumps(report, indent=2) + '\n')
 
+def _benchmark_smoke(exporter, data, evidence, environment):
+    suffix = exporter.suffix
+    binaries = {name: exporter.with_name(name + suffix) for name in
+                ('spektrafilm-bench', 'spektrafilm-bench-fixtures')}
+    for binary in binaries.values():
+        assert binary.is_file(), f'Installed benchmark missing: {binary}'
+    root = evidence / 'benchmark'
+    root.mkdir()
+    commands = []
+
+    def invoke(binary, *arguments):
+        argv = [str(binary), *map(str, arguments)]
+        result = subprocess.run(argv, cwd=evidence, env=environment,
+                                capture_output=True, text=True, timeout=300)
+        commands.append({'argv': argv, 'returncode': result.returncode,
+                         'stdout': result.stdout, 'stderr': result.stderr})
+        (root / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    bench = binaries['spektrafilm-bench']
+    fixtures = root / 'fixtures'
+    invoke(binaries['spektrafilm-bench-fixtures'], '--renderer', exporter,
+           '--data-dir', data, '--out', fixtures)
+    run = root / 'run'
+    invoke(bench, 'run', '--suite', fixtures / 'quick.json', '--target',
+           fixtures / 'baseline.json', '--case', 'color_chart', '--out', run)
+    invoke(bench, 'validate', '--kind', 'run', '--file', run / 'run.json')
+    comparison = root / 'comparison'
+    invoke(bench, 'compare', '--baseline', run, '--candidate', run,
+           '--out', comparison)
+    manifest = json.loads((comparison / 'comparison.json').read_text())
+    rows = manifest['cases'][0]['measurements']
+    for metric in ('numeric.rmse', 'delta_e00.median', 'flip.mean'):
+        row = next(row for row in rows if row['metric'] == metric
+                   and row['region_id'] == 'full_image')
+        assert row['availability'] == 'available' and row['value'] == 0, row
+    invoke(bench, 'validate', '--kind', 'comparison', '--file',
+           comparison / 'comparison.json')
+    report = root / 'report'
+    invoke(bench, 'report', '--comparison', comparison, '--out', report)
+    assert (report / 'index.html').is_file()
+    assert json.loads((report / 'report.json').read_text())['comparison_id'] == manifest['id']
+    for license_name in ('nvlabs-flip-bsd-3-clause.txt', 'littlecms-mit.txt'):
+        assert any(path.is_file() for path in exporter.parents[1].rglob(license_name)), license_name
+    return binaries, {'installed_benchmark': str(bench),
+                      'comparison_id': manifest['id'], 'identity_metrics':
+                      ['numeric.rmse', 'delta_e00.median', 'flip.mean'],
+                      'report': str(report / 'index.html')}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cli', type=Path, required=True)
@@ -239,6 +290,9 @@ def main():
     observations.append({'installed_lut_exporter': str(exporter),
                          'bundle': str(bundle), 'artifacts': artifact_evidence,
                          'ocio_processors': processor_count, 'qa_report_passed': qa['passed']})
+    benchmark_binaries, benchmark_observation = _benchmark_smoke(
+        exporter, data, evidence, environment)
+    observations.append(benchmark_observation)
     if args.gui:
         from gui_acceptance import accept_gui
         observations.append(accept_gui(args.gui.resolve(), exporter, source, raw,
@@ -246,10 +300,11 @@ def main():
     _write_provenance(
         evidence, package_root,
         {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
+         **benchmark_binaries,
          **({'gui': args.gui.resolve()} if args.gui else {})},
         observations)
     gui_suffix = ' and native GUI acceptance' if args.gui else ''
-    print(f'PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA{gui_suffix}')
+    print(f'PASS installed image depths, float headroom, metadata, spectral export, errors, RAW, LUT/OCIO/QA, native benchmark{gui_suffix}')
 
 
 if __name__ == '__main__':

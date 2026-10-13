@@ -5,7 +5,7 @@ default:
     @just --list
 
 # Build the portable default (wgpu/WGSL) release binaries.
-build: build-gui build-cli build-f64 decode-raw
+build: build-gui build-cli build-f64 decode-raw build-benchmark
 
 build-gui:
     cargo build --locked --release -p spektrafilm-gui
@@ -18,6 +18,9 @@ build-f64:
 
 decode-raw:
     cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui
+
+build-benchmark:
+    cargo build --locked --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures
 
 # Check formatting without modifying files.
 fmt:
@@ -56,9 +59,9 @@ test-fast-precision precision_args:
     cargo test --locked -p spektrafilm-core --test telemetry {{precision_args}}
     cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui {{precision_args}} -- state::tests:: numeric::tests::
 
-# Run the appearance benchmark regressions with locked Python dependencies.
+# Run the native appearance benchmark regressions.
 benchmark-test:
-    uv run --project scripts/benchmark --locked python -m unittest discover -s scripts/benchmark/tests
+    cargo test --locked -p spektrafilm-benchmark
 
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
 gui-headless:
