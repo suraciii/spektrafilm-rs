@@ -16,6 +16,7 @@ See [the pipeline guide](pipeline.md) for spectral methods and illuminants.
 Schema 3 bundles record the full digested parameter tree per print.
 They also record the digest's changed values, a SHA-256 snapshot digest, and resolved input stops and gain.
 `Bundle::baked_params` preserves the actual bake configuration for QA.
+Preview, Scan, Export, and complete source-to-output LUTs use the same overall effect amount. Segmented LUTs require amount `1`; see the [LUT delivery specification](../specs/lut-delivery/spec.md) for the topology rule.
 Grain and coupler TOML presets override controls when stock specifics are requested.
 Later edits use `apply_stocks_specifics=false`.
 
@@ -53,7 +54,6 @@ knee = [0.0, 1.0, 6.0]
 [output_gamut_compress]
 algorithm = "cam16ucs"
 knee = [0.0, 1.0, 6.0]
-lightness_compression = [0.7, 1.0, 2.2]
 ```
 
 ## Input stops and parameter digestion
