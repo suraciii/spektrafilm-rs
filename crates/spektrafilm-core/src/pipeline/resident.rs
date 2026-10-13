@@ -76,9 +76,9 @@ impl Pipeline {
         } else {
             &dir.langmuir_donor_k_rgb
         };
-        if dir.active && coefficients.iter().any(|k| (k - 1.0).abs() > f64::EPSILON) {
-            reasons.push(ResidentFallbackReason::LangmuirChemistry);
-        }
+        // Non-default Langmuir chemistry no longer declines: DIR runs as
+        // an assembled CPU fence (pipe architecture, capability class —
+        // see `dir_cpu_stage` in `try_gpu_resident`).
         // Input transfer decoding no longer declines: the resident route
         // decodes the input before upload (pipe architecture, capability
         // class — see `try_gpu_resident`).
@@ -373,8 +373,16 @@ impl Pipeline {
         // re-interpolates these against `log_raw - correction`.
         // Held in this binding so `&density_curves_0_f64` outlives the
         // backend call.
-        let dir_inputs = if self.params.film_render.dir_couplers.active {
-            let dir = &self.params.film_render.dir_couplers;
+        let dir = &self.params.film_render.dir_couplers;
+        let dir_langmuir_default = {
+            let coefficients = if self.film.is_positive() {
+                &dir.langmuir_receiver_k_rgb
+            } else {
+                &dir.langmuir_donor_k_rgb
+            };
+            coefficients.iter().all(|k| (k - 1.0).abs() <= f64::EPSILON)
+        };
+        let dir_inputs = if dir.active && dir_langmuir_default {
             let matrix = crate::chain_prep::dir_matrix(dir);
             let prepared = spektrafilm_model::couplers::prepare_dir(
                 &film_curves.raw,
@@ -416,6 +424,46 @@ impl Pipeline {
                 gamma_factor: d.6,
             }
         });
+        // Non-default Langmuir chemistry runs DIR as an assembled CPU fence
+        // over the density and log-raw buffers (pipe architecture,
+        // capability class): the GPU shader has no Langmuir path.
+        let dir_cpu_stage: Option<Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + '_>> =
+            if dir.active && !dir_langmuir_default {
+                let dir = &self.params.film_render.dir_couplers;
+                let matrix = crate::chain_prep::dir_matrix(dir);
+                let curves_raw = &film_curves.raw;
+                let log_exp = film_log_exp;
+                let pix_um = pixel_size_um;
+                let is_positive = self.film.is_positive();
+                let gamma = self.params.film_render.density_curve_gamma as f64;
+                let seed_backend = backend;
+                let closure: Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + '_> =
+                    Box::new(move |density: &ImageBuf, log_raw: &ImageBuf| {
+                        let observation =
+                            crate::stages::StageObservation::new(seed_backend, "dir_couplers");
+                        let observed = observation.backend(seed_backend);
+                        spektrafilm_model::couplers::apply_density_correction(
+                            density,
+                            log_raw,
+                            pix_um as f32,
+                            log_exp,
+                            curves_raw,
+                            &matrix,
+                            dir.amount,
+                            dir.diffusion_size_um,
+                            dir.diffusion_tail_um,
+                            dir.diffusion_tail_weight,
+                            is_positive,
+                            gamma as f32,
+                            dir.langmuir_donor_k_rgb,
+                            dir.langmuir_receiver_k_rgb,
+                            observed,
+                        )
+                    });
+                Some(closure)
+            } else {
+                None
+            };
 
         // Glare in the resident chain — applied after scan_spectral on the
         // final RGB buffer. Mirrors the CPU lognormal + blur + add. Python
@@ -560,6 +608,7 @@ impl Pipeline {
             scanner_lens_blur_px,
             highlight_boost,
             density_cpu_stage,
+            dir_cpu_stage,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
@@ -846,5 +895,52 @@ mod tests {
         let mean = sum / out_cpu.data.len() as f64;
         assert!(mean < 5e-2, "decoded-input mean divergence: {mean}");
         assert!(max_diff < 5e-1, "decoded-input max divergence: {max_diff}");
+    }
+
+    /// Non-default Langmuir chemistry no longer demotes to per-stage: DIR
+    /// runs as an assembled CPU fence over the density and log-raw buffers.
+    /// The fence narrows both buffer inputs to f32 (GPU chain precision);
+    /// the budget matches the Spektra-fence budget.
+    #[test]
+    fn langmuir_dir_resident_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.camera.auto_exposure = false;
+        params.film_render.grain.active = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.dir_couplers.active = true;
+        // Negative film uses the donor coefficients.
+        params.film_render.dir_couplers.langmuir_donor_k_rgb = [1.3, 0.85, 1.1];
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "langmuir fence mean divergence: {mean}");
+        assert!(max_diff < 5e-1, "langmuir fence max divergence: {max_diff}");
     }
 }
