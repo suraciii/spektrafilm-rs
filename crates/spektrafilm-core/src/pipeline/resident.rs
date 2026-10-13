@@ -781,6 +781,40 @@ impl Pipeline {
             } else {
                 None
             };
+        // Output transfer (pipe architecture, S4): encode the native
+        // destination when the caller requested encoding and the
+        // Procedural-grain pass hasn't already emitted encoded samples, or
+        // restore linear when it has and no encoding was requested. This
+        // moves the post-readback host encode/decode of `apply_post_scan`
+        // onto the device.
+        let grain_v2_active = self.grain_emits_encoded();
+        let cctf_kind = match scan_output_space.cctf {
+            spektrafilm_math::colorspace::Cctf::Linear => 0,
+            spektrafilm_math::colorspace::Cctf::Acescct => 1,
+            spektrafilm_math::colorspace::Cctf::Srgb => 2,
+            spektrafilm_math::colorspace::Cctf::ProPhoto => 3,
+            spektrafilm_math::colorspace::Cctf::Rec2020 => 4,
+            spektrafilm_math::colorspace::Cctf::AdobeRgb1998 => 5,
+            spektrafilm_math::colorspace::Cctf::Gamma2_6 => 6,
+        };
+        let identity_f32: [[f32; 3]; 3] = std::array::from_fn(|i| {
+            std::array::from_fn(|j| scan_output_space.rgb_to_rgb_identity()[i][j] as f32)
+        });
+        let output_transfer = if !grain_v2_active && self.params.io.output_cctf_encoding {
+            Some(spektrafilm_gpu::OutputTransferGpuParams {
+                decode: false,
+                cctf_kind,
+                matrix: identity_f32,
+            })
+        } else if grain_v2_active && !self.params.io.output_cctf_encoding {
+            Some(spektrafilm_gpu::OutputTransferGpuParams {
+                decode: true,
+                cctf_kind,
+                matrix: identity_f32,
+            })
+        } else {
+            None
+        };
 
         let params = spektrafilm_gpu::FilmChainParams {
             image,
@@ -825,10 +859,13 @@ impl Pipeline {
             scan_acquisition_cpu_stage,
             print_acquisition_cpu_stage,
             camera_diffusion_cpu_stage,
+            output_transfer,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
-                context.decline_resident(spektrafilm_gpu::telemetry::ResidentDeclineReason::BlurRadiusExceedsBackendSupport);
+                context.decline_resident(
+                    spektrafilm_gpu::telemetry::ResidentDeclineReason::BlurRadiusExceedsBackendSupport,
+                );
             }
             tracing::info!(
                 target: "spektrafilm_core::pipeline",
@@ -859,33 +896,17 @@ impl Pipeline {
         Ok(result)
     }
 
-    /// Finalize the export transfer without applying the same-space matrix twice.
+    /// Post-readback host finishing. The output transfer encode/decode moved
+    /// onto the device as the pipe-tail transfer pass (pipe architecture,
+    /// S4); the magazine appearance remains the host tail until it gains a
+    /// GPU path.
     pub(super) fn apply_post_scan(
         &self,
         mut rgb: ImageBuf,
         backend: &dyn ComputeBackend,
     ) -> ImageBuf {
-        use rayon::prelude::*;
-        use spektrafilm_math::precision::from_f64;
-        let grain_v2_active = self.params.film_render.grain.active
-            && self.params.settings.rgb_to_raw_method != "mallett2019"
-            && matches!(
-                self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::Procedural
-            );
         let space = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
             .expect("validated output colour space");
-        if !grain_v2_active && self.params.io.output_cctf_encoding {
-            rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-                let out = spektrafilm_math::colorspace::encode_rgb(
-                    [px[0] as f64, px[1] as f64, px[2] as f64],
-                    space,
-                );
-                for c in 0..3 {
-                    px[c] = from_f64(out[c]);
-                }
-            });
-        }
         if self.params.magazine_print_color.active
             && self.params.magazine_print_color.strength > 0.0
         {
@@ -894,22 +915,30 @@ impl Pipeline {
                 "magazine_print_color",
                 spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
             );
+            // The pipe-tail transfer pass normalizes the readback state:
+            // samples arrive encoded exactly when the caller requested
+            // encoding (Procedural-grain output was decoded back).
+            let encoded = self.params.io.output_cctf_encoding;
             crate::magazine_print_color::apply(
                 &mut rgb,
                 &self.params.magazine_print_color,
                 space,
-                self.params.io.output_cctf_encoding || grain_v2_active,
+                encoded,
             );
         }
-        if grain_v2_active && !self.params.io.output_cctf_encoding {
-            rgb.data.par_iter_mut().for_each(|value| {
-                *value = from_f64(spektrafilm_math::colorspace::cctf_decode(
-                    *value as f64,
-                    space.cctf,
-                ));
-            });
-        }
         rgb
+    }
+
+    /// Whether the Procedural-grain pass emits encoded samples on the
+    /// resident chain (it encodes before grain; the pipe-tail transfer
+    /// decodes afterwards when the caller requested linear output).
+    fn grain_emits_encoded(&self) -> bool {
+        self.params.film_render.grain.active
+            && self.params.settings.rgb_to_raw_method != "mallett2019"
+            && matches!(
+                self.params.film_render.grain.engine,
+                crate::params::grain::GrainEngine::Procedural
+            )
     }
 }
 
@@ -1588,5 +1617,125 @@ mod tests {
             max_diff < 5e-1,
             "camera diffusion fence max divergence: {max_diff}"
         );
+    }
+
+    /// The output transfer encode runs on the device as the pipe-tail pass
+    /// (pipe architecture, S4): a render that requests encoded output has
+    /// no post-readback host encode, so GPU and CPU agree under the
+    /// standard budget.
+    #[test]
+    fn output_transfer_encode_pipe_tail_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.io.output_color_space = "sRGB".into();
+        params.io.output_cctf_encoding = true;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "output transfer mean divergence: {mean}");
+        assert!(
+            max_diff < 5e-1,
+            "output transfer max divergence: {max_diff}"
+        );
+    }
+
+    /// The decode half of the pipe-tail transfer: Procedural grain emits
+    /// encoded samples and the tail restores linear output when the caller
+    /// requested no encoding.
+    #[test]
+    fn output_transfer_decode_pipe_tail_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.io.output_color_space = "sRGB".into();
+        params.io.output_cctf_encoding = false;
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "transfer decode mean divergence: {mean}");
+        assert!(
+            max_diff < 5e-1,
+            "transfer decode max divergence: {max_diff}"
+        );
+    }
+
+    /// Post-readback host finishing must be a no-op once the output
+    /// transfer runs on the device (pipe architecture S4): with the
+    /// magazine appearance off, `apply_post_scan` returns the readback
+    /// samples untouched.
+    #[test]
+    fn resident_readback_has_no_host_tail_without_magazine() {
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let img = spektrafilm_math::image::ImageBuf::from_data(2, 2, vec![0.5_f32.into(); 12]);
+        let out = pipeline.apply_post_scan(img.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend);
+        assert_eq!(out.data, img.data);
     }
 }
