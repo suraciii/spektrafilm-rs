@@ -13,6 +13,7 @@ This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolp
 - **Preview and export interactively.** One session keeps Preview, full-resolution Scan, Save and the independent Export dialog together, with state save and restore. See [the GUI guide](docs/gui.md).
 - **Process in batch.** `spektrafilm` is the fast f32 processor and `spektrafilm-f64` is the CPU reference exporter; both keep floating samples in float TIFF/EXR, copy source EXIF/IPTC/XMP to non-EXR output, and write color tags or ICC profiles. See [the CLI guide](docs/cli.md).
 - **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye and Fotufilm Film are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).
+- **Run the original Fotufilm model.** Select the complete original CPU simulation independently of the adapted grain engine, with original stocks, controls and UInt64 seeds. Its arithmetic remains f32 in both host precision configurations. See [original Fotufilm simulation](docs/cli.md#original-fotufilm-simulation).
 - **Deliver LUTs for a camera.** Bake deterministic bundles for Panasonic V-Log with CUBE, 3DL, Hald, OCIO and QA artifacts. See [LUT delivery](docs/luts.md).
 - **Compare versions.** `spektrafilm-bench` renders immutable evidence from color, tone, FLIP, grain, halation and edge measurements and builds an offline review. See [the appearance benchmark](docs/benchmark.md).
 - **Decode camera RAW.** `decode_raw_gui` shares the native LibRaw and Lensfun path with the pipeline and writes linear ACES2065-1 TIFF. See [RAW decoding](docs/raw.md).
@@ -55,6 +56,7 @@ List the shipped films, papers and presets:
 
 ```bash
 ./target/release/spektrafilm list-profiles --data-dir data
+
 ./target/release/spektrafilm preset list --source all --format text
 ```
 

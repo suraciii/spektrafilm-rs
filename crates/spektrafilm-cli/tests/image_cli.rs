@@ -31,18 +31,20 @@ impl Fixture {
         Self(root)
     }
     fn run(&self, output: &str, extra: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command
             .arg("process")
             .arg(self.0.join("input.png"))
             .arg("--output")
-            .arg(self.0.join(output))
-            .args([
-                "--film",
-                "kodak_portra_400",
-                "--backend",
-                "cpu",
-                "--data-dir",
-            ])
+            .arg(self.0.join(output));
+        if !extra
+            .windows(2)
+            .any(|pair| pair == ["--engine", "fotufilm"])
+        {
+            command.args(["--film", "kodak_portra_400"]);
+        }
+        command
+            .args(["--backend", "cpu", "--data-dir"])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
             .args(extra)
             .env("RUST_LOG", "off")
@@ -103,6 +105,103 @@ fn raster_declaration_requires_supplied_components_without_publication() {
         std::fs::read(f.0.join("output.tif")).unwrap(),
         b"prior image"
     );
+}
+
+#[test]
+fn original_density_tap_preserves_geometry_and_unencoded_float_output() {
+    use spektrafilm_core::image_io;
+    let f = Fixture::new();
+    let result = f.run(
+        "density.tiff",
+        &[
+            "--engine",
+            "fotufilm",
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--seed",
+            "18446744073709551615",
+            "--set",
+            "taps.collect=cmy_film,settings.preview_mode=true,settings.preview_max_size=8",
+            "--raw-out",
+            f.0.join("density.raw").to_str().unwrap(),
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let loaded = image_io::load(&f.0.join("density.tiff")).unwrap();
+    assert_eq!((loaded.image.width, loaded.image.height), (32, 24));
+    let raw = std::fs::read(f.0.join("density.raw")).unwrap();
+    for (sample, bytes) in loaded.image.data.iter().zip(raw.as_chunks::<8>().0) {
+        assert_eq!(
+            spektrafilm_math::precision::to_f64(*sample),
+            f64::from_le_bytes(*bytes)
+        );
+    }
+    assert!(
+        loaded
+            .image
+            .data
+            .iter()
+            .all(|sample| sample.is_finite() && *sample >= 0.0)
+    );
+    let rejected = f.run(
+        "density.jpg",
+        &[
+            "--engine",
+            "fotufilm",
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--set",
+            "taps.collect=cmy_film",
+        ],
+    );
+    assert!(!rejected.status.success());
+    assert!(!f.0.join("density.jpg").exists());
+}
+
+#[test]
+fn original_rgb_input_tap_saves_in_declared_input_domain() {
+    use spektrafilm_core::image_io;
+    use spektrafilm_math::precision::to_f64;
+    let f = Fixture::new();
+    let result = f.run(
+        "passthrough.tiff",
+        &[
+            "--engine",
+            "fotufilm",
+            "--input-color-space",
+            "ProPhoto RGB",
+            "--input-cctf-decoding",
+            "false",
+            "--set",
+            "taps.collect=rgb_in",
+            "--saving-color-space",
+            "sRGB",
+            "--saving-cctf-encoding",
+            "false",
+            "--bit-depth",
+            "32",
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let source = image_io::load(&f.0.join("input.png")).unwrap().image;
+    let expected = image_io::convert_image(&source, "ProPhoto RGB", false, "sRGB", false).unwrap();
+    let actual = image_io::load(&f.0.join("passthrough.tiff")).unwrap().image;
+    assert_eq!((actual.width, actual.height), (32, 24));
+    for (actual, expected) in actual.data.iter().zip(&expected.data) {
+        assert!((to_f64(*actual) - to_f64(*expected)).abs() <= 1e-6);
+    }
 }
 
 #[test]
@@ -196,7 +295,6 @@ fn route_conflicts_and_dry_run_format_fail_before_rendering() {
     for args in [
         vec!["--route", "input > film > scan", "--scan-film"],
         vec!["--dry-run-format", "text"],
-        vec!["--seed", "4294967296"],
         vec!["--seed", "-1"],
         vec!["--seed", "0", "--seed", "42"],
     ] {
@@ -209,6 +307,21 @@ fn route_conflicts_and_dry_run_format_fail_before_rendering() {
         );
         assert!(!f.0.join("output.tif").exists());
     }
+    let result = f.run(
+        "output.tif",
+        &[
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--seed",
+            "4294967296",
+            "--dry-run",
+        ],
+    );
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("SpektraFilm --seed"));
+    assert!(!f.0.join("output.tif").exists());
     let result = f.run(
         "output.tif",
         &[

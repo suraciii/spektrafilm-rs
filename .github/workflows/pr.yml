@@ -94,7 +94,8 @@ jobs:
       - name: Configure native library paths
         run: |
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/libraw-022/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/libraw-022/lib" >> "$GITHUB_ENV"
+          echo "HALIDE_ROOT=$RUNNER_TEMP/halide-21" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/libraw-022/lib:$RUNNER_TEMP/halide-21/lib64" >> "$GITHUB_ENV"
       - name: Install native build dependencies
         run: |
           sudo apt-get update
@@ -124,6 +125,15 @@ jobs:
           ./configure --prefix="$RUNNER_TEMP/libraw-022" --disable-static --disable-examples
           make -j"$(nproc)"
           make install
+      - name: Cache pinned Halide 21
+        id: halide
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/halide-21
+          key: halide-21.0.0-b629c80-ubuntu-24.04-${{ runner.arch }}-v1
+      - name: Install pinned official Halide 21
+        if: steps.halide.outputs.cache-hit != 'true'
+        run: bash scripts/install_halide.sh "$RUNNER_TEMP/halide-21"
       - name: Install just
         uses: taiki-e/install-action@v2
         with:

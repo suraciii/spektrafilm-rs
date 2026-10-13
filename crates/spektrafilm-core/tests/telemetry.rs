@@ -61,6 +61,81 @@ fn report_round_trip_preserves_u64_above_json_float_precision() {
 }
 
 #[test]
+fn original_source_report_publishes_pinned_stock_and_cpu_stage_but_rejects_unpinned_stock() {
+    use spektrafilm_core::{params::RuntimeParams, telemetry::RenderConfiguration};
+    let mut params = RuntimeParams::default();
+    params.engine = spektrafilm_core::params::SimulationEngine::Fotufilm;
+    let mut report = collected_report();
+    report.configuration.render = Some(RenderConfiguration::from_fotufilm(&params));
+    report.stages[0].name = "fotufilm_source_cpu_binary32".into();
+    let encoded = report.to_json().unwrap();
+    let restored = Report::from_json(&encoded).unwrap();
+    assert_eq!(
+        restored
+            .configuration
+            .render
+            .as_ref()
+            .unwrap()
+            .film_stock
+            .as_ref()
+            .unwrap()
+            .as_str(),
+        "fotufilm:portra400"
+    );
+    params.fotufilm.stock = "private-user-stock".into();
+    report.configuration.render = Some(RenderConfiguration::from_fotufilm(&params));
+    assert!(report.to_json().is_err());
+}
+
+#[test]
+fn original_report_preserves_density_tap_and_texture_domains() {
+    use spektrafilm_core::{
+        params::{RuntimeParams, SimulationEngine},
+        telemetry::{ColorSpaceRole, RenderConfiguration},
+    };
+    let mut params = RuntimeParams::default();
+    params.engine = SimulationEngine::Fotufilm;
+    params
+        .fotufilm
+        .native
+        .insert("stage".into(), "negative".into());
+    let negative = RenderConfiguration::from_fotufilm(&params);
+    assert_eq!(negative.output_color_space, ColorSpaceRole::Custom);
+    assert!(!negative.output_transfer_encoded);
+    assert_eq!(
+        negative.source_configuration.unwrap()["output"],
+        "gross_cmy_record_density"
+    );
+    params.fotufilm.native.insert("stage".into(), "full".into());
+    params.taps.collect = Some("cmy_film".into());
+    let tapped = RenderConfiguration::from_fotufilm(&params);
+    assert_eq!(tapped.output_color_space, ColorSpaceRole::Custom);
+    assert!(!tapped.output_transfer_encoded);
+    params.taps.collect = Some("rgb_out".into());
+    params.taps.inject = Some("cmy_film".into());
+    params
+        .fotufilm
+        .native
+        .insert("stage".into(), "negative".into());
+    let printed = RenderConfiguration::from_fotufilm(&params);
+    assert_eq!(printed.output_color_space, ColorSpaceRole::Srgb);
+    assert!(printed.output_transfer_encoded);
+    let source = printed.source_configuration.unwrap();
+    assert_eq!(source["input"], "gross_cmy_record_density");
+    assert_eq!(source["output"], "linear_display_p3");
+    params.taps.inject = None;
+    params
+        .fotufilm
+        .native
+        .insert("stage".into(), "texture".into());
+    let texture = RenderConfiguration::from_fotufilm(&params);
+    assert_eq!(
+        texture.source_configuration.unwrap()["output"],
+        "linear_rec2020"
+    );
+}
+
+#[test]
 fn validator_rejects_nonfinite_and_missing_parent() {
     let mut report = collected_report();
     report.operation.duration = Some(f64::NAN);

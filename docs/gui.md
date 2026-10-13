@@ -16,6 +16,14 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 `SPEKTRAFILM_GUI_STATE` provides the same startup override. See [building and packaging](building.md) for the GUI build.
 
+## Original Fotufilm engine
+
+The **Simulation engine** selector chooses Fotufilm independently of the SpektraFilm grain selector. It loads original stock-specific controls, including Standard/Film grain, and exposes the remaining native options through a JSON editor. Preview executes the full source simulation before resizing RGB output; Scan and Export use the same model. Cold graph compilation and Film population preparation can delay the first render. Use a release build as described in [building](building.md).
+
+The selected UInt64 simulation seed and original request persist in saved GUI state. Fotufilm retains supported output and saving controls; SpektraFilm's Overall effect amount and OutputMix preset menu are unavailable for this engine.
+
+For native negative-stage or `cmy_film` output, the viewer shows a labeled transmission preview while retaining gross C/M/Y record densities. Save and Export require unencoded 32-bit TIFF or EXR, and output preserves source geometry. See [original CLI controls](cli.md#original-fotufilm-simulation) and the [film-chain contract](../specs/film-chain/spec.md#original-fotufilm-engine).
+
 ## Input and controls
 
 **Open…** loads standard images or camera RAW. RAW processing uses LibRaw. It exposes as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction. RAW enters the runtime as linear ACES2065-1. See [RAW input](raw.md) for white balance details.

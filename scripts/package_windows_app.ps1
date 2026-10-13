@@ -291,6 +291,19 @@ function Copy-NativeBundle([string]$Destination) {
             throw "Native prefix bin directory missing: $prefix"
         }
     }
+    if (-not $env:HALIDE_ROOT) { throw 'HALIDE_ROOT must name the official Halide 21 SDK' }
+    $halideDll = Join-Path $env:HALIDE_ROOT 'bin\Halide.dll'
+    if (-not (Test-Path -LiteralPath $halideDll)) { throw "Official Halide DLL missing: $halideDll" }
+    Copy-Item -LiteralPath $halideDll -Destination $Destination -Force
+    $bridgeRelease = if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { 'release' }
+    $bridgeDll = Join-Path (Join-Path $BuildTargetDir $bridgeRelease) 'spektrafilm-fotufilm.dll'
+    if (-not (Test-Path -LiteralPath $bridgeDll)) { throw "Built Fotufilm native C ABI DLL missing: $bridgeDll" }
+    Copy-Item -LiteralPath $bridgeDll -Destination $Destination -Force
+    if (-not $env:VCToolsRedistDir) { throw 'VCToolsRedistDir is required to distribute the MSVC runtime' }
+    $runtimeDlls = @(Get-ChildItem -LiteralPath (Join-Path $env:VCToolsRedistDir 'x64') -Recurse -Filter '*.dll' |
+        Where-Object { $_.Directory.Name -match '^Microsoft\.VC\d+\.CRT$' })
+    if (-not $runtimeDlls) { throw 'MSVC x64 redistributable DLLs missing' }
+    $runtimeDlls | Copy-Item -Destination $Destination -Force
     if (-not $LensfunDatabase) {
         $dataRoot = (& $pkgConfig --variable=datadir lensfun).Trim()
         $script:LensfunDatabase = Join-Path $dataRoot "lensfun\version_1"
@@ -312,6 +325,7 @@ function Copy-NativeBundle([string]$Destination) {
     }
     if (-not $lcmsFound) { throw "LittleCMS runtime DLL missing under $lcmsPrefix\bin" }
     Get-ChildItem -LiteralPath $Destination -Filter *.exe | ForEach-Object { $queue.Enqueue($_.FullName) }
+    Get-ChildItem -LiteralPath $Destination -Filter *.dll | ForEach-Object { $queue.Enqueue($_.FullName) }
     $seen = @{}
     while ($queue.Count -gt 0) {
         $binary = $queue.Dequeue()
@@ -323,6 +337,8 @@ function Copy-NativeBundle([string]$Destination) {
             if ($seen.ContainsKey($dll.ToLowerInvariant())) { continue }
             $seen[$dll.ToLowerInvariant()] = $true
             $source = $null
+            $bundled = Join-Path $Destination $dll
+            if (Test-Path -LiteralPath $bundled) { continue }
             foreach ($prefix in $nativePrefixes) {
                 $candidate = Join-Path (Join-Path $prefix "bin") $dll
                 if (Test-Path -LiteralPath $candidate) { $source = $candidate; break }
@@ -339,6 +355,21 @@ function Copy-NativeBundle([string]$Destination) {
     $licenses = Join-Path $Destination "licenses"
     $licenseRoot = Join-Path $licenses "native"
     New-Item -ItemType Directory -Force -Path $licenseRoot | Out-Null
+    $halideNotices = Join-Path $env:HALIDE_ROOT 'share\doc\Halide\LICENSE.txt'
+    if (-not (Test-Path -LiteralPath $halideNotices)) { throw 'Official Halide notices missing' }
+    New-Item -ItemType Directory -Force -Path (Join-Path $licenseRoot 'Halide') | Out-Null
+    Copy-Item -LiteralPath $halideNotices -Destination (Join-Path $licenseRoot 'Halide\LICENSE.txt')
+    $halideProvenance = Join-Path $env:HALIDE_ROOT 'Halide-provenance.txt'
+    if (Test-Path -LiteralPath $halideProvenance) { Copy-Item -LiteralPath $halideProvenance -Destination (Join-Path $licenseRoot 'Halide') }
+    $runtimeLicenses = @(Get-ChildItem -LiteralPath $env:VCToolsRedistDir -Recurse -File |
+        Where-Object { $_.Name -match '^(license|redist).*\.(txt|rtf)$' })
+    if (-not $runtimeLicenses) {
+        $runtimeLicenses = @(Get-ChildItem -LiteralPath $env:VCToolsInstallDir -Recurse -File |
+            Where-Object { $_.FullName -match 'redist' -and $_.Name -match '^(license|redist).*\.(txt|rtf)$' })
+    }
+    if (-not $runtimeLicenses) { throw 'MSVC redistributable license missing from the installed toolchain' }
+    New-Item -ItemType Directory -Force -Path (Join-Path $licenseRoot 'MSVC') | Out-Null
+    $runtimeLicenses | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $licenseRoot ("MSVC\" + $_.Name)) -Force }
     foreach ($prefix in $nativePrefixes) {
         $sourceRoot = Join-Path $prefix "share\licenses"
         if (-not (Test-Path -LiteralPath $sourceRoot)) { throw "Native license directory missing: $sourceRoot" }

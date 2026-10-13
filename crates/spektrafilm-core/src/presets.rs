@@ -507,12 +507,16 @@ impl Preset {
         let payload = extract_section(section, params)?;
         let mut captured = RuntimeParams::default();
         parameter_edits(&payload)?.apply(&mut captured)?;
-        provenance.scanner = Some(
-            serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(
-                &captured,
-            ))
-            .map_err(|e| e.to_string())?,
-        );
+        provenance.scanner = if section == Section::Fotufilm {
+            None
+        } else {
+            Some(
+                serde_json::to_value(crate::scan_receiver::ScannerProvenance::from_params(
+                    &captured,
+                ))
+                .map_err(|e| e.to_string())?,
+            )
+        };
         let preset = Self {
             schema_version: PRESET_SCHEMA_VERSION,
             name: name.into(),
@@ -526,6 +530,20 @@ impl Preset {
         preset.validate()?;
         Ok(preset)
     }
+    /// Validate source-engine preset controls using the original preparation producer.
+    pub fn apply_fotufilm_section(
+        &self,
+        current: &RuntimeParams,
+        data_dir: &Path,
+    ) -> Result<RuntimeParams, String> {
+        if self.kind()? != PresetKind::Section(Section::Fotufilm) {
+            return Err("expected a Fotufilm source preset".into());
+        }
+        let params = self.overlay_section(current)?;
+        params.validate()?;
+        spektrafilm_fotufilm::Session::new(data_dir, params.fotufilm.clone())?;
+        Ok(params)
+    }
     /// Returns a candidate validated against the current film and scan configuration.
     /// An unrelated edit may preserve an already-invalid scan configuration.
     pub fn apply_section(
@@ -535,6 +553,9 @@ impl Preset {
     ) -> Result<RuntimeParams, String> {
         let params = self.overlay_section(current)?;
         params.validate()?;
+        if params.engine == crate::params::SimulationEngine::Fotufilm {
+            return Ok(params);
+        }
         let scan_changed = params.scanner.scan_output != current.scanner.scan_output
             || params.scanner.white_correction != current.scanner.white_correction
             || params.scanner.black_correction != current.scanner.black_correction
@@ -554,6 +575,18 @@ impl Preset {
         let PresetParameters::Section(payload) = &self.parameters else {
             return Err("expected a section preset".into());
         };
+        if self.kind()? == PresetKind::Section(Section::Fotufilm) {
+            let mut params = current.clone();
+            if let Some(engine) = payload.get("engine") {
+                params.engine =
+                    serde_json::from_value(engine.clone()).map_err(|e| e.to_string())?;
+            }
+            if let Some(request) = payload.get("fotufilm") {
+                params.fotufilm =
+                    serde_json::from_value(request.clone()).map_err(|e| e.to_string())?;
+            }
+            return Ok(params);
+        }
         let edits = parameter_edits(payload)?;
         let mut params = current.clone();
         edits.apply(&mut params)?;
