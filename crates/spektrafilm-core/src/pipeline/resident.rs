@@ -73,9 +73,15 @@ impl Pipeline {
         // assembled fence on the film density buffer (pipe architecture,
         // capability class — see `density_cpu_stage` in `try_gpu_resident`).
         // An active Dye field is resolved on the CPU from the full developed
-        // film density; this decision is the capability authority for every
-        // resident entry point.
-        if crate::stages::grain_v3::active(&self.params) {
+        // film density. The identity-geometry case runs as an assembled fence
+        // on the film density buffer; the readout geometries the pipe cannot
+        // express and the env-gated certification readouts keep the
+        // whole-route CPU fallback (see `resident_fence_supported` in
+        // `stages::grain_v3`). This decision is the capability authority for
+        // every resident entry point.
+        if crate::stages::grain_v3::active(&self.params)
+            && !crate::stages::grain_v3::resident_fence_supported(&self.film, &self.params)
+        {
             reasons.push(ResidentFallbackReason::FilmGrainV3FieldCpu);
         }
         if crate::stages::grain_fotufilm::active(&self.params) {
@@ -496,35 +502,74 @@ impl Pipeline {
         } else {
             None
         };
-        // Spektra grain runs on the host as an assembled fence on the film
-        // density buffer: the resident chain keeps device residency for
-        // every other stage, transferring 2 + 2 × 1 times total.
-        let density_cpu_stage = if self.params.film_render.grain.active
-            && matches!(
-                self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::Spektra
-            ) {
-            let film = &self.film;
-            let grain = &self.params.film_render.grain;
-            let norm_curves = film_curves_norm;
-            let use_fast_stats = self.params.settings.use_fast_stats;
-            let random_seed = self.params.random_seed;
-            let seed_backend = backend;
-            let closure: CpuStageFn<'_> = Box::new(move |density| {
-                let observation = crate::stages::StageObservation::new(seed_backend, "grain_v1");
-                let observed = observation.backend(seed_backend);
-                Ok(crate::stages::filming::apply_spektra_grain(
-                    density.clone(),
-                    film,
-                    grain,
-                    norm_curves,
-                    use_fast_stats,
-                    random_seed,
-                    pixel_size_um,
-                    observed,
-                ))
-            });
-            Some(closure)
+        // Host grain runs as an assembled fence on the film density buffer:
+        // the resident chain keeps device residency for every other stage,
+        // transferring 2 + 2 × fence count times total. Spektra resolves its
+        // field from the normalized density; Dye reads the same buffer with
+        // the identity readout geometry, which the decision admits only when
+        // the requested geometry is the delivered raster
+        // (`stages::grain_v3::resident_fence_supported`).
+        let density_cpu_stage: Option<CpuStageFn<'_>> = if self.params.film_render.grain.active {
+            match self.params.film_render.grain.engine {
+                crate::params::grain::GrainEngine::Spektra => {
+                    let film = &self.film;
+                    let grain = &self.params.film_render.grain;
+                    let norm_curves = film_curves_norm;
+                    let use_fast_stats = self.params.settings.use_fast_stats;
+                    let random_seed = self.params.random_seed;
+                    let seed_backend = backend;
+                    let closure: CpuStageFn<'_> = Box::new(move |density| {
+                        let observation =
+                            crate::stages::StageObservation::new(seed_backend, "grain_v1");
+                        let observed = observation.backend(seed_backend);
+                        Ok(crate::stages::filming::apply_spektra_grain(
+                            density.clone(),
+                            film,
+                            grain,
+                            norm_curves,
+                            use_fast_stats,
+                            random_seed,
+                            pixel_size_um,
+                            observed,
+                        ))
+                    });
+                    Some(closure)
+                }
+                crate::params::grain::GrainEngine::Dye => {
+                    let film = &self.film;
+                    let params = &self.params;
+                    let seed_backend = backend;
+                    let source_pitch_um = pixel_size_um;
+                    let closure: CpuStageFn<'_> = Box::new(move |density| {
+                        // The field reads the density the chain developed on
+                        // the device, with the identity readout geometry: the
+                        // request resolves to the delivered raster, so the
+                        // fence writes the field back through the same buffer.
+                        // `readout` reports its own `grain_v3_field` CPU
+                        // observation with the published reason.
+                        let grid =
+                            crate::stages::grain_v3::geometry(density, params, source_pitch_um)?
+                                .grid();
+                        if grid.width != density.width || grid.height != density.height {
+                            return Err(format!(
+                                "film grain Dye: readout geometry {}x{} does not match the \
+                                 resident raster {}x{}",
+                                grid.width, grid.height, density.width, density.height
+                            ));
+                        }
+                        crate::stages::grain_v3::readout(
+                            density,
+                            film,
+                            params,
+                            source_pitch_um,
+                            grid,
+                            seed_backend,
+                        )
+                    });
+                    Some(closure)
+                }
+                _ => None,
+            }
         } else {
             None
         };
@@ -1620,6 +1665,88 @@ mod tests {
         assert!(max_diff < 5e-1, "fence max divergence: {max_diff}");
     }
 
+    /// Params for the Dye fence parity checks: the reference print route with
+    /// every optional device-heavy stage off, the Dye engine active, and a
+    /// small format so the readout pitch stays near the field's support and
+    /// the resolved grain stays visible.
+    fn dye_fence_params() -> RuntimeParams {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        params.io.scan_film = false;
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = false;
+        params.camera.auto_exposure = false;
+        params.camera.film_format_mm = 8.0;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.io.output_cctf_encoding = false;
+        params.film_render.grain.active = true;
+        params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
+        params.film_render.grain.v3_dye_support_um = 8.0;
+        params
+    }
+
+    /// The Dye field resolves on the CPU from the full developed density; the
+    /// resident chain runs it as the assembled density fence when the request
+    /// resolves to the delivered raster.
+    #[test]
+    fn dye_grain_density_fence_matches_cpu() {
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let params = dye_fence_params();
+        let pipeline =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params.clone(), &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let image = comparison_image(64);
+        let out_gpu = pipeline.process(image.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        assert_eq!(
+            (out_gpu.width, out_gpu.height),
+            (out_cpu.width, out_cpu.height)
+        );
+        let (mean, max_diff) = parity_metrics(&out_gpu, &out_cpu);
+        assert!(
+            mean < 5e-2 && max_diff < 5e-1,
+            "dye density fence: mean={mean:.6} max={max_diff:.6}"
+        );
+        assert_eq!(
+            observed_execution_path(&pipeline, image.clone(), &gpu),
+            spektrafilm_gpu::telemetry::ExecutionPath::GpuResident
+        );
+
+        // The field changes the image, and it is the Dye engine rather than
+        // the Procedural one: both must be visible.
+        let mut off = params.clone();
+        off.film_render.grain.active = false;
+        let baseline = Pipeline::new_with_spectral(film.clone(), print.clone(), off, &dir).unwrap();
+        let out_off = baseline
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let (effect, _) = parity_metrics(&out_cpu, &out_off);
+        assert!(effect > 1e-3, "dye field had no effect: mean={effect:.6}");
+
+        let mut procedural = params;
+        procedural.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
+        let other = Pipeline::new_with_spectral(film, print, procedural, &dir).unwrap();
+        let out_procedural = other
+            .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let (branch, _) = parity_metrics(&out_cpu, &out_procedural);
+        assert!(
+            branch > 1e-3,
+            "dye field matches procedural grain: mean={branch:.6}"
+        );
+    }
+
     /// Input transfer decoding no longer demotes to per-stage: the resident
     /// route decodes the input before upload with the same expression as
     /// `expose`, so a decoded-input render must match the CPU reference
@@ -1937,8 +2064,11 @@ mod tests {
         params.io.scan_film = true;
         params.camera.auto_exposure = false;
         params.io.output_gamut_compress.algorithm = "off".into();
-        // Capability gap: an active Dye field resolves on the CPU from the
-        // full developed density, with no resident readout.
+        // Capability gap: a cropped Dye request resolves its field on a
+        // readout region the resident chain's fixed-size density buffer
+        // cannot hold, so no resident fence exists for it.
+        params.io.crop = true;
+        params.io.crop_size = [0.5, 0.5];
         params.film_render.grain.active = true;
         params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
@@ -2229,17 +2359,24 @@ mod tests {
             ResidentDecision::UseResident
         ));
 
-        // Dye resolves its field on the CPU from the full developed density,
-        // so no resident entry point may run it.
+        // Dye resolves its field on the CPU from the full developed density.
+        // The delivered raster runs as the assembled density fence; a cropped
+        // request keeps the whole-route fallback.
         pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        pipeline.params.io.crop = true;
         let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("Dye grain must remain on the per-stage path");
+            panic!("a cropped Dye request must remain on the per-stage path");
         };
         assert!(
             reasons
                 .iter()
                 .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainV3FieldCpu))
         );
+        pipeline.params.io.crop = false;
         pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
         pipeline.params.film_render.grain.fotufilm.amount = 1.0;
         let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {

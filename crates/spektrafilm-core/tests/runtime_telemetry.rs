@@ -246,6 +246,71 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
 }
 
 #[test]
+fn active_v3_field_fence_reports_its_cpu_stage_reason() {
+    // The delivered raster (no crop, no upscale) runs the Dye field as the
+    // assembled density fence: the render stays on the resident chain, the
+    // field's CPU stage keeps its published reason, and the fence is not a
+    // resident decline.
+    let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+        eprintln!("no GPU adapter available; skipping");
+        return;
+    };
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let mut params = RuntimeParams::default();
+    params.camera.auto_exposure = false;
+    params.camera.film_format_mm = 36.0;
+    params.workflow.route = "input > film > scan".to_owned();
+    params.io.scan_film = true;
+    params.io.output_gamut_compress.algorithm = "off".into();
+    params.film_render.grain.engine = spektrafilm_core::params::GrainEngine::Dye;
+    params.film_render.grain.v3_dye_support_um = 8.0;
+    let runtime =
+        Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &data).unwrap();
+    let (width, height) = (32u32, 32u32);
+    let image = ImageBuf::from_data(
+        width,
+        height,
+        (0..(width * height * 3) as usize)
+            .map(|index| from_f64(0.05 + 0.9 * (index % 97) as f64 / 97.0))
+            .collect(),
+    );
+    let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);
+    operation.set_render_configuration(runtime.telemetry_configuration());
+    operation.set_input_dimensions(width, height);
+    let attempt = operation.attempt(1);
+    let simulation = attempt
+        .context()
+        .scope("simulation", ObservationKind::Phase, Purpose::Image);
+    let output = runtime
+        .process_observed(image, &gpu, simulation.context())
+        .unwrap();
+    drop(simulation);
+    attempt.finish(Outcome::Succeeded);
+    let report = operation.finish(Outcome::Succeeded).unwrap();
+    report.validate().unwrap();
+    let summary = report.summary();
+    assert_eq!(
+        summary.path,
+        Some(ExecutionPath::GpuResident),
+        "the Dye fence must keep the resident chain: {:?}",
+        summary.path
+    );
+    assert!(
+        summary
+            .cpu_stage_reasons
+            .contains(&("grain_v3_field".to_owned(), CpuReason::GrainV3FieldCpu)),
+        "Dye field stage missing from the report: {:?}",
+        summary.cpu_stage_reasons
+    );
+    assert!(
+        summary.resident_decline_reasons.is_empty(),
+        "the Dye fence must not decline the resident route: {:?}",
+        summary.resident_decline_reasons
+    );
+    assert_eq!((output.width, output.height), (width, height));
+}
+
+#[test]
 fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
     // The grain engine resolves on the CPU from the developed film density, so
     // a report must name the stage and the CPU reason that declined the

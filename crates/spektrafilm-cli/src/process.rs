@@ -629,26 +629,29 @@ fn cmd_process(
         spektrafilm_math::colorspace::resolve(saving_space)
             .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
     }
-    // Active Dye resolves its field on the CPU and never enters the resident
-    // WGPU chain, whatever backend the surrounding stages use. Its supported
-    // condition is validated here so the dry run reports and rejects exactly
-    // what a render does, and the effective backend is reported next to the
-    // selected one.
+    // Active Dye resolves its field on the CPU. When the request resolves to
+    // the delivered raster the field runs as the assembled density fence and
+    // the render stays on the selected backend; otherwise the whole route is
+    // the per-stage CPU path. Its supported condition is validated here so
+    // the dry run reports and rejects exactly what a render does, and the
+    // effective backend is reported next to the selected one.
     spektrafilm_core::stages::grain_v3::validate_supported(&film, &params)
         .map_err(anyhow::Error::msg)?;
     let grain_v3_active = spektrafilm_core::stages::grain_v3::active(&params);
+    let grain_v3_on_cpu = grain_v3_active
+        && !spektrafilm_core::stages::grain_v3::resident_fence_supported(&film, &params);
     if grain_v3_active {
         eprintln!(
             "Backend (effective): {}",
             spektrafilm_core::stages::grain_v3::effective_backend_note()
         );
     }
-    // An active Dye field resolves on the CPU whatever backend the rest of
-    // the chain uses, so the dry run reports the effective backend it did
-    // not select.
+    // Every active Dye field resolves on the CPU; only a request the fence
+    // cannot express (a crop or upscale, or the env-gated certification
+    // readouts) moves the whole route to the per-stage CPU path.
     let grain_v3 = json!({
         "active": grain_v3_active,
-        "effective_backend": if grain_v3_active { Some("cpu") } else { None },
+        "effective_backend": if grain_v3_on_cpu { Some("cpu") } else { None },
         "note": if grain_v3_active {
             Some(spektrafilm_core::stages::grain_v3::effective_backend_note())
         } else {

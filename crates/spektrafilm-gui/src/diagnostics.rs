@@ -136,8 +136,9 @@ impl Diagnostics {
 }
 
 /// Effective backend label for Scan and Export reports. An active Dye field
-/// resolves on the CPU and never enters the resident chain, so the selected
-/// backend name alone would misreport the executed path.
+/// resolves on the CPU — inside the assembled density fence on the resident
+/// route, or as the per-stage readout — so the selected backend name alone
+/// would understate where the grain runs.
 pub(crate) fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
     if spektrafilm_core::stages::grain_v3::active(params) {
         format!("{selected} · grain Dye on CPU")
