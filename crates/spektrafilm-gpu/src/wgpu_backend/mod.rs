@@ -383,10 +383,51 @@ impl ComputeBackend for WgpuBackend {
             None
         };
         if let Some(s) = &scope {
-            s.context()
-                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+            s.context().record_executor(Executor::Gpu, None);
         }
-        cpu_backend::CpuBackend.colorspace_convert(img, matrix)
+        let n_pixels = img.pixel_count() as u32;
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            m00: f32,
+            m01: f32,
+            m02: f32,
+            m10: f32,
+            m11: f32,
+            m12: f32,
+            m20: f32,
+            m21: f32,
+            m22: f32,
+        }
+        let params = Params {
+            width: img.width,
+            height: img.height,
+            m00: matrix[0][0],
+            m01: matrix[0][1],
+            m02: matrix[0][2],
+            m10: matrix[1][0],
+            m11: matrix[1][1],
+            m12: matrix[1][2],
+            m20: matrix[2][0],
+            m21: matrix[2][1],
+            m22: matrix[2][2],
+        };
+        let input_f32 = scalars_to_f32(&img.data);
+        let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
+        let result = self.dispatch_compute(
+            include_str!("../../../spektrafilm-shaders/wgsl/colorspace_convert.wgsl"),
+            &[
+                GpuBuffer::uniform(bytemuck::bytes_of(&params)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(&input_f32)),
+                GpuBuffer::storage_rw(&output_bytes),
+            ],
+            n_pixels,
+            2,
+            "colorspace_convert",
+        );
+        ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn cctf_encode_srgb(&self, img: &ImageBuf) -> ImageBuf {
         let scope = if self.device.context.enabled() {
@@ -399,10 +440,38 @@ impl ComputeBackend for WgpuBackend {
             None
         };
         if let Some(s) = &scope {
-            s.context()
-                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+            s.context().record_executor(Executor::Gpu, None);
         }
-        cpu_backend::CpuBackend.cctf_encode_srgb(img)
+        let n_pixels = img.pixel_count() as u32;
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            mode: u32,
+            #[allow(dead_code)]
+            pad: u32,
+        }
+        let params = Params {
+            width: img.width,
+            height: img.height,
+            mode: 0,
+            pad: 0,
+        };
+        let input_f32 = scalars_to_f32(&img.data);
+        let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
+        let result = self.dispatch_compute(
+            include_str!("../../../spektrafilm-shaders/wgsl/cctf_srgb.wgsl"),
+            &[
+                GpuBuffer::uniform(bytemuck::bytes_of(&params)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(&input_f32)),
+                GpuBuffer::storage_rw(&output_bytes),
+            ],
+            n_pixels,
+            2,
+            "cctf_encode_srgb",
+        );
+        ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn cctf_decode_srgb(&self, img: &ImageBuf) -> ImageBuf {
         let scope = if self.device.context.enabled() {
@@ -415,10 +484,38 @@ impl ComputeBackend for WgpuBackend {
             None
         };
         if let Some(s) = &scope {
-            s.context()
-                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+            s.context().record_executor(Executor::Gpu, None);
         }
-        cpu_backend::CpuBackend.cctf_decode_srgb(img)
+        let n_pixels = img.pixel_count() as u32;
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            mode: u32,
+            #[allow(dead_code)]
+            pad: u32,
+        }
+        let params = Params {
+            width: img.width,
+            height: img.height,
+            mode: 1,
+            pad: 0,
+        };
+        let input_f32 = scalars_to_f32(&img.data);
+        let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
+        let result = self.dispatch_compute(
+            include_str!("../../../spektrafilm-shaders/wgsl/cctf_srgb.wgsl"),
+            &[
+                GpuBuffer::uniform(bytemuck::bytes_of(&params)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(&input_f32)),
+                GpuBuffer::storage_rw(&output_bytes),
+            ],
+            n_pixels,
+            2,
+            "cctf_decode_srgb",
+        );
+        ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
         Some(self.grain_v2_gpu(img, params))
@@ -474,10 +571,42 @@ impl ComputeBackend for WgpuBackend {
             None
         };
         if let Some(s) = &scope {
-            s.context()
-                .record_executor(Executor::Cpu, Some(CpuReason::BackendDefault));
+            s.context().record_executor(Executor::Gpu, None);
         }
-        cpu_backend::CpuBackend.table_lookup(img, table_x, table_y)
+        let n_pixels = img.pixel_count() as u32;
+        let k = table_x.len() as u32;
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            table_len: u32,
+            #[allow(dead_code)]
+            pad: u32,
+        }
+        let params = Params {
+            width: img.width,
+            height: img.height,
+            table_len: k,
+            pad: 0,
+        };
+        let table_y_f32: Vec<f32> = table_y.iter().flat_map(|r| r.iter().copied()).collect();
+        let input_f32 = scalars_to_f32(&img.data);
+        let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
+        let result = self.dispatch_compute(
+            include_str!("../../../spektrafilm-shaders/wgsl/table_lookup.wgsl"),
+            &[
+                GpuBuffer::uniform(bytemuck::bytes_of(&params)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(&input_f32)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(table_x)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(&table_y_f32)),
+                GpuBuffer::storage_rw(&output_bytes),
+            ],
+            n_pixels,
+            4,
+            "table_lookup",
+        );
+        ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
     fn lut3d_interp(&self, img: &ImageBuf, lut: &Lut3D) -> ImageBuf {
         let scope = if self.device.context.enabled() {
@@ -490,10 +619,39 @@ impl ComputeBackend for WgpuBackend {
             None
         };
         if let Some(s) = &scope {
-            s.context()
-                .record_executor(Executor::Cpu, Some(CpuReason::SpectralLut));
+            s.context().record_executor(Executor::Gpu, None);
         }
-        cpu_backend::CpuBackend.lut3d_interp(img, lut)
+        let n_pixels = img.pixel_count() as u32;
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            size: u32,
+            #[allow(dead_code)]
+            pad: u32,
+        }
+        let params = Params {
+            width: img.width,
+            height: img.height,
+            size: lut.size,
+            pad: 0,
+        };
+        let input_f32 = scalars_to_f32(&img.data);
+        let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
+        let result = self.dispatch_compute(
+            include_str!("../../../spektrafilm-shaders/wgsl/lut3d_interp.wgsl"),
+            &[
+                GpuBuffer::uniform(bytemuck::bytes_of(&params)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(&input_f32)),
+                GpuBuffer::storage_ro(bytemuck::cast_slice(&lut.data)),
+                GpuBuffer::storage_rw(&output_bytes),
+            ],
+            n_pixels,
+            3,
+            "lut3d_interp",
+        );
+        ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
 
     fn scan_spectral(
