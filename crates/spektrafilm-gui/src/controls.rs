@@ -80,8 +80,8 @@ pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medi
     if !film_medium.positive_output_eligible(&params.workflow.route) {
         params.scanner.scan_output = "direct_scan".into();
     }
-    if params.scanner.scan_output != "positive_scan" {
-        params.scanner.positive_interpretation = PositiveInterpretation::Separable;
+    if params.scanner.scan_output != "negative_to_positive" {
+        params.scanner.positive_interpretation = PositiveInterpretation::default();
         params.scanner.auto_setup = ScannerAutoSetup::Off;
         params.scanner.finish = ScannerFinish::Neutral;
     }
@@ -157,25 +157,30 @@ pub(crate) fn show(
                         (ReceiverProfile::LabScanApprox, "lab scan (approximate)"),
                     ], "Receiver response for film acquisition. Lab scan uses an approximate, uncalibrated receiver.");
                 }
-                if positive_route && choice_tip(
+                if positive_route && choice_tip_entries(
                     ui,
                     "scan output",
                     &mut params.scanner.scan_output,
-                    &["direct_scan", "positive_scan"],
-                    "direct_scan preserves the scanner capture; positive_scan applies calibrated density interpretation and print-like tone. Selecting positive_scan turns off white and black capture correction.",
+                    [
+                        ("direct_scan", "Preserve medium polarity"),
+                        ("negative_to_positive", "Negative to positive"),
+                    ]
+                    .into_iter(),
+                    "Preserve medium polarity retains the medium's native scan polarity. Negative to positive applies calibrated negative conversion and turns off white and black capture correction.",
                 ) {
-                    if params.scanner.scan_output == "positive_scan" {
+                    if params.scanner.scan_output == "negative_to_positive" {
                         params.scanner.white_correction = false;
                         params.scanner.black_correction = false;
                     }
                     flags.runtime_changed = true;
                     normalize_scanner_selections(params, film_medium);
                 }
-                if positive_route && params.scanner.scan_output == "positive_scan" {
-                    flags.runtime_changed |= enum_choice(ui, "positive interpretation", &mut params.scanner.positive_interpretation, &[
+                if positive_route && params.scanner.scan_output == "negative_to_positive" {
+                    flags.runtime_changed |= enum_choice(ui, "Negative conversion method", &mut params.scanner.positive_interpretation, &[
+                        (PositiveInterpretation::Density, "density"),
                         (PositiveInterpretation::Separable, "separable"),
                         (PositiveInterpretation::Coupled, "coupled"),
-                    ], "Method used to recover positive color from the receiver capture.");
+                    ], "Negative conversion method: density reads the film's own record densities without a receiver capture; separable and coupled interpret the receiver capture.");
                     flags.runtime_changed |= enum_choice(ui, "scanner auto setup", &mut params.scanner.auto_setup, &[
                         (ScannerAutoSetup::Off, "off"),
                         (ScannerAutoSetup::PerFrame, "per_frame"),
@@ -183,17 +188,17 @@ pub(crate) fn show(
                     flags.runtime_changed |= enum_choice(ui, "scanner finish", &mut params.scanner.finish, &[
                         (ScannerFinish::Neutral, "neutral"),
                         (ScannerFinish::LabScan, "lab_scan"),
-                    ], "Optional scanner finish after positive interpretation.");
+                    ], "Optional scanner finish after negative conversion.");
                     if params.scanner.finish == ScannerFinish::LabScan {
                         flags.runtime_changed |= numeric(ui, "finish strength", &mut params.scanner.finish_strength, 0.0, 1.0, 0.01, 3, "Scanner finish strength. Zero returns the calibrated scan before finishing.");
                     }
-                    flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Positive scan brightness offset in stops.");
-                    flags.runtime_changed |= tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, -16.0, 16.0, 0.05, 3, "Independent red, green, and blue positive scan exposure offsets in stops.");
-                    flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Positive scan logistic contrast; strictly positive.");
-                    flags.runtime_changed |= numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, 0.0001, 16.0, 0.02, 3, "Positive scan maximum density; strictly positive.");
+                    flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Negative conversion brightness offset in stops.");
+                    flags.runtime_changed |= tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, -16.0, 16.0, 0.05, 3, "Independent red, green, and blue negative conversion exposure offsets in stops.");
+                    flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Negative conversion logistic contrast; strictly positive.");
+                    flags.runtime_changed |= numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, 0.0001, 16.0, 0.02, 3, "Negative conversion maximum density; strictly positive.");
                 }
                 if medium == ScanMedium::Slide
-                    || (positive_route && params.scanner.scan_output == "positive_scan")
+                    || (positive_route && params.scanner.scan_output == "negative_to_positive")
                 {
                     flags.runtime_changed |= scan_points(ui, &mut params.scanner.black_point, &mut params.scanner.white_point);
                 }
@@ -640,7 +645,15 @@ fn tuple<T: egui::emath::Numeric, const N: usize>(
                 .iter_mut()
                 .enumerate()
                 .map(|(index, value)| {
-                    numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip)
+                    let changed =
+                        numeric_field(ui, (label, index), value, min, max, step, decimals, tooltip);
+                    let id = ui.make_persistent_id(("numeric-field", (label, index)));
+                    // Build the indexed name only when accessibility is requested, not in
+                    // the ordinary per-frame widget path. The visible group stays unchanged.
+                    ui.ctx().accesskit_node_builder(id, |node| {
+                        node.set_label(format!("{label} {index}"));
+                    });
+                    changed
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })
@@ -699,7 +712,7 @@ fn point_tuple(
                 .iter_mut()
                 .enumerate()
                 .map(|(channel, value)| {
-                    crate::numeric::numeric_field_validated(
+                    let changed = crate::numeric::numeric_field_validated(
                         ui,
                         (label, channel),
                         value,
@@ -715,7 +728,12 @@ fn point_tuple(
                                 next > other[channel]
                             }
                         },
-                    )
+                    );
+                    let id = ui.make_persistent_id(("numeric-field", (label, channel)));
+                    ui.ctx().accesskit_node_builder(id, |node| {
+                        node.set_label(format!("{label} {channel}"));
+                    });
+                    changed
                 })
                 .fold(false, |changed, field_changed| changed | field_changed)
         })
@@ -898,6 +916,10 @@ fn set_extra(extras: &mut Value, section: &str, key: &str, value: Value) {
 }
 
 #[cfg(test)]
+#[path = "controls_acceptance.rs"]
+mod acceptance;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -949,7 +971,7 @@ mod tests {
             let mut params = RuntimeParams::default();
             params.workflow.route = route.into();
             params.scanner.scan_output = if positive {
-                "positive_scan"
+                "negative_to_positive"
             } else {
                 "direct_scan"
             }
@@ -966,7 +988,7 @@ mod tests {
                 "{route}"
             );
             for label in [
-                "positive interpretation",
+                "Negative conversion method",
                 "scanner auto setup",
                 "scanner finish",
                 "finish strength",
@@ -991,9 +1013,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         for (selected, next) in [
             ("legacy colorimetric", "lab scan (approximate)"),
+            ("density", "separable"),
             ("separable", "coupled"),
             ("off", "per_frame"),
             ("neutral", "lab_scan"),
@@ -1058,7 +1081,7 @@ mod tests {
         );
         assert_eq!(
             params.scanner.positive_interpretation,
-            PositiveInterpretation::Separable
+            PositiveInterpretation::Density
         );
         assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Off);
         assert_eq!(params.scanner.finish, ScannerFinish::Neutral);

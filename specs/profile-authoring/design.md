@@ -1,8 +1,8 @@
-# Profile authoring design
+# Profile fitting design
 
 ## Boundaries
 
-Profile fitting lives in `spektrafilm-core::fit` and is gated on the `precision-f64` feature. The CLI subcommand lives in the lab binary and contains argument parsing, file loading, and file writing only.
+Profile fitting lives in `spektrafilm-core::fit` and is gated on the `precision-f64` feature. The CLI subcommand lives in the f64 binary and contains argument parsing, file loading, and file writing only.
 
 The module owns: the chart layout and patch tables, chart image assembly and patch sampling, the objective, the optimizer, the metrics, the report, and the forward evaluation over the calibrated pipeline.
 
@@ -32,13 +32,13 @@ One evaluation renders the assembled chart image through a calibrated runtime an
 The optimizer is a bounded least-squares solver over the residual vector of the objective.
 
 - Finite-difference Jacobian, forward differences, step `0.05` for surface coefficients and `0.01` for tone coefficients.
-- Trust-region behavior over a bounded parameter box: surface coefficients in `[-40, 40]`, `conversion_brightness_ev` in `[-4, 4]`, `conversion_balance_ev` entries in `[-2, 2]`.
+- Trust-region behavior over a bounded parameter box: surface coefficients in `[-40, 40]`, `positive_density_ev` in `[-4, 4]`, `positive_balance_ev` entries in `[-2, 2]`.
 - At most 15 accepted parameter vectors; the iteration count is the number of accepted vectors. The command must report the iteration and evaluation counts.
 - Finite differences are independent and may run in parallel on the rayon pool. Parallelism must not change the result.
 
 ## Tone gauge
 
-The negative-conversion offset of every channel is `conversion_brightness_ev + conversion_balance_ev[channel]`. A common offset added to `conversion_brightness_ev` and subtracted from every `conversion_balance_ev` channel therefore leaves the scan unchanged, and the four tone values are redundant by one degree of freedom. A tone fit pins `conversion_balance_ev[1]` to its resolved value, so the fitted tone is the unique representative of its equivalence class, and records the pinned channel and value in the report.
+The negative-conversion offset of every channel is `positive_density_ev + positive_balance_ev[channel]`. A common offset added to `positive_density_ev` and subtracted from every `positive_balance_ev` channel therefore leaves the scan unchanged, and the four tone values are redundant by one degree of freedom. A tone fit pins `positive_balance_ev[1]` to its resolved value, so the fitted tone is the unique representative of its equivalence class, and records the pinned channel and value in the report.
 
 ## Cross validation
 
@@ -57,7 +57,7 @@ The chain must be deterministic for a fixed candidate vector: halation and grain
 ## Failure handling
 
 - Input parsing and validation failures carry the file path and the failing field.
-- A film profile with no `hanatos2025_adaptation_surface_params` fails the `surface` group, because the group's fitted values have nowhere to be written. A profile that carries the field is fittable whether or not the look currently applies the surface.
+- A missing `hanatos2025_adaptation_surface_params` field on the film profile fails the `surface` group before the first evaluation.
 - A chain configuration whose output is not the converted negative image fails validation once, before the first evaluation, reusing the existing route and scan-output validation.
 - The command writes no output file unless the fit completes.
 

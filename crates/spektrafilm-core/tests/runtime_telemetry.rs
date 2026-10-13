@@ -16,7 +16,7 @@ fn telemetry_scanner_configuration_roundtrips_actual_approximate_selection() {
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
     params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-    params.scanner.scan_output = "positive_scan".into();
+    params.scanner.scan_output = "negative_to_positive".into();
     params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
     params.scanner.finish_strength = 0.5;
     let runtime =
@@ -27,6 +27,10 @@ fn telemetry_scanner_configuration_roundtrips_actual_approximate_selection() {
     let decoded =
         spektrafilm_core::telemetry::Report::from_json(&report.to_json().unwrap()).unwrap();
     let actual = decoded.configuration.render.unwrap();
+    assert_eq!(
+        serde_json::to_value(actual.scan_output).unwrap(),
+        "negative_to_positive"
+    );
     assert_eq!(actual.receiver.profile, "lab_scan_approx");
     assert_eq!(
         actual.receiver.calibration_status,
@@ -105,13 +109,13 @@ fn concurrent_runtime_calls_preserve_pixels_and_operation_ownership() {
 }
 
 #[test]
-fn positive_scan_cpu_override_preserves_stage_reports() {
+fn negative_to_positive_cpu_override_preserves_stage_reports() {
     use spektrafilm_gpu::telemetry::{BackendSelected, Executor, ResidentDeclineReason};
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
     params.io.scan_film = true;
-    params.scanner.scan_output = "positive_scan".into();
+    params.scanner.scan_output = "negative_to_positive".into();
     params.camera.auto_exposure = false;
     params.debug.deactivate_spatial_effects = true;
     params.debug.deactivate_stochastic_effects = true;
@@ -157,16 +161,16 @@ fn positive_scan_cpu_override_preserves_stage_reports() {
             report
                 .execution
                 .resident_decline_reasons
-                .contains(&ResidentDeclineReason::PositiveScanOutput),
+                .contains(&ResidentDeclineReason::NegativeToPositiveOutput),
             backend.is_gpu()
         );
         assert!(
             report
                 .stages
                 .iter()
-                .any(|stage| stage.name == "positive_scan"
+                .any(|stage| stage.name == "negative_to_positive"
                     && stage.executor == Some(Executor::Cpu)
-                    && stage.cpu_reason == Some(CpuReason::PositiveScanOutput))
+                    && stage.cpu_reason == Some(CpuReason::NegativeToPositiveOutput))
         );
         assert!(
             report
@@ -187,7 +191,7 @@ fn active_v3_field_reports_its_cpu_stage_reason() {
     params.camera.auto_exposure = false;
     params.camera.film_format_mm = 36.0;
     params.workflow.route = "input > film > scan".to_owned();
-    params.scanner.scan_output = "positive_scan".to_owned();
+    params.scanner.scan_output = "negative_to_positive".to_owned();
     params.io.scan_film = true;
     params.io.crop = true;
     params.io.crop_size = [0.02, 0.02];
@@ -239,7 +243,7 @@ fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
     params.camera.auto_exposure = false;
     params.camera.film_format_mm = 36.0;
     params.workflow.route = "input > film > scan".to_owned();
-    params.scanner.scan_output = "positive_scan".to_owned();
+    params.scanner.scan_output = "negative_to_positive".to_owned();
     params.io.scan_film = true;
     params.io.crop = true;
     params.io.crop_size = [0.02, 0.02];

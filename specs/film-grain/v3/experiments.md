@@ -10,7 +10,7 @@ For active Grain Dye, `SPEKTRAFILM_GRAIN_V3_CELL_SPECTRAL=1` requests linear spe
 
 Exactness refers to the piecewise-constant formed field. It does not recover within-cell variations. Field refinement must be assessed separately from output-footprint refinement.
 
-The initial reader supports color-negative print exposure and direct film capture, including positive scan interpretation after integration. Print collection may stop at `log_e_print`, `cmy_print` or `rgb_out`; film scanning collects `rgb_out`. Injection must occur at or before `log_e_film`. Density-only collection at `cmy_film` is rejected for an optical request.
+The initial reader supports color-negative print exposure and direct film capture, including negative conversion after integration. Print collection may stop at `log_e_print`, `cmy_print` or `rgb_out`; film scanning collects `rgb_out`. Injection must occur at or before `log_e_film`. Density-only collection at `cmy_film` is rejected for an optical request.
 
 The reader rejects simultaneous supersampling (`SPEKTRAFILM_GRAIN_V3_APERTURE_FACTOR`), enlarger/scanner LUTs, scanner luminance remap, spatial optics, scanner point/white/black corrections, and magazine finishing. Rejections occur before field allocation. Zero spatial optics is an explicit experiment limit, not evidence for the production routes with optical filtering.
 

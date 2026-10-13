@@ -490,7 +490,7 @@ impl App {
         {
             self.load_image_from_path(&path);
         }
-        if section == "Scanner" && self.params.scanner.scan_output == "positive_scan" {
+        if section == "Scanner" && self.params.scanner.scan_output == "negative_to_positive" {
             match self.params.scanner.auto_setup {
                 ScannerAutoSetup::Off => {
                     ui.label("Scanner setup: disabled");

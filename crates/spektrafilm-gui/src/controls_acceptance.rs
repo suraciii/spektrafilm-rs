@@ -4,7 +4,7 @@ use spektrafilm_core::params::RuntimeParams;
 fn scanner_params() -> RuntimeParams {
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
-    params.scanner.scan_output = "positive_scan".into();
+    params.scanner.scan_output = "negative_to_positive".into();
     params.scanner.positive_density_ev = 0.0;
     params
 }

@@ -795,7 +795,7 @@ mod tests {
         let mut look = builtin_presets().remove(0);
         look.name = "Missing profile".into();
         look.film_profile.as_mut().unwrap().stock = "missing_profile".into();
-        let section = Preset::from_json_str(r#"{"schema_version":2,"name":"Incompatible scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
+        let section = Preset::from_json_str(r#"{"schema_version":2,"name":"Incompatible scan","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
         std::fs::create_dir_all(directory.join("presets")).unwrap();
         for preset in [look, section] {
             std::fs::write(
@@ -984,7 +984,7 @@ mod tests {
         app.params.scanner.black_point = [0.1, 0.2, 0.3];
         app.params.scanner.white_point = [0.7, 0.8, 0.9];
         app.params.workflow.route = "input > film > scan".into();
-        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
         app.params.scanner.positive_interpretation =
@@ -1016,7 +1016,7 @@ mod tests {
         assert_eq!(app.parameter_revision, revision.wrapping_add(1));
         app.params.workflow.route = "input > convert-film > scan".into();
         app.finish_route_change();
-        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.white_correction = false;
         app.params.scanner.black_correction = false;
         let revision = app.parameter_revision;
@@ -1061,7 +1061,7 @@ mod tests {
         let (app, directory) = test_app("slide-startup");
         let mut params = app.params.clone();
         params.workflow.route = "input > film > scan".into();
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.white_correction = false;
         params.scanner.black_correction = false;
         params.scanner.black_point = [0.1, 0.2, 0.3];
@@ -1098,7 +1098,7 @@ mod tests {
         let (mut app, directory) = test_app("scanner-points");
         app.params.workflow.route = "input > film > scan".into();
         app.finish_route_change();
-        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
         app.params.scanner.positive_interpretation =
@@ -1111,6 +1111,10 @@ mod tests {
         let preset =
             Preset::capture_section("Film points", Section::Scanner, &app.params, provenance())
                 .unwrap();
+        assert_eq!(
+            serde_json::to_value(&preset).unwrap()["parameters"]["scanner"]["scan_output"],
+            "negative_to_positive"
+        );
         app.presets
             .library
             .save_new(&preset, &app.data_dir)
@@ -1131,8 +1135,10 @@ mod tests {
             spektrafilm_core::params::PositiveInterpretation::Separable;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::Neutral;
         app.params.scanner.finish_strength = 1.0;
+        app.params.scanner.scan_output = "direct_scan".into();
         app.load_preset(entry.group, &entry.name);
         assert!(app.status.starts_with("Applied preset"), "{}", app.status);
+        assert_eq!(app.params.scanner.scan_output, "negative_to_positive");
         assert_eq!(
             app.params.scanner.receiver_profile,
             spektrafilm_core::params::ReceiverProfile::LabScanApprox
@@ -1159,6 +1165,7 @@ mod tests {
             None,
             directory.join("preset_browser_state.json"),
         );
+        assert_eq!(restarted.params.scanner.scan_output, "negative_to_positive");
         assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
         assert_eq!(restarted.params.scanner.white_point, [0.7, 0.8, 0.9]);
         assert_eq!(

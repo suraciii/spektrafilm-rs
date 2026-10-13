@@ -442,8 +442,14 @@ fn load_baseline(path: Option<&Path>) -> Result<RuntimeParams, String> {
         Some(path) => {
             let file = std::fs::File::open(path)
                 .map_err(|e| format!("opening params file {}: {e}", path.display()))?;
-            serde_json::from_reader(std::io::BufReader::new(file))
-                .map_err(|e| format!("parsing params file {}: {e}", path.display()))
+            let params: RuntimeParams = serde_json::from_reader(std::io::BufReader::new(file))
+                .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
+            crate::params::validation::validate_enum_value(
+                "scanner.scan_output",
+                &params.scanner.scan_output,
+            )
+            .map_err(|e| format!("params file {}: {e}", path.display()))?;
+            Ok(params)
         }
         None => Ok(RuntimeParams::default()),
     }

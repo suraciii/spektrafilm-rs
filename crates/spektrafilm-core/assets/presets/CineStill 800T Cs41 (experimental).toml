@@ -1,7 +1,7 @@
 schema_version = 2
 name = "CineStill 800T Cs41 (experimental)"
 author = "SpektraFilm"
-description = "Experimental Cs41 negative curve fit with borrowed Vision3 spectra, verified before printing. Halation and Grain V3 controls are fitted to public lab scans of CineStill 800T (PhotonFolly): halation radial profile around lamps; grain RMS level, channel ratio and tonal trend on tone-matched flat windows. Neither is a measured CineStill PSF or granularity. Grain is off by default because these V3 controls are fitted at the 36 mm reference film format; enable it there. Neutral input means white lit by the film's tungsten reference (T, about 2800 K): balance inputs to that light (RAW: custom 2812 K), not as-shot. Highlight boost is disabled. Optional Portra Endura settings balance synthetic midgray; they do not calibrate the film. Select workflow separately."
+description = "Experimental Cs41 negative curve fit with borrowed Vision3 spectra, verified before printing. The Cs41 curves are anchored to the chart's 3200 K tungsten exposure light, so a 3200 K-lit gray renders neutral. Halation and Grain V3 controls are fitted to public lab scans of CineStill 800T (PhotonFolly): halation radial profile around lamps; grain RMS level, channel ratio and tonal trend on tone-matched flat windows. Neither is a measured CineStill PSF or granularity. Grain is off by default because these V3 controls are fitted at the 36 mm reference film format; enable it there. Input white is interpreted as lit by the profile reference T (about 2800 K): balance RAW to custom 2812 K, not as-shot, so scene light keeps its colour relative to the film. Negative-conversion tone is fitted to two real 800T lab scans with linear scene references (a 9-step chart gray row and a RAW-input frame) and neutralizes 3200 K; it assumes scene-linear input. Highlight boost is disabled. Optional Portra Endura settings balance synthetic midgray; they do not calibrate the film. Select workflow separately."
 
 [film_profile]
 stock = "cinestill_800t_cs41_approx"
@@ -10,6 +10,11 @@ version = "0.3.4"
 [print_profile]
 stock = "kodak_portra_endura"
 version = "0.3.4"
+
+[parameters.settings]
+# TE226-fitted adaptation surface (data-l1-notone): smooth per-chromaticity log-exposure
+# correction of the spectral reconstruction, fitted against a real 800T lab scan.
+apply_hanatos2025_adaptation_surface = true
 
 [parameters.enlarger]
 illuminant = "TH-KG3"
@@ -50,10 +55,10 @@ unsharp_mask = [
     0.0,
     0.0,
 ]
-positive_density_ev = 0.8781766618
-positive_balance_ev = [-0.5476896833, 0.0, 0.1039080055]
-positive_contrast = 0.73551400058216643
-positive_dmax = 1.5625841465572565
+positive_density_ev = 0.9667912653
+positive_balance_ev = [0.1878, 0.0, -0.3048]
+positive_contrast = 0.976
+positive_dmax = 1.986
 
 [parameters.film_render]
 density_curve_gamma = 1.0

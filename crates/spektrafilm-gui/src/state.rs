@@ -144,6 +144,14 @@ impl GuiState {
         if !value.is_object() {
             bail!("GUI state must be a JSON object");
         }
+        for scanner in [&value["scanner"], &value["rust"]["runtime"]["scanner"]] {
+            if let Some(selection) = scanner.get("scan_output") {
+                spektrafilm_core::params::sources::ParameterEdits::parse(&format!(
+                    "scanner.scan_output={selection}"
+                ))
+                .map_err(anyhow::Error::msg)?;
+            }
+        }
         let mut state = Self::factory();
         let mut normalized = value.clone();
         normalized["input_image"] = flatten(&value["input_image"], &["io", "settings"]);
@@ -687,6 +695,15 @@ mod tests {
     fn rust_grain_controls_preserve_python_sections_and_state_roundtrip() {
         use spektrafilm_core::presets::{Preset, Provenance, Section};
 
+        fn negative_film_profile() -> spektrafilm_core::profile::Profile {
+            // This test exercises preset/state projection, so keep the profile
+            // small while satisfying negative-conversion profile validation.
+            serde_json::from_str(
+                r#"{"metadata":{},"info":{"stock":"test-negative","type":"negative","support":"film","stage":"filming","use":"still"},"data":{"density_curves":[[0.0,0.0,0.0]]}}"#,
+            )
+            .unwrap()
+        }
+
         let factory = GuiState::factory();
         let baseline = GuiState::from_runtime(
             &factory.runtime_params().unwrap(),
@@ -713,11 +730,7 @@ mod tests {
         // Monochrome is derived from the film, so sections preserve the target's value.
         let mut target = factory.runtime_params().unwrap();
         target.film_render.grain.monochrome = true;
-        let film = spektrafilm_core::profile::load_profile_by_name(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
-            factory.film(),
-        )
-        .unwrap();
+        let film = negative_film_profile();
         let applied = preset.apply_section(&target, &film).unwrap();
         let saved =
             GuiState::from_runtime(&applied, factory.film(), factory.paper(), &factory.sections)
@@ -1166,11 +1179,11 @@ mod tests {
         Ok::<(), anyhow::Error>(())
     }
     #[test]
-    fn positive_scan_convert_route_roundtrip() -> anyhow::Result<()> {
+    fn negative_to_positive_convert_route_roundtrip() -> anyhow::Result<()> {
         let factory = GuiState::factory();
         let mut params = factory.runtime_params().unwrap();
         params.workflow.route = "input > convert-film > scan".into();
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.black_point = [0.1, 0.2, 0.3];
         params.scanner.white_point = [0.7, 0.8, 0.9];
         params.scanner.receiver_profile = spektrafilm_core::params::ReceiverProfile::LabScanApprox;
@@ -1205,7 +1218,7 @@ mod tests {
         let loaded = GuiState::from_value(saved.sections)?;
         let restored = loaded.runtime_params()?;
         assert_eq!(restored.workflow.route, "input > convert-film > scan");
-        assert_eq!(restored.scanner.scan_output, "positive_scan");
+        assert_eq!(restored.scanner.scan_output, "negative_to_positive");
         assert_eq!(restored.scanner.black_point, [0.1, 0.2, 0.3]);
         assert_eq!(restored.scanner.white_point, [0.7, 0.8, 0.9]);
         assert_eq!(
@@ -1228,15 +1241,18 @@ mod tests {
         let state = GuiState::from_value(json!({
             "simulation": {"route": "input > convert-film > scan"},
             "rust": {"version": 1, "runtime": {"scanner": {
-                "scan_output": "positive_scan", "receiver_profile": "lab_scan_approx",
+                "scan_output": "negative_to_positive", "receiver_profile": "lab_scan_approx",
                 "positive_interpretation": "coupled", "auto_setup": "per_frame",
                 "finish": "lab_scan", "finish_strength": 0.0
             }}}
         }))
         .unwrap();
         let params = state.runtime_params().unwrap();
-        assert_eq!(params.scanner.scan_output, "positive_scan");
-        assert_eq!(state.sections["scanner"]["scan_output"], "positive_scan");
+        assert_eq!(params.scanner.scan_output, "negative_to_positive");
+        assert_eq!(
+            state.sections["scanner"]["scan_output"],
+            "negative_to_positive"
+        );
         for (key, expected) in [
             ("receiver_profile", json!("lab_scan_approx")),
             ("positive_interpretation", json!("coupled")),
@@ -1250,6 +1266,17 @@ mod tests {
                 expected
             );
         }
+        // An explicit canonical selection takes precedence over the extension.
+        let mut canonical = state.sections.clone();
+        canonical["scanner"]["scan_output"] = json!("direct_scan");
+        canonical["scanner"]["positive_interpretation"] = json!("density");
+        canonical["scanner"]["auto_setup"] = json!("off");
+        canonical["scanner"]["finish"] = json!("neutral");
+        let canonical = GuiState::from_value(canonical).unwrap();
+        assert_eq!(
+            canonical.runtime_params().unwrap().scanner.scan_output,
+            "direct_scan"
+        );
     }
     #[test]
     fn scanner_defaults_and_invalid_combinations_use_runtime_contract() {

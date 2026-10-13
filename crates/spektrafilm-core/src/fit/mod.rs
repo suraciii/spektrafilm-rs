@@ -3,7 +3,7 @@
 //!
 //! The fit renders a chart through the calibrated pipeline and minimizes the
 //! CIELAB difference between the rendered patches and a reference patch table.
-//! See `specs/profile-authoring/`.
+//! See `specs/profile-fit/`.
 
 pub mod chart;
 mod color;
@@ -25,7 +25,7 @@ use std::path::PathBuf;
 pub enum FitGroup {
     /// The leading terms of the film profile's `hanatos2025_adaptation_surface_params`.
     Surface,
-    /// The negative-conversion `conversion_brightness_ev` and `conversion_balance_ev`.
+    /// The negative-conversion `positive_density_ev` and `positive_balance_ev`.
     Tone,
 }
 
@@ -78,15 +78,15 @@ pub struct FitForcedSettings {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ToneFit {
-    pub conversion_brightness_ev: f64,
-    pub conversion_balance_ev: [f64; 3],
+    pub positive_density_ev: f64,
+    pub positive_balance_ev: [f64; 3],
 }
 
 /// The redundancy a tone fit pins, so that a fitted tone is unique.
 ///
-/// A common offset added to `conversion_brightness_ev` and subtracted from every
-/// `conversion_balance_ev` channel leaves the negative conversion unchanged. The fit
-/// pins `conversion_balance_ev[pinned_channel]` to `value` and searches the rest.
+/// A common offset added to `positive_density_ev` and subtracted from every
+/// `positive_balance_ev` channel leaves the negative conversion unchanged. The fit
+/// pins `positive_balance_ev[pinned_channel]` to `value` and searches the rest.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToneGauge {
     pub pinned_channel: usize,
@@ -281,10 +281,10 @@ pub fn fit(request: FitRequest) -> Result<FitReport, String> {
         differences,
         surface: surface.then(|| evaluator.surface_matrix(&run.x[..surface_parameters])),
         tone: tone.then(|| {
-            let (conversion_brightness_ev, conversion_balance_ev) = evaluator.tone_values(&run.x);
+            let (positive_density_ev, positive_balance_ev) = evaluator.tone_values(&run.x);
             ToneFit {
-                conversion_brightness_ev,
-                conversion_balance_ev,
+                positive_density_ev,
+                positive_balance_ev,
             }
         }),
         tone_gauge: tone.then(|| {

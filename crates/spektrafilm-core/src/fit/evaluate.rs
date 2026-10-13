@@ -6,18 +6,18 @@ use super::color::{self, PatchDifferences};
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
 use crate::runtime::Runtime;
-use spektrafilm_backend::cpu_backend::CpuBackend;
+use spektrafilm_gpu::cpu_backend::CpuBackend;
 use spektrafilm_math::image::ImageBuf;
 use std::path::PathBuf;
 
-/// Scalar count of the free tone parameters: `conversion_brightness_ev`, then the
+/// Scalar count of the free tone parameters: `positive_density_ev`, then the
 /// red and blue balance channels. The green channel is pinned, see
 /// [`PINNED_BALANCE_CHANNEL`].
 pub(crate) const TONE_PARAMETERS: usize = 3;
 /// The balance channel a tone fit pins.
 ///
-/// A common offset added to `conversion_brightness_ev` and subtracted from every
-/// `conversion_balance_ev` channel leaves the negative conversion unchanged, so the
+/// A common offset added to `positive_density_ev` and subtracted from every
+/// `positive_balance_ev` channel leaves the negative conversion unchanged, so the
 /// four values are redundant by one degree of freedom. Pinning one channel
 /// makes the fitted tone unique.
 pub(crate) const PINNED_BALANCE_CHANNEL: usize = 1;
@@ -159,7 +159,7 @@ impl Evaluator {
             .chain(fit_gray.iter().copied())
             .collect();
         fit_indices.sort_unstable();
-        let tone_pin = params.scanner.conversion_balance_ev[PINNED_BALANCE_CHANNEL];
+        let tone_pin = params.scanner.positive_balance_ev[PINNED_BALANCE_CHANNEL];
         Ok(Self {
             film,
             print,
@@ -226,9 +226,9 @@ impl Evaluator {
         let mut x = vec![0.0; self.dimension()];
         if self.tone {
             let offset = self.surface_parameters();
-            x[offset] = self.params.scanner.conversion_brightness_ev;
-            x[offset + 1] = self.params.scanner.conversion_balance_ev[0];
-            x[offset + 2] = self.params.scanner.conversion_balance_ev[2];
+            x[offset] = self.params.scanner.positive_density_ev;
+            x[offset + 1] = self.params.scanner.positive_balance_ev[0];
+            x[offset + 2] = self.params.scanner.positive_balance_ev[2];
         }
         x
     }
@@ -285,8 +285,8 @@ impl Evaluator {
         }
         if self.tone {
             let (density, balance) = self.tone_values(x);
-            params.scanner.conversion_brightness_ev = density;
-            params.scanner.conversion_balance_ev = balance;
+            params.scanner.positive_density_ev = density;
+            params.scanner.positive_balance_ev = balance;
         }
         params.film_render.halation.active = false;
         params.film_render.grain.active = false;

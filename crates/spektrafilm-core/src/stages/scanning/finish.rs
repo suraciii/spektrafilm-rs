@@ -1,4 +1,4 @@
-//! LabScan-style scanner finishing for positive scans.
+//! LabScan-style scanner finishing for converted negative images.
 //!
 //! The constants and Oklab treatment are adapted from FotufilmCore's
 //! `LabScanFinish.swift`, SHA-256

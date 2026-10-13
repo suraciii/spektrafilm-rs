@@ -331,8 +331,8 @@ impl<'a> ForwardCapture<'a> {
     }
 }
 
-fn positive_scan_requested(params: &RuntimeParams) -> bool {
-    params.scanner.scan_output == "positive_scan"
+fn negative_to_positive_requested(params: &RuntimeParams) -> bool {
+    params.scanner.scan_output == "negative_to_positive"
 }
 
 fn points_active(params: &RuntimeParams) -> bool {
@@ -406,7 +406,7 @@ impl PositiveCalibration {
     ) -> Result<Self, String> {
         let axis = &profile.data.log_exposure;
         if axis.len() < 2 || profile.data.density_curves.len() != axis.len() {
-            return Err("positive_scan requires matching profile calibration curves with at least two samples".into());
+            return Err("negative_to_positive requires matching profile calibration curves with at least two samples".into());
         }
         let rows = ImageBuf::from_data(
             axis.len() as u32,
@@ -441,7 +441,7 @@ impl PositiveCalibration {
                 }
                 if ended {
                     return Err(format!(
-                        "positive_scan calibration has an invalid interior sample in channel {channel}"
+                        "negative_to_positive calibration has an invalid interior sample in channel {channel}"
                     ));
                 }
                 let reference = *clear.get_or_insert(value);
@@ -485,7 +485,7 @@ impl PositiveCalibration {
             }
             if density.len() < 2 {
                 return Err(format!(
-                    "positive_scan calibration has fewer than two positive distinct samples in channel {channel}"
+                    "negative_to_positive calibration has fewer than two positive distinct samples in channel {channel}"
                 ));
             }
             channels.push(PositiveChannel {
@@ -505,14 +505,15 @@ impl PositiveCalibration {
                 .fold(f64::INFINITY, f64::min);
             if !start.is_finite() || !end.is_finite() || start >= end {
                 return Err(
-                    "positive_scan points require a finite shared log-exposure interval".into(),
+                    "negative_to_positive points require a finite shared log-exposure interval"
+                        .into(),
                 );
             }
         }
         Ok(Self {
             channels: channels
                 .try_into()
-                .map_err(|_| "positive_scan calibration requires three channels")?,
+                .map_err(|_| "negative_to_positive calibration requires three channels")?,
         })
     }
 }
@@ -612,7 +613,54 @@ fn interpret_negative_capture(
     Ok(rgb)
 }
 
+/// Record-density interpretation: the narrowband lab-scanner inverse of the
+/// film's own characteristic curves. Scanner optics blur transmitted light
+/// record by record, before the sensor reads density, so the blur runs here in
+/// the density domain and the capture never enters the loop.
+fn interpret_negative_density(
+    density_cmy: &ImageBuf,
+    calibration: &interpretation::DensityCalibration,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+) -> Result<ImageBuf, String> {
+    let [start, end] = calibration.range();
+    let points = PointMap::new(start, end, params)?;
+    let mut rgb = if params.scanner.lens_blur > 0.0 {
+        let mut transmitted = density_cmy.clone();
+        transmitted
+            .data
+            .par_iter_mut()
+            .for_each(|value| *value = from_f64(10.0f64.powf(-to_f64(*value))));
+        let mut blurred = backend.gaussian_blur(&transmitted, params.scanner.lens_blur);
+        blurred
+            .data
+            .par_iter_mut()
+            .for_each(|value| *value = from_f64(-to_f64(*value).log10()));
+        blurred
+    } else {
+        density_cmy.clone()
+    };
+    rgb.data
+        .par_chunks_exact_mut(3)
+        .try_for_each(|px| -> Result<(), String> {
+            let density = [to_f64(px[0]), to_f64(px[1]), to_f64(px[2])];
+            let exposure = calibration.estimate(density)?;
+            for channel in 0..3 {
+                px[channel] = from_f64(positive_tone(exposure[channel], channel, &points, params).0);
+                if !px[channel].is_finite() {
+                    return Err(
+                        "density interpretation output is not representable in the selected precision"
+                            .into(),
+                    );
+                }
+            }
+            Ok(())
+        })?;
+    Ok(rgb)
+}
+
 enum ExposureCalibration {
+    Density(interpretation::DensityCalibration),
     Separable(PositiveCalibration),
     Coupled(interpretation::CoupledCalibration),
     Monochrome(PositiveCalibration),
@@ -621,6 +669,7 @@ enum ExposureCalibration {
 impl ExposureCalibration {
     fn range(&self) -> [f64; 2] {
         match self {
+            Self::Density(c) => c.range(),
             Self::Coupled(c) => c.range(),
             Self::Separable(c) | Self::Monochrome(c) => [
                 c.channels
@@ -657,6 +706,9 @@ impl ExposureCalibration {
             }
         };
         let values = match self {
+            Self::Density(_) => {
+                return Err("density interpretation reads record densities, not a capture".into());
+            }
             Self::Coupled(c) => c.estimate(capture)?,
             Self::Separable(c) => std::array::from_fn(|i| estimate(&c.channels[i], capture[i])),
             Self::Monochrome(c) => [estimate(&c.channels[0], capture[0]); 3],
@@ -665,6 +717,15 @@ impl ExposureCalibration {
             return Err("scanner inverse produced nonfinite relative exposure".into());
         }
         Ok(values)
+    }
+
+    /// Relative log exposure from record densities. Only the density
+    /// interpretation takes densities; the capture methods convert first.
+    fn estimate_density(&self, density: [f64; 3]) -> Result<[f64; 3], String> {
+        match self {
+            Self::Density(c) => c.estimate(density),
+            _ => Err("capture interpretation requires a scanner capture".into()),
+        }
     }
 }
 
@@ -677,6 +738,11 @@ fn prepare_exposure_calibration(
     base: &[f64],
     forward: &ForwardCapture<'_>,
 ) -> Result<ExposureCalibration, String> {
+    if params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density {
+        return Ok(ExposureCalibration::Density(
+            interpretation::DensityCalibration::prepare(profile)?,
+        ));
+    }
     let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
     if params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Coupled
         && !profile.is_bw()
@@ -732,7 +798,13 @@ pub(crate) fn prepare_setup(
     let samples: Vec<[f64; 3]> = density
         .data
         .par_chunks_exact(3)
-        .map(|p| calibration.estimate(forward.capture([to_f64(p[0]), to_f64(p[1]), to_f64(p[2])])))
+        .map(|p| {
+            let values = [to_f64(p[0]), to_f64(p[1]), to_f64(p[2])];
+            match &calibration {
+                ExposureCalibration::Density(_) => calibration.estimate_density(values),
+                _ => calibration.estimate(forward.capture(values)),
+            }
+        })
         .collect::<Result<Vec<_>, _>>()?;
     ScannerSetup::from_samples(
         &samples,
@@ -1033,13 +1105,19 @@ fn scan_with_capture(
     include_base: bool,
     captured_rgb: Option<ImageBuf>,
 ) -> Result<ImageBuf, String> {
-    let positive_scan = positive_scan_requested(params);
+    let negative_to_positive = negative_to_positive_requested(params);
+    // The density reading acquires no capture, so the spectral scan and the
+    // receiver correction it feeds are skipped entirely. Where a capture does
+    // arrive, `density` behaves as `separable`.
+    let density_reading = negative_to_positive
+        && params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density
+        && captured_rgb.is_none();
     let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
-    let _positive_scan = positive_scan.then(|| {
+    let _negative_to_positive = negative_to_positive.then(|| {
         super::StageObservation::cpu(
             backend,
-            "positive_scan",
-            spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+            "negative_to_positive",
+            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
         )
     });
     let _slide_points = slide_points.then(|| {
@@ -1049,7 +1127,7 @@ fn scan_with_capture(
             spektrafilm_gpu::telemetry::CpuReason::ScannerFilmPoints,
         )
     });
-    let cpu_fallback = positive_scan
+    let cpu_fallback = negative_to_positive
         .then(|| {
             backend
                 .observation_context()
@@ -1057,12 +1135,12 @@ fn scan_with_capture(
                 .map(|context| {
                     spektrafilm_gpu::bind_cpu_fallback(
                         context.clone(),
-                        spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+                        spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
                     )
                 })
         })
         .flatten();
-    let backend = if positive_scan {
+    let backend = if negative_to_positive {
         static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
             spektrafilm_gpu::cpu_backend::CpuBackend;
         cpu_fallback
@@ -1083,9 +1161,13 @@ fn scan_with_capture(
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, scan_illuminant);
     let scan_context = &prepared.scan;
     let base_density = base_density.as_ref();
-    let receiver_reference = scan_context.receiver.as_ref().map(|receiver| {
-        receiver.correction(profile, params, color_ref, &channel_density, base_density)
-    });
+    let receiver_reference = if density_reading {
+        None
+    } else {
+        scan_context.receiver.as_ref().map(|receiver| {
+            receiver.correction(profile, params, color_ref, &channel_density, base_density)
+        })
+    };
     let color_ref = receiver_reference.as_ref().unwrap_or(color_ref);
 
     // Dispatch spectral integration to backend (GPU or CPU). The backend
@@ -1098,19 +1180,24 @@ fn scan_with_capture(
     // The path selection (including the faithful B&W/slide luminance
     // remap) lives in `scan_spectral_rgb` so the reference samples
     // below cannot diverge from this bulk scan.
-    let mut rgb = captured_rgb.unwrap_or_else(|| {
-        scan_spectral_rgb(
-            density_cmy,
-            profile,
-            params,
-            backend,
-            color_ref,
-            &channel_density,
-            base_density,
-            scan_context,
-            slide_points,
-        )
-    });
+    let mut rgb = if density_reading {
+        let calibration = interpretation::DensityCalibration::prepare(profile)?;
+        interpret_negative_density(density_cmy, &calibration, params, backend)?
+    } else {
+        captured_rgb.unwrap_or_else(|| {
+            scan_spectral_rgb(
+                density_cmy,
+                profile,
+                params,
+                backend,
+                color_ref,
+                &channel_density,
+                base_density,
+                scan_context,
+                slide_points,
+            )
+        })
+    };
 
     // Historical white/black correction stays inside the scan LUT. Active
     // slide points defer only that remap until after capture blur and points.
@@ -1184,15 +1271,19 @@ fn scan_with_capture(
         }
     }
 
-    // Positive interpretation is scanner-domain: optical capture and lens
-    // blur happen before the calibrated negative endpoint inversion.
-    if positive_scan {
+    // Positive interpretation is scanner-domain for the capture methods:
+    // optical capture and lens blur happen before the calibrated negative
+    // endpoint inversion. The density reading ran above, where it blurred
+    // transmitted light record by record instead.
+    if negative_to_positive && !density_reading {
         if params.scanner.lens_blur > 0.0 {
             rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
         }
-        if params.scanner.positive_interpretation
-            == crate::params::PositiveInterpretation::Separable
+        if params.scanner.positive_interpretation != crate::params::PositiveInterpretation::Coupled
         {
+            // `separable`, and `density` where the incoming image is a
+            // capture: the capture converts to density per channel before
+            // the inverse.
             let calibration = PositiveCalibration::from_profile(
                 profile,
                 params,
@@ -1224,11 +1315,11 @@ fn scan_with_capture(
             interpret_coupled_capture(&mut rgb, &calibration, params)?;
         }
     }
-    if positive_scan && params.scanner.finish == crate::params::ScannerFinish::LabScan {
+    if negative_to_positive && params.scanner.finish == crate::params::ScannerFinish::LabScan {
         let _finish = super::StageObservation::cpu(
             backend,
             "scanner_finish",
-            spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
         );
         finish::apply(
             &mut rgb,
@@ -1239,7 +1330,7 @@ fn scan_with_capture(
     }
 
     // Output gamut compression — direct scans preserve the historical
-    // capture order; positive scans compress only after interpretation.
+    // capture order; converted negative images compress only after interpretation.
     if gamut.is_active() {
         let _gamut = super::StageObservation::cpu(
             backend,
@@ -1256,7 +1347,7 @@ fn scan_with_capture(
 
     // Direct scans apply optical blur after gamut compression, preserving
     // the established direct-scan behavior.
-    if !positive_scan && !slide_points && params.scanner.lens_blur > 0.0 {
+    if !negative_to_positive && !slide_points && params.scanner.lens_blur > 0.0 {
         rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
     }
 
@@ -1380,6 +1471,89 @@ mod tests {
                 clear: 1.0,
             }),
         }
+    }
+
+    fn density_calibration() -> interpretation::DensityCalibration {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let profile = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        interpretation::DensityCalibration::prepare(&profile).unwrap()
+    }
+
+    fn interpret_density(density: &[f64], params: &RuntimeParams) -> Vec<f64> {
+        let input = ImageBuf::from_data(
+            (density.len() / 3) as u32,
+            1,
+            density.iter().copied().map(from_f64).collect(),
+        );
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        interpret_negative_density(&input, &density_calibration(), params, &backend)
+            .unwrap()
+            .data
+            .iter()
+            .map(|value| to_f64(*value))
+            .collect()
+    }
+
+    #[test]
+    fn denser_negative_reads_brighter_and_stays_finite_beyond_the_curves() {
+        let params = RuntimeParams::default();
+        let values = interpret_density(
+            &[-100.0, 0.01, 1.0, 1.9, 100.0]
+                .into_iter()
+                .flat_map(|v| [v; 3])
+                .collect::<Vec<_>>(),
+            &params,
+        );
+        let values: Vec<f64> = values.into_iter().step_by(3).collect();
+        assert!(values.windows(2).all(|w| w[1] > w[0]));
+        assert!(
+            values
+                .iter()
+                .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+        );
+    }
+
+    #[test]
+    fn each_output_channel_reads_only_its_own_record() {
+        let params = RuntimeParams::default();
+        let neutral = interpret_density(&[1.0, 1.0, 1.0], &params);
+        let low_magenta = interpret_density(&[1.0, 0.2, 1.0], &params);
+        assert_eq!(low_magenta[0], neutral[0]);
+        assert!(low_magenta[1] < neutral[1]);
+        assert_eq!(low_magenta[2], neutral[2]);
+    }
+
+    #[test]
+    fn density_reading_ignores_the_receiver_and_the_capture() {
+        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let profile = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let density = ImageBuf::from_data(
+            3,
+            1,
+            [0.2, 0.4, 0.6, 0.9, 0.9, 0.9, 1.5, 1.2, 1.1]
+                .into_iter()
+                .map(from_f64)
+                .collect(),
+        );
+        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let color_ref = crate::color_reference::ColorReference::identity();
+        let gamut = crate::gamut_compression::OutputGamutCompress::identity();
+        let mut params = RuntimeParams::default();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Density;
+        params.scanner.receiver_profile = crate::params::ReceiverProfile::LegacyColorimetric;
+        let legacy = scan_with_capture(
+            &density, &profile, &params, &backend, &color_ref, &gamut, None, true, None,
+        )
+        .unwrap();
+        params.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
+        let lab_scan = scan_with_capture(
+            &density, &profile, &params, &backend, &color_ref, &gamut, None, true, None,
+        )
+        .unwrap();
+        assert_eq!(legacy.data, lab_scan.data);
+        assert!(legacy.data.iter().all(|value| value.is_finite()));
     }
 
     #[test]
@@ -1736,11 +1910,11 @@ mod tests {
     }
 
     #[test]
-    fn public_positive_scan_rejects_unrepresentable_window_reciprocal() {
+    fn public_negative_to_positive_rejects_unrepresentable_window_reciprocal() {
         let film = profile("kodak_portra_400");
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.film_render.grain.active = false;
         params.scanner.white_point = [1e-320; 3];
         let result = process(

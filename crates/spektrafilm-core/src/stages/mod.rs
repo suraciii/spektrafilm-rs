@@ -274,7 +274,7 @@ mod integration_tests {
     }
 
     #[test]
-    fn positive_scan_inverts_negative_capture_on_cpu_path() {
+    fn negative_to_positive_reverses_negative_polarity_on_cpu_path() {
         let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -285,7 +285,7 @@ mod integration_tests {
         params.io.output_color_space = "sRGB".into();
         params.io.output_cctf_encoding = false;
         params.io.output_gamut_compress.algorithm = "off".into();
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.unsharp_mask = [0.0, 0.0];
         params.camera.auto_exposure = false;
         params.film_render.grain.active = false;

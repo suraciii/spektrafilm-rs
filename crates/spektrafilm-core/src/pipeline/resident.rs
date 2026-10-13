@@ -5,7 +5,7 @@ use spektrafilm_math::image::ImageBuf;
 #[derive(Debug, Clone, Copy)]
 enum ResidentFallbackReason {
     WorkflowRoute,
-    PositiveScanOutput,
+    NegativeToPositiveOutput,
     ScannerReceiver,
     ScannerFilmPoints,
     LangmuirChemistry,
@@ -55,8 +55,8 @@ impl Pipeline {
         ) {
             reasons.push(ResidentFallbackReason::WorkflowRoute);
         }
-        if self.params.scanner.scan_output == "positive_scan" {
-            reasons.push(ResidentFallbackReason::PositiveScanOutput);
+        if self.params.scanner.scan_output == "negative_to_positive" {
+            reasons.push(ResidentFallbackReason::NegativeToPositiveOutput);
         }
         if self.params.scanner.receiver_profile == crate::params::ReceiverProfile::LabScanApprox {
             reasons.push(ResidentFallbackReason::ScannerReceiver);
@@ -202,7 +202,9 @@ impl Pipeline {
                         use spektrafilm_gpu::telemetry::ResidentDeclineReason as R;
                         let reason = match reason {
                             ResidentFallbackReason::WorkflowRoute => R::WorkflowRoute,
-                            ResidentFallbackReason::PositiveScanOutput => R::PositiveScanOutput,
+                            ResidentFallbackReason::NegativeToPositiveOutput => {
+                                R::NegativeToPositiveOutput
+                            }
                             ResidentFallbackReason::ScannerFilmPoints => R::ScannerFilmPoints,
                             ResidentFallbackReason::ScannerReceiver => R::ScannerReceiver,
                             ResidentFallbackReason::LangmuirChemistry => R::LangmuirChemistry,

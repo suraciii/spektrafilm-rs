@@ -269,11 +269,18 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // scanner route after that production profile-selection behavior.
     choose(h, "workflow", "input > film > scan");
     click(h, "Scanner");
-    choose(h, "scan output", "direct_scan");
+    choose(h, "scan output", "Preserve medium polarity");
     assert!(h.query_by_label("positive density ev").is_none());
     let direct = render(h, "PREVIEW");
     assert_eq!((direct.width, direct.height), (128, 64));
-    choose(h, "scan output", "positive_scan");
+    choose(h, "scan output", "Negative to positive");
+    assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
+    choose(h, "Negative conversion method", "separable");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        spektrafilm_core::params::PositiveInterpretation::Separable
+    );
+    choose(h, "Negative conversion method", "density");
     assert!(h.query_by_label("positive density ev").is_some());
     edit(h, "positive density ev", "0");
     let positive = render(h, "PREVIEW");
@@ -283,7 +290,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     );
     assert!(
         edge_difference(&positive) > 0.01,
-        "positive interpretation must restore ramp polarity"
+        "negative conversion must restore ramp polarity"
     );
     edit(h, "positive density ev", "1");
     assert_eq!(h.state().params.scanner.positive_density_ev, 1.0);
@@ -306,7 +313,88 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         h.get_by_label("positive density ev").value().as_deref(),
         Some("1.000")
     );
+    let preset = spektrafilm_core::presets::Preset::capture_section(
+        "Negative conversion",
+        spektrafilm_core::presets::Section::Scanner,
+        &h.state().params,
+        spektrafilm_core::presets::Provenance {
+            implementation_version: env!("CARGO_PKG_VERSION").into(),
+            model_version: "spektrafilm".into(),
+            scanner: None,
+        },
+    )
+    .unwrap();
+    spektrafilm_core::presets::PresetLibrary::new(s.directory.path().join("presets"))
+        .save_new(&preset, &data_dir())
+        .unwrap();
+    click(h, "▶");
+    click(h, "Refresh");
+    click(h, "◀");
+    choose(h, "scan output", "Preserve medium polarity");
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    let scanner_header = h.get_by_label("Scanner").raw_bounds().unwrap();
+    h.get(
+        egui_kittest::kittest::by()
+            .label("Preset: custom")
+            .predicate(|node| {
+                node.raw_bounds().is_some_and(|bounds| {
+                    bounds.y0 < scanner_header.y1 && bounds.y1 > scanner_header.y0
+                })
+            }),
+    )
+    .simulate_click();
+    h.run_steps(3);
+    click(h, "Negative conversion");
+    assert!(
+        h.state().status.starts_with("Applied preset"),
+        "{}",
+        h.state().status
+    );
+    assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     let preview = render(h, "PREVIEW");
+    let accepted = h.state().current_state().unwrap();
+    let accepted_params = h.state().params.clone();
+    let accepted_input = h.state().image.as_ref().unwrap().clone();
+    let accepted_output = h.state().output_image.as_ref().unwrap().clone();
+    let revision = h.state().parameter_revision;
+    let calibration_epoch = h.state().calibration_epoch;
+    for carrier in ["canonical", "extension", "shadowed_extension"] {
+        let mut invalid = accepted.sections.clone();
+        if carrier == "canonical" {
+            invalid["scanner"]["scan_output"] = serde_json::json!("positive_scan");
+        } else {
+            invalid["rust"]["runtime"]["scanner"]["scan_output"] =
+                serde_json::json!("positive_scan");
+            if carrier == "extension" {
+                invalid["scanner"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("scan_output");
+            }
+        }
+        let path = s.directory.path().join(format!("removed-{carrier}.json"));
+        std::fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        let result =
+            state::GuiState::load(&path).and_then(|state| h.state_mut().apply_state(state));
+        let error = result.unwrap_err();
+        assert!(format!("{error:#}").contains("positive_scan"), "{error:#}");
+        assert_eq!(h.state().params, accepted_params);
+        assert_eq!(h.state().parameter_revision, revision);
+        assert_eq!(h.state().calibration_epoch, calibration_epoch);
+        assert_eq!(
+            h.state().current_state().unwrap().sections,
+            accepted.sections
+        );
+        assert!(Arc::ptr_eq(
+            h.state().image.as_ref().unwrap(),
+            &accepted_input
+        ));
+        assert!(Arc::ptr_eq(
+            h.state().output_image.as_ref().unwrap(),
+            &accepted_output
+        ));
+        assert_eq!(h.state().output_image.as_ref().unwrap().data, preview.data);
+    }
     let save_path = s.directory.path().join("retained.png");
     h.state_mut().save_to_path(&save_path);
     assert!(
@@ -325,6 +413,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     assert_png(&save_path, &expected_saved);
     let scan = render(h, "SCAN");
     assert_eq!((scan.width, scan.height), (160, 80));
+    assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
     click(h, "Export options");
@@ -361,6 +450,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     )
     .unwrap();
     assert_png(&export_path, &expected_export);
+    assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     assert_eq!(h.state().output_image.as_ref().unwrap().width, 128);
     // Extension correction must never silently overwrite an existing file.
     let before = std::fs::read(&export_path).unwrap();
@@ -406,13 +496,20 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     }
     let persisted = s.directory.path().join("persisted.json");
     h.state().current_state().unwrap().save(&persisted).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    assert_eq!(saved["scanner"]["scan_output"], "negative_to_positive");
+    assert_eq!(
+        saved["rust"]["runtime"]["scanner"]["scan_output"],
+        "negative_to_positive"
+    );
     let mut restored = app(
         persisted,
         s.directory.path().join("asymmetric-ramp.png"),
         s.directory.path().join("restored-browser.json"),
     );
     assert_eq!(restored.params.workflow.route, "input > film > scan");
-    assert_eq!(restored.params.scanner.scan_output, "positive_scan");
+    assert_eq!(restored.params.scanner.scan_output, "negative_to_positive");
     assert_eq!(restored.params.scanner.positive_density_ev, 1.0);
     assert_eq!(
         restored.params.scanner.positive_balance_ev,
