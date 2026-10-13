@@ -31,6 +31,91 @@ pub fn normalize_stock(stock: &str) -> String {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct Stage {
+    pub inject: Tap,
+    pub collect: Tap,
+    pub role: std::borrow::Cow<'static, str>,
+    pub suffix: Option<std::borrow::Cow<'static, str>>,
+    pub shared: bool,
+}
+impl Stage {
+    const fn canonical(
+        inject: Tap,
+        collect: Tap,
+        role: &'static str,
+        suffix: Option<&'static str>,
+    ) -> Self {
+        Self {
+            inject,
+            collect,
+            role: std::borrow::Cow::Borrowed(role),
+            suffix: match suffix {
+                Some(suffix) => Some(std::borrow::Cow::Borrowed(suffix)),
+                None => None,
+            },
+            shared: matches!(collect, Tap::LogEFilm | Tap::CmyFilm),
+        }
+    }
+    pub fn domain(&self) -> &'static str {
+        if self.inject == Tap::RgbIn {
+            "input_rgb"
+        } else {
+            self.inject.name()
+        }
+    }
+    pub fn range(&self) -> &'static str {
+        if self.collect == Tap::RgbOut {
+            "output_rgb"
+        } else {
+            self.collect.name()
+        }
+    }
+    pub fn effective_role(&self, magazine: bool) -> std::borrow::Cow<'_, str> {
+        if magazine && self.collect == Tap::RgbOut {
+            std::borrow::Cow::Owned(format!("magazine_{}", self.role))
+        } else {
+            std::borrow::Cow::Borrowed(self.role.as_ref())
+        }
+    }
+}
+
+static ONE_STAGES: [Stage; 1] = [Stage::canonical(Tap::RgbIn, Tap::RgbOut, "combined", None)];
+static TWO_STAGES: [Stage; 2] = [
+    Stage::canonical(Tap::RgbIn, Tap::CmyFilm, "film", Some("film")),
+    Stage::canonical(Tap::CmyFilm, Tap::RgbOut, "print", Some("print")),
+];
+static THREE_STAGES: [Stage; 3] = [
+    Stage::canonical(Tap::RgbIn, Tap::LogEFilm, "filming_expose", Some("l1")),
+    Stage::canonical(Tap::LogEFilm, Tap::CmyFilm, "filming_develop", Some("l2")),
+    Stage::canonical(Tap::CmyFilm, Tap::RgbOut, "printing_combined", Some("l3")),
+];
+static FOUR_STAGES: [Stage; 4] = [
+    Stage::canonical(Tap::RgbIn, Tap::LogEFilm, "filming_expose", Some("l1")),
+    Stage::canonical(Tap::LogEFilm, Tap::CmyFilm, "filming_develop", Some("l2")),
+    Stage::canonical(Tap::CmyFilm, Tap::LogEPrint, "printing_expose", Some("l3")),
+    Stage::canonical(
+        Tap::LogEPrint,
+        Tap::RgbOut,
+        "printing_develop_scan",
+        Some("l4"),
+    ),
+];
+
+const fn stage_taps<const N: usize>(stages: &[Stage]) -> [Tap; N] {
+    let mut taps = [stages[0].inject; N];
+    let mut i = 0;
+    while i < stages.len() {
+        taps[i + 1] = stages[i].collect;
+        i += 1;
+    }
+    taps
+}
+static ONE_TAPS: [Tap; 2] = stage_taps(&ONE_STAGES);
+static TWO_TAPS: [Tap; 3] = stage_taps(&TWO_STAGES);
+static THREE_TAPS: [Tap; 4] = stage_taps(&THREE_STAGES);
+static FOUR_TAPS: [Tap; 5] = stage_taps(&FOUR_STAGES);
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Topology {
     #[default]
@@ -52,18 +137,20 @@ impl Topology {
             Self::Four => "4lut",
         }
     }
+    pub(crate) fn stages(self) -> &'static [Stage] {
+        match self {
+            Self::One => &ONE_STAGES,
+            Self::Two => &TWO_STAGES,
+            Self::Three => &THREE_STAGES,
+            Self::Four => &FOUR_STAGES,
+        }
+    }
     pub fn taps(self) -> &'static [Tap] {
         match self {
-            Self::One => &[Tap::RgbIn, Tap::RgbOut],
-            Self::Two => &[Tap::RgbIn, Tap::CmyFilm, Tap::RgbOut],
-            Self::Three => &[Tap::RgbIn, Tap::LogEFilm, Tap::CmyFilm, Tap::RgbOut],
-            Self::Four => &[
-                Tap::RgbIn,
-                Tap::LogEFilm,
-                Tap::CmyFilm,
-                Tap::LogEPrint,
-                Tap::RgbOut,
-            ],
+            Self::One => &ONE_TAPS,
+            Self::Two => &TWO_TAPS,
+            Self::Three => &THREE_TAPS,
+            Self::Four => &FOUR_TAPS,
         }
     }
 }

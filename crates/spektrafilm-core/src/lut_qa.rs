@@ -2,7 +2,7 @@
 //! References use the scientific runtime, never a freshly baked comparison LUT.
 use crate::{
     gamut_compression::OutputGamutCompress,
-    lut_baker::{Bundle, Lut, REFERENCE_COMMIT, Topology},
+    lut_baker::{Bundle, Lut, REFERENCE_COMMIT},
     lut_transport::{self, ColorSpaceEntry},
     neutral_filters::NeutralFilters,
     params::Tap,
@@ -211,34 +211,16 @@ pub fn run(
 }
 
 fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
-    let roles: &[(&str, Option<&str>)] = match bundle.meta.topology {
-        Topology::One => &[("combined", Some(print))],
-        Topology::Two => &[("film", None), ("print", Some(print))],
-        Topology::Three => &[
-            ("filming_expose", None),
-            ("filming_develop", None),
-            ("printing_combined", Some(print)),
-        ],
-        Topology::Four => &[
-            ("filming_expose", None),
-            ("filming_develop", None),
-            ("printing_expose", Some(print)),
-            ("printing_develop_scan", Some(print)),
-        ],
-    };
     let magazine = bundle.meta.provenance.contains_key("magazine_print_color");
     let mut chain = Vec::new();
-    for (stage, &(role, stock)) in roles.iter().enumerate() {
-        let expected_role = if magazine && stage + 1 == roles.len() {
-            format!("magazine_{role}")
-        } else {
-            role.to_owned()
-        };
+    for (index, stage) in bundle.meta.topology.stages().iter().enumerate() {
+        let stock = if stage.shared { None } else { Some(print) };
+        let expected_role = stage.effective_role(magazine);
         let candidates: Vec<_> = bundle
             .meta
             .luts
             .iter()
-            .filter(|m| m.role == expected_role && m.print_profile.as_deref() == stock)
+            .filter(|m| m.role == expected_role.as_ref() && m.print_profile.as_deref() == stock)
             .collect();
         if candidates.len() != 1 {
             return Err(format!(
@@ -258,25 +240,16 @@ fn effective_lut(bundle: &Bundle, print: &str) -> Result<Lut, String> {
         {
             return Err(format!("malformed QA LUT {}", m.path));
         }
-        let taps = bundle.meta.topology.taps();
-        let domain = if stage == 0 {
-            "input_rgb"
-        } else {
-            taps[stage].name()
-        };
-        let range = if stage + 1 == roles.len() {
-            "output_rgb"
-        } else {
-            taps[stage + 1].name()
-        };
+        let domain = stage.domain();
+        let range = stage.range();
         if m.domain != domain || m.range != range {
             return Err(format!(
                 "malformed QA wire {}: expected {domain} -> {range}",
                 m.path
             ));
         }
-        if stage > 0 {
-            let tap = taps[stage];
+        if index > 0 {
+            let tap = stage.inject;
             let a = bundle.meta.wires.decode(tap, [0.; 3])?;
             let b = bundle.meta.wires.decode(tap, [1.; 3])?;
             if a.iter()

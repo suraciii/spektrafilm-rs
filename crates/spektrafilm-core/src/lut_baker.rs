@@ -17,11 +17,11 @@ use crate::profile;
 use crate::runtime::{DigestMode, Runtime, digest_params_with_neutral};
 
 mod bundle;
-use bundle::effective_input_gain;
 pub use bundle::{
     BoundaryWires, Bundle, BundleMeta, BundleSpec, ColorSpaceMeta, DensityWire, InputExposureMeta,
     LogEWire, Lut, LutFileMeta, StocksMeta, Topology, normalize_stock,
 };
+use bundle::{Stage, effective_input_gain};
 
 pub const REFERENCE_COMMIT: &str = "28bf883e1672e884307edc75852549376e13644e";
 
@@ -70,7 +70,7 @@ impl BundleBuilder {
         let mut digests = BTreeMap::new();
         let mut metas = Vec::new();
         let recipes = recipes(spec.topology, spec.include_combinations);
-        for recipe in recipes.iter().filter(|r| r.shared) {
+        for recipe in recipes.iter().filter(|r| r.stage.shared) {
             let (path, lut, meta) =
                 bake_recipe(recipe, None, &first, &spec, &wires, input, output, backend)?;
             luts.push((path, lut));
@@ -109,7 +109,7 @@ impl BundleBuilder {
             snapshots.insert(print.clone(), snapshot);
             digests.insert(print.clone(), digest);
             baked_params.insert(print.clone(), pipeline.params().clone());
-            for recipe in recipes.iter().filter(|r| !r.shared) {
+            for recipe in recipes.iter().filter(|r| !r.stage.shared) {
                 let (path, lut, meta) = bake_recipe(
                     recipe,
                     Some(print),
@@ -422,46 +422,19 @@ fn measure_wires(
     Ok(wires)
 }
 struct Recipe {
-    inject: Tap,
-    collect: Tap,
-    role: String,
-    suffix: Option<String>,
-    shared: bool,
+    stage: Stage,
     combination: bool,
 }
 fn recipes(topology: Topology, combinations: bool) -> Vec<Recipe> {
     let taps = topology.taps();
-    let mut result = Vec::new();
-    for i in 0..taps.len() - 1 {
-        let (role, suffix) = match topology {
-            Topology::One => ("combined", None),
-            Topology::Two => {
-                if i == 0 {
-                    ("film", Some("film".into()))
-                } else {
-                    ("print", Some("print".into()))
-                }
-            }
-            Topology::Three | Topology::Four => {
-                let role = match i {
-                    0 => "filming_expose",
-                    1 => "filming_develop",
-                    2 if topology == Topology::Three => "printing_combined",
-                    2 => "printing_expose",
-                    _ => "printing_develop_scan",
-                };
-                (role, Some(format!("l{}", i + 1)))
-            }
-        };
-        result.push(Recipe {
-            inject: taps[i],
-            collect: taps[i + 1],
-            role: role.into(),
-            suffix,
-            shared: matches!(taps[i + 1], Tap::LogEFilm | Tap::CmyFilm),
+    let mut result: Vec<_> = topology
+        .stages()
+        .iter()
+        .map(|stage| Recipe {
+            stage: stage.clone(),
             combination: false,
-        });
-    }
+        })
+        .collect();
     if combinations {
         // Increasing span length matches pinned ordering: l12,l23,l34,l123,...
         for span in 2..taps.len() {
@@ -470,11 +443,13 @@ fn recipes(topology: Topology, combinations: bool) -> Vec<Recipe> {
                     .map(|id| id.to_string())
                     .collect::<String>();
                 result.push(Recipe {
-                    inject: taps[i],
-                    collect: taps[i + span],
-                    role: format!("subchain_{ids}"),
-                    suffix: Some(format!("l{ids}")),
-                    shared: matches!(taps[i + span], Tap::LogEFilm | Tap::CmyFilm),
+                    stage: Stage {
+                        inject: taps[i],
+                        collect: taps[i + span],
+                        role: format!("subchain_{ids}").into(),
+                        suffix: Some(format!("l{ids}").into()),
+                        shared: topology.stages()[i + span - 1].shared,
+                    },
                     combination: true,
                 });
             }
@@ -495,21 +470,18 @@ fn bake_recipe(
 ) -> Result<(String, Lut, LutFileMeta), String> {
     let magazine_active = pipeline.params().magazine_print_color.active
         && pipeline.params().magazine_print_color.strength > 0.0;
-    let role = if magazine_active && recipe.collect == Tap::RgbOut {
-        format!("magazine_{}", recipe.role)
-    } else {
-        recipe.role.clone()
-    };
-    let image = lattice_image(spec.resolution, recipe.inject, spec, wires, input)?;
+    let stage = &recipe.stage;
+    let role = stage.effective_role(magazine_active);
+    let image = lattice_image(spec.resolution, stage.inject, spec, wires, input)?;
     let raw =
-        pipeline.process_with_taps(image, backend, Some(recipe.inject), Some(recipe.collect))?;
+        pipeline.process_with_taps(image, backend, Some(stage.inject), Some(stage.collect))?;
     let mut table = Vec::with_capacity(spec.resolution.pow(3));
     for pixel in raw.data.chunks_exact(3) {
         let physical = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
-        let code = if recipe.collect == Tap::RgbOut {
+        let code = if stage.collect == Tap::RgbOut {
             output.encode_rgb(physical.map(|v| v * output.output_gain()))
         } else {
-            wires.encode(recipe.collect, physical)?
+            wires.encode(stage.collect, physical)?
         };
         if code.iter().any(|v| !v.is_finite()) {
             return Err(format!("nonfinite {role} LUT sample"));
@@ -521,7 +493,7 @@ fn bake_recipe(
         title.push('_');
         title.push_str(&normalize_stock(print));
     }
-    if let Some(suffix) = &recipe.suffix {
+    if let Some(suffix) = &stage.suffix {
         title.push('_');
         title.push_str(suffix);
     }
@@ -534,21 +506,11 @@ fn bake_recipe(
         },
         title
     );
-    let domain = if recipe.inject == Tap::RgbIn {
-        "input_rgb"
-    } else {
-        recipe.inject.name()
-    };
-    let range = if recipe.collect == Tap::RgbOut {
-        "output_rgb"
-    } else {
-        recipe.collect.name()
-    };
     let meta = LutFileMeta {
-        role,
+        role: role.into_owned(),
         path: path.clone(),
-        domain: domain.into(),
-        range: range.into(),
+        domain: stage.domain().into(),
+        range: stage.range().into(),
         print_profile: print.map(str::to_owned),
     };
     Ok((

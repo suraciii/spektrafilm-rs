@@ -5,6 +5,12 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod evidence;
+mod masks;
+
+pub use evidence::{Availability, MeasurementRecord, validate_generated_document};
+pub use masks::{geometry_mask, reference_geometry_mask};
+
 pub const ID_PATTERN: &str = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$";
 fn err(code: &str, message: impl Into<String>) -> Error {
     Error::new(code, message.into())
@@ -140,13 +146,17 @@ fn scan_duplicate(b: &[u8], mut i: usize) -> Result<usize> {
     }
 }
 
-pub fn load_json_document(path: &Path) -> Result<Value> {
+pub fn load_json_value(path: &Path) -> Result<Value> {
     let b = fs::read(path)
         .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
     scan_duplicate(&b, 0)?;
     let v: Value = serde_json::from_slice(&b)
         .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
     finite(&v)?;
+    Ok(v)
+}
+pub fn load_json_document(path: &Path) -> Result<Value> {
+    let v = load_json_value(path)?;
     if !v.is_object() {
         return Err(err("document_type", "document root must be an object"));
     }
@@ -369,6 +379,26 @@ fn config(v: &Value, doc: &Path) -> Result<()> {
 }
 
 pub fn schema_for(kind: &str) -> Result<Value> {
+    if matches!(
+        kind,
+        "configuration" | "reference" | "regions" | "preparation"
+    ) {
+        let suite = schema_for("suite")?;
+        let mut schema = suite["properties"]["cases"]["items"]["properties"][kind].clone();
+        if kind == "reference" {
+            schema["properties"].as_object_mut().unwrap().remove("path");
+            schema["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sha256");
+            schema["required"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|v| v != "path" && v != "sha256");
+        }
+        schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
+        return Ok(schema);
+    }
     let raw = match kind {
         "suite" => include_str!("../assets/suite.schema.json"),
         "target" => include_str!("../assets/target.schema.json"),
@@ -414,6 +444,98 @@ fn validate_schema(kind: &str, v: &Value) -> Result<()> {
     }
     Ok(())
 }
+pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -> Result<()> {
+    match kind {
+        "configuration" => config(value, document)?,
+        "regions" => {
+            let regions = value
+                .as_array()
+                .ok_or_else(|| err("schema_validation", "regions must be array"))?;
+            unique(regions, "id")?;
+            for region in regions {
+                if region["id"] == "full_image" {
+                    return Err(err("reserved_region", "full_image is reserved"));
+                }
+                geometry(&region["geometry"], document)?;
+            }
+        }
+        "preparation" => file_record(&value["original"], document)?,
+        "reference" => {
+            for key in [
+                "transform",
+                "aligned_derivative",
+                "correspondence_review",
+                "common_area_mask",
+            ] {
+                if let Some(record) = value.get(key) {
+                    file_record(record, document)?;
+                }
+            }
+            if let Some(icc) = value["color"].get("icc") {
+                file_record(icc, document)?;
+            }
+            for region in value["regions"].as_array().into_iter().flatten() {
+                geometry(&region["geometry"], document)?;
+            }
+            if value["scope"] == "aligned_scene"
+                && (value.get("correspondence_review").is_none()
+                    || value.get("common_area_mask").is_none()
+                    || (value.get("transform").is_none()
+                        && value.get("aligned_derivative").is_none()))
+            {
+                return Err(err(
+                    "missing_correspondence",
+                    "aligned scene requires transform/derivative, review, and mask",
+                ));
+            }
+            if value["scope"] == "aligned_scene" {
+                crate::references::validate_correspondence_documents(value, document)?;
+                let review_path = resolve_path(
+                    value["correspondence_review"]["path"].as_str().unwrap(),
+                    document,
+                )?;
+                let review = load_json_document(&review_path)?;
+                for region in review["excluded_regions"].as_array().into_iter().flatten() {
+                    geometry(&region["geometry"], &review_path)?;
+                }
+            }
+            if value["scope"] == "regional"
+                && value["regions"].as_array().is_none_or(|v| v.is_empty())
+            {
+                return Err(err(
+                    "missing_regions",
+                    "regional reference requires corresponding regions",
+                ));
+            }
+            if value["scope"] == "material" {
+                for key in ["domain", "units", "instrument", "conditions"] {
+                    if value.get(key).is_none() {
+                        return Err(err(
+                            "material_conditions",
+                            "material reference requires measurement conditions",
+                        ));
+                    }
+                }
+            }
+            if value["color"].get("icc").is_none()
+                && (value["color"].get("color_space").is_none()
+                    || value["color"].get("cctf_decoding").is_none())
+            {
+                return Err(err(
+                    "reference_color",
+                    "reference requires explicit color or hashed ICC",
+                ));
+            }
+        }
+        _ => return Err(err("unknown_document_kind", kind)),
+    }
+    Ok(())
+}
+
+pub fn validate_shape(kind: &str, value: &Value) -> Result<()> {
+    validate_authored(kind, value)
+}
+
 fn validate_authored(kind: &str, v: &Value) -> Result<()> {
     finite(v)?;
     validate_schema(kind, v)?;
@@ -422,7 +544,12 @@ fn validate_authored(kind: &str, v: &Value) -> Result<()> {
 
 pub fn load_suite(path: &Path) -> Result<Value> {
     let v = load_json_document(path)?;
-    validate_authored("suite", &v)?;
+    validate_suite(&v, path)?;
+    Ok(v)
+}
+
+pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
+    validate_authored("suite", v)?;
     let cases = v["cases"].as_array().unwrap();
     unique(cases, "id")?;
     for x in v["protocol"]["probe"]["tone_response"]
@@ -435,6 +562,9 @@ pub fn load_suite(path: &Path) -> Result<Value> {
     for c in cases {
         let parsed: CaseDocument = serde_json::from_value(c.clone())?;
         file_record(&c["input"], path)?;
+        if let Some(preparation) = c.get("preparation") {
+            file_record(&preparation["original"], path)?;
+        }
         let input = obj(&c["input"])?;
         let raw = input.get("kind").and_then(Value::as_str) == Some("raw");
         if raw {
@@ -497,12 +627,12 @@ pub fn load_suite(path: &Path) -> Result<Value> {
                             "aligned scene requires transform/derivative, review, and mask",
                         ));
                     }
-                    let review = load_json_document(&resolve_path(
-                        r["correspondence_review"]["path"].as_str().unwrap(),
-                        path,
-                    )?)?;
+                    crate::references::validate_correspondence_documents(r, path)?;
+                    let review_path =
+                        resolve_path(r["correspondence_review"]["path"].as_str().unwrap(), path)?;
+                    let review = load_json_document(&review_path)?;
                     for x in review["excluded_regions"].as_array().into_iter().flatten() {
-                        geometry(&x["geometry"], path)?
+                        geometry(&x["geometry"], &review_path)?
                     }
                 }
                 "regional" => {
@@ -558,7 +688,7 @@ pub fn load_suite(path: &Path) -> Result<Value> {
             }
         }
     }
-    Ok(v)
+    Ok(())
 }
 pub fn load_target(path: &Path) -> Result<Value> {
     let v = load_json_document(path)?;
@@ -746,28 +876,6 @@ pub struct CaseDocument {
     pub regions: Vec<RegionDocument>,
     pub measurements: Vec<String>,
 }
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Availability {
-    Available,
-    Unavailable,
-    NotApplicable,
-}
-#[derive(Debug, Deserialize)]
-pub struct MeasurementRecord {
-    pub case_id: String,
-    pub region_id: String,
-    pub metric: String,
-    pub domain: String,
-    pub units: String,
-    pub estimator: String,
-    pub sample_count: u64,
-    pub availability: Availability,
-    pub seed_population: Vec<u64>,
-    pub artifact_refs: Vec<Value>,
-    pub value: Option<f64>,
-    pub reason: Option<String>,
-}
 
 pub fn validate_policy_selectors(policy: &Value, suite: &Value) -> Result<()> {
     if policy.get("protocol_digest").and_then(Value::as_str)
@@ -801,494 +909,4 @@ pub fn validate_policy_selectors(policy: &Value, suite: &Value) -> Result<()> {
         }
     }
     Ok(())
-}
-pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result<()> {
-    finite(v)?;
-    validate_schema(kind, v)?;
-    let o = obj(v)?;
-    let body = Value::Object(
-        o.iter()
-            .filter(|(k, _)| k.as_str() != "id")
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-    );
-    if text(o, "id")? != digest(&body)? {
-        return Err(err(
-            "manifest_identity",
-            "manifest identity does not match contents",
-        ));
-    }
-    let mut index = std::collections::BTreeMap::new();
-    for a in v["artifacts"].as_array().unwrap() {
-        let ao = obj(a)?;
-        let p = text(ao, "path")?;
-        if index.insert(p, a).is_some() {
-            return Err(err(
-                "duplicate_artifact",
-                "artifact index paths must be unique",
-            ));
-        }
-        let file = safe_artifact_path(root, p)?;
-        if !file.is_file() {
-            return Err(err("missing_artifact", "artifact must be a regular file"));
-        }
-        if sha256_file(&file)? != text(ao, "sha256")? {
-            return Err(err("hash_mismatch", "artifact hash mismatch"));
-        }
-    }
-    let reference = |item: &Value| -> Result<()> {
-        let p = item
-            .as_str()
-            .or_else(|| item.get("path").and_then(Value::as_str))
-            .ok_or_else(|| {
-                err(
-                    "unindexed_artifact",
-                    "artifact reference must resolve in index",
-                )
-            })?;
-        let a = index.get(p).ok_or_else(|| {
-            err(
-                "unindexed_artifact",
-                format!("artifact reference absent: {p}"),
-            )
-        })?;
-        if item.is_object() && item.get("sha256") != a.get("sha256") {
-            return Err(err(
-                "artifact_identity",
-                "artifact reference hash differs from index",
-            ));
-        }
-        Ok(())
-    };
-    let measurements = |rows: &Value| -> Result<()> {
-        for row in rows.as_array().into_iter().flatten() {
-            let r = obj(row)?;
-            if [
-                "case_id",
-                "region_id",
-                "metric",
-                "domain",
-                "units",
-                "estimator",
-                "sample_count",
-                "availability",
-                "seed_population",
-                "artifact_refs",
-            ]
-            .iter()
-            .any(|k| !r.contains_key(*k))
-                || row["sample_count"].as_u64().is_none()
-            {
-                return Err(err(
-                    "measurement_fields",
-                    "measurement requires identity, population and estimator",
-                ));
-            }
-            if !matches!(
-                row["availability"].as_str(),
-                Some("available" | "unavailable" | "not_applicable")
-            ) {
-                return Err(err(
-                    "measurement_availability",
-                    "invalid measurement availability",
-                ));
-            }
-            let parsed: MeasurementRecord = serde_json::from_value(row.clone())
-                .map_err(|e| err("measurement_fields", e.to_string()))?;
-            match parsed.availability {
-                Availability::Available => {
-                    if parsed.value.is_none_or(|x| !x.is_finite()) || row.get("reason").is_some() {
-                        return Err(err(
-                            "measurement_value",
-                            "available measurement requires one finite value",
-                        ));
-                    }
-                }
-                Availability::Unavailable | Availability::NotApplicable => {
-                    if row.get("value").is_some()
-                        || parsed.reason.as_deref().is_none_or(str::is_empty)
-                    {
-                        return Err(err(
-                            "measurement_availability",
-                            "unavailable measurement requires reason and no value",
-                        ));
-                    }
-                }
-            }
-            for a in &parsed.artifact_refs {
-                reference(a)?
-            }
-        }
-        Ok(())
-    };
-    if kind == "run" {
-        reference(&v["suite"])?;
-        reference(&v["target"])?;
-        let suite = load_json_document(&safe_artifact_path(
-            root,
-            v["suite"]["path"].as_str().unwrap(),
-        )?)?;
-        validate_schema("suite", &suite)?;
-        if digest(&suite)? != v["suite"]["digest"].as_str().unwrap_or("")
-            || suite["protocol"] != v["protocol"]
-        {
-            return Err(err(
-                "suite_identity",
-                "suite snapshot and protocol mismatch",
-            ));
-        }
-        let selected = v["selection"]["case_ids"]
-            .as_array()
-            .ok_or_else(|| err("run_selection", "selection case_ids must be array"))?;
-        let all = suite["cases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| c["id"].clone())
-            .collect::<Vec<_>>();
-        let set = selected.iter().map(|x| x.as_str()).collect::<BTreeSet<_>>();
-        if selected.is_empty()
-            || set.len() != selected.len()
-            || selected.iter().any(|x| !all.contains(x))
-            || v["selection"]["full_suite"].as_bool() != Some(selected == &all)
-        {
-            return Err(err(
-                "run_selection",
-                "selection must identify distinct suite cases and full-suite state",
-            ));
-        }
-        let mut expected = BTreeSet::new();
-        for c in suite["cases"].as_array().unwrap() {
-            if selected.contains(&c["id"]) {
-                for seed in c["seeds"].as_array().unwrap() {
-                    expected.insert((
-                        c["id"].as_str().unwrap().to_string(),
-                        seed.as_u64().unwrap(),
-                    ));
-                }
-            }
-        }
-        let mut observed = BTreeSet::new();
-        for row in v["cases"].as_array().unwrap() {
-            let ro = obj(row)?;
-            identifier(ro, "case_id")?;
-            let seed = row["seed"]
-                .as_u64()
-                .filter(|x| *x <= u32::MAX as u64)
-                .ok_or_else(|| err("run_case", "invalid case seed"))?;
-            if !observed.insert((text(ro, "case_id")?.to_string(), seed)) {
-                return Err(err("run_selection", "duplicate rendered case/seed"));
-            }
-            match row["status"].as_str() {
-                Some("completed") => {
-                    for k in [
-                        "input",
-                        "raw",
-                        "raw_metadata",
-                        "master",
-                        "diagnostics",
-                        "resolved",
-                        "stdout",
-                        "stderr",
-                    ] {
-                        reference(req(ro, k)?)?
-                    }
-                    let layout = &row["raw"]["layout"];
-                    let w = layout["width"]
-                        .as_u64()
-                        .ok_or_else(|| err("raw_layout", "invalid width"))?;
-                    let h = layout["height"]
-                        .as_u64()
-                        .ok_or_else(|| err("raw_layout", "invalid height"))?;
-                    let bytes = w
-                        .checked_mul(h)
-                        .and_then(|x| x.checked_mul(24))
-                        .ok_or_else(|| err("raw_layout", "raw byte count overflow"))?;
-                    if fs::metadata(safe_artifact_path(
-                        root,
-                        row["raw"]["path"].as_str().unwrap(),
-                    )?)?
-                    .len()
-                        != bytes
-                    {
-                        return Err(err("raw_layout", "raw byte count differs from dimensions"));
-                    }
-                    let d = load_json_document(&safe_artifact_path(
-                        root,
-                        row["diagnostics"]["path"].as_str().unwrap(),
-                    )?)?;
-                    if d["configuration"]["published_dimensions"] != row["dimensions"] {
-                        return Err(err(
-                            "render_geometry",
-                            "diagnostics and retained dimensions disagree",
-                        ));
-                    }
-                }
-                Some("failed") => {
-                    if row
-                        .get("error")
-                        .is_none_or(|x| !x.is_object() || x.as_object().unwrap().is_empty())
-                    {
-                        return Err(err(
-                            "missing_failure",
-                            "failed render requires structured error",
-                        ));
-                    }
-                    if v["execution_status"] == "completed" {
-                        return Err(err("run_status", "completed run contains failed cases"));
-                    }
-                }
-                _ => return Err(err("run_status", "invalid run case status")),
-            }
-        }
-        if observed != expected {
-            return Err(err(
-                "run_selection",
-                "rendered case/seed population differs from suite",
-            ));
-        }
-        for x in v["dependencies"].as_array().unwrap() {
-            if x["role"] != "renderer" {
-                reference(x)?
-            }
-        }
-    } else if kind == "comparison" {
-        if let Some(p) = v.get("policy") {
-            reference(p)?
-        } else if v["evaluation_status"] != "not_evaluated" {
-            return Err(err(
-                "evaluation_status",
-                "comparison without policy must remain not_evaluated",
-            ));
-        }
-        for case in v["cases"].as_array().unwrap() {
-            measurements(&case["measurements"])?;
-            for x in case["review"]
-                .as_object()
-                .into_iter()
-                .flat_map(|m| m.values())
-            {
-                reference(x)?
-            }
-            for x in case["artifacts"].as_array().into_iter().flatten() {
-                reference(x)?
-            }
-            if v["execution_status"] == "completed" && case["status"] == "failed" {
-                return Err(err(
-                    "comparison_status",
-                    "completed comparison contains failed measurements",
-                ));
-            }
-        }
-        measurements(&v["seed_measurements"])?;
-        unique(v["findings"].as_array().unwrap(), "id")?;
-        for finding in v["findings"].as_array().unwrap() {
-            let f = obj(finding)?;
-            for k in [
-                "id",
-                "case_id",
-                "region_id",
-                "metric",
-                "decision",
-                "evidence",
-            ] {
-                req(f, k)?;
-            }
-            let e = finding["evidence"]
-                .as_array()
-                .filter(|x| !x.is_empty())
-                .ok_or_else(|| err("finding_evidence", "finding requires inspectable evidence"))?;
-            for x in e {
-                reference(x)?
-            }
-        }
-        if v["evaluation_status"] == "passed" && v["execution_status"] != "completed" {
-            return Err(err("evaluation_status", "failed execution cannot qualify"));
-        }
-    }
-    Ok(())
-}
-pub fn geometry_mask(g: &Value, width: usize, height: usize, base: &Path) -> Result<Vec<bool>> {
-    let count = width
-        .checked_mul(height)
-        .ok_or_else(|| err("invalid_mask", "image size overflow"))?;
-    let g = g.get("mask").or_else(|| g.get("rectangle")).unwrap_or(g);
-    if let Some(a) = g.as_array() {
-        if a.len() != 4 || a.iter().any(|x| x.as_u64().is_none()) {
-            return Err(err("invalid_bounds", "rectangle requires four integers"));
-        }
-        let x = a[0].as_u64().unwrap() as usize;
-        let y = a[1].as_u64().unwrap() as usize;
-        let w = a[2].as_u64().unwrap() as usize;
-        let h = a[3].as_u64().unwrap() as usize;
-        if w == 0
-            || h == 0
-            || x.checked_add(w).is_none_or(|n| n > width)
-            || y.checked_add(h).is_none_or(|n| n > height)
-        {
-            return Err(err("invalid_bounds", "geometry exceeds image"));
-        }
-        let mut m = vec![false; count];
-        for yy in y..y + h {
-            for xx in x..x + w {
-                m[yy * width + xx] = true
-            }
-        }
-        return Ok(m);
-    }
-    let o = obj(g)?;
-    file_record(g, base)?;
-    if o.get("width").and_then(Value::as_u64) != Some(width as u64)
-        || o.get("height").and_then(Value::as_u64) != Some(height as u64)
-    {
-        return Err(err(
-            "invalid_region",
-            "declared mask dimensions differ from master",
-        ));
-    }
-    let p = resolve_path(text(o, "path")?, base)?;
-    let ext = p
-        .extension()
-        .and_then(|x| x.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let values = match ext.as_str() {
-        "npy" => {
-            let (v, shape) = crate::image_data::read_npy(&p)?;
-            if shape != [height, width] {
-                return Err(err("invalid_region", "mask dimensions differ from master"));
-            }
-            v
-        }
-        "tif" | "tiff" => {
-            let mut decoder =
-                tiff::decoder::Decoder::new(std::io::BufReader::new(fs::File::open(&p)?))
-                    .map_err(|e| err("invalid_region", e.to_string()))?;
-            if decoder
-                .dimensions()
-                .map_err(|e| err("invalid_region", e.to_string()))?
-                != (width as u32, height as u32)
-                || !matches!(
-                    decoder
-                        .colortype()
-                        .map_err(|e| err("invalid_region", e.to_string()))?,
-                    tiff::ColorType::Gray(_)
-                )
-            {
-                return Err(err(
-                    "invalid_region",
-                    "mask must be single-channel master-sized array",
-                ));
-            }
-            use tiff::decoder::DecodingResult::*;
-            match decoder
-                .read_image()
-                .map_err(|e| err("invalid_region", e.to_string()))?
-            {
-                U8(v) => v.into_iter().map(|x| x as f64).collect(),
-                U16(v) => v.into_iter().map(|x| x as f64).collect(),
-                U32(v) => v.into_iter().map(|x| x as f64).collect(),
-                U64(v) => v.into_iter().map(|x| x as f64).collect(),
-                I8(v) => v.into_iter().map(|x| x as f64).collect(),
-                I16(v) => v.into_iter().map(|x| x as f64).collect(),
-                I32(v) => v.into_iter().map(|x| x as f64).collect(),
-                I64(v) => v.into_iter().map(|x| x as f64).collect(),
-                F32(v) => v.into_iter().map(|x| x as f64).collect(),
-                F64(v) => v,
-                _ => return Err(err("invalid_region", "unsupported TIFF mask samples")),
-            }
-        }
-        "png" => {
-            let im = image::open(&p).map_err(|e| err("invalid_region", e.to_string()))?;
-            if im.width() != width as u32 || im.height() != height as u32 {
-                return Err(err("invalid_region", "mask dimensions differ from master"));
-            }
-            match im {
-                image::DynamicImage::ImageLuma8(v) => {
-                    v.into_raw().into_iter().map(f64::from).collect()
-                }
-                image::DynamicImage::ImageLuma16(v) => {
-                    v.into_raw().into_iter().map(f64::from).collect()
-                }
-                _ => {
-                    return Err(err(
-                        "invalid_region",
-                        "mask must be single-channel master-sized array",
-                    ));
-                }
-            }
-        }
-        _ => return Err(err("invalid_region", "mask must be NPY, PNG, or TIFF")),
-    };
-    if values.len() != count || values.iter().any(|x| !x.is_finite()) {
-        return Err(err(
-            "invalid_region",
-            "mask must be finite single-channel master-sized array",
-        ));
-    }
-    let mask = values.into_iter().map(|x| x != 0.0).collect::<Vec<_>>();
-    if !mask.iter().any(|x| *x) {
-        return Err(err("invalid_region", "mask has no selected pixels"));
-    }
-    Ok(mask)
-}
-pub fn reference_geometry_mask(
-    g: &Value,
-    width: usize,
-    height: usize,
-    base: &Path,
-) -> Result<Vec<bool>> {
-    let g = g.get("rectangle").unwrap_or(g);
-    if g.is_array() {
-        return geometry_mask(g, width, height, base);
-    }
-    let o = obj(g).map_err(|_| err("invalid_region", "mask requires frozen rectangle or file"))?;
-    let name = text(o, "path")?;
-    let p = if Path::new(name).is_absolute() {
-        PathBuf::from(name)
-    } else {
-        base.join(name)
-    };
-    let (v, shape) = if p
-        .extension()
-        .and_then(|x| x.to_str())
-        .is_some_and(|x| x.eq_ignore_ascii_case("npy"))
-    {
-        crate::image_data::read_npy(&p)?
-    } else {
-        let im = image::open(&p).map_err(|e| err("invalid_region", e.to_string()))?;
-        let dims = vec![im.height() as usize, im.width() as usize];
-        match im {
-            image::DynamicImage::ImageLuma8(v) => {
-                (v.into_raw().into_iter().map(f64::from).collect(), dims)
-            }
-            _ => {
-                return Err(err(
-                    "invalid_region",
-                    "mask must be single-channel binary image",
-                ));
-            }
-        }
-    };
-    if shape != [height, width]
-        || ["width", "height"]
-            .iter()
-            .zip([width, height])
-            .any(|(k, n)| o.get(*k).is_some_and(|x| x.as_u64() != Some(n as u64)))
-    {
-        return Err(err(
-            "invalid_region",
-            "mask dimensions differ from declared coordinate system",
-        ));
-    }
-    if v.iter().any(|x| !x.is_finite()) {
-        return Err(err("invalid_region", "mask contains invalid samples"));
-    }
-    if v.iter().any(|x| *x != 0.0 && *x != 1.0 && *x != 255.0) {
-        return Err(err(
-            "invalid_region",
-            "mask must be binary; no implicit thresholding",
-        ));
-    }
-    Ok(v.into_iter().map(|x| x != 0.0).collect())
 }

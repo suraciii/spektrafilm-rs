@@ -1,4 +1,4 @@
-use super::blur::{BlurJob, DispatchJob};
+use super::blur::{BlurJob, BlurParams, DispatchJob, gaussian_kernel};
 use super::*;
 
 /// Pre-built unsharp mask pass — owns the blur and the combine dispatch.
@@ -57,32 +57,13 @@ pub(super) fn build_unsharp_state(
         backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
 
     let sigma = up.sigma_px.max(0.01);
-    let radius = fir_blur_radius(sigma);
-    let kernel_size = (2 * radius + 1) as usize;
-    let sigma_f64 = sigma as f64;
-    let two_sigma_sq = 2.0 * sigma_f64 * sigma_f64;
-    let r_i32 = radius as i32;
-    let mut kernel = Vec::with_capacity(kernel_size);
-    for k in 0..kernel_size {
-        let x = (k as i32 - r_i32) as f64;
-        kernel.push((-x * x / two_sigma_sq).exp());
-    }
-    let sum: f64 = kernel.iter().sum();
-    let kernel_f32: Vec<f32> = kernel.into_iter().map(|v| (v / sum) as f32).collect();
+    let (radius, kernel_f32) = gaussian_kernel(sigma);
 
     let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("unsharp_blur_kernel"),
         contents: bytemuck::cast_slice(&kernel_f32),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct BlurParams {
-        width: u32,
-        height: u32,
-        radius: u32,
-        _pad: u32,
-    }
     let params = BlurParams {
         width,
         height,

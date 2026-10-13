@@ -143,8 +143,7 @@ impl App {
             self.params.scanner.black_correction = true;
             self.params.print_render.glare.active = false;
         }
-        self.dirty = true;
-        self.parameter_revision = self.parameter_revision.wrapping_add(1);
+        self.mark_parameters_changed();
         self.force_preview = true;
     }
 
@@ -176,8 +175,7 @@ impl App {
                 .on_hover_text("Apply a magazine print appearance after the selected workflow.")
                 .changed()
             {
-                self.dirty = true;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                self.mark_parameters_changed();
             }
         });
         ui.horizontal(|ui| {
@@ -255,9 +253,7 @@ impl App {
 
     pub(super) fn invalidate_look_render(&mut self) {
         self.scan_for_print_snapshot = None;
-        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-        self.parameter_revision = self.parameter_revision.wrapping_add(1);
-        self.dirty = true;
+        self.mark_parameters_changed_invalidating_calibration();
     }
 
     pub(super) fn select_film_profile(&mut self, selected: String) {
@@ -474,9 +470,7 @@ impl App {
             self.film_medium,
         );
         if changes.runtime_changed {
-            self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
-            self.parameter_revision = self.parameter_revision.wrapping_add(1);
-            self.dirty = true;
+            self.mark_parameters_changed_invalidating_calibration();
         }
         if let Some(action) = changes.action {
             self.start_calibration(action);
@@ -601,8 +595,7 @@ impl App {
                 times,
                 selected,
             ) {
-                self.dirty = true;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                self.mark_parameters_changed();
             }
             self.parameter_section(
                 ui,
