@@ -151,7 +151,8 @@ pub fn compute_exposure_correction(
 /// Backend-neutral DIR inputs derived once from the film profile and
 /// controls. Both the per-stage CPU path ([`apply_density_correction`]) and
 /// the GPU-resident chain builder consume this so the matrix scaling, the
-/// "curves before DIR" inversion, and the density maxima cannot drift apart.
+/// "curves before DIR" inversion, and the Langmuir chemistry cannot drift
+/// apart.
 #[derive(Debug, Clone)]
 pub struct DirPrepared {
     /// `couplers_matrix * amount`, row-major.
@@ -161,17 +162,30 @@ pub struct DirPrepared {
     pub curves_0: Vec<[f64; 3]>,
     /// Per-channel maximum of the normalized composite curves.
     pub density_max: [f64; 3],
+    /// Donor Langmuir knee per channel (`langmuir_donor_k * d_max`). A
+    /// channel with `K = inf` stays linear.
+    pub donor_k: [f64; 3],
+    /// Donor Langmuir reference per channel (`d_max / 2`); also the
+    /// amplitude-match point of the exposure correction.
+    pub donor_ref: [f64; 3],
+    /// Receiver Langmuir knee per channel — positive films only.
+    pub receiver_knee: Option<[f64; 3]>,
+    /// Receiver operating-point inhibitor per channel — positive only.
+    pub receiver_ref: Option<[f64; 3]>,
 }
 
 /// Derive the shared DIR inputs: scaled couplers matrix, the pre-DIR
-/// curves, and the normalized density maxima. Pure function of the film
-/// tables and the DIR controls — no image input.
+/// Langmuir curves, the normalized density maxima and the Langmuir
+/// parameters. Pure function of the film tables and the DIR controls — no
+/// image input.
 pub fn prepare_dir(
     density_curves: &[[f64; 3]],
     log_exposure: &[f64],
     couplers_matrix: &[[f64; 3]; 3],
     amount: f64,
     positive: bool,
+    langmuir_donor_k: [f64; 3],
+    langmuir_receiver_k: [f64; 3],
 ) -> DirPrepared {
     let mut matrix_scaled = *couplers_matrix;
     for row in &mut matrix_scaled {
@@ -180,12 +194,34 @@ pub fn prepare_dir(
         }
     }
     let norm_curves = normalize_density_curves_f64(density_curves);
-    let curves_0 = compute_curves_before_dir(&norm_curves, log_exposure, &matrix_scaled, positive);
+    let (donor_k, donor_ref) = langmuir_params(&norm_curves, langmuir_donor_k);
+    // The receiver knee derives from the *unit* matrix (before the amount
+    // scaling) so a pushed `amount` drives the response into saturation
+    // instead of moving the knee.
+    let receiver = receiver_params(donor_ref, couplers_matrix, langmuir_receiver_k);
+    let curves_0 = curves_before_dir_langmuir(
+        &norm_curves,
+        log_exposure,
+        &matrix_scaled,
+        positive,
+        donor_k,
+        donor_ref,
+        positive.then_some(receiver),
+    );
     let density_max = max_density_f64(&norm_curves);
+    let (receiver_knee, receiver_ref) = if positive {
+        (Some(receiver.0), Some(receiver.1))
+    } else {
+        (None, None)
+    };
     DirPrepared {
         matrix_scaled,
         curves_0,
         density_max,
+        donor_k,
+        donor_ref,
+        receiver_knee,
+        receiver_ref,
     }
 }
 
@@ -315,44 +351,37 @@ pub fn apply_density_correction(
     langmuir_receiver_k: [f64; 3],
     backend: &dyn ComputeBackend,
 ) -> ImageBuf {
-    let mut matrix_scaled = *couplers_matrix;
-    for row in &mut matrix_scaled {
-        for v in row.iter_mut() {
-            *v *= amount;
-        }
-    }
-
-    let norm_curves = normalize_density_curves_f64(density_curves);
-    let (dk, dref) = langmuir_params(&norm_curves, langmuir_donor_k);
-    let receiver_params = receiver_params(dref, couplers_matrix, langmuir_receiver_k);
-    let (donor, receiver, rref) = if positive {
-        (None, Some(receiver_params.0), receiver_params.1)
-    } else {
-        (Some(dk), None, [0.0; 3])
-    };
-    let density_curves_0 = curves_before_dir_langmuir(
-        &norm_curves,
+    let prepared = prepare_dir(
+        density_curves,
         log_exposure,
-        &matrix_scaled,
+        couplers_matrix,
+        amount,
         positive,
-        dk,
-        dref,
-        positive.then_some(receiver_params),
+        langmuir_donor_k,
+        langmuir_receiver_k,
     );
-    let density_max = max_density_f64(&norm_curves);
+    let (donor, receiver, rref) = if positive {
+        (
+            None,
+            prepared.receiver_knee,
+            prepared.receiver_ref.unwrap_or([0.0; 3]),
+        )
+    } else {
+        (Some(prepared.donor_k), None, [0.0; 3])
+    };
     let diffusion_size_px = (diffusion_size_um / pixel_size_um as f64) as f32;
     let diffusion_tail_px = (diffusion_tail_um / pixel_size_um as f64) as f32;
     let log_raw_corrected = compute_exposure_correction(
         log_raw,
         density_cmy,
-        density_max,
-        &matrix_scaled,
+        prepared.density_max,
+        &prepared.matrix_scaled,
         diffusion_size_px,
         diffusion_tail_px,
         diffusion_tail_weight,
         positive,
         donor,
-        dref,
+        prepared.donor_ref,
         receiver,
         rref,
         backend,
@@ -362,70 +391,14 @@ pub fn apply_density_correction(
     backend.density_curve_interp(
         &log_raw_corrected,
         log_exposure,
-        &density_curves_0,
+        &prepared.curves_0,
         gamma_factor as f64,
     )
 }
 
-/// Compute density curves before DIR coupler effects.
-pub fn compute_curves_before_dir(
-    density_curves: &[[f64; 3]],
-    log_exposure: &[f64],
-    couplers_matrix: &[[f64; 3]; 3],
-    positive: bool,
-) -> Vec<[f64; 3]> {
-    let k = density_curves.len();
-    let mut dc_silver = density_curves.to_vec();
-
-    if positive {
-        let max_d = max_density_f64(density_curves);
-        for row in &mut dc_silver {
-            for c in 0..3 {
-                row[c] = max_d[c] - row[c];
-            }
-        }
-    }
-
-    // couplers_amount = dc_silver @ couplers_matrix
-    let mut couplers_amount = vec![[0.0f64; 3]; k];
-    for j in 0..k {
-        for m in 0..3 {
-            couplers_amount[j][m] = dc_silver[j][0] * couplers_matrix[0][m]
-                + dc_silver[j][1] * couplers_matrix[1][m]
-                + dc_silver[j][2] * couplers_matrix[2][m];
-        }
-    }
-
-    // log_exposure_0 = log_exposure - couplers_amount
-    // Then re-interpolate density curves on the shifted axis
-    let mut corrected = vec![[0.0f64; 3]; k];
-    for c in 0..3 {
-        let le_shifted: Vec<f64> = (0..k)
-            .map(|j| log_exposure[j] - couplers_amount[j][c])
-            .collect();
-        let dc_col: Vec<f64> = density_curves.iter().map(|row| row[c]).collect();
-        for j in 0..k {
-            corrected[j][c] = interp_curve(&le_shifted, &dc_col, log_exposure[j]);
-        }
-    }
-
-    corrected
-}
-
-fn interp_curve(x: &[f64], y: &[f64], query: f64) -> f64 {
-    if query <= x[0] {
-        return y[0];
-    }
-    if query >= x[x.len() - 1] {
-        return y[y.len() - 1];
-    }
-    let i = x.partition_point(|&v| v <= query) - 1;
-    y[i] + (query - x[i]) / (x[i + 1] - x[i]) * (y[i + 1] - y[i])
-}
-
 #[cfg(test)]
 mod tests {
-    use super::compute_curves_before_dir;
+    use super::curves_before_dir_langmuir;
 
     #[test]
     fn dir_curve_precision_matches_pinned_python_for_both_film_types() {
@@ -440,7 +413,17 @@ mod tests {
             [0.020000023, 0.130000029, 0.050000031],
             [0.040000037, 0.060000041, 0.170000043],
         ];
-        // spektrafilm 0.3.4 compute_density_curves_before_dir_couplers.
+        // An infinite donor knee and no receiver side degenerate to the
+        // linear 0.3.4 model, whose `compute_density_curves_before_dir_couplers`
+        // output is pinned below (empty-curve channels clamp, middle row
+        // interpolates on the shifted exposure).
+        let mut dmax = [0.0_f64; 3];
+        for row in &curves {
+            for c in 0..3 {
+                dmax[c] = dmax[c].max(row[c]);
+            }
+        }
+        let donor_ref = [dmax[0] * 0.5, dmax[1] * 0.5, dmax[2] * 0.5];
         let expected = [
             [
                 [
@@ -458,7 +441,15 @@ mod tests {
             ],
         ];
         for (positive, expected) in [false, true].into_iter().zip(expected) {
-            let actual = compute_curves_before_dir(&curves, &exposure, &matrix, positive);
+            let actual = curves_before_dir_langmuir(
+                &curves,
+                &exposure,
+                &matrix,
+                positive,
+                [f64::INFINITY; 3],
+                donor_ref,
+                None,
+            );
             for (actual, expected) in actual.iter().zip(expected) {
                 for c in 0..3 {
                     assert!((actual[c] - expected[c]).abs() < 1e-14);

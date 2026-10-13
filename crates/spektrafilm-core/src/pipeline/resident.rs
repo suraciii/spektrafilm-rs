@@ -6,13 +6,7 @@ use spektrafilm_math::image::ImageBuf;
 enum ResidentFallbackReason {
     WorkflowRoute,
     NegativeToPositiveOutput,
-    ScannerReceiver,
     ScannerFilmPoints,
-    LangmuirChemistry,
-    InputTransferDecoding,
-    RequestedSpectralLut,
-    ActiveOpticalDiffusion,
-    FaithfulGrainDistribution,
     /// Active Dye resolves its film-coordinate field on the CPU; the
     /// resident chain has no equivalent readout.
     FilmGrainV3FieldCpu,
@@ -89,9 +83,6 @@ impl Pipeline {
         {
             reasons.push(ResidentFallbackReason::ScannerFilmPoints);
         }
-        // Non-default Langmuir chemistry no longer declines: DIR runs as
-        // an assembled CPU fence (pipe architecture, capability class —
-        // see `dir_cpu_stage` in `try_gpu_resident`).
         // Input transfer decoding no longer declines: the resident route
         // decodes the input before upload (pipe architecture, capability
         // class — see `try_gpu_resident`).
@@ -240,18 +231,6 @@ impl Pipeline {
                                 R::NegativeToPositiveOutput
                             }
                             ResidentFallbackReason::ScannerFilmPoints => R::ScannerFilmPoints,
-                            ResidentFallbackReason::ScannerReceiver => R::ScannerReceiver,
-                            ResidentFallbackReason::LangmuirChemistry => R::LangmuirChemistry,
-                            ResidentFallbackReason::InputTransferDecoding => {
-                                R::InputTransferDecoding
-                            }
-                            ResidentFallbackReason::RequestedSpectralLut => R::RequestedSpectralLut,
-                            ResidentFallbackReason::ActiveOpticalDiffusion => {
-                                R::ActiveOpticalDiffusion
-                            }
-                            ResidentFallbackReason::FaithfulGrainDistribution => {
-                                R::FaithfulGrainDistribution
-                            }
                             ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
                             ResidentFallbackReason::FilmGrainFotufilmCpu => R::FotufilmFilmCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
@@ -416,15 +395,7 @@ impl Pipeline {
         // Held in this binding so `&density_curves_0_f64` outlives the
         // backend call.
         let dir = &self.params.film_render.dir_couplers;
-        let dir_langmuir_default = {
-            let coefficients = if self.film.is_positive() {
-                &dir.langmuir_receiver_k_rgb
-            } else {
-                &dir.langmuir_donor_k_rgb
-            };
-            coefficients.iter().all(|k| (k - 1.0).abs() <= f64::EPSILON)
-        };
-        let dir_inputs = if dir.active && dir_langmuir_default {
+        let dir_inputs = if dir.active {
             let matrix = crate::chain_prep::dir_matrix(dir);
             let prepared = spektrafilm_model::couplers::prepare_dir(
                 &film_curves.raw,
@@ -432,6 +403,8 @@ impl Pipeline {
                 &matrix,
                 dir.amount,
                 self.film.is_positive(),
+                dir.langmuir_donor_k_rgb,
+                dir.langmuir_receiver_k_rgb,
             );
             Some((
                 prepared,
@@ -454,6 +427,7 @@ impl Pipeline {
                 [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
             ];
             let dm = d.0.density_max;
+            let narrow = |v: [f64; 3]| [v[0] as f32, v[1] as f32, v[2] as f32];
             spektrafilm_gpu::DirCouplersGpuParams {
                 couplers_matrix_scaled: matrix_f32,
                 density_max: [dm[0] as f32, dm[1] as f32, dm[2] as f32],
@@ -461,52 +435,17 @@ impl Pipeline {
                 diffusion_size_px: (d.2 / d.1) as f32,
                 diffusion_tail_px: (d.3 / d.1) as f32,
                 diffusion_tail_weight: d.4 as f32,
+                // The reversal donor stays linear (the saturation sits on
+                // the receiver side), mirroring `apply_density_correction`.
+                donor_k: (!d.5).then(|| narrow(d.0.donor_k)),
+                donor_ref: narrow(d.0.donor_ref),
+                receiver_knee: d.0.receiver_knee.map(narrow),
+                receiver_ref: narrow(d.0.receiver_ref.unwrap_or([0.0; 3])),
                 density_curves_0: &d.0.curves_0,
                 log_exposure: film_log_exp,
                 gamma_factor: d.6,
             }
         });
-        // Non-default Langmuir chemistry runs DIR as an assembled CPU fence
-        // over the density and log-raw buffers (pipe architecture,
-        // capability class): the GPU shader has no Langmuir path.
-        let dir_cpu_stage: Option<Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + '_>> =
-            if dir.active && !dir_langmuir_default {
-                let dir = &self.params.film_render.dir_couplers;
-                let matrix = crate::chain_prep::dir_matrix(dir);
-                let curves_raw = &film_curves.raw;
-                let log_exp = film_log_exp;
-                let pix_um = pixel_size_um;
-                let is_positive = self.film.is_positive();
-                let gamma = self.params.film_render.density_curve_gamma as f64;
-                let seed_backend = backend;
-                let closure: Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + '_> =
-                    Box::new(move |density: &ImageBuf, log_raw: &ImageBuf| {
-                        let observation =
-                            crate::stages::StageObservation::new(seed_backend, "dir_couplers");
-                        let observed = observation.backend(seed_backend);
-                        spektrafilm_model::couplers::apply_density_correction(
-                            density,
-                            log_raw,
-                            pix_um as f32,
-                            log_exp,
-                            curves_raw,
-                            &matrix,
-                            dir.amount,
-                            dir.diffusion_size_um,
-                            dir.diffusion_tail_um,
-                            dir.diffusion_tail_weight,
-                            is_positive,
-                            gamma as f32,
-                            dir.langmuir_donor_k_rgb,
-                            dir.langmuir_receiver_k_rgb,
-                            observed,
-                        )
-                    });
-                Some(closure)
-            } else {
-                None
-            };
-
         // Glare in the resident chain — applied after scan_spectral on the
         // final RGB buffer. Mirrors the CPU lognormal + blur + add. Python
         // 0.3.4 disables viewing glare entirely on the `io.scan_film` path
@@ -882,7 +821,6 @@ impl Pipeline {
             scanner_lens_blur_px,
             highlight_boost,
             density_cpu_stage,
-            dir_cpu_stage,
             scan_tail_cpu_stage,
             scan_acquisition_cpu_stage,
             print_acquisition_cpu_stage,
@@ -942,6 +880,7 @@ impl Pipeline {
 mod tests {
     use super::*;
     use crate::params::RuntimeParams;
+    use spektrafilm_math::image::ImageBuf;
 
     fn data_dir() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -950,6 +889,112 @@ mod tests {
             .parent()
             .unwrap()
             .join("data")
+    }
+
+    /// Params for the film-render resident parity checks: the slide-style
+    /// `input > film > scan` route with every optional device-heavy stage
+    /// off, so the comparison isolates the film develop chain (density
+    /// curve, DIR couplers, scanner readout).
+    fn resident_parity_params(n: u32) -> RuntimeParams {
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+        params.io.output_cctf_encoding = false;
+        // Keep the diffusion kernels inside the FIR domain at this working
+        // resolution so the GPU's truncated kernel and the CPU's matched
+        // path agree without the IIR approximation entering the budget.
+        if n > 64 {
+            params.film_render.dir_couplers.diffusion_size_um = 20.0;
+            params.film_render.dir_couplers.diffusion_tail_um = 200.0;
+        }
+        params
+    }
+
+    fn comparison_image(n: u32) -> ImageBuf {
+        use spektrafilm_math::precision::from_f64;
+        let data: Vec<_> = (0..n * n * 3)
+            .map(|i| from_f64(0.05 + 0.9 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        ImageBuf::from_data(n, n, data)
+    }
+
+    /// Mean and max absolute deviation between the two outputs.
+    fn parity_metrics(gpu: &ImageBuf, cpu: &ImageBuf) -> (f64, f64) {
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in gpu.data.iter().zip(cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        (sum / cpu.data.len() as f64, max_diff)
+    }
+
+    /// Resident chain parity for a positive slide film. Pins the DIR
+    /// coupler chemistry: the Langmuir-aware "curves before DIR", the
+    /// reversal receiver saturation after the diffusion blend, and the
+    /// 3-Gaussian exponential tail (a linear or single-Gaussian DIR stage
+    /// misses by orders of magnitude on this image).
+    #[test]
+    fn resident_positive_slide_matches_cpu_per_stage() {
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let pipeline =
+            Pipeline::new_with_spectral(film, print, resident_parity_params(16), &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let image = comparison_image(16);
+        let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+        let cpu_out = pipeline
+            .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+        assert!(
+            mean < 5e-2 && max_diff < 5e-1,
+            "positive slide resident parity: mean={mean:.6} max={max_diff:.6}"
+        );
+    }
+
+    /// Resident chain parity for a negative film at a working resolution
+    /// where the DIR diffusion is active — the donor-side Langmuir and the
+    /// exponential tail carry the comparison here.
+    #[test]
+    fn resident_negative_matches_cpu_per_stage() {
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = resident_parity_params(16);
+        params.film_render.dir_couplers.diffusion_tail_weight = 0.5;
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let image = comparison_image(16);
+        let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+        let cpu_out = pipeline
+            .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+        assert!(
+            mean < 5e-2 && max_diff < 5e-1,
+            "negative resident parity: mean={mean:.6} max={max_diff:.6}"
+        );
     }
 
     #[test]
@@ -1431,12 +1476,12 @@ mod tests {
         assert!(max_diff < 5e-1, "decoded-input max divergence: {max_diff}");
     }
 
-    /// Non-default Langmuir chemistry no longer demotes to per-stage: DIR
-    /// runs as an assembled CPU fence over the density and log-raw buffers.
-    /// The fence narrows both buffer inputs to f32 (GPU chain precision);
-    /// the budget matches the Spektra-fence budget.
+    /// Non-default Langmuir chemistry stays on the device: the DIR node
+    /// applies the donor saturation with the caller's coefficients, so a
+    /// negative film with custom knees must match the CPU reference without
+    /// any fence or per-stage demotion.
     #[test]
-    fn langmuir_dir_resident_fence_matches_cpu() {
+    fn langmuir_dir_non_default_donor_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
         let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
@@ -1474,8 +1519,8 @@ mod tests {
             sum += d;
         }
         let mean = sum / out_cpu.data.len() as f64;
-        assert!(mean < 5e-2, "langmuir fence mean divergence: {mean}");
-        assert!(max_diff < 5e-1, "langmuir fence max divergence: {max_diff}");
+        assert!(mean < 5e-2, "langmuir DIR mean divergence: {mean}");
+        assert!(max_diff < 5e-1, "langmuir DIR max divergence: {max_diff}");
     }
 
     /// An explicitly requested GPU backend must fail at assembly when a

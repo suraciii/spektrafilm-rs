@@ -1,4 +1,3 @@
-use super::ObservedEncoder;
 use super::{
     ImageBuf, WgpuBackend, build_dir_state, build_gamut_state, build_glare_state,
     build_grain_v2_state, build_halation_state, build_highlight_boost_state,
@@ -856,29 +855,8 @@ impl WgpuBackend {
             n_pixels,
         ));
         // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
-        //     the density curve back into buf_a. Non-default Langmuir
-        //     chemistry runs as an assembled CPU fence instead (pipe
-        //     architecture, capability class), reading both buffers and
-        //     writing the corrected density back in place.
-        if let Some(cpu) = p.dir_cpu_stage.as_ref() {
-            let buf_a = buf_a.clone();
-            let buf_b = buf_b.clone();
-            let (w, h) = (image.width, image.height);
-            let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
-                name: "dir_couplers_cpu",
-                fence: Box::new(move |pipe| {
-                    let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
-                    let log_raw = pipe.readback_buffer(&buf_b, img_bytes_u64);
-                    let corrected = cpu(
-                        &ImageBuf::from_data(w, h, crate::gpu_helpers::f32_to_scalars(density)),
-                        &ImageBuf::from_data(w, h, crate::gpu_helpers::f32_to_scalars(log_raw)),
-                    );
-                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&corrected.data);
-                    pipe.write_image_buffer(&buf_a, &out_f32);
-                }),
-            });
-        } else if let Some(ds) = dir_state.take() {
+        //     the density curve back into buf_a.
+        if let Some(ds) = dir_state.take() {
             stages.push(super::pipe::ChainStage::Gpu {
                 name: "dir_couplers",
                 encode: Box::new(move |encoder| ds.encode_passes(encoder, n_pixels, wg_xy)),
