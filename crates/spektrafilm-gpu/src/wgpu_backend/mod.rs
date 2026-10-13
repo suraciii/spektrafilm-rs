@@ -172,7 +172,6 @@ impl WgpuBackend {
         let queue = ObservedQueue {
             raw: queue,
             context: ObservationContext::default(),
-            batch: None,
         };
         let pipeline_cache = std::sync::Arc::new(PipelineCache::default());
         Some(Self {
@@ -306,7 +305,6 @@ impl ComputeBackend for WgpuBackend {
         let queue = ObservedQueue {
             raw: self.queue.raw.clone(),
             context,
-            batch: None,
         };
         Some(Box::new(Self {
             pipe: self.pipe.with_observed(device.clone(), queue.clone()),
