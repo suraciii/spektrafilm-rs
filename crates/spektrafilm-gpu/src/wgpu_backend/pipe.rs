@@ -296,35 +296,61 @@ impl GpuPipe {
     }
 }
 
-/// One node of an assembled compute chain (pipe-architecture slice S2).
+/// One node of an assembled compute chain (pipe-architecture slices S2/S3).
 /// A `Gpu` node encodes passes into the current command buffer without
-/// host transfer. A `Cpu` node is an assembled fence: the executor
-/// submits, materializes the image, runs the CPU stage, and re-uploads
-/// before continuing with a fresh command buffer (slice S3).
+/// host transfer. A `Cpu` node is an assembled fence: the executor submits
+/// pending passes, the closure materializes a device image, runs the CPU
+/// stage, and writes the result back to the device before the next nodes
+/// encode against it.
 pub(super) enum ChainStage<'a> {
     Gpu {
         name: &'static str,
         encode: Box<dyn FnOnce(&mut ObservedEncoder) + 'a>,
+    },
+    Cpu {
+        name: &'static str,
+        fence: Box<dyn FnOnce(&GpuPipe) + 'a>,
     },
 }
 
 impl GpuPipe {
     /// Execute an assembled stage list. Consecutive `Gpu` nodes share one
     /// command buffer and one submission, exactly like the former fused
-    /// chain; a `Cpu` fence node (S3) splits the submission.
+    /// chain; a `Cpu` fence node flushes the submission, runs the closure,
+    /// and continues with a fresh command buffer.
     pub(super) fn run_chain(&self, stages: Vec<ChainStage<'_>>) {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         for stage in stages {
             match stage {
-                ChainStage::Gpu { name, encode } => {
-                    // One compute pass per node keeps the pass labels that
-                    // telemetry and pass accounting observe today.
-                    let _ = name;
-                    encode(&mut encoder);
+                ChainStage::Gpu { name: _, encode } => encode(&mut encoder),
+                ChainStage::Cpu { name: _, fence } => {
+                    // The fence materializes device data, so all previously
+                    // encoded passes must complete first.
+                    self.queue.submit(Some(encoder.finish()));
+                    fence(self);
+                    encoder = self.device.create_command_encoder(&Default::default());
                 }
             }
         }
         self.queue.submit(Some(encoder.finish()));
+    }
+
+    /// Materialize a device image buffer through the pooled readback path.
+    /// Records one readback of `bytes`.
+    pub(super) fn readback_buffer(&self, buf: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
+        let readback = self.take_readback(bytes);
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(buf, 0, &readback, 0, bytes);
+        self.queue.submit(Some(encoder.finish()));
+        let out = self.read_mapped_f32(&readback, bytes);
+        self.return_readback(readback, bytes);
+        out
+    }
+
+    /// Overwrite a device image buffer with host samples. Records one
+    /// image upload of the written bytes.
+    pub(super) fn write_image_buffer(&self, buf: &wgpu::Buffer, data: &[f32]) {
+        self.queue.write_buffer(buf, 0, bytemuck::cast_slice(data));
     }
 }
 

@@ -841,6 +841,29 @@ impl WgpuBackend {
                 encode: Box::new(move |encoder| ds.encode_passes(encoder, n_pixels, wg_xy)),
             });
         }
+        // 3a. Capability fence (pipe architecture, S3): an unported grain
+        //     engine runs on the host over the developed film density —
+        //     after DIR, matching the CPU develop order — and the result
+        //     is written back in place so the pre-bound print bind groups
+        //     keep addressing the same buffer.
+        if let Some(cpu) = p.density_cpu_stage.as_ref() {
+            let buf_a = buf_a.clone();
+            let (w, h) = (image.width, image.height);
+            let img_bytes_u64 = img_bytes as u64;
+            stages.push(super::pipe::ChainStage::Cpu {
+                name: "density_cpu_stage",
+                fence: Box::new(move |pipe| {
+                    let host = pipe.readback_buffer(&buf_a, img_bytes_u64);
+                    let grained = cpu(&ImageBuf::from_data(
+                        w,
+                        h,
+                        crate::gpu_helpers::f32_to_scalars(host),
+                    ));
+                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&grained.data);
+                    pipe.write_image_buffer(&buf_a, &out_f32);
+                }),
+            });
+        }
         // 4 + 5. Printing: print_spectral (buf_a → buf_b) then the print
         //     density curve (buf_b → buf_a). Skipped for scan_film — the
         //     scan pass consumes the film density already in buf_a.
