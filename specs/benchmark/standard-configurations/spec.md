@@ -6,7 +6,7 @@ An agent must be able to generate reusable rendering configurations and run a lo
 
 A standard configuration is a rendering setup, not a new film profile or preset kind. It must use the existing preset and case-configuration contracts. A baseline remains an explicitly selected completed run.
 
-The [machine interface](interface.md#standard-configuration-generation) owns command syntax, output filenames, and generation results. The [system design](design.md#standard-configuration-ownership) owns construction and reuse boundaries.
+The [machine interface](../interface.md#standard-configuration-generation) owns command syntax, output filenames, and generation results. The [system design](../design.md#standard-configuration-ownership) owns construction and reuse boundaries.
 
 ## User workflow
 
@@ -68,7 +68,7 @@ Generating a new bundle after an upgrade must remain an explicit setup action. I
 
 A profile, preset, or data change must remain a declared comparison condition. A generated preset must not require the baseline's profile content hash when the caller intentionally compares profile revisions. The selected runtime data must still be hashed by the runner.
 
-Comparing different film materials may require a separately authored common output configuration. [Digital Reference](../film-chain/digital-reference.md) is one modeled convention for supported negative-film scans. It is not the standard print-scan setup and must not be enabled silently.
+Comparing different film materials may require a separately authored common output configuration. [Digital Reference](../../film-chain/digital-reference/spec.md) is one modeled convention for supported negative-film scans. It is not the standard print-scan setup and must not be enabled silently.
 
 No generated configuration may supply universal acceptance thresholds. The existing exploratory policy must remain unqualified. Generation must not create a calibrated policy or update an approved baseline.
 

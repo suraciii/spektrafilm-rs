@@ -40,7 +40,7 @@ CPU f64 reference/export, WGPU f32 execution, and explicit per-stage CPU fallbac
 Shared film/print curve and spectral preparation lives in `chain_prep`.
 Stages and the resident builder consume the same derivations.
 Backend-specific arithmetic, resource ownership, and dispatch remain separate.
-See [the current P1+P2 record](../GPU_UNIFY_PLAN.md#p1p2-当前实现2026-10-09) for the execution contract and verification limits.
+See the current P1+P2 record in the project context workspace for the execution contract and verification limits.
 
 ## Feature ownership
 

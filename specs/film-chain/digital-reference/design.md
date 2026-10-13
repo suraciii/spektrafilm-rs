@@ -2,7 +2,7 @@
 
 ## Ownership
 
-The [product contract](digital-reference.md) owns behavior and acceptance. The [domain glossary](../../CONTEXT.md) owns terms. The Film chain owns this addition; it does not create another workflow or subsystem.
+The [product contract](spec.md) owns behavior and acceptance. The [domain glossary](../../../CONTEXT.md) owns terms. The Film chain owns this addition; it does not create another workflow or subsystem.
 
 Scan preparation must resolve a reference receiver, its common color interpretation, its reference tone placement, and fixed normalization as one compatible conversion configuration. This coupling is specific to reference conversion. Existing receiver-independent `density` behavior must remain intact.
 
@@ -26,7 +26,7 @@ A matched reference receiver and conversion inside Scan preserves the existing s
 
 The existing `scanner.positive_interpretation` enum adds `digital_reference`. The existing `scanner.receiver_profile` enum adds the matching `digital_reference`. Both values are required together. This reuses the existing parameter source, preset, state, recipe, and discovery boundaries without adding a Scan treatment field. Defaults remain unchanged.
 
-Manual controls are `scanner.reference_exposure_ev` and `scanner.reference_balance_ev`. They default to zero. Their output-gain semantics belong to the [product contract](digital-reference.md#reference-exposure). Existing reconstruction controls must remain at their defaults in this mode.
+Manual controls are `scanner.reference_exposure_ev` and `scanner.reference_balance_ev`. They default to zero. Their output-gain semantics belong to the [product contract](spec.md#reference-exposure). Existing reconstruction controls must remain at their defaults in this mode.
 
 ### Numerical reference model
 
