@@ -13,7 +13,7 @@
 
 A section is a named set of look-owned parameter paths. This table is authoritative for routing, and a section preset carries exactly its section's paths.
 
-A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` stays a document field for upstream parity but is not a section, because the pipeline never reads it and no control surface edits it. The print-stage glare belongs to `print` through `print_render`.
+A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` stays a document field for upstream parity but is not a section, because the pipeline never reads it and no control surface edits it. Print viewing glare remains in `print` through `print_render`; its [readout boundary](../film-chain/spec.md#scan-optics-and-print-viewing-glare) must not be inferred from that storage location.
 
 - `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`, `film_render.response`
 - `grain`: `film_render.grain`

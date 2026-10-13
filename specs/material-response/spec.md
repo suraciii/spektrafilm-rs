@@ -44,11 +44,19 @@ Print exposure must remain the overall density control. Existing midgray-referen
 
 `print_render.response.shadows_tone`, `midtones_tone`, and `highlights_tone` must be finite in [-1,1] and default to zero. Positive values must warm the corresponding region and negative values must cool it under the declared baseline print readout. These controls must modulate main printing exposure through a modeled local filter adjustment before development. They must not tint completed RGB or claim a measured chemical bath or spatially masked darkroom process.
 
-The three smooth region weights must be nonnegative and sum to one. They must come from one untoned baseline print evaluation per sample, including the selected main exposure, global filtration, and preflash. No weight may depend on another region's modified result. The local filtration must affect only main exposure; preflash must not acquire the local filter pack. Zero tone controls must bypass the extra evaluation. Image coordinates and neighboring pixels must not affect the weights.
+The three smooth region weights must be nonnegative and sum to one. They must come from one local untoned baseline print evaluation before spatial propagation, including main exposure, global filtration, and preflash. No weight may depend on another region's modified result. The local filtration must affect only main exposure; preflash must not acquire the local filter pack. Zero tone controls must bypass the extra evaluation. Image coordinates and neighboring pixels must not affect these weights. The subsequently propagated exposure may depend on neighboring samples.
 
 Warm/cool print-tone controls must be inactive for monochrome print materials. They must not claim colored output from a spectrally neutral material or add an RGB tint as a fallback. Stored values must remain available for a color print profile.
 
-The response order must be baseline mask evaluation, local main-exposure filtration, Print highlight mapping, color density, saturation, and material density formation. Tonal effects must reach the print-density output even when scanner finishing is disabled.
+Print must execute this order:
+
+1. Evaluate the local baseline masks without spatial propagation or creative response.
+2. Apply global and local main-exposure filtration and evaluate the transmitted main exposure.
+3. Apply enlarger optical diffusion to the linear main exposure.
+4. Add the independently prepared preflash at the material plane.
+5. Apply Print highlight mapping, color density, and saturation to the received total exposure, then form material density.
+
+Preflash is modeled as a spatially uniform material-plane exposure with its own filtration. It must not be filtered or blurred as part of the main image. Its existing exposure-unit and normalization conventions must remain unchanged. This capability does not add a nonuniform preflash source or another optical-path selector. Tonal effects must reach print density even when scanner finishing is disabled.
 
 ## Scan reference isolation
 
@@ -86,10 +94,10 @@ Route changes must preserve inactive values. Finished RGB must identify both mat
 
 ## Acceptance
 
-1. With neutral new controls and no retired lightness value, existing CPU f64, native-f32, and admitted GPU results must remain within their existing budgets. Disabled and active-neutral paths must avoid numerical round trips. Failure and bypass checks must cover sampled and fitted profiles.
+1. With neutral new controls and no retired lightness value, existing CPU f64, native-f32, and admitted GPU results must remain within their existing budgets, except for the declared [optical-order cutover](../film-chain/spec.md#optical-order-cutover). Disabled and active-neutral response paths must avoid numerical round trips; they must not restore the old optical order. Failure and bypass checks must cover sampled and fitted profiles.
 2. Film highlight tests must prove onset continuity, monotonicity, unchanged middle reference, retained record-exposure ratios, and changed film-density output. Print tests must prove correct whiteward direction for each supported polarity, unchanged middle reference and material white, and changed print density without changed film density.
 3. A neutral wedge and chromatic patches must prove neutral-locus invariance, saturation-zero behavior, signed color-density direction, and finite boundary behavior. Tests must identify the reference readout. Invalid material coordinates must fail before publication, not clamp silently.
-4. Print tone tests must prove smooth partition weights, main/preflash isolation, no sequential remasking, and changed material output before Scan. Full-frame and isolated identical patches must agree when spatial effects are disabled.
+4. Print tone tests must prove smooth partition weights, main/preflash isolation, no sequential remasking, and changed material output before Scan. Full-frame and isolated identical patches must agree when spatial effects are disabled. With diffusion active, a bright edge and nonuniform tonal mask must distinguish filtration-before-diffusion and diffusion-before-response from the reversed orders. Uniform preflash must remain uniform, including image and tile boundaries.
 5. Changing only creative response must leave prepared scanner references and automatic setup unchanged. Adjusted densities must produce an observable change under fixed scanning on nondegenerate patches. A matching inverse of the adjusted response must fail this acceptance intent.
 6. Real CLI and GUI scenarios must cover film-print-scan, reversal film-scan, admitted negative conversion, native negative output, converted-negative printing, and Finished RGB. Inactive-route controls must not execute. Resident, per-stage, and diagnostic paths must share stage placement and report faithful fallback.
 7. Mix tests must compare both exact endpoints and a known intermediate linear mixture. Non-square crop, resize, rotation, RAW, and negative capture must verify source alignment. Save must not reapply response or mix; Export must consume its immutable snapshot.

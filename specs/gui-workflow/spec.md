@@ -49,3 +49,11 @@ MAIN Output must expose Overall effect amount as the full-result/prepared-source
 
 Loading retired settings must follow [Output boundary and retirement](../material-response/spec.md#output-boundary-and-retirement). A rejected document must identify the exact retired path and leave the source document, active controls, accepted render identity, and retained output unchanged. The GUI must not silently replace a retired numeric lightness triplet with Film or Print response settings; the user must explicitly remove it and choose any replacement.
 
+## Optical and grain labels
+
+MAIN Scanner must distinguish Lens blur (readout optics) from Unsharp mask (digital sharpening). Identity point controls must not imply a different optical order. Tooltips must explain the [optical-order cutover](../film-chain/spec.md#optical-order-cutover) without offering a legacy late-blur mode.
+
+PRINT may retain the `print_render.glare` controls in its existing preset section, but their visible group must be labeled Print viewing glare. Its description must identify readout stray light, not preflash or a change in material density. Preflash and Enlarger diffusion must remain separately labeled exposure and optical controls. Group location must not imply that all Print controls execute during development.
+
+The existing grain selector must retain its stable engine names and preset section. It must identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Selecting Procedural must describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution. No duplicate grain selector or automatic engine conversion is required.
+
