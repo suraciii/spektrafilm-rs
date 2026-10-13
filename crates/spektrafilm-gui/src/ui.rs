@@ -61,10 +61,11 @@ impl App {
             .map(|job| ("Export", job.operation.mode()));
         let save_report = self.diagnostics.show(ui, render, queued, export);
         if save_report
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("JSON report", &["json"])
-                .set_file_name("spektrafilm-report.json")
-                .save_file()
+            && let Some(path) = self.chooser.save_file(
+                rfd::FileDialog::new()
+                    .add_filter("JSON report", &["json"])
+                    .set_file_name("spektrafilm-report.json"),
+            )
         {
             self.status = match self.diagnostics.save_selected(&path) {
                 Ok(()) => "Saved diagnostic report.".into(),
@@ -76,11 +77,11 @@ impl App {
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             if ui.button("Save current to file").clicked()
-                && let Some(path) = self
-                    .file_dialog("state")
-                    .set_file_name("gui_state.json")
-                    .add_filter("JSON", &["json"])
-                    .save_file()
+                && let Some(path) = self.chooser.save_file(
+                    self.file_dialog("state")
+                        .set_file_name("gui_state.json")
+                        .add_filter("JSON", &["json"]),
+                )
             {
                 self.remember_dialog("state", &path);
                 let result = self.current_state().and_then(|s| s.save(&path));
@@ -91,9 +92,8 @@ impl App {
             }
             if ui.button("Load from file").clicked()
                 && let Some(path) = self
-                    .file_dialog("state")
-                    .add_filter("JSON", &["json"])
-                    .pick_file()
+                    .chooser
+                    .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
             {
                 let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
                 self.status = match result {
@@ -107,14 +107,15 @@ impl App {
             if ui.button("Save current as default").clicked() {
                 let result = self
                     .current_state()
-                    .and_then(|s| s.save(&state::default_path()));
+                    .and_then(|s| s.save(&state::default_path(&self.config_directory)));
                 self.status = match result {
                     Ok(()) => "Saved current GUI state as startup default".into(),
                     Err(e) => format!("Startup save error: {e:#}"),
                 };
             }
             if ui.button("Restore factory default").clicked() {
-                let result = state::reset_factory().and_then(|s| self.apply_state(s));
+                let result =
+                    state::reset_factory(&self.config_directory).and_then(|s| self.apply_state(s));
                 self.status = match result {
                     Ok(()) => "Restored factory default GUI state".into(),
                     Err(e) => format!("Factory reset error: {e:#}"),
@@ -541,10 +542,13 @@ impl App {
             } else {
                 "Select an input image"
             }).clicked()
-                && let Some(path) = self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()).pick_file() {
-                    self.remember_dialog("load", &path);
-                    self.load_image_from_path(&path);
-                }
+                && let Some(path) = self.chooser.pick_file(
+                    self.file_dialog("load").add_filter("Image", &image_io::accepted_extensions()),
+                )
+            {
+                self.remember_dialog("load", &path);
+                self.load_image_from_path(&path);
+            }
             if raw {
                 self.parameter_section(ui, "Import Raw");
             }
@@ -920,6 +924,11 @@ impl eframe::App for App {
         self.persist_browser_state(true);
         if let Some(mut job) = self.export_job.take() {
             job.cancel.store(true, Ordering::SeqCst);
+            #[cfg(test)]
+            if let Some(pause) = &job.pause {
+                pause.notify_cancelled();
+                pause.release();
+            }
             if let Some(h) = job.handle.take() {
                 let _ = h.join();
             }

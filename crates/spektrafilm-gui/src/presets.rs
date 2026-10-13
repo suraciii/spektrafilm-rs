@@ -617,12 +617,11 @@ impl App {
                 });
             }
             PresetAction::Export => {
-                if let Some(path) = self
-                    .file_dialog("preset")
-                    .set_file_name(format!("{}.toml", entry.name))
-                    .add_filter("Preset", &["toml", "json"])
-                    .save_file()
-                {
+                if let Some(path) = self.chooser.save_file(
+                    self.file_dialog("preset")
+                        .set_file_name(format!("{}.toml", entry.name))
+                        .add_filter("Preset", &["toml", "json"]),
+                ) {
                     self.remember_dialog("preset", &path);
                     let preset = self.presets.entries[index].preset.as_ref().unwrap();
                     self.status = match self.presets.library.export(preset, &path, &self.data_dir) {
@@ -640,11 +639,10 @@ impl App {
         }
     }
     fn import_preset(&mut self) {
-        if let Some(path) = self
-            .file_dialog("preset")
-            .add_filter("Preset", &["toml", "json"])
-            .pick_file()
-        {
+        if let Some(path) = self.chooser.pick_file(
+            self.file_dialog("preset")
+                .add_filter("Preset", &["toml", "json"]),
+        ) {
             self.remember_dialog("preset", &path);
             match self.presets.library.import(&path, None, &self.data_dir) {
                 Ok(path) => {
