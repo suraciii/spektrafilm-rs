@@ -8,7 +8,7 @@
 //! `fence`) are the execution core for slices S2 and S3.
 
 use super::cache::PipelineCache;
-use super::observation::{ObservedDevice, ObservedQueue};
+use super::observation::{ObservedDevice, ObservedEncoder, ObservedQueue};
 use super::{GpuBuffer, dispatch_linear};
 use crate::telemetry::*;
 use parking_lot::Mutex;
@@ -255,7 +255,6 @@ impl GpuPipe {
         self.return_readback(readback, image.bytes);
         out
     }
-
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
     /// materialized bytes, then copy the mapped range out as f32.
     pub(super) fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
@@ -294,6 +293,38 @@ impl GpuPipe {
         if pool.buffers.len() < READBACK_POOL_MAX_BUFFERS {
             pool.buffers.push((size, buffer));
         }
+    }
+}
+
+/// One node of an assembled compute chain (pipe-architecture slice S2).
+/// A `Gpu` node encodes passes into the current command buffer without
+/// host transfer. A `Cpu` node is an assembled fence: the executor
+/// submits, materializes the image, runs the CPU stage, and re-uploads
+/// before continuing with a fresh command buffer (slice S3).
+pub(super) enum ChainStage<'a> {
+    Gpu {
+        name: &'static str,
+        encode: Box<dyn FnOnce(&mut ObservedEncoder) + 'a>,
+    },
+}
+
+impl GpuPipe {
+    /// Execute an assembled stage list. Consecutive `Gpu` nodes share one
+    /// command buffer and one submission, exactly like the former fused
+    /// chain; a `Cpu` fence node (S3) splits the submission.
+    pub(super) fn run_chain(&self, stages: Vec<ChainStage<'_>>) {
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        for stage in stages {
+            match stage {
+                ChainStage::Gpu { name, encode } => {
+                    // One compute pass per node keeps the pass labels that
+                    // telemetry and pass accounting observe today.
+                    let _ = name;
+                    encode(&mut encoder);
+                }
+            }
+        }
+        self.queue.submit(Some(encoder.finish()));
     }
 }
 
