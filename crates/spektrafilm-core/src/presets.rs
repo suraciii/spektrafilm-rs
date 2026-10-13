@@ -270,6 +270,15 @@ impl Preset {
                     "legacy preset parameters.output_mix is unknown; use schema_version 3".into(),
                 );
             }
+            if object
+                .get("parameters")
+                .and_then(|p| p.get("camera"))
+                .is_some()
+            {
+                return Err(
+                    "legacy preset parameters.camera is unknown; use schema_version 3".into(),
+                );
+            }
             if object.get("film_profile").is_some_and(|v| !v.is_null())
                 || object.get("print_profile").is_some_and(|v| !v.is_null())
             {

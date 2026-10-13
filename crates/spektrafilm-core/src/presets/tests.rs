@@ -111,10 +111,9 @@ fn legacy_whole_looks_gain_full_mix_and_preserve_caller_io() {
         let preset = builtin_presets().remove(0);
         let mut document = serde_json::to_value(preset).unwrap();
         document["schema_version"] = version.into();
-        document["parameters"]
-            .as_object_mut()
-            .unwrap()
-            .remove("output_mix");
+        let parameters = document["parameters"].as_object_mut().unwrap();
+        parameters.remove("output_mix");
+        parameters.remove("camera");
         let migrated = Preset::from_json_str(&document.to_string()).unwrap();
         assert_eq!(migrated.schema_version, 3);
         assert_eq!(migrated.look_parameters().unwrap().output_mix.amount, 1.0);
