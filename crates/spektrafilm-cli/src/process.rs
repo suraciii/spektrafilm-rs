@@ -687,6 +687,14 @@ fn cmd_process(
         if plan.is_none() {
             unchecked.push("output_format");
         }
+        let neutral = spektrafilm_core::neutral_filters::NeutralFilters::load(data_dir)
+            .map_err(|e| anyhow::anyhow!("neutral filter database: {e}"))?;
+        let filtration = spektrafilm_core::print_filtration::resolve(
+            &params,
+            &resolved.film_name,
+            &resolved.print_name,
+            Some(&neutral),
+        );
         let report = json!({
             "film_profile": resolved.film_name,
             "print_profile": resolved.print_name,
@@ -724,6 +732,7 @@ fn cmd_process(
         let mut report = report;
         report["seed"] = json!(params.random_seed);
         report["edits"] = serde_json::to_value(&resolved.edits)?;
+        report["print_filtration"] = serde_json::to_value(filtration)?;
         report["unchecked"] = json!(unchecked);
         match args.dry_run_format.unwrap_or(DiscoveryFormat::Json) {
             DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),

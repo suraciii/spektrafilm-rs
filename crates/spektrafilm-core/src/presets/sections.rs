@@ -84,7 +84,9 @@ impl Section {
         self.paths()
             .iter()
             .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}.")))
-            && !(self == Self::Enlarger && path.starts_with("enlarger.diffusion_filter"))
+            && !(self == Self::Enlarger
+                && (path.starts_with("enlarger.diffusion_filter")
+                    || crate::print_filtration::is_neutral_baseline(path)))
     }
 }
 fn flatten(prefix: &str, value: &Value, out: &mut Vec<(String, Value)>) {
@@ -152,16 +154,20 @@ pub fn section_matches(preset: &Preset, params: &RuntimeParams) -> Result<bool, 
     };
     crate::params::sources::validate_finite(params)?;
     let applied = preset.overlay_section(params)?;
-    let expected =
-        serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| e.to_string())?;
-    let current =
-        serde_json::to_value(LookParameters::capture(params)).map_err(|e| e.to_string())?;
+    let expected = comparable_section_value(&applied)?;
+    let current = comparable_section_value(params)?;
     let mut leaves = Vec::new();
     flatten("", payload, &mut leaves);
     Ok(leaves.iter().all(|(path, _)| {
         let pointer = format!("/{}", path.replace('.', "/"));
         current.pointer(&pointer) == expected.pointer(&pointer)
     }))
+}
+/// The value a section payload is compared against: the look capture. The
+/// neutral baselines stay out of it, because no preset carries them and the
+/// resolved paper supplies them.
+fn comparable_section_value(params: &RuntimeParams) -> Result<Value, String> {
+    serde_json::to_value(LookParameters::capture(params)).map_err(|e| e.to_string())
 }
 pub fn matching_section_preset<'a>(
     section: Section,

@@ -313,6 +313,102 @@ fn sparse_edits_preserve_legacy_group_defaults_and_protect_only_supplied_axes() 
 }
 
 #[test]
+fn dry_run_reports_neutral_baseline_sources_shifts_and_a_paper_change() {
+    use spektrafilm_core::neutral_filters::NeutralFilters;
+    let f = Fixture::new();
+    let neutral = NeutralFilters::load(&f.data).unwrap();
+    let endura = neutral
+        .lookup("kodak_portra_endura", "TH-KG3", "kodak_portra_400")
+        .expect("the endura entry covers portra 400");
+    let report = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--paper",
+        "kodak_portra_endura",
+        "--dry-run",
+    ]);
+    let filtration = report["print_filtration"].as_array().unwrap();
+    assert_eq!(filtration.len(), 3, "{report}");
+    for (axis, path) in [
+        "enlarger.c_filter_neutral",
+        "enlarger.m_filter_neutral",
+        "enlarger.y_filter_neutral",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(filtration[axis]["axis"], *path);
+        assert_eq!(filtration[axis]["baseline"], endura[axis] as f32);
+        assert_eq!(filtration[axis]["effective"], endura[axis] as f32);
+        assert_eq!(filtration[axis]["source"], "database");
+    }
+    // The shift is the look's own offset, so the effective total adds it to
+    // whatever baseline the resolved paper supplied.
+    let shifted = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--paper",
+        "kodak_portra_endura",
+        "--set",
+        "enlarger.m_filter_shift=5",
+        "--dry-run",
+    ]);
+    assert_eq!(shifted["print_filtration"][1]["baseline"], endura[1] as f32);
+    assert_eq!(shifted["print_filtration"][1]["shift"], 5.0);
+    assert_eq!(
+        shifted["print_filtration"][1]["effective"],
+        endura[1] as f32 + 5.0
+    );
+    // A deliberate leaf outranks the database for that axis only.
+    let pinned = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--paper",
+        "kodak_portra_endura",
+        "--set",
+        "enlarger.m_filter_neutral=34",
+        "--dry-run",
+    ]);
+    assert_eq!(pinned["print_filtration"][1]["baseline"], 34.0);
+    assert_eq!(pinned["print_filtration"][1]["source"], "set");
+    assert_eq!(pinned["print_filtration"][0]["source"], "database");
+    assert_eq!(pinned["print_filtration"][0]["baseline"], endura[0] as f32);
+    // A paper change moves the baseline instead of carrying the old one.
+    let archive = neutral
+        .lookup(
+            "fujifilm_crystal_archive_typeii",
+            "TH-KG3",
+            "kodak_portra_400",
+        )
+        .expect("the crystal archive entry covers portra 400");
+    let other = f.report(&[
+        "--film",
+        "kodak_portra_400",
+        "--paper",
+        "fujifilm_crystal_archive_typeii",
+        "--dry-run",
+    ]);
+    assert_ne!(archive, endura);
+    assert_eq!(other["print_filtration"][1]["baseline"], archive[1] as f32);
+    assert_eq!(other["print_filtration"][1]["source"], "database");
+    let text = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--paper",
+        "kodak_portra_endura",
+        "--dry-run",
+        "--dry-run-format",
+        "text",
+    ]);
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(stdout.contains("PRINT FILTRATION"), "{stdout}");
+    assert!(
+        stdout.contains("enlarger.m_filter_neutral: baseline") && stdout.contains("[database]"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn invalid_sources_fail_even_when_later_replaced_and_publish_nothing() {
     let f = Fixture::new();
     for source in [
