@@ -8,7 +8,7 @@ The `process` command must support [presets](../presets/spec.md), sparse paramet
 
 A **parameter override** is a sparse set of explicit edits to runtime controls for one invocation. It may contain any leaf of the one settable set, and it may select a stock through `film.stock` or `print.stock`. It must not rewrite its source preset. A parameter override is not a preset, GUI state, or render recipe.
 
-The parameter contract owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md). Field names, units, bounds, conditional effect behavior, and each leaf's class belong to their parameter model and capability specifications; the [preset specification](../presets/spec.md#parameter-set) owns the class vocabulary. One settable set serves every input surface: `--set`, a preset document, the GUI, and the API must accept exactly the same leaves, a leaf that no control edits must not keep a command-line path, and a leaf that has a control must not be reachable only from a file. Help, data-directory selection, command status, and human feedback belong to the [workflow contract](#workflow-contract).
+The parameter contract owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md). Field names, units, bounds, conditional effect behavior, and each leaf's class belong to their parameter model and capability specifications; the [preset specification](../presets/spec.md#parameter-set) owns the class vocabulary. One settable set serves every input surface: `--set`, a preset document, the GUI, and the API must accept exactly the same leaves, a leaf that no control edits must not keep a command-line path, and a leaf that has a control must not be reachable only from a file. A `debug`-class leaf is the one addition the CLI makes to that set, and only under [debug mode](#process-syntax): a parameter override may carry it there, and a preset document must reject it in every mode. Help, data-directory selection, command status, and human feedback belong to the [workflow contract](#workflow-contract).
 
 ## Process syntax
 
@@ -26,9 +26,14 @@ OPTIONS may include:
   --input-color-space NAME   raster source primaries; discover with describe --field io.input_color_space
   --input-cctf-decoding true|false  whether raster samples require transfer decoding
   --seed UINT32         deterministic stochastic seed; default: 0
+  --debug               admit debug-class parameters and list them in describe output
 ```
 
 Existing backend, workflow, RAW, output, and data-directory options must remain available.
+
+### Debug mode
+
+`--debug` must admit the `debug`-class leaves of the [parameter set](../presets/spec.md#parameter-set) to `--set` and to a parameter file, and it must make `describe` and `describe --field` cover them. Without the flag, a debug-class path must fail with the same unknown-path error as a path outside the set. The flag itself must not change a default, a validation rule, a render path, or the output, and no mode may let a preset document carry a debug-class leaf. Verification, parity, and calibration harnesses that need a measured neutral axis, the spectral grid, a LUT or performance switch, a tap hook, or a diagnostics switch must request the debug mode explicitly, so an ordinary invocation keeps the settable set equal to the GUI controls.
 
 ### Preset selector
 

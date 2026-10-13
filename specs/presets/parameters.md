@@ -1,17 +1,19 @@
 # Preset parameters
 
-One parameter set serves every input surface. A leaf is settable through the GUI, the CLI, a preset document, and the API together, or it is settable nowhere: a leaf that no control edits must not keep a command-line path, and a leaf that has a control must not be reachable only from a file. The table is generated from the parameter metadata rather than maintained by hand, and a new leaf must arrive with a class, a control decision, and a capture attribute.
+One parameter set serves every input surface. A leaf is settable through the GUI, the CLI, a preset document, and the API together, or it is settable nowhere: a leaf that no control edits must not keep a command-line path, and a leaf that has a control must not be reachable only from a file. The single exception is a `debug` leaf, which only the CLI debug mode admits and which no preset may carry. The table is generated from the parameter metadata rather than maintained by hand, and a new leaf must arrive with a class, a control decision, and a capture attribute.
 
 | Class | Leaves | Settable | Meaning |
 |---|---|---|---|
-| `parameter` | 198 | yes, by every surface | A user control edits it |
-| `internal` | 20 | no | No control edits it, it is derived, or the pipeline never reads it |
+| `parameter` | 198 | GUI control, `--set`, preset, API | A user control edits it |
+| `debug` | 20 | CLI only, under `--debug`; never preset content | A diagnostics, parity, or verification switch |
 
 `capture` is a second attribute of a `parameter` leaf: a whole-look capture writes the leaves with `capture=yes`, which are the values a user tunes while simulating. A `capture=no` leaf is a source, geometry, delivery, viewer, or environment value; a document may still carry it explicitly.
 
 ## Review items
 
-### No control, and no settable path (must lose `--set`, preset, and API access)
+### Debug-class leaves (20; CLI debug mode only, never a preset)
+
+These keep a command-line path, so no acceptance run needs a second `--params` file, but they must not be ordinary parameters and must not become preset content.
 
 | Path | Why |
 |---|---|
@@ -36,7 +38,9 @@ One parameter set serves every input surface. A leaf is settable through the GUI
 | `taps.collect` | spectral tap test hook |
 | `taps.inject` | spectral tap test hook |
 
-### No control, but a taking-side style value (needs a control, or removal)
+### Controls to add (3 taking-side style values)
+
+Each of these carries no GUI control today, so it must gain one and stay settable; until the control exists it must not keep a settable path.
 
 | Path | Why |
 |---|---|
@@ -274,4 +278,4 @@ One parameter set serves every input surface. A leaf is settable through the GUI
 
 ## Source
 
-Generated from `spektrafilm describe` metadata, the GUI control surface, and the shipped capability contracts. Totals: 198 parameters, 20 internal leaves, of which 20 lose an existing settable path and 3 need a control decision.
+Generated from `spektrafilm describe` metadata, the GUI control surface, and the shipped capability contracts. Totals: 198 parameters, 20 debug leaves, and 3 controls to add.

@@ -16,6 +16,7 @@ Every runtime parameter leaf carries exactly one class, and the class together w
 | Class | Meaning | Settable by |
 |---|---|---|
 | `parameter` | A user control edits it | the GUI, the CLI, a preset, and the API |
+| `debug` | A diagnostics, parity, or verification switch that no control edits | the CLI, only under the debug mode; never a preset |
 | `internal` | No control edits it, it is derived, or the pipeline never reads it | nowhere |
 
 `capture` is a second attribute of a `parameter` leaf: a whole-look capture writes the leaves with `capture=true`, which are the values a user tunes while simulating. A `capture=false` leaf is a source, geometry, delivery, viewer, or environment value that a document may still carry explicitly.
@@ -27,9 +28,9 @@ The leaf table lives in [preset parameters](parameters.md). Counts from the curr
 | Class | Leaves | of which `capture=true` |
 |---|---|---|
 | `parameter` | 198 | 182 |
-| `internal` | 20 | 0 |
+| `debug` | 20 | 0 |
 
-Twenty of the leaves the runtime accepts today have no control anywhere. They must lose their settable paths, because a value the user cannot edit must not be reachable through the CLI or a preset either; three of them are taking-side style values that need a control instead. [preset parameters](parameters.md) lists all twenty-three with their evidence.
+The twenty debug leaves are the measured neutral axes, the parity-only glare fields, the spectral grid and LUT and performance switches, the preview switch, the calibration-policy switch, the tap hooks, and the diagnostics switches. They keep a command-line path only under the debug mode, because a value the user cannot edit must not become an ordinary parameter; three taking-side style values instead need a control and stay `parameter`. [preset parameters](parameters.md) lists them with their evidence.
 
 The table must be regenerated from the metadata rather than maintained by hand, so a new leaf cannot enter the runtime without a class, a control decision, and a capture attribute.
 
