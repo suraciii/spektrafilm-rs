@@ -127,6 +127,12 @@ fn file_dependencies(
             dependency_path(text(&case["input"], "path")?, suite_path)?,
             "input".into(),
         );
+        if let Some(preparation) = case.get("preparation") {
+            paths.insert(
+                dependency_path(text(&preparation["original"], "path")?, suite_path)?,
+                "preparation_original".into(),
+            );
+        }
         for key in ["presets", "set_files"] {
             for path in case["configuration"][key].as_array().into_iter().flatten() {
                 paths.insert(
@@ -181,12 +187,10 @@ fn file_dependencies(
                 add_geometry(&region["geometry"], suite_path, &mut paths)?;
             }
             if let Some(review) = reference.get("correspondence_review") {
-                let review = documents::load_json_document(&documents::resolve_path(
-                    text(review, "path")?,
-                    suite_path,
-                )?)?;
+                let review_path = documents::resolve_path(text(review, "path")?, suite_path)?;
+                let review = documents::load_json_document(&review_path)?;
                 for excluded in review["excluded_regions"].as_array().into_iter().flatten() {
-                    add_geometry(&excluded["geometry"], suite_path, &mut paths)?;
+                    add_geometry(&excluded["geometry"], &review_path, &mut paths)?;
                 }
             }
         }
@@ -399,6 +403,11 @@ fn renderer_success(output: &Output, code: &str) -> Result<()> {
     }
     Ok(())
 }
+fn resolved_geometry(resolved: &Value, diagnostics: &Value) -> Value {
+    let io = &resolved["parameters"]["io"];
+    json!({"input_dimensions":diagnostics["configuration"]["input_dimensions"],"working_dimensions":diagnostics["configuration"]["working_dimensions"],"published_dimensions":diagnostics["configuration"]["published_dimensions"],"crop":io["crop"],"crop_center":io["crop_center"],"crop_size":io["crop_size"],"upscale_factor":io["upscale_factor"],"preview_mode":resolved["parameters"]["settings"]["preview_mode"],"preview_max_size":resolved["parameters"]["settings"]["preview_max_size"]})
+}
+
 fn run_case(
     case: &Value,
     seed: u64,
@@ -506,47 +515,124 @@ fn run_case(
             "application/json",
             json!({}),
         )?;
-        if case["input"]["kind"] == "raw" {
-            let mut preview = command.clone();
-            if let Some(i) = preview.iter().position(|s| s == "--route") {
-                preview[i + 1] = "input".into();
-            } else {
-                preview.extend(["--route".into(), "input".into()]);
+        let mut source_command = command.clone();
+        if let Some(i) = source_command.iter().position(|s| s == "--route") {
+            source_command[i + 1] = "input".into();
+        } else {
+            source_command.extend(["--route".into(), "input".into()]);
+        }
+        let output_index = source_command
+            .iter()
+            .position(|s| s == "--output")
+            .ok_or_else(|| Error::new("source_evidence", "Missing output option"))?;
+        source_command[output_index + 1] = folder.join("source.tif").to_string_lossy().into();
+        source_command.extend([
+            "--set".into(), "io.output_color_space=ACES2065-1,io.output_cctf_encoding=false,magazine_print_color.active=false,film_render.grain.active=false,taps.inject=rgb_in,taps.collect=rgb_out".into(),
+            "--raw-out".into(), folder.join("source.f64").to_string_lossy().into(),
+            "--diagnostics".into(), folder.join("source-diagnostics.json").to_string_lossy().into(),
+        ]);
+        row["source_command"] = json!(source_command);
+        let mut source_dry = source_command.clone();
+        for option in ["--raw-out", "--diagnostics"] {
+            if let Some(index) = source_dry.iter().position(|value| value == option) {
+                source_dry.drain(index..index + 2);
             }
-            for (option, value) in [
-                (
-                    "--output",
-                    folder
-                        .join("source-preview.png")
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
-                ("--format", "png".into()),
-                ("--bit-depth", "8".into()),
-            ] {
-                let i = preview
-                    .iter()
-                    .position(|s| s == option)
-                    .ok_or_else(|| Error::new("source_review", "Missing render option"))?;
-                preview[i + 1] = value;
-            }
-            if let Some(i) = preview.iter().position(|s| s == "--compression") {
-                preview.drain(i..i + 2);
-            }
-            preview.extend([
-                "--saving-color-space".into(),
-                "sRGB".into(),
-                "--saving-cctf-encoding".into(),
-                "true".into(),
-            ]);
-            let (result, _) = invoke(&preview, &environment, &folder, "source-preview", evidence)?;
-            renderer_success(&result, "source_review")?;
-            row["source_review"] = evidence.add(
-                &folder.join("source-preview.png"),
-                "source",
-                "image/png",
-                json!({}),
-            )?;
+        }
+        source_dry.push("--dry-run".into());
+        let (result, _) = invoke(
+            &source_dry,
+            &environment,
+            &folder,
+            "source-dry-run",
+            evidence,
+        )?;
+        renderer_success(&result, "source_configuration")?;
+        let source_resolved: Value = serde_json::from_slice(&result.stdout)?;
+        if source_resolved["parameters"]["workflow"]["route"] != "input"
+            || source_resolved["parameters"]["io"]["output_color_space"] != "ACES2065-1"
+            || source_resolved["parameters"]["io"]["output_cctf_encoding"] != false
+            || source_resolved["parameters"]["magazine_print_color"]["active"] != false
+            || source_resolved["parameters"]["taps"]["inject"] != "rgb_in"
+            || source_resolved["parameters"]["taps"]["collect"] != "rgb_out"
+        {
+            return Err(Error::new(
+                "source_configuration",
+                "Source route must resolve to input with linear ACES2065-1, magazine disabled, and RGB input/output taps",
+            ));
+        }
+        common::dump(&folder.join("source-resolved.json"), &source_resolved)?;
+        row["source_resolved"] = evidence.add(
+            &folder.join("source-resolved.json"),
+            "source_configuration",
+            "application/json",
+            json!({}),
+        )?;
+        let (result, _) = invoke(
+            &source_command,
+            &environment,
+            &folder,
+            "source-render",
+            evidence,
+        )?;
+        renderer_success(&result, "source_evidence")?;
+        let source_diagnostics =
+            documents::load_json_document(&folder.join("source-diagnostics.json"))?;
+        let source_dimensions = &source_diagnostics["configuration"]["published_dimensions"];
+        let source_width = source_dimensions[0]
+            .as_u64()
+            .ok_or_else(|| Error::new("source_geometry", "Missing source width"))?;
+        let source_height = source_dimensions[1]
+            .as_u64()
+            .ok_or_else(|| Error::new("source_geometry", "Missing source height"))?;
+        let source_layout = json!({"width":source_width,"height":source_height,"channels":3,"dtype":"f64","channel_order":"RGB","endianness":if cfg!(target_endian="little"){ "little" }else{ "big" }});
+        let source_color = json!({"color_space":"ACES2065-1","transfer":"linear"});
+        let expected = source_width
+            .checked_mul(source_height)
+            .and_then(|n| n.checked_mul(24))
+            .ok_or_else(|| Error::new("raw_layout", "Source dimensions overflow"))?;
+        if source_width == 0
+            || source_height == 0
+            || fs::metadata(folder.join("source.f64"))?.len() != expected
+        {
+            return Err(Error::new(
+                "raw_layout",
+                "Source byte count disagrees with observed dimensions",
+            ));
+        }
+        let mut source_metadata = source_layout.clone();
+        source_metadata
+            .as_object_mut()
+            .unwrap()
+            .extend(source_color.as_object().unwrap().clone());
+        common::dump(&folder.join("source.f64.json"), &source_metadata)?;
+        row["source_raw_metadata"] = evidence.add(
+            &folder.join("source.f64.json"),
+            "source_raw_metadata",
+            "application/json",
+            json!({}),
+        )?;
+        row["source_raw"] = evidence.add(
+            &folder.join("source.f64"),
+            "source_native_master",
+            "application/octet-stream",
+            json!({"layout":source_layout,"color":source_color}),
+        )?;
+        row["source_master"] = evidence.add(
+            &folder.join("source.tif"),
+            "source_floating_master",
+            "image/tiff",
+            json!({"dimensions":source_dimensions,"color":source_color}),
+        )?;
+        row["source_diagnostics"] = evidence.add(
+            &folder.join("source-diagnostics.json"),
+            "source_diagnostics",
+            "application/json",
+            json!({}),
+        )?;
+        row["source_dimensions"] = source_diagnostics["configuration"]["input_dimensions"].clone();
+        row["source_geometry"] = resolved_geometry(&source_resolved, &source_diagnostics);
+        if let Some(preparation) = case.get("preparation") {
+            row["preparation"] = preparation.clone();
         }
         let mut render = command;
         render.extend([
@@ -621,6 +707,19 @@ fn run_case(
         )?;
         row["execution"] = diagnostics["execution"].clone();
         row["dimensions"] = json!([width, height]);
+        row["simulation_geometry"] = resolved_geometry(&resolved, &diagnostics);
+        let grain = &resolved["parameters"]["film_render"]["grain"];
+        let dye = grain["active"] == true
+            && grain["engine"] == "dye"
+            && resolved["parameters"]["debug"]["deactivate_spatial_effects"] != true;
+        let fotufilm = grain["active"] == true
+            && grain["engine"] == "fotufilm"
+            && resolved["parameters"]["debug"]["deactivate_stochastic_effects"] != true
+            && grain["fotufilm"]["amount"]
+                .as_f64()
+                .is_some_and(|v| v > 0.0);
+        row["source_pixel_aligned"] =
+            json!(!dye && !fotufilm && row["source_geometry"] == row["simulation_geometry"]);
         row["precision"] = json!({"host_precision":configuration["host_precision"],"gpu_precision":configuration["gpu_precision"],"spectral_preparation_precision":configuration["spectral_preparation_precision"]});
         row["status"] = json!("completed");
         Ok(())
@@ -681,6 +780,19 @@ pub fn run(
     let suite_path = suite_path.canonicalize()?;
     let target_path = target_path.canonicalize()?;
     let suite = documents::load_suite(&suite_path)?;
+    run_suite(suite, &suite_path, &target_path, out, selections)
+}
+
+pub fn run_suite(
+    suite: Value,
+    suite_path: &Path,
+    target_path: &Path,
+    out: &Path,
+    selections: &[String],
+) -> Result<(Value, i32)> {
+    let suite_path = absolute(suite_path)?;
+    documents::validate_suite(&suite, &suite_path)?;
+    let target_path = target_path.canonicalize()?;
     let target = documents::load_target(&target_path)?;
     documents::validate_target_cases(&target, &suite)?;
     let all_ids: Vec<String> = array(&suite, "cases")?
@@ -745,6 +857,9 @@ pub fn run(
                 json!({}),
             )?;
             record["source_path"] = dependency["source_path"].clone();
+            if dependency["role"] == "correspondence_review" {
+                record["resolved_source_path"] = dependency["path"].clone();
+            }
             retained.push(record);
         }
     }

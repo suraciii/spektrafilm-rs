@@ -307,6 +307,28 @@
             ],
             "additionalProperties": false
           },
+          "preparation": {
+            "type": "object",
+            "description": "Passive provenance of the prepared input; operations are recorded and never executed.",
+            "properties": {
+              "original": {
+                "type": "object",
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 },
+                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+                },
+                "required": ["path", "sha256"],
+                "additionalProperties": false
+              },
+              "operations": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            },
+            "required": ["original", "operations"],
+            "additionalProperties": false
+          },
           "configuration": {
             "type": "object",
             "properties": {

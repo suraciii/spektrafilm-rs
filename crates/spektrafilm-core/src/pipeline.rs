@@ -997,6 +997,11 @@ impl Pipeline {
         stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
         if self.params.workflow.route == "input" {
+            let (working, _) = self.rescale_working(&image, backend)?;
+            let image = match working {
+                std::borrow::Cow::Owned(working) => working,
+                std::borrow::Cow::Borrowed(_) => image,
+            };
             let _observation = stages::StageObservation::cpu(
                 backend,
                 "post_scan",
@@ -1500,6 +1505,53 @@ mod spectral_invalidation_tests {
                 Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap()
             })
             .clone()
+    }
+
+    #[test]
+    fn input_route_preserves_requested_crop_pixels_without_exposure() {
+        let mut pipeline = build();
+        pipeline.params.workflow.route = "input".into();
+        pipeline.params.film_render.grain.active = false;
+        pipeline.params.magazine_print_color.active = false;
+        pipeline.params.io.input_color_space = "ACES2065-1".into();
+        pipeline.params.io.output_color_space = "ACES2065-1".into();
+        pipeline.params.io.input_cctf_decoding = false;
+        pipeline.params.io.output_cctf_encoding = false;
+        pipeline.params.camera.auto_exposure = true;
+        pipeline.params.camera.exposure_compensation_ev = 4.0;
+        pipeline.params.io.crop = true;
+        pipeline.params.io.crop_center = [0.5, 0.5];
+        pipeline.params.io.crop_size = [0.5, 0.25];
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(i as f64 / 100.0 - 0.1))
+                .collect(),
+        );
+        let output = pipeline
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        assert_eq!((output.width, output.height), (4, 2));
+        for y in 0..2_usize {
+            for x in 0..4_usize {
+                let source = ((y + 2) * 8 + x + 2) * 3;
+                let result = (y * 4 + x) * 3;
+                for channel in 0..3 {
+                    assert!(
+                        (to_f64(output.data[result + channel])
+                            - to_f64(image.data[source + channel]))
+                        .abs()
+                            < 1e-6
+                    );
+                }
+            }
+        }
+        pipeline.params.io.upscale_factor = 2.0;
+        let output = pipeline
+            .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        assert_eq!((output.width, output.height), (8, 4));
     }
     #[test]
     fn digital_reference_preserves_formed_negative_and_prepared_identity() {
