@@ -8,6 +8,23 @@
 - A section preset must pass the same value validators as a look preset for the paths it carries, and its payload must follow the parameter-file leaf discipline: only supplied leaves are edited, unknown fields and duplicate keys fail, and omitted values must not be filled from defaults. Applying it edits exactly its section and registers those values as explicit, so neither stock initialization nor database calibration rewrites them, and it must not clear explicit values outside its section.
 - Writes, atomicity, rename, delete, duplicate, import, and export must treat both kinds through one code path. The resolver must reuse the parameter-file leaf-merge implementation for section presets instead of adding a second merge.
 - The library directory is `<config_dir>/presets`. The configuration directory policy is shared by the GUI and the CLI. `SPEKTRAFILM_CONFIG_DIR` must override it; there is no separate preset directory override. The library directory must not require a data directory.
+- Enlarger filtration is two fields, not one. A **neutral filter** (`c/m/y_filter_neutral`) is the CC baseline a dichroic axis sits at; a **filter shift** (`m/y_filter_shift`) is a CC offset from that baseline. The effective CC value is `neutral + shift`. The two words must not be used interchangeably in a document, a control label, or a diagnostic.
+- The neutral baseline belongs to the print profile. The database `data/filters/neutral_print_filters.json` is keyed by (print stock, illuminant, film stock) and each entry is the filtration that prints a neutral ramp neutral on that paper, so a value fitted on one paper is not portable to another. The look payload carries the shifts and, when needed, the look baseline; the neutral fields are resolved per paper. This keeps one authority per fact: the paper owns its baseline, the look owns its offsets and its fallback.
+- Because the neutral fields are not look payload, `LookParameters` must not serialize them and `neutral_print_filters_protected` must not be set by preset application. The database lookup then supplies the baseline. Explicit user edits through a section preset or a sparse source still set protection for the axis they name, and `settings.neutral_print_filters_from_database` keeps the user's on/off choice.
+- A neutral value that reaches the `enlarger` group is a schema rejection, not a silent drop, so no document can carry a second paper's baseline into a new one. Migration moves a carried value into the look baseline group.
+
+### Look baseline
+
+The database describes 22 films across 9 papers under the `TH-KG3` illuminant. A film outside that set has no baseline to resolve, so a look for it needs a fallback that is not a paper's measurement.
+
+- A **look baseline** is an optional look-owned group carrying the three CC baselines. It applies when the resolved (print stock, illuminant, film stock) triple has no database entry, and is ignored when an entry exists. A database entry always wins, because it is the paper's own measurement.
+- The look baseline exists for films the database does not describe. `cinestill_800t_cs41_approx` is one: it has no entry on any of the 9 papers, so its fitted `C0 M23.48 Y27.97` would otherwise be lost to the generic runtime default `C0 M65 Y55` and the look's print calibration would silently change. That fit is the look's own, solved on Kodak Portra Endura, not a copy of that paper's database entry, which is `C0 M29.78 Y34.93` for the closest tungsten film in the database.
+- The shipped 800T look demonstrates why the group is needed rather than merely a neutral-field move. Pinning the fit inside `enlarger` and protecting the axes made the value travel to every paper. Moving it to a look baseline keeps the fit for papers the database does not describe and lets the database win on the 9 papers it does describe.
+- A look whose film has a database entry on every paper it can print on must omit the group, because the database is the complete authority for it. Omitting is not the same as carrying zeros.
+- The group is absent from section presets. A section edits the resolved baseline through the `enlarger` neutral leaves it already owns, which stay explicit.
+- Resolution order per axis is: an explicit user edit, then the database entry, then the look baseline, then the runtime default. Each step must be reported so a caller can see which one produced the effective value.
+- The control surface already matches this split: the enlarger section exposes the M and Y shifts and no neutral control, so a user's only route to a baseline is a resolved paper, a look baseline, or a deliberate sparse-source edit.
+
 
 ## Sections
 
@@ -23,7 +40,8 @@ A section must be a group of editable controls that a user can see and that can 
 - `convert`: `film_render.convert`
 - `camera filter`: `camera_diffusion_filter`
 - `enlarger filter`: `enlarger.diffusion_filter`
-- `enlarger`: `enlarger` without `enlarger.diffusion_filter`
+- `enlarger`: `enlarger` without `enlarger.diffusion_filter` and without the three neutral filter baselines, which the [print filtration contract](spec.md#print-filtration) resolves per paper
+- `print filtration`: the look baseline group only. The M/Y shifts stay in `enlarger`.
 - `scanner`: `scanner`
 - `print`: `print_render`
 - `output mix`: `output_mix`
@@ -40,7 +58,9 @@ The flows a user actually runs must be short; every one below is two or three st
 
 - Start a look: pick a browser row. Profiles, every look control, and the workflow default follow, and a render is scheduled.
 - Keep a section: adjust that section, open its menu (it reads `custom`), Save as, name it. The file lands in the library and the menu reads that name; the next image applies it in one click after the look.
-- Change an applied look: edit any look control, then Update the user document, Save as under a new name, or Revert.
+- Change an applied look: edit any look control, then Update the user document, Save as under a name, or Revert.
+- Change the paper of an applied look: pick a new print profile. The neutral baseline re-derives from the new paper's database entry, or from the look baseline when that paper has no entry, and the M/Y shifts stay. No paper's neutral value is copied onto another paper, and the look does not read modified because its own controls did not change.
+- See why a paper changed: the dry-run report names the source of each baseline — `set`, `database`, `look`, or `default` — so the effective filtration is visible before a render.
 - Move a preset between machines: Export either kind, drop the file into `<config_dir>/presets`, refresh. The same name then resolves for the GUI and the CLI.
 - Reopen the app: controls come from the restored state, and the browser re-marks the remembered group and name; a missing document shows as missing.
 - Script a run: `preset list` and `preset show` describe the same names and groups the browser shows, and `--preset` resolves them with the same rules.
@@ -80,7 +100,9 @@ The flows a user actually runs must be short; every one below is two or three st
 ## Boundaries
 
 - The GUI state keeps its complete-state contract. The panel width, the expanded state, and the last applied group and name belong to the versioned Rust extension and must not enter the Python-compatible sections. They must not change the meaning of a saved preset document.
-- Modified detection compares the captured look controls and the film and print references with the applied document. It must not compare GUI state or a prepared runtime parameter tree.
+- Modified detection compares the captured look controls and the film and print references with the applied document, and never the resolved neutral baselines or GUI state. A resolved baseline is derived state, not look state, so it cannot make an applied preset read modified. A print-profile change therefore moves the resolved baseline while the applied preset still matches on its own controls.
+- Look capture must collect the M/Y shifts through the `enlarger` section, the look baseline through its own group when the applied look carries one, and never a resolved neutral baseline.
+
 - Look capture must collect existing material controls through their existing sections and output mix through its own section. It must never collect an `IoParams` snapshot or output gamut settings. Schema migration must follow the [preset file-format contract](spec.md#file-formats): older whole looks gain full output mix, while older sections retain sparse omission. Capture, apply, and migrated export must not expand `io` ownership. Preparation must preserve existing material capability, scan-inverse, and calibration semantics under [Material controls and output composition](../material-response/spec.md). Unshipped response groups and the Cyan-shift field are unknown fields, including in draft version 3 documents; neither capture nor migration may materialize them.
 - Built-in documents must stay read-only at run time. A user edit must produce a user document or no change. The `My Presets` group header must show the resolved library directory path, must offer to reveal it, and must offer to refresh discovery, so a document placed while the GUI runs becomes visible without a restart. Only user documents have a path.
 - Renaming the applied user preset must follow the marker to the new name. Deleting it must leave the look controls untouched and must show the remembered name as missing.
