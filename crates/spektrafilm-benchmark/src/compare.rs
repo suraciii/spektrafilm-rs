@@ -717,7 +717,7 @@ pub fn compare(
                     }
                 }
             }
-            findings.push(json!({"id":common::digest(&json!([case_id,seed,"failed_render"]))?,"case_id":case_id,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
+            findings.push(json!({"id":common::digest(&json!([case_id,seed,"failed_render"]))?,"case_id":case_id,"seed":seed,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
             cases.push(record);
             continue;
         }
@@ -990,6 +990,8 @@ pub fn compare(
     }
     runner::finalize(&root, "comparison.json", &mut manifest)?;
     let mut result = json!({"schema_version":1,"command":"compare","execution_status":manifest["execution_status"],"evaluation_status":evaluation,"artifact":root.join("comparison.json"),"comparison_id":manifest["id"]});
+    result["summary"] = manifest["summary"].clone();
+    result["condition_differences"] = manifest["condition_differences"].clone();
     if !completed {
         result["errors"] = json!([{"code":"measurement_failure","boundary":"comparison","message":"One or more selected results failed; inspect comparison cases and findings"}]);
     }
@@ -1079,7 +1081,7 @@ pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Val
             }
             for pair_id in pair_ids {
                 record["pairs"].as_array_mut().unwrap().push(json!({"id":pair_id,"left_role":pair_id,"right_role":"simulation","pixel_aligned":false,"status":"failed","reason":"failed_render","measurements":[],"review":{},"regions":[],"automatic_regions":[],"errors":row["errors"]}));
-                findings.push(json!({"id":common::digest(&json!([case_id,seed,pair_id,"failed_render"]))?,"case_id":case_id,"pair_id":pair_id,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
+                findings.push(json!({"id":common::digest(&json!([case_id,seed,pair_id,"failed_render"]))?,"case_id":case_id,"seed":seed,"pair_id":pair_id,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
             }
             cases.push(record);
             continue;
@@ -1392,6 +1394,8 @@ pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Val
     let mut manifest = json!({"schema_version":1,"mode":"single_run","run":{"id":run["id"],"manifest_sha256":common::sha256_file(&run_root.join("run.json"))?},"default_pair":if pair_ids.contains(&"reference") {"reference"} else {"input"},"execution_status":if completed {"completed"} else {"failed"},"evaluation_status":"not_evaluated","protocol":suite["protocol"],"protocol_digest":documents::protocol_digest(&suite)?,"selection":run["selection"],"condition_differences":[],"cases":cases,"findings":findings,"summary":{"selected_cases":run["selection"]["case_ids"].as_array().map_or(0,Vec::len),"completed_cases":completed_cases.len(),"required_rules":0,"unavailable_rules":0,"protected_failures":0,"worst_case_findings":[]},"artifacts":evidence.values()});
     runner::finalize(&root, "comparison.json", &mut manifest)?;
     let mut result = json!({"schema_version":1,"command":"compare","execution_status":manifest["execution_status"],"evaluation_status":"not_evaluated","artifact":root.join("comparison.json"),"comparison_id":manifest["id"]});
+    result["summary"] = manifest["summary"].clone();
+    result["condition_differences"] = manifest["condition_differences"].clone();
     if !completed {
         result["errors"] = json!([{"code":"measurement_failure","boundary":"comparison","message":"One or more selected pairs failed; inspect comparison evidence"}]);
     }

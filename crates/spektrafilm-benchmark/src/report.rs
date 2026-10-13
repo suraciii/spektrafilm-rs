@@ -968,7 +968,57 @@ fn pair_case(case: &Value, pair: &Value) -> Value {
     view
 }
 
+// Fragment identities are retained case/seed/pair/region values, never display ordinals.
+fn fragment_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            write!(encoded, "%{byte:02X}").unwrap();
+        }
+    }
+    encoded
+}
+
+fn navigation_fragment(
+    case_id: &str,
+    seed: &Value,
+    pair: Option<&str>,
+    region: Option<&str>,
+) -> String {
+    let mut fragment = format!(
+        "#case={}&seed={}",
+        fragment_component(case_id),
+        fragment_component(&text(seed))
+    );
+    if let Some(pair) = pair {
+        fragment.push_str(&format!("&pair={}", fragment_component(pair)));
+    }
+    if let Some(region) = region {
+        fragment.push_str(&format!("&region={}", fragment_component(region)));
+    }
+    fragment
+}
+
+fn navigation_links(fragment: &str, label: &str) -> String {
+    format!(
+        "<span class=\"navigation-links\"><a href=\"{}\">打开{label}链接</a> <button type=\"button\" data-copy-link=\"{}\">复制{label}链接</button></span>",
+        escape(fragment),
+        escape(fragment)
+    )
+}
+
 /// Publish a self-contained offline report from a validated comparison directory.
+///
+/// Offline navigation uses `#case=<id>&seed=<seed>[&pair=<id>[&region=<id>]]`.
+/// Every value is percent-encoded UTF-8 and denotes the exact retained identity.
+/// The seed is its decimal representation; a region requires an explicit pair.
+/// An omitted pair selects the retained default (or the first retained pair when
+/// absent); version comparisons use `baseline/candidate`. Unknown identities,
+/// duplicate/unknown keys, empty values and malformed encoding show an alert and
+/// hide the case panels until a valid link or case selection is chosen.
 pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
     if fs::symlink_metadata(out).is_ok() {
         return Err(Error::new(
@@ -1017,7 +1067,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
             escape(get(case, "status", "unknown"))
         ));
     }
-    html.push_str("</select></label><span class=\"small\">所有案例和失败状态均可访问</span></nav><p class=\"small\">");
+    html.push_str("</select></label><span class=\"small\">所有案例和失败状态均可访问</span></nav><p data-navigation-error role=\"alert\" hidden></p><p data-copy-status role=\"status\"></p><p class=\"small\">");
     html.push_str(
         &[
             ("selected_cases", "案例"),
@@ -1085,7 +1135,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
     html.push_str("</details>");
     for (index, case) in ordered.iter().enumerate() {
         let id = get(case, "case_id", get(case, "id", "unavailable"));
-        html.push_str(&format!("<section id=\"case-{index}\" class=\"case-panel\" data-case-panel=\"case-{index}\"{}><h2>{} <small>· seed {}</small></h2>", if index == 0 { "" } else { " hidden" }, escape(&human(id)), field(case, "seed")));
+        html.push_str(&format!("<section id=\"case-{index}\" class=\"case-panel\" data-case-panel=\"case-{index}\" data-case-id=\"{}\" data-seed=\"{}\"{}><h2>{} <small>· seed {}</small></h2>{}", escape(id), field(case, "seed"), if index == 0 { "" } else { " hidden" }, escape(&human(id)), field(case, "seed"), navigation_links(&navigation_fragment(id, &case["seed"], None, None), "案例")));
         for (key, label) in [
             ("source_dimensions", "原始输入尺寸"),
             ("source_geometry", "输入解码与模拟几何"),
@@ -1103,6 +1153,14 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
             pairs.iter().map(|pair| pair_case(case, pair)).collect()
         };
         let default = get(&comparison, "default_pair", "input");
+        let default = if pairs.iter().any(|pair| pair["id"] == default) {
+            default
+        } else {
+            pairs
+                .first()
+                .map(|pair| get(pair, "id", ""))
+                .unwrap_or("baseline/candidate")
+        };
         if !pairs.is_empty() {
             html.push_str("<nav class=\"pair-nav\" aria-label=\"比较对象\"><label>比较对象 <select data-pair-nav>");
             for (pair_index, pair) in pairs.iter().enumerate() {
@@ -1135,7 +1193,8 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
             } else {
                 ("基准", "候选")
             };
-            html.push_str(&format!("<div data-pair-panel=\"pair-{index}-{pair_index}\"{}><p class=\"status\">状态：{} {}</p>", if pairs.is_empty() || case["pair_id"] == default { "" } else { " hidden" }, escape(get(case, "status", "unavailable")), case.get("reason").map(text).unwrap_or_default()));
+            let pair_id = get(case, "pair_id", "baseline/candidate");
+            html.push_str(&format!("<div data-pair-panel=\"pair-{index}-{pair_index}\" data-pair-id=\"{}\" data-default-pair=\"{}\"{}>{}<p class=\"status\">状态：{} {}</p>", escape(pair_id), pair_id == default, if pair_id == default { "" } else { " hidden" }, navigation_links(&navigation_fragment(id, &case["seed"], Some(pair_id), None), "比较"), escape(get(case, "status", "unavailable")), case.get("reason").map(text).unwrap_or_default()));
             let mut images = BTreeMap::new();
             for role in ["source", "baseline", "candidate", "reference", "difference"] {
                 let reference = role_reference(case, role, &assets);
@@ -1200,6 +1259,16 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                 html.push_str("<details><summary>细节区域（坐标、定位和 A/B 裁剪）</summary>");
             }
             for (mut region, method) in regions.iter().cloned() {
+                let region_id = get(&region, "id", get(&region, "region_id", "不可用")).to_owned();
+                html.push_str(&format!(
+                    "<details data-region-id=\"{}\"><summary>{}</summary>{}",
+                    escape(&region_id),
+                    escape(get(&region, "label", &human(&region_id))),
+                    navigation_links(
+                        &navigation_fragment(id, &case["seed"], Some(pair_id), Some(&region_id)),
+                        "区域"
+                    )
+                ));
                 let mut mask_entry = None;
                 if let Some(path) = region["geometry"]["path"].as_str() {
                     if case["status"] != "completed" && !assets.index.contains_key(path) {
@@ -1207,6 +1276,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                             "<p class=\"unavailable\">{}：渲染失败，区域掩膜证据不可用。</p>",
                             field(&region, "label")
                         ));
+                        html.push_str("</details>");
                         continue;
                     }
                     let entry = assets.copy(&json!(path))?;
@@ -1218,6 +1288,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                             "<p class=\"unavailable\">{}：区域掩膜证据不可用。</p>",
                             field(&region, "label")
                         ));
+                        html.push_str("</details>");
                         continue;
                     }
                     let entry = entry.unwrap();
@@ -1243,8 +1314,12 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                     mask_entry = Some(entry);
                 }
                 let rect = rectangle(&region)?;
-                let region_id = get(&region, "id", get(&region, "region_id", "不可用")).to_owned();
-                html.push_str(&format!("<details><summary>{}</summary><p>坐标 [x, y, width, height]：{} · 选择方式：{}</p>",escape(get(&region,"label",&human(&region_id))),rect.map(|v|text(&json!(v))).unwrap_or_else(||"不可用".into()),escape(&method)));
+                html.push_str(&format!(
+                    "<p>坐标 [x, y, width, height]：{} · 选择方式：{}</p>",
+                    rect.map(|v| text(&json!(v)))
+                        .unwrap_or_else(|| "不可用".into()),
+                    escape(&method)
+                ));
                 html.push_str(&folded("选择依据与区域元数据", &region));
                 if let Some(entry) = mask_entry {
                     html.push_str(&format!(
@@ -1447,6 +1522,22 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn semantic_fragments_encode_exact_identities() {
+        assert_eq!(
+            navigation_fragment(
+                "色 / &%?#",
+                &json!(17),
+                Some("reference/a&b"),
+                Some("patch + β")
+            ),
+            "#case=%E8%89%B2%20%2F%20%26%25%3F%23&seed=17&pair=reference%2Fa%26b&region=patch%20%2B%20%CE%B2"
+        );
+        assert_eq!(
+            navigation_fragment("case", &json!(0), None, None),
+            "#case=case&seed=0"
+        );
+    }
     #[test]
     fn redistribution_denial_never_copies_bytes() {
         let source = tempfile::tempdir().unwrap();

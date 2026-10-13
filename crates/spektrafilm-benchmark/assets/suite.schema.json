@@ -331,16 +331,20 @@
           },
           "configuration": {
             "type": "object",
+            "description": "Renderer configuration using its existing carriers and precedence: params, presets in order, sparse set_files, inline set, then explicit route/scan_output/RAW options. File paths resolve relative to the containing suite or standalone configuration JSON. Omitted fields retain renderer defaults; target changes apply afterward.",
             "properties": {
               "film": {
+                "description": "Renderer film profile name; discover with spektrafilm list --format json. Presets may select profiles during resolution.",
                 "type": "string",
                 "minLength": 1
               },
               "paper": {
+                "description": "Renderer print-paper profile name. Must resolve inside target data_dir during preflight and execution.",
                 "type": "string",
                 "minLength": 1
               },
               "presets": {
+                "description": "Ordered renderer --preset JSON/TOML file paths, using the existing look/section composition rules. Paths resolve relative to the containing document; benchmark presets must be retained files.",
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -350,10 +354,12 @@
                 "uniqueItems": false
               },
               "params": {
+                "description": "Legacy renderer --params snapshot path applied before presets and sparse edits.",
                 "type": "string",
                 "minLength": 1
               },
               "set_files": {
+                "description": "Ordered sparse parameter JSON/TOML paths passed through the renderer --set carrier after presets.",
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -363,6 +369,7 @@
                 "uniqueItems": false
               },
               "set": {
+                "description": "Ordered renderer PATH=VALUE assignment strings. Values use the renderer parameter language; strings and enums may require JSON quotes.",
                 "type": "array",
                 "items": {
                   "type": "string",
@@ -372,15 +379,18 @@
                 "uniqueItems": false
               },
               "route": {
+                "description": "Renderer workflow route, for example input > film > print > scan. Configuration owns source geometry; target edits cannot override it.",
                 "type": "string",
                 "minLength": 1
               },
               "scan_output": {
+                "description": "Renderer --scan-output selector for the chosen workflow.",
                 "type": "string",
                 "minLength": 1
               },
               "raw": {
                 "type": "object",
+                "description": "Dedicated renderer RAW decoding options; applicable only to explicitly declared RAW input.",
                 "properties": {
                   "white_balance": {
                     "type": "string",

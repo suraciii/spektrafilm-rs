@@ -165,3 +165,7 @@ Source attribution and redistribution restrictions must accompany external refer
 14. Supply a local reference and select input, reference, and both comparison pairs. Preserve pair-specific roles, measurements, maps, and crops. A visual-only or regional reference must not gain pixelwise correspondence from equal dimensions.
 15. Run an externally prepared crop and a renderer crop as distinct cases. Preserve their input identities and renderer-resolved geometry; keep full-render detail crops separate.
 16. Build and inspect a multi-pair offline report with original input files and renderer unavailable. Preserve request order and switch pairs on desktop and narrow layouts.
+17. Preflight a valid suite and an invalid renderer parameter across multiple seeds. Preserve resolved configurations and grouped failures without decoding, rendering, or publishing a completed run. Execute the valid configuration and compare its resolved parameters with preflight.
+18. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; preserve unavailable reasons and separate per-seed observations from seed aggregates.
+19. Generate and validate a pinned target independently of fixtures. Reject existing output and changed executable identity; use the target with a local input.
+20. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.
