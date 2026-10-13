@@ -34,7 +34,7 @@ The command reports the training and held-out medians of both folds. It leaves t
 
 ## Shipped Portra 800 fit
 
-The shipped `kodak_portra_800` surface came from this command. The profile's `metadata.datasource` records the fitted sources and provenance; the fit report carries the metrics.
+The shipped `kodak_portra_800` surface came from this command. The profile's `metadata.datasource` records the fitted sources and provenance; the fit report carries the metrics. The shipped preset's negative-conversion timing is tuned on the default film-scan appearance instead, because the fit's patch-SSE objective is dominated by its worst patches and does not minimize the patch-median error.
 
 ## Example
 
