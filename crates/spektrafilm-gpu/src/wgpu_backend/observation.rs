@@ -294,7 +294,7 @@ impl WgpuBackend {
             None
         };
         let backend = Self {
-            pipe: super::pipe::GpuPipe::new(
+            pipe: self.pipe.with_observed(
                 ObservedDevice {
                     raw: self.device.raw.clone(),
                     context: context.clone(),
@@ -305,7 +305,6 @@ impl WgpuBackend {
                     context: context.clone(),
                     batch: state.clone(),
                 },
-                self.pipeline_cache.clone(),
             ),
             device: ObservedDevice {
                 raw: self.device.raw.clone(),
