@@ -322,7 +322,6 @@ impl GpuPipe {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         for stage in stages {
             match stage {
-<<<<<<< HEAD
                 ChainStage::Gpu { name: _, encode } => encode(&mut encoder),
                 ChainStage::Cpu { name: _, fence } => {
                     // The fence materializes device data, so all previously
@@ -330,19 +329,11 @@ impl GpuPipe {
                     self.queue.submit(Some(encoder.finish()));
                     fence(self);
                     encoder = self.device.create_command_encoder(&Default::default());
-=======
-                ChainStage::Gpu { name, encode } => {
-                    // One compute pass per node keeps the pass labels that
-                    // telemetry and pass accounting observe today.
-                    let _ = name;
-                    encode(&mut encoder);
->>>>>>> origin/main-0.3.4
                 }
             }
         }
         self.queue.submit(Some(encoder.finish()));
     }
-<<<<<<< HEAD
 
     /// Materialize a device image buffer through the pooled readback path.
     /// Records one readback of `bytes`.
@@ -361,8 +352,6 @@ impl GpuPipe {
     pub(super) fn write_image_buffer(&self, buf: &wgpu::Buffer, data: &[f32]) {
         self.queue.write_buffer(buf, 0, bytemuck::cast_slice(data));
     }
-=======
->>>>>>> origin/main-0.3.4
 }
 
 #[cfg(all(test, feature = "wgpu-backend"))]
