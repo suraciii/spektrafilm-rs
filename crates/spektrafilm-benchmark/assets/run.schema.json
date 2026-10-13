@@ -1,0 +1,109 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_status": {
+      "enum": [
+        "completed",
+        "failed"
+      ]
+    },
+    "suite": {
+      "type": "object"
+    },
+    "target": {
+      "type": "object"
+    },
+    "protocol": {
+      "type": "object"
+    },
+    "selection": {
+      "type": "object"
+    },
+    "dependencies": {
+      "type": "array"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 1,
+            "uniqueItems": false
+          },
+          "layout": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "path",
+          "sha256",
+          "media_type",
+          "role"
+        ],
+        "additionalProperties": true
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "execution_status",
+    "suite",
+    "target",
+    "protocol",
+    "selection",
+    "dependencies",
+    "cases",
+    "artifacts"
+  ],
+  "additionalProperties": true,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpektraFilm benchmark run version 1"
+}

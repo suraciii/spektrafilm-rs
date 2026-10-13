@@ -6,6 +6,7 @@ members = [
     "crates/spektrafilm-math",
     "crates/spektrafilm-model",
     "crates/spektrafilm-cli",
+    "crates/spektrafilm-benchmark",
     "crates/spektrafilm-gui",
     "crates/spektrafilm-raw",
 ]

@@ -1,0 +1,1124 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "protocol": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "const": "appearance-v1"
+        },
+        "pixels_per_degree": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "region_sampling_scales": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "grain": {
+          "type": "object",
+          "properties": {
+            "residual": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "enum": [
+                    "flat_mean",
+                    "gaussian_high_pass"
+                  ]
+                },
+                "high_pass_radius_px": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "border_px": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "method",
+                "high_pass_radius_px",
+                "border_px"
+              ],
+              "additionalProperties": false
+            },
+            "spectrum": {
+              "type": "object",
+              "properties": {
+                "window": {
+                  "enum": [
+                    "hann",
+                    "boxcar"
+                  ]
+                }
+              },
+              "required": [
+                "window"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "residual",
+            "spectrum"
+          ],
+          "additionalProperties": false
+        },
+        "halation": {
+          "type": "object",
+          "properties": {
+            "center_px": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "core_radius_px": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "background_inner_radius_px": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "background_outer_radius_px": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "extent_px": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "bin_width_px": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "domain": {
+              "const": "linear_srgb"
+            }
+          },
+          "required": [
+            "center_px",
+            "core_radius_px",
+            "background_inner_radius_px",
+            "background_outer_radius_px",
+            "extent_px",
+            "bin_width_px",
+            "domain"
+          ],
+          "additionalProperties": false
+        },
+        "edge": {
+          "type": "object",
+          "properties": {
+            "axis": {
+              "enum": [
+                "x",
+                "y"
+              ]
+            },
+            "plateau_fraction": {
+              "const": 0.2
+            },
+            "domain": {
+              "const": "linear_srgb"
+            },
+            "input_contrast": {
+              "type": "number"
+            },
+            "input_exposure_stops": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "axis",
+            "plateau_fraction",
+            "domain",
+            "input_contrast",
+            "input_exposure_stops"
+          ],
+          "additionalProperties": false
+        },
+        "local_contrast_scales_sigma_px": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 0,
+          "uniqueItems": false
+        },
+        "probe": {
+          "type": "object",
+          "properties": {
+            "tone_response": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "exposure_stops": {
+                    "type": "number"
+                  },
+                  "geometry": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "minItems": 4,
+                        "maxItems": 4
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "sha256": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          },
+                          "width": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "height": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "sha256",
+                          "width",
+                          "height"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "exposure_stops",
+                  "geometry"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "uniqueItems": false
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "hotspots": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "min_area_px": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "count",
+            "min_area_px"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "pixels_per_degree",
+        "region_sampling_scales",
+        "grain",
+        "hotspots"
+      ],
+      "additionalProperties": false
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+          },
+          "kind": {
+            "enum": [
+              "probe",
+              "scene"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "kind": {
+                "enum": [
+                  "raster",
+                  "raw"
+                ]
+              },
+              "adapter": {
+                "type": "string",
+                "minLength": 1
+              },
+              "color_space": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cctf_decoding": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "configuration": {
+            "type": "object",
+            "properties": {
+              "film": {
+                "type": "string",
+                "minLength": 1
+              },
+              "paper": {
+                "type": "string",
+                "minLength": 1
+              },
+              "presets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0,
+                "uniqueItems": false
+              },
+              "params": {
+                "type": "string",
+                "minLength": 1
+              },
+              "set_files": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0,
+                "uniqueItems": false
+              },
+              "set": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0,
+                "uniqueItems": false
+              },
+              "route": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scan_output": {
+                "type": "string",
+                "minLength": 1
+              },
+              "raw": {
+                "type": "object",
+                "properties": {
+                  "white_balance": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "temperature": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "tint": {
+                    "type": "number"
+                  },
+                  "lens_correction": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "seeds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "role": {
+                  "enum": [
+                    "skin",
+                    "neutral",
+                    "shadow",
+                    "highlight",
+                    "color",
+                    "flat_field",
+                    "edge",
+                    "texture",
+                    "other"
+                  ]
+                },
+                "geometry": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "minItems": 4,
+                      "maxItems": 4
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        },
+                        "width": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "height": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "sha256",
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "measurements": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "numeric",
+                      "color",
+                      "tone",
+                      "flip",
+                      "grain",
+                      "halation",
+                      "edge"
+                    ]
+                  },
+                  "minItems": 0,
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "role",
+                "geometry",
+                "measurements"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "uniqueItems": false
+          },
+          "measurements": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "numeric",
+                "color",
+                "tone",
+                "flip",
+                "grain",
+                "halation",
+                "edge"
+              ]
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          },
+          "reference": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "scope": {
+                "enum": [
+                  "material",
+                  "aligned_scene",
+                  "regional",
+                  "visual"
+                ]
+              },
+              "color": {
+                "type": "object",
+                "properties": {
+                  "color_space": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "cctf_decoding": {
+                    "type": "boolean"
+                  },
+                  "icc": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "provenance": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "attribution": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "redistribution": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "capture": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "development": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "digitization": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "source",
+                  "attribution",
+                  "redistribution",
+                  "capture",
+                  "development",
+                  "digitization"
+                ],
+                "additionalProperties": false
+              },
+              "processing": {
+                "type": "object",
+                "properties": {
+                  "grading": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "histogram_matching": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "compression": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sharpening": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "noise_reduction": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "resampling": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "grading",
+                  "histogram_matching",
+                  "compression",
+                  "sharpening",
+                  "noise_reduction",
+                  "resampling"
+                ],
+                "additionalProperties": false
+              },
+              "transform": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "aligned_derivative": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "correspondence_review": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "common_area_mask": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "regions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "role": {
+                      "enum": [
+                        "skin",
+                        "neutral",
+                        "shadow",
+                        "highlight",
+                        "color",
+                        "flat_field",
+                        "edge",
+                        "texture",
+                        "other"
+                      ]
+                    },
+                    "geometry": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "minItems": 4,
+                          "maxItems": 4
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            },
+                            "width": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "sha256",
+                            "width",
+                            "height"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "measurements": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "numeric",
+                          "color",
+                          "tone",
+                          "flip",
+                          "grain",
+                          "halation",
+                          "edge"
+                        ]
+                      },
+                      "minItems": 0,
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "role",
+                    "geometry",
+                    "measurements"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 0,
+                "uniqueItems": false
+              },
+              "domain": {
+                "type": "string",
+                "minLength": 1
+              },
+              "instrument": {
+                "type": "string",
+                "minLength": 1
+              },
+              "units": {
+                "type": "string",
+                "minLength": 1
+              },
+              "conditions": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "sha256",
+              "scope",
+              "color",
+              "provenance",
+              "processing"
+            ],
+            "additionalProperties": false
+          },
+          "probe_response": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string",
+                "minLength": 1
+              },
+              "units": {
+                "type": "string",
+                "minLength": 1
+              },
+              "instrument": {
+                "type": "string",
+                "minLength": 1
+              },
+              "conditions": {
+                "type": "string",
+                "minLength": 1
+              },
+              "coordinate": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "units": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "name",
+                  "units"
+                ],
+                "additionalProperties": false
+              },
+              "estimator": {
+                "enum": [
+                  "native_channel_mean",
+                  "native_channel_median",
+                  "lab_channel_mean",
+                  "lab_channel_median",
+                  "linear_luminance_mean",
+                  "linear_luminance_median"
+                ]
+              },
+              "curves": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                    },
+                    "channel": {
+                      "enum": [
+                        "R",
+                        "G",
+                        "B",
+                        "L",
+                        "a",
+                        "b",
+                        "Y"
+                      ]
+                    },
+                    "samples": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "coordinate": {
+                            "type": "number"
+                          },
+                          "region_id": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+                          }
+                        },
+                        "required": [
+                          "coordinate",
+                          "region_id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1,
+                      "uniqueItems": false
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "channel",
+                    "samples"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "uniqueItems": false
+              }
+            },
+            "required": [
+              "domain",
+              "units",
+              "instrument",
+              "conditions",
+              "coordinate",
+              "estimator",
+              "curves"
+            ],
+            "additionalProperties": false
+          },
+          "probe": {
+            "type": "object",
+            "properties": {
+              "halation": {
+                "type": "object",
+                "properties": {
+                  "center_px": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "core_radius_px": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "background_inner_radius_px": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "background_outer_radius_px": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "extent_px": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "bin_width_px": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "domain": {
+                    "const": "linear_srgb"
+                  }
+                },
+                "required": [
+                  "center_px",
+                  "core_radius_px",
+                  "background_inner_radius_px",
+                  "background_outer_radius_px",
+                  "extent_px",
+                  "bin_width_px",
+                  "domain"
+                ],
+                "additionalProperties": false
+              },
+              "edge": {
+                "type": "object",
+                "properties": {
+                  "axis": {
+                    "enum": [
+                      "x",
+                      "y"
+                    ]
+                  },
+                  "plateau_fraction": {
+                    "const": 0.2
+                  },
+                  "domain": {
+                    "const": "linear_srgb"
+                  },
+                  "input_contrast": {
+                    "type": "number"
+                  },
+                  "input_exposure_stops": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "axis",
+                  "plateau_fraction",
+                  "domain",
+                  "input_contrast",
+                  "input_exposure_stops"
+                ],
+                "additionalProperties": false
+              },
+              "tone_response": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "exposure_stops": {
+                      "type": "number"
+                    },
+                    "geometry": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "minItems": 4,
+                          "maxItems": 4
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            },
+                            "width": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "height": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "sha256",
+                            "width",
+                            "height"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "exposure_stops",
+                    "geometry"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 0,
+                "uniqueItems": false
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "split": {
+            "enum": [
+              "calibration",
+              "evaluation"
+            ]
+          },
+          "split_group": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "input",
+          "configuration",
+          "seeds",
+          "regions",
+          "measurements"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "protocol",
+    "cases"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpektraFilm benchmark suite version 1"
+}

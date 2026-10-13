@@ -72,14 +72,14 @@ resolve_dependency() {
 collect_library_dirs() {
     library_dirs=()
     local module directory formula prefix
-    for module in libraw lensfun exiv2 glib-2.0 OpenImageIO; do
+    for module in libraw lensfun exiv2 glib-2.0 OpenImageIO lcms2; do
         directory="$(pkg-config --variable=libdir "$module" 2>/dev/null || true)"
         [[ -z "$directory" ]] || library_dirs+=("$directory")
     done
     if command -v brew >/dev/null 2>&1; then
         prefix="$(brew --prefix)"
         library_dirs+=("$prefix/lib")
-        for formula in libraw lensfun exiv2 glib openimageio; do
+        for formula in libraw lensfun exiv2 glib openimageio little-cms2; do
             prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
             [[ -z "$prefix" ]] || library_dirs+=("$prefix/lib")
         done
@@ -93,7 +93,21 @@ package_native_dependencies() {
     local sources=() destinations=() executables=() inherited_paths=()
     bundled_sources=()
     mkdir -p "$frameworks"
-    for name in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
+    lcms_source=""
+    for lcms_candidate in "$(brew --prefix little-cms2 2>/dev/null || true)/lib/liblcms2.2.dylib" "$(pkg-config --variable=libdir lcms2 2>/dev/null || true)/liblcms2.2.dylib"; do
+        [[ -f "$lcms_candidate" ]] && { lcms_source="$lcms_candidate"; break; }
+    done
+    [[ -n "$lcms_source" ]] || fail "cannot locate LittleCMS dylib"
+    lcms_source="$(canonical_file "$lcms_source")" || fail "cannot resolve LittleCMS dylib provenance"
+    cp "$lcms_source" "$frameworks/liblcms2.2.dylib"
+    chmod u+w "$frameworks/liblcms2.2.dylib"
+    install_name_tool -id "@loader_path/liblcms2.2.dylib" "$frameworks/liblcms2.2.dylib"
+    bundled_sources+=("$lcms_source")
+    sources+=("$lcms_source")
+    destinations+=("$frameworks/liblcms2.2.dylib")
+    executables+=("$lcms_source")
+    inherited_paths+=("")
+    for name in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
         source="$(canonical_file "$BUILD_TARGET_DIR/release/$name")" || fail "missing executable $name"
         sources+=("$source")
         destinations+=("$APP_BUNDLE/Contents/MacOS/$name")
@@ -188,6 +202,12 @@ bundle_lensfun_database() {
 bundle_native_licenses() {
     local output="$APP_BUNDLE/Contents/Resources/licenses"
     local source cellar formula version root file relative found required directory
+    mkdir -p "$output"
+    cp LICENSE "$output/spektrafilm-GPL-3.0.txt"
+    for benchmark_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
+        [[ -s "licenses/$benchmark_license" ]] || fail "benchmark license missing: licenses/$benchmark_license"
+        cp "licenses/$benchmark_license" "$output/$benchmark_license"
+    done
     local roots=() seen
     mkdir -p "$output"
     cp LICENSE "$output/Spektrafilm-LICENSE"
@@ -232,7 +252,7 @@ bundle_native_licenses() {
         if [[ -d "$root/.brew" ]]; then cp -R "$root/.brew" "$output/$formula/"; fi
         (( found == 1 )) || fail "missing native license files for $formula ($root)"
     done
-    for required in libraw lensfun exiv2 glib openimageio; do
+    for required in libraw lensfun exiv2 glib openimageio little-cms2; do
         [[ -d "$output/$required" ]] || fail "missing required core license: $required"
     done
     # Database licensing is separate from the Lensfun library's LGPL license.
@@ -253,10 +273,11 @@ bundle_native_licenses() {
 cargo build --release -p spektrafilm-gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
+cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures --target-dir "$BUILD_TARGET_DIR"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
     cp "$BUILD_TARGET_DIR/release/$executable" "$APP_BUNDLE/Contents/MacOS/$executable"
     chmod +x "$APP_BUNDLE/Contents/MacOS/$executable"
 done

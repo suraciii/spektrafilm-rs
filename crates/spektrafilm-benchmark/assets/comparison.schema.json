@@ -1,0 +1,135 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_status": {
+      "enum": [
+        "completed",
+        "failed"
+      ]
+    },
+    "evaluation_status": {
+      "enum": [
+        "not_evaluated",
+        "passed",
+        "review_required",
+        "failed",
+        "insufficient_evidence"
+      ]
+    },
+    "baseline": {
+      "type": "object"
+    },
+    "candidate": {
+      "type": "object"
+    },
+    "protocol": {
+      "type": "object"
+    },
+    "selection": {
+      "type": "object"
+    },
+    "condition_differences": {
+      "type": "array"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "summary": {
+      "type": "object"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 1,
+            "uniqueItems": false
+          },
+          "layout": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "path",
+          "sha256",
+          "media_type",
+          "role"
+        ],
+        "additionalProperties": true
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "policy": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "execution_status",
+    "evaluation_status",
+    "baseline",
+    "candidate",
+    "protocol",
+    "selection",
+    "condition_differences",
+    "cases",
+    "findings",
+    "summary",
+    "artifacts"
+  ],
+  "additionalProperties": true,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SpektraFilm benchmark comparison version 1"
+}
