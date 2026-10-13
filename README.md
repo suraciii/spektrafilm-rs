@@ -419,6 +419,8 @@ The external `spektrafilm-bench` CLI renders immutable evidence, compares versio
 
 Build the native benchmark tools. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
 
+The generated grain probe selects `procedural` in custom Noise mode with three explicit seeds. Generate fresh fixtures for the current renderer; suites generated before the engine rename still contain the rejected `v2` selector.
+
 ```bash
 just build-f64
 just build-benchmark
