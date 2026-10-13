@@ -1,5 +1,6 @@
 //! Preset browser presentation and library actions. Documents and writes belong to core.
 use crate::App;
+use crate::theme;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use spektrafilm_core::{
@@ -325,29 +326,64 @@ impl App {
                         } else {
                             ""
                         };
-                        let response =
-                            ui.selectable_label(active, format!("{}{suffix}", entry.name));
-                        if response.clicked() {
-                            action = Some((index, PresetAction::Load));
-                        }
-                        response.context_menu(|ui| {
-                            if let Some(selected) = self.preset_actions(ui, entry, true) {
-                                action = Some((index, selected));
+                        // Card-style preset entry with route metadata
+                        let card_frame = if active {
+                            egui::Frame::none()
+                                .fill(theme::ACCENT)
+                                .stroke(egui::Stroke::new(1.0, theme::ACCENT))
+                                .corner_radius(6.0)
+                                .inner_margin(8.0)
+                        } else {
+                            egui::Frame::none()
+                                .fill(theme::SURFACE2)
+                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .corner_radius(6.0)
+                                .inner_margin(8.0)
+                        };
+                        card_frame.show(ui, |ui| {
+                            let response = ui.selectable_label(
+                                active,
+                                egui::RichText::new(format!("{}{suffix}", entry.name))
+                                    .color(if active {
+                                        theme::FG
+                                    } else {
+                                        theme::FG_SECONDARY
+                                    })
+                                    .size(11.0),
+                            );
+                            if response.clicked() {
+                                action = Some((index, PresetAction::Load));
                             }
+                            response.context_menu(|ui| {
+                                if let Some(selected) = self.preset_actions(ui, entry, true) {
+                                    action = Some((index, selected));
+                                }
+                            });
+                            // Film → print route metadata
+                            ui.horizontal(|ui| {
+                                let film_label = entry
+                                    .film_profile
+                                    .as_ref()
+                                    .map(|p| p.stock.as_str())
+                                    .unwrap_or("?");
+                                let print_label = entry
+                                    .print_profile
+                                    .as_ref()
+                                    .map(|p| p.stock.as_str())
+                                    .unwrap_or("?");
+                                ui.label(
+                                    egui::RichText::new(film_label)
+                                        .color(theme::ACCENT_DIM)
+                                        .size(9.0),
+                                );
+                                ui.label(egui::RichText::new("→").color(theme::FG_MUTED).size(9.0));
+                                ui.label(
+                                    egui::RichText::new(print_label)
+                                        .color(theme::ACCENT_DIM)
+                                        .size(9.0),
+                                );
+                            });
                         });
-                        ui.small(format!(
-                            "{} → {}",
-                            entry
-                                .film_profile
-                                .as_ref()
-                                .map(|p| p.stock.as_str())
-                                .unwrap_or("?"),
-                            entry
-                                .print_profile
-                                .as_ref()
-                                .map(|p| p.stock.as_str())
-                                .unwrap_or("?")
-                        ));
                     }
                     if let Some((index, action)) = action {
                         self.apply_preset_action(index, action);
