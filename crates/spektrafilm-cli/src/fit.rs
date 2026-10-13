@@ -83,11 +83,11 @@ pub(crate) struct FitArgs {
     /// Workflow route; the fit needs a scan route.
     #[arg(long, help_heading = "Look and workflow")]
     route: Option<String>,
-    /// Film scanner output mode; the fit requires positive_scan.
+    /// Film scanner output mode; the fit requires negative_to_positive.
     #[arg(
         long,
-        default_value = "positive_scan",
-        value_parser = ["direct_scan", "positive_scan"],
+        default_value = "negative_to_positive",
+        value_parser = ["direct_scan", "negative_to_positive"],
         help_heading = "Look and workflow"
     )]
     scan_output: String,

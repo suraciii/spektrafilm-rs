@@ -94,7 +94,7 @@ vocabulary!(CpuReason {
     GrainV2Unsupported,
     GrainV3FieldCpu,
     FotufilmFilmCpu,
-    PositiveScanOutput,
+    NegativeToPositiveOutput,
     ScannerFilmPoints,
     ScannerReceiver,
 });
@@ -113,7 +113,7 @@ vocabulary!(ResidentDeclineReason {
     MallettExecutionParity,
     BackendNoResidentSupport,
     DiagnosticTapRoute,
-    PositiveScanOutput,
+    NegativeToPositiveOutput,
     ScannerFilmPoints,
     ScannerReceiver,
 });

@@ -711,7 +711,7 @@ mod tests {
         }
         params.io.scan_film = true;
         params.workflow.route = FILM_SCAN_ROUTE.into();
-        for mode in ["direct_scan", "positive_scan"] {
+        for mode in ["direct_scan", "negative_to_positive"] {
             params.scanner.scan_output = mode.into();
             let capture = |cells: &ImageBuf| {
                 super::super::scanning::capture_linear(cells, &film, &params, &backend, &color)
@@ -762,7 +762,7 @@ mod tests {
             for (route, scan_film, scan_output) in [
                 (PRINT_ROUTE, false, "direct_scan"),
                 (FILM_SCAN_ROUTE, true, "direct_scan"),
-                (FILM_SCAN_ROUTE, true, "positive_scan"),
+                (FILM_SCAN_ROUTE, true, "negative_to_positive"),
             ] {
                 stock_params.workflow.route = route.into();
                 stock_params.io.scan_film = scan_film;
@@ -821,7 +821,7 @@ mod tests {
         }
 
         // The diagnostic film-scan route runs for both scan outputs.
-        for scan_output in ["positive_scan", "direct_scan"] {
+        for scan_output in ["negative_to_positive", "direct_scan"] {
             let mut scanned = supported_params();
             scanned.workflow.route = "input > film > scan".into();
             scanned.io.scan_film = true;

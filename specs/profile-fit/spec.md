@@ -22,7 +22,7 @@ The fitted surface corrects the per-layer exposure as a function of the input ch
 
 A patch index range is a half-open `[start, end)` pair. The color range selects the chromatic patches. The gray range selects the gray row. The fit-gray range selects the gray patches that the fit scores, which may exclude the brightest and darkest steps of that row.
 
-The chain configuration reuses the process command surface: `--preset`, `--data-dir`, `--route`, and `--set`. The scene table and the chain must agree on the input color space. The comparison interprets the chain output as linear sRGB, so the configured route and scanner output must produce the finished positive scan.
+The chain configuration reuses the process command surface: `--preset`, `--data-dir`, `--route`, and `--set`. The scene table and the chain must agree on the input color space. The comparison interprets the chain output as linear sRGB, so the configured route and scanner output must produce the converted negative image.
 
 A fit must fail with an actionable error when the two patch tables differ in length, when the patch count differs from `rows * cols`, when an index range falls outside the patch count, or when a table value is not finite.
 
@@ -33,7 +33,7 @@ A fit must fail with an actionable error when the two patch tables differ in len
 - `surface`: the `surface_terms` leading non-constant terms of every layer of the film profile's `hanatos2025_adaptation_surface_params`, that is `layers * terms` values. The fit replaces the whole surface: the fitted terms carry the fitted values and every other term is zero. The fit must not use the profile's stored surface values as a starting surface.
 - `tone`: `scanner.positive_density_ev` and the three `scanner.positive_balance_ev` values. `scanner.positive_contrast` and `scanner.positive_dmax` keep the values of the chain configuration.
 
-A common offset added to `positive_density_ev` and subtracted from every `positive_balance_ev` channel leaves the positive scan unchanged, so the four values are redundant by one degree of freedom. The fit must pin `positive_balance_ev[1]` to its resolved value and search only the other three, and the report must record the pinned channel and its value. Without the pin, identical data would fit equivalent but different tones.
+A common offset added to `positive_density_ev` and subtracted from every `positive_balance_ev` channel leaves the converted image unchanged, so the four values are redundant by one degree of freedom. The fit must pin `positive_balance_ev[1]` to its resolved value and search only the other three, and the report must record the pinned channel and its value. Without the pin, identical data would fit equivalent but different tones.
 
 The default is `surface`. `--surface-terms <N>` sets the term count of the surface group and defaults to 9.
 

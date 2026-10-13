@@ -1115,7 +1115,7 @@ mod telemetry_lifecycle_tests {
         app.print_name = "kodak_portra_endura".into();
         app.params.workflow.route = "input > film > scan".into();
         app.params.io.scan_film = true;
-        app.params.scanner.scan_output = "positive_scan".into();
+        app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
         app.params.scanner.white_correction = false;
         app.params.scanner.black_correction = false;
@@ -1384,7 +1384,7 @@ mod telemetry_lifecycle_tests {
     }
 
     #[test]
-    fn imported_positive_slide_state_fails_without_mutating_current_scan() {
+    fn imported_negative_conversion_slide_state_fails_without_mutating_current_scan() {
         let mut app = scanner_app();
         let original = app.params.clone();
         let revision = app.parameter_revision;
@@ -1405,7 +1405,7 @@ mod telemetry_lifecycle_tests {
         app.image_path = None;
         let valid = app.current_state().unwrap();
         app.apply_state(valid).unwrap();
-        assert_eq!(app.params.scanner.scan_output, "positive_scan");
+        assert_eq!(app.params.scanner.scan_output, "negative_to_positive");
         assert_eq!(app.params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
     }
 

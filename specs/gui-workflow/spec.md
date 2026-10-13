@@ -12,18 +12,19 @@
   [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls)
   assign to the scanned medium. For a negative film profile on the direct
   `input > film > scan` route or the real negative-capture `input > convert-film > scan` route, they offer `direct_scan` and
-  `positive_scan`. Positive scan additionally shows density brightness,
-  three-channel balance, contrast, maximum density, and positive interpretation
-  method. A slide film scan and a negative film scan with `positive_scan` show
+  `negative_to_positive`. Labels must follow the [scan output naming contract](../film-chain/spec.md#scan-output-naming-acceptance). Negative conversion additionally shows density brightness,
+  three-channel balance, contrast, maximum density, and negative conversion
+  method. A slide film scan and a negative film scan with `negative_to_positive` show
   the per-channel black and white points. Film scans show receiver profile,
   scanner finish, finish strength, and the `off` or `per_frame` setup mode.
   The GUI identifies approximate receiver profiles as approximate. A route or
   film profile change that makes the selected mode ineligible resets it to
   `direct_scan` and clears ineligible scanner controls.
-- Selecting `positive_scan` clears scanner white and black correction flags.
+- Selecting `negative_to_positive` clears scanner white and black correction flags.
   Hidden capture-correction settings must not prevent this mode selection.
   State and preset validation still reject an explicitly supplied incompatible
   scan configuration.
+- Imported states and presets must reject the removed mode as defined by [Scanner language](../film-chain/spec.md#scanner-language). A rejected import must not replace accepted parameters or the retained image.
 - Scanner setup controls must expose whether the current setup is disabled or
   derived for the current input revision. Preview, Scan, and Export must use
   the same accepted setup for one input and parameter revision.

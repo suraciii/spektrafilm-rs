@@ -24,7 +24,7 @@ One evaluation renders the assembled chart image through a calibrated runtime an
 - The chart image is assembled from the scene patch table with the layout geometry. Patches are separated by the layout gap so that no stage can bleed between them.
 - A runtime is constructed per candidate parameter vector, because a surface change invalidates the spectral calibration. The runtime is built in memory from the resolved film and print profiles; no temporary data directory is written.
 - The evaluation runs on the CPU backend at the crate scalar precision, which is f64 in this feature.
-- The evaluation renders the linear domain: it clears `io.output_cctf_encoding`, because the reference patch table is linear sRGB. The positive-scan stage would otherwise apply the destination transfer curve inside the same buffer.
+- The evaluation renders the linear domain: it clears `io.output_cctf_encoding`, because the reference patch table is linear sRGB. The negative-conversion stage would otherwise apply the destination transfer curve inside the same buffer.
 - Sampling reads a centered box per patch and must not include gap pixels.
 
 ## Optimizer
@@ -38,7 +38,7 @@ The optimizer is a bounded least-squares solver over the residual vector of the 
 
 ## Tone gauge
 
-The positive-scan offset of every channel is `positive_density_ev + positive_balance_ev[channel]`. A common offset added to `positive_density_ev` and subtracted from every `positive_balance_ev` channel therefore leaves the scan unchanged, and the four tone values are redundant by one degree of freedom. A tone fit pins `positive_balance_ev[1]` to its resolved value, so the fitted tone is the unique representative of its equivalence class, and records the pinned channel and value in the report.
+The negative-conversion offset of every channel is `positive_density_ev + positive_balance_ev[channel]`. A common offset added to `positive_density_ev` and subtracted from every `positive_balance_ev` channel therefore leaves the scan unchanged, and the four tone values are redundant by one degree of freedom. A tone fit pins `positive_balance_ev[1]` to its resolved value, so the fitted tone is the unique representative of its equivalence class, and records the pinned channel and value in the report.
 
 ## Cross validation
 
@@ -58,7 +58,7 @@ The chain must be deterministic for a fixed candidate vector: halation and grain
 
 - Input parsing and validation failures carry the file path and the failing field.
 - A missing `hanatos2025_adaptation_surface_params` field on the film profile fails the `surface` group before the first evaluation.
-- A chain configuration whose output is not the finished positive scan fails validation once, before the first evaluation, reusing the existing route and scan-output validation.
+- A chain configuration whose output is not the converted negative image fails validation once, before the first evaluation, reusing the existing route and scan-output validation.
 - The command writes no output file unless the fit completes.
 
 ## Provenance

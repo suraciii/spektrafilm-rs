@@ -25,7 +25,7 @@ use std::path::PathBuf;
 pub enum FitGroup {
     /// The leading terms of the film profile's `hanatos2025_adaptation_surface_params`.
     Surface,
-    /// The positive-scan `positive_density_ev` and `positive_balance_ev`.
+    /// The negative-conversion `positive_density_ev` and `positive_balance_ev`.
     Tone,
 }
 
@@ -85,7 +85,7 @@ pub struct ToneFit {
 /// The redundancy a tone fit pins, so that a fitted tone is unique.
 ///
 /// A common offset added to `positive_density_ev` and subtracted from every
-/// `positive_balance_ev` channel leaves the positive scan unchanged. The fit
+/// `positive_balance_ev` channel leaves the negative conversion unchanged. The fit
 /// pins `positive_balance_ev[pinned_channel]` to `value` and searches the rest.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToneGauge {

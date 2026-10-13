@@ -204,7 +204,7 @@ pub struct ScannerParams {
     #[serde(default)]
     pub lens_blur: f32,
     /// Scan output polarity: `direct_scan` preserves the scanner capture;
-    /// `positive_scan` interprets each negative dye record's density as a
+    /// `negative_to_positive` interprets each negative dye record's density as a
     /// positive image.
     #[serde(default = "default_direct_scan")]
     pub scan_output: String,
@@ -1029,13 +1029,30 @@ mod tests {
     }
 
     #[test]
-    fn scanner_output_defaults_to_direct_and_rejects_unknown_modes() {
+    fn scanner_output_defaults_to_direct_and_rejects_removed_or_unknown_modes() {
         let legacy: super::ScannerParams = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.scan_output, "direct_scan");
 
         let mut params = RuntimeParams::default();
-        params.scanner.scan_output = "unknown".into();
-        assert!(params.validate().is_err());
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.validate().unwrap();
+        let encoded = serde_json::to_string(&params).unwrap();
+        let decoded: RuntimeParams = serde_json::from_str(&encoded).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded.scanner.scan_output, "negative_to_positive");
+        assert!(
+            super::sources::ParameterEdits::parse("scanner.scan_output=negative_to_positive")
+                .is_ok()
+        );
+        for mode in ["positive_scan", "unknown"] {
+            params.scanner.scan_output = mode.into();
+            let error = params.validate().unwrap_err();
+            assert!(error.contains("scanner.scan_output"));
+            assert!(
+                super::sources::ParameterEdits::parse(&format!("scanner.scan_output={mode}"))
+                    .is_err()
+            );
+        }
     }
 
     #[test]

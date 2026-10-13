@@ -301,7 +301,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "scanner.scan_output" => ["direct_scan", "positive_scan"]
+        "scanner.scan_output" => ["direct_scan", "negative_to_positive"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
@@ -407,7 +407,7 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         "scanner.positive_interpretation" => matches!(value, "density" | "separable" | "coupled"),
         "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
         "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
-        "scanner.scan_output" => matches!(value, "direct_scan" | "positive_scan"),
+        "scanner.scan_output" => matches!(value, "direct_scan" | "negative_to_positive"),
         "film_render.grain.engine" => {
             matches!(value, "spektra" | "procedural" | "dye" | "fotufilm")
         }
@@ -621,7 +621,7 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     {
         return Err("scanner.receiver_profile=lab_scan_approx requires a film scan route".into());
     }
-    if scanner.scan_output != "positive_scan" {
+    if scanner.scan_output != "negative_to_positive" {
         for (path, enabled) in [
             (
                 "scanner.positive_interpretation=coupled",
@@ -637,7 +637,9 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             ),
         ] {
             if enabled {
-                return Err(format!("{path} requires scanner.scan_output=positive_scan"));
+                return Err(format!(
+                    "{path} requires scanner.scan_output=negative_to_positive"
+                ));
             }
         }
     }

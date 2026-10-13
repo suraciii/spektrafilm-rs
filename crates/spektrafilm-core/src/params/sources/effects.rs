@@ -24,7 +24,7 @@ pub(super) enum Condition {
     AutoExposure,
     Crop,
     ScannerPoints,
-    PositiveScan,
+    NegativeToPositive,
     LabScanFinish,
     FilmScan,
     MagazineActive,
@@ -66,9 +66,9 @@ impl Condition {
             Self::AutoExposure => "camera.auto_exposure = true",
             Self::Crop => "io.crop = true",
             Self::ScannerPoints => {
-                "slide film scan or negative film scan with scanner.scan_output = positive_scan; ignored for paper and direct negative scans"
+                "slide film scan or negative film scan with scanner.scan_output = negative_to_positive; ignored for paper and direct negative scans"
             }
-            Self::PositiveScan => "scanner.scan_output = positive_scan",
+            Self::NegativeToPositive => "scanner.scan_output = negative_to_positive",
             Self::LabScanFinish => "scanner.finish = lab_scan",
             Self::FilmScan => "film-scan route",
             Self::MagazineActive => "magazine_print_color.active = true",
@@ -114,9 +114,9 @@ impl Condition {
             Self::Crop => p.io.crop,
             Self::ScannerPoints => {
                 (p.io.scan_film || p.workflow.route == "input > convert-film > scan")
-                    && (film.is_positive() || p.scanner.scan_output == "positive_scan")
+                    && (film.is_positive() || p.scanner.scan_output == "negative_to_positive")
             }
-            Self::PositiveScan => p.scanner.scan_output == "positive_scan",
+            Self::NegativeToPositive => p.scanner.scan_output == "negative_to_positive",
             Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
             Self::FilmScan => p.io.scan_film || p.workflow.route == "input > convert-film > scan",
             Self::MagazineActive => p.magazine_print_color.active,
@@ -197,13 +197,13 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
     } else if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push(ScannerPoints);
     } else if path == "scanner.finish_strength" {
-        out.extend([PositiveScan, LabScanFinish]);
+        out.extend([NegativeToPositive, LabScanFinish]);
     } else if path == "scanner.receiver_profile" {
         out.push(FilmScan);
     } else if path.starts_with("scanner.positive_")
         || matches!(path, "scanner.auto_setup" | "scanner.finish")
     {
-        out.push(PositiveScan);
+        out.push(NegativeToPositive);
     } else if path.starts_with("magazine_print_color.") {
         out.push(if path.ends_with(".strength") {
             MagazineActive
