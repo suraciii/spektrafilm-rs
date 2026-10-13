@@ -28,7 +28,7 @@ A leaf whose class is `debug` is a diagnostics or verification switch. The GUI m
 
 Film and print selection are leaves of the set: `film.stock` and `print.stock`, whose values are stock names. A document that supplies them selects those profiles on application; a document that omits them leaves the active selection unchanged. Profile identity — a profile version or a content hash — is not a parameter, and a reader must reject it as an unknown field.
 
-One leaf-merge implementation must serve a preset document, a sparse parameter source, and a command-line assignment, with one value vocabulary.
+One leaf-merge implementation must serve a preset document, a sparse parameter source, and a command-line assignment, with one value vocabulary. A path supplied by any of those sources must count as an explicit value, so the database-calibration protection, the modified marker, and every later derivation treat a sparse file, a preset, and a command-line assignment alike.
 
 ## User library
 
