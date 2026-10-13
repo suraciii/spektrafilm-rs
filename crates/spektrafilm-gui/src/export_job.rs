@@ -16,9 +16,10 @@ use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 
-use super::diagnostics::BackendRequested;
+use super::App;
+use super::diagnostics::{BackendRequested, effective_backend_name};
 use super::export::{ExportBackend, ExportOptions};
-use super::{App, effective_backend_name, observed_result};
+use super::render_worker::{observed_result, panic_message};
 
 /// One in-flight export owning an immutable input, pipeline and option snapshot.
 /// Cancellation discards its staged file once the current operation completes.
@@ -318,7 +319,7 @@ impl App {
                         })
                     },
                 ))
-                .unwrap_or_else(|panic| Err(anyhow::anyhow!(super::panic_message(&panic))));
+                .unwrap_or_else(|panic| Err(anyhow::anyhow!(panic_message(&panic))));
                 attempt.finish(if res.is_ok() {
                     Outcome::Succeeded
                 } else if cancel_for_worker.load(Ordering::SeqCst) {

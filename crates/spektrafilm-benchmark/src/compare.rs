@@ -1,16 +1,15 @@
 use crate::{
     Error, Result,
-    common::{self, Evidence, Progress},
+    common::{self, Evidence, Progress, array, text},
     documents,
     image_data::{self, ImageData},
-    metrics, references,
-    runner::{self, array, text},
+    metrics, references, runner,
 };
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 fn load_run(root: &Path) -> Result<(Value, Value)> {
@@ -218,9 +217,8 @@ fn retained_case(
                         .dependencies
                         .get(original.as_path())
                         .or_else(|| {
-                            context
-                                .dependencies
-                                .get(lexical_absolute(&original).as_path())
+                            let normalized = documents::normalize_path(&original).ok()?;
+                            context.dependencies.get(normalized.as_path())
                         })
                         .ok_or_else(|| {
                             Error::new(
@@ -296,7 +294,10 @@ fn retained_case(
             .join(text(&case["reference"]["correspondence_review"], "path")?);
         let resolved_review = dependencies
             .get(original_review.as_path())
-            .or_else(|| dependencies.get(lexical_absolute(&original_review).as_path()))
+            .or_else(|| {
+                let normalized = documents::normalize_path(&original_review).ok()?;
+                dependencies.get(normalized.as_path())
+            })
             .and_then(|dependency| dependency["resolved_source_path"].as_str())
             .map(Path::new)
             .unwrap_or(&original_review);
@@ -320,19 +321,6 @@ fn retained_case(
         clone["reference"]["correspondence_review"]["sha256"] = record["sha256"].clone();
     }
     Ok(clone)
-}
-fn lexical_absolute(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
 }
 fn probe_protocol(protocol: &Value, case: &Value, seed: u64) -> Value {
     let mut result = protocol.clone();
@@ -574,21 +562,8 @@ fn condition_differences(
             changes || renderer || data,
             &context,
         );
-        for (section, names) in [
-            (
-                "io",
-                &[
-                    "input_color_space",
-                    "input_cctf_decoding",
-                    "crop",
-                    "crop_center",
-                    "crop_size",
-                    "upscale_factor",
-                ][..],
-            ),
-            ("settings", &["preview_mode", "preview_max_size"][..]),
-        ] {
-            for name in names {
+        for (section, names) in documents::CASE_OWNED_FIELDS {
+            for name in *names {
                 if left_parameters[section][name] != right_parameters[section][name] {
                     return Err(Error::new(
                         "incompatible_geometry",
@@ -609,6 +584,80 @@ fn condition_differences(
     Ok(result)
 }
 
+/// Publishes the failure payload, renderer logs, and failure record shared by
+/// version and single-run comparisons. `logs` names each contributing run and
+/// the role used for its retained stdout/stderr artifacts; only object-valued
+/// log records are retained.
+fn publish_failed_render(
+    evidence: &mut Evidence,
+    folder: &Path,
+    case_id: &str,
+    seed: u64,
+    payload: &Value,
+    metadata: Value,
+    logs: &[(&str, &Value, &Path)],
+) -> Result<Value> {
+    let path = folder.join("render-failure.json");
+    common::dump(&path, payload)?;
+    let failure = evidence.add(&path, "render_failure", "application/json", metadata)?;
+    for (role, row, run_root) in logs {
+        for stream in ["stdout", "stderr"] {
+            if let Some(log) = row.get(stream).filter(|v| v.is_object()) {
+                evidence.copy(
+                    &documents::safe_artifact_path(run_root, text(log, "path")?)?,
+                    &format!("cases/{case_id}/seed-{seed}/{role}.{stream}"),
+                    "renderer_log",
+                    json!({"media_type":"text/plain"}),
+                )?;
+            }
+        }
+    }
+    Ok(failure)
+}
+
+/// Rewrites each finding identity with the owning scope and defaults a missing
+/// evidence reference to the published measurement artifact.
+fn publish_measurement_findings(
+    rows: &mut [Value],
+    scope: &[Value],
+    measurement_path: &Value,
+) -> Result<Vec<Value>> {
+    let mut published = Vec::with_capacity(rows.len());
+    for finding in rows {
+        let mut identity = scope.to_vec();
+        identity.push(finding["id"].clone());
+        finding["id"] = json!(common::digest(&Value::Array(identity))?);
+        if finding["evidence"]
+            .as_array()
+            .is_none_or(|refs| refs.is_empty())
+        {
+            finding["evidence"] = json!([measurement_path]);
+        }
+        published.push(finding.clone());
+    }
+    Ok(published)
+}
+
+/// Finalizes a comparison manifest and builds the CLI result envelope both
+/// comparison modes return.
+fn finish_comparison(
+    root: &Path,
+    evaluation: &str,
+    manifest: &mut Value,
+    completed: bool,
+    failure_message: &str,
+    exit_code: i32,
+) -> Result<(Value, i32)> {
+    runner::finalize(root, "comparison.json", manifest)?;
+    let mut result = json!({"schema_version":1,"command":"compare","execution_status":manifest["execution_status"],"evaluation_status":evaluation,"artifact":root.join("comparison.json"),"comparison_id":manifest["id"]});
+    result["summary"] = manifest["summary"].clone();
+    result["condition_differences"] = manifest["condition_differences"].clone();
+    if !completed {
+        result["errors"] = json!([{"code":"measurement_failure","boundary":"comparison","message":failure_message}]);
+    }
+    Ok((result, exit_code))
+}
+
 pub fn compare(
     baseline_path: &Path,
     candidate_path: &Path,
@@ -616,7 +665,7 @@ pub fn compare(
     policy_path: Option<&Path>,
     gate: bool,
 ) -> Result<(Value, i32)> {
-    let root = runner::absolute(out)?;
+    let root = documents::normalize_path(out)?;
     let preexisting = fs::symlink_metadata(out).is_ok();
     let result = compare_impl(baseline_path, candidate_path, out, policy_path, gate);
     if preexisting {
@@ -668,7 +717,7 @@ fn compare_impl(
         }
     }
     let differences = condition_differences(&baseline, &candidate, &left_root, &right_root)?;
-    let root = runner::absolute(out)?;
+    let root = documents::normalize_path(out)?;
     common::create_destination(&root)?;
     let mut progress = Progress::new("compare");
     let mut evidence = Evidence::new(&root);
@@ -718,24 +767,18 @@ fn compare_impl(
         let mut record = json!({"case_id":case_id,"seed":seed,"status":"failed","measurements":[],"regions":definition["regions"],"review":{}});
         if left["status"] != "completed" || right["status"] != "completed" {
             record["reason"] = json!("failed_render");
-            let path = folder.join("render-failure.json");
-            common::dump(&path, &json!({"baseline":left,"candidate":right}))?;
-            let failure = evidence.add(&path, "render_failure", "application/json", json!({}))?;
-            for (role, row, run_root) in [
-                ("baseline", left, &left_root),
-                ("candidate", *right, &right_root),
-            ] {
-                for stream in ["stdout", "stderr"] {
-                    if let Some(log) = row.get(stream) {
-                        evidence.copy(
-                            &documents::safe_artifact_path(run_root, text(log, "path")?)?,
-                            &format!("cases/{case_id}/seed-{seed}/{role}.{stream}"),
-                            "renderer_log",
-                            json!({"media_type":"text/plain"}),
-                        )?;
-                    }
-                }
-            }
+            let failure = publish_failed_render(
+                &mut evidence,
+                &folder,
+                case_id,
+                seed,
+                &json!({"baseline":left,"candidate":right}),
+                json!({}),
+                &[
+                    ("baseline", left, &left_root),
+                    ("candidate", right, &right_root),
+                ],
+            )?;
             findings.push(json!({"id":common::digest(&json!([case_id,seed,"failed_render"]))?,"case_id":case_id,"seed":seed,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
             progress.finish(case_id, seed, "failed", started);
             cases.push(record);
@@ -886,13 +929,11 @@ fn compare_impl(
         let measurement_evidence =
             evidence.add(&path, "measurements", "application/json", json!({}))?;
         if let Some(rows) = record["findings"].as_array_mut() {
-            for finding in rows {
-                finding["id"] = json!(common::digest(&json!([case_id, seed, finding["id"]]))?);
-                if finding["evidence"].as_array().is_none_or(|v| v.is_empty()) {
-                    finding["evidence"] = json!([measurement_evidence["path"]]);
-                }
-                findings.push(finding.clone());
-            }
+            findings.extend(publish_measurement_findings(
+                rows,
+                &[json!(case_id), json!(seed)],
+                &measurement_evidence["path"],
+            )?);
         }
         for row in array(&record, "measurements")? {
             let metric = text(row, "metric")?;
@@ -1014,22 +1055,19 @@ fn compare_impl(
         )?;
         manifest["artifacts"] = json!(evidence.values());
     }
-    runner::finalize(&root, "comparison.json", &mut manifest)?;
-    let mut result = json!({"schema_version":1,"command":"compare","execution_status":manifest["execution_status"],"evaluation_status":evaluation,"artifact":root.join("comparison.json"),"comparison_id":manifest["id"]});
-    result["summary"] = manifest["summary"].clone();
-    result["condition_differences"] = manifest["condition_differences"].clone();
-    if !completed {
-        result["errors"] = json!([{"code":"measurement_failure","boundary":"comparison","message":"One or more selected results failed; inspect comparison cases and findings"}]);
-    }
-    Ok((
-        result,
+    finish_comparison(
+        &root,
+        evaluation,
+        &mut manifest,
+        completed,
+        "One or more selected results failed; inspect comparison cases and findings",
         i32::from(!completed || (gate && evaluation != "passed")),
-    ))
+    )
 }
 
 /// Compare retained input/reference evidence against one simulation run without rendering.
 pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Value, i32)> {
-    let root = runner::absolute(out)?;
+    let root = documents::normalize_path(out)?;
     let preexisting = fs::symlink_metadata(out).is_ok();
     let result = compare_single_impl(run_path, against, out);
     if preexisting {
@@ -1080,7 +1118,7 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
             .at(text(row, "case_id")?));
         }
     }
-    let root = runner::absolute(out)?;
+    let root = documents::normalize_path(out)?;
     common::create_destination(&root)?;
     let mut progress = Progress::new("compare");
     let mut evidence = Evidence::new(&root);
@@ -1100,24 +1138,15 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
         let started = progress.start(case_id, seed);
         let mut record = json!({"case_id":case_id,"seed":seed,"status":"failed","pairs":[]});
         if row["status"] != "completed" {
-            let failure_path = folder.join("render-failure.json");
-            common::dump(&failure_path, row)?;
-            let failure = evidence.add(
-                &failure_path,
-                "render_failure",
-                "application/json",
+            let failure = publish_failed_render(
+                &mut evidence,
+                &folder,
+                case_id,
+                seed,
+                row,
                 json!({"case_id":case_id,"seed":seed}),
+                &[("renderer", row, &run_root)],
             )?;
-            for stream in ["stdout", "stderr"] {
-                if let Some(log) = row.get(stream).filter(|v| v.is_object()) {
-                    evidence.copy(
-                        &documents::safe_artifact_path(&run_root, text(log, "path")?)?,
-                        &format!("cases/{case_id}/seed-{seed}/renderer.{stream}"),
-                        "renderer_log",
-                        json!({"media_type":"text/plain"}),
-                    )?;
-                }
-            }
             for pair_id in pair_ids {
                 record["pairs"].as_array_mut().unwrap().push(json!({"id":pair_id,"left_role":pair_id,"right_role":"simulation","pixel_aligned":false,"status":"failed","reason":"failed_render","measurements":[],"review":{},"regions":[],"automatic_regions":[],"errors":row["errors"]}));
                 findings.push(json!({"id":common::digest(&json!([case_id,seed,pair_id,"failed_render"]))?,"case_id":case_id,"seed":seed,"pair_id":pair_id,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
@@ -1398,21 +1427,11 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
                 "application/json",
                 json!({"case_id":case_id,"seed":seed,"pair_id":pair_id}),
             )?;
-            for mut finding in pair_findings {
-                finding["id"] = json!(common::digest(&json!([
-                    case_id,
-                    seed,
-                    pair_id,
-                    finding["id"]
-                ]))?);
-                if finding["evidence"]
-                    .as_array()
-                    .is_none_or(|refs| refs.is_empty())
-                {
-                    finding["evidence"] = json!([pair["measurement_artifact"]["path"]]);
-                }
-                findings.push(finding);
-            }
+            findings.extend(publish_measurement_findings(
+                &mut pair_findings,
+                &[json!(case_id), json!(seed), json!(pair_id)],
+                &pair["measurement_artifact"]["path"],
+            )?);
             record["pairs"].as_array_mut().unwrap().push(pair);
         }
         record["status"] = json!(if array(&record, "pairs")?
@@ -1439,14 +1458,14 @@ fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Va
         .filter_map(|case| case["case_id"].as_str())
         .collect();
     let mut manifest = json!({"schema_version":1,"mode":"single_run","run":{"id":run["id"],"manifest_sha256":common::sha256_file(&run_root.join("run.json"))?},"default_pair":if pair_ids.contains(&"reference") {"reference"} else {"input"},"execution_status":if completed {"completed"} else {"failed"},"evaluation_status":"not_evaluated","protocol":suite["protocol"],"protocol_digest":documents::protocol_digest(&suite)?,"selection":run["selection"],"condition_differences":[],"cases":cases,"findings":findings,"summary":{"selected_cases":run["selection"]["case_ids"].as_array().map_or(0,Vec::len),"completed_cases":completed_cases.len(),"required_rules":0,"unavailable_rules":0,"protected_failures":0,"worst_case_findings":[]},"artifacts":evidence.values()});
-    runner::finalize(&root, "comparison.json", &mut manifest)?;
-    let mut result = json!({"schema_version":1,"command":"compare","execution_status":manifest["execution_status"],"evaluation_status":"not_evaluated","artifact":root.join("comparison.json"),"comparison_id":manifest["id"]});
-    result["summary"] = manifest["summary"].clone();
-    result["condition_differences"] = manifest["condition_differences"].clone();
-    if !completed {
-        result["errors"] = json!([{"code":"measurement_failure","boundary":"comparison","message":"One or more selected pairs failed; inspect comparison evidence"}]);
-    }
-    Ok((result, i32::from(!completed)))
+    finish_comparison(
+        &root,
+        "not_evaluated",
+        &mut manifest,
+        completed,
+        "One or more selected pairs failed; inspect comparison evidence",
+        i32::from(!completed),
+    )
 }
 
 #[cfg(test)]

@@ -41,42 +41,6 @@ fn raw_fixture() -> PathBuf {
     path
 }
 
-/// Build a session without the shared synthetic image so the App starts empty.
-#[cfg(feature = "gui-raw")]
-fn empty_session() -> Session {
-    use spektrafilm_gpu::cpu_backend::CpuBackend;
-
-    let directory = tempfile::tempdir().unwrap();
-    let factory = state::GuiState::factory();
-    let mut params = factory.runtime_params().unwrap();
-    params.settings.preview_max_size = 128;
-    params.camera.auto_exposure = false;
-    params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
-    params.io.crop = false;
-    let mut initial =
-        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
-            .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
-    let state_path = directory.path().join("initial.json");
-    initial.save(&state_path).unwrap();
-    let browser_path = directory.path().join("browser.json");
-    let harness = Harness::builder()
-        .with_size(egui::vec2(1500.0, 1400.0))
-        .build_eframe(move |_| {
-            App::new_with_browser_path(
-                Arc::new(CpuBackend),
-                None,
-                Some(state_path),
-                None,
-                browser_path,
-                data_dir(),
-            )
-        });
-    assert!(harness.state().image.is_none());
-    Session { harness, directory }
-}
-
 #[cfg(feature = "gui-raw")]
 #[test]
 fn raw_import_through_the_app_sets_linear_aces_and_renders() {

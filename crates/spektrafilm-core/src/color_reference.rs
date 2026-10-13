@@ -498,16 +498,7 @@ fn interp(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
 mod parity_tests {
     use super::*;
     use crate::pipeline::Pipeline;
-    use std::path::{Path, PathBuf};
-
-    fn data_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
+    use crate::test_support::data_dir;
 
     /// Print-path B&W correction regression guard. The luminance remap
     /// `(m, q)` and the printing-exposure correction were cross-checked

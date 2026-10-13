@@ -12,19 +12,10 @@ use std::time::Instant;
 
 use crate::params::RuntimeParams;
 use crate::profile::Profile;
+use spektrafilm_gpu::timing::{print_stage_timing, stage_timings_enabled};
 
 mod metering;
 pub use metering::{measure_autoexposure_ev, meter_autoexposure_ev};
-
-fn stage_timings_enabled() -> bool {
-    std::env::var_os("SPEKTRAFILM_STAGE_TIMINGS").is_some()
-}
-
-fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
-    if enabled {
-        eprintln!("stage {stage}: {} ms", start.elapsed().as_millis());
-    }
-}
 
 /// Per-pixel `raw = m · rgb` for the Mallett2019 path (f64 matmul, rayon-parallel).
 fn apply_mallett_matrix(image: &ImageBuf, m: &[[f64; 3]; 3]) -> ImageBuf {
@@ -366,37 +357,6 @@ pub fn develop(
     density_cmy
 }
 
-/// Full filming stage: expose + develop on an already-prepared working
-/// image. Geometry (crop/upscale) is the caller's responsibility — see
-/// [`crate::resizing::crop_and_rescale`]; the pixel pitch passed here
-/// must be the one derived from the full input.
-pub fn process(
-    image: &ImageBuf,
-    film: &Profile,
-    params: &RuntimeParams,
-    backend: &dyn ComputeBackend,
-    tc_lut: Option<&TcLut>,
-    pixel_size_um: f64,
-) -> ImageBuf {
-    let ref_illuminant = select_illuminant(&film.info.reference_illuminant);
-    let ae_ev = meter_autoexposure_ev(image, params);
-    let log_raw = expose(
-        image,
-        film,
-        params,
-        backend,
-        tc_lut,
-        None,
-        &ref_illuminant,
-        1.0,
-        pixel_size_um,
-        ae_ev,
-    );
-    develop(&log_raw, film, params, backend, pixel_size_um)
-}
-
-use crate::spectral_service::select_illuminant;
-
 #[cfg(test)]
 mod tests {
     #[cfg(test)]
@@ -404,18 +364,9 @@ mod tests {
         use super::super::*;
         use crate::params::RuntimeParams;
         use crate::profile::{self, Profile};
+        use crate::test_support::data_dir;
         use spektrafilm_gpu::cpu_backend::CpuBackend;
-        use spektrafilm_math::image::ImageBuf;
-        use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
-
-        fn data_dir() -> std::path::PathBuf {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("data")
-        }
+        use spektrafilm_math::precision::Scalar;
 
         fn portra() -> Option<Profile> {
             let path = data_dir().join("profiles/kodak_portra_400.json");

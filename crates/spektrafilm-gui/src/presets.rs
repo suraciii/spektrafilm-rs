@@ -787,7 +787,7 @@ mod tests {
             Some(state_path),
             None,
             directory.join("preset_browser_state.json"),
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         app.presets.library = PresetLibrary::new(directory.join("presets"));
         app.presets.refresh();
@@ -896,7 +896,7 @@ mod tests {
                 initial_state,
                 None,
                 directory.join("preset_browser_state.json"),
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+                crate::headless::data_dir(),
             )
         };
         let mut restarted = reopen(None);
@@ -1087,7 +1087,7 @@ mod tests {
             Some(path),
             None,
             directory.join("preset_browser_state.json"),
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         assert!(
             restarted
@@ -1172,7 +1172,7 @@ mod tests {
             Some(path),
             None,
             directory.join("preset_browser_state.json"),
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         assert_eq!(restarted.params.scanner.scan_output, "negative_to_positive");
         assert_eq!(restarted.params.scanner.black_point, [0.1, 0.2, 0.3]);
@@ -1482,7 +1482,7 @@ mod tests {
         let preset =
             Preset::capture_section("Filters", Section::Enlarger, &params, provenance()).unwrap();
         let film = spektrafilm_core::profile::load_profile_by_name(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            &crate::headless::data_dir(),
             "kodak_gold_200",
         )
         .unwrap();

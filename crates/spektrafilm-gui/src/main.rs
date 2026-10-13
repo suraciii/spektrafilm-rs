@@ -21,16 +21,19 @@ use spektrafilm_core::telemetry::{Operation, OperationKind, Outcome, SourceRende
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
+mod backend;
 mod calibration;
 mod chooser;
 mod controls;
 mod diagnostics;
 mod display;
+mod embedded_bundle;
 mod export;
 mod export_job;
 #[cfg(test)]
 mod headless;
 mod numeric;
+mod platform;
 mod presets;
 mod profiles;
 mod render;
@@ -38,12 +41,17 @@ mod render_worker;
 mod routes;
 mod state;
 mod ui;
+use backend::{gui_backend, gui_renderer};
 use calibration::CalibrationJob;
+use controls::{normalize_scan_output, scan_medium};
+use diagnostics::effective_backend_name;
 #[cfg(test)]
 use export::ExportBackend;
 use export::{ExportDialog, ExportOptions};
 use export_job::ExportJob;
-use profiles::{ProfileEntry, dev_time_combo, profile_combo, profile_dev_times, scan_profiles};
+use profiles::{
+    ProfileEntry, dev_time_combo, pick_data_dir, profile_combo, profile_dev_times, scan_profiles,
+};
 #[cfg(test)]
 use render::RuntimeCache;
 use render::{RenderSnapshot, SharedScannerSetup, build_runtime_observed};
@@ -156,124 +164,6 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-#[cfg(embed_bundle)]
-mod embedded_bundle {
-    use std::io::Write;
-    use std::path::{Path, PathBuf};
-
-    use anyhow::{Context, Result};
-
-    include!(env!("SPEKTRAFILM_EMBED_MANIFEST"));
-
-    pub fn setup() -> Result<()> {
-        let root = cache_root().join(BUNDLE_ID);
-        let data_dir = root.join("data");
-        let f64_cli = root.join(f64_cli_name());
-        let marker = root.join(".ready");
-
-        if !marker.is_file() || !data_dir.join("profiles").is_dir() || !f64_cli.is_file() {
-            std::fs::create_dir_all(&data_dir)
-                .with_context(|| format!("creating {}", data_dir.display()))?;
-            for (rel, bytes) in DATA_FILES {
-                write_file(&data_dir.join(rel), bytes)?;
-            }
-            write_file(&f64_cli, F64_EXE)?;
-            write_file(&marker, BUNDLE_ID.as_bytes())?;
-        }
-
-        // This runs before any worker threads are spawned.
-        unsafe {
-            std::env::set_var("SPEKTRAFILM_DATA_DIR", &data_dir);
-            let adjacent = std::env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(|dir| dir.join(f64_cli_name())))
-                .filter(|path| path.is_file());
-            if std::env::var_os("SPEKTRAFILM_F64_CLI").is_none() {
-                std::env::set_var("SPEKTRAFILM_F64_CLI", adjacent.as_ref().unwrap_or(&f64_cli));
-            }
-        }
-        Ok(())
-    }
-
-    fn cache_root() -> PathBuf {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir)
-            .join("spektrafilm")
-            .join("embedded")
-    }
-
-    fn f64_cli_name() -> &'static str {
-        if cfg!(windows) {
-            "spektrafilm-f64.exe"
-        } else {
-            "spektrafilm-f64"
-        }
-    }
-
-    fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
-        let mut file =
-            std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
-        file.write_all(bytes)
-            .with_context(|| format!("writing {}", path.display()))?;
-        Ok(())
-    }
-}
-
-#[cfg(not(embed_bundle))]
-mod embedded_bundle {
-    use anyhow::Result;
-
-    pub fn setup() -> Result<()> {
-        Ok(())
-    }
-}
-
-fn gui_renderer() -> eframe::Renderer {
-    match std::env::var("SPEKTRAFILM_GUI_RENDERER") {
-        Ok(v) if v.eq_ignore_ascii_case("wgpu") => eframe::Renderer::Wgpu,
-        Ok(v) if v.eq_ignore_ascii_case("glow") => eframe::Renderer::Glow,
-        _ => {
-            if cfg!(target_os = "macos") {
-                // Metal-backed CAMetalLayer lets us tag the colorspace as sRGB.
-                eframe::Renderer::Wgpu
-            } else {
-                // Keep the UI compositor away from wgpu/D3D12 by default on
-                // Windows/Linux; the WGPU compute backend is selected separately.
-                eframe::Renderer::Glow
-            }
-        }
-    }
-}
-
-/// GUI Preview and Scan prefer WGPU even in a reference-precision build.
-/// An explicit CPU override and unavailable adapters use the native CPU backend.
-fn gui_backend() -> Arc<dyn ComputeBackend> {
-    match std::env::var("SPEKTRAFILM_BACKEND").ok().as_deref() {
-        None => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-            .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
-            .unwrap_or_else(|| Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend)),
-        Some(_) => Arc::from(spektrafilm_gpu::select_backend()),
-    }
-}
-
-/// Effective backend label for Scan and Export reports. An active Dye field
-/// resolves on the CPU and never enters the resident chain, so the selected
-/// backend name alone would misreport the executed path.
-fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
-    if spektrafilm_core::stages::grain_v3::active(params) {
-        format!("{selected} · grain Dye on CPU")
-    } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
-        format!("{selected} · grain Fotufilm on CPU")
-    } else {
-        selected.to_owned()
-    }
-}
-
 struct App {
     backend: Arc<dyn ComputeBackend>,
     data_dir: PathBuf,
@@ -354,20 +244,6 @@ struct App {
     calibration_job: Option<CalibrationJob>,
     calibration_epoch: u64,
     parameter_revision: u64,
-}
-
-fn scan_medium(film: &profile::Profile) -> controls::ScanMedium {
-    if film.is_film() && film.is_negative() {
-        controls::ScanMedium::Negative
-    } else if film.is_film() && film.is_positive() {
-        controls::ScanMedium::Slide
-    } else {
-        controls::ScanMedium::None
-    }
-}
-
-fn normalize_scan_output(params: &mut RuntimeParams, film_medium: controls::ScanMedium) {
-    controls::normalize_scanner_selections(params, film_medium);
 }
 
 impl App {
@@ -640,7 +516,7 @@ impl App {
             self.film_name.clone(),
             self.print_name.clone(),
             self.data_dir.clone(),
-            self.gui_state.sections["special"].clone(),
+            self.gui_state.special().clone(),
             scanner_setup,
         )
     }
@@ -704,9 +580,6 @@ impl App {
             backend: self.backend.clone(),
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
-            display_profile: self.gui_state.sections["rust"]["display_profile"]
-                .as_str()
-                .map(PathBuf::from),
             ctx: ctx.clone(),
             worker_wait: operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image),
             operation,
@@ -765,12 +638,8 @@ impl App {
                         diagnostics::color_space(&r.output_color_space),
                         r.output_cctf_encoding,
                     ));
-                    let display_profile = self.gui_state.sections["rust"]["display_profile"]
-                        .as_str()
-                        .map(Path::new);
                     let display_current = r.display_enabled
                         == self.viewer.settings.use_display_transform
-                        && r.display_profile.as_deref() == display_profile
                         && r.display_max_size == self.params.settings.preview_max_size;
                     self.last_input_clone_ms = r.input_clone_ms;
                     self.last_scale_ms = r.scale_ms;
@@ -792,9 +661,7 @@ impl App {
                         &self.output_color_space,
                         self.output_cctf_encoding,
                         self.viewer.settings.use_display_transform,
-                        self.gui_state.sections["rust"]["display_profile"]
-                            .as_str()
-                            .map(Path::new),
+                        self.gui_state.display_profile().map(Path::new),
                     );
                     self.status = format!(
                         "{} · {} · {} × {} ({:.1} MP)",
@@ -810,7 +677,7 @@ impl App {
                         &self.output_color_space,
                         self.output_cctf_encoding,
                         r.display_enabled,
-                        r.display_profile.as_deref(),
+                        None,
                         r.display_max_size,
                     );
                     self.output_image = Some(output);
@@ -881,12 +748,8 @@ impl App {
             .as_ref()
             .expect("output checked before dialog");
         let t = Instant::now();
-        let destination = self.gui_state.sections["simulation"]["saving_color_space"]
-            .as_str()
-            .unwrap_or("sRGB");
-        let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"]
-            .as_bool()
-            .unwrap_or(true);
+        let destination = self.gui_state.saving_color_space();
+        let encoded = self.gui_state.saving_cctf_encoding();
         let save_options = SaveOptions {
             depth: match actual_format {
                 image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
@@ -964,152 +827,6 @@ impl App {
         }
     }
 }
-
-/// Extract the human-readable payload from a caught panic. Panics carry
-/// either a `&str` (literal messages) or a `String` (formatted ones);
-/// anything else gets a generic label.
-fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
-    if let Some(s) = panic.downcast_ref::<&str>() {
-        format!("panic: {s}")
-    } else if let Some(s) = panic.downcast_ref::<String>() {
-        format!("panic: {s}")
-    } else {
-        "panic (no message)".to_string()
-    }
-}
-
-/// Find the data directory. Probes, in order:
-///   1. `$SPEKTRAFILM_DATA_DIR` — explicit override.
-///   2. `<exe>/../Resources/data` — macOS `.app` bundle layout
-///      (`Foo.app/Contents/MacOS/<exe>` → `Contents/Resources/data`).
-///   3. `<exe>/data` — data shipped next to the binary.
-///   4. `./data` — current working directory.
-///   5. `<CARGO_MANIFEST_DIR>/../../data` — workspace root, for
-///      `cargo run -p spektrafilm-gui`.
-///
-/// Finder launches apps with `cwd=/`, so the exe-relative probes (2–3)
-/// matter for a double-clicked `.app`. Falls back to `./data` so the
-/// downstream loader surfaces a clear "profiles not found" error.
-fn pick_data_dir() -> PathBuf {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(dir) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
-        candidates.push(PathBuf::from(dir));
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        candidates.push(dir.join("..").join("Resources").join("data"));
-        candidates.push(dir.join("data"));
-    }
-    candidates.push(PathBuf::from("data"));
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        candidates.push(PathBuf::from(manifest).join("..").join("..").join("data"));
-    }
-    candidates
-        .into_iter()
-        .find(|p| p.is_dir())
-        .unwrap_or_else(|| PathBuf::from("data"))
-}
-
-/// macOS only: walk from the eframe `RawWindowHandle` down to the
-/// `CAMetalLayer` and tag its colorspace as sRGB. Without this the
-/// metal layer's `colorspace` is null and macOS treats the framebuffer
-/// pixels as raw display primaries — sRGB content rendered into a
-/// wide-gamut panel comes out oversaturated. Setting the layer's
-/// colorspace makes the OS gamut-map exactly like it does for a
-/// regular sRGB-tagged PNG opened in Preview, so what you see in the
-/// GUI matches what you export.
-#[cfg(target_os = "macos")]
-fn tag_metal_layer_srgb<H: raw_window_handle::HasWindowHandle>(h: &H) -> Result<(), String> {
-    use core_graphics::color_space::{CGColorSpace, kCGColorSpaceSRGB};
-    use foreign_types::ForeignType;
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    use raw_window_handle::RawWindowHandle;
-
-    let handle = h
-        .window_handle()
-        .map_err(|e| format!("no window handle: {e}"))?;
-    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-        return Err("not an AppKit window".into());
-    };
-    let ns_view: *mut AnyObject = appkit.ns_view.as_ptr().cast();
-    if ns_view.is_null() {
-        return Err("ns_view is null".into());
-    }
-
-    // `kCGColorSpaceSRGB` is an extern static CFStringRef, accessing it
-    // is unsafe in the 2024 edition's stricter model.
-    let srgb_cs = unsafe { CGColorSpace::create_with_name(kCGColorSpaceSRGB) }
-        .ok_or_else(|| "CGColorSpaceCreateWithName(sRGB) returned null".to_string())?;
-    // `foreign_types::ForeignType::as_ptr` returns the opaque
-    // `CGColorSpaceRef` (i.e. `*mut sys::CGColorSpace`). `setColorspace:`
-    // is declared as taking a `CGColorSpaceRef`, whose ObjC type encoding
-    // is `^{CGColorSpace=}`. A bare `*mut c_void` encodes as `^v`, which
-    // objc2's debug-build argument-encoding verification rejects (the
-    // release build skips that check, which is why only debug crashed).
-    // Cast through a zero-field opaque struct whose `Encode` matches the
-    // expected `^{CGColorSpace=}` so both builds pass the same pointer.
-    #[repr(C)]
-    struct CGColorSpaceOpaque {
-        _private: [u8; 0],
-    }
-    // A pointer to this type encodes as `^{CGColorSpace=}` — what
-    // `setColorspace:` expects. `RefEncode` (not `Encode`) is the trait
-    // objc2 consults for a `*const T` argument.
-    unsafe impl objc2::RefEncode for CGColorSpaceOpaque {
-        const ENCODING_REF: objc2::Encoding =
-            objc2::Encoding::Pointer(&objc2::Encoding::Struct("CGColorSpace", &[]));
-    }
-    let cs_ref = srgb_cs.as_ptr() as *const CGColorSpaceOpaque;
-
-    // Only `CAMetalLayer` has a `colorspace` property; calling
-    // `setColorspace:` on a plain `CALayer` is an unrecognized selector
-    // (crash), so we always gate on `respondsToSelector:`.
-    let selector = objc2::sel!(setColorspace:);
-    unsafe {
-        let root_layer: *mut AnyObject = msg_send![ns_view, layer];
-        if root_layer.is_null() {
-            return Err("ns_view.layer is null".into());
-        }
-        // Find the CAMetalLayer. wgpu-hal 24 (the raw-window-metal
-        // approach) does NOT replace the view's layer: when the root
-        // layer isn't already a CAMetalLayer — the default for an
-        // eframe/winit NSView — it installs the metal layer as a
-        // *sublayer*. So the root layer is a plain CALayer with no
-        // `colorspace`; the layer we must tag is the metal sublayer.
-        // (Older eframe set the view's own layer to the CAMetalLayer, so
-        // check the root first and fall back to scanning sublayers.)
-        let metal_layer = if msg_send![root_layer, respondsToSelector: selector] {
-            root_layer
-        } else {
-            let sublayers: *mut AnyObject = msg_send![root_layer, sublayers];
-            let mut found: *mut AnyObject = std::ptr::null_mut();
-            if !sublayers.is_null() {
-                let count: usize = msg_send![sublayers, count];
-                for i in 0..count {
-                    let sub: *mut AnyObject = msg_send![sublayers, objectAtIndex: i];
-                    if !sub.is_null() && msg_send![sub, respondsToSelector: selector] {
-                        found = sub;
-                        break;
-                    }
-                }
-            }
-            found
-        };
-        if metal_layer.is_null() {
-            // The metal sublayer may not exist yet on the first frame;
-            // the caller retries until this succeeds.
-            return Err("no CAMetalLayer on the view or its sublayers yet".into());
-        }
-        // CAMetalLayer.colorspace is `retain`-strong, so ObjC takes its
-        // own reference; we can let `srgb_cs` drop after the call.
-        let _: () = msg_send![metal_layer, setColorspace: cs_ref];
-        tracing::info!("tagged CAMetalLayer.colorspace = sRGB");
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod telemetry_lifecycle_tests {
     use super::*;
@@ -1129,7 +846,7 @@ mod telemetry_lifecycle_tests {
                     .unwrap()
                     .as_nanos()
             )),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
         );
         app.film_name = "kodak_portra_400".into();
         app.print_name = "kodak_portra_endura".into();

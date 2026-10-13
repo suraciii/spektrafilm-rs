@@ -271,7 +271,7 @@ fn inspect(input: &Path) -> Result<Value> {
     };
     Ok(json!({
         "path": input,
-        "format": format_name(format),
+        "format": format.name(),
         "width": loaded.image.width,
         "height": loaded.image.height,
         "precisionBits": precision_bits,
@@ -280,15 +280,6 @@ fn inspect(input: &Path) -> Result<Value> {
         "metadata": {"read": loaded.metadata.is_some()},
         "inspection": "read-only",
     }))
-}
-
-fn format_name(format: image_io::ImageFormat) -> &'static str {
-    match format {
-        image_io::ImageFormat::Jpeg => "jpeg",
-        image_io::ImageFormat::Png => "png",
-        image_io::ImageFormat::Tiff => "tiff",
-        image_io::ImageFormat::Exr => "exr",
-    }
 }
 
 fn tiff_precision_bits(path: &Path) -> Result<u8> {
@@ -369,16 +360,7 @@ pub(crate) fn select_data_dir(argument: PathBuf, matches: &ArgMatches) -> Result
             source,
         });
     }
-    let executable = std::env::current_exe().context("locating executable for data discovery")?;
-    let directory = executable
-        .parent()
-        .context("executable has no parent directory")?;
-    let candidates = [
-        directory.join("data"),
-        directory.join("../share/data"),
-        directory.join("../Resources/data"),
-        std::env::current_dir()?.join("data"),
-    ];
+    let candidates = spektrafilm_core::config::data_dir_candidates();
     for path in &candidates {
         if path.is_dir() {
             return Ok(DataSelection {

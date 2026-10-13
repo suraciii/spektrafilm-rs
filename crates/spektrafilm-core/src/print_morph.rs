@@ -436,16 +436,7 @@ fn morph_density_curves_impl(
 #[cfg(test)]
 mod parity_tests {
     use super::*;
-    use std::path::{Path, PathBuf};
-
-    fn data_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
+    use crate::test_support::data_dir;
 
     /// s023 print-curve morph regression guard. Morphed density curves for the
     /// kodak_portra_endura fitted model are cross-checked against a faithful

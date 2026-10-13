@@ -3,7 +3,6 @@ use crate::{
     common::{self, Error, Result, create_destination, destination_exists, dump, sha256_file},
     documents::{load_json_document, safe_artifact_path, validate_generated_document},
     image_data::read_npy,
-    runner,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -1079,7 +1078,7 @@ fn navigation_links(fragment: &str, label: &str) -> String {
 /// duplicate/unknown keys, empty values and malformed encoding show an alert and
 /// hide the case panels until a valid link or case selection is chosen.
 pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
-    let root = runner::absolute(out)?;
+    let root = crate::documents::normalize_path(out)?;
     let preexisting = fs::symlink_metadata(out).is_ok();
     let result = build_report_impl(comparison, out);
     if preexisting {

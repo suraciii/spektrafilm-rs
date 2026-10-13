@@ -206,7 +206,9 @@ fn validate(kind: &str, file: &Path) -> Result<Value> {
 fn execute(command: Command) -> Result<(Value, i32)> {
     match command {
         Command::Schema { kind } => Ok((documents::schema_for(&kind)?, 0)),
-        Command::Validate { kind, file } => Ok((validate(&kind, &runner::absolute(&file)?)?, 0)),
+        Command::Validate { kind, file } => {
+            Ok((validate(&kind, &documents::normalize_path(&file)?)?, 0))
+        }
         Command::Run {
             suite,
             input,
@@ -295,7 +297,7 @@ fn execute(command: Command) -> Result<(Value, i32)> {
             out,
         } => Ok((target::create(&renderer, &data_dir, &backend, &out)?, 0)),
         Command::Report { comparison, out } => {
-            let out = runner::absolute(&out)?;
+            let out = documents::normalize_path(&out)?;
             report::build_report(&comparison, &out)?;
             Ok((
                 json!({"schema_version":1,"command":"report","execution_status":"completed","artifact":out.join("index.html")}),

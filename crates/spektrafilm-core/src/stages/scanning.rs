@@ -1198,6 +1198,7 @@ pub(crate) fn process_prepared(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::data_dir;
 
     fn calibration() -> PositiveCalibration {
         PositiveCalibration {
@@ -1210,7 +1211,7 @@ mod tests {
     }
 
     fn density_calibration() -> interpretation::DensityCalibration {
-        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let data = data_dir();
         let profile = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         interpretation::DensityCalibration::prepare(&profile).unwrap()
     }
@@ -1261,7 +1262,7 @@ mod tests {
 
     #[test]
     fn density_reading_ignores_the_receiver_and_the_capture() {
-        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let data = data_dir();
         let profile = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let density = ImageBuf::from_data(
             3,
@@ -1459,8 +1460,7 @@ mod tests {
     }
 
     fn profile(name: &str) -> Profile {
-        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-        crate::profile::load_profile_by_name(&data, name).unwrap()
+        crate::profile::load_profile_by_name(&data_dir(), name).unwrap()
     }
 
     #[test]

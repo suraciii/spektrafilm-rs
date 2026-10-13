@@ -12,6 +12,23 @@ pub use evidence::{Availability, MeasurementRecord, validate_generated_document}
 pub use masks::{geometry_mask, reference_geometry_mask};
 
 pub const ID_PATTERN: &str = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$";
+
+/// Resolved parameter fields owned by the case definition. Targets must not
+/// override input interpretation, geometry, or preview settings.
+pub const CASE_OWNED_FIELDS: &[(&str, &[&str])] = &[
+    (
+        "io",
+        &[
+            "input_color_space",
+            "input_cctf_decoding",
+            "crop",
+            "crop_center",
+            "crop_size",
+            "upscale_factor",
+        ],
+    ),
+    ("settings", &["preview_mode", "preview_max_size"]),
+];
 fn err(code: &str, message: impl Into<String>) -> Error {
     Error::new(code, message.into())
 }
@@ -162,6 +179,31 @@ pub fn load_json_document(path: &Path) -> Result<Value> {
     }
     Ok(v)
 }
+/// Absolute form of a path: relative paths resolve against the process working
+/// directory, then `.` and `..` components are removed lexically.
+///
+/// Symlinks are deliberately not resolved here. Callers that need physical
+/// identity canonicalize explicitly, and dependency lookup keys must stay
+/// lexical so a parent-relative authored path still matches the retained
+/// source the runner recorded for it.
+pub fn normalize_path(path: &Path) -> Result<PathBuf> {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    Ok(normalized)
+}
 pub fn resolve_path(value: &str, document: &Path) -> Result<PathBuf> {
     if value.is_empty() || value.contains('\0') {
         return Err(err(
@@ -182,17 +224,7 @@ pub fn resolve_path(value: &str, document: &Path) -> Result<PathBuf> {
     if let Ok(p) = full.canonicalize() {
         return Ok(p);
     }
-    let mut normalized = PathBuf::new();
-    for component in full.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            x => normalized.push(x),
-        }
-    }
-    Ok(normalized)
+    normalize_path(&full)
 }
 pub fn safe_artifact_path(root: &Path, value: &str) -> Result<PathBuf> {
     if value.is_empty()
@@ -532,7 +564,7 @@ pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -
     Ok(())
 }
 
-pub fn validate_shape(kind: &str, value: &Value) -> Result<()> {
+pub(crate) fn validate_shape(kind: &str, value: &Value) -> Result<()> {
     validate_authored(kind, value)
 }
 
@@ -714,22 +746,24 @@ pub fn load_target(path: &Path) -> Result<Value> {
         config(changes, path)?;
         for assignment in changes["set"].as_array().unwrap() {
             let source = assignment.as_str().unwrap();
-            for key in [
-                "io.input_color_space",
-                "io.input_cctf_decoding",
-                "io.crop",
-                "io.crop_center",
-                "io.crop_size",
-                "io.upscale_factor",
-            ] {
-                if source
-                    .split(',')
-                    .any(|x| x.split_once('=').is_some_and(|(p, _)| p.trim() == key))
-                {
-                    return Err(err(
-                        "target_geometry",
-                        "target must not modify input interpretation or geometry",
-                    ));
+            for (section, names) in CASE_OWNED_FIELDS {
+                // Preview settings are compared against the case-only dry
+                // resolution by the runner; this static guard covers the input
+                // interpretation and geometry keys.
+                if *section != "io" {
+                    continue;
+                }
+                for name in *names {
+                    let key = format!("{section}.{name}");
+                    if source
+                        .split(',')
+                        .any(|x| x.split_once('=').is_some_and(|(p, _)| p.trim() == key))
+                    {
+                        return Err(err(
+                            "target_geometry",
+                            "target must not modify input interpretation or geometry",
+                        ));
+                    }
                 }
             }
         }
@@ -859,7 +893,7 @@ pub fn protocol_digest(suite: &Value) -> Result<String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegionDocument {
+struct RegionDocument {
     pub id: String,
     pub label: String,
     pub role: String,
@@ -867,7 +901,7 @@ pub struct RegionDocument {
     pub measurements: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CaseDocument {
+struct CaseDocument {
     pub id: String,
     pub kind: String,
     pub input: Value,

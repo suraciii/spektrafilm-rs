@@ -49,15 +49,7 @@ pub(crate) fn dump_if_env(var: &str, image: &ImageBuf) {
 #[cfg(test)]
 use crate::enlarger;
 use crate::spectral_service::select_illuminant;
-fn stage_timings_enabled() -> bool {
-    std::env::var_os("SPEKTRAFILM_STAGE_TIMINGS").is_some()
-}
-
-fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
-    if enabled {
-        eprintln!("stage {stage}: {} ms", start.elapsed().as_millis());
-    }
-}
+use spektrafilm_gpu::timing::{print_stage_timing, stage_timings_enabled};
 
 fn record_stage_timing(
     timings: &mut Option<&mut BTreeMap<String, f64>>,
@@ -1534,15 +1526,7 @@ impl Pipeline {
 #[cfg(test)]
 mod spectral_invalidation_tests {
     use super::*;
-
-    fn data_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
+    use crate::test_support::data_dir;
 
     #[test]
     fn film_chemistry_rebuilds_total_and_grain_layers_from_the_fitted_model() {

@@ -4,22 +4,18 @@ mod observation;
 use crate::telemetry::*;
 use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
 
-#[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
 
 use crate::gpu_helpers::{
     f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
 };
-#[cfg(feature = "wgpu-backend")]
 use crate::{ComputeBackend, Lut3D, cpu_backend};
 
-#[cfg(feature = "wgpu-backend")]
 mod cache;
-#[cfg(feature = "wgpu-backend")]
 mod film_chain;
-#[cfg(feature = "wgpu-backend")]
+mod params;
 use cache::{CachedPipelineRef, PipelineCache};
-
+pub(crate) use params::{DensityParams, FrontParams, ScanParams};
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
 /// monster kernel froze the display once). 256 → at
@@ -29,16 +25,13 @@ const MAX_BLUR_RADIUS: u32 = 256;
 
 // Keep in sync with the linear WGSL kernels. 256 is supported by the
 // default device limits; a two-dimensional grid preserves large-image support.
-#[cfg(feature = "wgpu-backend")]
 const LINEAR_WORKGROUP_SIZE: u32 = 256;
 
-#[cfg(feature = "wgpu-backend")]
 fn dispatch_grid(workgroups: u32) -> (u32, u32) {
     let x = workgroups.clamp(1, 65535);
     (x, workgroups.div_ceil(x))
 }
 
-#[cfg(feature = "wgpu-backend")]
 fn dispatch_linear(pass: &mut ObservedPass<'_>, n_values: u32) {
     let (x, y) = dispatch_grid(n_values.div_ceil(LINEAR_WORKGROUP_SIZE));
     pass.dispatch_workgroups(x, y, 1);
@@ -49,7 +42,6 @@ fn fir_blur_radius(sigma: f32) -> u32 {
     ((3.0_f32 * sigma).ceil() as u32).min(MAX_BLUR_RADIUS)
 }
 
-#[cfg(feature = "wgpu-backend")]
 pub struct WgpuBackend {
     device: ObservedDevice,
     queue: ObservedQueue,
@@ -58,7 +50,6 @@ pub struct WgpuBackend {
     adapter: AdapterDescription,
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl WgpuBackend {
     pub fn new() -> Option<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -307,14 +298,12 @@ impl WgpuBackend {
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 struct GpuBuffer {
     data: Vec<u8>,
     binding_type: wgpu::BufferBindingType,
     usage: wgpu::BufferUsages,
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl GpuBuffer {
     fn uniform(data: &[u8]) -> Self {
         Self {
@@ -339,7 +328,6 @@ impl GpuBuffer {
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl ComputeBackend for WgpuBackend {
     fn observation_context(&self) -> Option<&ObservationContext> {
         Some(&self.device.context)
@@ -696,20 +684,7 @@ impl ComputeBackend for WgpuBackend {
 
         // Pack uniform params — mat3x3 in WGSL std140 is 3 columns of vec4.
         // GPU shaders are f32-only: cast precision-preserved inputs at the shader boundary.
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            n_wavelengths: u32,
-            normalization: f32,
-            col0: [f32; 4],
-            col1: [f32; 4],
-            col2: [f32; 4],
-            bw: [f32; 4],
-        }
-
-        let params = Params {
+        let params = ScanParams {
             width: density_cmy.width,
             height: density_cmy.height,
             n_wavelengths: n_wl as u32,
@@ -889,20 +864,9 @@ impl ComputeBackend for WgpuBackend {
         // Pack uniform: mat3x3 in std140 = 3 vec4 columns. f32 only on GPU.
         // WGSL columns are read as columns of the matrix; storing row-major as
         // [col[0], col[1], col[2]] where col[j][i] = mat[i][j].
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            lut_size: u32,
-            _pad: u32,
-            col0: [f32; 4],
-            col1: [f32; 4],
-            col2: [f32; 4],
-        }
 
         let m = rgb_to_adapted_xyz;
-        let params = Params {
+        let params = FrontParams {
             width: image.width,
             height: image.height,
             lut_size,
@@ -952,16 +916,6 @@ impl ComputeBackend for WgpuBackend {
         let n_pixels = log_raw.pixel_count() as u32;
         let k = log_exposure.len() as u32;
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            k: u32,
-            uniform_grid: u32,
-            gamma_inv: [f32; 3],
-            _pad: f32,
-        }
         // Detect uniformly-spaced log_exposure (typical case) to use the fast path.
         let uniform = is_uniform_grid_endpoint(log_exposure);
         let gamma_inv = if gamma_factor.abs() > 1e-12 {
@@ -969,7 +923,7 @@ impl ComputeBackend for WgpuBackend {
         } else {
             1.0
         };
-        let params = Params {
+        let params = DensityParams {
             width: log_raw.width,
             height: log_raw.height,
             k,
@@ -1026,35 +980,19 @@ impl ComputeBackend for WgpuBackend {
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 mod blur;
-#[cfg(feature = "wgpu-backend")]
 mod couplers;
-#[cfg(feature = "wgpu-backend")]
 mod gamut;
-#[cfg(feature = "wgpu-backend")]
 mod glare;
-#[cfg(feature = "wgpu-backend")]
 mod grain;
-#[cfg(feature = "wgpu-backend")]
 mod halation;
-#[cfg(feature = "wgpu-backend")]
 mod highlight;
-#[cfg(feature = "wgpu-backend")]
 mod unsharp;
-#[cfg(feature = "wgpu-backend")]
 use blur::*;
-#[cfg(feature = "wgpu-backend")]
 use couplers::*;
-#[cfg(feature = "wgpu-backend")]
 use gamut::*;
-#[cfg(feature = "wgpu-backend")]
 use glare::*;
-#[cfg(feature = "wgpu-backend")]
 use grain::*;
-#[cfg(feature = "wgpu-backend")]
 use halation::*;
-#[cfg(feature = "wgpu-backend")]
 use highlight::*;
-#[cfg(feature = "wgpu-backend")]
 use unsharp::*;

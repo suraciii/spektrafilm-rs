@@ -327,7 +327,7 @@ impl BundleSpec {
         self.native_input_gain
     }
 }
-pub(super) fn effective_input_gain(spec: &BundleSpec, input: &ColorSpaceEntry) -> f64 {
+pub(crate) fn effective_input_gain(spec: &BundleSpec, input: &ColorSpaceEntry) -> f64 {
     if spec.native_input_gain {
         input.native_input_gain()
     } else {

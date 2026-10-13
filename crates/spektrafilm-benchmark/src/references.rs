@@ -1,11 +1,11 @@
-use crate::common::{self, Error, Result};
+use crate::common::{self, Availability, Error, EvidenceBuilder, Result};
 use crate::image_data::ImageData;
 use crate::{documents, image_data};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -143,18 +143,6 @@ fn processing_eligibility(reference: &Value) -> Result<(bool, bool)> {
     ))
 }
 
-#[derive(Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum TerminalState {
-    Completed,
-    Failed,
-}
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Availability {
-    Available,
-    Unavailable,
-}
 #[derive(Clone, Copy)]
 enum ArtifactRole {
     Native,
@@ -182,25 +170,17 @@ impl ArtifactRole {
         }
     }
 }
+/// Reference measurements extend the shared row with the frozen protocol and
+/// reference identity; `serde(flatten)` merges the shared keys into the same
+/// object, so the serialized key set is unchanged.
 #[derive(Serialize)]
 struct Measurement {
     case_id: String,
     seed_population: Value,
-    region_id: String,
+    #[serde(flatten)]
+    shared: common::Measurement,
     reference_id: String,
-    metric: String,
-    metric_version: &'static str,
     protocol_id: Value,
-    domain: String,
-    units: String,
-    estimator: String,
-    sample_count: usize,
-    artifact_refs: Vec<String>,
-    availability: Availability,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    value: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
 }
 struct Comparison<'a> {
     reference: &'a Value,
@@ -210,10 +190,7 @@ struct Comparison<'a> {
     prefix: String,
     out: &'a Path,
     sequence: usize,
-    measurements: Vec<Measurement>,
-    findings: Vec<Value>,
-    artifacts: Vec<Value>,
-    state: TerminalState,
+    body: EvidenceBuilder<Measurement, Value, Value>,
     review: Value,
     single: bool,
     protocol: Value,
@@ -236,10 +213,7 @@ impl<'a> Comparison<'a> {
             prefix,
             out,
             sequence: 0,
-            measurements: Vec::new(),
-            findings: Vec::new(),
-            artifacts: Vec::new(),
-            state: TerminalState::Completed,
+            body: EvidenceBuilder::default(),
             review,
             single: false,
             protocol: protocol.clone(),
@@ -265,9 +239,9 @@ impl<'a> Comparison<'a> {
         failure: bool,
         refs: &[String],
     ) {
-        self.findings.push(json!({"id":format!("{}:{region}:{metric}:{reason}",self.prefix),"case_id":self.case_id,"region_id":region,"metric":metric,"decision":"unavailable","code":reason,"evidence":refs}));
+        self.body.findings.push(json!({"id":format!("{}:{region}:{metric}:{reason}",self.prefix),"case_id":self.case_id,"region_id":region,"metric":metric,"decision":"unavailable","code":reason,"evidence":refs}));
         if failure {
-            self.state = TerminalState::Failed;
+            self.body.mark_failed();
         }
     }
     // Keep metric fields explicit: each argument is part of the frozen measurement payload.
@@ -313,37 +287,39 @@ impl<'a> Comparison<'a> {
             &SIDES
         };
         for (i, side) in sides.iter().enumerate() {
-            self.measurements.push(Measurement {
+            self.body.measurements.push(Measurement {
                 case_id: self.case_id.clone(),
                 seed_population: self.seeds.clone(),
-                region_id: region.into(),
+                shared: common::Measurement {
+                    region_id: region.into(),
+                    metric: format!("{metric}.{side}"),
+                    metric_version: METRIC_VERSION,
+                    domain: domain.into(),
+                    units: units.into(),
+                    estimator: estimator.into(),
+                    sample_count: count,
+                    artifact_refs: refs.to_vec(),
+                    availability: if expanded.is_some() {
+                        Availability::Available
+                    } else {
+                        Availability::Unavailable
+                    },
+                    value: expanded.as_ref().map(|v| v[i]),
+                    reason: if expanded.is_some() {
+                        None
+                    } else {
+                        Some(reason.clone().unwrap_or("missing_evidence".into()))
+                    },
+                },
                 reference_id: self.reference["id"].as_str().unwrap_or("").into(),
-                metric: format!("{metric}.{side}"),
-                metric_version: METRIC_VERSION,
                 protocol_id: self.protocol_id.clone(),
-                domain: domain.into(),
-                units: units.into(),
-                estimator: estimator.into(),
-                sample_count: count,
-                artifact_refs: refs.to_vec(),
-                availability: if expanded.is_some() {
-                    Availability::Available
-                } else {
-                    Availability::Unavailable
-                },
-                value: expanded.as_ref().map(|v| v[i]),
-                reason: if expanded.is_some() {
-                    None
-                } else {
-                    Some(reason.clone().unwrap_or("missing_evidence".into()))
-                },
             });
         }
         if let Some(v) = expanded {
             if self.single {
-                self.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.simulation_distance"),"decision":"measured","evidence":refs,"simulation_distance":v[0],"interpretation":"Simulation distance to the selected reference; no acceptance threshold is inferred."}));
+                self.body.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.simulation_distance"),"decision":"measured","evidence":refs,"simulation_distance":v[0],"interpretation":"Simulation distance to the selected reference; no acceptance threshold is inferred."}));
             } else {
-                self.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.distance_delta"),"decision":"measured","evidence":refs,"baseline_distance":v[0],"candidate_distance":v[1],"distance_delta":v[2],"interpretation":"Negative distance_delta means closer to this reference; no acceptance threshold is inferred."}));
+                self.body.findings.push(json!({"id":format!("{}:{region}:{metric}:measured",self.prefix),"case_id":self.case_id,"region_id":region,"metric":format!("{metric}.distance_delta"),"decision":"measured","evidence":refs,"baseline_distance":v[0],"candidate_distance":v[1],"distance_delta":v[2],"interpretation":"Negative distance_delta means closer to this reference; no acceptance threshold is inferred."}));
             }
         } else {
             self.finding(
@@ -375,7 +351,8 @@ impl<'a> Comparison<'a> {
     fn json_artifact(&mut self, role: ArtifactRole, payload: &Value) -> Result<String> {
         let (id, path) = self.next_artifact(role, "json");
         common::dump(&path, payload)?;
-        self.artifacts
+        self.body
+            .artifacts
             .push(self.artifact_row(&id, &path, role.name(), "application/json")?);
         Ok(id)
     }
@@ -395,7 +372,7 @@ impl<'a> Comparison<'a> {
         if let Some(u) = units {
             row["units"] = json!(u);
         }
-        self.artifacts.push(row);
+        self.body.artifacts.push(row);
         Ok(id)
     }
     fn rgb_artifact(
@@ -416,7 +393,7 @@ impl<'a> Comparison<'a> {
             row["height"] = json!(dims[1]);
             row["bit_depth"] = json!(16);
             row["quantization"] = json!("16-bit rounded; no dither");
-            self.artifacts.push(row);
+            self.body.artifacts.push(row);
             Ok(id)
         } else {
             self.numeric_artifact(
@@ -439,7 +416,7 @@ impl<'a> Comparison<'a> {
         )?;
         array_metadata(&mut row, &[dims[1], dims[0]], "bool");
         row["domain"] = json!("render_pixel_coordinates");
-        self.artifacts.push(row);
+        self.body.artifacts.push(row);
         Ok(id)
     }
     fn preview(
@@ -457,11 +434,14 @@ impl<'a> Comparison<'a> {
         row["width"] = json!(dims[0]);
         row["height"] = json!(dims[1]);
         row["color_available"] = json!(color_available);
-        self.artifacts.push(row);
+        self.body.artifacts.push(row);
         Ok(id)
     }
     fn finish(self) -> Value {
-        json!({"measurements":self.measurements,"findings":self.findings,"artifacts":self.artifacts,"execution_status":self.state,"metric_version":METRIC_VERSION,"reference_review":self.review})
+        let mut extra = BTreeMap::new();
+        extra.insert("metric_version".into(), json!(METRIC_VERSION));
+        extra.insert("reference_review".into(), self.review);
+        self.body.finish(extra)
     }
 }
 fn array_metadata(row: &mut Value, shape: &[usize], dtype: &str) {
@@ -885,7 +865,7 @@ fn aligned(
         if !tone {
             row["reason"] = json!("tone_contaminated_reference");
         }
-        c.artifacts.push(row);
+        c.body.artifacts.push(row);
         c.review["difference_artifact_id"] = json!(id);
         c.review_ref(&id);
         if tone {
@@ -945,7 +925,7 @@ fn aligned(
             let mut row = c.artifact_row(&id, &path, "difference_map", "application/x-npy")?;
             row["metric"] = json!("flip");
             row["dimensions"] = json!(dims);
-            c.artifacts.push(row);
+            c.body.artifacts.push(row);
             flip_refs.push(id);
             Some(map)
         } else {
@@ -1863,8 +1843,12 @@ fn compare_reference_population(
         );
         c.review["unavailable_reason"] = json!(reason);
         c.limitation(error.message);
-        let existing: BTreeSet<String> =
-            c.measurements.iter().map(|m| m.region_id.clone()).collect();
+        let existing: BTreeSet<String> = c
+            .body
+            .measurements
+            .iter()
+            .map(|m| m.shared.region_id.clone())
+            .collect();
         match reference.get("scope").and_then(Value::as_str).unwrap_or("") {
             "aligned_scene" => {
                 for id in std::iter::once("full_image").chain(
@@ -1908,9 +1892,10 @@ fn compare_reference_population(
                 for id in ids {
                     let metric = format!("reference.material.{id}");
                     if !c
+                        .body
                         .measurements
                         .iter()
-                        .any(|m| m.metric.starts_with(&format!("{metric}.")))
+                        .any(|m| m.shared.metric.starts_with(&format!("{metric}.")))
                     {
                         c.distances(
                             "full_image",
@@ -2103,7 +2088,7 @@ mod tests {
         .unwrap();
         assert_eq!(c.review["regions"][0]["render_sample_count"], 2);
         assert_eq!(c.review["regions"][0]["reference_sample_count"], 3);
-        assert_eq!(c.measurements.len(), 9);
+        assert_eq!(c.body.measurements.len(), 9);
     }
 
     #[test]

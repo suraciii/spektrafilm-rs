@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{Scalar, from_f32, from_f64, to_f32};
+use spektrafilm_math::precision::{Scalar, exp10_inplace, from_f32, from_f64, to_f32};
 use spektrafilm_math::spectral;
 
 use crate::{ComputeBackend, Lut3D};
@@ -11,8 +11,6 @@ use crate::{ComputeBackend, Lut3D};
 #[cfg(not(target_os = "windows"))]
 #[allow(unused_imports)]
 use blas_src as _;
-
-use spektrafilm_math::vforce::exp10_inplace;
 
 #[derive(Clone, Copy)]
 enum Transpose {
