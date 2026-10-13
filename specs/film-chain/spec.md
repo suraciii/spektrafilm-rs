@@ -2,7 +2,7 @@
 
 ## Contract
 
-- The simulation engine selects the owning film model. `spektrafilm` is the historical default. Its film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine finishing entry-point contract](../magazine-finishing/spec.md#enablement).
+- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine finishing entry-point contract](../magazine-finishing/spec.md#enablement).
 - A photographic print route must provide a photographic print profile.
 - Optional magazine finishing must satisfy the [Magazine finishing](../magazine-finishing/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
@@ -10,33 +10,9 @@
 - [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
-- CPU f64 is the SpektraFilm reference path. WGPU f32 is an interactive or explicitly selected fast path; it may use CPU stages for unsupported effects and is not f64 reference output. The Fotufilm engine retains its original CPU binary32 arithmetic in both executable precision configurations.
+- Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). CPU f64 remains the numerical reference; GPU execution must cover the selected chain without replacing its model.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
-
-## Original Fotufilm engine
-
-`engine=fotufilm` selects the complete Fotufilm model pinned at `59d43471dbef45c85ae442e507a291fdebfb2ec5`. It is independent of the adapted `film_render.grain.engine=fotufilm` appearance model inside SpektraFilm.
-
-`fotufilm.stock` selects an original stock. `fotufilm.controls` carries original editor controls. `fotufilm.native` carries original engine options that are not editor controls. The original source owns defaults, control applicability, and option validation. Missing or invalid selected resources and unknown option names must fail before output publication.
-
-The engine must retain the original spectral reconstruction, scene metering, film exposure, characteristic curves, DIR, donor layers, grain, optical transport, print or scan medium, and output processing. The selected original Standard or Film grain model must not fall back to a different model. Layered transport must retain the original render-plan components, fourth donor record, preflash, and texture-stage semantics.
-
-The full source image must supply original metering, flare, and tone measurements before crop, resize, or preview delivery. Preview, Scan, and Export must use the same original simulation semantics for the same source, controls, and seed. Preview may resize the completed image for delivery; it must not disable simulation effects.
-
-Full and print stages produce linear Display P3. The negative stage produces gross optical record densities, including base density. The print stage consumes those densities without an input RGB transform. The texture stage uses the original linear Rec2020 basis. Destination color conversion and encoding apply only to RGB outputs.
-
-Negative output must preserve floating densities in unencoded 32-bit TIFF or EXR. It must identify the C, M, and Y record channels rather than claim RGB primaries or embed a display ICC profile. A density viewer may show transmission `10^-D` only in its disposable viewing raster. Save and Export must retain the density samples.
-
-The host owns the per-render UInt64 seed. It must preserve all bits for Fotufilm. The original frame index remains independent. Historical SpektraFilm seed admission remains unchanged.
-
-Unsupported legacy diagnostic taps must fail explicitly. `rgb_in`, `cmy_film`, and `rgb_out` must use actual source stage boundaries rather than surrogate outputs.
-Collecting `cmy_film` selects the density contract regardless of the requested native stage. Injecting `cmy_film` and collecting `rgb_out` selects the print RGB contract. Equal `rgb_in` taps retain the declared input color space and transfer state; equal `cmy_film` taps retain the input densities. Output interpretation, preview geometry, saving, and diagnostics must follow these effective boundaries.
-
-The effective configuration must identify the original revision, selected original stock and options, CPU execution, and binary32 arithmetic. Selecting a GPU backend must not misreport the source engine as GPU execution.
-
-Cancellation must discard canceled results before output publication. Native cold graph compilation may complete before cancellation is observed.
-
 
 ## Scanner language
 
@@ -56,7 +32,7 @@ The [Digital Reference contract](digital-reference/spec.md) defines a common ref
 2. GUI controls must display `Preserve medium polarity` for `direct_scan`, `Negative to positive` for `negative_to_positive`, and `Negative conversion method` for `scanner.positive_interpretation`.
 3. Replacing the removed value with `negative_to_positive` must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls. Verify density, separable, coupled, direct-negative, reversal-film, and paper paths with the same executable precision.
 4. Removed-value rejection must occur before output publication. A failed GUI import must retain the accepted parameters and image.
-5. Conversion telemetry must report stage `negative_to_positive` and CPU/resident-decline reason `negative_to_positive_output`. Other telemetry fields and schema versions retain their contracts.
+5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
 
 ## Scan medium and scanner controls
 
@@ -190,7 +166,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
   after negative conversion. Output gamut compression, unsharp mask,
   transfer encoding, and output handoff run after scanner finishing.
 - `negative_to_positive` rejects scanner white/black correction and active Procedural grain.
-  It uses the CPU per-stage backend; resident WGPU execution is not eligible.
+  Its execution follows [GPU execution](../gpu-execution/spec.md#backend-selection); conversion selection must not force CPU.
 
 ## Scanner acceptance
 
@@ -207,4 +183,4 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - Receiver, interpretation, setup, and finish combinations that the selected route or medium cannot support must fail before output publication and must produce the same validation result for GUI, CLI dry run, and rendering.
 - A nonuniform bright-edge capture and an active nonlinear downstream transform must distinguish blur-before-interpretation from blur-after-interpretation. Cover native negative, slide with identity and nonidentity points, print scan, and admitted positive interpretation. Zero blur must preserve the corresponding no-blur result; uniform fields must remain uniform with blur active.
 - Changing only print viewing glare must leave film and print density unchanged and alter the linear readout before downstream correction. With glare disabled, spatially varying glare must not leak into calibration or other routes.
-- CPU f64, native-f32, resident, per-stage, Preview, and Export must use the same optical order. Unsupported resident order must select a faithful route before dispatch, not append blur to an already interpreted image. Cropped and tiled readout must include the required optical context and match full-frame readout within measured budgets.
+- CPU f64, native-f32, resident, per-stage, Preview, and Export must use the same optical order. A GPU request must implement that order or fail under [GPU execution](../gpu-execution/spec.md#backend-selection), not append blur to an already interpreted image. Cropped and tiled readout must include the required optical context and match full-frame readout within measured budgets.

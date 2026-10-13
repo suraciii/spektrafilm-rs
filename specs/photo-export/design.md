@@ -1,6 +1,6 @@
 # Photo export design
 
-- Rendering and writing are separate boundaries. The renderer returns native floating output; one shared writer handles CLI, GUI Save, and f64 Export.
+- Rendering, saving conversion, and native writing are separate boundaries. The renderer retains floating output in its execution domain; [GPU residency](../gpu-execution/design.md#device-residency) governs computation and final host handoff. One shared writer handles CLI and GUI publication.
 - Export chooses a backend and re-renders at export geometry. Save starts from retained output and applies only the requested saving conversion.
 - Simulation color settings and saving color settings are distinct. A writer option never changes film-chain gamut mapping.
 - Writers validate format-specific constraints before opening the destination, write to a temporary path, and publish only after the write succeeds.

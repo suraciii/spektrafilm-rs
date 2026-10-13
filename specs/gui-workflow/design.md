@@ -9,15 +9,15 @@
 - The output amount control must use [core output composition](../output-mix/design.md#output-composition). The GUI must not derive an output-mix source from the Input viewer raster, add an output lightness stage, or add a Finished RGB output-processing switch.
 - State and preset loading must validate and migrate a candidate before committing any UI or runtime state. Rejected retired settings leave the source, active controls, accepted render identity, and retained output intact under [Persistence and delivery](../output-mix/design.md#persistence-and-delivery).
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
-- Viewer presentation uses disposable display rasters. Save and Export consume retained native output or invoke the export renderer and shared writer.
+- Viewer presentation uses disposable device or host display rasters under [GPU residency](../gpu-execution/design.md#device-residency). Save and Export consume retained floating output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.
-- Full-source sampling transforms each source tap before interpolation. Capped display rasters reduce the source in f64 before color conversion.
+- Full-source sampling transforms each source tap before interpolation. Capped display rasters reduce the source before color conversion. CPU f64 defines reference reduction; GPU viewing must satisfy [numerical alignment](../gpu-execution/design.md#numerical-alignment) without CPU image arithmetic.
 - Preview and viewport composition use separate persistent workers. Each worker retains one queued snapshot and replaces it when a newer request arrives.
 - A render request, the pending UI job, and the worker result share one captured render identity. The worker must preserve its collection mode and animation intent.
 - The UI accepts pipeline output only when request, input, and parameter revisions match. It accepts composed frames only when the generation and viewport key match.
-- Pipeline and viewer workers share immutable native images. Prepared display pixels use one cache identity rule: source allocation, display settings, and preview size must match.
+- Pipeline and viewer workers share immutable image ownership in the selected execution domain. Prepared display samples use one cache identity rule: source allocation, display settings, and preview size must match.
 - Persistent startup state and transient viewer state use separate stores and invalidation rules.
 - Export work runs outside the UI event loop. Completion, failure, and cancellation are explicit states; temporary output is never presented as completed output.
 - Numeric editors associate visible labels with their text inputs. Tuple editors identify each component. Profile and development-time selectors associate their visible labels with the selection control.
 - Native Save and Export actions select a path before entering the shared output operation. Headless acceptance enters at that path boundary and executes the same worker and writer.
-- Headless App acceptance exercises production controls and real CPU workers. It waits for operation completion and checks accepted output identities. Offscreen layout checks and native desktop acceptance have separate evidence scopes, as defined in the [acceptance guide](../../scripts/parity/README.md#headless-gui-acceptance).
+- Headless App acceptance exercises production controls and real workers. CPU coverage, hardware-GPU computation coverage, offscreen layout checks, and native desktop acceptance have separate evidence scopes under [GPU acceptance](../gpu-execution/spec.md#acceptance) and the [GUI acceptance guide](../../scripts/parity/README.md#headless-gui-acceptance).

@@ -52,7 +52,7 @@ Dye must not read `particle_area_um2` or `particle_scale`. Spektra final blur, d
 `active = false` must produce the existing grain-off result exactly. Preview mode, stochastic deactivation, spatial deactivation, and LUT mode must bypass Dye before its field parameters are resolved. Preview must be identified as grain-free. Scan and Export must execute active Dye.
 Timing, diagnostic taps, and output dumps must continue to exercise active Dye. Only the named bypass modes may suppress its allocation.
 
-Dye must use CPU execution. A WGPU request must keep the same semantics through the CPU route and report the effective backend. Resident execution must not omit or replace Dye. Precision follows the actual executable; the f64 CLI is the numerical reference.
+Dye must execute the same formation, exact Poisson count law, global-coordinate random addressing, and readout algorithm on CPU and GPU under [GPU algorithm alignment](../../gpu-execution/spec.md#algorithm-alignment). CPU f64 remains the numerical reference; GPU must preserve the f64 conditioning required for discrete decisions through exact integer or extended-precision arithmetic or fail under [GPU computation scope](../../gpu-execution/spec.md#computation-scope). Backend selection, residency, and failure behavior follow [GPU backend selection](../../gpu-execution/spec.md#backend-selection). GPU execution must not consume CPU-prepared image-sized or stochastic population/field data, substitute a generic stochastic approximation, switch engines, or use CPU grain arithmetic after GPU selection.
 
 ## Appearance
 
@@ -77,6 +77,8 @@ The same source, recipe, geometry, seed, precision, and implementation must repr
 Refining internal sampling must converge toward the same declared response. It must not act as an undocumented strength, size, or sharpness control. The supported output range must be recorded from exercised evidence. This specification does not establish a universal output range or visible-grain equivalence.
 
 ## Acceptance
+
+GPU acceptance must pair CPU native-f32, CPU f64, and hardware-GPU Dye renders with identical resolved curves, controls, seeds, source identity, film coordinates, footprints, and downstream settings. It must prove identical exact Poisson decisions for identical reference conditioning and preserve crop/tile identity; output statistics or photographic agreement cannot substitute for this. Upstream/source precision and source-parity evidence remain separate from CPU/GPU alignment evidence. Follow [GPU execution acceptance](../../gpu-execution/spec.md#acceptance) and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment).
 
 Acceptance must use lossless output from the actual Scan or Export path on the reference condition. The set must contain at least two photographs and one color chart. Together they must include a portrait, a smooth region, dark and bright regions, saturated color, and fine subject detail.
 
@@ -120,7 +122,7 @@ The record must distinguish exercised geometry, full-frame execution, and photog
 
 This release does not require microscopic crystal reconstruction, correlated or shared CMY fields, multiple texture scales, Dehancer Film Resolution, or a hard grain-diameter resolution cutoff. It does not promise Spektra or Dehancer pixel parity.
 
-Print-paper grain, scanner chroma noise reduction, semantic skin protection, and GPU optimization are outside this release. Arbitrary final-RGB noise, JPEG tuning, and display sharpening must not substitute for the declared model.
+Print-paper grain, scanner chroma noise reduction, and semantic skin protection remain outside this model. GPU execution is governed by [GPU execution](../../gpu-execution/spec.md); this model adds no backend-specific controls. Arbitrary final-RGB noise, JPEG tuning, and display sharpening must not substitute for the declared model.
 
 ## References
 

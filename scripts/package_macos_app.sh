@@ -76,13 +76,6 @@ collect_library_dirs() {
         directory="$(pkg-config --variable=libdir "$module" 2>/dev/null || true)"
         [[ -z "$directory" ]] || library_dirs+=("$directory")
     done
-    if [[ -n "${HALIDE_ROOT:-}" ]]; then
-        library_dirs+=("${HALIDE_LIB_DIR:-$HALIDE_ROOT/lib}" "$HALIDE_ROOT/lib64")
-    fi
-    for module in Halide halide; do
-        directory="$(pkg-config --variable=libdir "$module" 2>/dev/null || true)"
-        [[ -z "$directory" ]] || library_dirs+=("$directory")
-    done
     if command -v brew >/dev/null 2>&1; then
         prefix="$(brew --prefix)"
         library_dirs+=("$prefix/lib")
@@ -224,14 +217,6 @@ bundle_native_licenses() {
     cp attribution/NOTICE "$output/Fotufilm-NOTICE.txt"
     for source in ${bundled_sources[@]+"${bundled_sources[@]}"}; do
         case "$source" in
-            */libHalide*.dylib)
-                root="${HALIDE_ROOT:-$(pkg-config --variable=prefix Halide 2>/dev/null || pkg-config --variable=prefix halide 2>/dev/null || true)}"
-                [[ -s "$root/share/doc/Halide/LICENSE.txt" ]] || fail "official Halide notices missing; set HALIDE_ROOT"
-                mkdir -p "$output/Halide"
-                cp "$root/share/doc/Halide/LICENSE.txt" "$output/Halide/LICENSE.txt"
-                [[ ! -f "$root/Halide-provenance.txt" ]] || cp "$root/Halide-provenance.txt" "$output/Halide/"
-                continue
-                ;;
             */Cellar/*)
                 cellar="${source%%/Cellar/*}/Cellar"
                 relative="${source#"$cellar/"}"
@@ -267,7 +252,7 @@ bundle_native_licenses() {
         if [[ -d "$root/.brew" ]]; then cp -R "$root/.brew" "$output/$formula/"; fi
         (( found == 1 )) || fail "missing native license files for $formula ($root)"
     done
-    for required in libraw lensfun exiv2 glib openimageio little-cms2 Halide; do
+    for required in libraw lensfun exiv2 glib openimageio little-cms2; do
         [[ -d "$output/$required" ]] || fail "missing required core license: $required"
     done
     # Database licensing is separate from the Lensfun library's LGPL license.

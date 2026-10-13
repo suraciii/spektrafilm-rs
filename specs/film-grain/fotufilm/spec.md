@@ -28,7 +28,7 @@ Film population parameters must be independent of runtime Amount, Size, Softness
 
 `active = false`, effective `amount = 0`, and runtime stochastic-effect deactivation must be exact existing-path bypasses. They must prepare no grain bank. LUT generation must deactivate grain and prepare no bank.
 
-The CPU must implement preparation and sampling. A WGPU request may retain faithful GPU execution of unrelated stages, but reports must identify CPU grain execution and the resident-chain decline reason. The implementation must not claim a GPU grain kernel or precision identity between f32 and f64 builds.
+The selected executor must implement Fotufilm preparation and sampling with the same model on CPU and GPU. CPU f64 remains the numerical reference; GPU must preserve source/reference conditioning for formation, fitted population, crystal marks, and residual sampling, including exact discrete decisions where the model defines them. Backend selection, residency, and failure behavior follow [GPU execution](../../gpu-execution/spec.md#backend-selection) and [algorithm alignment](../../gpu-execution/spec.md#algorithm-alignment). GPU execution must not use CPU-prepared stochastic population or bank data, CPU grain arithmetic, a Gaussian or other generic stochastic substitute, or another engine. Floating outputs need not be bit-identical between f32 and f64 builds.
 
 The full-source film extent must determine physical pitch. Cropping must retain absolute film coordinates. Actual rounded output dimensions must determine both output pitches. Downstream spatial processing must receive a lattice covering the full film before the requested crop is extracted. Preview must evaluate the same model on its declared reduced-resolution source; it must not claim pixel equality with full Scan or Export.
 
@@ -46,7 +46,7 @@ PNG, JPEG, TIFF, EXR, float output, native Preview, Scan and Export must preserv
 
 ## Acceptance
 
-Original-stock Rust preparation and corrected readout must be compared with executable pinned Fotufilm references separately from adapted current-profile appearance. Population fit, anchor convergence, formation, pitch correction and final residual sampling must have measured evidence; formula-only probes must not certify those paths.
+Original-stock Rust preparation and corrected readout must be compared with executable pinned Fotufilm references separately from adapted current-profile appearance. This upstream/source parity evidence is separate from CPU/GPU alignment: aligned executor evidence uses identical resolved curves, bank identity, seed, coordinates, and model-defined decisions, and output statistics cannot replace those checks. Population fit, anchor convergence, formation, pitch correction and final residual sampling must have measured evidence; formula-only probes must not certify those paths. Follow [GPU execution acceptance](../../gpu-execution/spec.md#acceptance) and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment).
 
 Direct constant-transmittance texel integration must verify complete periodic boxes, seam placements and coarse footprints independently of summed-area-table arithmetic. Determinism, aligned crop identity, zero-strength bypass, material transitions, parameter invalidation and rejection must have regression coverage. Runtime and native GUI smoke must exercise the actual changed path.
 

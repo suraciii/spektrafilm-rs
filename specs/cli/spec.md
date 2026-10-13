@@ -4,7 +4,7 @@ This document is the unified CLI specification. The parameter and workflow secti
 
 ## Contract
 
-The `process` command must support [presets](../presets/spec.md), sparse parameter files, and individual parameter assignments through the unified `--set` option. Both `spektrafilm` and `spektrafilm-f64` must accept the same language. The executable and backend must retain their existing computation precision contracts.
+The `process` command must support [presets](../presets/spec.md), sparse parameter files, and individual parameter assignments through the unified `--set` option. Both `spektrafilm` and `spektrafilm-f64` must accept the same language. Backend policy and computation precision follow [GPU execution](../gpu-execution/spec.md#backend-selection).
 
 A **parameter override** is a sparse set of explicit edits to runtime controls for one invocation. It may contain look-owned and non-look controls. It must not change profile references or rewrite its source preset. A parameter override is not a preset, GUI state, or render recipe.
 
@@ -166,7 +166,7 @@ The output path, format, sample depth, compression, JPEG controls, saving color 
 
 `--saving-color-space` and `--saving-cctf-encoding true|false` must select the final writer-stage color conversion. They must not be aliases for scanner `io.output_color_space` and `io.output_cctf_encoding`, which remain editable runtime controls. Omitting saving color must use ACES2065-1 for EXR and the scanner output space for other formats. Omitting saving encoding must select linear EXR and otherwise inherit scanner output encoding. JPEG and PNG must require encoded saving output. EXR must require linear saving output. These rules must be validated before rendering, including support for the selected color space and conversion.
 
-`--backend cpu|gpu` must retain precedence over `SPEKTRAFILM_BACKEND`. Omitting the flag must retain existing environment/default selection. Output sample depth must not select computation precision. `spektrafilm-f64 --backend cpu` must retain the CPU f64 reference contract; software WGPU and hardware WGPU must remain distinguishable execution evidence.
+`--backend cpu|gpu` must retain precedence over `SPEKTRAFILM_BACKEND`. Omitting the flag must follow the [GPU-first selection policy](../gpu-execution/spec.md#backend-selection) while retaining explicit environment selection. Output sample depth must not select computation precision. `spektrafilm-f64 --backend cpu` must retain the CPU f64 reference contract; software WGPU and hardware WGPU must remain distinguishable execution evidence.
 
 The following POSIX command combines a look with independent TIFF export options:
 
@@ -292,12 +292,6 @@ Both `spektrafilm` and `spektrafilm-f64` must expose the same command syntax and
 
 This capability owns help, version identification, data-directory selection, command status, and human feedback. It must not add shell completion, interactive prompts, a TUI, or a replacement argument parser. LUT publication and quality rules remain owned by [LUT delivery](../lut-delivery/spec.md).
 
-Complete Fotufilm selection uses `process --engine fotufilm --fotufilm-stock portra400` or equivalent `--set engine=fotufilm --set fotufilm.stock=portra400`. `--fotufilm-control NAME=VALUE` edits original editor fields; `--fotufilm-native NAME=VALUE` edits the original alignment object, including paths such as `scalars.exposureEV`. Structured render recipes carry the same engine and request; `render --engine` explicitly overrides the recipe engine. Historical SpektraFilm remains the default.
-
-`describe --engine fotufilm --fotufilm-stock ID` exports the complete source ControlsManifest, original dynamic menus, stock applicability, executable simulation fields, native option types and original stock catalogue from the selected resources. It may require source resources. It must not restrict discovery to upstream web fields. Dry-run validates the original request through the same Session preparation used by rendering. Fotufilm must not require historical film or print profiles.
-Native field discovery accepts grouped paths such as `--field fotufilm.native.scalars.exposureEV`, and rejects unknown members. `--seed` owns the original UInt64 seed. Original execution uses CPU binary32 regardless of the historical backend selection. Negative-stage density keeps source geometry and writes unencoded 32-bit TIFF or EXR.
-
-
 ## Help and identity
 
 Every public command and option must have a help description. Descriptions must identify the purpose, expected value form, and applicability of the option. Dimensional numeric options must state their units. Options with finite choices must show the choices from their authoritative definition. A field with an open vocabulary must explain how to discover or supply its values.
@@ -347,9 +341,6 @@ Automatic discovery must exercise relocated executable-relative data, working-di
 A misspelled known field or preset name must fail and suggest its nearby canonical spelling, including a library name. An unrelated unknown value must fail without a misleading correction. Existing invalid-option suggestions must remain available.
 
 JSON and TOML discovery, dry-run, render, and inspect output must remain parseable with stderr captured separately. LUT bake and quality messages must use stderr. Normal image rendering must preserve its stdout behavior and output pixels.
-
-Fotufilm controls and native options must reach the original simulation and reject unsupported fields with the source diagnostic. Standard and Film grain models, media/format, source illuminant and original process controls must remain selectable. Preview renders the full source geometry before bounded output delivery; it must not disable original grain or optics.
-
 
 ## Workflow implementation status
 The current executable implements the help, version, signed-number, data-selection, discovery, dry-run, and stderr/stdout separation described above. Native image publication requirements and failure scenarios remain owned by [photo export](../photo-export/spec.md#publication). LUT QA exit semantics, bundle replacement protection, and multi-print naming collisions remain separate behavioral investigations; they are not inferred from this CLI workflow contract.

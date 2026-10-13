@@ -112,7 +112,7 @@ mass_lc = M_lc*a_lc*s_lc / f_lc
 cell_absolute_density_lc = mass_lc*K_lc / A
 ```
 
-At `p=0`, use zero count. At `p=1`, sample the stated law. Use an exact Poisson algorithm. Rounded normal count approximations must not replace it. Poisson thinning gives this law from Spektra's interior Poisson-then-binomial distribution without requiring its random-call order.
+At `p=0`, use zero count. At `p=1`, sample the stated law. CPU and GPU must use this same exact Poisson law and reference conditioning. A device precision limitation must use exact integer or extended-precision arithmetic or fail under [numerical alignment](../../gpu-execution/design.md#numerical-alignment). Rounded normal count approximations must not replace it. Poisson thinning gives this law from Spektra's interior Poisson-then-binomial distribution without requiring its random-call order.
 
 The local expectation is `t_lc`. Unformed cell variance is `M_lc*M_lc*a_lc*p_lc*s_lc/(A*f_lc)`. Event mass is independent of cell area; intensity scales with area. Raw cell-density variance grows under refinement while formed readout statistics must converge.
 
@@ -189,7 +189,7 @@ Validate exact Poisson sampling with probability/CDF checks at representative ze
 
 At fixed pitch, seed, target surface, and precision, overlapping CMY full-frame/crop and single-tile/multi-tile reads must agree within `1e-5` for f32 and `1e-10` for f64. Require identical output footprints for this equality. Crop dimension rounding can change footprints; such comparisons must instead declare the distinct sampling. Repeated identical execution must be deterministic.
 
-Two canvases at an equal physical pitch differ in film extent, so their conditioning agrees only to pipeline float precision. A cell whose Poisson threshold falls inside that noise can still move by one count. The 512-squared 24 mm against 1024-squared 48 mm probe measured a conditioning difference of `1.8e-7`, 99% of overlapping samples within `1e-5`, a 0.17% tail of at most one count quantum (`3.6e-4` in density), and high-passed grain sigma within `0.1%` between canvases. Cross-canvas comparison therefore checks the count law and the covariance, not sample identity; sample identity belongs to reads of one canvas.
+Two canvases at an equal physical pitch differ in film extent, so their conditioning agrees only to pipeline float precision. A cell whose Poisson threshold falls inside that noise can still move by one count. This cross-canvas comparison does not relax exact CPU/GPU count decisions when reference conditioning values are identical. The 512-squared 24 mm against 1024-squared 48 mm probe measured a conditioning difference of `1.8e-7`, 99% of overlapping samples within `1e-5`, a 0.17% tail of at most one count quantum (`3.6e-4` in density), and high-passed grain sigma within `0.1%` between canvases. Cross-canvas comparison therefore checks the count law and the covariance, not sample identity; sample identity belongs to reads of one canvas.
 
 ## Runtime integration
 
@@ -199,7 +199,7 @@ Geometry must carry full-film bounds, crop origin, target grid, and actual outpu
 
 Apply inactive, preview, spatial-deactivation, stochastic-deactivation, and LUT bypass before active-Dye parameter resolution and allocation. These specific modes must not allocate the field. Diagnostic taps, timing, and output dumps must continue to exercise active Dye; a generic debug flag must not disable it. The expectation diagnostic must not mutate the user's recipe.
 
-Active Dye must disable resident WGPU execution and use CPU. Report the effective backend in capability and dry-run output. Unsupported conditions and resources must fail before publication. Scan and Export must share the resolved model.
+Active Dye must execute population preparation, exact count realization, formation, filtering, and readout on the selected executor. CPU f64 remains the numerical reference. GPU production must keep numerical preparation and grain computation on the device and must not consume CPU-prepared population, bank, image-sized field, or grain arithmetic. Follow [GPU backend selection](../../gpu-execution/spec.md#backend-selection), [device residency](../../gpu-execution/design.md#device-residency), [numerical alignment](../../gpu-execution/design.md#numerical-alignment), and [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment). Report the effective executor in capability and dry-run output. Unsupported conditions and resources must fail before publication. Scan and Export must share the resolved model.
 
 On the print route, Dye density enters the [print exposure composition](../../output-mix/design.md#print-exposure-composition). Every scan of that material must follow [Scan optics and print viewing glare](../../film-chain/spec.md#scan-optics-and-print-viewing-glare), including direct scans. Dye must not restore the historical post-gamut optical blur or compose its grain after encoding. Convert-film remains outside active Dye support.
 

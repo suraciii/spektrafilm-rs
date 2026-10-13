@@ -9,3 +9,4 @@
 - Crop bounds, dimensions, and resize factors must be finite and valid. Empty crops are errors.
 - Input loading does not apply film, print, grain, or output encoding; those belong to the film chain and output capabilities.
 - The renderer's `input` route must apply the requested crop and resize before output color conversion. It must preserve decoded input values without auto-exposure or exposure compensation. Observed input dimensions must identify the original source separately from working and published dimensions.
+- Backend selection and the separation of native unpacking from RAW and raster numerical processing follow [GPU computation scope](../gpu-execution/spec.md#computation-scope). Input normalization must not conceal CPU image arithmetic inside a GPU operation.

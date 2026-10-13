@@ -155,11 +155,6 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         if (format == 2) type = depth == 8 ? OIIO::TypeDesc::UINT8 : depth == 16 ? OIIO::TypeDesc::UINT16 : OIIO::TypeDesc::FLOAT;
         if (format == 3) type = depth == 16 ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
         OIIO::ImageSpec spec(width, height, 3, type);
-        const bool record_density = std::strcmp(color_space, "Fotufilm record density") == 0;
-        if (record_density) {
-            spec.channelnames = {"C", "M", "Y"};
-            spec.attribute("spektrafilm:sample_domain", "Fotufilm gross record optical density");
-        }
         if (format == 0) {
             if (jpeg_quality > 0) spec.attribute("CompressionQuality", jpeg_quality);
             if (jpeg_subsampling != 0)
@@ -169,7 +164,7 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
             spec.attribute("Compression", compression == 0 ? "none" : "zip");
         if (format == 2)
             spec.attribute("tiff:write_exif", 0);
-        if (format == 3 && export_metadata && !record_density) {
+        if (format == 3 && export_metadata) {
             const float srgb[] = {0.64f, 0.33f, 0.30f, 0.60f, 0.15f, 0.06f, 0.3127f, 0.3290f};
             const float aces[] = {0.7347f, 0.2653f, 0.0f, 1.0f, 0.0001f, -0.0770f, 0.32168f, 0.33767f};
             const float* chromaticities = std::strcmp(color_space, "ACES2065-1") == 0 ? aces : srgb;

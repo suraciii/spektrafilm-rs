@@ -3,7 +3,7 @@
 ## Contract
 
 - Export re-renders the image at the requested output resolution and writes PNG, JPEG, TIFF, or OpenEXR.
-- CPU f64 is the reference export backend and the default. Explicit WGPU export uses f32 and fails if no usable adapter exists; unsupported stages may use the faithful CPU route.
+- Export backend selection, computation scope, and numerical alignment follow [GPU execution](../gpu-execution/spec.md). The production default must prefer GPU; the explicit CPU f64 reference remains available. An explicit GPU request must not use CPU image stages.
 - Save writes retained floating output without rerunning the film simulation. It may convert to a separately selected saving color space and transfer function before writing.
 - Existing material controls and [output mix](../output-mix/spec.md#output-mix) must be captured in the immutable Export snapshot. Export must evaluate preflash and chemistry at their existing eligible exposure and development stages and preserve scanner calibration and inverse semantics. Finished RGB must not run material processing. Save writes the retained completed result without repeating material processing, Magazine appearance, output gamut processing, grain, or output mix. Saving color conversion follows the completed output mix in linear output RGB.
 - PNG and JPEG require 8-bit output. TIFF supports 8-bit, 16-bit, and float output; OpenEXR supports half and float output. Integer output clips to [0,1]; float output preserves negative and super-white values.
