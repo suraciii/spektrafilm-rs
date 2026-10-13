@@ -99,15 +99,10 @@ impl Pipeline {
         // run as assembled CPU fences that replace the GPU spectral
         // integration (see `scan_acquisition_cpu_stage` and
         // `print_acquisition_cpu_stage` in `try_gpu_resident`).
-        // The enlarger diffusion filter runs in the same print acquisition
-        // fence; camera diffusion still declines until it gets its chain
-        // head fence.
-        let diffusion_effective = |df: &crate::params::diffusion::DiffusionFilterParams| {
-            df.active && df.strength > 0.0 && df.spatial_scale > 0.0
-        };
-        if diffusion_effective(&self.params.camera.diffusion_filter) {
-            reasons.push(ResidentFallbackReason::ActiveOpticalDiffusion);
-        }
+        // Optical diffusion no longer declines: the enlarger filter runs in
+        // the print acquisition fence and the camera filter runs as the
+        // chain-head fence on the raw exposure buffer (see
+        // `camera_diffusion_cpu_stage` in `try_gpu_resident`).
         // Spektra grain no longer declines: it runs on the host as an
         // assembled fence on the film density buffer (pipe architecture,
         // capability class — see `density_cpu_stage` in `try_gpu_resident`).
@@ -682,6 +677,27 @@ impl Pipeline {
                 None
             };
 
+        // Camera optical diffusion runs on the host as an assembled fence on
+        // the raw exposure buffer — after highlight reconstruction, before
+        // the camera lens blur (the CPU filming order; pipe architecture,
+        // capability class). The faithful discrete-PSF convolution matches
+        // the CPU reference exactly.
+        let camera_diffusion_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> = if self
+            .params
+            .camera
+            .diffusion_filter
+            .active
+        {
+            let dm = self.params.camera.diffusion_filter.to_model();
+            let closure: Box<dyn Fn(&ImageBuf) -> ImageBuf + '_> =
+                Box::new(move |raw: &ImageBuf| {
+                    spektrafilm_model::diffusion::apply_diffusion_filter_um(raw, &dm, pixel_size_um)
+                        .expect("camera diffusion filter family validated at pipeline entry")
+                });
+            Some(closure)
+        } else {
+            None
+        };
         // The PCHIP enlarger LUT and the enlarger diffusion filter run on
         // the host as an assembled fence that replaces the fused print
         // spectral pass (pipe architecture, capability class): the shared
@@ -808,6 +824,7 @@ impl Pipeline {
             scan_tail_cpu_stage,
             scan_acquisition_cpu_stage,
             print_acquisition_cpu_stage,
+            camera_diffusion_cpu_stage,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
@@ -1438,9 +1455,9 @@ mod tests {
 
     /// An explicitly requested GPU backend must fail at assembly when a
     /// capability-missing stage would otherwise demote the route to CPU
-    /// silently (pipe architecture fence policy). Camera optical diffusion
-    /// still has no chain-head fence, so requesting it with an explicit
-    /// backend errors before output publication.
+    /// silently (pipe architecture fence policy). The negative-to-positive
+    /// density reading replaces the acquisition itself and has no fence, so
+    /// requesting it with an explicit backend errors before publication.
     #[test]
     fn explicit_gpu_request_fails_on_capability_gap() {
         let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit() else {
@@ -1451,15 +1468,14 @@ mod tests {
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > print > scan".into();
-        params.io.scan_film = false;
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
         params.camera.auto_exposure = false;
         params.io.output_gamut_compress.algorithm = "off".into();
-        // Capability gap: camera optical diffusion has no GPU path yet.
-        params.camera.diffusion_filter.active = true;
-        params.camera.diffusion_filter.strength = 0.5;
-        params.camera.diffusion_filter.spatial_scale = 4.0;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Density;
 
+        // Capability gap: the density reading replaces the acquisition.
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
         let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
         let err = pipeline
@@ -1478,11 +1494,10 @@ mod tests {
         let mut params2 = RuntimeParams::default();
         params2.camera.auto_exposure = false;
         params2.io.output_gamut_compress.algorithm = "off".into();
-        params2.workflow.route = "input > film > print > scan".into();
-        params2.io.scan_film = false;
-        params2.camera.diffusion_filter.active = true;
-        params2.camera.diffusion_filter.strength = 0.5;
-        params2.camera.diffusion_filter.spatial_scale = 4.0;
+        params2.workflow.route = "input > film > scan".into();
+        params2.io.scan_film = true;
+        params2.scanner.scan_output = "negative_to_positive".into();
+        params2.scanner.positive_interpretation = crate::params::PositiveInterpretation::Density;
         let pipeline2 = Pipeline::new_with_spectral(
             crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
             crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
@@ -1492,5 +1507,86 @@ mod tests {
         .unwrap();
         let img2 = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
         assert!(pipeline2.process(img2, &auto_gpu).is_ok());
+
+        // The capture methods (separable) interpret the acquisition on the
+        // resident fence, so the same explicit backend must succeed — this
+        // also guards the whole-route CPU fallback in `process_with_taps`
+        // from swallowing the fence path again.
+        let mut params3 = RuntimeParams::default();
+        params3.workflow.route = "input > film > scan".into();
+        params3.io.scan_film = true;
+        params3.camera.auto_exposure = false;
+        params3.io.output_gamut_compress.algorithm = "off".into();
+        params3.scanner.scan_output = "negative_to_positive".into();
+        params3.scanner.positive_interpretation = crate::params::PositiveInterpretation::Separable;
+        let pipeline3 = Pipeline::new_with_spectral(
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+            params3,
+            &dir,
+        )
+        .unwrap();
+        let img3 = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
+        assert!(pipeline3.process(img3, &gpu).is_ok());
+    }
+
+    /// Camera optical diffusion runs on the resident chain as an assembled
+    /// CPU fence on the raw exposure buffer — after highlight
+    /// reconstruction, before the camera lens blur — with the exact
+    /// discrete-PSF convolution, so an active filter no longer demotes the
+    /// route.
+    #[test]
+    fn camera_diffusion_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.camera.diffusion_filter.active = true;
+        params.camera.diffusion_filter.strength = 0.5;
+        params.camera.diffusion_filter.spatial_scale = 4.0;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(
+            mean < 5e-2,
+            "camera diffusion fence mean divergence: {mean}"
+        );
+        assert!(
+            max_diff < 5e-1,
+            "camera diffusion fence max divergence: {max_diff}"
+        );
     }
 }

@@ -393,6 +393,12 @@ pub struct FilmChainParams<'a> {
     /// the same domain the fused shader emits — so the GPU print density
     /// curve pass continues unchanged.
     pub print_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage on the raw film exposure buffer between
+    /// highlight reconstruction and the camera lens blur — the assembled
+    /// fence for the camera optical diffusion filter's discrete PSF
+    /// convolution (pipe architecture, capability class). Receives the
+    /// front-pass raw and returns the diffused raw, written back in place.
+    pub camera_diffusion_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.

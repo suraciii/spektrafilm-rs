@@ -904,7 +904,27 @@ impl Pipeline {
                 timings,
             );
         }
-        let cpu_fallback = if self.params.scanner.scan_output == "negative_to_positive" {
+        // The negative-to-positive capture methods (separable/coupled) run
+        // on the resident chain as the assembled scanner readout fence
+        // (`scan_tail_cpu_stage`); only the density reading and Digital
+        // Reference replace the acquisition and keep the whole-route CPU
+        // fallback. An explicit GPU request must fail there instead of
+        // silently demoting (pipe architecture fence policy).
+        let n2p_acquisition_replacement = self.params.scanner.scan_output == "negative_to_positive"
+            && matches!(
+                self.params.scanner.positive_interpretation,
+                crate::params::PositiveInterpretation::Density
+                    | crate::params::PositiveInterpretation::DigitalReference
+            );
+        if n2p_acquisition_replacement && backend.explicit_gpu_request() {
+            return Err(
+                "explicit GPU request cannot run the negative-to-positive density reading or \
+                 Digital Reference on WGPU (they replace the acquisition); retry with an \
+                 explicit CPU request"
+                    .into(),
+            );
+        }
+        let cpu_fallback = if n2p_acquisition_replacement {
             backend
                 .observation_context()
                 .filter(|context| context.enabled())
