@@ -36,6 +36,13 @@ pub struct Provenance {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LookParameters {
+    /// Absent in legacy presets, which preserve the current virtual exposure.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_camera"
+    )]
+    pub camera: Option<LookCameraParams>,
     pub enlarger: EnlargerParams,
     pub scanner: ScannerParams,
     pub film_render: FilmRenderingParams,
@@ -47,6 +54,42 @@ pub struct LookParameters {
     /// toggles, and the working wavelength grid are not look content.
     #[serde(default)]
     pub settings: LookSettingsParams,
+}
+/// Virtual film exposure and metering, separate from RAW and input correction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LookCameraParams {
+    pub exposure_compensation_ev: f32,
+    pub auto_exposure: bool,
+    pub auto_exposure_method: String,
+}
+fn deserialize_present_camera<'de, D>(deserializer: D) -> Result<Option<LookCameraParams>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    LookCameraParams::deserialize(deserializer).map(Some)
+}
+impl LookCameraParams {
+    fn capture(params: &RuntimeParams) -> Self {
+        Self {
+            exposure_compensation_ev: params.camera.exposure_compensation_ev,
+            auto_exposure: params.camera.auto_exposure,
+            auto_exposure_method: params.camera.auto_exposure_method.clone(),
+        }
+    }
+    fn apply_to(&self, params: &mut RuntimeParams) {
+        params.camera.exposure_compensation_ev = self.exposure_compensation_ev;
+        params.camera.auto_exposure = self.auto_exposure;
+        params
+            .camera
+            .auto_exposure_method
+            .clone_from(&self.auto_exposure_method);
+    }
+    fn matches(&self, params: &RuntimeParams) -> bool {
+        self.exposure_compensation_ev == params.camera.exposure_compensation_ev
+            && self.auto_exposure == params.camera.auto_exposure
+            && self.auto_exposure_method == params.camera.auto_exposure_method
+    }
 }
 /// Look-owned processing settings (subset of `SettingsParams`, same defaults).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,6 +157,7 @@ pub struct ResolvedPreset {
 impl LookParameters {
     pub fn capture(params: &RuntimeParams) -> Self {
         Self {
+            camera: Some(LookCameraParams::capture(params)),
             enlarger: params.enlarger.clone(),
             scanner: params.scanner.clone(),
             film_render: params.film_render.clone(),
@@ -135,10 +179,13 @@ impl LookParameters {
 
     /// Replace every look-owned parameter of `params` with this look.
     ///
-    /// The look owns the enlarger, scanner, film-render and print-render
-    /// sections, the camera diffusion filter, and the look-owned processing
-    /// settings. Every other parameter section keeps its value.
+    /// The look owns virtual exposure when present, enlarger, scanner, film
+    /// and print rendering, camera diffusion, and look processing settings.
+    /// Every other parameter section keeps its value.
     pub fn apply_to(&self, params: &mut RuntimeParams) {
+        if let Some(camera) = &self.camera {
+            camera.apply_to(params);
+        }
         params.enlarger = self.enlarger.clone();
         params.scanner = self.scanner.clone();
         params.film_render = self.film_render.clone();
@@ -146,6 +193,24 @@ impl LookParameters {
         params.camera.diffusion_filter = self.camera_diffusion_filter.clone();
         params.output_mix = self.output_mix.clone();
         self.settings.apply_to(&mut params.settings);
+    }
+    /// Compare only carried controls; legacy presets do not own exposure.
+    pub fn matches(&self, params: &RuntimeParams) -> bool {
+        self.camera
+            .as_ref()
+            .is_none_or(|camera| camera.matches(params))
+            && self.enlarger == params.enlarger
+            && self.scanner == params.scanner
+            && self.film_render == params.film_render
+            && self.print_render == params.print_render
+            && self.camera_diffusion_filter == params.camera.diffusion_filter
+            && self.output_mix == params.output_mix
+            && self.settings.apply_hanatos2025_adaptation_window
+                == params.settings.apply_hanatos2025_adaptation_window
+            && self.settings.apply_hanatos2025_adaptation_surface
+                == params.settings.apply_hanatos2025_adaptation_surface
+            && self.settings.spectral_gaussian_blur == params.settings.spectral_gaussian_blur
+            && self.settings.use_cat16 == params.settings.use_cat16
     }
 }
 impl LookSettingsParams {
@@ -658,5 +723,7 @@ pub(crate) fn restore_explicit_stock_values(
             .expect("retaining validated explicit controls");
     }
 }
+#[cfg(test)]
+mod camera_tests;
 #[cfg(test)]
 mod tests;
