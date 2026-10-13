@@ -691,7 +691,7 @@ impl ComputeBackend for WgpuBackend {
             out
         };
         let xyz_to_rgb = &combined;
-        let n_wl = channel_density.len();
+        let n_wl = channel_density.len().min(illuminant.len());
         let n_pixels = density_cmy.pixel_count() as u32;
 
         // Pack uniform params — mat3x3 in WGSL std140 is 3 columns of vec4.
@@ -745,7 +745,10 @@ impl ComputeBackend for WgpuBackend {
         // `pow(10, -d) ≈ 0`, zeroing that wavelength's contribution exactly the same
         // way Python's `density_to_light` zeros NaN-bearing wavelengths.
         let (cd_flat, mut bd) = sanitize_spectral_inputs(channel_density, base_density, n_wl);
-        let illu_f32: Vec<f32> = illuminant.iter().map(|&v| v as f32).collect();
+        let illu_f32: Vec<f32> = illuminant
+            .iter()
+            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
+            .collect();
         bd.resize(n_wl, 0.0);
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
@@ -797,7 +800,10 @@ impl ComputeBackend for WgpuBackend {
                 preflash,
             );
         }
-        let n_wl = channel_density.len();
+        let n_wl = channel_density
+            .len()
+            .min(illuminant.len())
+            .min(sensitivity.len());
         let n_pixels = density_cmy.pixel_count() as u32;
 
         #[repr(C)]
@@ -828,7 +834,10 @@ impl ComputeBackend for WgpuBackend {
             .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
             .collect();
         bd.resize(n_wl, 0.0);
-        let illu_f32: Vec<f32> = illuminant.iter().map(|&v| v as f32).collect();
+        let illu_f32: Vec<f32> = illuminant
+            .iter()
+            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
+            .collect();
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
 
