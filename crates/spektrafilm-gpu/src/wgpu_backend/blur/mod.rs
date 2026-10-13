@@ -1,5 +1,33 @@
 use super::*;
 
+/// Shared uniform ABI for the horizontal and vertical FIR shaders.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub(super) struct BlurParams {
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) radius: u32,
+    pub(super) _pad: u32,
+}
+
+/// Normalize in f64 before casting weights to the shader's f32 storage.
+/// Callers retain their own sigma clamping and CPU fallback policy.
+pub(super) fn gaussian_kernel(sigma: f32) -> (u32, Vec<f32>) {
+    let radius = fir_blur_radius(sigma);
+    let kernel_size = (2 * radius + 1) as usize;
+    let sigma_f64 = sigma as f64;
+    let two_sigma_sq = 2.0 * sigma_f64 * sigma_f64;
+    let r_i32 = radius as i32;
+    let mut kernel = Vec::with_capacity(kernel_size);
+    for k in 0..kernel_size {
+        let x = (k as i32 - r_i32) as f64;
+        kernel.push((-x * x / two_sigma_sq).exp());
+    }
+    let sum: f64 = kernel.iter().sum();
+    let kernel_f32 = kernel.into_iter().map(|v| (v / sum) as f32).collect();
+    (radius, kernel_f32)
+}
+
 pub(super) struct BlurJob {
     pub(super) _kernel_buf: wgpu::Buffer,
     pub(super) _params_buf: wgpu::Buffer,
@@ -52,26 +80,8 @@ pub(super) fn build_simple_blur_state(
     let blur_pipe_h = backend.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), blur_layout);
     let blur_pipe_v = backend.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), blur_layout);
 
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct BlurParams {
-        width: u32,
-        height: u32,
-        radius: u32,
-        _pad: u32,
-    }
     let sigma = sigma.max(0.01);
-    let radius = fir_blur_radius(sigma);
-    let kernel_size = (2 * radius + 1) as usize;
-    let two_sigma_sq = 2.0 * (sigma as f64) * (sigma as f64);
-    let r_i32 = radius as i32;
-    let mut kernel = Vec::with_capacity(kernel_size);
-    for k in 0..kernel_size {
-        let x = (k as i32 - r_i32) as f64;
-        kernel.push((-x * x / two_sigma_sq).exp());
-    }
-    let ksum: f64 = kernel.iter().sum();
-    let kernel_f32: Vec<f32> = kernel.into_iter().map(|v| (v / ksum) as f32).collect();
+    let (radius, kernel_f32) = gaussian_kernel(sigma);
     let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{label}_blur_kernel")),
         contents: bytemuck::cast_slice(&kernel_f32),
@@ -191,20 +201,8 @@ impl WgpuBackend {
             tracing::info!(target: "spektrafilm_gpu::wgpu_backend", sigma, execution = "cpu", "using faithful CPU Gaussian blur");
             return cpu_backend::CpuBackend.gaussian_blur(img, sigma);
         }
-        let radius = fir_blur_radius(sigma);
-        let kernel_size = (2 * radius + 1) as usize;
-
         // Pre-compute normalized Gaussian kernel on CPU.
-        let sigma_f64 = sigma as f64;
-        let two_sigma_sq = 2.0 * sigma_f64 * sigma_f64;
-        let mut kernel = Vec::with_capacity(kernel_size);
-        let r_i32 = radius as i32;
-        for i in 0..kernel_size {
-            let x = (i as i32 - r_i32) as f64;
-            kernel.push((-x * x / two_sigma_sq).exp());
-        }
-        let sum: f64 = kernel.iter().sum();
-        let kernel_f32: Vec<f32> = kernel.into_iter().map(|v| (v / sum) as f32).collect();
+        let (radius, kernel_f32) = gaussian_kernel(sigma);
 
         let w = img.width;
         let h = img.height;
@@ -237,15 +235,7 @@ impl WgpuBackend {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            radius: u32,
-            _pad: u32,
-        }
-        let params = Params {
+        let params = BlurParams {
             width: w,
             height: h,
             radius,
@@ -416,41 +406,13 @@ impl WgpuBackend {
         let h_pipe = self.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), layout);
         let v_pipe = self.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), layout);
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Params {
-            width: u32,
-            height: u32,
-            radius: u32,
-            _pad: u32,
-        }
-
-        // Pre-build per-sigma kernel/params/bind groups. The struct owns
+        // Pre-build per-sigma kernel/params/bind groups. Each job owns
         // the kernel/params buffers so they outlive the encoder.
-        #[allow(dead_code)]
-        struct PerSigma {
-            params_buf: wgpu::Buffer,
-            kernel_buf: wgpu::Buffer,
-            bg_h: wgpu::BindGroup,
-            bg_v: wgpu::BindGroup,
-        }
-
-        let per_sigma: Vec<PerSigma> = sigmas
+        let per_sigma: Vec<BlurJob> = sigmas
             .iter()
             .enumerate()
             .map(|(i, &sigma)| {
-                let radius = fir_blur_radius(sigma);
-                let kernel_size = (2 * radius + 1) as usize;
-                let sigma_f64 = sigma as f64;
-                let two_sigma_sq = 2.0 * sigma_f64 * sigma_f64;
-                let r_i32 = radius as i32;
-                let mut kernel = Vec::with_capacity(kernel_size);
-                for k in 0..kernel_size {
-                    let x = (k as i32 - r_i32) as f64;
-                    kernel.push((-x * x / two_sigma_sq).exp());
-                }
-                let sum: f64 = kernel.iter().sum();
-                let kernel_f32: Vec<f32> = kernel.into_iter().map(|v| (v / sum) as f32).collect();
+                let (radius, kernel_f32) = gaussian_kernel(sigma);
 
                 let kernel_buf =
                     self.device
@@ -460,7 +422,7 @@ impl WgpuBackend {
                             usage: wgpu::BufferUsages::STORAGE,
                         });
 
-                let params = Params {
+                let params = BlurParams {
                     width: w,
                     height: h,
                     radius,
@@ -519,9 +481,9 @@ impl WgpuBackend {
                     ],
                 });
 
-                PerSigma {
-                    params_buf,
-                    kernel_buf,
+                BlurJob {
+                    _kernel_buf: kernel_buf,
+                    _params_buf: params_buf,
                     bg_h,
                     bg_v,
                 }

@@ -570,7 +570,12 @@ Feature ownership stays inside the existing crates:
 
 - `spektrafilm-model/src/`: `grain/{v1,v2}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests; `optics/` owns shared physical blur, unsharp masking, and highlight boost.
 - `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate; serialized JSON fields are unchanged.
-- `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. Shared blur infrastructure stays in `blur/`; `film_chain.rs` owns resident orchestration and its resource lifetimes, while `mod.rs` retains device setup and shared dispatch.
+- `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. `blur/` owns Gaussian FIR weight generation and its shared uniform layout; `film_chain.rs` owns resident orchestration and its resource lifetimes, while `mod.rs` retains device setup and shared dispatch.
+- `spektrafilm-cli/src/process.rs` owns process arguments, invocation setup, preflight, rendering, and publication; `main.rs` retains command dispatch and shared data selection.
+- `spektrafilm-core/src/lut_baker/bundle.rs` owns canonical topology stage roles, taps, suffixes, and print sharing. Baking, QA, and OCIO consume those descriptors, including magazine final-stage roles.
+- `spektrafilm-core/src/pipeline_calibration.rs` applies input-gamut remapping at one boundary after method-specific spectral LUT construction; the matrix-only Mallett path stays separate.
+- `spektrafilm-gui/src/main.rs` owns contiguous parameter-revision/dirty transitions, with a separate calibration-invalidating transition. State restoration retains its explicit ordering around profile and viewer updates.
+- `spektrafilm-benchmark/src/documents.rs` owns authored-document validation and shared document helpers; `documents/evidence.rs` owns generated run/comparison validation, and `documents/masks.rs` owns render/reference geometry-mask decoding with their distinct acceptance rules.
 
 Canonical Rust paths include `spektrafilm_model::grain::v1`, `spektrafilm_model::grain::v2`, and `spektrafilm_core::params::grain::GrainParams`; the former flat module paths have been removed.
 
