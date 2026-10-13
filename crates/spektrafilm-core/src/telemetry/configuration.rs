@@ -236,6 +236,7 @@ pub enum ScanOutput {
 #[serde(rename_all = "snake_case")]
 pub enum PositiveInterpretation {
     #[default]
+    Density,
     Separable,
     Coupled,
 }
@@ -322,6 +323,7 @@ impl RenderConfiguration {
                 ScanOutput::DirectScan
             },
             positive_interpretation: match params.scanner.positive_interpretation {
+                crate::params::PositiveInterpretation::Density => PositiveInterpretation::Density,
                 crate::params::PositiveInterpretation::Separable => {
                     PositiveInterpretation::Separable
                 }

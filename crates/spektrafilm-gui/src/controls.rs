@@ -81,7 +81,7 @@ pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medi
         params.scanner.scan_output = "direct_scan".into();
     }
     if params.scanner.scan_output != "positive_scan" {
-        params.scanner.positive_interpretation = PositiveInterpretation::Separable;
+        params.scanner.positive_interpretation = PositiveInterpretation::default();
         params.scanner.auto_setup = ScannerAutoSetup::Off;
         params.scanner.finish = ScannerFinish::Neutral;
     }
@@ -173,9 +173,10 @@ pub(crate) fn show(
                 }
                 if positive_route && params.scanner.scan_output == "positive_scan" {
                     flags.runtime_changed |= enum_choice(ui, "positive interpretation", &mut params.scanner.positive_interpretation, &[
+                        (PositiveInterpretation::Density, "density"),
                         (PositiveInterpretation::Separable, "separable"),
                         (PositiveInterpretation::Coupled, "coupled"),
-                    ], "Method used to recover positive color from the receiver capture.");
+                    ], "Method used to recover positive color: density reads the film's own record densities without a receiver capture; separable and coupled interpret the receiver capture.");
                     flags.runtime_changed |= enum_choice(ui, "scanner auto setup", &mut params.scanner.auto_setup, &[
                         (ScannerAutoSetup::Off, "off"),
                         (ScannerAutoSetup::PerFrame, "per_frame"),
@@ -1011,6 +1012,7 @@ mod tests {
         params.scanner.scan_output = "positive_scan".into();
         for (selected, next) in [
             ("legacy colorimetric", "lab scan (approximate)"),
+            ("density", "separable"),
             ("separable", "coupled"),
             ("off", "per_frame"),
             ("neutral", "lab_scan"),
@@ -1075,7 +1077,7 @@ mod tests {
         );
         assert_eq!(
             params.scanner.positive_interpretation,
-            PositiveInterpretation::Separable
+            PositiveInterpretation::Density
         );
         assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Off);
         assert_eq!(params.scanner.finish, ScannerFinish::Neutral);

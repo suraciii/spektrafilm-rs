@@ -292,7 +292,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|v| (*v).into())
             .collect(),
-        "scanner.positive_interpretation" => ["separable", "coupled"]
+        "scanner.positive_interpretation" => ["density", "separable", "coupled"]
             .iter()
             .map(|v| (*v).into())
             .collect(),
@@ -404,7 +404,7 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
 pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
     let valid = match path {
         "scanner.receiver_profile" => matches!(value, "legacy_colorimetric" | "lab_scan_approx"),
-        "scanner.positive_interpretation" => matches!(value, "separable" | "coupled"),
+        "scanner.positive_interpretation" => matches!(value, "density" | "separable" | "coupled"),
         "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
         "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
         "scanner.scan_output" => matches!(value, "direct_scan" | "positive_scan"),

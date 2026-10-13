@@ -5,7 +5,7 @@
         "created": "2026-10-11",
         "license": "spektrafilm profile by Andrea Volpato, licensed under CC BY-SA 4.0. Redistribution and derivatives must credit the author, link the project (https://github.com/andreavolpato/spektrafilm),preserve this license, and remain CC BY-SA 4.0.Modifications must be noted. Full text of the license and attribution requirements: https://github.com/andreavolpato/spektrafilm/blob/main/SPEKTRAFILM_LICENSE.txt.",
         "citation": "If you use this profile in your work, please cite the spektrafilm project: https://github.com/andreavolpato/spektrafilm, see CITATION.cff for details.",
-        "datasource": "EXPERIMENTAL APPROXIMATION, not a measured CineStill spectral profile. Modified by SpektraFilm contributors on 2026-10-11. Sensitivity, Hanatos adaptation and masked dye spectra are inherited from Andrea Volpato's kodak_vision3_500t profile (CC BY-SA 4.0). RGB sensitometry digitized from https://cdn.shopify.com/s/files/1/0339/5113/files/cs41curves_600x600.png?v=1712783069, published in https://cinestillfilm.com/blogs/news/what-makes-800t-the-original-and-only-true-800-speed-tungsten-balanced-film-for-still-photography. Chart labels: 800T; Cs41; 3200 K tungsten; 1/50 s; DlogH reference -1.535. The chart does not specify densitometer status, batch, development time or temperature. Status M is an explicit fitting assumption. Status M response data: https://raw.githubusercontent.com/JanLohse/spectral_film_lut/6307a98f3cf4f2d7b6d09bab82fbf6f64356ccfe/src/spectral_film_lut/densiometry.py (Jan Lohse, MIT). Fit uses spectral transmittance integration with the inherited dye spectra and a smooth fitted base correction; raw RGB densities are not CMY dye amounts. Three normal-CDF components are mathematical fits, not measured emulsion sublayers. High exposures outside the published range are model extrapolations. No absolute ISO calibration is claimed. The reference log exposure maps to the existing profile midgray convention. Halation uses the existing still/no-antihalation heuristic; no CineStill PSF or grain measurements are supplied. The new profile is intended for fixed-workflow comparisons with grain disabled. Original manufacturer data remain the property of their respective holders."
+        "datasource": "EXPERIMENTAL APPROXIMATION, not a measured CineStill spectral profile. Modified by SpektraFilm contributors on 2026-10-11. Sensitivity, Hanatos adaptation and masked dye spectra are inherited from Andrea Volpato's kodak_vision3_500t profile (CC BY-SA 4.0). RGB sensitometry digitized from https://cdn.shopify.com/s/files/1/0339/5113/files/cs41curves_600x600.png?v=1712783069, published in https://cinestillfilm.com/blogs/news/what-makes-800t-the-original-and-only-true-800-speed-tungsten-balanced-film-for-still-photography. Chart labels: 800T; Cs41; 3200 K tungsten; 1/50 s; DlogH reference -1.535. The chart does not specify densitometer status, batch, development time or temperature. Status M is an explicit fitting assumption. Status M response data: https://raw.githubusercontent.com/JanLohse/spectral_film_lut/6307a98f3cf4f2d7b6d09bab82fbf6f64356ccfe/src/spectral_film_lut/densiometry.py (Jan Lohse, MIT). Fit uses spectral transmittance integration with the inherited dye spectra and a smooth fitted base correction; raw RGB densities are not CMY dye amounts. Three normal-CDF components are mathematical fits, not measured emulsion sublayers. High exposures outside the published range are model extrapolations. No absolute ISO calibration is claimed. The reference log exposure maps to the existing profile midgray convention. Halation uses the existing still/no-antihalation heuristic; no CineStill PSF or grain measurements are supplied. The new profile is intended for fixed-workflow comparisons with grain disabled. Original manufacturer data remain the property of their respective holders. Hanatos2025 adaptation surface fitted by spektrafilm-f64 fit 0.1.2: scene patches from Panasonic DC-G81 linear raw patch readings (cs-413/800t-emulation TE226_G81.ccr) converted with the LibRaw DMC-G8 D65 color matrix, of an Image Engineering TE226 transmissive chart on a tungsten light box; reference patches from a CineStill 800T lab scan of the same chart (TE226_800t.ccr, 8-bit sRGB). The surface therefore also corrects that camera's readings, not the stock alone."
     },
     "info": {
         "stock": "cinestill_800t_cs41_approx",
@@ -7043,57 +7043,57 @@
             40.428166
         ],
         "hanatos2025_adaptation_surface_params": [
-            [
-                -0.045515,
-                -1.675795,
-                -1.795063,
-                19.060199,
-                8.617031,
-                18.204959,
-                6.046716,
-                17.356062,
-                -20.748996,
-                -4.746574,
-                8.90814,
-                -15.407048,
-                -2.0711,
-                -5.47468,
-                10.223822
-            ],
-            [
-                -0.008057,
-                -0.081676,
-                -0.091055,
-                0.554247,
-                2.26113,
-                4.555055,
-                1.566084,
-                4.853793,
-                -3.729263,
-                0.747074,
-                0.85391,
-                1.082282,
-                -0.48357,
-                0.145005,
-                -0.304838
-            ],
-            [
-                0.086145,
-                -0.072688,
-                0.303018,
-                -9.103766,
-                -4.851004,
-                -11.784256,
-                36.210172,
-                -17.980874,
-                9.155649,
-                -30.181976,
-                -6.006089,
-                -12.651065,
-                -1.394219,
-                6.991594,
-                -4.659966
-            ]
+        [
+                    0.0,
+                    -2.595886397932054,
+                    -0.6254104933363848,
+                    -0.18749462575607379,
+                    4.327306261998925,
+                    2.1431056067229153,
+                    -0.7835957181442847,
+                    -1.9234054471344426,
+                    1.0382683299473376,
+                    -0.9504131410200293,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+        ],
+        [
+                    0.0,
+                    -0.4815002659061965,
+                    0.27155037906038604,
+                    2.248325494102693,
+                    3.923838223604448,
+                    -0.6656157490162805,
+                    0.619873445596852,
+                    4.251884027896512,
+                    1.6651640334735922,
+                    -4.539207775015483,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+        ],
+        [
+                    0.0,
+                    6.075337718052383,
+                    -0.15918799582489815,
+                    -12.858326821084118,
+                    -7.427089839792282,
+                    0.3091737397088783,
+                    0.29737794849450144,
+                    -5.459772521881309,
+                    -2.982152922699954,
+                    7.001573544064824,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
         ]
+]
     }
 }

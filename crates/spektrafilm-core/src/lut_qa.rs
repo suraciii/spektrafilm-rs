@@ -493,7 +493,8 @@ fn okxyz(v: [f64; 3]) -> [f64; 3] {
         .map(|v| v * v * v),
     )
 }
-fn lab(xyz: [f64; 3]) -> [f64; 3] {
+/// CIE L*a*b* from XYZ under the sRGB white point.
+pub fn xyz_to_lab(xyz: [f64; 3]) -> [f64; 3] {
     let white = [0.3127 / 0.329, 1., (1. - 0.3127 - 0.329) / 0.329];
     let f: [f64; 3] = std::array::from_fn(|i| {
         let t = xyz[i] / white[i];
@@ -761,8 +762,11 @@ fn run_print(
             for (&p, &t) in samples.iter().zip(&truth) {
                 let a = xyz(output, lut.sample(p));
                 let b = xyz(output, t);
-                tri.push(delta_e_2000(lab(a), lab(b)));
-                tet.push(delta_e_2000(lab(xyz(output, tetra(lut, p))), lab(b)));
+                tri.push(delta_e_2000(xyz_to_lab(a), xyz_to_lab(b)));
+                tet.push(delta_e_2000(
+                    xyz_to_lab(xyz(output, tetra(lut, p))),
+                    xyz_to_lab(b),
+                ));
                 let a = ictcp(a);
                 let b = ictcp(b);
                 itp.push(

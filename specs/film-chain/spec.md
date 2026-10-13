@@ -39,9 +39,10 @@
 
 - `scanner.receiver_profile` selects the scanner receiver used by a film-scan route. `legacy_colorimetric` is the default and preserves the existing spectral-to-output behavior. `lab_scan_approx` is an approximate narrow-band receiver profile.
 - A receiver profile changes scanner acquisition only. It must not change film exposure, development, film-domain grain, halation, print exposure, or the input camera exposure.
-- The receiver profile must be resolved before scan calibration. Direct film scans and positive interpretations must use the same receiver capture for one render.
+- The receiver profile must be resolved before scan calibration. Direct film scans and capture-based positive interpretations must use the same receiver capture for one render.
 - `input > convert-film > scan` must treat the incoming image as the input capture for the conversion stage. The selected receiver applies to the output scan stage and must not be applied a second time to the input capture.
-- `scanner.positive_interpretation` selects `separable` or `coupled` positive interpretation when `scanner.scan_output=positive_scan`. `separable` is the default.
+- `scanner.positive_interpretation` selects `density`, `separable`, or `coupled` positive interpretation when `scanner.scan_output=positive_scan`. `density` is the default.
+- `density` reads record densities through the film's own monotone characteristic curves. It acquires no receiver capture and must produce identical output for identical record densities and scanner controls, whatever `scanner.receiver_profile` selects.
 - `separable` uses the per-channel monotone inverse defined by [Direct negative-film scan output](#direct-negative-film-scan-output).
 - `coupled` uses a three-channel inverse of the resolved film, receiver, and output response. It must be prepared once per render configuration and evaluated per pixel through a finite lookup table or an equivalent bounded interpolation structure.
 - A coupled inverse must use the CPU f64 path as its reference. It must preserve finite endpoints, bounded output, and continuous behavior at the film toe, mid-range, and shoulder. It must not run an iterative solver per image pixel.
@@ -95,14 +96,34 @@
   `input > film > scan` route or the real negative-capture
   `input > convert-film > scan` route. Paper profiles, print-paper routes,
   and `scan-minus-base` are not eligible.
-- Positive interpretation uses the resolved receiver capture. `separable` derives a per-channel monotone inverse from the selected profile density curves. `coupled` uses the three-channel inverse defined in [Scanner receiver and interpretation](#scanner-receiver-and-interpretation). Both modes estimate relative log exposure, subtract camera exposure compensation only on the simulated `input > film > scan` route, apply the configured density brightness, RGB balance, contrast, and maximum-density controls, then emit output-space linear RGB.
-- Calibration captures outside the profile range use finite endpoint tangent
-  extrapolation. Negative and above-clear scanner RGB remains representable
-  until the normal writer; no log-of-clipped-RGB operation is permitted.
-- Positive interpretation runs after scanner spectral capture and scanner lens
-  blur. Optional scanner finishing runs after positive interpretation. Output
-  gamut compression, unsharp mask, transfer encoding, and output handoff run
-  after scanner finishing.
+- Positive interpretation input is record density by default. `density` reads
+  each dye record's density, as a narrowband scanner does, and derives a
+  per-record monotone inverse from the selected profile density curves. One
+  record's output must not depend on another record's density. The simulated
+  `input > film > scan` route hands it the film stage's record densities and
+  inserts no synthetic capture.
+- `separable` and `coupled` interpret a resolved receiver capture instead.
+  `separable` derives a per-channel monotone inverse from the selected profile
+  density curves after converting the capture to density through its per-channel
+  clear reference. `coupled` uses the three-channel inverse defined in
+  [Scanner receiver and interpretation](#scanner-receiver-and-interpretation).
+  A real negative-capture `input > convert-film > scan` route and the exact-cell
+  scan path interpret their capture with one of these methods; `density` behaves
+  as `separable` where the incoming image is a capture.
+- Every method estimates relative log exposure, subtracts camera exposure
+  compensation only on the simulated `input > film > scan` route, applies the
+  configured density brightness, RGB balance, contrast, and maximum-density
+  controls, then emits output-space linear RGB. Zero balance renders a grey lit
+  by the profile reference illuminant neutral.
+- Densities outside the profile curves and calibration captures outside the
+  profile range use finite endpoint tangent extrapolation; the tone curve keeps
+  output finite and within the configured density range. Negative and
+  above-clear scanner RGB remains representable until the normal writer; no
+  log-of-clipped-RGB operation is permitted.
+- Scanner lens blur acts on transmitted light before the density reading, and on
+  the capture before a capture interpretation. Optional scanner finishing runs
+  after positive interpretation. Output gamut compression, unsharp mask,
+  transfer encoding, and output handoff run after scanner finishing.
 - `positive_scan` rejects scanner white/black correction and active Procedural grain.
   It uses the CPU per-stage backend; resident WGPU execution is not eligible.
 
@@ -112,6 +133,7 @@
 - Changing `scanner.receiver_profile` must not change film density, film-domain grain, halation, print exposure, or camera exposure. It must change only the scan acquisition and the downstream interpretation of that capture.
 - `direct_scan` must preserve the native polarity of the selected medium. Scanner finishing must not run on a direct negative-film output.
 - `positive_scan` must use one receiver capture for calibration and image pixels. It must not rebuild spectral calibration per pixel.
+- `density` must not change its output when only `scanner.receiver_profile` changes, and it must not acquire a receiver capture. `separable` and `coupled` must change only through the capture the receiver profile produces.
 - `coupled` must produce finite, continuous output across the calibration range and finite tangent extrapolation outside it. It must not run an iterative solver per image pixel.
 - `per_frame` must measure the full input before crop and resize. Preview, Scan, and Export must produce the same scanner setup for the same input and parameter revision.
 - Changing film exposure, development, grain, halation, print exposure, or camera exposure while holding scanner settings constant must not be an effect of receiver or scanner finish selection.

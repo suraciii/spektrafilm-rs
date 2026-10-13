@@ -351,6 +351,8 @@ fn conditions(path: &str) -> Vec<String> {
     }
     if path == "scanner.receiver_profile" {
         out.push("film scans only; legacy_colorimetric preserves CIE spectral-to-output acquisition; lab_scan_approx is an approximate uncalibrated Fotufilm narrow-band receiver (630/545/465 nm, sigma 8.5/14/9.5 nm), version fotufilm_lab_scan_approx_v1".into());
+    } else if path == "scanner.positive_interpretation" {
+        out.push("density reads record densities and acquires no receiver capture, so its output is receiver-independent; separable and coupled interpret a receiver capture and apply to a real negative capture or the exact-cell scan path; density behaves as separable where the incoming image is a capture".into());
     } else if path == "scanner.scan_output" {
         out.push("positive_scan requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain Procedural are unsupported".into());
     }
