@@ -101,20 +101,6 @@ fn flatten(prefix: &str, value: &Value, out: &mut Vec<(String, Value)>) {
         out.push((prefix.into(), value.clone()));
     }
 }
-fn insert(root: &mut Value, path: &str, value: Value) {
-    let mut parts = path.split('.').peekable();
-    let mut current = root;
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            current[part] = value;
-            return;
-        }
-        if current.get(part).is_none() {
-            current[part] = serde_json::json!({});
-        }
-        current = &mut current[part];
-    }
-}
 pub fn extract_section(section: Section, params: &RuntimeParams) -> Result<Value, String> {
     crate::params::sources::validate_finite(params)?;
     let root = serde_json::to_value(LookParameters::capture(params)).map_err(|e| e.to_string())?;
@@ -123,7 +109,7 @@ pub fn extract_section(section: Section, params: &RuntimeParams) -> Result<Value
     let mut payload = serde_json::json!({});
     for (path, value) in leaves {
         if section.owns(&path) && path != "film_render.grain.monochrome" {
-            insert(&mut payload, &path, value);
+            crate::params::sources::insert(&mut payload, &path, value);
         }
     }
     Ok(payload)

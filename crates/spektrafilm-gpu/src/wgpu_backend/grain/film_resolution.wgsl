@@ -1,11 +1,13 @@
 // Grain V2 working-domain resolution passes.
 // dimensions: width, height, axis (0/1; 2 = native encoded input), optical.
-// taps: weight count, CCTF (0 = already encoded), reserved, reserved.
+// taps: weight count, CCTF wire code (`Cctf::code()` in colorspace.rs),
+// reserved, reserved.
 struct Params { dimensions:vec4<u32>, taps:vec4<u32>, matrix:array<vec4<f32>,3> }
 @group(0) @binding(0) var<uniform> p:Params;
 @group(0) @binding(1) var<storage,read> input:array<f32>;
 @group(0) @binding(2) var<storage,read> weights:array<vec2<f32>>;
 @group(0) @binding(3) var<storage,read_write> output:array<f32>;
+// `case` labels are `Cctf`'s discriminants; 0 (default) = already encoded.
 fn encode(v:f32)->f32 {
  switch p.taps.y {
   case 2u: {if(v<=0.0078125){return 10.5402377416545*v+0.0729055341958355;}return (log2(v)+9.72)/17.52;}

@@ -571,17 +571,9 @@ pub type Simulator = Runtime;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::data_dir;
     use spektrafilm_gpu::cpu_backend::CpuBackend;
     use spektrafilm_math::precision::from_f64;
-
-    fn data_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
 
     #[test]
     fn runtime_preparation_rejects_removed_scan_output_before_calibration() {

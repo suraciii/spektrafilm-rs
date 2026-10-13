@@ -899,82 +899,10 @@ pub fn linear_rgb(image: &ImageData) -> Result<Vec<[f64; 3]>> {
 }
 pub fn rgb_to_lab(rgb: &[[f64; 3]]) -> Vec<[f64; 3]> {
     rgb.iter()
-        .map(|p| {
-            let p = p.map(|v| srgb_decode(v.clamp(0., 1.)));
-            let x = 0.4124 * p[0] + 0.3576 * p[1] + 0.1805 * p[2];
-            let y = 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
-            let z = 0.0193 * p[0] + 0.1192 * p[1] + 0.9505 * p[2];
-            let f = |t: f64| {
-                if t > 216.0 / 24389.0 {
-                    t.cbrt()
-                } else {
-                    (24389.0 / 27.0 * t + 16.) / 116.
-                }
-            };
-            let (fx, fy, fz) = (
-                f(x / (0.3127 / 0.329)),
-                f(y),
-                f(z / ((1. - 0.3127 - 0.329) / 0.329)),
-            );
-            [116. * fy - 16., 500. * (fx - fy), 200. * (fy - fz)]
-        })
+        .map(|p| spektrafilm_math::lab::srgb_encoded_to_lab(p.map(|v| v.clamp(0., 1.))))
         .collect()
 }
-pub fn delta_e_2000(a: [f64; 3], b: [f64; 3]) -> f64 {
-    let (l1, a1, b1) = (a[0], a[1], a[2]);
-    let (l2, a2, b2) = (b[0], b[1], b[2]);
-    let (c1, c2) = ((a1 * a1 + b1 * b1).sqrt(), (a2 * a2 + b2 * b2).sqrt());
-    let cb = (c1 + c2) / 2.;
-    let g = 0.5 * (1. - (cb.powi(7) / (cb.powi(7) + 25_f64.powi(7))).sqrt());
-    let (ap1, ap2) = ((1. + g) * a1, (1. + g) * a2);
-    let (cp1, cp2) = ((ap1 * ap1 + b1 * b1).sqrt(), (ap2 * ap2 + b2 * b2).sqrt());
-    let hp = |x: f64, y: f64| {
-        let mut h = y.atan2(x).to_degrees();
-        if h < 0. {
-            h += 360.
-        }
-        h
-    };
-    let (h1, h2) = (hp(ap1, b1), hp(ap2, b2));
-    let dh = if cp1 * cp2 == 0. {
-        0.
-    } else if (h2 - h1).abs() <= 180. {
-        h2 - h1
-    } else if h2 <= h1 {
-        h2 - h1 + 360.
-    } else {
-        h2 - h1 - 360.
-    };
-    let dhp = 2. * (cp1 * cp2).sqrt() * (dh.to_radians() / 2.).sin();
-    let lb = (l1 + l2) / 2.;
-    let cbp = (cp1 + cp2) / 2.;
-    let hb = if cp1 * cp2 == 0. {
-        h1 + h2
-    } else if (h1 - h2).abs() <= 180. {
-        (h1 + h2) / 2.
-    } else if h1 + h2 < 360. {
-        (h1 + h2 + 360.) / 2.
-    } else {
-        (h1 + h2 - 360.) / 2.
-    };
-    let t = 1. - 0.17 * ((hb - 30.).to_radians()).cos()
-        + 0.24 * ((2. * hb).to_radians()).cos()
-        + 0.32 * ((3. * hb + 6.).to_radians()).cos()
-        - 0.20 * ((4. * hb - 63.).to_radians()).cos();
-    let sl = 1. + 0.015 * (lb - 50.).powi(2) / (20. + (lb - 50.).powi(2)).sqrt();
-    let sc = 1. + 0.045 * cbp;
-    let sh = 1. + 0.015 * cbp * t;
-    let rt = -2.
-        * (cbp.powi(7) / (cbp.powi(7) + 25_f64.powi(7))).sqrt()
-        * (60. * (-((hb - 275.) / 25.).powi(2)).exp())
-            .to_radians()
-            .sin();
-    (((l2 - l1) / sl).powi(2)
-        + ((cp2 - cp1) / sc).powi(2)
-        + (dhp / sh).powi(2)
-        + rt * ((cp2 - cp1) / sc) * (dhp / sh))
-        .sqrt()
-}
+pub use spektrafilm_math::lab::delta_e_2000;
 pub fn write_png16(path: &Path, rgb: &[[f64; 3]], width: usize, height: usize) -> Result<()> {
     if rgb.len() != width * height {
         return Err(err("invalid_image_layout", "PNG dimensions mismatch"));
@@ -1191,16 +1119,6 @@ mod tests {
         let changed = official_flip(&a, &b, 8, 8, 60.).unwrap();
         assert!(changed.iter().all(|x| *x > 0. && *x <= 1.));
     }
-}
-
-pub fn norms(s: &str) -> String {
-    norm_space(s)
-}
-pub fn icc_version() -> Result<u32> {
-    crate::icc::icc_version()
-}
-pub fn numeric_library_identity() -> Value {
-    json!({"implementation":"Rust native f64","colour_reference":"colour-science 0.4.7", "flip":native_identity()["flip"].clone()})
 }
 
 fn npy_dtype(path: &Path) -> Result<String> {

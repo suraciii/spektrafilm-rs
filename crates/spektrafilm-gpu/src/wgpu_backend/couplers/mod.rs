@@ -1,4 +1,4 @@
-use super::blur::{BlurJob, BlurParams, DispatchJob, gaussian_kernel};
+use super::blur::{BlurJob, DispatchJob};
 use super::*;
 
 /// Pre-built DIR coupler passes — owns scratch buffers, kernel buffers,
@@ -9,7 +9,6 @@ use super::*;
 /// blur of the correction → weighted lerp of the 3-Gaussian exponential
 /// tail → in-place subtract from log_raw with the receiver Langmuir →
 /// re-interpolation of `density_curves_0`.
-#[cfg(feature = "wgpu-backend")]
 pub(super) struct DirState {
     _buf_correction: wgpu::Buffer, // raw matmul output (blur source)
     _buf_gaussian: wgpu::Buffer,   // blur scratch / gaussian_part
@@ -40,7 +39,6 @@ pub(super) struct DirState {
 /// passes `None` when the polarity has no donor/receiver term — so the
 /// channel is masked off and the sanitized `k` keeps the
 /// unconditionally-evaluated saturation term finite.
-#[cfg(feature = "wgpu-backend")]
 fn langmuir_uniforms(k: Option<[f32; 3]>) -> ([f32; 4], [f32; 4]) {
     let mut k_out = [1.0_f32; 4];
     let mut mask = [0.0_f32; 4];
@@ -55,7 +53,6 @@ fn langmuir_uniforms(k: Option<[f32; 3]>) -> ([f32; 4], [f32; 4]) {
     (k_out, mask)
 }
 
-#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_dir_state(
     device: &ObservedDevice,
     dp: &crate::DirCouplersGpuParams<'_>,
@@ -175,87 +172,29 @@ pub(super) fn build_dir_state(
     // Each blur reads `buf_correction` (the matmul output, which stays
     // pristine — never the blur destination) and uses `buf_a` as the
     // horizontal mid buffer, free once the matmul has run.
-    let make_blur_job =
-        |sigma: f32, src: &wgpu::Buffer, out: &wgpu::Buffer, label: &str| -> BlurJob {
-            let sigma = sigma.max(0.01);
-            let (radius, kernel_f32) = gaussian_kernel(sigma);
-
-            let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("dir_blur_kernel_{label}")),
-                contents: bytemuck::cast_slice(&kernel_f32),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-            let params = BlurParams {
-                width,
-                height,
-                radius,
-                _pad: 0,
-            };
-            let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("dir_blur_params_{label}")),
-                contents: bytemuck::bytes_of(&params),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("dir_blur_h_{label}")),
-                layout: &blur_pipe_h.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: params_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: src.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: kernel_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: buf_a.as_entire_binding(),
-                    }, // mid
-                ],
-            });
-            let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("dir_blur_v_{label}")),
-                layout: &blur_pipe_v.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: params_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: buf_a.as_entire_binding(),
-                    }, // mid
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: kernel_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: out.as_entire_binding(),
-                    },
-                ],
-            });
-            BlurJob {
-                _kernel_buf: kernel_buf,
-                _params_buf: params_buf,
-                bg_h,
-                bg_v,
-            }
-        };
+    let make_blur = |sigma: f32, src: &wgpu::Buffer, out: &wgpu::Buffer, label: &str| -> BlurJob {
+        blur::make_blur_job(
+            device,
+            sigma,
+            width,
+            height,
+            src,
+            buf_a,
+            out,
+            label,
+            &blur_pipe_h,
+            &blur_pipe_v,
+        )
+    };
     // Gaussian component of the blend: correction → buf_gaussian. Skipped
     // entirely (with the rest of the spatial blend) when the CPU gate is
     // off — `diffuse` is the mirror of `diffusion_size_pixel > 0`.
     let blur_gaussian = diffuse.then(|| {
-        make_blur_job(
+        make_blur(
             dp.diffusion_size_px,
             &buf_correction,
             &buf_gaussian,
-            "gaussian",
+            "dir_blur_gaussian",
         )
     });
 
@@ -329,8 +268,8 @@ pub(super) fn build_dir_state(
     if diffuse {
         for (amp, ratio) in spektrafilm_math::gaussian::EXPONENTIAL_GAUSSIAN_FITS {
             let sigma = ratio as f32 * dp.diffusion_tail_px;
-            let blur =
-                (sigma > 0.0).then(|| make_blur_job(sigma, &buf_correction, &buf_gaussian, "tail"));
+            let blur = (sigma > 0.0)
+                .then(|| make_blur(sigma, &buf_correction, &buf_gaussian, "dir_blur_tail"));
             let src = if blur.is_some() {
                 &buf_gaussian
             } else {
@@ -465,16 +404,6 @@ pub(super) fn build_dir_state(
         contents: bytemuck::cast_slice(&curves_f32),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct DensityParams {
-        width: u32,
-        height: u32,
-        k: u32,
-        uniform_grid: u32,
-        gamma_inv: [f32; 3],
-        _pad: f32,
-    }
     let density_params = DensityParams {
         width,
         height,
@@ -545,7 +474,6 @@ pub(super) fn build_dir_state(
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl DirState {
     pub(super) fn encode_passes(
         &self,

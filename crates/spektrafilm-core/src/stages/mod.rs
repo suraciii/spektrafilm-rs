@@ -1,5 +1,4 @@
 pub mod converting;
-mod debug_compare;
 pub mod filming;
 pub mod grain_fotufilm;
 pub mod grain_v3;
@@ -98,6 +97,18 @@ fn build_lut_grid(steps: usize, data_min: [f64; 3], data_max: [f64; 3]) -> Image
     grid
 }
 
+/// Whether the grain engine selected by `params` is the one `engine` names.
+///
+/// Every grain stage's `active`/`validate_supported` pair starts from this
+/// gate; the engine-specific predicates add their own extra conditions on top.
+pub(crate) fn grain_engine_active(
+    params: &crate::params::RuntimeParams,
+    engine: crate::params::GrainEngine,
+) -> bool {
+    let grain = &params.film_render.grain;
+    grain.active && grain.engine == engine
+}
+
 #[cfg(test)]
 mod lut_grid_tests {
     use super::build_lut_grid;
@@ -132,18 +143,9 @@ mod integration_tests {
     use crate::params::RuntimeParams;
     use crate::pipeline::Pipeline;
     use crate::profile;
+    use crate::test_support::data_dir;
     use spektrafilm_math::image::ImageBuf;
     use spektrafilm_math::precision::{Scalar, from_f64};
-    use std::path::Path;
-
-    fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
 
     #[test]
     fn grain_v2_uses_scan_encoding_and_preserves_linear_export() {
@@ -469,18 +471,13 @@ mod debug_tests {
     use crate::params::RuntimeParams;
     use crate::profile;
     use crate::stages;
+    use crate::test_support::data_dir;
     use spektrafilm_math::image::ImageBuf;
     use spektrafilm_math::precision::from_f64;
-    use std::path::Path;
 
     #[test]
     fn debug_pipeline_values() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data");
+        let dir = data_dir();
         let film = profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
 
@@ -549,19 +546,10 @@ mod scan_semantics_tests {
     use crate::params::RuntimeParams;
     use crate::pipeline::Pipeline;
     use crate::profile;
+    use crate::test_support::data_dir;
     use spektrafilm_gpu::cpu_backend::CpuBackend;
     use spektrafilm_math::image::ImageBuf;
     use spektrafilm_math::precision::{from_f64, to_f64};
-    use std::path::Path;
-
-    fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
 
     fn quiet_params() -> RuntimeParams {
         // Stochastic/spatial film effects off so the only moving part in

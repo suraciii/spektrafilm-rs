@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use spektrafilm_core::profile;
@@ -11,6 +11,25 @@ use spektrafilm_core::profile;
 pub(super) struct ProfileEntry {
     stock: String,
     display: String,
+}
+
+/// Find the data directory. Probes, in order:
+///   1. `$SPEKTRAFILM_DATA_DIR` — explicit override.
+///   2. [`spektrafilm_core::config::data_dir_candidates`] — the exe-relative
+///      install layouts, the working directory, then the workspace root for
+///      `cargo run -p spektrafilm-gui`.
+///
+/// Finder launches apps with `cwd=/`, so the exe-relative probes matter for a
+/// double-clicked `.app`. Falls back to `./data` so the downstream loader
+/// surfaces a clear "profiles not found" error.
+pub(super) fn pick_data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("SPEKTRAFILM_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    spektrafilm_core::config::data_dir_candidates()
+        .into_iter()
+        .find(|path| path.is_dir())
+        .unwrap_or_else(|| PathBuf::from("data"))
 }
 
 /// Scan `<data_dir>/profiles/*.json`, parse each profile's `info`, and

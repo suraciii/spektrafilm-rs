@@ -225,10 +225,6 @@ pub fn prepare_dir(
     }
 }
 
-/// Full DIR coupler density correction pipeline.
-///
-/// Port of Python `apply_density_correction_dir_couplers`.
-#[allow(clippy::too_many_arguments)]
 fn langmuir(value: f64, k: f64, reference: f64) -> f64 {
     if k.is_infinite() {
         value
@@ -238,12 +234,7 @@ fn langmuir(value: f64, k: f64, reference: f64) -> f64 {
 }
 
 fn langmuir_params(curves: &[[f64; 3]], donor_k: [f64; 3]) -> ([f64; 3], [f64; 3]) {
-    let mut dmax = [0.0_f64; 3];
-    for row in curves {
-        for c in 0..3 {
-            dmax[c] = dmax[c].max(row[c]);
-        }
-    }
+    let dmax = max_density_f64(curves);
     let dref = [dmax[0] * 0.5, dmax[1] * 0.5, dmax[2] * 0.5];
     let k = [
         donor_k[0] * dmax[0],
@@ -276,12 +267,7 @@ fn curves_before_dir_langmuir(
     donor_ref: [f64; 3],
     receiver: Option<([f64; 3], [f64; 3])>,
 ) -> Vec<[f64; 3]> {
-    let mut dmax = [0.0_f64; 3];
-    for row in curves {
-        for c in 0..3 {
-            dmax[c] = dmax[c].max(row[c]);
-        }
-    }
+    let dmax = max_density_f64(curves);
     let mut out = vec![[0.0; 3]; curves.len()];
     for c in 0..3 {
         let mut shifted = Vec::with_capacity(curves.len());
@@ -333,6 +319,9 @@ fn curves_before_dir_langmuir(
     out
 }
 
+/// Full DIR coupler density correction pipeline.
+///
+/// Port of Python `apply_density_correction_dir_couplers`.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_density_correction(
     density_cmy: &ImageBuf,

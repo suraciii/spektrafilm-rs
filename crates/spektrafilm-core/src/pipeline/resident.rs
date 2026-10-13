@@ -289,6 +289,14 @@ impl Pipeline {
         // faithful per-stage path until the positive-film resident chain
         // reaches parity (see the ScannerFilmPoints note above).
         if color_ref.has_remap() {
+            if backend.explicit_gpu_request() {
+                return Err(
+                    "explicit GPU request cannot run the scanner luminance correction on WGPU \
+                     (it must follow linear optical blur and glare on the faithful per-stage path); \
+                     retry with an explicit CPU request"
+                        .into(),
+                );
+            }
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
                     spektrafilm_gpu::telemetry::ResidentDeclineReason::ScannerFilmPoints,
@@ -880,16 +888,8 @@ impl Pipeline {
 mod tests {
     use super::*;
     use crate::params::RuntimeParams;
+    use crate::test_support::data_dir;
     use spektrafilm_math::image::ImageBuf;
-
-    fn data_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
 
     /// Params for the film-render resident parity checks: the slide-style
     /// `input > film > scan` route with every optional device-heavy stage

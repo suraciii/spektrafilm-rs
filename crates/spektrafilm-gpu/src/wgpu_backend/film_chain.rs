@@ -1,8 +1,8 @@
 use super::{
-    ImageBuf, WgpuBackend, build_dir_state, build_gamut_state, build_glare_state,
-    build_grain_v2_state, build_halation_state, build_highlight_boost_state,
-    build_simple_blur_state, build_unsharp_state, dispatch_linear, f32_to_scalars,
-    is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
+    DensityParams, FrontParams, ImageBuf, ScanParams, WgpuBackend, build_dir_state,
+    build_gamut_state, build_glare_state, build_grain_v2_state, build_halation_state,
+    build_highlight_boost_state, build_simple_blur_state, build_unsharp_state, dispatch_linear,
+    f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
 };
 
 impl WgpuBackend {
@@ -198,17 +198,6 @@ impl WgpuBackend {
         // Front pass (hanatos LUT lookup or mallett matmul). Both shaders
         // share this uniform layout; `lut_size` is hanatos-only (0 for
         // mallett, where the field is a pad).
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct FrontParams {
-            width: u32,
-            height: u32,
-            lut_size: u32,
-            _pad: u32,
-            col0: [f32; 4],
-            col1: [f32; 4],
-            col2: [f32; 4],
-        }
         let (m, front_lut_size) = match &p.front {
             crate::FrontPass::Hanatos2025 {
                 tc_lut,
@@ -227,16 +216,6 @@ impl WgpuBackend {
         };
         let front_params_buf = mk_uniform("front_params", bytemuck::bytes_of(&front_params));
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct DensityParams {
-            width: u32,
-            height: u32,
-            k: u32,
-            uniform_grid: u32,
-            gamma_inv: [f32; 3],
-            _pad: f32,
-        }
         let film_density_params = DensityParams {
             width: image.width,
             height: image.height,
@@ -293,18 +272,6 @@ impl WgpuBackend {
             bytemuck::bytes_of(&print_density_params),
         );
 
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct ScanParams {
-            width: u32,
-            height: u32,
-            n_wavelengths: u32,
-            normalization: f32,
-            col0: [f32; 4],
-            col1: [f32; 4],
-            col2: [f32; 4],
-            bw: [f32; 4],
-        }
         let s = scan_xyz_to_rgb;
         // B&W/slide luminance remap (m, q); z=1 enables it in the shader.
         // Preserve floating range before gamut compression and destination encoding.

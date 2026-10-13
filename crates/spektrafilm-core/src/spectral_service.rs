@@ -71,16 +71,7 @@ impl SpectralShape {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-
-    fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
+    use crate::test_support::data_dir;
 
     fn portra_sensitivity() -> Vec<[f64; 3]> {
         let film = crate::profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();

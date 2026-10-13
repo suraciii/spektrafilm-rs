@@ -294,7 +294,6 @@ mod tests {
     use spektrafilm_gpu::cpu_backend::CpuBackend;
     use spektrafilm_gpu::telemetry::ObservationContext;
     use spektrafilm_math::image::ImageBuf;
-    use std::path::PathBuf;
     use std::sync::{Arc, OnceLock};
 
     fn snapshot_and_input() -> (RenderSnapshot, ImageBuf) {
@@ -313,7 +312,7 @@ mod tests {
             params,
             "kodak_portra_400".into(),
             "kodak_portra_endura".into(),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            crate::headless::data_dir(),
             serde_json::json!({}),
             Arc::new(OnceLock::new()),
         );

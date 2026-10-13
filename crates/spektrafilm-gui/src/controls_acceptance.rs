@@ -270,13 +270,7 @@ mod layout_snapshots {
                     directory.is_absolute(),
                     "snapshot directory must be absolute"
                 );
-                let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .parent()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .canonicalize()
-                    .unwrap();
+                let repository = crate::headless::repository_root().canonicalize().unwrap();
                 std::fs::create_dir_all(&directory).unwrap();
                 let directory = directory.canonicalize().unwrap();
                 assert!(

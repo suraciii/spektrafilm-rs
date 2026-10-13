@@ -1,7 +1,5 @@
 use super::*;
-fn data() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
-}
+use crate::test_support::data_dir as data;
 fn test_film() -> Profile {
     profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap()
 }
