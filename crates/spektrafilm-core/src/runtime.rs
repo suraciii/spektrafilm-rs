@@ -391,13 +391,18 @@ impl Runtime {
     }
 
     pub fn telemetry_configuration(&self) -> crate::telemetry::RenderConfiguration {
-        crate::telemetry::RenderConfiguration::from_runtime(
+        let mut configuration = crate::telemetry::RenderConfiguration::from_runtime(
             &self.pipeline.params,
             &self.pipeline.film,
             &self.pipeline.print,
-        )
+        );
+        configuration.reference = self.reference_provenance().cloned();
+        configuration
     }
 
+    pub fn reference_provenance(&self) -> Option<&crate::digital_reference::ReferenceProvenance> {
+        self.pipeline.reference_provenance()
+    }
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }

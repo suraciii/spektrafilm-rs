@@ -59,6 +59,13 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     if !enabled {
         return Ok(false);
     }
+    if params.scanner.positive_interpretation
+        == crate::params::PositiveInterpretation::DigitalReference
+    {
+        return Err(format!(
+            "{CELL_SPECTRAL_ENV} does not support Digital Reference; disable the exact-cell diagnostic"
+        ));
+    }
     if params.workflow.route != PRINT_ROUTE && params.workflow.route != FILM_SCAN_ROUTE {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
