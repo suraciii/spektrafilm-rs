@@ -187,9 +187,9 @@ impl Pipeline {
         color_ref: &crate::color_reference::ColorReference,
         pixel_size_um: f64,
         ae_ev: f64,
-    ) -> Option<ImageBuf> {
+    ) -> Result<Option<ImageBuf>, String> {
         if !backend.is_gpu() {
-            return None;
+            return Ok(None);
         }
         // Input transfer decoding is shared preprocessing for the resident
         // route (pipe architecture, capability class): the front pass
@@ -262,6 +262,30 @@ impl Pipeline {
                         context.decline_resident(reason);
                     }
                 }
+                // An explicitly requested GPU backend must not silently run
+                // capability-missing stages on the CPU (pipe architecture
+                // fence policy): fail at assembly instead of demoting the
+                // route. Frontend-class reasons select a route; they do not
+                // demote one and stay permitted.
+                if backend.explicit_gpu_request() {
+                    let capability_missing = reasons.iter().any(|r| {
+                        !matches!(
+                            r,
+                            ResidentFallbackReason::WorkflowRoute
+                                | ResidentFallbackReason::MissingResidentFrontPass
+                                | ResidentFallbackReason::MallettExecutionParity
+                                | ResidentFallbackReason::UnsupportedOutputGamut
+                        )
+                    });
+                    if capability_missing {
+                        return Err(format!(
+                            "explicit GPU request cannot run the complete computation scope \
+                             on WGPU (capability-missing stages: {:?}); retry with an \
+                             explicit CPU request to use the per-stage route",
+                            reasons
+                        ));
+                    }
+                }
                 tracing::info!(
                     target: "spektrafilm_core::pipeline",
                     backend = backend.name(),
@@ -269,7 +293,7 @@ impl Pipeline {
                     fallback_reasons = ?reasons,
                     "using per-stage path because resident GPU execution is unavailable"
                 );
-                return None;
+                return Ok(None);
             }
         }
         // The resident scan shader applies its nonlinear luminance remap
@@ -286,9 +310,17 @@ impl Pipeline {
                 reason = "scanner luminance correction must follow linear optical blur and glare",
                 "using faithful per-stage scanner correction"
             );
-            return None;
+            return Ok(None);
         }
-        let front = self.resident_front_pass(color_ref, ae_ev)?;
+        let Some(front) = self.resident_front_pass(color_ref, ae_ev) else {
+            if backend.explicit_gpu_request() {
+                return Err(
+                    "explicit GPU request cannot prepare the resident front pass on WGPU; retry with an explicit CPU request"
+                        .into(),
+                );
+            }
+            return Ok(None);
+        };
 
         let film_curves = crate::chain_prep::FilmCurves::prepare(&self.film);
         let film_log_exp = film_curves.log_exposure;
@@ -621,7 +653,13 @@ impl Pipeline {
                 fallback_reasons = ?[ResidentFallbackReason::BlurRadiusExceedsBackendSupport],
                 "using per-stage path because a resident FIR blur exceeds backend support"
             );
-            return None;
+            if backend.explicit_gpu_request() {
+                return Err(
+                    "explicit GPU request exceeds the backend FIR blur support; retry with an explicit CPU request"
+                        .into(),
+                );
+            }
+            return Ok(None);
         }
         let resident = super::stages::StageObservation::new(backend, "film_chain");
         let result = resident.backend(backend).try_run_film_chain(&params);
@@ -634,7 +672,7 @@ impl Pipeline {
                 );
             }
         }
-        result
+        Ok(result)
     }
 
     /// Finalize the export transfer without applying the same-space matrix twice.
@@ -942,5 +980,55 @@ mod tests {
         let mean = sum / out_cpu.data.len() as f64;
         assert!(mean < 5e-2, "langmuir fence mean divergence: {mean}");
         assert!(max_diff < 5e-1, "langmuir fence max divergence: {max_diff}");
+    }
+
+    /// An explicitly requested GPU backend must fail at assembly when a
+    /// capability-missing stage would otherwise demote the route to CPU
+    /// silently (pipe architecture fence policy). The scanner spectral LUT
+    /// is still an unported capability, so requesting it with an explicit
+    /// backend errors before output publication.
+    #[test]
+    fn explicit_gpu_request_fails_on_capability_gap() {
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        // Capability gap: the scanner spectral LUT has no GPU path yet.
+        params.settings.use_scanner_lut = true;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
+        let err = pipeline
+            .process(img, &gpu)
+            .expect_err("explicit GPU request must fail on a capability gap");
+        assert!(
+            err.contains("explicit GPU request"),
+            "unexpected error: {err}"
+        );
+
+        // The automatic route with the same configuration still succeeds on
+        // the per-stage path.
+        let Some(auto_gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            return;
+        };
+        let mut params2 = RuntimeParams::default();
+        params2.camera.auto_exposure = false;
+        params2.io.output_gamut_compress.algorithm = "off".into();
+        params2.settings.use_scanner_lut = true;
+        let pipeline2 = Pipeline::new_with_spectral(
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+            params2,
+            &dir,
+        )
+        .unwrap();
+        let img2 = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
+        assert!(pipeline2.process(img2, &auto_gpu).is_ok());
     }
 }

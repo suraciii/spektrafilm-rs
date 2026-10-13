@@ -276,6 +276,14 @@ pub trait ComputeBackend: Send + Sync {
         false
     }
 
+    /// True when the user explicitly requested this GPU backend
+    /// (`SPEKTRAFILM_BACKEND=wgpu`). An explicit request must not run a
+    /// capability-missing stage on the CPU silently: the operation fails
+    /// at assembly instead of demoting the route.
+    fn explicit_gpu_request(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &str;
 }
 
@@ -534,7 +542,12 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     #[cfg(feature = "wgpu-backend")]
     {
         if requested.as_deref().is_none() || requested.as_deref() == Some("wgpu") {
-            if let Some(gpu) = wgpu_backend::WgpuBackend::new() {
+            let constructor = if requested.as_deref() == Some("wgpu") {
+                wgpu_backend::WgpuBackend::new_explicit
+            } else {
+                wgpu_backend::WgpuBackend::new
+            };
+            if let Some(gpu) = constructor() {
                 tracing::info!(
                     precision = "f32",
                     reference = false,
