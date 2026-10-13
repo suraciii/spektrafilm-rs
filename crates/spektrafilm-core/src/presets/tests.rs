@@ -580,12 +580,15 @@ fn section_matching_compares_typed_carried_values() {
 }
 
 #[test]
-fn look_resolution_normalizes_scan_output_for_film_and_route() {
+fn look_resolution_keeps_a_declared_film_scan_route_and_its_scan_mode() {
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
     current.io.scan_film = true;
     current.scanner.scan_output = "negative_to_positive".into();
-    for stock in ["kodak_ektachrome_100", "kodak_portra_400"] {
+    for (stock, expected_mode) in [
+        ("kodak_ektachrome_100", "direct_scan"),
+        ("kodak_portra_400", "negative_to_positive"),
+    ] {
         let preset = Preset::capture(
             "Scan look",
             stock,
@@ -594,16 +597,28 @@ fn look_resolution_normalizes_scan_output_for_film_and_route() {
             provenance(),
         );
         let resolved = preset.resolve(&data(), &current).unwrap();
-        assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
-        if resolved.film.is_positive() {
-            assert_eq!(resolved.params.workflow.route, "input > film > scan");
-        } else {
-            assert_eq!(
-                resolved.params.workflow.route,
-                "input > film > print > scan"
-            );
-        }
+        assert_eq!(resolved.params.scanner.scan_output, expected_mode);
+        assert_eq!(resolved.params.workflow.route, "input > film > scan");
     }
+}
+
+#[test]
+fn look_resolution_normalizes_scan_mode_without_a_declared_film_scan_route() {
+    let mut current = RuntimeParams::default();
+    current.scanner.scan_output = "negative_to_positive".into();
+    let preset = Preset::capture(
+        "Scan look",
+        "kodak_portra_400",
+        "kodak_portra_endura",
+        &current,
+        provenance(),
+    );
+    let resolved = preset.resolve(&data(), &current).unwrap();
+    assert_eq!(resolved.params.scanner.scan_output, "direct_scan");
+    assert_eq!(
+        resolved.params.workflow.route,
+        "input > film > print > scan"
+    );
 }
 
 #[test]

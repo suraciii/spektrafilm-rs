@@ -422,7 +422,18 @@ impl Preset {
         look.apply_to(&mut params);
         params.neutral_print_filters_protected = [true; 3];
         let default_route = workflow_default(&film);
-        params.workflow.route = default_route.clone();
+        // A caller that already declared a film-scan route keeps it. The route and
+        // the scan mode it selects are a workflow choice; overriding the route here
+        // would silently discard the scan mode an authored document carries.
+        let caller_declared_film_scan = matches!(
+            current.workflow.route.as_str(),
+            "input > film > scan" | "input > convert-film > scan"
+        );
+        params.workflow.route = if caller_declared_film_scan {
+            current.workflow.route.clone()
+        } else {
+            default_route.clone()
+        };
         params.io.scan_film = film.is_positive();
         if params.scanner.positive_interpretation
             == crate::params::PositiveInterpretation::DigitalReference
