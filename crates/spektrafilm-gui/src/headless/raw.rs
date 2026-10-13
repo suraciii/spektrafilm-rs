@@ -1,22 +1,28 @@
 //! RAW import acceptance through the production App.
 //!
-//! The pinned Kodak DC50 fixture is not redistributed. Provide it with
-//! `SPEKTRAFILM_GUI_RAW_FIXTURE` pointing at a file whose SHA-256 matches the
-//! pinned digest; a missing or mismatched fixture fails these tests instead
-//! of silently skipping them.
+//! The fixture-backed test is opt-in behind the `gui-raw` feature: the pinned
+//! Kodak DC50 image is not redistributed, so it stays out of the default gate
+//! and runs through `just gui-raw`. Point `SPEKTRAFILM_GUI_RAW_FIXTURE` at a
+//! file whose SHA-256 matches the pinned digest; a missing or mismatched
+//! fixture fails instead of silently skipping. The fixture-free failure path
+//! needs no external file and always runs.
 
 use super::*;
-use spektrafilm_gpu::cpu_backend::CpuBackend;
 
 /// Pinned Kodak DC50 KDC fixture digest.
+#[cfg(feature = "gui-raw")]
 const RAW_FIXTURE_SHA256: &str = "37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc";
 /// Decoded geometry of the pinned fixture.
+#[cfg(feature = "gui-raw")]
 const RAW_WIDTH: u32 = 768;
+#[cfg(feature = "gui-raw")]
 const RAW_HEIGHT: u32 = 512;
 
-fn raw_fixture() -> Option<PathBuf> {
+#[cfg(feature = "gui-raw")]
+fn raw_fixture() -> PathBuf {
     use sha2::{Digest, Sha256};
-    let path = std::env::var_os("SPEKTRAFILM_GUI_RAW_FIXTURE")?;
+    let path = std::env::var_os("SPEKTRAFILM_GUI_RAW_FIXTURE")
+        .expect("SPEKTRAFILM_GUI_RAW_FIXTURE is not set; run the RAW acceptance fixture");
     let path = PathBuf::from(path);
     if !path.is_file() {
         panic!(
@@ -32,11 +38,14 @@ fn raw_fixture() -> Option<PathBuf> {
         "RAW fixture digest mismatch for {}",
         path.display()
     );
-    Some(path)
+    path
 }
 
 /// Build a session without the shared synthetic image so the App starts empty.
+#[cfg(feature = "gui-raw")]
 fn empty_session() -> Session {
+    use spektrafilm_gpu::cpu_backend::CpuBackend;
+
     let directory = tempfile::tempdir().unwrap();
     let factory = state::GuiState::factory();
     let mut params = factory.runtime_params().unwrap();
@@ -68,11 +77,10 @@ fn empty_session() -> Session {
     Session { harness, directory }
 }
 
+#[cfg(feature = "gui-raw")]
 #[test]
 fn raw_import_through_the_app_sets_linear_aces_and_renders() {
-    let Some(fixture) = raw_fixture() else {
-        panic!("SPEKTRAFILM_GUI_RAW_FIXTURE is not set; run the RAW acceptance fixture");
-    };
+    let fixture = raw_fixture();
     let mut s = empty_session();
     let h = &mut s.harness;
     let destination = s.directory.path().join("raw-export.tiff");

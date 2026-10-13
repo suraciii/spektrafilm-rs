@@ -75,7 +75,7 @@ gui-raw:
     set -euo pipefail
     fixture="${SPEKTRAFILM_GUI_RAW_FIXTURE:?Set SPEKTRAFILM_GUI_RAW_FIXTURE to the pinned Kodak DC50 KDC file}"
     SPEKTRAFILM_GUI_RAW_FIXTURE="$fixture" \
-        cargo test --locked -p spektrafilm-gui --features precision-f64 headless::raw::
+        cargo test --locked -p spektrafilm-gui --features precision-f64,gui-raw headless::raw::
 
 # Render focused GUI layouts offscreen; requires a usable WGPU adapter.
 gui-layout:
