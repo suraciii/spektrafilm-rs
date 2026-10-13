@@ -2124,3 +2124,196 @@ fn describe_text_lists_non_settable_runtime_leaves_and_set_rejects_them() {
     );
     assert!(error.contains("recipe runner"), "{error}");
 }
+
+#[test]
+fn digital_reference_explicit_carrier_renders_and_rejects_invalid_transactions() {
+    let f = Fixture::new();
+    let selection = "scanner.scan_output=negative_to_positive,scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference";
+    let base = [
+        "--film",
+        "kodak_portra_400",
+        "--route",
+        "input > film > scan",
+        "--set",
+        selection,
+    ];
+    let mut args = base.to_vec();
+    args.push("--dry-run");
+    let report = f.report(&args);
+    assert!(!f.root.join("output.tif").exists());
+    assert_eq!(
+        report["parameters"]["scanner"]["reference_exposure_ev"],
+        0.0
+    );
+    assert_eq!(
+        report["parameters"]["scanner"]["reference_balance_ev"],
+        json!([0.0, 0.0, 0.0])
+    );
+    let monochrome = f.report(&[
+        "--film",
+        "kodak_doublex",
+        "--route",
+        "input > film > scan",
+        "--set",
+        selection,
+        "--dry-run",
+    ]);
+    assert_eq!(monochrome["film_profile"], "kodak_doublex");
+    args = base.to_vec();
+    args.extend_from_slice(&["--backend", "cpu", "--set", "camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true"]);
+    let rendered = f.process(&args);
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let output_path = f.root.join("output.tif");
+    let neutral = image::open(&output_path).unwrap().to_rgb32f();
+    args.extend_from_slice(&["--set", "scanner.reference_exposure_ev=1"]);
+    let brighter = f.process(&args);
+    assert!(
+        brighter.status.success(),
+        "{}",
+        String::from_utf8_lossy(&brighter.stderr)
+    );
+    let bright = image::open(&output_path).unwrap().to_rgb32f();
+    assert!(bright.as_raw().iter().sum::<f32>() > neutral.as_raw().iter().sum::<f32>());
+    let retained = std::fs::read(&output_path).unwrap();
+    let input_before = std::fs::read(&f.input).unwrap();
+    for invalid in [
+        "scanner.receiver_profile=legacy_colorimetric",
+        "scanner.positive_interpretation=density",
+        "scanner.auto_setup=per_frame",
+        "scanner.black_point=[0.1,0,0]",
+        "scanner.white_point=[0.9,1,1]",
+        "scanner.positive_density_ev=1",
+        "scanner.positive_balance_ev=[1,0,0]",
+        "scanner.positive_contrast=1.5",
+        "scanner.positive_dmax=2",
+        "scanner.scan_output=direct_scan",
+    ] {
+        for dry_run in [false, true] {
+            let mut args = base.to_vec();
+            args.extend_from_slice(&["--set", invalid]);
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let result = f.process(&args);
+            assert!(
+                !result.status.success(),
+                "accepted {invalid}, dry_run={dry_run}"
+            );
+            assert!(result.stdout.is_empty());
+            let error = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                error.contains("digital_reference") || error.contains("Digital Reference"),
+                "{invalid}: {error}"
+            );
+            assert_eq!(std::fs::read(&output_path).unwrap(), retained);
+            assert_eq!(std::fs::read(&f.input).unwrap(), input_before);
+        }
+    }
+    for dry_run in [false, true] {
+        let mut args = base.to_vec();
+        args[3] = "input > convert-film > scan";
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let result = f.process(&args);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("Digital Reference"));
+        assert_eq!(std::fs::read(&output_path).unwrap(), retained);
+    }
+    let result = f.process(&[
+        "--film",
+        "kodak_ektachrome_100",
+        "--route",
+        "input > film > scan",
+        "--set",
+        selection,
+        "--dry-run",
+    ]);
+    assert!(
+        !result.status.success(),
+        "accepted unsupported reversal film"
+    );
+    assert_eq!(std::fs::read(&output_path).unwrap(), retained);
+}
+
+#[test]
+fn digital_reference_recipe_render_preserves_output_on_invalid_receiver() {
+    let f = Fixture::new();
+    let report = f.report(&[
+        "--film", "kodak_portra_400", "--route", "input > film > scan", "--set",
+        "scanner.scan_output=negative_to_positive,scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference,scanner.reference_exposure_ev=0.5,scanner.reference_balance_ev=[0.25,-0.125,0],camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true",
+        "--dry-run",
+    ]);
+    let input = f.root.join("reference-input.tiff");
+    let file = std::fs::File::create(&input).unwrap();
+    let mut encoder = tiff::encoder::TiffEncoder::new(file).unwrap();
+    encoder
+        .new_image::<tiff::encoder::colortype::RGB32Float>(4, 4)
+        .unwrap()
+        .write_data(&[0.1_f32, 0.2, 0.3].repeat(16))
+        .unwrap();
+    drop(encoder);
+    let recipe_path = f.root.join("reference-recipe.json");
+    let output = f.root.join("reference-recipe.png");
+    let mut recipe = json!({
+        "schemaVersion":"spektrafilm-rs-params-1",
+        "filmProfile":"kodak_portra_400", "printProfile":"kodak_portra_endura",
+        "parameters":report["parameters"],
+        "output":{"format":"png","precisionBits":8,"colorSpace":"sRGB","transferFunction":"srgb","geometry":"bounded","encoding":"bounded-preview","maxEdge":4}
+    });
+    std::fs::write(&recipe_path, serde_json::to_vec(&recipe).unwrap()).unwrap();
+    let args = [
+        "render",
+        "--input",
+        input.to_str().unwrap(),
+        "--recipe",
+        recipe_path.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+        "--data-dir",
+        f.data.to_str().unwrap(),
+    ];
+    let result = f.run(&args);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let process_output = f.root.join("reference-process.png");
+    let process = f.run(&[
+        "process", input.to_str().unwrap(), "--output", process_output.to_str().unwrap(),
+        "--film", "kodak_portra_400", "--route", "input > film > scan", "--backend", "cpu",
+        "--input-color-space", "ProPhoto RGB", "--input-cctf-decoding", "false",
+        "--set", "scanner.scan_output=negative_to_positive,scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference,scanner.reference_exposure_ev=0.5,scanner.reference_balance_ev=[0.25,-0.125,0],camera.auto_exposure=false,debug.deactivate_spatial_effects=true,debug.deactivate_stochastic_effects=true,settings.preview_mode=true,settings.preview_max_size=4,io.output_color_space=sRGB,io.output_cctf_encoding=true",
+    ]);
+    assert!(
+        process.status.success(),
+        "{}",
+        String::from_utf8_lossy(&process.stderr)
+    );
+    let recipe_pixels = image::open(&output).unwrap().to_rgb8();
+    let process_pixels = image::open(&process_output).unwrap().to_rgb8();
+    assert_eq!(
+        recipe_pixels, process_pixels,
+        "recipe must preserve reference exposure and balance behavior"
+    );
+    let retained = std::fs::read(&output).unwrap();
+    recipe["parameters"]["scanner"]["receiver_profile"] = json!("legacy_colorimetric");
+    std::fs::write(&recipe_path, serde_json::to_vec(&recipe).unwrap()).unwrap();
+    let rejected_output = f.root.join("rejected-reference.png");
+    let mut rejected_args = args;
+    rejected_args[6] = rejected_output.to_str().unwrap();
+    let result = f.run(&rejected_args);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        error.contains("digital_reference") || error.contains("Digital Reference"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), retained);
+    assert!(!rejected_output.exists());
+}

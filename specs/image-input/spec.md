@@ -8,3 +8,4 @@
 - Auto-exposure meters the complete source before crop and resize. Crop and resize then produce the working image and preserve the source pixel pitch for spatial stages.
 - Crop bounds, dimensions, and resize factors must be finite and valid. Empty crops are errors.
 - Input loading does not apply film, print, grain, or output encoding; those belong to the film chain and output capabilities.
+- The renderer's `input` route must apply the requested crop and resize before output color conversion. It must preserve decoded input values without auto-exposure or exposure compensation. Observed input dimensions must identify the original source separately from working and published dimensions.

@@ -58,7 +58,9 @@ impl Pipeline {
         if self.params.scanner.scan_output == "negative_to_positive" {
             reasons.push(ResidentFallbackReason::NegativeToPositiveOutput);
         }
-        if self.params.scanner.receiver_profile == crate::params::ReceiverProfile::LabScanApprox {
+        if self.params.scanner.receiver_profile
+            != crate::params::ReceiverProfile::LegacyColorimetric
+        {
             reasons.push(ResidentFallbackReason::ScannerReceiver);
         }
         if self.params.io.scan_film

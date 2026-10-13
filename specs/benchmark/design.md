@@ -29,6 +29,10 @@ The benchmark must not add a second parameter DSL. Suite and target documents ma
 
 The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters. The executable must not require the Python benchmark at runtime.
 
+The single-image CLI adapter must build the existing suite and case representation and call the existing run orchestrator. It must resolve each authored dependency against its owning document before producing the retained suite. It must not add chart detection or a separate simulation-parameter vocabulary.
+
+Externally preparing all images would keep the benchmark smaller but would discard original metering and film-scale context for simulation crops. A benchmark image editor would duplicate those rules. The chosen boundary accepts prepared local files, delegates simulation geometry to the renderer, and owns only completed-result measurement and detail regions. Preparation provenance remains passive evidence.
+
 ## Component responsibilities
 
 ### Document loader
@@ -47,11 +51,15 @@ The orchestrator must execute the real `spektrafilm` or `spektrafilm-f64` entry 
 
 The orchestrator must retain the command vector after path normalization, selected environment allowlist, process identity, renderer result, and execution diagnostics. It must identify the renderer revision when the executable exposes one and retain the executable hash regardless.
 
+The orchestrator must retain an observed floating decoded-input result for both raster and RAW cases through the renderer's input route. Source and simulation must use the same case geometry and decoding controls. Source output conversion and disabled magazine finishing must be explicit overrides; image-input and simulation behavior retain their existing owners. Source dimensions and actual result geometry must be retained independently.
+
 ### Comparison engine
 
 The comparison engine matches results by stable case and seed identities. It verifies protocol, dimensions, source declarations, effective parameter compatibility, and applicable reference scope before computing measurements. It must produce an explicit incompatibility result instead of silently aligning incompatible runs.
 
 It must compute maps before summaries. Summary scalars must be derived from the retained map or curve and the declared valid mask. Automatic hotspot selection must use those same retained measurements.
+
+Single-run comparison must consume source and simulation masters from one run. It must reuse existing measurement adapters for input/simulation and existing reference evaluation for reference/simulation, without synthesizing a second simulation run or measuring a self-comparison as a substitute. Each pair owns its roles, measurement availability, maps, hotspots, and review artifacts. Reference processing and correspondence limits must apply before metric selection. The report builder must consume these pair records without assigning reference images baseline status.
 
 ### Metric adapters
 
@@ -67,7 +75,9 @@ It must not infer budgets, tune parameters, choose a more favorable reference, o
 
 ### Review builder
 
-The review builder creates an offline report from comparison artifacts. It must not render or recalculate metrics. It must preserve artifact hashes in its manifest and use relative links. It must emit accessible full-image, A/B, locator, detail, and difference views.
+The review builder creates an offline report from comparison artifacts. It must not render or recalculate metrics. It must preserve artifact hashes and relative paths referenced by the immutable comparison snapshot. Permitted indexed dependencies must remain locally resolvable after the original comparison is removed; redistribution restrictions and unavailable artifacts must remain explicit. It must emit accessible full-image, A/B, locator, detail, and difference views.
+
+Case navigation must preserve request order. Pair selection must change the complete evidence panel, including labels, scalar summary, difference artifacts, regions, and native detail. Pixel-aligned pairs use synchronized viewers; regional and visual pairs use separately identified native images and corresponding regions where supplied.
 
 ## Identity and cache invariant
 

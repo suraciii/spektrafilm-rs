@@ -146,13 +146,17 @@ fn scan_duplicate(b: &[u8], mut i: usize) -> Result<usize> {
     }
 }
 
-pub fn load_json_document(path: &Path) -> Result<Value> {
+pub fn load_json_value(path: &Path) -> Result<Value> {
     let b = fs::read(path)
         .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
     scan_duplicate(&b, 0)?;
     let v: Value = serde_json::from_slice(&b)
         .map_err(|e| err("document_read", e.to_string()).at(path.display().to_string()))?;
     finite(&v)?;
+    Ok(v)
+}
+pub fn load_json_document(path: &Path) -> Result<Value> {
+    let v = load_json_value(path)?;
     if !v.is_object() {
         return Err(err("document_type", "document root must be an object"));
     }
@@ -375,6 +379,26 @@ fn config(v: &Value, doc: &Path) -> Result<()> {
 }
 
 pub fn schema_for(kind: &str) -> Result<Value> {
+    if matches!(
+        kind,
+        "configuration" | "reference" | "regions" | "preparation"
+    ) {
+        let suite = schema_for("suite")?;
+        let mut schema = suite["properties"]["cases"]["items"]["properties"][kind].clone();
+        if kind == "reference" {
+            schema["properties"].as_object_mut().unwrap().remove("path");
+            schema["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sha256");
+            schema["required"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|v| v != "path" && v != "sha256");
+        }
+        schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
+        return Ok(schema);
+    }
     let raw = match kind {
         "suite" => include_str!("../assets/suite.schema.json"),
         "target" => include_str!("../assets/target.schema.json"),
@@ -420,6 +444,98 @@ fn validate_schema(kind: &str, v: &Value) -> Result<()> {
     }
     Ok(())
 }
+pub fn validate_local_dependencies(kind: &str, value: &Value, document: &Path) -> Result<()> {
+    match kind {
+        "configuration" => config(value, document)?,
+        "regions" => {
+            let regions = value
+                .as_array()
+                .ok_or_else(|| err("schema_validation", "regions must be array"))?;
+            unique(regions, "id")?;
+            for region in regions {
+                if region["id"] == "full_image" {
+                    return Err(err("reserved_region", "full_image is reserved"));
+                }
+                geometry(&region["geometry"], document)?;
+            }
+        }
+        "preparation" => file_record(&value["original"], document)?,
+        "reference" => {
+            for key in [
+                "transform",
+                "aligned_derivative",
+                "correspondence_review",
+                "common_area_mask",
+            ] {
+                if let Some(record) = value.get(key) {
+                    file_record(record, document)?;
+                }
+            }
+            if let Some(icc) = value["color"].get("icc") {
+                file_record(icc, document)?;
+            }
+            for region in value["regions"].as_array().into_iter().flatten() {
+                geometry(&region["geometry"], document)?;
+            }
+            if value["scope"] == "aligned_scene"
+                && (value.get("correspondence_review").is_none()
+                    || value.get("common_area_mask").is_none()
+                    || (value.get("transform").is_none()
+                        && value.get("aligned_derivative").is_none()))
+            {
+                return Err(err(
+                    "missing_correspondence",
+                    "aligned scene requires transform/derivative, review, and mask",
+                ));
+            }
+            if value["scope"] == "aligned_scene" {
+                crate::references::validate_correspondence_documents(value, document)?;
+                let review_path = resolve_path(
+                    value["correspondence_review"]["path"].as_str().unwrap(),
+                    document,
+                )?;
+                let review = load_json_document(&review_path)?;
+                for region in review["excluded_regions"].as_array().into_iter().flatten() {
+                    geometry(&region["geometry"], &review_path)?;
+                }
+            }
+            if value["scope"] == "regional"
+                && value["regions"].as_array().is_none_or(|v| v.is_empty())
+            {
+                return Err(err(
+                    "missing_regions",
+                    "regional reference requires corresponding regions",
+                ));
+            }
+            if value["scope"] == "material" {
+                for key in ["domain", "units", "instrument", "conditions"] {
+                    if value.get(key).is_none() {
+                        return Err(err(
+                            "material_conditions",
+                            "material reference requires measurement conditions",
+                        ));
+                    }
+                }
+            }
+            if value["color"].get("icc").is_none()
+                && (value["color"].get("color_space").is_none()
+                    || value["color"].get("cctf_decoding").is_none())
+            {
+                return Err(err(
+                    "reference_color",
+                    "reference requires explicit color or hashed ICC",
+                ));
+            }
+        }
+        _ => return Err(err("unknown_document_kind", kind)),
+    }
+    Ok(())
+}
+
+pub fn validate_shape(kind: &str, value: &Value) -> Result<()> {
+    validate_authored(kind, value)
+}
+
 fn validate_authored(kind: &str, v: &Value) -> Result<()> {
     finite(v)?;
     validate_schema(kind, v)?;
@@ -428,7 +544,12 @@ fn validate_authored(kind: &str, v: &Value) -> Result<()> {
 
 pub fn load_suite(path: &Path) -> Result<Value> {
     let v = load_json_document(path)?;
-    validate_authored("suite", &v)?;
+    validate_suite(&v, path)?;
+    Ok(v)
+}
+
+pub fn validate_suite(v: &Value, path: &Path) -> Result<()> {
+    validate_authored("suite", v)?;
     let cases = v["cases"].as_array().unwrap();
     unique(cases, "id")?;
     for x in v["protocol"]["probe"]["tone_response"]
@@ -441,6 +562,9 @@ pub fn load_suite(path: &Path) -> Result<Value> {
     for c in cases {
         let parsed: CaseDocument = serde_json::from_value(c.clone())?;
         file_record(&c["input"], path)?;
+        if let Some(preparation) = c.get("preparation") {
+            file_record(&preparation["original"], path)?;
+        }
         let input = obj(&c["input"])?;
         let raw = input.get("kind").and_then(Value::as_str) == Some("raw");
         if raw {
@@ -503,12 +627,12 @@ pub fn load_suite(path: &Path) -> Result<Value> {
                             "aligned scene requires transform/derivative, review, and mask",
                         ));
                     }
-                    let review = load_json_document(&resolve_path(
-                        r["correspondence_review"]["path"].as_str().unwrap(),
-                        path,
-                    )?)?;
+                    crate::references::validate_correspondence_documents(r, path)?;
+                    let review_path =
+                        resolve_path(r["correspondence_review"]["path"].as_str().unwrap(), path)?;
+                    let review = load_json_document(&review_path)?;
                     for x in review["excluded_regions"].as_array().into_iter().flatten() {
-                        geometry(&x["geometry"], path)?
+                        geometry(&x["geometry"], &review_path)?
                     }
                 }
                 "regional" => {
@@ -564,7 +688,7 @@ pub fn load_suite(path: &Path) -> Result<Value> {
             }
         }
     }
-    Ok(v)
+    Ok(())
 }
 pub fn load_target(path: &Path) -> Result<Value> {
     let v = load_json_document(path)?;

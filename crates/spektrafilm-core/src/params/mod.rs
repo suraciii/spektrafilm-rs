@@ -124,12 +124,14 @@ pub enum ReceiverProfile {
     #[default]
     LegacyColorimetric,
     LabScanApprox,
+    DigitalReference,
 }
 impl ReceiverProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::LegacyColorimetric => "legacy_colorimetric",
             Self::LabScanApprox => "lab_scan_approx",
+            Self::DigitalReference => "digital_reference",
         }
     }
 }
@@ -145,6 +147,8 @@ pub enum PositiveInterpretation {
     Separable,
     /// Interpret a receiver capture through the three-channel coupled inverse.
     Coupled,
+    /// Common modeled receiver and fixed Reference Exposure response.
+    DigitalReference,
 }
 impl PositiveInterpretation {
     pub const fn as_str(self) -> &'static str {
@@ -152,6 +156,7 @@ impl PositiveInterpretation {
             Self::Density => "density",
             Self::Separable => "separable",
             Self::Coupled => "coupled",
+            Self::DigitalReference => "digital_reference",
         }
     }
 }
@@ -230,6 +235,12 @@ pub struct ScannerParams {
     pub positive_contrast: f64,
     #[serde(default = "default_positive_dmax")]
     pub positive_dmax: f64,
+    /// Output-relative stops after the fixed reference response.
+    #[serde(default)]
+    pub reference_exposure_ev: f64,
+    /// Independent linear-sRGB output-relative stops, before output-space mapping.
+    #[serde(default)]
+    pub reference_balance_ev: [f64; 3],
 }
 
 impl Default for ScannerParams {
@@ -253,6 +264,8 @@ impl Default for ScannerParams {
             positive_balance_ev: [0.0; 3],
             positive_contrast: default_positive_contrast(),
             positive_dmax: default_positive_dmax(),
+            reference_exposure_ev: 0.0,
+            reference_balance_ev: [0.0; 3],
         }
     }
 }
@@ -995,11 +1008,15 @@ mod tests {
         for (path, allowed) in [
             (
                 "scanner.receiver_profile",
-                &["legacy_colorimetric", "lab_scan_approx"][..],
+                &[
+                    "legacy_colorimetric",
+                    "lab_scan_approx",
+                    "digital_reference",
+                ][..],
             ),
             (
                 "scanner.positive_interpretation",
-                &["density", "separable", "coupled"][..],
+                &["density", "separable", "coupled", "digital_reference"][..],
             ),
             ("scanner.auto_setup", &["off", "per_frame"][..]),
             ("scanner.finish", &["neutral", "lab_scan"][..]),

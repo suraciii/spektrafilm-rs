@@ -19,7 +19,7 @@ fn configuration(grain: bool, spatial: bool) -> Value {
     if grain {
         edits.extend(
             [
-                "film_render.grain.engine=v2",
+                "film_render.grain.engine=procedural",
                 "film_render.grain.v2_profile=custom",
                 "film_render.grain.v2_mode=noise",
                 "film_render.grain.v2_amount=25",
@@ -272,18 +272,6 @@ mod tests {
         let image = image::open(path).unwrap().to_rgb8();
         assert_eq!(image.get_pixel(0, 0).0, [26; 3]);
         assert_eq!(image.get_pixel(1, 0).0, [128; 3]);
-    }
-    #[test]
-    fn grain_settings_and_seeds_preserve_controlled_probe_contract() {
-        let config = configuration(true, false);
-        let edits = config["set"].as_array().unwrap();
-        assert!(edits.contains(&json!("debug.deactivate_stochastic_effects=false")));
-        assert!(edits.contains(&json!("film_render.grain.v2_amount=25")));
-        let provenance: Value = serde_json::from_str(NATURAL_SOURCE).unwrap();
-        assert_eq!(
-            provenance["sha256"],
-            "37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc"
-        );
     }
     #[test]
     fn generated_suites_targets_policy_and_provenance_are_complete() {

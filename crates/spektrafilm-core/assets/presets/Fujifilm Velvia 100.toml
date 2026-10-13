@@ -11,6 +11,9 @@ version = "0.3.4"
 stock = "fujifilm_crystal_archive_typeii"
 version = "0.3.4"
 
+[parameters.settings]
+apply_hanatos2025_adaptation_surface = true
+
 [parameters.enlarger]
 illuminant = "TH-KG3"
 print_exposure = 1.0

@@ -12,6 +12,8 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; background:#1b212b; padding:
 .case-nav { position:sticky; top:0; z-index:3; background:#12151b; padding:8px 0; display:flex; gap:12px; align-items:center; border-bottom:1px solid #394354; }
 .case-nav label { min-width:0; } .case-nav select { max-width:100%; }
 .case-panel[hidden] { display:none; }
+[data-pair-panel][hidden], [hidden] { display:none !important; }
+.pair-nav { margin:12px 0; } .pair-nav select { max-width:100%; }
 .supporting { margin:16px 0; }
 .change-summary { background:#1b212b; padding:12px; border-left:3px solid #8dccff; }
 .metric-summary { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:10px; margin:14px 0; }
@@ -42,9 +44,12 @@ figure { margin:0; min-width:0; } figure>img { max-width:100%; height:auto; } fi
 .viewer[data-mode=side] .split-pane { display:none; }
 .viewer:not([data-mode=side]) .side-pane { display:none; }
 .viewer:not([data-mode=side]) .panes { display:block; }
+.viewer[data-aligned=false] .split-pane { display:none; }
+.viewer[data-aligned=false][data-mode=baseline] .side-pane[data-side=baseline], .viewer[data-aligned=false][data-mode=candidate] .side-pane[data-side=candidate] { display:block; }
+.viewer[data-aligned=false]:not([data-mode=side]) .panes { display:block; }
 .locator { position:relative; display:inline-block; max-width:240px; }
 .locator>img { display:block; width:100%; height:auto; }
 .locator .rectangle { position:absolute; border:2px solid #ffda68; box-sizing:border-box; pointer-events:none; }
 table { border-collapse:collapse; width:100%; } td,th { padding:8px; border-bottom:1px solid #394354; text-align:left; overflow-wrap:anywhere; }
 .evidence-plot { display:block; width:min(100%,600px); height:auto; border:1px solid #394354; margin:8px 0; }
-@media(max-width:700px) { body { padding:12px; } .case-nav { position:static; align-items:stretch; flex-direction:column; } .case-nav select { display:block; width:100%; box-sizing:border-box; } .panes { grid-template-columns:1fr; } .viewport { height:230px; } table { display:block; overflow:auto; } .metric-summary { grid-template-columns:repeat(2,minmax(120px,1fr)); } }
+@media(max-width:700px) { body { padding:12px; } .case-nav { position:static; align-items:stretch; flex-direction:column; } .case-nav select,.pair-nav select { display:block; width:100%; box-sizing:border-box; } .panes { grid-template-columns:1fr; } .viewport { height:230px; } table { display:block; overflow:auto; } .metric-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } }
