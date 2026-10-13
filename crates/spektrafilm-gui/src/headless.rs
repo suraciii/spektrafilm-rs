@@ -1006,3 +1006,43 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     );
     render(h, "PREVIEW");
 }
+
+#[test]
+fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().params.camera.exposure_compensation_ev = -1.0;
+    h.state_mut().params.camera.auto_exposure = true;
+    click(h, "▶");
+    click(h, "American Reminiscence");
+    assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.5);
+    assert!(!h.state().params.camera.auto_exposure);
+    assert!(
+        h.query_by_label("American Reminiscence • applied")
+            .is_some()
+    );
+    let initial = render(h, "PREVIEW");
+    assert!(edge_difference(&initial) > 0.01);
+    edit(h, "exposure compensation ev", "-1.0");
+    assert!(
+        h.query_by_label("American Reminiscence • modified")
+            .is_some()
+    );
+    let changed = render(h, "PREVIEW");
+    assert!(
+        initial
+            .data
+            .iter()
+            .zip(&changed.data)
+            .any(|(a, b)| (*a as f64 - *b as f64).abs() > 0.001)
+    );
+    click(h, "American Reminiscence • modified");
+    let restored = render(h, "PREVIEW");
+    assert!(
+        h.query_by_label("American Reminiscence • applied")
+            .is_some()
+    );
+    for (a, b) in initial.data.iter().zip(&restored.data) {
+        assert!((*a as f64 - *b as f64).abs() < 1e-6);
+    }
+}

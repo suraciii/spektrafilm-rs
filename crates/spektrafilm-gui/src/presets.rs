@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use spektrafilm_core::{
     params::RuntimeParams,
     presets::{
-        LibraryEntry, LookParameters, Preset, PresetGroup, PresetKind, PresetLibrary, Provenance,
-        Section, matching_section_preset, validate_name,
+        LibraryEntry, Preset, PresetGroup, PresetKind, PresetLibrary, Provenance, Section,
+        matching_section_preset, validate_name,
     },
 };
 use std::path::{Path, PathBuf};
@@ -98,7 +98,9 @@ pub fn marker(
             .print_profile
             .as_ref()
             .is_some_and(|p| p.stock == print)
-        && preset.look_parameters() == Some(&LookParameters::capture(params))
+        && preset
+            .look_parameters()
+            .is_some_and(|look| look.matches(params))
     {
         Marker::Applied
     } else {
@@ -1318,7 +1320,13 @@ mod tests {
     use spektrafilm_core::presets::builtin_presets;
     #[test]
     fn marker_transitions_and_capture_roundtrip() {
-        let p = builtin_presets().remove(0);
+        let p = Preset::capture(
+            "Exposure marker",
+            "kodak_gold_200",
+            "kodak_portra_endura",
+            &RuntimeParams::default(),
+            provenance(),
+        );
         let mut params = RuntimeParams::default();
         let look = p.look_parameters().unwrap();
         look.apply_to(&mut params);
@@ -1351,6 +1359,28 @@ mod tests {
             marker(&applied, &entries, &params, film, print),
             Marker::Applied
         );
+        params.camera.exposure_compensation_ev += 0.5;
+        assert_eq!(
+            marker(&applied, &entries, &params, film, print),
+            Marker::Modified
+        );
+        look.apply_to(&mut params);
+        assert_eq!(
+            marker(&applied, &entries, &params, film, print),
+            Marker::Applied
+        );
+        params.camera.auto_exposure = !params.camera.auto_exposure;
+        assert_eq!(
+            marker(&applied, &entries, &params, film, print),
+            Marker::Modified
+        );
+        look.apply_to(&mut params);
+        params.camera.auto_exposure_method = "average".into();
+        assert_eq!(
+            marker(&applied, &entries, &params, film, print),
+            Marker::Modified
+        );
+        look.apply_to(&mut params);
         params.enlarger.print_exposure += 1.0;
         assert_eq!(
             marker(&applied, &entries, &params, film, print),

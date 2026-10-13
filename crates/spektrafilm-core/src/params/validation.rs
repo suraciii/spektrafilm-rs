@@ -625,6 +625,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             params.camera.color_filter
         ));
     }
+    validate_enum_value(
+        "camera.auto_exposure_method",
+        &params.camera.auto_exposure_method,
+    )?;
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     let scanner = &params.scanner;
     let reference =
@@ -834,5 +838,20 @@ mod tests {
         let error = validate(&params).unwrap_err();
         assert!(error.contains("spektrafilm process --help"));
         assert!(!error.contains("did you mean"));
+    }
+
+    #[test]
+    fn camera_metering_method_must_match_the_dispatch_vocabulary() {
+        for method in enum_values("camera.auto_exposure_method").unwrap() {
+            let mut params = RuntimeParams::default();
+            params.camera.auto_exposure = true;
+            params.camera.auto_exposure_method = method;
+            validate(&params).unwrap();
+        }
+        let mut params = RuntimeParams::default();
+        params.camera.auto_exposure_method = "typo".into();
+        let error = validate(&params).unwrap_err();
+        assert!(error.starts_with("camera.auto_exposure_method:"));
+        assert!(error.contains("average"));
     }
 }
