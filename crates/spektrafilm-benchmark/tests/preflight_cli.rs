@@ -5,6 +5,8 @@ use spektrafilm_benchmark::common;
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 use tempfile::TempDir;
 
+#[path = "support/progress.rs"]
+mod progress;
 fn read(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
@@ -91,7 +93,16 @@ fn invoke(root: &Path, out: &str, dry: bool, selection: &[&str], code: i32) -> V
         String::from_utf8_lossy(&output.stderr)
     );
     // Parsing the entire stream also enforces one JSON result object.
-    serde_json::from_slice(&output.stdout).unwrap()
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let manifest = root
+        .join(out)
+        .join(if dry { "preflight.json" } else { "run.json" });
+    if manifest.is_file() {
+        progress::assert_case_seed_progress(&output.stderr, "run", &read(&manifest));
+    } else {
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("Starting run "));
+    }
+    result
 }
 
 fn change_target(root: &Path, changes: Value) {

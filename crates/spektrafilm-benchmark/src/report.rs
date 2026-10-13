@@ -1,8 +1,9 @@
 //! Portable offline presentation of retained evidence; no rendering or measurement.
 use crate::{
-    common::{Error, Result, create_destination, dump, sha256_file},
+    common::{self, Error, Result, create_destination, destination_exists, dump, sha256_file},
     documents::{load_json_document, safe_artifact_path, validate_generated_document},
     image_data::read_npy,
+    runner,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -1078,11 +1079,19 @@ fn navigation_links(fragment: &str, label: &str) -> String {
 /// duplicate/unknown keys, empty values and malformed encoding show an alert and
 /// hide the case panels until a valid link or case selection is chosen.
 pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
+    let root = runner::absolute(out)?;
+    let preexisting = fs::symlink_metadata(out).is_ok();
+    let result = build_report_impl(comparison, out);
+    if preexisting {
+        result
+    } else {
+        result.map_err(|error| common::incomplete_destination(error, &root, "report.json"))
+    }
+}
+
+fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
     if fs::symlink_metadata(out).is_ok() {
-        return Err(Error::new(
-            "destination_exists",
-            format!("report destination already exists: {}", out.display()),
-        ));
+        return Err(destination_exists(out));
     }
     let root = comparison.canonicalize()?;
     let document = safe_artifact_path(&root, "comparison.json")?;

@@ -85,9 +85,7 @@ fn resolve_configuration(
     command
         .arg("process")
         .arg(input)
-        .args(["--dry-run", "--backend", "cpu", "--output"])
-        .arg(out.join(format!("{name}.tif")))
-        .arg("--data-dir")
+        .args(["--dry-run", "--backend", "cpu", "--data-dir"])
         .arg(data_dir)
         .args([
             "--input-color-space",
@@ -187,159 +185,159 @@ pub fn create_fixtures(
     download_natural: bool,
 ) -> Result<Value> {
     create_destination(out)?;
-    export_look(renderer, data_dir, out)?;
-    let color_tone = configuration(false, false, &["film_render.grain.active=false"]);
-    let appearance = configuration(true, true, &[]);
-    documents::validate_shape("configuration", &color_tone)?;
-    documents::validate_shape("configuration", &appearance)?;
-    dump(&out.join("color-tone.json"), &color_tone)?;
-    dump(&out.join("appearance.json"), &appearance)?;
-    let colors = [
-        [0.45, 0.45, 0.45],
-        [0.65, 0.42, 0.32],
-        [0.2, 0.55, 0.3],
-        [0.1, 0.3, 0.65],
-        [0.7, 0.15, 0.12],
-        [0.15, 0.65, 0.65],
-        [0.65, 0.15, 0.65],
-        [0.7, 0.65, 0.1],
-    ];
-    let path = out.join("chart.png");
-    save_probe(&path, 128, 128, |x, y| {
-        if y < 32 {
-            [x as f64 / 127.0; 3]
-        } else {
-            colors[x as usize / 16]
+    let result = (|| -> Result<Value> {
+        export_look(renderer, data_dir, out)?;
+        let color_tone = configuration(false, false, &["film_render.grain.active=false"]);
+        let appearance = configuration(true, true, &[]);
+        documents::validate_shape("configuration", &color_tone)?;
+        documents::validate_shape("configuration", &appearance)?;
+        dump(&out.join("color-tone.json"), &color_tone)?;
+        dump(&out.join("appearance.json"), &appearance)?;
+        let colors = [
+            [0.45, 0.45, 0.45],
+            [0.65, 0.42, 0.32],
+            [0.2, 0.55, 0.3],
+            [0.1, 0.3, 0.65],
+            [0.7, 0.15, 0.12],
+            [0.15, 0.65, 0.65],
+            [0.65, 0.15, 0.65],
+            [0.7, 0.65, 0.1],
+        ];
+        let path = out.join("chart.png");
+        save_probe(&path, 128, 128, |x, y| {
+            if y < 32 {
+                [x as f64 / 127.0; 3]
+            } else {
+                colors[x as usize / 16]
+            }
+        })?;
+        for (name, file) in [
+            ("color-tone", "color-tone.json"),
+            ("appearance", "appearance.json"),
+        ] {
+            let configuration = documents::load_json_document(&out.join(file))?;
+            resolve_configuration(renderer, data_dir, out, &path, name, &configuration)?;
         }
-    })?;
-    for (name, file) in [
-        ("color-tone", "color-tone.json"),
-        ("appearance", "appearance.json"),
-    ] {
-        let configuration = documents::load_json_document(&out.join(file))?;
-        resolve_configuration(renderer, data_dir, out, &path, name, &configuration)?;
-    }
-    let chart = make_case(
-        "color_chart",
-        &path,
-        &["numeric", "color", "tone", "flip"],
-        vec![
-            region("skin", [16, 32, 16, 64], &["color", "tone"], "skin"),
-            region("gray", [0, 32, 16, 64], &["color", "tone"], "neutral"),
-        ],
-        color_tone.clone(),
-        &[0],
-        Value::Null,
-    )?;
-    let path = out.join("exposure.png");
-    save_probe(&path, 128, 64, |x, _| {
-        [image_data::srgb_encode((0.18 * 2_f64.powi(x as i32 / 16 - 5)).min(1.0)); 3]
-    })?;
-    let response: Vec<_> = (0..8)
-        .map(|i| json!({"exposure_stops":(i as f64)-5.0,"geometry":[i*16+3,3,10,58]}))
-        .collect();
-    let tone = make_case(
-        "exposure_response",
-        &path,
-        &["numeric", "color", "tone", "flip"],
-        vec![],
-        color_tone.clone(),
-        &[0],
-        json!({"tone_response":response}),
-    )?;
-    let path = out.join("flat_fields.png");
-    save_probe(&path, 128, 128, |x, _| {
-        [[0.1, 0.3, 0.5, 0.8][x as usize / 32]; 3]
-    })?;
-    let grain = make_case(
-        "grain_fields",
-        &path,
-        &["numeric", "color", "flip"],
-        (0..4)
-            .map(|i| {
-                region(
-                    &format!("level_{i}"),
-                    [i * 32 + 4, 4, 24, 120],
-                    &["grain", "color"],
-                    "flat_field",
-                )
-            })
-            .collect(),
-        configuration(
-            false,
-            true,
-            &[
-                "film_render.grain.active=true",
-                "film_render.grain.engine=procedural",
-                "film_render.grain.v2_profile=custom",
-                "film_render.grain.v2_mode=noise",
-                "film_render.grain.v2_amount=25",
+        let chart = make_case(
+            "color_chart",
+            &path,
+            &["numeric", "color", "tone", "flip"],
+            vec![
+                region("skin", [16, 32, 16, 64], &["color", "tone"], "skin"),
+                region("gray", [0, 32, 16, 64], &["color", "tone"], "neutral"),
             ],
-        ),
-        &[0, 42, 99],
-        Value::Null,
-    )?;
-    let path = out.join("bright_point.png");
-    save_probe(&path, 128, 128, |x, y| {
-        [if (x as f64 - 63.5).powi(2) + (y as f64 - 63.5).powi(2) <= 9.0 {
-            1.0
-        } else {
-            0.04
-        }; 3]
-    })?;
-    let point = make_case(
-        "halation_point",
-        &path,
-        &["numeric", "color", "flip", "halation"],
-        vec![],
-        configuration(true, false, &["film_render.grain.active=false"]),
-        &[0],
-        json!({"halation":{"center_px":[63.5,63.5],"core_radius_px":3.0,"background_inner_radius_px":45.0,"background_outer_radius_px":58.0,"extent_px":40.0,"bin_width_px":1.0,"domain":"linear_srgb"}}),
-    )?;
-    let path = out.join("edge.png");
-    save_probe(&path, 128, 128, |x, _| [if x < 64 { 0.1 } else { 0.8 }; 3])?;
-    let contrast = image_data::srgb_decode(204.0 / 255.0) - image_data::srgb_decode(26.0 / 255.0);
-    let edge = make_case(
-        "edge_response",
-        &path,
-        &["numeric", "color", "flip", "edge"],
-        vec![],
-        configuration(true, false, &["film_render.grain.active=false"]),
-        &[0],
-        json!({"edge":{"axis":"x","plateau_fraction":0.2,"domain":"linear_srgb","input_contrast":contrast,"input_exposure_stops":0.0}}),
-    )?;
-    let final_appearance = make_case(
-        "final_appearance",
-        &out.join("chart.png"),
-        &["numeric", "color", "tone", "flip"],
-        vec![],
-        appearance.clone(),
-        &[0, 42, 99],
-        Value::Null,
-    )?;
-    let protocol = json!({"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0,4.0,16.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":4.0,"border_px":1},"spectrum":{"window":"hann"}},"hotspots":{"count":6,"min_area_px":1024}});
-    let mut quick =
-        json!({"schema_version":1,"id":"quick-probes","protocol":protocol,"cases":[chart,tone]});
-    let mut complete = json!({"schema_version":1,"id":"complete-probes","protocol":protocol,"cases":[chart,tone,grain,point,edge,final_appearance]});
-    let mut provenance = json!({"schema_version":1,"controlled_images":"Deterministic RGB probes generated by this package; not measured spectral or physical film references.","natural_scene":null,"standard_configurations":{
-        "revision":"standard-print-scan-v1",
-        "preset_selector":PRESET_SELECTOR,
-        "renderer":{"path":fs::canonicalize(renderer)?,"sha256":sha256_file(renderer)?},
-        "files":[
-            {"path":"look.toml","sha256":sha256_file(&out.join("look.toml"))?},
-            {"path":"color-tone.json","sha256":sha256_file(&out.join("color-tone.json"))?},
-            {"path":"appearance.json","sha256":sha256_file(&out.join("appearance.json"))?}
-        ]
-    }});
-    let mut suites = vec!["quick.json", "complete.json"];
-    if natural_input.is_some() || download_natural {
-        let source: Value = serde_json::from_str(NATURAL_SOURCE)?;
-        let destination = out.join("natural.KDC");
-        if let Some(input) = natural_input {
-            fs::copy(input, &destination)?;
-        } else {
-            let mut response =
-                ureq::get(source["source_url"].as_str().ok_or_else(|| {
+            color_tone.clone(),
+            &[0],
+            Value::Null,
+        )?;
+        let path = out.join("exposure.png");
+        save_probe(&path, 128, 64, |x, _| {
+            [image_data::srgb_encode((0.18 * 2_f64.powi(x as i32 / 16 - 5)).min(1.0)); 3]
+        })?;
+        let response: Vec<_> = (0..8)
+            .map(|i| json!({"exposure_stops":(i as f64)-5.0,"geometry":[i*16+3,3,10,58]}))
+            .collect();
+        let tone = make_case(
+            "exposure_response",
+            &path,
+            &["numeric", "color", "tone", "flip"],
+            vec![],
+            color_tone.clone(),
+            &[0],
+            json!({"tone_response":response}),
+        )?;
+        let path = out.join("flat_fields.png");
+        save_probe(&path, 128, 128, |x, _| {
+            [[0.1, 0.3, 0.5, 0.8][x as usize / 32]; 3]
+        })?;
+        let grain = make_case(
+            "grain_fields",
+            &path,
+            &["numeric", "color", "flip"],
+            (0..4)
+                .map(|i| {
+                    region(
+                        &format!("level_{i}"),
+                        [i * 32 + 4, 4, 24, 120],
+                        &["grain", "color"],
+                        "flat_field",
+                    )
+                })
+                .collect(),
+            configuration(
+                false,
+                true,
+                &[
+                    "film_render.grain.active=true",
+                    "film_render.grain.engine=procedural",
+                    "film_render.grain.v2_profile=custom",
+                    "film_render.grain.v2_mode=noise",
+                    "film_render.grain.v2_amount=25",
+                ],
+            ),
+            &[0, 42, 99],
+            Value::Null,
+        )?;
+        let path = out.join("bright_point.png");
+        save_probe(&path, 128, 128, |x, y| {
+            [if (x as f64 - 63.5).powi(2) + (y as f64 - 63.5).powi(2) <= 9.0 {
+                1.0
+            } else {
+                0.04
+            }; 3]
+        })?;
+        let point = make_case(
+            "halation_point",
+            &path,
+            &["numeric", "color", "flip", "halation"],
+            vec![],
+            configuration(true, false, &["film_render.grain.active=false"]),
+            &[0],
+            json!({"halation":{"center_px":[63.5,63.5],"core_radius_px":3.0,"background_inner_radius_px":45.0,"background_outer_radius_px":58.0,"extent_px":40.0,"bin_width_px":1.0,"domain":"linear_srgb"}}),
+        )?;
+        let path = out.join("edge.png");
+        save_probe(&path, 128, 128, |x, _| [if x < 64 { 0.1 } else { 0.8 }; 3])?;
+        let contrast =
+            image_data::srgb_decode(204.0 / 255.0) - image_data::srgb_decode(26.0 / 255.0);
+        let edge = make_case(
+            "edge_response",
+            &path,
+            &["numeric", "color", "flip", "edge"],
+            vec![],
+            configuration(true, false, &["film_render.grain.active=false"]),
+            &[0],
+            json!({"edge":{"axis":"x","plateau_fraction":0.2,"domain":"linear_srgb","input_contrast":contrast,"input_exposure_stops":0.0}}),
+        )?;
+        let final_appearance = make_case(
+            "final_appearance",
+            &out.join("chart.png"),
+            &["numeric", "color", "tone", "flip"],
+            vec![],
+            appearance.clone(),
+            &[0, 42, 99],
+            Value::Null,
+        )?;
+        let protocol = json!({"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0,4.0,16.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":4.0,"border_px":1},"spectrum":{"window":"hann"}},"hotspots":{"count":6,"min_area_px":1024}});
+        let mut quick = json!({"schema_version":1,"id":"quick-probes","protocol":protocol,"cases":[chart,tone]});
+        let mut complete = json!({"schema_version":1,"id":"complete-probes","protocol":protocol,"cases":[chart,tone,grain,point,edge,final_appearance]});
+        let mut provenance = json!({"schema_version":1,"controlled_images":"Deterministic RGB probes generated by this package; not measured spectral or physical film references.","natural_scene":null,"standard_configurations":{
+            "revision":"standard-print-scan-v1",
+            "preset_selector":PRESET_SELECTOR,
+            "renderer":{"path":fs::canonicalize(renderer)?,"sha256":sha256_file(renderer)?},
+            "files":[
+                {"path":"look.toml","sha256":sha256_file(&out.join("look.toml"))?},
+                {"path":"color-tone.json","sha256":sha256_file(&out.join("color-tone.json"))?},
+                {"path":"appearance.json","sha256":sha256_file(&out.join("appearance.json"))?}
+            ]
+        }});
+        let mut suites = vec!["quick.json", "complete.json"];
+        if natural_input.is_some() || download_natural {
+            let source: Value = serde_json::from_str(NATURAL_SOURCE)?;
+            let destination = out.join("natural.KDC");
+            if let Some(input) = natural_input {
+                fs::copy(input, &destination)?;
+            } else {
+                let mut response = ureq::get(source["source_url"].as_str().ok_or_else(|| {
                     Error::new("invalid_document", "Natural provenance URL missing")
                 })?)
                 .config()
@@ -347,83 +345,84 @@ pub fn create_fixtures(
                 .build()
                 .call()
                 .map_err(|e| Error::new("dependency_download", e.to_string()))?;
-            let mut reader = response.body_mut().as_reader();
-            let mut file = fs::File::create(&destination)?;
-            std::io::copy(&mut reader, &mut file)?;
+                let mut reader = response.body_mut().as_reader();
+                let mut file = fs::File::create(&destination)?;
+                std::io::copy(&mut reader, &mut file)?;
+            }
+            if sha256_file(&destination)? != source["sha256"].as_str().unwrap_or("") {
+                return Err(Error::new(
+                    "dependency_hash",
+                    "Natural RAW does not match pinned provenance",
+                )
+                .at(destination.display().to_string()));
+            }
+            let mut config = color_tone.clone();
+            config["raw"] = json!({"white_balance":"as-shot","lens_correction":false});
+            if fs::metadata(&destination)?.len()
+                != source["bytes"].as_u64().ok_or_else(|| {
+                    Error::new("invalid_document", "Natural provenance byte count missing")
+                })?
+            {
+                return Err(Error::new(
+                    "dependency_hash",
+                    "Natural RAW byte count does not match pinned provenance",
+                )
+                .at(destination.display().to_string()));
+            }
+            let natural = json!({"id":"kodak_dc50_scene","kind":"scene","input":{"kind":"raw","adapter":"spektrafilm-raw","path":"natural.KDC","sha256":source["sha256"]},"configuration":config,"seeds":[0],"regions":[region("shadow",[64,64,160,128],&["color","tone"],"shadow"),region("texture",[320,192,160,128],&["color","tone"],"texture")],"measurements":["numeric","color","tone","flip"]});
+            let mut natural_appearance = natural.clone();
+            natural_appearance["id"] = json!("natural_appearance");
+            natural_appearance["configuration"] = appearance.clone();
+            natural_appearance["configuration"]["raw"] = config["raw"].clone();
+            natural_appearance["seeds"] = json!([0, 42, 99]);
+            dump(
+                &out.join("natural.json"),
+                &json!({"schema_version":1,"id":"natural-scene","protocol":protocol,"cases":[natural]}),
+            )?;
+            suites.push("natural.json");
+            provenance["natural_scene"] = source;
+            quick["id"] = json!("quick-probes-and-scene");
+            complete["id"] = json!("complete-probes-and-scene");
+            quick["cases"].as_array_mut().unwrap().push(natural.clone());
+            complete["cases"].as_array_mut().unwrap().push(natural);
+            complete["cases"]
+                .as_array_mut()
+                .unwrap()
+                .push(natural_appearance);
         }
-        if sha256_file(&destination)? != source["sha256"].as_str().unwrap_or("") {
-            return Err(Error::new(
-                "dependency_hash",
-                "Natural RAW does not match pinned provenance",
-            )
-            .at(destination.display().to_string()));
-        }
-        let mut config = color_tone.clone();
-        config["raw"] = json!({"white_balance":"as-shot","lens_correction":false});
-        if fs::metadata(&destination)?.len()
-            != source["bytes"].as_u64().ok_or_else(|| {
-                Error::new("invalid_document", "Natural provenance byte count missing")
-            })?
-        {
-            return Err(Error::new(
-                "dependency_hash",
-                "Natural RAW byte count does not match pinned provenance",
-            )
-            .at(destination.display().to_string()));
-        }
-        let natural = json!({"id":"kodak_dc50_scene","kind":"scene","input":{"kind":"raw","adapter":"spektrafilm-raw","path":"natural.KDC","sha256":source["sha256"]},"configuration":config,"seeds":[0],"regions":[region("shadow",[64,64,160,128],&["color","tone"],"shadow"),region("texture",[320,192,160,128],&["color","tone"],"texture")],"measurements":["numeric","color","tone","flip"]});
-        let mut natural_appearance = natural.clone();
-        natural_appearance["id"] = json!("natural_appearance");
-        natural_appearance["configuration"] = appearance.clone();
-        natural_appearance["configuration"]["raw"] = config["raw"].clone();
-        natural_appearance["seeds"] = json!([0, 42, 99]);
-        dump(
-            &out.join("natural.json"),
-            &json!({"schema_version":1,"id":"natural-scene","protocol":protocol,"cases":[natural]}),
+        dump(&out.join("quick.json"), &quick)?;
+        dump(&out.join("complete.json"), &complete)?;
+        let mut target = target::construct(
+            renderer,
+            data_dir,
+            "cpu",
+            "baseline",
+            json!({"set_files":[],"set":[]}),
+            json!({"RAYON_NUM_THREADS":"8","OPENBLAS_NUM_THREADS":"1","OMP_NUM_THREADS":"1"}),
         )?;
-        suites.push("natural.json");
-        provenance["natural_scene"] = source;
-        quick["id"] = json!("quick-probes-and-scene");
-        complete["id"] = json!("complete-probes-and-scene");
-        quick["cases"].as_array_mut().unwrap().push(natural.clone());
-        complete["cases"].as_array_mut().unwrap().push(natural);
-        complete["cases"]
-            .as_array_mut()
-            .unwrap()
-            .push(natural_appearance);
-    }
-    dump(&out.join("quick.json"), &quick)?;
-    dump(&out.join("complete.json"), &complete)?;
-    let mut target = target::construct(
-        renderer,
-        data_dir,
-        "cpu",
-        "baseline",
-        json!({"set_files":[],"set":[]}),
-        json!({"RAYON_NUM_THREADS":"8","OPENBLAS_NUM_THREADS":"1","OMP_NUM_THREADS":"1"}),
-    )?;
-    for (name, edits) in [
-        ("baseline", vec![]),
-        ("candidate", vec!["camera.exposure_compensation_ev=0.25"]),
-        ("grain-candidate", vec!["film_render.grain.v2_amount=35"]),
-    ] {
-        target["id"] = json!(name);
-        target["changes"]["set"] = json!(edits);
-        dump(&out.join(format!("{name}.json")), &target)?;
-        documents::load_target(&out.join(format!("{name}.json")))?;
-    }
-    let policy = json!({"schema_version":1,"id":"exploratory-color","protocol_digest":documents::protocol_digest(&complete)?,"calibration":{"status":"exploratory","evidence":[]},"rules":[{"id":"skin-color","purpose":"protect","selector":{"case_id":"color_chart","region_id":"skin"},"metric":"delta_e00.p95","max":2.0,"required":true}]});
-    dump(&out.join("exploratory-policy.json"), &policy)?;
-    for suite in &suites {
-        documents::load_suite(&out.join(suite))?;
-    }
-    documents::load_policy(&out.join("exploratory-policy.json"))?;
-    dump(&out.join("provenance.json"), &provenance)?;
-    Ok(
-        json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"}}),
-    )
+        for (name, edits) in [
+            ("baseline", vec![]),
+            ("candidate", vec!["camera.exposure_compensation_ev=0.25"]),
+            ("grain-candidate", vec!["film_render.grain.v2_amount=35"]),
+        ] {
+            target["id"] = json!(name);
+            target["changes"]["set"] = json!(edits);
+            dump(&out.join(format!("{name}.json")), &target)?;
+            documents::load_target(&out.join(format!("{name}.json")))?;
+        }
+        let policy = json!({"schema_version":1,"id":"exploratory-color","protocol_digest":documents::protocol_digest(&complete)?,"calibration":{"status":"exploratory","evidence":[]},"rules":[{"id":"skin-color","purpose":"protect","selector":{"case_id":"color_chart","region_id":"skin"},"metric":"delta_e00.p95","max":2.0,"required":true}]});
+        dump(&out.join("exploratory-policy.json"), &policy)?;
+        for suite in &suites {
+            documents::load_suite(&out.join(suite))?;
+        }
+        documents::load_policy(&out.join("exploratory-policy.json"))?;
+        dump(&out.join("provenance.json"), &provenance)?;
+        Ok(
+            json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"}}),
+        )
+    })();
+    result.map_err(|error| crate::common::incomplete_destination(error, out, "provenance.json"))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
