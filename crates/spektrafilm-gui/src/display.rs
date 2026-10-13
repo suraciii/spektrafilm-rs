@@ -458,8 +458,41 @@ pub struct Viewer {
     prepared_output: Option<PreparedDisplay>,
     revision: u64,
     worker: DisplayWorker,
+    #[cfg(test)]
+    observed_geometry: Option<(Rect, Rect, Interpolation, Option<PixelInspection>)>,
+    #[cfg(test)]
+    observed_image: Option<egui::ColorImage>,
 }
+#[cfg(test)]
+pub(crate) struct ViewerObservation {
+    pub viewport: Rect,
+    pub image_rect: Rect,
+    pub interpolation: Interpolation,
+    pub inspection: Option<PixelInspection>,
+    pub pixels: Option<egui::ColorImage>,
+    pub key: Option<Vec<u64>>,
+    pub generation: u64,
+    pub accepted_generation: u64,
+    pub transition: Option<(usize, bool)>,
+}
+
 impl Viewer {
+    #[cfg(test)]
+    pub(crate) fn observation(&self) -> ViewerObservation {
+        let (viewport, image_rect, interpolation, inspection) =
+            self.observed_geometry.expect("viewer has been shown");
+        ViewerObservation {
+            viewport,
+            image_rect,
+            interpolation,
+            inspection,
+            pixels: self.observed_image.clone(),
+            key: self.cache_key.clone(),
+            generation: self.generation,
+            accepted_generation: self.accepted_generation,
+            transition: self.transition.as_ref().map(|t| (t.frame, t.polaroid)),
+        }
+    }
     pub fn invalidate_display(&mut self) {
         // Display controls change viewing pixels without retaining development animation.
         self.transition = None;
@@ -968,6 +1001,10 @@ impl Viewer {
             if let Some(status) = response.status {
                 self.transform_status = status;
             }
+            #[cfg(test)]
+            {
+                self.observed_image = Some(response.image.clone());
+            }
             if let Some(texture) = self.texture.as_mut() {
                 texture.set(response.image, TextureOptions::NEAREST);
             } else {
@@ -1009,6 +1046,10 @@ impl Viewer {
                     }
                 })
             });
+        #[cfg(test)]
+        {
+            self.observed_geometry = Some((rect, image_rect, interpolation, inspection));
+        }
         let text = if let Some(p) = inspection {
             format!(
                 "{:?} ({}, {}) RGB {:.6}, {:.6}, {:.6}",

@@ -1,7 +1,7 @@
 use super::*;
 use crate::export_job::ExportPause;
 use parking_lot::{Condvar, Mutex};
-use spektrafilm_backend::telemetry::CollectionMode;
+use spektrafilm_gpu::telemetry::CollectionMode;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
@@ -17,12 +17,8 @@ fn staged_export(h: &mut Harness<'_, App>, destination: &Path) -> Arc<ExportPaus
     let options = h.state().export_options.clone();
     h.state_mut()
         .start_export_to_path_inner(&ctx, options, destination, Some(pause.clone()));
-    // The real writer stages output on its own thread. Under the workspace
-    // gate many test binaries and worker threads run at once, so wait on the
-    // repo's real-worker budget rather than a tight barrier: measured 4-9s
-    // unloaded, with a 20s barrier failing intermittently on loaded machines.
     ready
-        .recv_timeout(WAIT_DEADLINE)
+        .recv_timeout(Duration::from_secs(20))
         .expect("real export writer did not produce staged output");
     h.run_steps(3);
     pause
@@ -93,7 +89,7 @@ fn cancel_discards_real_staged_export_and_preserves_existing_destination() {
                 Instant::now() < deadline,
                 "cancelled export worker did not stop"
             );
-            wait_tick();
+            std::thread::yield_now();
         }
         h.run_steps(3);
         assert!(
@@ -171,7 +167,7 @@ fn on_exit_joins_active_render_and_discards_queued_results() {
                     Instant::now() < deadline,
                     "on_exit did not request shutdown"
                 );
-                wait_tick();
+                std::thread::yield_now();
             }
             drop(guard);
         });
@@ -183,7 +179,7 @@ fn on_exit_joins_active_render_and_discards_queued_results() {
                 Instant::now() < deadline,
                 "render worker did not take request"
             );
-            wait_tick();
+            std::thread::yield_now();
         }
         h.state_mut().full_scan_requested = true;
         h.state_mut().dispatch_render(&ctx);

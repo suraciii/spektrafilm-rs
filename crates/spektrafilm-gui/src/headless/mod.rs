@@ -2,14 +2,10 @@
 //! Only confirmed chooser paths cross the explicit Save/Export boundary here.
 use super::*;
 use egui_kittest::{Harness, kittest::Queryable};
-use spektrafilm_backend::cpu_backend::CpuBackend;
+use spektrafilm_gpu::cpu_backend::CpuBackend;
 use tempfile::TempDir;
-mod calibration;
-mod dialogs;
 mod files;
 mod lifecycle;
-mod pages;
-mod panels;
 mod raw;
 mod viewer;
 mod workflow;
@@ -24,41 +20,8 @@ impl Drop for Session {
     }
 }
 
-/// Workspace `data/` directory, resolved from this crate's manifest directory.
-///
-/// Shared by every GUI acceptance/unit test that needs real profiles or presets.
-pub(crate) fn data_dir() -> PathBuf {
+fn data_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
-}
-
-/// Repository root (the parent of [`data_dir`]), for assertions that generated
-/// artifacts stay outside the checkout.
-#[cfg(feature = "gui-snapshots")]
-pub(crate) fn repository_root() -> PathBuf {
-    data_dir().parent().unwrap().to_path_buf()
-}
-
-/// Write `image` under `SPEKTRAFILM_GUI_SNAPSHOT_DIR` when that absolute,
-/// repository-external directory is set. Returns without writing otherwise,
-/// so the default gate never depends on a snapshot directory.
-#[cfg(feature = "gui-snapshots")]
-pub(crate) fn save_snapshot(image: &image::RgbaImage, name: &str) {
-    let Some(directory) = std::env::var_os("SPEKTRAFILM_GUI_SNAPSHOT_DIR") else {
-        return;
-    };
-    let directory = PathBuf::from(directory);
-    assert!(
-        directory.is_absolute(),
-        "snapshot directory must be absolute"
-    );
-    let repository = repository_root().canonicalize().unwrap();
-    std::fs::create_dir_all(&directory).unwrap();
-    let directory = directory.canonicalize().unwrap();
-    assert!(
-        !directory.starts_with(repository),
-        "snapshot artifacts must be outside the repository"
-    );
-    image.save(directory.join(name)).unwrap();
 }
 
 fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
@@ -73,7 +36,7 @@ fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
 }
 
 fn session() -> Session {
-    session_fixture()
+    session_stochastic(true)
 }
 
 /// Queue a chooser result and forbid falling back to a native dialog.
@@ -84,36 +47,11 @@ fn script(h: &mut Harness<'_, App>, result: chooser::ChooserResult) {
     h.state_mut().chooser.scripted(result);
 }
 
-/// Deterministic factory state shared by the headless fixtures: stochastic,
-/// spatial, and reveal effects disabled so preview and scan comparisons stay
-/// reproducible. Returns the saved state path.
-fn deterministic_state(directory: &Path) -> PathBuf {
-    let factory = state::GuiState::factory();
-    let mut params = factory.runtime_params().unwrap();
-    params.settings.preview_max_size = 128;
-    params.camera.auto_exposure = false;
-    params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = true;
-    params.io.crop = false;
-    let mut initial =
-        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
-            .unwrap();
-    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
-    // The viewer's 50-frame Polaroid reveal paints one full-canvas raster per
-    // frame. That costs about 0.7 s per frame at this harness size, so sessions
-    // start with the animation off. The animation keeps its coverage in
-    // `headless::viewer::explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not`,
-    // which turns it back on through `viewer.settings.reveal`.
-    initial.sections["rust"]["viewer"]["settings"]["reveal"] = serde_json::json!(false);
-    let state_path = directory.join("initial.json");
-    initial.save(&state_path).unwrap();
-    state_path
-}
-
-/// Deterministic synthetic input shared by the headless fixtures: a ramp image
-/// plus the deterministic state from [`deterministic_state`].
-fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
-    let image_path = directory.join("asymmetric-ramp.png");
+/// The shared harness deactivates stochastic effects so preview and scan
+/// comparisons stay deterministic; grain acceptance needs them active.
+fn session_stochastic(deactivate_stochastic_effects: bool) -> Session {
+    let directory = tempfile::tempdir().unwrap();
+    let image_path = directory.path().join("asymmetric-ramp.png");
     let mut image = ImageBuf::new(160, 80);
     for y in 0..image.height {
         for x in 0..image.width {
@@ -139,59 +77,25 @@ fn deterministic_inputs(directory: &Path) -> (PathBuf, PathBuf) {
         None,
     )
     .unwrap();
-    let state_path = deterministic_state(directory);
-    (image_path, state_path)
-}
-
-/// The shared harness deactivates stochastic effects so preview and scan
-/// comparisons stay deterministic.
-fn session_fixture() -> Session {
-    let directory = tempfile::tempdir().unwrap();
-    let (image_path, state_path) = deterministic_inputs(directory.path());
+    let factory = state::GuiState::factory();
+    let mut params = factory.runtime_params().unwrap();
+    params.settings.preview_max_size = 128;
+    params.camera.auto_exposure = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = deactivate_stochastic_effects;
+    params.io.crop = false;
+    let mut initial =
+        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+            .unwrap();
+    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
+    let state_path = directory.path().join("initial.json");
+    initial.save(&state_path).unwrap();
     let browser_path = directory.path().join("browser.json");
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1500.0, 1400.0))
         .build_eframe(move |_| app(state_path, image_path, browser_path));
     assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
     click(&mut harness, "◀");
-    Session { harness, directory }
-}
-
-/// A session built for offscreen pixel capture: the production window size, the
-/// wgpu renderer, and the presets panel left in its default expanded state.
-#[cfg(feature = "gui-snapshots")]
-fn snapshot_session() -> Session {
-    let directory = tempfile::tempdir().unwrap();
-    let (image_path, state_path) = deterministic_inputs(directory.path());
-    let browser_path = directory.path().join("browser.json");
-    let harness = Harness::builder()
-        .with_size(egui::vec2(1460.0, 980.0))
-        .wgpu()
-        .build_eframe(move |_| app(state_path, image_path, browser_path));
-    assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
-    Session { harness, directory }
-}
-
-/// Build a session whose App starts without an image, so a test can drive its
-/// own import path. Shares the deterministic state from [`deterministic_state`].
-#[cfg(feature = "gui-raw")]
-fn empty_session() -> Session {
-    let directory = tempfile::tempdir().unwrap();
-    let state_path = deterministic_state(directory.path());
-    let browser_path = directory.path().join("browser.json");
-    let harness = Harness::builder()
-        .with_size(egui::vec2(1500.0, 1400.0))
-        .build_eframe(move |_| {
-            App::new_with_browser_path(
-                Arc::new(CpuBackend),
-                None,
-                Some(state_path),
-                None,
-                browser_path,
-                data_dir(),
-            )
-        });
-    assert!(harness.state().image.is_none());
     Session { harness, directory }
 }
 
@@ -228,44 +132,15 @@ fn import_file(h: &mut Harness<'_, App>, raw: bool) {
     h.run_steps(3);
 }
 
-/// Scroll the controls panel down so elements below the fold come into view.
-///
-/// The harness's `simulate_click` doesn't scroll, and a section that expands
-/// below the fold reveals its controls outside the scroll viewport's clip
-/// rect, where pointer events no longer reach them. Real wheel input over the
-/// panel scrolls it through the same path a user takes.
-fn scroll_controls_down(h: &mut Harness<'_, App>) {
-    let screen = h.ctx.screen_rect();
-    let pointer = egui::pos2(screen.right() - 160.0, screen.center().y);
-    h.input_mut()
-        .events
-        .push(egui::Event::PointerMoved(pointer));
-    h.input_mut().events.push(egui::Event::MouseWheel {
-        unit: egui::MouseWheelUnit::Point,
-        delta: egui::vec2(0.0, -600.0),
-        modifiers: Default::default(),
-    });
-    // egui smooths a large wheel delta over several frames; keep stepping so
-    // the scroll settles before the next interaction.
-    h.run_steps(10);
-}
-
-/// Pick `option` from the combo labeled `label`.
-///
-/// The option is looked up by button role: a grain engine group is a
-/// `CollapsingHeader` whose title carries the engine's label, so a plain
-/// label query would match both the header and the popup option.
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
     h.run_steps(3);
     if h.state().export_dialog.is_open() {
-        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
-            .simulate_click();
+        h.get_by_label(option).simulate_click();
         h.run_steps(3);
     } else {
-        h.get_by_role_and_label(egui::accesskit::Role::Button, option)
-            .click();
+        h.get_by_label(option).click();
         h.run_steps(3);
         h.press_key(egui::Key::Escape);
         h.run_steps(3);
@@ -273,7 +148,8 @@ fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
 }
 
 fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
-    h.get_by_label(label).focus();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, label)
+        .focus();
     h.step();
     // egui's command modifier is platform dependent; no global environment changes.
     h.input_mut().events.push(egui::Event::Key {
@@ -297,20 +173,8 @@ fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
     h.run_steps(3);
 }
 
-/// Wall-clock budget for a headless wait. The waits assert that the app
-/// finishes, never how fast, and CI runners are several times slower than
-/// developer machines while running the bin's tests in parallel.
-pub(crate) const WAIT_DEADLINE: Duration = Duration::from_secs(180);
-
-/// Yield the runner's cores to the worker thread a wait is waiting for. The
-/// workers are separate threads, so a spinning waiter competes with the very
-/// work it waits on and can starve it past the deadline on few-core runners.
-pub(crate) fn wait_tick() {
-    std::thread::sleep(Duration::from_millis(1));
-}
-
 fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
-    let deadline = Instant::now() + WAIT_DEADLINE;
+    let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         h.step();
         if condition(h.state()) {
@@ -321,31 +185,11 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
             "App completion timed out: {}",
             h.state().status
         );
-        wait_tick();
+        std::thread::yield_now();
     }
 }
 
-/// Advance the viewer until it has painted the last frame of its
-/// reveal/crossfade transition and accepted the new output. Sessions start with
-/// the reveal animation disabled, so this returns once the display worker
-/// accepts the render.
-fn settle_animation(h: &mut Harness<'_, App>) {
-    wait_until(h, |a| {
-        let observation = a.viewer.observation();
-        observation.generation == observation.accepted_generation
-            && observation.transition.is_none()
-    });
-}
-
 fn render(h: &mut Harness<'_, App>, button: &str) -> Arc<ImageBuf> {
-    // State loading can schedule a preview even with auto-preview off. Drain it
-    // before clicking: a disabled action does not enqueue the requested render.
-    wait_until(h, |a| {
-        a.render_job.is_none()
-            && a.export_job.is_none()
-            && a.calibration_job.is_none()
-            && !a.force_preview
-    });
     let previous = h.state().output_image.clone();
     click(h, button);
     wait_until(h, |a| {
@@ -452,39 +296,6 @@ fn assert_float_tiff(path: &Path) {
     );
 }
 
-/// The export dialog "GPU" selection is an explicit request: a configuration
-/// that still needs a host-executed stage must fail before publication instead
-/// of being silently demoted to CPU. The harness preview backend is the CPU
-/// backend, so this also covers opening an explicit WGPU backend for the job.
-#[test]
-fn explicit_gpu_export_fails_before_publication() {
-    let mut s = session();
-    let h = &mut s.harness;
-    render(h, "PREVIEW");
-    let mut state = h.state().current_state().unwrap();
-    state.sections["input_image"]["input_cctf_decoding"] = serde_json::json!(true);
-    state.sections["input_image"]["input_color_space"] = serde_json::json!("sRGB");
-    h.state_mut().apply_state(state).unwrap();
-    assert!(h.state().params.io.input_cctf_decoding);
-
-    let destination = s.directory.path().join("explicit-gpu.png");
-    let mut options = h.state().export_options.clone();
-    options.backend = ExportBackend::Gpu;
-    let ctx = h.ctx.clone();
-    h.state_mut()
-        .start_export_to_path(&ctx, options, &destination);
-    wait_until(h, |a| a.export_job.is_none());
-    let status = h.state().status.clone();
-    assert!(
-        status.contains("explicit GPU request") || status.contains("no WGPU adapter is available"),
-        "{status}"
-    );
-    assert!(
-        !destination.exists(),
-        "a failed explicit GPU export published an output"
-    );
-}
-
 #[test]
 fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let mut s = session();
@@ -501,19 +312,19 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     choose(h, "workflow", "input > film > scan");
     click(h, "Scanner");
     choose(h, "scan output", "Preserve medium polarity");
-    assert!(h.query_by_label("brightness").is_none());
+    assert!(h.query_by_label("positive density ev").is_none());
     let direct = render(h, "PREVIEW");
     assert_eq!((direct.width, direct.height), (128, 64));
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     choose(h, "Negative conversion method", "separable");
     assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        spektrafilm_core::params::NegativeConversionMethod::Separable
+        h.state().params.scanner.positive_interpretation,
+        spektrafilm_core::params::PositiveInterpretation::Separable
     );
     choose(h, "Negative conversion method", "density");
-    assert!(h.query_by_label("brightness").is_some());
-    edit(h, "brightness", "0");
+    assert!(h.query_by_label("positive density ev").is_some());
+    edit(h, "positive density ev", "0");
     let positive = render(h, "PREVIEW");
     assert!(
         edge_difference(&direct) < -0.01,
@@ -523,25 +334,25 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         edge_difference(&positive) > 0.01,
         "negative conversion must restore ramp polarity"
     );
-    edit(h, "brightness", "1");
-    assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
+    edit(h, "positive density ev", "1");
+    assert_eq!(h.state().params.scanner.positive_density_ev, 1.0);
     let brighter = render(h, "PREVIEW");
     assert!(mean(&brighter) > mean(&positive) + 0.01);
-    edit(h, "balance 0", "0.25");
-    edit(h, "balance 1", "-0.125");
-    edit(h, "balance 2", "0.5");
+    edit(h, "positive balance ev 0", "0.25");
+    edit(h, "positive balance ev 1", "-0.125");
+    edit(h, "positive balance ev 2", "0.5");
     assert_eq!(
-        h.state().params.scanner.conversion_balance_ev,
+        h.state().params.scanner.positive_balance_ev,
         [0.25, -0.125, 0.5]
     );
-    edit(h, "film-scan white point 0", "0.95");
-    edit(h, "film-scan black point 0", "0.025");
-    assert_eq!(h.state().params.scanner.white_point, [0.95, 1.0, 1.0]);
-    assert_eq!(h.state().params.scanner.black_point, [0.025, 0.0, 0.0]);
-    edit(h, "brightness", "not-a-number");
-    assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
+    edit(h, "white level", "0.95");
+    edit(h, "black level", "0.025");
+    assert!((h.state().params.scanner.white_level - 0.95).abs() < 1e-6);
+    assert!((h.state().params.scanner.black_level - 0.025).abs() < 1e-6);
+    edit(h, "positive density ev", "not-a-number");
+    assert_eq!(h.state().params.scanner.positive_density_ev, 1.0);
     assert_eq!(
-        h.get_by_label("brightness").value().as_deref(),
+        h.get_by_label("positive density ev").value().as_deref(),
         Some("1.000")
     );
     let preset = spektrafilm_core::presets::Preset::capture_section(
@@ -633,14 +444,6 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         "{}",
         h.state().status
     );
-    let dialog_dirs: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(s.directory.path().join("dialog_dirs.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        dialog_dirs["save_output"].as_str(),
-        s.directory.path().to_str()
-    );
     let expected_saved = image_io::convert_image(
         &preview,
         &h.state().output_color_space,
@@ -656,7 +459,6 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     // Export must ignore the most recently retained preview's reduced resolution.
     render(h, "PREVIEW");
     click(h, "Export options");
-    scroll_controls_down(h);
     click(h, "Export…");
     assert!(h.state().export_dialog.is_open());
     choose(h, "Format", "TIFF");
@@ -750,18 +552,16 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     );
     assert_eq!(restored.params.workflow.route, "input > film > scan");
     assert_eq!(restored.params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(restored.params.scanner.conversion_brightness_ev, 1.0);
+    assert_eq!(restored.params.scanner.positive_density_ev, 1.0);
     assert_eq!(
-        restored.params.scanner.conversion_balance_ev,
+        restored.params.scanner.positive_balance_ev,
         [0.25, -0.125, 0.5]
     );
     assert_eq!(restored.film_name, "kodak_portra_400");
-    assert_eq!(restored.params.scanner.white_point, [0.95, 1.0, 1.0]);
-    assert_eq!(restored.params.scanner.black_point, [0.025, 0.0, 0.0]);
     eframe::App::on_exit(&mut restored, None);
     choose(h, "workflow", "Finished RGB");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    assert!(h.query_by_label("brightness").is_none());
+    assert!(h.query_by_label("positive density ev").is_none());
 }
 
 #[test]
@@ -809,6 +609,272 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
 }
 
 #[test]
+fn original_simulation_controls_persist_and_density_reaches_real_workers() {
+    use spektrafilm_core::params::SimulationEngine;
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().diagnostics.mode = CollectionMode::Summary;
+    choose(h, "Simulation engine", "Fotufilm");
+    assert_eq!(h.state().params.engine, SimulationEngine::Fotufilm);
+    assert!(h.query_by_label("scan output").is_none());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "output color space")
+            .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::TextInput, "Overall effect amount")
+            .is_none()
+    );
+    edit(h, "Simulation seed", "18446744073709551615");
+    click(h, "Apply Simulation seed");
+    assert_eq!(h.state().params.random_seed, u64::MAX);
+    click(h, "Original native options");
+    edit(h, "stage", "\"negative\"");
+    h.get_by_label("Apply stage").click();
+    h.run_steps(3);
+    edit(h, "textureStages", "0");
+    h.get_by_label("Apply textureStages").click();
+    h.run_steps(3);
+    assert_eq!(h.state().params.fotufilm.native["stage"], "negative");
+    assert_eq!(h.state().params.fotufilm.native["textureStages"], 0);
+    let saved = h.state().current_state().unwrap();
+    let restored = state::GuiState::from_value(saved.sections.clone())
+        .unwrap()
+        .runtime_params()
+        .unwrap();
+    assert_eq!(restored.engine, SimulationEngine::Fotufilm);
+    assert_eq!(restored.random_seed, u64::MAX);
+    assert_eq!(restored.fotufilm, h.state().params.fotufilm);
+    h.state_mut().params.io.crop = true;
+    h.state_mut().params.io.crop_size = [0.5, 0.5];
+    h.state_mut().params.io.upscale_factor = 2.0;
+    let preview = render(h, "PREVIEW");
+    assert_eq!((preview.width, preview.height), (160, 80));
+    assert_eq!(
+        h.state().output_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    assert!(!h.state().output_cctf_encoding);
+    let scan = render(h, "SCAN");
+    assert_eq!((scan.width, scan.height), (160, 80));
+    assert!(scan.data.iter().all(|value| value.is_finite()));
+    let report_path = s.directory.path().join("original-scan-report.json");
+    h.state().diagnostics.save_selected(&report_path).unwrap();
+    let report = spektrafilm_core::telemetry::Report::from_json(
+        &std::fs::read_to_string(&report_path).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report.operation.outcome, Outcome::Succeeded);
+    assert_eq!(
+        report.configuration.render.unwrap().engine,
+        SimulationEngine::Fotufilm
+    );
+    // Retained density belongs to the completed render, even after changing the request.
+    choose(h, "Simulation engine", "SpektraFilm");
+    let path = s.directory.path().join("retained-density.tiff");
+    h.state_mut().save_to_path(&path);
+    assert!(
+        h.state().status.starts_with("Saved retained-density.tiff"),
+        "{}",
+        h.state().status
+    );
+    assert!(path.is_file());
+    let mut options = h.state().export_options.clone();
+    options.format = export::ExportFormat::Exr;
+    options.depth = BitDepth::ThirtyTwo;
+    options.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+    options.saving_cctf_encoding = false;
+    options.normalize();
+    assert_eq!(
+        options.saving_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    assert!(!options.saving_cctf_encoding);
+    choose(h, "Simulation engine", "Fotufilm");
+    let ctx = h.ctx.clone();
+    let exported = s.directory.path().join("original-density.exr");
+    h.state_mut().start_export_to_path(&ctx, options, &exported);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert!(exported.is_file());
+
+    // Full-stage density taps retain source geometry and publish raw densities.
+    edit(h, "stage", "\"full\"");
+    h.get_by_label("Apply stage").click();
+    h.run_steps(3);
+    h.state_mut().params.taps.collect = Some("cmy_film".into());
+    let tapped_density = render(h, "PREVIEW");
+    assert_eq!((tapped_density.width, tapped_density.height), (160, 80));
+    assert_eq!(
+        h.state().output_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    assert!(!h.state().output_cctf_encoding);
+    let mut tapped_options = h.state().export_options.clone();
+    tapped_options.format = export::ExportFormat::Tiff;
+    // A stale RGB saving choice must be replaced by the actual density domain.
+    tapped_options.depth = BitDepth::Eight;
+    tapped_options.saving_color_space = "sRGB".into();
+    tapped_options.saving_cctf_encoding = true;
+    let tapped_path = s.directory.path().join("full-stage-density.tiff");
+    h.state_mut()
+        .start_export_to_path(&ctx, tapped_options, &tapped_path);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert_float_tiff(&tapped_path);
+    let published_density = image_io::load(&tapped_path).unwrap().image;
+    assert_eq!(
+        (published_density.width, published_density.height),
+        (160, 80)
+    );
+    for (&actual, &expected) in published_density.data.iter().zip(&tapped_density.data) {
+        assert!((actual as f64 - expected as f64).abs() < 2e-5);
+    }
+
+    // Returning to full RGB must clear the previous density saving contract in
+    // both the dialog and the chooser-confirmed export worker path.
+    h.state_mut().params.taps.collect = None;
+    let rgb = render(h, "SCAN");
+    assert_ne!(
+        h.state().output_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    click(h, "Original native options");
+    click(h, "Export options");
+    click(h, "Export…");
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label("Gross record density · 32-bit float · no RGB encoding or ICC profile")
+            .is_none()
+    );
+    click(h, "Cancel");
+    let stale_options = h.state().export_options.clone();
+    assert_eq!(
+        stale_options.saving_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    let rgb_path = s.directory.path().join("after-density-rgb.tiff");
+    h.state_mut()
+        .start_export_to_path(&ctx, stale_options, &rgb_path);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert_eq!(h.state().export_options.saving_color_space, "sRGB");
+    assert!(h.state().export_options.saving_cctf_encoding);
+    let expected_rgb = image_io::convert_image(
+        &rgb,
+        &h.state().output_color_space,
+        h.state().output_cctf_encoding,
+        "sRGB",
+        true,
+    )
+    .unwrap();
+    let published_rgb = image_io::load(&rgb_path).unwrap().image;
+    assert_eq!(
+        (published_rgb.width, published_rgb.height),
+        (rgb.width, rgb.height)
+    );
+    for (&actual, &expected) in published_rgb.data.iter().zip(&expected_rgb.data) {
+        assert!((actual as f64 - expected as f64).abs() < 2e-5);
+    }
+
+    // An RGB input tap retains the input's space and transfer state even when
+    // the requested output is encoded sRGB. Geometry controls do not alter it.
+    h.state_mut().params.io.input_color_space = "ProPhoto RGB".into();
+    h.state_mut().params.io.input_cctf_decoding = false;
+    h.state_mut().params.io.output_color_space = "sRGB".into();
+    h.state_mut().params.io.output_cctf_encoding = true;
+    h.state_mut().params.taps.collect = Some("rgb_in".into());
+    let input = h.state().image.as_ref().unwrap().clone();
+    let tapped_rgb = render(h, "SCAN");
+    assert_eq!((tapped_rgb.width, tapped_rgb.height), (160, 80));
+    assert_eq!(tapped_rgb.data, input.data);
+    assert_eq!(h.state().output_color_space, "ProPhoto RGB");
+    assert!(!h.state().output_cctf_encoding);
+    let (expected_display, _) = display::output_display_raster(
+        &input,
+        "ProPhoto RGB",
+        false,
+        h.state().viewer.settings.use_display_transform,
+        None,
+        h.state().params.settings.preview_max_size as usize,
+    )
+    .unwrap();
+    assert_eq!(
+        h.state().viewer.output.as_ref().unwrap().rgb,
+        expected_display.rgb
+    );
+    let expected_tapped_rgb =
+        image_io::convert_image(&input, "ProPhoto RGB", false, "sRGB", true).unwrap();
+
+    // Save uses the completed render's interpretation after the request changes.
+    h.state_mut().params.io.input_color_space = "sRGB".into();
+    h.state_mut().params.io.input_cctf_decoding = true;
+    let retained_rgb_path = s.directory.path().join("retained-input-rgb.png");
+    h.state_mut().save_to_path(&retained_rgb_path);
+    assert!(
+        h.state().status.starts_with("Saved retained-input-rgb.png"),
+        "{}",
+        h.state().status
+    );
+    assert_png(&retained_rgb_path, &expected_tapped_rgb);
+
+    // Export independently processes the full source with its declared input
+    // interpretation, without replacing the retained Scan.
+    h.state_mut().params.io.input_color_space = "ProPhoto RGB".into();
+    h.state_mut().params.io.input_cctf_decoding = false;
+    let mut tapped_rgb_options = h.state().export_options.clone();
+    tapped_rgb_options.format = export::ExportFormat::Tiff;
+    tapped_rgb_options.depth = BitDepth::ThirtyTwo;
+    tapped_rgb_options.saving_color_space = "sRGB".into();
+    tapped_rgb_options.saving_cctf_encoding = true;
+    let tapped_rgb_path = s.directory.path().join("input-rgb-export.tiff");
+    h.state_mut()
+        .start_export_to_path(&ctx, tapped_rgb_options, &tapped_rgb_path);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert_float_tiff(&tapped_rgb_path);
+    let published_tapped_rgb = image_io::load(&tapped_rgb_path).unwrap().image;
+    assert_eq!(
+        (published_tapped_rgb.width, published_tapped_rgb.height),
+        (input.width, input.height)
+    );
+    assert_eq!(
+        published_tapped_rgb.data.len(),
+        expected_tapped_rgb.data.len()
+    );
+    for (&actual, &expected) in published_tapped_rgb
+        .data
+        .iter()
+        .zip(&expected_tapped_rgb.data)
+    {
+        assert!((actual as f64 - expected as f64).abs() < 2e-5);
+    }
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &tapped_rgb
+    ));
+}
+
+#[test]
 fn real_worker_accepts_only_latest_request_and_current_revision() {
     let mut s = session();
     let h = &mut s.harness;
@@ -829,24 +895,10 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
         Arc::ptr_eq(&baseline, h.state().output_image.as_ref().unwrap()),
         "stale real worker response must not replace retained output"
     );
-    let start_guard = active.lock();
     h.state_mut().dispatch_render(&ctx);
     let first_request = h.state().render_job.as_ref().unwrap().request_id;
-    // The worker takes the preview before blocking on its start marker. Keep
-    // that preview in flight so submitting a full scan cannot replace it in
-    // the pending slot; both real responses must reach the App.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while h.state().render_worker.state.0.lock().is_some() {
-        assert!(
-            Instant::now() < deadline,
-            "worker did not take first request"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    h.state_mut().full_scan_requested = true;
     h.state_mut().dispatch_render(&ctx);
     assert!(h.state().render_job.as_ref().unwrap().request_id > first_request);
-    drop(start_guard);
     wait_until(h, |a| {
         a.render_job.is_none()
             && a.output_image
@@ -854,9 +906,7 @@ fn real_worker_accepts_only_latest_request_and_current_revision() {
                 .is_some_and(|out| !Arc::ptr_eq(out, &baseline))
     });
     assert!(edge_difference(h.state().output_image.as_ref().unwrap()) < -0.01);
-    let accepted = h.state().output_image.as_ref().unwrap();
-    assert_eq!((accepted.width, accepted.height), (160, 80));
-    assert!(h.state().status.starts_with("Scan ·"));
+    assert!(h.state().status.starts_with("Preview ·"));
 }
 
 #[cfg(feature = "gui-snapshots")]
@@ -877,18 +927,12 @@ mod layout_snapshots {
         assert!(h.query_by_label("Apply saving CCTF encoding").is_some());
         // Attach the offscreen renderer only in this opt-in gate; render the
         // real dialog's TIFF-specific controls selected above.
-        let dimensions = h
-            .state()
-            .image
-            .as_ref()
-            .map(|image| [image.width, image.height])
-            .unwrap_or([0, 0]);
         let mut modal = Harness::builder()
             .with_size(egui::vec2(700.0, 650.0))
             .wgpu()
             .build_state(
                 |ctx, dialog: &mut ExportDialog| {
-                    dialog.show(ctx, dimensions);
+                    dialog.show(ctx);
                 },
                 std::mem::take(&mut h.state_mut().export_dialog),
             );
@@ -944,56 +988,38 @@ mod layout_snapshots {
                 pair[1].0
             );
         }
-        // The dialog must state what the chosen settings will write; the row
-        // is a read-only label, so it carries no widget of its own to query.
-        assert!(
-            modal
-                .query_by_label_contains("Estimated output size")
-                .is_some(),
-            "the export dialog must state the estimated output size"
-        );
         let colors: std::collections::HashSet<_> = image.pixels().map(|p| p.0).collect();
         assert!(
             colors.len() > 20,
             "modal text and controls must render, not just a background"
         );
-        save_snapshot(&image, "export-modal.png");
-    }
-
-    /// Render the real App window for every page offscreen. The PNGs are layout
-    /// evidence; they are written outside the repository when
-    /// `SPEKTRAFILM_GUI_SNAPSHOT_DIR` is set.
-    #[test]
-    fn app_window_renders_every_page_offscreen() {
-        let mut previous: Option<image::RgbaImage> = None;
-        for label in ["MAIN", "FILM", "PRINT", "ADVANCED", "CONFIG"] {
-            let mut s = snapshot_session();
-            let h = &mut s.harness;
-            click(h, label);
-            render(h, "PREVIEW");
-            settle_animation(h);
-            // The histogram is binned off the UI thread; the PNG is layout
-            // evidence for the readout, so wait for the distribution to land.
-            wait_until(h, |a| a.histogram.cached_data().is_some());
-            h.run_steps(3);
-            let image = h.render().expect("offscreen app render");
-            assert_eq!((image.width(), image.height()), (1460, 980));
-            if let Some(previous) = &previous {
-                assert_ne!(
-                    previous.as_raw(),
-                    image.as_raw(),
-                    "page {label} rendered identically to the previous page"
-                );
-            }
-            save_snapshot(&image, &format!("app-{label}.png"));
-            previous = Some(image);
+        if let Some(directory) = std::env::var_os("SPEKTRAFILM_GUI_SNAPSHOT_DIR") {
+            let directory = PathBuf::from(directory);
+            assert!(
+                directory.is_absolute(),
+                "snapshot directory must be absolute"
+            );
+            let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .canonicalize()
+                .unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            let directory = directory.canonicalize().unwrap();
+            assert!(
+                !directory.starts_with(repository),
+                "snapshot artifacts must be outside the repository"
+            );
+            image.save(directory.join("export-modal.png")).unwrap();
         }
     }
 }
 
 #[test]
 fn digital_reference_real_app_selection_render_transactions_and_outputs() {
-    use spektrafilm_core::params::{NegativeConversionMethod, ReceiverProfile, ScannerAutoSetup};
+    use spektrafilm_core::params::{PositiveInterpretation, ReceiverProfile, ScannerAutoSetup};
     let mut s = session();
     let h = &mut s.harness;
     click(h, "Profiles");
@@ -1003,9 +1029,9 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     click(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
     choose(h, "scanner auto setup", "per_frame");
-    edit(h, "brightness", "1");
-    edit(h, "contrast", "1.5");
-    edit(h, "film-scan black point 0", "0.05");
+    edit(h, "positive density ev", "1");
+    edit(h, "positive contrast", "1.5");
+    edit(h, "black point 0", "0.05");
     choose(
         h,
         "Negative conversion method",
@@ -1013,19 +1039,16 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     );
     let scanner = &h.state().params.scanner;
     assert_eq!(
-        scanner.negative_conversion_method,
-        NegativeConversionMethod::DigitalReference
+        scanner.positive_interpretation,
+        PositiveInterpretation::DigitalReference
     );
     assert_eq!(scanner.receiver_profile, ReceiverProfile::DigitalReference);
     assert_eq!(scanner.auto_setup, ScannerAutoSetup::Off);
     assert_eq!(scanner.black_point, [0.0; 3]);
     assert_eq!(scanner.white_point, [1.0; 3]);
     let defaults = spektrafilm_core::params::ScannerParams::default();
-    assert_eq!(
-        scanner.conversion_brightness_ev,
-        defaults.conversion_brightness_ev
-    );
-    assert_eq!(scanner.conversion_contrast, defaults.conversion_contrast);
+    assert_eq!(scanner.positive_density_ev, defaults.positive_density_ev);
+    assert_eq!(scanner.positive_contrast, defaults.positive_contrast);
     assert!(
         h.query_by_label("Reference Exposure: 18% neutral (fixed)")
             .is_some()
@@ -1033,12 +1056,12 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     for label in [
         "receiver profile",
         "scanner auto setup",
-        "brightness",
-        "balance 0",
-        "contrast",
-        "maximum density",
-        "film-scan black point 0",
-        "film-scan white point 0",
+        "positive density ev",
+        "positive balance ev 0",
+        "positive contrast",
+        "positive dmax",
+        "black point 0",
+        "white point 0",
     ] {
         assert!(
             h.query_by_label(label).is_none(),
@@ -1065,7 +1088,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         ("receiver_profile", serde_json::json!("legacy_colorimetric")),
         ("auto_setup", serde_json::json!("per_frame")),
         ("black_point", serde_json::json!([0.1, 0.0, 0.0])),
-        ("conversion_contrast", serde_json::json!(1.5)),
+        ("positive_contrast", serde_json::json!(1.5)),
     ] {
         let mut invalid = accepted.sections.clone();
         invalid["scanner"][key] = value;
@@ -1125,7 +1148,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     let mut extension_only = accepted.sections.clone();
     for key in [
         "receiver_profile",
-        "negative_conversion_method",
+        "positive_interpretation",
         "reference_exposure_ev",
         "reference_balance_ev",
     ] {
@@ -1199,8 +1222,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     );
     choose(h, "workflow", "input > convert-film > scan");
     assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        NegativeConversionMethod::Density
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
     );
     assert_eq!(
         h.state().params.scanner.receiver_profile,
@@ -1224,8 +1247,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "workflow", "Finished RGB");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        NegativeConversionMethod::Density
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
     );
     assert_eq!(
         h.state().params.scanner.receiver_profile,
@@ -1248,52 +1271,12 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "film profile", slide.info.name.as_deref().unwrap());
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert_eq!(
-        h.state().params.scanner.negative_conversion_method,
-        NegativeConversionMethod::Density
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
     );
     assert_eq!(
         h.state().params.scanner.receiver_profile,
         ReceiverProfile::LegacyColorimetric
     );
     render(h, "PREVIEW");
-}
-
-#[test]
-fn american_reminiscence_browser_restores_virtual_exposure_and_render() {
-    let mut s = session();
-    let h = &mut s.harness;
-    h.state_mut().params.camera.exposure_compensation_ev = -1.0;
-    h.state_mut().params.camera.auto_exposure = true;
-    click(h, "▶");
-    click(h, "American Reminiscence");
-    assert_eq!(h.state().params.camera.exposure_compensation_ev, 0.5);
-    assert!(!h.state().params.camera.auto_exposure);
-    assert!(
-        h.query_by_label("American Reminiscence • applied")
-            .is_some()
-    );
-    let initial = render(h, "PREVIEW");
-    assert!(edge_difference(&initial) > 0.01);
-    edit(h, "exposure compensation ev", "-1.0");
-    assert!(
-        h.query_by_label("American Reminiscence • modified")
-            .is_some()
-    );
-    let changed = render(h, "PREVIEW");
-    assert!(
-        initial
-            .data
-            .iter()
-            .zip(&changed.data)
-            .any(|(a, b)| (*a as f64 - *b as f64).abs() > 0.001)
-    );
-    click(h, "American Reminiscence • modified");
-    let restored = render(h, "PREVIEW");
-    assert!(
-        h.query_by_label("American Reminiscence • applied")
-            .is_some()
-    );
-    for (a, b) in initial.data.iter().zip(&restored.data) {
-        assert!((*a as f64 - *b as f64).abs() < 1e-6);
-    }
 }

@@ -4178,6 +4178,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "spektrafilm-core",
  "spektrafilm-fotufilm",
  "spektrafilm-gpu",
