@@ -184,9 +184,10 @@ impl Pipeline {
     }
 
     /// Try the GPU-resident fast path. Builds all the per-stage data and
-    /// hands it to the backend's `try_run_film_chain`. Grain Procedural returns native
-    /// encoded RGB; other paths return linear RGB. `apply_post_scan` finalizes export.
-    /// Pitch and metered EV come from the complete input before crop/rescale.
+    /// hands it to the backend's `try_run_film_chain`. The pipe tail runs
+    /// the output transfer and magazine passes, so the readback already
+    /// carries the finalized export state. Pitch and metered EV come from
+    /// the complete input before crop/rescale.
     pub(super) fn try_gpu_resident(
         &self,
         image: &ImageBuf,
@@ -785,8 +786,7 @@ impl Pipeline {
         // destination when the caller requested encoding and the
         // Procedural-grain pass hasn't already emitted encoded samples, or
         // restore linear when it has and no encoding was requested. This
-        // moves the post-readback host encode/decode of `apply_post_scan`
-        // onto the device.
+        // moved the former post-readback host encode/decode onto the device.
         let grain_v2_active = self.grain_emits_encoded();
         let cctf_kind = match scan_output_space.cctf {
             spektrafilm_math::colorspace::Cctf::Linear => 0,
@@ -811,6 +811,34 @@ impl Pipeline {
                 decode: true,
                 cctf_kind,
                 matrix: identity_f32,
+            })
+        } else {
+            None
+        };
+        // Magazine print appearance (pipe architecture, S4): the last host
+        // finishing moves onto the device right after the transfer tail.
+        // The buffer state there is encoded exactly when the caller
+        // requested output encoding.
+        let magazine = if self.params.magazine_print_color.active
+            && self.params.magazine_print_color.strength > 0.0
+        {
+            let (to_lab, from_lab) =
+                crate::magazine_print_color::MagazineTransform::new(&scan_output_space)
+                    .gpu_matrices();
+            let (tone_in, tone_out, tone_slopes) = crate::magazine_print_color::gpu_tone_curve();
+            let f32m = |m: &[[f64; 3]; 3]| {
+                std::array::from_fn(|i| std::array::from_fn(|j| m[i][j] as f32))
+            };
+            let f32a = |a: &[f64; 10]| std::array::from_fn(|i| a[i] as f32);
+            Some(spektrafilm_gpu::MagazineGpuParams {
+                strength: self.params.magazine_print_color.strength.clamp(0.0, 1.0) as f32,
+                encoded: self.params.io.output_cctf_encoding,
+                cctf_kind,
+                to_lab: f32m(&to_lab),
+                from_lab: f32m(&from_lab),
+                tone_in: f32a(&tone_in),
+                tone_out: f32a(&tone_out),
+                tone_slopes: f32a(&tone_slopes),
             })
         } else {
             None
@@ -860,6 +888,7 @@ impl Pipeline {
             print_acquisition_cpu_stage,
             camera_diffusion_cpu_stage,
             output_transfer,
+            magazine,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
@@ -894,39 +923,6 @@ impl Pipeline {
             }
         }
         Ok(result)
-    }
-
-    /// Post-readback host finishing. The output transfer encode/decode moved
-    /// onto the device as the pipe-tail transfer pass (pipe architecture,
-    /// S4); the magazine appearance remains the host tail until it gains a
-    /// GPU path.
-    pub(super) fn apply_post_scan(
-        &self,
-        mut rgb: ImageBuf,
-        backend: &dyn ComputeBackend,
-    ) -> ImageBuf {
-        let space = spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
-            .expect("validated output colour space");
-        if self.params.magazine_print_color.active
-            && self.params.magazine_print_color.strength > 0.0
-        {
-            let _magazine = super::stages::StageObservation::cpu(
-                backend,
-                "magazine_print_color",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-            );
-            // The pipe-tail transfer pass normalizes the readback state:
-            // samples arrive encoded exactly when the caller requested
-            // encoding (Procedural-grain output was decoded back).
-            let encoded = self.params.io.output_cctf_encoding;
-            crate::magazine_print_color::apply(
-                &mut rgb,
-                &self.params.magazine_print_color,
-                space,
-                encoded,
-            );
-        }
-        rgb
     }
 
     /// Whether the Procedural-grain pass emits encoded samples on the
@@ -1721,21 +1717,53 @@ mod tests {
         );
     }
 
-    /// Post-readback host finishing must be a no-op once the output
-    /// transfer runs on the device (pipe architecture S4): with the
-    /// magazine appearance off, `apply_post_scan` returns the readback
-    /// samples untouched.
+    /// The magazine appearance runs on the device as the last pipe-tail
+    /// pass (pipe architecture, S4): the whole post-scan finishing is on
+    /// the GPU, so GPU and CPU agree under the standard budget with the
+    /// magazine active.
     #[test]
-    fn resident_readback_has_no_host_tail_without_magazine() {
+    fn magazine_pipe_tail_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.io.output_color_space = "sRGB".into();
+        params.io.output_cctf_encoding = true;
+        params.camera.auto_exposure = false;
         params.io.output_gamut_compress.algorithm = "off".into();
         params.film_render.grain.active = false;
+        params.magazine_print_color.active = true;
+        params.magazine_print_color.strength = 1.0;
+
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
-        let img = spektrafilm_math::image::ImageBuf::from_data(2, 2, vec![0.5_f32.into(); 12]);
-        let out = pipeline.apply_post_scan(img.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend);
-        assert_eq!(out.data, img.data);
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.9 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "magazine mean divergence: {mean}");
+        assert!(max_diff < 5e-1, "magazine max divergence: {max_diff}");
     }
 }

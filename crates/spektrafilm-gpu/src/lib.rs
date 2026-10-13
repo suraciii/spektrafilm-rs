@@ -405,6 +405,11 @@ pub struct FilmChainParams<'a> {
     /// transfer; decode restores linear for a Procedural-grain output when
     /// the caller requested no encoding.
     pub output_transfer: Option<OutputTransferGpuParams>,
+    /// Optional magazine print appearance pass on the final buffer after
+    /// the output transfer (pipe architecture, S4). The residual host
+    /// finishing moves onto the device; the input state is encoded exactly
+    /// when the caller requested output encoding.
+    pub magazine: Option<MagazineGpuParams>,
 }
 
 /// One pipe-tail transfer pass (pipe architecture, S4).
@@ -416,6 +421,27 @@ pub struct OutputTransferGpuParams {
     pub cctf_kind: u32,
     /// Same-space RGB roundtrip matrix (`rgb_to_rgb_identity`).
     pub matrix: [[f32; 3]; 3],
+}
+
+/// One pipe-tail magazine appearance pass (pipe architecture, S4).
+pub struct MagazineGpuParams {
+    /// Mix strength, clamped to 0..=1 by the caller.
+    pub strength: f32,
+    /// Input/output state: true when the buffer carries encoded samples.
+    pub encoded: bool,
+    /// `Cctf` discriminant: 0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto,
+    /// 4 Rec2020, 5 Adobe RGB (1998), 6 Gamma 2.6.
+    pub cctf_kind: u32,
+    /// Destination RGB → CIELAB D50 (Bradford-adapted).
+    pub to_lab: [[f32; 3]; 3],
+    /// CIELAB D50 → destination RGB.
+    pub from_lab: [[f32; 3]; 3],
+    /// Tone-curve input knots in CIELAB L*.
+    pub tone_in: [f32; 10],
+    /// Tone-curve output knots in CIELAB L*.
+    pub tone_out: [f32; 10],
+    /// Tone-curve Hermite slopes.
+    pub tone_slopes: [f32; 10],
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.

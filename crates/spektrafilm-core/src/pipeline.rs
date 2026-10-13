@@ -1218,12 +1218,10 @@ impl Pipeline {
                 self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)?
         {
             tracing::info!("pipeline: gpu-resident fast path complete");
-            let _post = stages::StageObservation::cpu(
-                backend,
-                "post_scan",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-            );
-            return Ok(self.apply_post_scan(out, backend));
+            // Post-scan finishing (output transfer + magazine) already ran
+            // as pipe-tail passes; the readback is final (pipe
+            // architecture, S4).
+            return Ok(out);
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
@@ -1335,17 +1333,9 @@ impl Pipeline {
             Some(out) => out,
             None => return Ok(None),
         };
-        let _post = stages::StageObservation::cpu(
-            backend,
-            "post_scan",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        Ok(Some(self.compose_output_mix(
-            self.apply_post_scan(out, backend),
-            source,
-            backend,
-            None,
-        )?))
+        // Post-scan finishing already ran as pipe-tail passes on the
+        // resident chain (pipe architecture, S4); the readback is final.
+        Ok(Some(self.compose_output_mix(out, source, backend, None)?))
     }
 
     /// Prepare the already decoded/RAW-corrected input before virtual camera
@@ -2771,55 +2761,6 @@ mod spectral_invalidation_tests {
         let mixed = pipeline.process(image, &backend).unwrap();
         for ((s, r), actual) in source.data.iter().zip(&complete.data).zip(&mixed.data) {
             assert_eq!(*actual, from_f64(0.5 * to_f64(*s) + 0.5 * to_f64(*r)));
-        }
-    }
-
-    #[test]
-    fn resident_finishing_applies_magazine_on_normalized_readback() {
-        use spektrafilm_math::colorspace::{encode_rgb, resolve};
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
-        let mut pipeline = build();
-        pipeline.params.io.output_color_space = "sRGB".into();
-        pipeline.params.magazine_print_color.active = true;
-        pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
-        let space = resolve("sRGB").unwrap();
-        // The pipe-tail output transfer (S4) normalizes the readback state
-        // before the host tail: samples arrive encoded exactly when the
-        // caller requested encoding, regardless of the grain engine.
-        // `apply_post_scan` therefore sees that state and applies the
-        // magazine without any encode/decode of its own.
-        for procedural in [false, true] {
-            pipeline.params.film_render.grain.active = procedural;
-            for encoded in [false, true] {
-                pipeline.params.io.output_cctf_encoding = encoded;
-                let linear = ImageBuf::from_data(
-                    2,
-                    1,
-                    [0.07, 0.4, 0.8, 0.3, 0.5, 0.9].map(from_f64).to_vec(),
-                );
-                // The readback state the host tail receives.
-                let mut readback = linear.clone();
-                if encoded {
-                    for pixel in readback.data.as_chunks_mut::<3>().0 {
-                        let rgb = encode_rgb(
-                            [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])],
-                            space,
-                        );
-                        for c in 0..3 {
-                            pixel[c] = from_f64(rgb[c]);
-                        }
-                    }
-                }
-                let mut expected = readback.clone();
-                crate::magazine_print_color::apply(
-                    &mut expected,
-                    &pipeline.params.magazine_print_color,
-                    space,
-                    encoded,
-                );
-                let actual = pipeline.apply_post_scan(readback, &backend);
-                assert_eq!(actual.data, expected.data);
-            }
         }
     }
 }
