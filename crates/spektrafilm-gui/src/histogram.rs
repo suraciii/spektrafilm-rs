@@ -3,15 +3,23 @@
 //! The histogram reads the retained output image and renders as a compact
 //! strip in the control panel. It is viewer-only and never affects saved
 //! or exported pixels.
+//!
+//! The retained output is linear RGB (values may exceed `1.0` or fall below
+//! `0.0` out of gamut), so each channel is passed through the sRGB OETF
+//! before binning: the readout is a display-referred (sRGB-encoded) tonal
+//! distribution, not a distribution of linear values. Binning is derived
+//! from the retained output without a second render.
 
 use egui::{Color32, Pos2, Rect, Ui};
+use spektrafilm_math::colorspace::srgb_encode_f64;
 use spektrafilm_math::image::ImageBuf;
 use std::sync::Arc;
 
 /// Number of histogram bins per channel.
 const BINS: usize = 64;
 
-/// Computed histogram data for one image.
+/// Computed histogram data for one image, binned over display-referred
+/// (sRGB-encoded) tone.
 #[derive(Clone, Debug, Default)]
 pub struct HistogramData {
     /// Red channel bins, normalized to [0, 1].
@@ -24,6 +32,11 @@ pub struct HistogramData {
 
 impl HistogramData {
     /// Compute histogram data from an image buffer.
+    ///
+    /// Each channel of the linear output RGB is converted to a display-referred
+    /// tone with the sRGB OETF before binning, and the encoded value is clamped
+    /// to `0..=1`. The binning math runs in `f64` so it is identical under both
+    /// `Scalar` precision settings; the bins themselves stay `f32` for display.
     pub fn compute(image: &ImageBuf) -> Self {
         let mut data = Self {
             r: vec![0.0; BINS],
@@ -35,15 +48,16 @@ impl HistogramData {
             return data;
         }
         let total = pixel_count as f32;
+        let scale = (BINS - 1) as f64;
         for y in 0..image.height {
             for x in 0..image.width {
                 let i = (y * image.width + x) as usize * 3;
-                let r = image.data[i].max(0.0).min(1.0);
-                let g = image.data[i + 1].max(0.0).min(1.0);
-                let b = image.data[i + 2].max(0.0).min(1.0);
-                let r_bin = (r * (BINS - 1) as f32).round() as usize;
-                let g_bin = (g * (BINS - 1) as f32).round() as usize;
-                let b_bin = (b * (BINS - 1) as f32).round() as usize;
+                let r = srgb_encode_f64(image.data[i] as f64).max(0.0).min(1.0);
+                let g = srgb_encode_f64(image.data[i + 1] as f64).max(0.0).min(1.0);
+                let b = srgb_encode_f64(image.data[i + 2] as f64).max(0.0).min(1.0);
+                let r_bin = (r * scale).round() as usize;
+                let g_bin = (g * scale).round() as usize;
+                let b_bin = (b * scale).round() as usize;
                 data.r[r_bin] += 1.0 / total;
                 data.g[g_bin] += 1.0 / total;
                 data.b[b_bin] += 1.0 / total;
@@ -198,5 +212,48 @@ impl HistogramStrip {
     /// Toggle visibility.
     pub fn toggle(&mut self) {
         self.visible = !self.visible;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peak_bin(bins: &[f32]) -> usize {
+        bins.iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(i, _)| i)
+            .unwrap()
+    }
+
+    #[test]
+    fn bins_use_display_referred_srgb_tone() {
+        // Linear 0.5 encodes to display tone ~0.7354 -> bin 46, not the
+        // linear midpoint bin 32 the old pre-encode binning produced.
+        let image = ImageBuf::from_data(
+            2,
+            1,
+            vec![0.5 as _, 0.5 as _, 0.5 as _, 0.5 as _, 0.5 as _, 0.5 as _],
+        );
+        let data = HistogramData::compute(&image);
+        assert_eq!(peak_bin(&data.r), 46);
+        assert_eq!(peak_bin(&data.g), 46);
+        assert_eq!(peak_bin(&data.b), 46);
+    }
+
+    #[test]
+    fn out_of_gamut_linear_values_clamp_to_edge_bins() {
+        // -0.25 linear is out of gamut (below 0) and 4.0 linear exceeds
+        // display white; both clamp after encoding to the edge bins.
+        let image = ImageBuf::from_data(
+            2,
+            1,
+            vec![-0.25 as _, 0.0 as _, 0.0 as _, 4.0 as _, 0.0 as _, 0.0 as _],
+        );
+        let data = HistogramData::compute(&image);
+        assert!(data.r[0] > 0.0);
+        assert!(data.r[BINS - 1] > 0.0);
+        assert!(data.r[1..BINS - 1].iter().all(|&v| v == 0.0));
     }
 }

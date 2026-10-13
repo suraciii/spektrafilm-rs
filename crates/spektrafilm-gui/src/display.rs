@@ -1,6 +1,5 @@
 // Viewer presentation. Immutable pipeline floats are shared for inspection;
 // a persistent worker prepares disposable fit data and bounded viewport pixels.
-use crate::numeric::numeric;
 use egui::{Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2};
 use parking_lot::{Condvar, Mutex};
 use serde_json::Value;
@@ -133,6 +132,10 @@ struct DisplayRequest {
     raster: Option<DisplayRaster>,
     paper_size: [usize; 2],
     previous: Option<DisplayRaster>,
+    /// Before/after split: `(fraction of image_rect width, left-side raster)`.
+    /// When present and `layer == Output`, pixels left of the split sample the
+    /// left-side (input) raster while pixels right of it sample the output.
+    split: Option<(f32, DisplayRaster)>,
     source: Option<Arc<ImageBuf>>,
     prepared: Option<PreparedDisplay>,
     metadata: DisplaySource,
@@ -287,6 +290,8 @@ pub struct Viewer {
     output_source_profile: Option<PathBuf>,
     prepared_input: Option<PreparedDisplay>,
     prepared_output: Option<PreparedDisplay>,
+    /// Before/after split fraction (0..=1) of image width; `None` disables.
+    compare_split: Option<f32>,
     revision: u64,
     worker: DisplayWorker,
     #[cfg(test)]
@@ -342,6 +347,15 @@ impl Viewer {
             zoom_percent: None,
             display_max_size: 1024,
             ..Self::default()
+        }
+    }
+    /// Set the before/after split fraction (0..=1) of image width; `None`
+    /// disables split rendering. Viewer-only, never affects saved pixels.
+    pub fn set_compare_split(&mut self, fraction: Option<f32>) {
+        let normalized = fraction.map(|f| f.clamp(0.0, 1.0));
+        if self.compare_split != normalized {
+            self.compare_split = normalized;
+            self.revision = self.revision.wrapping_add(1);
         }
     }
     pub fn set_input(&mut self, raster: DisplayRaster, original_size: [usize; 2]) {
@@ -539,14 +553,11 @@ impl Viewer {
                 "Use neutral 18% gray as backgroung to judge the exposure and neutral colors",
             );
         let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge.";
-        numeric(
+        crate::controls::param_numeric(
             ui,
             "white padding",
             &mut self.settings.white_padding,
-            0.0,
-            1.0,
-            0.01,
-            2,
+            "display.white_padding",
             tooltip,
         );
         before
@@ -757,6 +768,7 @@ impl Viewer {
             output_float
                 .map(|source| Arc::as_ptr(source) as usize as u64)
                 .unwrap_or(0),
+            self.compare_split.map(f32::to_bits).unwrap_or(0) as u64,
         ];
         if self.cache_key.as_ref() != Some(&key) {
             self.generation = self.generation.wrapping_add(1);
@@ -791,6 +803,15 @@ impl Viewer {
                 raster: selected.cloned(),
                 paper_size,
                 previous: self.transition.as_ref().and_then(|t| t.previous.clone()),
+                split: if layer == ViewLayer::Output {
+                    self.compare_split.and_then(|fraction| {
+                        self.prepared_input
+                            .as_ref()
+                            .map(|p| (fraction, p.raster.clone()))
+                    })
+                } else {
+                    None
+                },
                 source: source.cloned(),
                 prepared: match layer {
                     ViewLayer::Input => self.prepared_input.clone(),
@@ -1013,6 +1034,7 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
         mut raster,
         paper_size,
         previous,
+        split,
         source,
         prepared,
         metadata,
@@ -1147,8 +1169,19 @@ fn compose_display(request: DisplayRequest, cache: &mut CompositionCache) -> Dis
                 } else {
                     sample_rect(raster, p, image_rect, interpolation)
                 };
+                // Before/after split: left of the split samples the left-side
+                // (input) raster, right of it keeps the output already in `rgb`.
+                if layer == ViewLayer::Output
+                    && let Some((fraction, left)) = split.as_ref()
+                {
+                    let split_x = image_rect.min.x + image_rect.width() * fraction.clamp(0.0, 1.0);
+                    if p.x < split_x {
+                        rgb = sample_rect(left, p, image_rect, interpolation);
+                    }
+                }
                 if layer == ViewLayer::Output
                     && let Some(previous) = previous.as_ref()
+                    && split.is_none()
                 {
                     let a = frame as f32 / 10.0;
                     let old = sample_rect(previous, p, image_rect, interpolation);
@@ -1698,6 +1731,7 @@ mod tests {
             raster: Some(DisplayRaster::new([1, 1], vec![[0.5; 3]]).unwrap()),
             paper_size: [128, 128],
             previous: None,
+            split: None,
             prepared: None,
             source: Some(Arc::new(ImageBuf::from_data(
                 4,

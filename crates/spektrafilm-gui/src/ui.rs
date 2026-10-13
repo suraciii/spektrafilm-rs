@@ -839,6 +839,24 @@ impl eframe::App for App {
                     }
                     ui.add_space(2.0);
                 }
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                // Right panel toggles: feedback / film library
+                for (mode, icon, tip) in [
+                    ("feedback", "📊", "Histogram & feedback"),
+                    ("library", "🎞", "Film library"),
+                ] {
+                    let active = self.right_panel_mode.as_deref() == Some(mode);
+                    if ui
+                        .selectable_label(active, icon)
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        self.right_panel_mode = if active { None } else { Some(mode.to_owned()) };
+                    }
+                    ui.add_space(2.0);
+                }
             });
         // Left control panel: histogram at top, tabs, scrollable controls, action bar
         egui::SidePanel::left("controls")
@@ -846,8 +864,12 @@ impl eframe::App for App {
             .exact_width(320.0)
             .show(ctx, |ui| {
                 ui.heading("spektrafilm");
-                self.histogram
-                    .update(&self.output_image, self.parameter_revision);
+                let output_id = self
+                    .output_image
+                    .as_ref()
+                    .map(|o| Arc::as_ptr(o) as usize as u64)
+                    .unwrap_or(0);
+                self.histogram.update(&self.output_image, output_id);
                 self.histogram.render(ui);
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
@@ -939,6 +961,11 @@ impl eframe::App for App {
             self.viewer.layer_controls(ui);
             self.viewer
                 .set_display_max_size(self.params.settings.preview_max_size);
+            self.viewer.set_compare_split(if self.compare_active {
+                Some(self.compare_split)
+            } else {
+                None
+            });
             self.viewer
                 .show(ui, self.image.as_ref(), self.output_image.as_ref());
             // Before/after compare divider overlay

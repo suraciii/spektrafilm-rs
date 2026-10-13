@@ -1,5 +1,6 @@
 //! Editors for the pinned experimental GUI sections.
-use crate::numeric::{numeric, numeric_field};
+use crate::editor_ranges;
+use crate::numeric::{numeric, numeric_field, numeric_field_validated};
 use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::{
@@ -143,12 +144,49 @@ pub(crate) fn enum_choice<T: Copy + PartialEq>(
     changed
 }
 
+/// Per-path table keys for the shared density-curve morph editor. Film and
+/// print chemistry are separate parameter paths with one range each.
+struct ChemistryPaths {
+    gamma_factor: &'static str,
+    gamma_factor_fast: &'static str,
+    gamma_factor_slow: &'static str,
+    gamma_factor_red: &'static str,
+    gamma_factor_green: &'static str,
+    gamma_factor_blue: &'static str,
+    developer_exhaustion: &'static str,
+}
+
+const FILM_CHEMISTRY_PATHS: ChemistryPaths = ChemistryPaths {
+    gamma_factor: "film_render.chemistry.gamma_factor",
+    gamma_factor_fast: "film_render.chemistry.gamma_factor_fast",
+    gamma_factor_slow: "film_render.chemistry.gamma_factor_slow",
+    gamma_factor_red: "film_render.chemistry.gamma_factor_red",
+    gamma_factor_green: "film_render.chemistry.gamma_factor_green",
+    gamma_factor_blue: "film_render.chemistry.gamma_factor_blue",
+    developer_exhaustion: "film_render.chemistry.developer_exhaustion",
+};
+
+const PRINT_CHEMISTRY_PATHS: ChemistryPaths = ChemistryPaths {
+    gamma_factor: "print_render.density_curves_morph.gamma_factor",
+    gamma_factor_fast: "print_render.density_curves_morph.gamma_factor_fast",
+    gamma_factor_slow: "print_render.density_curves_morph.gamma_factor_slow",
+    gamma_factor_red: "print_render.density_curves_morph.gamma_factor_red",
+    gamma_factor_green: "print_render.density_curves_morph.gamma_factor_green",
+    gamma_factor_blue: "print_render.density_curves_morph.gamma_factor_blue",
+    developer_exhaustion: "print_render.density_curves_morph.developer_exhaustion",
+};
+
 fn render_chemistry(
     ui: &mut Ui,
     params: &mut PrintCurvesMorphParams,
     flags: &mut ChangeFlags,
     film: bool,
 ) {
+    let paths = if film {
+        &FILM_CHEMISTRY_PATHS
+    } else {
+        &PRINT_CHEMISTRY_PATHS
+    };
     let what = if film { "film" } else { "print" };
     flags.runtime_changed |= toggle(
         ui,
@@ -156,74 +194,53 @@ fn render_chemistry(
         &mut params.active,
         &format!("Enable {what} density-curve morphing."),
     );
-    flags.runtime_changed |= numeric(
+    flags.runtime_changed |= param_numeric(
         ui,
         "gamma factor",
         &mut params.gamma_factor,
-        0.25,
-        4.0,
-        0.05,
-        2,
+        paths.gamma_factor,
         &format!("Global coupled gamma multiplier for the {what} density curves."),
     );
-    flags.runtime_changed |= numeric(
+    flags.runtime_changed |= param_numeric(
         ui,
         "gamma factor fast",
         &mut params.gamma_factor_fast,
-        0.25,
-        4.0,
-        0.05,
-        2,
+        paths.gamma_factor_fast,
         "Gamma factor applied to the fast sub-layer.",
     );
-    flags.runtime_changed |= numeric(
+    flags.runtime_changed |= param_numeric(
         ui,
         "gamma factor slow",
         &mut params.gamma_factor_slow,
-        0.25,
-        4.0,
-        0.05,
-        2,
+        paths.gamma_factor_slow,
         "Gamma factor applied to the mid and slow sub-layers.",
     );
-    flags.runtime_changed |= numeric(
+    flags.runtime_changed |= param_numeric(
         ui,
         "gamma factor red",
         &mut params.gamma_factor_red,
-        0.25,
-        4.0,
-        0.02,
-        2,
+        paths.gamma_factor_red,
         "Per-channel gamma factor applied to the red channel.",
     );
-    flags.runtime_changed |= numeric(
+    flags.runtime_changed |= param_numeric(
         ui,
         "gamma factor green",
         &mut params.gamma_factor_green,
-        0.25,
-        4.0,
-        0.02,
-        2,
+        paths.gamma_factor_green,
         "Per-channel gamma factor applied to the green channel.",
     );
-    flags.runtime_changed |= numeric(
+    flags.runtime_changed |= param_numeric(
         ui,
         "gamma factor blue",
         &mut params.gamma_factor_blue,
-        0.25,
-        4.0,
-        0.02,
-        2,
+        paths.gamma_factor_blue,
         "Per-channel gamma factor applied to the blue channel.",
     );
-    flags.runtime_changed |= numeric(
+    flags.runtime_changed |= param_numeric(
         ui,
         "developer exhaustion",
         &mut params.developer_exhaustion,
-        0.0,
-        1.0,
-        0.02,
-        2,
+        paths.developer_exhaustion,
         &format!(
             "Blend all three {what} sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset."
         ),
@@ -236,9 +253,9 @@ fn preflash_controls(ui: &mut Ui, params: &mut RuntimeParams, flags: &mut Change
         ui.label("Preflash inactive on this route; stored values are retained.");
     }
     ui.add_enabled_ui(active, |ui| {
-        flags.runtime_changed |= numeric(ui, "preflash exposure", &mut params.enlarger.preflash_exposure, 0.0, 1000000.0, 0.005, 2, "Linear multiplier of the integrated spectral flash, not EV. Zero disables flash and retains its filters. For negative-to-photographic-paper printing, flash can bring weak highlight exposure differences into a responsive part of the paper curve; it cannot recover absent detail. Excess may lower paper white, add fog, alter midtones and change color. Other print materials retain their own polarity.");
-        flags.runtime_changed |= numeric(ui, "preflash y filter shift", &mut params.enlarger.preflash_y_filter_shift, -1000000.0, 1000000.0, 1.0, 2, "Independent preflash Yellow shift around the calibrated neutral filter pack, in Kodak CC units.");
-        flags.runtime_changed |= numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, -1000000.0, 1000000.0, 1.0, 2, "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
+        flags.runtime_changed |= param_numeric(ui, "preflash exposure", &mut params.enlarger.preflash_exposure, "enlarger.preflash_exposure", "Linear multiplier of the integrated spectral flash, not EV. Zero disables flash and retains its filters. For negative-to-photographic-paper printing, flash can bring weak highlight exposure differences into a responsive part of the paper curve; it cannot recover absent detail. Excess may lower paper white, add fog, alter midtones and change color. Other print materials retain their own polarity.");
+        flags.runtime_changed |= param_numeric(ui, "preflash y filter shift", &mut params.enlarger.preflash_y_filter_shift, "enlarger.preflash_y_filter_shift", "Independent preflash Yellow shift around the calibrated neutral filter pack, in Kodak CC units.");
+        flags.runtime_changed |= param_numeric(ui, "preflash m filter shift", &mut params.enlarger.preflash_m_filter_shift, "enlarger.preflash_m_filter_shift", "Independent preflash Magenta shift around the calibrated neutral filter pack, in Kodak CC units.");
     });
 }
 
@@ -259,9 +276,9 @@ pub(crate) fn show(
         }
         if section == "Camera" {
             ui.scope(|ui| {
-                flags.runtime_changed |= numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, -100.0, 100.0, 0.25, 2, "Add a bias to the auto-exposure of the camera.");
+                flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, "camera.exposure_compensation_ev", "Add a bias to the auto-exposure of the camera.");
                 flags.runtime_changed |= toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera.");
-                flags.runtime_changed |= numeric(ui, "film format mm", &mut params.camera.film_format_mm, 1.0, 1000.0, 0.5, 2, "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain Dye, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
+                flags.runtime_changed |= param_numeric(ui, "film format mm", &mut params.camera.film_format_mm, "camera.film_format_mm", "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain Dye, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");
                 flags.runtime_changed |= choice_tip(ui, "auto exposure method", &mut params.camera.auto_exposure_method, &["center_weighted", "matrix", "multi_zone", "partial", "highlight_weighted", "median", "average"], "Metering method used by the virtual camera's auto-exposure.");
                 flags.runtime_changed |= choice_tip(ui, "color filter", &mut params.camera.color_filter, &["none", "hoya_x0", "hoya_x1", "hoya_y2", "hoya_ya3", "hoya_r1"], "Camera taking filter held in front of the lens. Its measured spectral transmittance multiplies the incoming light, so it both darkens and color-casts the exposure (e.g. Hoya Y2/YA3 yellow, R1 red, X0/X1 UV/haze). 'none' = no filter.");
             });
@@ -272,10 +289,10 @@ pub(crate) fn show(
                 ui.label("Enlarger inactive on this route; stored values are retained.");
             }
             ui.add_enabled_ui(print_active, |ui| {
-                flags.runtime_changed |= numeric(ui, "print exposure", &mut params.enlarger.print_exposure, 0.0, 1000000.0, 0.02, 2, "Changes the exposure time set in the virtual enlarger");
+                flags.runtime_changed |= param_numeric(ui, "print exposure", &mut params.enlarger.print_exposure, "enlarger.print_exposure", "Changes the exposure time set in the virtual enlarger");
                 flags.runtime_changed |= toggle(ui, "print auto compensation", &mut params.enlarger.print_exposure_compensation, "Auto adjust the print exposure for the camera exposure compensation ev");
-                flags.runtime_changed |= numeric(ui, "print y filter shift", &mut params.enlarger.y_filter_shift, -200.0, 1000000.0, 1.0, 2, "Y filter shift of the color enlarger from a neutral position, in Kodak CC units");
-                flags.runtime_changed |= numeric(ui, "print m filter shift", &mut params.enlarger.m_filter_shift, -200.0, 1000000.0, 1.0, 2, "M filter shift of the color enlarger from a neutral position, in Kodak CC units");
+                flags.runtime_changed |= param_numeric(ui, "print y filter shift", &mut params.enlarger.y_filter_shift, "enlarger.y_filter_shift", "Y filter shift of the color enlarger from a neutral position, in Kodak CC units");
+                flags.runtime_changed |= param_numeric(ui, "print m filter shift", &mut params.enlarger.m_filter_shift, "enlarger.m_filter_shift", "M filter shift of the color enlarger from a neutral position, in Kodak CC units");
                 preflash_controls(ui, params, &mut flags);
             });
         }
@@ -350,16 +367,16 @@ pub(crate) fn show(
                         (ScannerFinish::LabScan, "lab_scan"),
                     ], "Optional scanner finish after negative conversion.");
                     if params.scanner.finish == ScannerFinish::LabScan {
-                        flags.runtime_changed |= numeric(ui, "finish strength", &mut params.scanner.finish_strength, 0.0, 1.0, 0.01, 3, "Scanner finish strength. Zero returns the calibrated scan before finishing.");
+                        flags.runtime_changed |= param_numeric(ui, "finish strength", &mut params.scanner.finish_strength, "scanner.finish_strength", "Scanner finish strength. Zero returns the calibrated scan before finishing.");
                     }
                     if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
-                        flags.runtime_changed |= numeric(ui, "Reference exposure EV", &mut params.scanner.reference_exposure_ev, -16.0, 16.0, 0.05, 3, "Output exposure in stops after the fixed reference response. Zero is neutral; +1 doubles linear light.");
-                        flags.runtime_changed |= tuple(ui, "Reference balance EV", &mut params.scanner.reference_balance_ev, -16.0, 16.0, 0.05, 3, "Independent linear-sRGB red, green and blue output gains in stops after the fixed reference response. All zero is neutral.");
+                        flags.runtime_changed |= param_numeric(ui, "Reference exposure EV", &mut params.scanner.reference_exposure_ev, "scanner.reference_exposure_ev", "Output exposure in stops after the fixed reference response. Zero is neutral; +1 doubles linear light.");
+                        flags.runtime_changed |= param_tuple(ui, "Reference balance EV", &mut params.scanner.reference_balance_ev, "scanner.reference_balance_ev", "Independent linear-sRGB red, green and blue output gains in stops after the fixed reference response. All zero is neutral.");
                     } else {
-                        flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Negative conversion brightness offset in stops.");
-                        flags.runtime_changed |= tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, -16.0, 16.0, 0.05, 3, "Independent red, green, and blue negative conversion exposure offsets in stops.");
-                        flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Negative conversion logistic contrast; strictly positive.");
-                        flags.runtime_changed |= numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, 0.0001, 16.0, 0.02, 3, "Negative conversion maximum density; strictly positive.");
+                        flags.runtime_changed |= param_numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, "scanner.positive_density_ev", "Negative conversion brightness offset in stops.");
+                        flags.runtime_changed |= param_tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, "scanner.positive_balance_ev", "Independent red, green, and blue negative conversion exposure offsets in stops.");
+                        flags.runtime_changed |= param_numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, "scanner.positive_contrast", "Negative conversion logistic contrast; strictly positive.");
+                        flags.runtime_changed |= param_numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, "scanner.positive_dmax", "Negative conversion maximum density; strictly positive.");
                     }
                 }
                 if medium == ScanMedium::Slide
@@ -368,14 +385,14 @@ pub(crate) fn show(
                 {
                     flags.runtime_changed |= scan_points(ui, &mut params.scanner.black_point, &mut params.scanner.white_point);
                 }
-                flags.runtime_changed |= numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, 0.0, 1000000.0, 0.05, 2, "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, points, correction, finishing, gamut processing, sharpening and encoding. Identity points retain this optical order.");
+                flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, points, correction, finishing, gamut processing, sharpening and encoding. Identity points retain this optical order.");
                 if medium.correction_eligible() {
                     flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable white point correction applied to the scanner output.");
-                    flags.runtime_changed |= numeric(ui, "white level", &mut params.scanner.white_level, 0.0, 1.0, 0.005, 3, "Target white level applied when white correction is enabled.");
+                    flags.runtime_changed |= param_numeric(ui, "white level", &mut params.scanner.white_level, "scanner.white_level", "Target white level applied when white correction is enabled.");
                     flags.runtime_changed |= toggle(ui, "black correction", &mut params.scanner.black_correction, "Enable black point correction applied to the scanner output.");
-                    flags.runtime_changed |= numeric(ui, "black level", &mut params.scanner.black_level, 0.0, 1.0, 0.005, 3, "Target black level applied when black correction is enabled.");
+                    flags.runtime_changed |= param_numeric(ui, "black level", &mut params.scanner.black_level, "scanner.black_level", "Target black level applied when black correction is enabled.");
                 }
-                flags.runtime_changed |= tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, 0.0, 1000000.0, 0.05, 2, "Digital scan sharpening after interpretation, scanner finish and output gamut processing: [sigma in pixels, amount].");
+                flags.runtime_changed |= param_tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, "scanner.unsharp_mask", "Digital scan sharpening after interpretation, scanner finish and output gamut processing: [sigma in pixels, amount].");
             });
         }
         if section == "Film chemistry" {
@@ -388,23 +405,20 @@ pub(crate) fn show(
             egui::CollapsingHeader::new("Print viewing glare").default_open(false).show(ui, |ui| {
                 ui.add_enabled_ui(params.workflow.route.contains(" > print > "), |ui| {
                     flags.runtime_changed |= toggle(ui, "active", &mut params.print_render.glare.active, "Add readout stray light after lens blur and before scanner correction. This does not change print exposure or developed density.");
-                    flags.runtime_changed |= numeric(ui, "percent", &mut params.print_render.glare.percent, 0.0, 1.0, 0.01, 2, "Percentage of the glare light (typically 0.1-0.25)");
-                    flags.runtime_changed |= numeric(ui, "roughness", &mut params.print_render.glare.roughness, 0.0, 1.0, 0.05, 2, "Roughness of the glare light (0-1)");
-                    flags.runtime_changed |= numeric(ui, "blur", &mut params.print_render.glare.blur, 0.0, 1000000.0, 0.1, 2, "Sigma of gaussian blur in pixels for the glare");
+                    flags.runtime_changed |= param_numeric(ui, "percent", &mut params.print_render.glare.percent, "print_render.glare.percent", "Percentage of the glare light (typically 0.1-0.25)");
+                    flags.runtime_changed |= param_numeric(ui, "roughness", &mut params.print_render.glare.roughness, "print_render.glare.roughness", "Roughness of the glare light (0-1)");
+                    flags.runtime_changed |= param_numeric(ui, "blur", &mut params.print_render.glare.blur, "print_render.glare.blur", "Sigma of gaussian blur in pixels for the glare");
                 });
             });
         }
         if section == "Magazine print color" {
             ui.collapsing(section, |ui| {
                 let magazine = &mut params.magazine_print_color;
-                flags.runtime_changed |= numeric(
+                flags.runtime_changed |= param_numeric(
                     ui,
                     "strength",
                     &mut magazine.strength,
-                    0.0,
-                    1.0,
-                    0.01,
-                    2,
+                    "magazine_print_color.strength",
                     "Magazine print color appearance strength.",
                 );
             });
@@ -413,48 +427,48 @@ pub(crate) fn show(
             egui::CollapsingHeader::new("Input gamut compress").default_open(false).show(ui, |ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.io.input_gamut_compress.active, "Compress input chromaticities toward the visible spectral locus before spectral upsampling. Off passes input through unchanged.");
                 flags.runtime_changed |= choice_tip(ui, "algorithm", &mut params.io.input_gamut_compress.algorithm, &["xy"], "xy: radial compression in CIE 1931 chromaticity toward the spectral locus / inscribed hull (ACES RGC family, preserves dominant wavelength). The only input algorithm.");
-                flags.runtime_changed |= tuple(ui, "knee", &mut params.io.input_gamut_compress.knee, 0.0, 1000000.0, 0.05, 3, "Reinhard knee (threshold, limit, power). Default (0.815, 1.0, 1.2) — ACES RGC pair: the 0.815 threshold leaves in-gamut colours untouched, the 1.2 power gives a slow tail so deep-imaginary colours keep their gradation, and limit 1.0 asymptotes on the boundary.");
-                flags.runtime_changed |= numeric(ui, "hull detail", &mut params.io.input_gamut_compress.hull_detail, 0.5, 48.0, 0.5, 1, "Detail of the inscribed-hull compression boundary = number of FFT modes kept. HIGHER keeps more locus detail (more cusp chroma) but re-admits polygon kinks; LOWER is smoother, rounding the spectral tips inward toward a circle. Note: this is modes-kept, not a blur width — larger means LESS smoothing.");
+                flags.runtime_changed |= param_tuple(ui, "knee", &mut params.io.input_gamut_compress.knee, "io.input_gamut_compress.knee", "Reinhard knee (threshold, limit, power). Default (0.815, 1.0, 1.2) — ACES RGC pair: the 0.815 threshold leaves in-gamut colours untouched, the 1.2 power gives a slow tail so deep-imaginary colours keep their gradation, and limit 1.0 asymptotes on the boundary.");
+                flags.runtime_changed |= param_numeric(ui, "hull detail", &mut params.io.input_gamut_compress.hull_detail, "io.input_gamut_compress.hull_detail", "Detail of the inscribed-hull compression boundary = number of FFT modes kept. HIGHER keeps more locus detail (more cusp chroma) but re-admits polygon kinks; LOWER is smoother, rounding the spectral tips inward toward a circle. Note: this is modes-kept, not a blur width — larger means LESS smoothing.");
             });
         }
         if section == "Output gamut compress" {
             egui::CollapsingHeader::new("Output gamut compress").default_open(false).show(ui, |ui| {
                 flags.runtime_changed |= choice_tip(ui, "algorithm", &mut params.io.output_gamut_compress.algorithm, &["off", "oklch", "aces_rgc", "oklrab", "jzazbz", "cam16ucs"], "off: disable output gamut compression. aces_rgc (default): per-channel ACES RGC v1.3, matches Resolve/Nuke/OCIO and is the cheapest per pixel. cam16ucs: CAM16-UCS chroma reduction with the smoothest constant-hue behavior (heaviest). oklch: perceptual chroma reduction in OkLab, preserves hue + lightness. oklrab/jzazbz: alternative perceptual spaces.");
-                flags.runtime_changed |= tuple(ui, "knee", &mut params.io.output_gamut_compress.knee, 0.0, 1000000.0, 0.05, 3, "Reinhard knee (threshold, limit, power) on normalized chroma C/C_max. Default (0.0, 1.0, 6.0) rolls off smoothly from the center with the asymptote on the output cube edge.");
+                flags.runtime_changed |= param_tuple(ui, "knee", &mut params.io.output_gamut_compress.knee, "io.output_gamut_compress.knee", "Reinhard knee (threshold, limit, power) on normalized chroma C/C_max. Default (0.0, 1.0, 6.0) rolls off smoothly from the center with the asymptote on the output cube edge.");
             });
         }
         if section == "Crop and upscale" {
             egui::CollapsingHeader::new("Crop and upscale").default_open(false).show(ui, |ui| {
-                flags.runtime_changed |= numeric(ui, "upscale factor", &mut params.io.upscale_factor, 0.0, 1000000.0, 0.5, 2, "Scale image size up to increase resolution");
+                flags.runtime_changed |= param_numeric(ui, "upscale factor", &mut params.io.upscale_factor, "io.upscale_factor", "Scale image size up to increase resolution");
                 flags.runtime_changed |= toggle(ui, "crop", &mut params.io.crop, "Crop image to a fraction of the original size to preview details at full scale");
-                flags.runtime_changed |= tuple(ui, "crop center", &mut params.io.crop_center, 0.0, 1.0, 0.01, 2, "Center of the crop region in relative coordinates in x, y (0-1)");
-                flags.runtime_changed |= tuple(ui, "crop size", &mut params.io.crop_size, 0.0, 1.0, 0.01, 2, "Normalized size of the crop region in x, y (0,1), as fraction of the long side.");
+                flags.runtime_changed |= param_tuple(ui, "crop center", &mut params.io.crop_center, "io.crop_center", "Center of the crop region in relative coordinates in x, y (0-1)");
+                flags.runtime_changed |= param_tuple(ui, "crop size", &mut params.io.crop_size, "io.crop_size", "Normalized size of the crop region in x, y (0,1), as fraction of the long side.");
             });
         }
         if section == "Film base" {
             ui.scope(|ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.base.active, "Enable film base-density (film base + fog / orange mask) tuning.");
-                flags.runtime_changed |= numeric(ui, "scale", &mut params.film_render.base.scale, 0.0, 1000000.0, 0.05, 2, "Overall multiplier on the film base density.");
-                flags.runtime_changed |= numeric(ui, "tilt", &mut params.film_render.base.tilt, -1000000.0, 1000000.0, 0.05, 2, "Spectral tilt of the film base, pivoting at 555 nm (1.0 = +0.1 density at 650 nm; negative tilts the other way).");
-                flags.runtime_changed |= numeric(ui, "cyan", &mut params.film_render.base.cyan, 0.0, 1000000.0, 0.05, 2, "Cyan-channel film base density shift around 650 nm (1.0 = neutral; adds (value - 1) density).");
-                flags.runtime_changed |= numeric(ui, "magenta", &mut params.film_render.base.magenta, 0.0, 1000000.0, 0.05, 2, "Magenta-channel film base density shift around 555 nm (1.0 = neutral; adds (value - 1) density).");
-                flags.runtime_changed |= numeric(ui, "yellow", &mut params.film_render.base.yellow, 0.0, 1000000.0, 0.05, 2, "Yellow-channel film base density shift around 460 nm (1.0 = neutral; adds (value - 1) density).");
+                flags.runtime_changed |= param_numeric(ui, "scale", &mut params.film_render.base.scale, "film_render.base.scale", "Overall multiplier on the film base density.");
+                flags.runtime_changed |= param_numeric(ui, "tilt", &mut params.film_render.base.tilt, "film_render.base.tilt", "Spectral tilt of the film base, pivoting at 555 nm (1.0 = +0.1 density at 650 nm; negative tilts the other way).");
+                flags.runtime_changed |= param_numeric(ui, "cyan", &mut params.film_render.base.cyan, "film_render.base.cyan", "Cyan-channel film base density shift around 650 nm (1.0 = neutral; adds (value - 1) density).");
+                flags.runtime_changed |= param_numeric(ui, "magenta", &mut params.film_render.base.magenta, "film_render.base.magenta", "Magenta-channel film base density shift around 555 nm (1.0 = neutral; adds (value - 1) density).");
+                flags.runtime_changed |= param_numeric(ui, "yellow", &mut params.film_render.base.yellow, "film_render.base.yellow", "Yellow-channel film base density shift around 460 nm (1.0 = neutral; adds (value - 1) density).");
             });
         }
         if section == "Print base" {
             egui::CollapsingHeader::new("Base").default_open(false).show(ui, |ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.print_render.base.active, "Enable print base-density tuning.");
-                flags.runtime_changed |= numeric(ui, "scale", &mut params.print_render.base.scale, 0.0, 1000000.0, 0.05, 2, "Overall multiplier on the print base density.");
-                flags.runtime_changed |= numeric(ui, "cyan", &mut params.print_render.base.cyan, 0.0, 1000000.0, 0.05, 2, "Cyan-channel multiplicative scale of the print base min around 610 nm (1.0 = neutral).");
-                flags.runtime_changed |= numeric(ui, "magenta", &mut params.print_render.base.magenta, 0.0, 1000000.0, 0.05, 2, "Magenta-channel multiplicative scale of the print base min around 530 nm (1.0 = neutral).");
-                flags.runtime_changed |= numeric(ui, "yellow", &mut params.print_render.base.yellow, 0.0, 1000000.0, 0.05, 2, "Yellow-channel multiplicative scale of the print base min around 445 nm (1.0 = neutral).");
+                flags.runtime_changed |= param_numeric(ui, "scale", &mut params.print_render.base.scale, "print_render.base.scale", "Overall multiplier on the print base density.");
+                flags.runtime_changed |= param_numeric(ui, "cyan", &mut params.print_render.base.cyan, "print_render.base.cyan", "Cyan-channel multiplicative scale of the print base min around 610 nm (1.0 = neutral).");
+                flags.runtime_changed |= param_numeric(ui, "magenta", &mut params.print_render.base.magenta, "print_render.base.magenta", "Magenta-channel multiplicative scale of the print base min around 530 nm (1.0 = neutral).");
+                flags.runtime_changed |= param_numeric(ui, "yellow", &mut params.print_render.base.yellow, "print_render.base.yellow", "Yellow-channel multiplicative scale of the print base min around 445 nm (1.0 = neutral).");
             });
         }
         if section == "Convert" {
             ui.scope(|ui| {
                 flags.runtime_changed |= choice_tip(ui, "scan illuminant", &mut params.film_render.convert.scan_illuminant, &["D50", "D55", "D65", "A", "BB3200", "BB5000", "LED-B3", "LED-B5", "LED-RGB1", "LED-V2", "FL2"], "Light source of the scanning / capture rig used to digitize the negative. Set it to match your rig (a physical input); the film Base is the creative lever. Only used by the 'convert-film' workflow routes.");
-                flags.runtime_changed |= numeric(ui, "exposure compensation ev", &mut params.film_render.convert.exposure_compensation_ev, -100.0, 100.0, 0.25, 2, "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density.");
-                flags.runtime_changed |= numeric(ui, "base percentile", &mut params.film_render.convert.base_percentile, 50.0, 100.0, 0.5, 2, "Brightest-pixels percentile used by 'Detect base' to sample the clear / unexposed film (99 = brightest 1%). Detect base fits the film Base so that clear film maps to density 0 (unexposed -> neutral).");
+                flags.runtime_changed |= param_numeric(ui, "exposure compensation ev", &mut params.film_render.convert.exposure_compensation_ev, "film_render.convert.exposure_compensation_ev", "Aligns the scan's overall brightness to the model (gain = 2^ev). Brighter input -> less recovered film density.");
+                flags.runtime_changed |= param_numeric(ui, "base percentile", &mut params.film_render.convert.base_percentile, "film_render.convert.base_percentile", "Brightest-pixels percentile used by 'Detect base' to sample the clear / unexposed film (99 = brightest 1%). Detect base fits the film Base so that clear film maps to density 0 (unexposed -> neutral).");
                 ui.horizontal(|ui| {
                     ui.label("calibration").on_hover_text("3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the scan illuminant and base cannot reach). Editable and copy/paste-able; an invalid string falls back to identity (no correction). Use 'Blind calibration' to fit it from the current image.");
                     flags.runtime_changed |= ui.text_edit_singleline(&mut params.film_render.convert.calibration).on_hover_text("3x3 device-correction matrix (9 numbers, row-major) applied to the input before inversion, to undo the scanner/camera colour rendering vs the standard observer over the film dyes (the cross-channel cast that the scan illuminant and base cannot reach). Editable and copy/paste-able; an invalid string falls back to identity (no correction). Use 'Blind calibration' to fit it from the current image.").changed();
@@ -477,7 +491,7 @@ pub(crate) fn show(
                 flags.runtime_changed |= choice_tip(ui, "spectral upsampling", &mut params.settings.rgb_to_raw_method, &["arctic2026beta04", "hanatos2025", "mallett2019"], "Method to upsample the spectral resolution of the image, hanatos2025 works on the full visible locus, mallett2019 works only on sRGB (will clip input).");
                 flags.runtime_changed |= toggle(ui, "hanatos2025 adaptation window", &mut params.settings.apply_hanatos2025_adaptation_window, "Apply the hanatos2025 bandpass adaptation window when reconstructing spectra.");
                 flags.runtime_changed |= toggle(ui, "hanatos2025 adaptation surface", &mut params.settings.apply_hanatos2025_adaptation_surface, "Apply the hanatos2025 surface adaptation polynomial when reconstructing spectra.");
-                flags.runtime_changed |= numeric(ui, "spectral gaussian blur", &mut params.settings.spectral_gaussian_blur, 0.0, 1000000.0, 0.1, 2, "Sigma in nm for Gaussian blur applied to reconstructed spectra.");
+                flags.runtime_changed |= param_numeric(ui, "spectral gaussian blur", &mut params.settings.spectral_gaussian_blur, "settings.spectral_gaussian_blur", "Sigma in nm for Gaussian blur applied to reconstructed spectra.");
             });
         }
         if section == "Grain" {
@@ -510,33 +524,33 @@ pub(crate) fn show(
                             (GrainV2Mode::Noise, "Noise"),
                         ], "Procedural grain processing mode.");
                         let resolved = grain.resolved_grain_v2();
-                        flags.runtime_changed |= optional_numeric(ui, "Size", &mut grain.v2_size, resolved.size, 1.0, 48.0, 0.5, 1, "Grain particle size.");
-                        flags.runtime_changed |= optional_numeric(ui, "Shadows", &mut grain.v2_shadows, resolved.shadows * 100.0, 0.0, 100.0, 1.0, 1, "Shadow grain amount.");
-                        flags.runtime_changed |= optional_numeric(ui, "Midtones", &mut grain.v2_midtones, resolved.midtones * 100.0, 0.0, 100.0, 1.0, 1, "Midtone grain amount.");
-                        flags.runtime_changed |= optional_numeric(ui, "Highlights", &mut grain.v2_highlights, resolved.highlights * 100.0, 0.0, 100.0, 1.0, 1, "Highlight grain amount.");
-                        flags.runtime_changed |= optional_numeric(ui, "Film Resolution", &mut grain.v2_resolution_factor, resolved.resolution_factor, 0.0, 100.0, 1.0, 1, "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution.");
-                        flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, 0.0, 100.0, 1.0, 1, "Chromatic grain amount.");
+                        flags.runtime_changed |= optional_numeric(ui, "Size", &mut grain.v2_size, resolved.size, "film_render.grain.v2_size", "Grain particle size.");
+                        flags.runtime_changed |= optional_numeric(ui, "Shadows", &mut grain.v2_shadows, resolved.shadows * 100.0, "film_render.grain.v2_shadows", "Shadow grain amount.");
+                        flags.runtime_changed |= optional_numeric(ui, "Midtones", &mut grain.v2_midtones, resolved.midtones * 100.0, "film_render.grain.v2_midtones", "Midtone grain amount.");
+                        flags.runtime_changed |= optional_numeric(ui, "Highlights", &mut grain.v2_highlights, resolved.highlights * 100.0, "film_render.grain.v2_highlights", "Highlight grain amount.");
+                        flags.runtime_changed |= optional_numeric(ui, "Film Resolution", &mut grain.v2_resolution_factor, resolved.resolution_factor, "film_render.grain.v2_resolution_factor", "Resolution component of the post-scan Procedural appearance algorithm; this does not set scanner lens resolution.");
+                        flags.runtime_changed |= optional_numeric(ui, "Chroma", &mut grain.v2_chroma, resolved.color * 100.0, "film_render.grain.v2_chroma", "Chromatic grain amount.");
                     }
-                    flags.runtime_changed |= numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, 0.0, 1.0, 1.0, 0, "Post-scan Procedural appearance resolution method: 0 = Optical Resolution; 1 = Fast Blur. This does not change scanner readout optics.");
-                    flags.runtime_changed |= numeric(ui, "Timer", &mut grain.v2_timer, 0.0, 0.999999, 0.01, 6, "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase.");
+                    flags.runtime_changed |= param_numeric(ui, "Resolution Type", &mut grain.v2_resolution_type, "film_render.grain.v2_resolution_type", "Post-scan Procedural appearance resolution method: 0 = Optical Resolution; 1 = Fast Blur. This does not change scanner readout optics.");
+                    flags.runtime_changed |= param_numeric(ui, "Timer", &mut grain.v2_timer, "film_render.grain.v2_timer", "Explicit Grain Procedural phase timer; 0 uses the seed-derived phase.");
                     let resolved = grain.resolved_grain_v2();
-                    flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, 0.0, 100.0, 1.0, 1, "Overall grain amount.");
+                    flags.runtime_changed |= optional_numeric(ui, "Amount", &mut grain.v2_amount, resolved.amount * 100.0, "film_render.grain.v2_amount", "Overall grain amount.");
                 } else if grain.engine == GrainEngine::Fotufilm {
                     let fotufilm = &mut grain.fotufilm;
-                    flags.runtime_changed |= numeric(ui, "Amount", &mut fotufilm.amount, 0.0, 4.0, 0.05, 2, "Effective Fotufilm grain amount.");
-                    flags.runtime_changed |= numeric(ui, "Size", &mut fotufilm.size, 0.5, 4.0, 0.05, 2, "Effective Fotufilm particle size multiplier.");
-                    flags.runtime_changed |= numeric(ui, "Softness", &mut fotufilm.softness, 0.5, 4.0, 0.05, 2, "Effective Fotufilm particle softness.");
-                    flags.runtime_changed |= numeric(ui, "Color", &mut fotufilm.color, 0.0, 1.0, 0.01, 2, "Effective chromatic grain amount.");
-                    flags.runtime_changed |= tuple(ui, "Layer amounts", &mut fotufilm.layers, 0.0, 4.0, 0.05, 2, "Effective grain amount per emulsion layer.");
+                    flags.runtime_changed |= param_numeric(ui, "Amount", &mut fotufilm.amount, "film_render.grain.fotufilm.amount", "Effective Fotufilm grain amount.");
+                    flags.runtime_changed |= param_numeric(ui, "Size", &mut fotufilm.size, "film_render.grain.fotufilm.size", "Effective Fotufilm particle size multiplier.");
+                    flags.runtime_changed |= param_numeric(ui, "Softness", &mut fotufilm.softness, "film_render.grain.fotufilm.softness", "Effective Fotufilm particle softness.");
+                    flags.runtime_changed |= param_numeric(ui, "Color", &mut fotufilm.color, "film_render.grain.fotufilm.color", "Effective chromatic grain amount.");
+                    flags.runtime_changed |= param_tuple(ui, "Layer amounts", &mut fotufilm.layers, "film_render.grain.fotufilm.layers", "Effective grain amount per emulsion layer.");
                     egui::CollapsingHeader::new("Fotufilm advanced").default_open(false).show(ui, |ui| {
-                        flags.runtime_changed |= numeric(ui, "RMS density", &mut fotufilm.rms_density, f64::MIN_POSITIVE, 0.1, 0.001, 6, "Authored effective RMS optical-density target; not measured stock calibration.");
-                        flags.runtime_changed |= numeric(ui, "Cloud radius (µm)", &mut fotufilm.clump_radius_um, f64::MIN_POSITIVE, 32.0, 0.1, 3, "Authored effective population clump radius in film micrometers.");
-                        flags.runtime_changed |= tuple(ui, "Layer weights", &mut fotufilm.layer_weights, f64::MIN_POSITIVE, 4.0, 0.05, 6, "Authored effective relative population weight per layer.");
-                        flags.runtime_changed |= tuple(ui, "Layer size ratio", &mut fotufilm.layer_size_ratio, 0.25, 4.0, 0.05, 2, "Effective relative particle size per layer.");
-                        flags.runtime_changed |= numeric(ui, "Radius span", &mut fotufilm.radius_span, 1.0, 20.0, 0.1, 1, "Effective population radius span.");
+                        flags.runtime_changed |= param_numeric(ui, "RMS density", &mut fotufilm.rms_density, "film_render.grain.fotufilm.rms_density", "Authored effective RMS optical-density target; not measured stock calibration.");
+                        flags.runtime_changed |= param_numeric(ui, "Cloud radius (µm)", &mut fotufilm.clump_radius_um, "film_render.grain.fotufilm.clump_radius_um", "Authored effective population clump radius in film micrometers.");
+                        flags.runtime_changed |= param_tuple(ui, "Layer weights", &mut fotufilm.layer_weights, "film_render.grain.fotufilm.layer_weights", "Authored effective relative population weight per layer.");
+                        flags.runtime_changed |= param_tuple(ui, "Layer size ratio", &mut fotufilm.layer_size_ratio, "film_render.grain.fotufilm.layer_size_ratio", "Effective relative particle size per layer.");
+                        flags.runtime_changed |= param_numeric(ui, "Radius span", &mut fotufilm.radius_span, "film_render.grain.fotufilm.radius_span", "Effective population radius span.");
                         flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares);
-                        flags.runtime_changed |= numeric(ui, "Coating density scale", &mut fotufilm.coating_density_scale, 0.25, 4.0, 0.05, 2, "Effective coating density scale.");
-                        flags.runtime_changed |= numeric(ui, "Fog density", &mut fotufilm.fog_density, 0.0, 0.3, 0.005, 3, "Effective fog density.");
+                        flags.runtime_changed |= param_numeric(ui, "Coating density scale", &mut fotufilm.coating_density_scale, "film_render.grain.fotufilm.coating_density_scale", "Effective coating density scale.");
+                        flags.runtime_changed |= param_numeric(ui, "Fog density", &mut fotufilm.fog_density, "film_render.grain.fotufilm.fog_density", "Effective fog density.");
                         flags.runtime_changed |= enum_choice(ui, "Material", &mut fotufilm.material, &[
                             (FotufilmMaterial::Auto, "Auto"),
                             (FotufilmMaterial::Silver, "Silver"),
@@ -545,91 +559,101 @@ pub(crate) fn show(
                         ], "Effective grain material.");
                     });
                 } else if grain.engine == GrainEngine::Dye {
-                    flags.runtime_changed |= numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, 1.0, 32.0, 0.5, 1, "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
-                    flags.runtime_changed |= numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, 0.1, 8.0, 0.05, 2, "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
-                    flags.runtime_changed |= tuple(ui, "rms granularity", &mut grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
-                    flags.runtime_changed |= tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, 0.01, 1000000.0, 0.25, 2, "Positive relative particle scale per emulsion sublayer.");
-                    flags.runtime_changed |= tuple(ui, "density min", &mut grain.density_min, 0.0, 1000000.0, 1.0, 2, "Minimum grain density.");
-                    flags.runtime_changed |= tuple(ui, "uniformity", &mut grain.uniformity, 0.0, 1.0, 0.01, 2, "Per-channel grain uniformity.");
+                    flags.runtime_changed |= param_numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, "film_render.grain.v3_dye_support_um", "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");
+                    flags.runtime_changed |= param_numeric(ui, "Event area (µm²)", &mut grain.v3_event_area_um2, "film_render.grain.v3_event_area_um2", "Base statistical event area in square film micrometers; controls grain strength independently of dye support.");
+                    flags.runtime_changed |= param_tuple(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel stock granularity; sets each channel's strength relative to the reference stock (6).");
+                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Positive relative particle scale per emulsion sublayer.");
+                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
+                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
                 } else {
-                    flags.runtime_changed |= tuple(ui, "rms granularity", &mut grain.rms_granularity, 0.0, 1000000.0, 1.0, 2, "Per-channel RMS granularity.");
-                    flags.runtime_changed |= tuple(ui, "density min", &mut grain.density_min, -1000000.0, 1000000.0, 1.0, 2, "Minimum grain density.");
-                    flags.runtime_changed |= tuple(ui, "uniformity", &mut grain.uniformity, -1000000.0, 1000000.0, 1.0, 2, "Per-channel grain uniformity.");
-                    flags.runtime_changed |= tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, 0.0, 1000000.0, 0.25, 2, "Relative particle scale per emulsion sublayer.");
-                    flags.runtime_changed |= numeric(ui, "blur", &mut grain.blur, 0.0, 3.0, 0.05, 2, "Post-blur sigma.");
-                    flags.runtime_changed |= numeric(ui, "dye-cloud blur", &mut grain.blur_dye_clouds_um, 0.0, 10.0, 0.1, 2, "Dye-cloud blur in micrometers.");
-                    flags.runtime_changed |= numeric(ui, "mult usm amount", &mut grain.mult_usm_amount, 0.0, 1000000.0, 0.1, 2, "Density unsharp-mask amount.");
-                    flags.runtime_changed |= numeric(ui, "mult usm sigma", &mut grain.mult_usm_sigma, 0.0, 1000000.0, 0.1, 2, "Density unsharp-mask radius.");
-                    flags.runtime_changed |= tuple(ui, "micro structure", &mut grain.micro_structure, 0.0, 1000000.0, 0.1, 2, "Micro-structure scale and clump size.");
+                    flags.runtime_changed |= param_tuple(ui, "rms granularity", &mut grain.rms_granularity, "film_render.grain.rms_granularity", "Per-channel RMS granularity.");
+                    flags.runtime_changed |= param_tuple(ui, "density min", &mut grain.density_min, "film_render.grain.density_min", "Minimum grain density.");
+                    flags.runtime_changed |= param_tuple(ui, "uniformity", &mut grain.uniformity, "film_render.grain.uniformity", "Per-channel grain uniformity.");
+                    flags.runtime_changed |= param_tuple(ui, "particle scale sublayers", &mut grain.particle_scale_sublayers, "film_render.grain.particle_scale_sublayers", "Relative particle scale per emulsion sublayer.");
+                    flags.runtime_changed |= param_numeric(ui, "blur", &mut grain.blur, "film_render.grain.blur", "Post-blur sigma.");
+                    flags.runtime_changed |= param_numeric(ui, "dye-cloud blur", &mut grain.blur_dye_clouds_um, "film_render.grain.blur_dye_clouds_um", "Dye-cloud blur in micrometers.");
+                    flags.runtime_changed |= param_numeric(ui, "mult usm amount", &mut grain.mult_usm_amount, "film_render.grain.mult_usm_amount", "Density unsharp-mask amount.");
+                    flags.runtime_changed |= param_numeric(ui, "mult usm sigma", &mut grain.mult_usm_sigma, "film_render.grain.mult_usm_sigma", "Density unsharp-mask radius.");
+                    flags.runtime_changed |= param_tuple(ui, "micro structure", &mut grain.micro_structure, "film_render.grain.micro_structure", "Micro-structure scale and clump size.");
                 }
             });
         }
         if section == "Halation" {
             ui.scope(|ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.halation.active, "Enable halation and in-emulsion scatter.");
-                flags.runtime_changed |= numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, 0.0, 1000000.0, 0.05, 2, "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering.");
-                flags.runtime_changed |= numeric(ui, "scatter spatial scale", &mut params.film_render.halation.scatter_spatial_scale, 0.0, 1000000.0, 0.1, 2, "High-level scatter size multiplier (1.0 = physical defaults). Scales both core and tail sigmas.");
-                flags.runtime_changed |= numeric(ui, "halation amount", &mut params.film_render.halation.halation_amount, 0.0, 1000000.0, 0.05, 2, "High-level halation strength multiplier (1.0 = physical defaults). Scales the per-channel halation amplitudes.");
-                flags.runtime_changed |= numeric(ui, "halation spatial scale", &mut params.film_render.halation.halation_spatial_scale, 0.0, 1000000.0, 0.1, 2, "High-level halation size multiplier (1.0 = physical defaults). Scales the first-bounce sigma.");
-                flags.runtime_changed |= numeric(ui, "boost ev", &mut params.film_render.halation.boost_ev, 0.0, 1000000.0, 0.5, 2, "Maximum highlight boost in stops.");
-                flags.runtime_changed |= numeric(ui, "protect ev", &mut params.film_render.halation.protect_ev, 0.0, 1000000.0, 0.5, 2, "Protected range above midgray for the boost onset in stops.");
-                flags.runtime_changed |= numeric(ui, "boost range", &mut params.film_render.halation.boost_range, 0.0, 1.0, 0.05, 2, "Controls how quickly the highlight boost ramps in, from 0 to 1.");
-                flags.runtime_changed |= tuple(ui, "scatter core um", &mut params.film_render.halation.scatter_core_um, 0.0, 1000000.0, 0.5, 2, "Sigma of the scatter core Gaussian per channel [R,G,B], in micrometers. Controls fine-scale sharpness loss in the emulsion.");
-                flags.runtime_changed |= tuple(ui, "scatter tail um", &mut params.film_render.halation.scatter_tail_um, 0.0, 1000000.0, 1.0, 2, "Decay constant of the scatter exponential tail per channel [R,G,B], in micrometers (internally approximated by a sum of Gaussians). Controls extended low-level spread within the emulsion.");
-                flags.runtime_changed |= tuple(ui, "scatter tail weight", &mut params.film_render.halation.scatter_tail_weight, 0.0, 1.0, 0.01, 2, "Weight of the scatter tail Gaussian per channel [R,G,B] (0-1). Tail weight + core weight = 1. Higher values put more scattered light into the long tail.");
-                flags.runtime_changed |= tuple(ui, "halation strength", &mut params.film_render.halation.halation_strength, 0.0, 1000000.0, 0.005, 3, "Total back-reflection halation amplitude per channel [R,G,B] (0-1). Typical red channel: weak AH 0.02-0.08, no AH 0.08-0.25. The blue channel is usually near zero.");
-                flags.runtime_changed |= tuple(ui, "halation first sigma um", &mut params.film_render.halation.halation_first_sigma_um, 0.0, 1000000.0, 1.0, 2, "Sigma of the first halation bounce per channel [R,G,B], in micrometers. Set by the base thickness (40-80 um for typical cine/still bases).");
-                flags.runtime_changed |= numeric(ui, "halation n bounces", &mut params.film_render.halation.halation_n_bounces, 1.0, 5.0, 1.0, 2, "Number of multi-bounce Gaussians summed in the halation pass. Subsequent bounces use sqrt(k)-spaced widths. Typical: 2-3.");
-                flags.runtime_changed |= numeric(ui, "halation bounce decay", &mut params.film_render.halation.halation_bounce_decay, 0.0, 1.0, 0.05, 2, "Per-bounce amplitude decay ratio (rho). Physical range 0.3-0.7. Controls how fast the halation energy falls off between bounces.");
+                flags.runtime_changed |= param_numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, "film_render.halation.scatter_amount", "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering.");
+                flags.runtime_changed |= param_numeric(ui, "scatter spatial scale", &mut params.film_render.halation.scatter_spatial_scale, "film_render.halation.scatter_spatial_scale", "High-level scatter size multiplier (1.0 = physical defaults). Scales both core and tail sigmas.");
+                flags.runtime_changed |= param_numeric(ui, "halation amount", &mut params.film_render.halation.halation_amount, "film_render.halation.halation_amount", "High-level halation strength multiplier (1.0 = physical defaults). Scales the per-channel halation amplitudes.");
+                flags.runtime_changed |= param_numeric(ui, "halation spatial scale", &mut params.film_render.halation.halation_spatial_scale, "film_render.halation.halation_spatial_scale", "High-level halation size multiplier (1.0 = physical defaults). Scales the first-bounce sigma.");
+                flags.runtime_changed |= param_numeric(ui, "boost ev", &mut params.film_render.halation.boost_ev, "film_render.halation.boost_ev", "Maximum highlight boost in stops.");
+                flags.runtime_changed |= param_numeric(ui, "protect ev", &mut params.film_render.halation.protect_ev, "film_render.halation.protect_ev", "Protected range above midgray for the boost onset in stops.");
+                flags.runtime_changed |= param_numeric(ui, "boost range", &mut params.film_render.halation.boost_range, "film_render.halation.boost_range", "Controls how quickly the highlight boost ramps in, from 0 to 1.");
+                flags.runtime_changed |= param_tuple(ui, "scatter core um", &mut params.film_render.halation.scatter_core_um, "film_render.halation.scatter_core_um", "Sigma of the scatter core Gaussian per channel [R,G,B], in micrometers. Controls fine-scale sharpness loss in the emulsion.");
+                flags.runtime_changed |= param_tuple(ui, "scatter tail um", &mut params.film_render.halation.scatter_tail_um, "film_render.halation.scatter_tail_um", "Decay constant of the scatter exponential tail per channel [R,G,B], in micrometers (internally approximated by a sum of Gaussians). Controls extended low-level spread within the emulsion.");
+                flags.runtime_changed |= param_tuple(ui, "scatter tail weight", &mut params.film_render.halation.scatter_tail_weight, "film_render.halation.scatter_tail_weight", "Weight of the scatter tail Gaussian per channel [R,G,B] (0-1). Tail weight + core weight = 1. Higher values put more scattered light into the long tail.");
+                flags.runtime_changed |= param_tuple(ui, "halation strength", &mut params.film_render.halation.halation_strength, "film_render.halation.halation_strength", "Total back-reflection halation amplitude per channel [R,G,B] (0-1). Typical red channel: weak AH 0.02-0.08, no AH 0.08-0.25. The blue channel is usually near zero.");
+                flags.runtime_changed |= param_tuple(ui, "halation first sigma um", &mut params.film_render.halation.halation_first_sigma_um, "film_render.halation.halation_first_sigma_um", "Sigma of the first halation bounce per channel [R,G,B], in micrometers. Set by the base thickness (40-80 um for typical cine/still bases).");
+                flags.runtime_changed |= param_numeric(ui, "halation n bounces", &mut params.film_render.halation.halation_n_bounces, "film_render.halation.halation_n_bounces", "Number of multi-bounce Gaussians summed in the halation pass. Subsequent bounces use sqrt(k)-spaced widths. Typical: 2-3.");
+                flags.runtime_changed |= param_numeric(ui, "halation bounce decay", &mut params.film_render.halation.halation_bounce_decay, "film_render.halation.halation_bounce_decay", "Per-bounce amplitude decay ratio (rho). Physical range 0.3-0.7. Controls how fast the halation energy falls off between bounces.");
                 flags.runtime_changed |= toggle(ui, "halation renormalize", &mut params.film_render.halation.halation_renormalize, "If enabled, divide by (1 + sum of bounce amplitudes) so mid-grey is preserved. If disabled, halation is purely additive and subtly lifts shadows as well as highlights.");
             });
         }
         if section == "Couplers" {
             ui.scope(|ui| {
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.dir_couplers.active, "Enable DIR coupler inhibition.");
-                flags.runtime_changed |= numeric(ui, "amount", &mut params.film_render.dir_couplers.amount, 0.0, 1000000.0, 0.05, 2, "Global multiplier on the DIR coupler inhibition matrix. 1.0 leaves the per-channel gammas as-is.");
-                flags.runtime_changed |= numeric(ui, "inhibition samelayer", &mut params.film_render.dir_couplers.inhibition_samelayer, 0.0, 1000000.0, 0.05, 2, "Multiplier on the same-layer (diagonal) inhibition. Controls overall contrast / gamma reduction within each RGB layer.");
-                flags.runtime_changed |= numeric(ui, "inhibition interlayer", &mut params.film_render.dir_couplers.inhibition_interlayer, 0.0, 1000000.0, 0.05, 2, "Multiplier on the cross-layer (off-diagonal) inhibition. Controls saturation enhancement from interlayer DIR effects.");
-                flags.runtime_changed |= tuple(ui, "gamma samelayer rgb", &mut params.film_render.dir_couplers.gamma_samelayer_rgb, 0.0, 1000000.0, 0.02, 2, "Per-channel same-layer DIR gamma (R, G, B). Effective gamma reduction of each layer's density curve.");
-                flags.runtime_changed |= tuple(ui, "gamma interlayer r to gb", &mut params.film_render.dir_couplers.gamma_interlayer_r_to_gb, 0.0, 1000000.0, 0.02, 2, "DIR inhibition from the R layer onto the G and B layers respectively (g_R->G, g_R->B).");
-                flags.runtime_changed |= tuple(ui, "gamma interlayer g to rb", &mut params.film_render.dir_couplers.gamma_interlayer_g_to_rb, 0.0, 1000000.0, 0.02, 2, "DIR inhibition from the G layer onto the R and B layers respectively (g_G->R, g_G->B).");
-                flags.runtime_changed |= tuple(ui, "gamma interlayer b to rg", &mut params.film_render.dir_couplers.gamma_interlayer_b_to_rg, 0.0, 1000000.0, 0.02, 2, "DIR inhibition from the B layer onto the R and G layers respectively (g_B->R, g_B->G).");
-                flags.runtime_changed |= tuple(ui, "langmuir donor k rgb", &mut params.film_render.dir_couplers.langmuir_donor_k_rgb, 0.1, 1000000.0, 0.1, 2, "NEGATIVE film: per-channel Langmuir saturation of DIR inhibitor release, normalized to each layer's d_max (R, G, B). Lower = earlier, stronger roll-off at high density (gentler shoulder, tames high-amount breakage); large values approach the linear model.");
-                flags.runtime_changed |= tuple(ui, "langmuir receiver k rgb", &mut params.film_render.dir_couplers.langmuir_receiver_k_rgb, 0.1, 1000000.0, 0.1, 2, "POSITIVE/reversal film: per-channel receiver-side Langmuir saturation (R, G, B), normalized to the arrived-inhibitor ceiling (the receiver analogue of langmuir_donor_k_rgb's d_max normalization). The donor (silver release) stays linear; this rolls off the receiving layer's response under a pushed amount. Lower = harder, more crash-proof knee (alters the operating-point look); large values approach linear.");
-                flags.runtime_changed |= numeric(ui, "diffusion size um", &mut params.film_render.dir_couplers.diffusion_size_um, 0.0, 1000000.0, 5.0, 2, "Sigma in um for the diffusion of the couplers, (5-20 um), controls sharpness and affects saturation.");
-                flags.runtime_changed |= numeric(ui, "diffusion tail um", &mut params.film_render.dir_couplers.diffusion_tail_um, 0.0, 1000000.0, 10.0, 2, "Exponential tail scale in um for long-range coupler spread. Larger values extend the rare long-distance inhibition halo beyond the Gaussian core.");
-                flags.runtime_changed |= numeric(ui, "diffusion tail weight", &mut params.film_render.dir_couplers.diffusion_tail_weight, 0.0, 1.0, 0.01, 2, "Fraction of coupler diffusion energy assigned to the long tail. 0 = pure Gaussian spread, higher values add a longer-range inhibition shoulder.");
+                flags.runtime_changed |= param_numeric(ui, "amount", &mut params.film_render.dir_couplers.amount, "film_render.dir_couplers.amount", "Global multiplier on the DIR coupler inhibition matrix. 1.0 leaves the per-channel gammas as-is.");
+                flags.runtime_changed |= param_numeric(ui, "inhibition samelayer", &mut params.film_render.dir_couplers.inhibition_samelayer, "film_render.dir_couplers.inhibition_samelayer", "Multiplier on the same-layer (diagonal) inhibition. Controls overall contrast / gamma reduction within each RGB layer.");
+                flags.runtime_changed |= param_numeric(ui, "inhibition interlayer", &mut params.film_render.dir_couplers.inhibition_interlayer, "film_render.dir_couplers.inhibition_interlayer", "Multiplier on the cross-layer (off-diagonal) inhibition. Controls saturation enhancement from interlayer DIR effects.");
+                flags.runtime_changed |= param_tuple(ui, "gamma samelayer rgb", &mut params.film_render.dir_couplers.gamma_samelayer_rgb, "film_render.dir_couplers.gamma_samelayer_rgb", "Per-channel same-layer DIR gamma (R, G, B). Effective gamma reduction of each layer's density curve.");
+                flags.runtime_changed |= param_tuple(ui, "gamma interlayer r to gb", &mut params.film_render.dir_couplers.gamma_interlayer_r_to_gb, "film_render.dir_couplers.gamma_interlayer_r_to_gb", "DIR inhibition from the R layer onto the G and B layers respectively (g_R->G, g_R->B).");
+                flags.runtime_changed |= param_tuple(ui, "gamma interlayer g to rb", &mut params.film_render.dir_couplers.gamma_interlayer_g_to_rb, "film_render.dir_couplers.gamma_interlayer_g_to_rb", "DIR inhibition from the G layer onto the R and B layers respectively (g_G->R, g_G->B).");
+                flags.runtime_changed |= param_tuple(ui, "gamma interlayer b to rg", &mut params.film_render.dir_couplers.gamma_interlayer_b_to_rg, "film_render.dir_couplers.gamma_interlayer_b_to_rg", "DIR inhibition from the B layer onto the R and G layers respectively (g_B->R, g_B->G).");
+                flags.runtime_changed |= param_tuple(ui, "langmuir donor k rgb", &mut params.film_render.dir_couplers.langmuir_donor_k_rgb, "film_render.dir_couplers.langmuir_donor_k_rgb", "NEGATIVE film: per-channel Langmuir saturation of DIR inhibitor release, normalized to each layer's d_max (R, G, B). Lower = earlier, stronger roll-off at high density (gentler shoulder, tames high-amount breakage); large values approach the linear model.");
+                flags.runtime_changed |= param_tuple(ui, "langmuir receiver k rgb", &mut params.film_render.dir_couplers.langmuir_receiver_k_rgb, "film_render.dir_couplers.langmuir_receiver_k_rgb", "POSITIVE/reversal film: per-channel receiver-side Langmuir saturation (R, G, B), normalized to the arrived-inhibitor ceiling (the receiver analogue of langmuir_donor_k_rgb's d_max normalization). The donor (silver release) stays linear; this rolls off the receiving layer's response under a pushed amount. Lower = harder, more crash-proof knee (alters the operating-point look); large values approach linear.");
+                flags.runtime_changed |= param_numeric(ui, "diffusion size um", &mut params.film_render.dir_couplers.diffusion_size_um, "film_render.dir_couplers.diffusion_size_um", "Sigma in um for the diffusion of the couplers, (5-20 um), controls sharpness and affects saturation.");
+                flags.runtime_changed |= param_numeric(ui, "diffusion tail um", &mut params.film_render.dir_couplers.diffusion_tail_um, "film_render.dir_couplers.diffusion_tail_um", "Exponential tail scale in um for long-range coupler spread. Larger values extend the rare long-distance inhibition halo beyond the Gaussian core.");
+                flags.runtime_changed |= param_numeric(ui, "diffusion tail weight", &mut params.film_render.dir_couplers.diffusion_tail_weight, "film_render.dir_couplers.diffusion_tail_weight", "Fraction of coupler diffusion energy assigned to the long tail. 0 = pure Gaussian spread, higher values add a longer-range inhibition shoulder.");
             });
         }
         if section == "Camera diffusion" || section == "Enlarger diffusion" {
             ui.scope(|ui| {
-                let filter = if section == "Camera diffusion" { &mut params.camera.diffusion_filter } else { &mut params.enlarger.diffusion_filter };
-                flags.runtime_changed |= diffusion(ui, filter);
+                let (filter, paths) = if section == "Camera diffusion" {
+                    (
+                        &mut params.camera.diffusion_filter,
+                        &CAMERA_DIFFUSION_PATHS,
+                    )
+                } else {
+                    (
+                        &mut params.enlarger.diffusion_filter,
+                        &ENLARGER_DIFFUSION_PATHS,
+                    )
+                };
+                flags.runtime_changed |= diffusion(ui, filter, paths);
             });
         }
         if section == "Experimental" {
             egui::CollapsingHeader::new("Experimental").default_open(false).show(ui, |ui| {
                 flags.runtime_changed |= choice_tip(ui, "print illuminant", &mut params.enlarger.illuminant, &["TH-KG3"], "Print illuminant to simulate");
-                flags.runtime_changed |= extra_channels(ui, extras, "film_channel_swap", "film channel swap");
-                flags.runtime_changed |= extra_channels(ui, extras, "print_channel_swap", "print channel swap");
+                flags.runtime_changed |= extra_channels(ui, extras, "film_channel_swap", "film channel swap", "extras.special.film_channel_swap");
+                flags.runtime_changed |= extra_channels(ui, extras, "print_channel_swap", "print channel swap", "extras.special.print_channel_swap");
             });
         }
         if section == "Output" {
-            flags.runtime_changed |= numeric(ui, "Overall effect amount", &mut params.output_mix.amount, 0.0, 1.0, 0.01, 3, "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
+            flags.runtime_changed |= param_numeric(ui, "Overall effect amount", &mut params.output_mix.amount, "output_mix.amount", "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
             flags.runtime_changed |= choice_tip(ui, "output color space", &mut params.io.output_color_space, COLOR_SPACES, "Output color space of the simulation");
             extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
             extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");
         }
         if section == "Display" {
-            if numeric(ui, "preview max size", &mut params.settings.preview_max_size, 128.0, 1000000.0, 128.0, 2, "max size of the long edge of the preview image in pixels") {
+            if param_numeric(ui, "preview max size", &mut params.settings.preview_max_size, "settings.preview_max_size", "max size of the long edge of the preview image in pixels") {
                 set_extra(extras, "display", "preview_max_size", Value::from(params.settings.preview_max_size));
             }
             flags.preview_requested |= ui.button("update").clicked();
         }
         if section == "Import Raw" {
             flags.raw_reload |= extra_choice(ui, extras, "load_raw", "white_balance", "white balance", "daylight", &["as_shot", "daylight", "tungsten", "custom"], "Leave at daylight (D65): it is the colorimetric reference the rest of the pipeline assumes, and should not be changed. Do not use it to neutralize a colour cast — fix white balance downstream with the enlarger filters instead. (custom exposes temperature/tint for special cases.)");
-            flags.raw_reload |= extra_number(ui, extras, "load_raw", "temperature", "temperature", 5500.0, 1000.0, 1000000.0, 100.0, 2, "Temperature in Kelvin for the custom whitebalance, not used for the other white balance settings");
-            flags.raw_reload |= extra_number(ui, extras, "load_raw", "tint", "tint", 1.0, 0.0, 1000000.0, 0.01, 2, "Tint value for the custom white balance, not used for the other white balance settings");
+            flags.raw_reload |= extra_number(ui, extras, "load_raw", "temperature", "temperature", 5500.0, "extras.load_raw.temperature", "Temperature in Kelvin for the custom whitebalance, not used for the other white balance settings");
+            flags.raw_reload |= extra_number(ui, extras, "load_raw", "tint", "tint", 1.0, "extras.load_raw.tint", "Tint value for the custom white balance, not used for the other white balance settings");
             flags.raw_reload |= extra_bool_tip(ui, extras, "load_raw", "lens_correction", "lens correction", false, "Apply lens corrections");
             flags.raw_reload |= ui.button("reprocess raw").clicked();
         }
@@ -637,7 +661,112 @@ pub(crate) fn show(
     flags
 }
 
-fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams) -> bool {
+/// Editor range for `path`, from the single per-path table. A missing entry
+/// is a defect, not a silent default to the machine range.
+fn editor_range_for(path: &str) -> editor_ranges::EditorRange {
+    editor_ranges::editor_range(path).unwrap_or_else(|| panic!("missing editor range for {path}"))
+}
+
+pub(crate) fn param_numeric<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    path: &str,
+    tooltip: &str,
+) -> bool {
+    let (min, max, step, decimals) = editor_range_for(path);
+    numeric(ui, label, value, min, max, step, decimals, tooltip)
+}
+
+/// `param_numeric` whose effective maximum is additionally capped at
+/// `max_cap`; the sublayer-share editor keeps the authored total at one.
+fn param_numeric_capped<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut T,
+    path: &str,
+    max_cap: f64,
+    tooltip: &str,
+) -> bool {
+    let (min, max, step, decimals) = editor_range_for(path);
+    numeric(
+        ui,
+        label,
+        value,
+        min,
+        max.min(max_cap),
+        step,
+        decimals,
+        tooltip,
+    )
+}
+
+fn param_tuple<T: egui::emath::Numeric, const N: usize>(
+    ui: &mut Ui,
+    label: &str,
+    values: &mut [T; N],
+    path: &str,
+    tooltip: &str,
+) -> bool {
+    let (min, max, step, decimals) = editor_range_for(path);
+    tuple(ui, label, values, min, max, step, decimals, tooltip)
+}
+
+fn param_numeric_field_validated<T, Id>(
+    ui: &mut Ui,
+    id_salt: Id,
+    value: &mut T,
+    path: &str,
+    tooltip: &str,
+    valid: impl Fn(T) -> bool,
+) -> bool
+where
+    T: egui::emath::Numeric,
+    Id: std::hash::Hash,
+{
+    let (min, max, step, decimals) = editor_range_for(path);
+    numeric_field_validated(ui, id_salt, value, min, max, step, decimals, tooltip, valid)
+}
+
+/// Per-path table keys for the shared diffusion-filter editor. Camera and
+/// enlarger diffusion are separate parameter paths with one range each.
+struct DiffusionPaths {
+    strength: &'static str,
+    spatial_scale: &'static str,
+    halo_warmth: &'static str,
+    core_intensity: &'static str,
+    core_size: &'static str,
+    halo_intensity: &'static str,
+    halo_size: &'static str,
+    bloom_intensity: &'static str,
+    bloom_size: &'static str,
+}
+
+const CAMERA_DIFFUSION_PATHS: DiffusionPaths = DiffusionPaths {
+    strength: "camera.diffusion_filter.strength",
+    spatial_scale: "camera.diffusion_filter.spatial_scale",
+    halo_warmth: "camera.diffusion_filter.halo_warmth",
+    core_intensity: "camera.diffusion_filter.core_intensity",
+    core_size: "camera.diffusion_filter.core_size",
+    halo_intensity: "camera.diffusion_filter.halo_intensity",
+    halo_size: "camera.diffusion_filter.halo_size",
+    bloom_intensity: "camera.diffusion_filter.bloom_intensity",
+    bloom_size: "camera.diffusion_filter.bloom_size",
+};
+
+const ENLARGER_DIFFUSION_PATHS: DiffusionPaths = DiffusionPaths {
+    strength: "enlarger.diffusion_filter.strength",
+    spatial_scale: "enlarger.diffusion_filter.spatial_scale",
+    halo_warmth: "enlarger.diffusion_filter.halo_warmth",
+    core_intensity: "enlarger.diffusion_filter.core_intensity",
+    core_size: "enlarger.diffusion_filter.core_size",
+    halo_intensity: "enlarger.diffusion_filter.halo_intensity",
+    halo_size: "enlarger.diffusion_filter.halo_size",
+    bloom_intensity: "enlarger.diffusion_filter.bloom_intensity",
+    bloom_size: "enlarger.diffusion_filter.bloom_size",
+};
+
+fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams, paths: &DiffusionPaths) -> bool {
     let mut changed = toggle(
         ui,
         "active",
@@ -651,114 +780,83 @@ fn diffusion(ui: &mut Ui, value: &mut DiffusionFilterParams) -> bool {
         &["glimmerglass", "black_pro_mist", "pro_mist", "cinebloom"],
         "PSF family. pro_mist / glimmerglass / cinebloom are transparent (energy-preserving); black_pro_mist absorbs a fraction of the deflected light, lifting shadows by reducing local contrast.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "strength",
         &mut value.strength,
-        0.0,
-        2.0,
-        0.125,
-        2,
+        paths.strength,
         "Commercial filter stop: 0, 1/8=0.125, 1/4=0.25, 1/2=0.5, 1, 2. Maps internally to the (p_s, p_a) deflected/absorbed photon fractions.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "spatial scale",
         &mut value.spatial_scale,
-        0.0,
-        1000000.0,
-        0.1,
-        2,
+        paths.spatial_scale,
         "Multiplier on the image-plane PSF widths (all per-group lambdas). Adjust for image-format / print-size differences.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "halo warmth",
         &mut value.halo_warmth,
-        -1.5,
-        1.5,
-        0.05,
-        2,
+        paths.halo_warmth,
         "Additive offset on the family's halo warmth axis. Positive = warm outer halo / cool inner halo. Energy-preserving per channel. 0 = use family default.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "core intensity",
         &mut value.core_intensity,
-        0.0,
-        4.0,
-        0.05,
-        2,
+        paths.core_intensity,
         "Advanced. Multiplier on the core weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "core size",
         &mut value.core_size,
-        0.1,
-        4.0,
-        0.05,
-        2,
+        paths.core_size,
         "Advanced. Multiplier on the core lambda. 1.0 = use family default.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "halo intensity",
         &mut value.halo_intensity,
-        0.0,
-        4.0,
-        0.05,
-        2,
+        paths.halo_intensity,
         "Advanced. Multiplier on the halo weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "halo size",
         &mut value.halo_size,
-        0.1,
-        4.0,
-        0.05,
-        2,
+        paths.halo_size,
         "Advanced. Multiplier on the halo lambda. 1.0 = use family default.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "bloom intensity",
         &mut value.bloom_intensity,
-        0.0,
-        4.0,
-        0.05,
-        2,
+        paths.bloom_intensity,
         "Advanced. Multiplier on the bloom weight; the three group weights are renormalized to sum to 1. 1.0 = use family default.",
     );
-    changed |= numeric(
+    changed |= param_numeric(
         ui,
         "bloom size",
         &mut value.bloom_size,
-        0.1,
-        4.0,
-        0.05,
-        2,
+        paths.bloom_size,
         "Advanced. Multiplier on the bloom lambda. 1.0 = use family default.",
     );
     changed
 }
 
 // UI helpers keep their existing parameter interfaces.
-#[allow(clippy::too_many_arguments)]
 fn optional_numeric(
     ui: &mut Ui,
     label: &str,
     value: &mut Option<f32>,
     inherited: f32,
-    min: f64,
-    max: f64,
-    step: f64,
-    decimals: usize,
+    path: &str,
     tooltip: &str,
 ) -> bool {
     let mut displayed = value.unwrap_or(inherited);
-    let changed = numeric(ui, label, &mut displayed, min, max, step, decimals, tooltip);
+    let changed = param_numeric(ui, label, &mut displayed, path, tooltip);
     if changed {
         *value = Some(displayed);
     }
@@ -812,14 +910,12 @@ fn fotufilm_sublayer_shares(ui: &mut Ui, shares: &mut [f64; 4]) -> bool {
             .map(|(_, share)| *share)
             .sum();
         let maximum = 1.0 - other_sum - 1e-9;
-        let edited = numeric(
+        let edited = param_numeric_capped(
             ui,
             ["Sublayer 1", "Sublayer 2", "Sublayer 3"][index],
             &mut shares[index],
-            1e-9,
+            "film_render.grain.fotufilm.sublayer_shares",
             maximum,
-            0.01,
-            6,
             "Authored share; transfers weight to or from sublayer 4.",
         );
         if edited {
@@ -832,8 +928,15 @@ fn fotufilm_sublayer_shares(ui: &mut Ui, shares: &mut [f64; 4]) -> bool {
 }
 
 fn scan_points(ui: &mut Ui, black: &mut [f64; 3], white: &mut [f64; 3]) -> bool {
-    point_tuple(ui, "black point", black, white, true)
-        | point_tuple(ui, "white point", white, black, false)
+    point_tuple(ui, "black point", black, white, true, "scanner.black_point")
+        | point_tuple(
+            ui,
+            "white point",
+            white,
+            black,
+            false,
+            "scanner.white_point",
+        )
 }
 
 fn point_tuple(
@@ -842,6 +945,7 @@ fn point_tuple(
     values: &mut [f64; 3],
     other: &[f64; 3],
     is_black: bool,
+    path: &str,
 ) -> bool {
     let tooltip = "Red, green, and blue positions in the film scan range. Each black point must be below its white point; values outside the points are not clipped.";
     ui.push_id(label, |ui| {
@@ -851,14 +955,11 @@ fn point_tuple(
                 .iter_mut()
                 .enumerate()
                 .map(|(channel, value)| {
-                    let changed = crate::numeric::numeric_field_validated(
+                    let changed = param_numeric_field_validated(
                         ui,
                         (label, channel),
                         value,
-                        0.0,
-                        1.0,
-                        0.005,
-                        3,
+                        path,
                         tooltip,
                         |next| {
                             if is_black {
@@ -1004,7 +1105,6 @@ pub fn extra_bool_tip(
 }
 
 // UI helpers keep their existing parameter interfaces.
-#[allow(clippy::too_many_arguments)]
 fn extra_number(
     ui: &mut Ui,
     extras: &mut Value,
@@ -1012,14 +1112,11 @@ fn extra_number(
     key: &str,
     label: &str,
     default: f64,
-    min: f64,
-    max: f64,
-    step: f64,
-    decimals: usize,
+    path: &str,
     tooltip: &str,
 ) -> bool {
     let mut value = extras[section][key].as_f64().unwrap_or(default);
-    if numeric(ui, label, &mut value, min, max, step, decimals, tooltip) {
+    if param_numeric(ui, label, &mut value, path, tooltip) {
         set_extra(extras, section, key, Value::from(value));
         true
     } else {
@@ -1027,7 +1124,7 @@ fn extra_number(
     }
 }
 
-fn extra_channels(ui: &mut Ui, extras: &mut Value, key: &str, label: &str) -> bool {
+fn extra_channels(ui: &mut Ui, extras: &mut Value, key: &str, label: &str, path: &str) -> bool {
     let mut values = [0_u32, 1, 2];
     if let Some(saved) = extras["special"][key].as_array() {
         for (value, saved) in values.iter_mut().zip(saved) {
@@ -1036,7 +1133,7 @@ fn extra_channels(ui: &mut Ui, extras: &mut Value, key: &str, label: &str) -> bo
             }
         }
     }
-    if tuple(ui, label, &mut values, 0.0, 2.0, 1.0, 0, "") {
+    if param_tuple(ui, label, &mut values, path, "") {
         set_extra(extras, "special", key, Value::from(values.to_vec()));
         true
     } else {
