@@ -47,6 +47,18 @@ test:
 test-f64:
     cargo test --locked --workspace --features precision-f64
 
+# Run measured deterministic logic and isolated file tests in both precisions.
+test-fast: (test-fast-precision "") (test-fast-precision "--features precision-f64")
+
+# Positive module selection keeps new rendering/device tests in main by default.
+[private]
+test-fast-precision precision_args:
+    cargo test --locked -p spektrafilm-math --lib {{precision_args}}
+    cargo test --locked -p spektrafilm-model --lib {{precision_args}} -- density_curves:: illuminants:: couplers:: glare:: grain::v1:: grain::fotufilm:: diffusion::
+    cargo test --locked -p spektrafilm-core --lib {{precision_args}} -- params::sources:: params::tests:: params::validation:: params_builder:: pipeline_calibration::tests:: resizing:: scan_receiver:: suggest:: stages::scanning::setup:: stages::scanning::coupled:: stages::scanning::finish:: magazine_print_color:: input_gamut:: gamut_compression:: lut_formats:: lut_ocio:: lut_delivery:: --skip process_params::
+    cargo test --locked -p spektrafilm-core --test telemetry {{precision_args}}
+    cargo test --locked -p spektrafilm-gui --bin spektrafilm-gui {{precision_args}} -- state::tests:: numeric::tests::
+
 # Run the native appearance benchmark regressions.
 benchmark-test:
     cargo test --locked -p spektrafilm-benchmark
@@ -63,11 +75,27 @@ gui-layout:
 check-python-cache:
     python3 scripts/check_python_cache.py
 
-# Full local gate. PR CI runs this same command.
-ci: check-python-cache fmt check check-f64 clippy test test-f64 benchmark-test
+
+# Compile tracked Python sources in memory without creating bytecode caches.
+check-python:
+    python3 -c 'import pathlib, subprocess; paths = subprocess.check_output(["git", "ls-files", "-z", "--", "*.py"]).split(b"\0"); [compile(pathlib.Path(path.decode()).read_bytes(), path.decode(), "exec") for path in paths if path]'
+
+# Pure math regressions need no native libraries, GPU, or renderer.
+test-pr:
+    cargo test --locked -p spektrafilm-math --lib
+    cargo test --locked -p spektrafilm-math --lib --features precision-f64
+# Required PR gate; workspace compilation and native suites run after merge.
+ci-pr: check-python-cache check-python fmt test-pr
+
+# Full local and main-branch gate, including slow rendering and GPU tests.
+ci: check-python-cache check-python fmt check check-f64 clippy test test-f64 benchmark-test
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
     python3 scripts/verify.py {{quote(evidence_dir)}}
+
+# Retain evidence for the fast PR gate using the same provenance checks.
+verify-pr evidence_dir:
+    python3 scripts/verify.py --gate ci-pr {{quote(evidence_dir)}}
 
 # Create a self-contained portable directory and archive under dist/.
 [unix]
