@@ -315,6 +315,11 @@ fn slide_reference_batches_are_calibration_not_image_work() {
     params.settings.use_scanner_lut = false;
     params.scanner.black_point = [0.04; 3];
     params.scanner.white_point = [0.96; 3];
+    // The reference capture is device work only on the per-stage route: the
+    // resident chain runs the slide points on the host readout fence, where
+    // no calibration batch exists. The Mallett front pass keeps this check
+    // on the per-stage path (its execution-parity reason declines residency).
+    params.settings.rgb_to_raw_method = "mallett2019".into();
     let runtime =
         Runtime::from_stocks("fujifilm_provia_100f", "kodak_portra_endura", params, &data).unwrap();
     let mut operation = Operation::new(OperationKind::Process, CollectionMode::Summary);

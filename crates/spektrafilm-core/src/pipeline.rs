@@ -284,15 +284,6 @@ impl Pipeline {
             Ok(())
         }
     }
-    fn effective_backend<'a>(&self, backend: &'a dyn ComputeBackend) -> &'a dyn ComputeBackend {
-        if self.params.scanner.scan_output == "negative_to_positive" {
-            static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
-                spektrafilm_gpu::cpu_backend::CpuBackend;
-            &CPU_BACKEND
-        } else {
-            backend
-        }
-    }
 }
 
 impl Pipeline {
@@ -896,47 +887,12 @@ impl Pipeline {
                 timings,
             );
         }
-        // The negative-to-positive capture methods (separable/coupled) run
-        // on the resident chain as the assembled scanner readout fence
-        // (`scan_tail_cpu_stage`); only the density reading and Digital
-        // Reference replace the acquisition and keep the whole-route CPU
-        // fallback. An explicit GPU request must fail there instead of
-        // silently demoting (pipe architecture fence policy).
-        let n2p_acquisition_replacement = self.params.scanner.scan_output == "negative_to_positive"
-            && matches!(
-                self.params.scanner.positive_interpretation,
-                crate::params::PositiveInterpretation::Density
-                    | crate::params::PositiveInterpretation::DigitalReference
-            );
-        if n2p_acquisition_replacement && backend.explicit_gpu_request() {
-            return Err(
-                "explicit GPU request cannot run the negative-to-positive density reading or \
-                 Digital Reference on WGPU (they replace the acquisition); retry with an \
-                 explicit CPU request"
-                    .into(),
-            );
-        }
-        let cpu_fallback = if n2p_acquisition_replacement {
-            backend
-                .observation_context()
-                .filter(|context| context.enabled())
-                .map(|context| {
-                    if backend.is_gpu() {
-                        context.decline_resident(
-                            spektrafilm_gpu::telemetry::ResidentDeclineReason::NegativeToPositiveOutput,
-                        );
-                    }
-                    spektrafilm_gpu::bind_cpu_fallback(
-                        context.clone(),
-                        spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
-                    )
-                })
-        } else {
-            None
-        };
-        let backend = cpu_fallback
-            .as_deref()
-            .unwrap_or_else(|| self.effective_backend(backend));
+        // Negative-to-positive interpretation is part of the resident
+        // decision: the capture methods run as the assembled scanner readout
+        // fence and the density reading and Digital Reference replace the
+        // acquisition as the assembled acquisition fence (pipe
+        // architecture, capability class). `resident_decision` is the sole
+        // authority, so no whole-route demotion happens here.
         let collect = match collect {
             Some(tap) => tap,
             None => self

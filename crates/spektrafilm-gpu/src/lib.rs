@@ -383,11 +383,13 @@ pub struct FilmChainParams<'a> {
     /// present, `bw_xyz_remap` must be `None`: the fence owns the remap in
     /// the faithful order, after optical blur and glare.
     pub scan_tail_cpu_stage: Option<CpuStageFn<'a>>,
-    /// Optional CPU stage replacing the GPU scan spectral pass when the CPU
-    /// route would take the PCHIP scanner LUT acquisition (the slide
-    /// luminance remap or `use_scanner_lut`; pipe architecture, capability
-    /// class). Receives the film/print density and returns the captured
-    /// RGB, which is written to the acquisition buffer.
+    /// Optional CPU stage replacing the GPU scan spectral pass whenever the
+    /// CPU route acquires differently: the PCHIP scanner LUT (the slide
+    /// luminance remap or `use_scanner_lut`), the modeled receiver capture,
+    /// and the negative-to-positive density reading and Digital Reference
+    /// (pipe architecture, capability class). Receives the film/print
+    /// density and returns the captured RGB, which is written to the
+    /// acquisition buffer.
     pub scan_acquisition_cpu_stage: Option<CpuStageFn<'a>>,
     /// Optional CPU stage replacing the fused GPU print spectral pass when
     /// the CPU route would take the PCHIP enlarger LUT or the enlarger
