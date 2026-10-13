@@ -712,8 +712,11 @@ impl GuiState {
 }
 
 pub use spektrafilm_core::config::config_dir;
-pub fn default_path() -> PathBuf {
-    config_dir().join("gui_default_state.json")
+/// Startup default state inside an already resolved session directory.
+/// Production resolves that directory to the platform configuration
+/// directory; acceptance supplies an isolated one.
+pub fn default_path(directory: &Path) -> PathBuf {
+    directory.join("gui_default_state.json")
 }
 pub fn startup(directory: &Path) -> Result<GuiState> {
     let path = directory.join("gui_default_state.json");
@@ -735,8 +738,8 @@ pub fn startup(directory: &Path) -> Result<GuiState> {
     }
     Ok(state)
 }
-pub fn reset_factory() -> Result<GuiState> {
-    let path = default_path();
+pub fn reset_factory(directory: &Path) -> Result<GuiState> {
+    let path = default_path(directory);
     if path.exists() {
         std::fs::remove_file(path)?;
     }
