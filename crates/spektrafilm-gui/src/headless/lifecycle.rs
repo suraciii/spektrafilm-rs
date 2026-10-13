@@ -17,8 +17,12 @@ fn staged_export(h: &mut Harness<'_, App>, destination: &Path) -> Arc<ExportPaus
     let options = h.state().export_options.clone();
     h.state_mut()
         .start_export_to_path_inner(&ctx, options, destination, Some(pause.clone()));
+    // The real writer stages output on its own thread. Under the workspace
+    // gate many test binaries and worker threads run at once, so wait on the
+    // repo's real-worker budget rather than a tight barrier: measured 4-9s
+    // unloaded, with a 20s barrier failing intermittently on loaded machines.
     ready
-        .recv_timeout(Duration::from_secs(20))
+        .recv_timeout(Duration::from_secs(90))
         .expect("real export writer did not produce staged output");
     h.run_steps(3);
     pause

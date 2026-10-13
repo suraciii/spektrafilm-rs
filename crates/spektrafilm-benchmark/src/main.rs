@@ -6,7 +6,7 @@ use spektrafilm_benchmark::{
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name="spektrafilm-bench",version=concat!(env!("CARGO_PKG_VERSION"), " schema-1"),about="Render immutable evidence, compare appearance, and build an offline review.", after_help="Generate packaged examples with spektrafilm-bench-fixtures --help.")]
+#[command(name="spektrafilm-bench",version=concat!(env!("CARGO_PKG_VERSION"), " schema-1"),about="Render immutable evidence, compare appearance, and build an offline review.", after_help="Generate packaged examples with `spektrafilm-bench-fixtures --help`, then consume a generated suite with `spektrafilm-bench run --suite BUNDLE/complete.json --target BUNDLE/baseline.json --out RUN`.")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

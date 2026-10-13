@@ -53,6 +53,36 @@ impl Fixture {
             .output()
             .unwrap()
     }
+    fn run_without_output(&self, extra: &[&str]) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command.arg("process").arg(self.0.join("input.png"));
+        if !extra
+            .windows(2)
+            .any(|pair| pair == ["--engine", "fotufilm"])
+        {
+            command.args(["--film", "kodak_portra_400"]);
+        }
+        command
+            .args(["--backend", "cpu", "--data-dir"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
+            .args(extra)
+            .env("RUST_LOG", "off")
+            .env("SPEKTRAFILM_CONFIG_DIR", self.0.join("config"))
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .env_remove("SPEKTRAFILM_DATA_DIR")
+            .env_remove("SPEKTRAFILM_BACKEND")
+            .output()
+            .unwrap()
+    }
+    fn report_without_output(&self, extra: &[&str]) -> Value {
+        let result = self.run_without_output(extra);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        serde_json::from_slice(&result.stdout).unwrap()
+    }
     fn report(&self, extra: &[&str]) -> Value {
         let result = self.run("output.tif", extra);
         assert!(
@@ -67,6 +97,193 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn dry_run_without_output_reports_unresolved_destination_without_writing() {
+    let f = Fixture::new();
+    let report = f.report_without_output(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--dry-run",
+    ]);
+    assert_eq!(report["output"]["path"], Value::Null);
+    assert_eq!(report["output"]["format"], Value::Null);
+    assert_eq!(report["output"]["bit_depth"], Value::Null);
+    assert_eq!(report["output"]["compression"], Value::Null);
+    assert_eq!(report["output"]["jpeg_quality"], Value::Null);
+    assert_eq!(report["output"]["jpeg_subsampling"], Value::Null);
+    assert_eq!(report["unchecked"][4], "output_format");
+    assert!(!f.0.join("output.tif").exists());
+}
+
+#[test]
+fn dry_run_without_output_accepts_explicit_format_and_reports_writer_defaults() {
+    let f = Fixture::new();
+    let report = f.report_without_output(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--format",
+        "png",
+        "--dry-run",
+    ]);
+    assert_eq!(report["output"]["path"], Value::Null);
+    assert_eq!(report["output"]["format"], "png");
+    assert_eq!(report["output"]["bit_depth"], 8);
+    assert_eq!(report["output"]["jpeg_quality"], Value::Null);
+    assert_eq!(report["output"]["compression"], Value::Null);
+    assert!(!f.0.join("output.tif").exists());
+}
+
+#[test]
+fn dry_run_without_output_preserves_raw_output_file() {
+    let f = Fixture::new();
+    let raw = f.0.join("buffer.raw");
+    std::fs::write(&raw, b"existing-buffer").unwrap();
+    let result = f.run_without_output(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--dry-run",
+        "--raw-out",
+        raw.to_str().unwrap(),
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(std::fs::read(raw).unwrap(), b"existing-buffer");
+}
+
+#[test]
+fn dry_run_without_output_accepts_writer_flags_for_explicit_format() {
+    let f = Fixture::new();
+    let report = f.report_without_output(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--format",
+        "jpeg",
+        "--jpeg-quality",
+        "80",
+        "--jpeg-subsampling",
+        "420",
+        "--dry-run",
+    ]);
+    assert_eq!(report["output"]["format"], "jpeg");
+    assert_eq!(report["output"]["jpeg_quality"], 80);
+    assert_eq!(report["output"]["jpeg_subsampling"], "420");
+    assert_eq!(report["output"]["path"], Value::Null);
+    assert!(!f.0.join("output.tif").exists());
+}
+#[test]
+fn dry_run_without_output_matches_supplied_destination_parameters() {
+    let f = Fixture::new();
+    let with_output = f.report(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--dry-run",
+    ]);
+    let without_output = f.report_without_output(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--format",
+        "tiff",
+        "--dry-run",
+    ]);
+    assert_eq!(with_output["parameters"], without_output["parameters"]);
+    for field in [
+        "format",
+        "bit_depth",
+        "color_space",
+        "cctf_encoding",
+        "compression",
+        "jpeg_quality",
+        "jpeg_subsampling",
+    ] {
+        assert_eq!(
+            with_output["output"][field], without_output["output"][field],
+            "{field}"
+        );
+    }
+    assert!(with_output["output"]["path"].is_string());
+    assert_eq!(without_output["output"]["path"], Value::Null);
+}
+
+#[test]
+fn dry_run_without_output_rejects_container_specific_options_without_format() {
+    let f = Fixture::new();
+    for args in [
+        vec!["--jpeg-quality", "90"],
+        vec!["--jpeg-subsampling", "420"],
+        vec!["--compression", "zip"],
+    ] {
+        let mut full = vec![
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--dry-run",
+        ];
+        full.extend(args);
+        let result = f.run_without_output(&full);
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("requires --format"),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!f.0.join("output.tif").exists());
+    }
+}
+
+#[test]
+fn ordinary_process_still_requires_output_at_argument_parsing() {
+    let f = Fixture::new();
+    let result = f.run_without_output(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+    ]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("--output"));
+    assert!(result.stdout.is_empty());
+}
+
+#[test]
+fn dry_run_text_without_output_does_not_fabricate_destination() {
+    let f = Fixture::new();
+    let result = f.run_without_output(&[
+        "--input-color-space",
+        "sRGB",
+        "--input-cctf-decoding",
+        "true",
+        "--dry-run",
+        "--dry-run-format",
+        "text",
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = String::from_utf8(result.stdout).unwrap();
+    assert!(text.contains("OUTPUT"));
+    assert!(text.contains("path: not selected"), "{text}");
+    assert!(text.contains("format: unresolved"), "{text}");
+    assert!(!text.contains("output.tif"), "{text}");
 }
 
 #[test]

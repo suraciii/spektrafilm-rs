@@ -31,9 +31,14 @@ pub(super) struct ProcessArgs {
     /// Whether raster samples require transfer decoding (true or false).
     #[arg(long, action = clap::ArgAction::Set, help_heading = "Input and RAW loading")]
     input_cctf_decoding: Option<bool>,
-    /// Destination TIFF, EXR, PNG, or JPEG image.
-    #[arg(short, long, help_heading = "Output")]
-    output: PathBuf,
+    /// Destination TIFF, EXR, PNG, or JPEG image; optional only with --dry-run.
+    #[arg(
+        short,
+        long,
+        required_unless_present = "dry_run",
+        help_heading = "Output"
+    )]
+    output: Option<PathBuf>,
     /// Output container; otherwise inferred from the destination extension.
     #[arg(long, value_enum, help_heading = "Output")]
     format: Option<OutputFormat>,
@@ -41,7 +46,7 @@ pub(super) struct ProcessArgs {
     #[arg(long, help_heading = "Output")]
     bit_depth: Option<u8>,
     /// JPEG quality from 1 to 100; applies only to JPEG.
-    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100), help_heading = "Output")]
+    #[arg(long, help_heading = "Output")]
     jpeg_quality: Option<u8>,
     /// JPEG chroma subsampling; applies only to JPEG.
     #[arg(long, value_enum, help_heading = "Output")]
@@ -216,6 +221,23 @@ impl OutputPlan {
                 format_name(extension_format)
             );
         }
+        Self::from_format(
+            format,
+            bit_depth,
+            jpeg_quality,
+            jpeg_subsampling,
+            compression,
+        )
+    }
+
+    /// Resolve a declared container when dry-run has no destination path.
+    fn from_format(
+        format: OutputFormat,
+        bit_depth: Option<u8>,
+        jpeg_quality: Option<u8>,
+        jpeg_subsampling: Option<JpegSubsamplingArg>,
+        compression: Option<CompressionArg>,
+    ) -> Result<Self> {
         let default_depth = match format {
             OutputFormat::Jpeg | OutputFormat::Png => 8,
             OutputFormat::Tiff | OutputFormat::Exr => 16,
@@ -256,6 +278,28 @@ impl OutputPlan {
             saving_space: String::new(),
             saving_encoded: false,
         })
+    }
+
+    /// Validate options that cannot be interpreted without a container.
+    fn validate_unresolved(
+        bit_depth: Option<u8>,
+        jpeg_quality: Option<u8>,
+        jpeg_subsampling: Option<JpegSubsamplingArg>,
+        compression: Option<CompressionArg>,
+    ) -> Result<Option<BitDepth>> {
+        if jpeg_quality.is_some() {
+            bail!("--jpeg-quality requires --format when --output is omitted");
+        }
+        if jpeg_subsampling.is_some() {
+            bail!("--jpeg-subsampling requires --format when --output is omitted");
+        }
+        if compression.is_some() {
+            bail!("--compression requires --format when --output is omitted");
+        }
+        bit_depth
+            .map(BitDepth::try_from)
+            .transpose()
+            .map_err(anyhow::Error::from)
     }
 
     /// Adopt the saving color space/transfer this container writes. Kept
@@ -362,7 +406,10 @@ struct WorkflowOptions {
 
 pub(super) fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
     let data_dir = std::mem::take(&mut args.data_dir);
-    let mut protected = vec![args.input.as_path(), args.output.as_path()];
+    let mut protected = vec![args.input.as_path()];
+    if let Some(output) = args.output.as_deref() {
+        protected.push(output);
+    }
     protected.extend(args.params.as_deref());
     protected.extend(args.raw_out.as_deref());
     protected.extend(
@@ -397,13 +444,13 @@ fn cmd_process(
     invocation: &mut telemetry::Invocation,
 ) -> Result<()> {
     let input = args.input.as_path();
-    let output = args.output.as_path();
+    let output = args.output.as_deref();
+    let workflow = &args.workflow;
     let format = args.format;
     let bit_depth = args.bit_depth;
     let jpeg_quality = args.jpeg_quality;
     let jpeg_subsampling = args.jpeg_subsampling;
     let compression = args.compression;
-    let workflow = &args.workflow;
     let film_name = args.film.as_deref();
     let paper_name = args.paper.as_deref();
     let selectors = &args.preset;
@@ -422,14 +469,40 @@ fn cmd_process(
     if iters == 0 {
         bail!("--iters must be at least 1");
     }
-    let plan = OutputPlan::from_flags(
-        output,
-        format,
-        bit_depth,
-        jpeg_quality,
-        jpeg_subsampling,
-        compression,
-    )?;
+    let (mut plan, unresolved_depth) = match output {
+        Some(output) => (
+            Some(OutputPlan::from_flags(
+                output,
+                format,
+                bit_depth,
+                jpeg_quality,
+                jpeg_subsampling,
+                compression,
+            )?),
+            None,
+        ),
+        None => match format {
+            Some(format) => (
+                Some(OutputPlan::from_format(
+                    format,
+                    bit_depth,
+                    jpeg_quality,
+                    jpeg_subsampling,
+                    compression,
+                )?),
+                None,
+            ),
+            None => (
+                None,
+                OutputPlan::validate_unresolved(
+                    bit_depth,
+                    jpeg_quality,
+                    jpeg_subsampling,
+                    compression,
+                )?,
+            ),
+        },
+    };
     invocation.boundary(IssueCategory::Input, IssueBoundary::InputLoad);
     if !input.is_file() {
         bail!("input is not a regular file: {}", input.display());
@@ -526,23 +599,30 @@ fn cmd_process(
 
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let plan = plan.with_saving(workflow, &output_color_space, output_cctf_encoding);
-    let saving_space_resolved =
-        spektrafilm_math::colorspace::resolve(&plan.saving_space).map_err(|e| {
-            anyhow::anyhow!(
-                "unsupported saving color space {:?}: {e}",
-                plan.saving_space
-            )
-        })?;
-    let output_space_resolved = spektrafilm_math::colorspace::resolve(&output_color_space)
-        .map_err(|e| {
-            anyhow::anyhow!("unsupported output color space {output_color_space:?}: {e}")
-        })?;
-    let _conversion_matrix = spektrafilm_math::colorspace::conversion_matrix(
-        output_space_resolved,
-        saving_space_resolved,
-    );
-    plan.validate_saving()?;
+    if let Some(resolved_plan) = plan.take() {
+        let resolved_plan =
+            resolved_plan.with_saving(workflow, &output_color_space, output_cctf_encoding);
+        let saving_space_resolved =
+            spektrafilm_math::colorspace::resolve(&resolved_plan.saving_space).map_err(|e| {
+                anyhow::anyhow!(
+                    "unsupported saving color space {:?}: {e}",
+                    resolved_plan.saving_space
+                )
+            })?;
+        let output_space_resolved = spektrafilm_math::colorspace::resolve(&output_color_space)
+            .map_err(|e| {
+                anyhow::anyhow!("unsupported output color space {output_color_space:?}: {e}")
+            })?;
+        let _conversion_matrix = spektrafilm_math::colorspace::conversion_matrix(
+            output_space_resolved,
+            saving_space_resolved,
+        );
+        resolved_plan.validate_saving()?;
+        plan = Some(resolved_plan);
+    } else if let Some(saving_space) = workflow.saving_color_space.as_deref() {
+        spektrafilm_math::colorspace::resolve(saving_space)
+            .map_err(|e| anyhow::anyhow!("unsupported saving color space {saving_space:?}: {e}"))?;
+    }
     // Active Dye resolves its field on the CPU and never enters the resident
     // WGPU chain, whatever backend the surrounding stages use. Its supported
     // condition is validated here so the dry run reports and rejects exactly
@@ -572,6 +652,41 @@ fn cmd_process(
     let grain_fotufilm = spektrafilm_core::stages::grain_fotufilm::configuration_report(&params);
     if dry_run {
         let backend_env = std::env::var("SPEKTRAFILM_BACKEND").ok();
+        let output_format = plan.as_ref().map(|plan| plan.format.name());
+        let output_bit_depth = plan
+            .as_ref()
+            .map(|plan| plan.depth.bits())
+            .or_else(|| unresolved_depth.map(|depth| depth.bits()));
+        let output_color_space = plan
+            .as_ref()
+            .map(|plan| plan.saving_space.clone())
+            .or_else(|| workflow.saving_color_space.clone());
+        let output_cctf_encoding = plan
+            .as_ref()
+            .map(|plan| plan.saving_encoded)
+            .or(workflow.saving_cctf_encoding);
+        let output_compression = plan.as_ref().and_then(|plan| {
+            plan.compression.map(|compression| match compression {
+                Compression::Zip => "zip",
+                Compression::None => "none",
+            })
+        });
+        let output_jpeg_quality = plan.as_ref().and_then(|plan| plan.jpeg_quality);
+        let output_jpeg_subsampling = plan.as_ref().and_then(|plan| {
+            plan.jpeg_subsampling.map(|subsampling| match subsampling {
+                JpegSubsampling::Yuv444 => "444",
+                JpegSubsampling::Yuv420 => "420",
+            })
+        });
+        let mut unchecked = vec![
+            "pixel_decode",
+            "compute_device",
+            "metered_exposure",
+            "output_geometry",
+        ];
+        if plan.is_none() {
+            unchecked.push("output_format");
+        }
         let report = json!({
             "film_profile": resolved.film_name,
             "print_profile": resolved.print_name,
@@ -592,13 +707,13 @@ fn cmd_process(
             },
             "output": {
                 "path": output,
-                "format": plan.format.name(),
-                "bit_depth": plan.depth.bits(),
-                "color_space": plan.saving_space,
-                "cctf_encoding": plan.saving_encoded,
-                "compression": plan.compression.map(|c| match c { Compression::Zip => "zip", Compression::None => "none" }),
-                "jpeg_quality": plan.jpeg_quality,
-                "jpeg_subsampling": plan.jpeg_subsampling.map(|s| match s { JpegSubsampling::Yuv444 => "444", JpegSubsampling::Yuv420 => "420" })
+                "format": output_format,
+                "bit_depth": output_bit_depth,
+                "color_space": output_color_space,
+                "cctf_encoding": output_cctf_encoding,
+                "compression": output_compression,
+                "jpeg_quality": output_jpeg_quality,
+                "jpeg_subsampling": output_jpeg_subsampling
             },
             "backend": {
                 "requested": backend_choice.map(|b| match b { Backend::Cpu => "cpu", Backend::Gpu => "gpu" }),
@@ -609,12 +724,7 @@ fn cmd_process(
         let mut report = report;
         report["seed"] = json!(params.random_seed);
         report["edits"] = serde_json::to_value(&resolved.edits)?;
-        report["unchecked"] = json!([
-            "pixel_decode",
-            "compute_device",
-            "metered_exposure",
-            "output_geometry"
-        ]);
+        report["unchecked"] = json!(unchecked);
         match args.dry_run_format.unwrap_or(DiscoveryFormat::Json) {
             DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
             DiscoveryFormat::Text => process_report::print_text(&report),
@@ -800,6 +910,8 @@ fn cmd_process(
         eprintln!("Pipeline: {} ms", t.elapsed().as_millis());
         r
     };
+    let plan = plan.context("internal error: missing output plan for rendering")?;
+    let output = output.context("internal error: missing output path for rendering")?;
 
     // Save output
     let t = Instant::now();

@@ -1,6 +1,6 @@
 use crate::{
     Error, Result,
-    common::{self, Evidence},
+    common::{self, Evidence, Progress},
     documents,
     image_data::{self, ImageData},
     metrics, references,
@@ -616,6 +616,23 @@ pub fn compare(
     policy_path: Option<&Path>,
     gate: bool,
 ) -> Result<(Value, i32)> {
+    let root = runner::absolute(out)?;
+    let preexisting = fs::symlink_metadata(out).is_ok();
+    let result = compare_impl(baseline_path, candidate_path, out, policy_path, gate);
+    if preexisting {
+        result
+    } else {
+        result.map_err(|error| common::incomplete_destination(error, &root, "comparison.json"))
+    }
+}
+
+fn compare_impl(
+    baseline_path: &Path,
+    candidate_path: &Path,
+    out: &Path,
+    policy_path: Option<&Path>,
+    gate: bool,
+) -> Result<(Value, i32)> {
     let left_root = baseline_path.canonicalize()?;
     let right_root = candidate_path.canonicalize()?;
     let (baseline, suite) = load_run(&left_root)?;
@@ -653,6 +670,7 @@ pub fn compare(
     let differences = condition_differences(&baseline, &candidate, &left_root, &right_root)?;
     let root = runner::absolute(out)?;
     common::create_destination(&root)?;
+    let mut progress = Progress::new("compare");
     let mut evidence = Evidence::new(&root);
     let defs: BTreeMap<_, _> = array(&suite, "cases")?
         .iter()
@@ -696,6 +714,7 @@ pub fn compare(
             .join(case_id)
             .join(format!("seed-{seed}"));
         fs::create_dir_all(&folder)?;
+        let started = progress.start(case_id, seed);
         let mut record = json!({"case_id":case_id,"seed":seed,"status":"failed","measurements":[],"regions":definition["regions"],"review":{}});
         if left["status"] != "completed" || right["status"] != "completed" {
             record["reason"] = json!("failed_render");
@@ -718,10 +737,10 @@ pub fn compare(
                 }
             }
             findings.push(json!({"id":common::digest(&json!([case_id,seed,"failed_render"]))?,"case_id":case_id,"seed":seed,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
+            progress.finish(case_id, seed, "failed", started);
             cases.push(record);
             continue;
         }
-        eprintln!("Comparing {case_id} seed {seed}");
         let images = [raw_image(&left_root, left)?, raw_image(&right_root, right)?];
         for (i, role, run_root, row) in [
             (0, "baseline", &left_root, left),
@@ -896,8 +915,15 @@ pub fn compare(
                 findings.push(json!({"id":common::digest(&json!([case_id,seed,row["region_id"],metric]))?,"case_id":case_id,"region_id":row["region_id"],"metric":metric,"decision":"changed","evidence":refs}));
             }
         }
+        progress.finish(
+            case_id,
+            seed,
+            record["status"].as_str().unwrap_or("failed"),
+            started,
+        );
         cases.push(record);
     }
+    progress.summary_rows(&cases);
     let seed_measurements = metrics::aggregate_seed_measurements(&cases);
     let mut measurements: Vec<Value> = cases
         .iter()
@@ -1003,6 +1029,17 @@ pub fn compare(
 
 /// Compare retained input/reference evidence against one simulation run without rendering.
 pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Value, i32)> {
+    let root = runner::absolute(out)?;
+    let preexisting = fs::symlink_metadata(out).is_ok();
+    let result = compare_single_impl(run_path, against, out);
+    if preexisting {
+        result
+    } else {
+        result.map_err(|error| common::incomplete_destination(error, &root, "comparison.json"))
+    }
+}
+
+fn compare_single_impl(run_path: &Path, against: &str, out: &Path) -> Result<(Value, i32)> {
     let pair_ids: &[&str] = match against {
         "input" => &["input"],
         "reference" => &["reference"],
@@ -1045,6 +1082,7 @@ pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Val
     }
     let root = runner::absolute(out)?;
     common::create_destination(&root)?;
+    let mut progress = Progress::new("compare");
     let mut evidence = Evidence::new(&root);
     let mut cases = Vec::new();
     let mut findings = Vec::new();
@@ -1059,6 +1097,7 @@ pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Val
             .join(case_id)
             .join(format!("seed-{seed}"));
         fs::create_dir_all(&folder)?;
+        let started = progress.start(case_id, seed);
         let mut record = json!({"case_id":case_id,"seed":seed,"status":"failed","pairs":[]});
         if row["status"] != "completed" {
             let failure_path = folder.join("render-failure.json");
@@ -1084,6 +1123,7 @@ pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Val
                 findings.push(json!({"id":common::digest(&json!([case_id,seed,pair_id,"failed_render"]))?,"case_id":case_id,"seed":seed,"pair_id":pair_id,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
             }
             cases.push(record);
+            progress.finish(case_id, seed, "failed", started);
             continue;
         }
         let case = retained_case(definition, &run, &run_root, &root, &mut evidence)?;
@@ -1383,8 +1423,15 @@ pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Val
         } else {
             "failed"
         });
+        progress.finish(
+            case_id,
+            seed,
+            record["status"].as_str().unwrap_or("failed"),
+            started,
+        );
         cases.push(record);
     }
+    progress.summary_rows(&cases);
     let completed = cases.iter().all(|case| case["status"] == "completed");
     let completed_cases: BTreeSet<_> = cases
         .iter()

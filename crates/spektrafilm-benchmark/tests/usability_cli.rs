@@ -65,7 +65,7 @@ fn comparison(root: &Path, single: bool) {
                 for value in &mut measured {
                     value["pair_id"] = json!("input");
                 }
-                json!({"case_id":case,"seed":seed,"status":"completed","measurements":measured,"pairs":[{
+                json!({"case_id":case,"seed":seed,"status":"completed","pairs":[{
                     "id":"input","left_role":"input","right_role":"simulation","pixel_aligned":true,
                     "status":"completed","measurements":measured,"review":{},"regions":[],"automatic_regions":[]}]})
             } else {
@@ -107,6 +107,50 @@ fn comparison(root: &Path, single: bool) {
     }
     value["id"] = json!(common::digest(&value).unwrap());
     common::dump(&root.join("comparison.json"), &value).unwrap();
+}
+
+#[test]
+fn inspect_exposes_the_same_measurement_fields_across_manifest_modes() {
+    let temp = TempDir::new().unwrap();
+    let mut version_rows = None;
+    for single in [false, true] {
+        let root = temp.path().join(if single { "single" } else { "version" });
+        comparison(&root, single);
+        let view = success(
+            cli()
+                .arg("inspect")
+                .arg("--comparison")
+                .arg(&root)
+                .args([
+                    "--case",
+                    "probe",
+                    "--metric",
+                    "numeric.rmse",
+                    "--metric",
+                    "color.unavailable",
+                ])
+                .output()
+                .unwrap(),
+        );
+        let mut rows = view["measurements"].as_array().unwrap().clone();
+        for row in &mut rows {
+            let object = row.as_object_mut().unwrap();
+            if single {
+                assert_eq!(object.remove("pair_id"), Some(json!("input")));
+            } else {
+                assert!(!object.contains_key("pair_id"));
+            }
+        }
+        if single {
+            assert_eq!(Some(rows), version_rows);
+        } else {
+            assert_eq!(rows.len(), 4);
+            assert_eq!(rows[0]["value"], 0.125);
+            assert_eq!(rows[1]["reason"], "source_color_unavailable");
+            assert!(rows[1].get("value").is_none());
+            version_rows = Some(rows);
+        }
+    }
 }
 
 #[test]
@@ -340,6 +384,12 @@ fn target_pins_dependencies_and_refuses_existing_destinations() {
     assert_eq!(repeat.status.code(), Some(1));
     let refused: Value = serde_json::from_slice(&repeat.stdout).unwrap();
     assert_eq!(refused["errors"][0]["code"], "destination_exists");
+    let message = refused["errors"][0]["message"].as_str().unwrap();
+    assert!(message.contains(out.to_str().unwrap()));
+    assert!(
+        message.contains("remove") && message.contains("choose") && message.contains("destination")
+    );
+    assert!(String::from_utf8_lossy(&repeat.stderr).contains(message));
     assert_eq!(fs::read(&out).unwrap(), before);
     #[cfg(unix)]
     {

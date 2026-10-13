@@ -20,7 +20,7 @@ Explicit-axis ownership must survive runtime construction and calibration rebuil
 
 A prepared configuration must not receive another stock initialization step when the runtime is constructed. Applying preview, LUT-mode, or debug constraints must not corrupt the editable controls used to resolve a subsequent configuration. Legacy baseline decoding and numerical preparation must remain unchanged except for the explicit declaration and route changes in the [compatibility contract](spec.md#compatibility).
 
-Core must return the resolved profiles and effective parameters as one validated result. The CLI must resolve and validate writer options separately from scanner output parameters. Normal processing and dry run must consume these same resolution results. Dry run must stop before image decoding and compute-device creation. It must not approximate a render or independently reconstruct the parameter composition.
+Core must return the resolved profiles and effective parameters as one validated result. The CLI must resolve and validate writer options separately from scanner output parameters. Writer resolution must not require an output artifact. A dry run without `--output` must resolve the writer defaults without inventing a destination path. Normal processing and dry run must consume these same resolution results. Dry run must stop before image decoding and compute-device creation. It must not approximate a render or independently reconstruct the parameter composition.
 
 The resolution report must include deterministic topology and monochrome channel normalization performed by runtime construction. These decisions must use the selected profiles and workflow without decoding image pixels.
 
