@@ -84,6 +84,10 @@ The tests use isolated state, image, and output files. They drive production
 controls and check scanner mode changes, numeric edits, rendering, state
 restoration, and image output.
 
+Render actions wait for pending state-load previews and worker jobs to drain
+before clicking the enabled production button. Parameter edits can supersede
+those previews; a click while the button is disabled does not request a render.
+
 Save and Export tests enter at the selected-path boundary. They use the same
 conversion, worker, and writer as the native dialog actions. These tests do not
 check file chooser interaction or prove native desktop acceptance.

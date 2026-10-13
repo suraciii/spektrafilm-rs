@@ -92,6 +92,11 @@ A quick suite must contain fixed controlled probes and a named subset of scenes.
 
 Missing assets and unsupported cases must remain visible. The report must state selected, completed, failed, and unavailable case counts. Empty selection must fail. A subset must remain identified as a subset and must not receive the complete suite's qualification.
 
+## Standard configuration entry point
+
+[Standard benchmark configurations](standard-configurations.md) define reusable isolated color-and-tone and full-appearance setups. They extend fixture generation and support the existing local-image and suite workflows. They must not introduce a film profile, preset kind, implicit baseline, or universal quality score.
+
+
 ## Reproducible rendering
 
 Raster cases must provide the [source declaration](../cli-parameters/spec.md#input-declaration). Embedded ICC data must remain recorded as provenance and must not silently override the renderer's explicit declaration. An external reference's color interpretation must be resolved separately before comparison.

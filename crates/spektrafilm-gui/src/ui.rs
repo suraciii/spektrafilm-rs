@@ -441,6 +441,7 @@ impl App {
             "Halation" => Some((Section::Halation, "Halation", false)),
             "Couplers" => Some((Section::Couplers, "Couplers", false)),
             "Convert" => Some((Section::Convert, "Convert", false)),
+            "Camera" => Some((Section::Camera, "Camera", true)),
             "Camera diffusion" => Some((Section::CameraFilter, "Diffusion", false)),
             "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
             "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
