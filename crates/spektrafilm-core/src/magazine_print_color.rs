@@ -203,13 +203,13 @@ fn lab_to_xyz(lab: [f64; 3]) -> [f64; 3] {
 }
 
 /// Destination linear RGB to CIELAB D50 and back, prepared once per image.
-struct MagazineTransform {
+pub(crate) struct MagazineTransform {
     to_lab: [[f64; 3]; 3],
     from_lab: [[f64; 3]; 3],
 }
 
 impl MagazineTransform {
-    fn new(space: &RgbColorSpace) -> Self {
+    pub(crate) fn new(space: &RgbColorSpace) -> Self {
         let white = space.whitepoint_xyz();
         let forward =
             colorspace::chromatic_adaptation_matrix_bradford_f64(white, colorspace::D50_XYZ_F64);
@@ -230,6 +230,20 @@ impl MagazineTransform {
     fn to_rgb(&self, lab: [f64; 3]) -> [f64; 3] {
         mul3v(&self.from_lab, lab_to_xyz(lab))
     }
+}
+
+impl MagazineTransform {
+    /// Prepared Lab matrices for the device magazine pass (pipe
+    /// architecture, S4): destination RGB → CIELAB D50 and back.
+    pub(crate) fn gpu_matrices(&self) -> ([[f64; 3]; 3], [[f64; 3]; 3]) {
+        (self.to_lab, self.from_lab)
+    }
+}
+
+/// Tone-curve knots and slopes for the device magazine pass: (inputs,
+/// outputs, Hermite slopes) in CIELAB L*.
+pub(crate) fn gpu_tone_curve() -> ([f64; 10], [f64; 10], [f64; 10]) {
+    (TONE_IN, TONE_OUT, TONE.slopes)
 }
 
 #[inline]

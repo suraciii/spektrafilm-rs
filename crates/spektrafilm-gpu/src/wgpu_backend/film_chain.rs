@@ -1079,7 +1079,10 @@ impl WgpuBackend {
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
             let pipe = self.cached_pipeline(
-                include_str!("../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl"),
+                concat!(
+                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl")
+                ),
                 &[
                     wgpu::BufferBindingType::Uniform,
                     wgpu::BufferBindingType::Storage { read_only: false },
@@ -1104,6 +1107,114 @@ impl WgpuBackend {
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("output_transfer"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&pipe.pipeline);
+                    pass.set_bind_group(0, &bg, &[]);
+                    dispatch_linear(&mut pass, n_pixels);
+                }),
+            });
+        }
+        // 6g. Magazine print appearance (pipe architecture, S4): the last
+        //     host finishing moves onto the device. Runs after the output
+        //     transfer, so the buffer state is encoded exactly when the
+        //     caller requested output encoding.
+        if let Some(mp) = p.magazine.as_ref() {
+            let buf_b = buf_b.clone();
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct MagazineParams {
+                n_pixels: u32,
+                cctf_kind: u32,
+                encoded: u32,
+                _pad0: u32,
+                strength_pad: [f32; 4],
+                to_col0: [f32; 4],
+                to_col1: [f32; 4],
+                to_col2: [f32; 4],
+                from_col0: [f32; 4],
+                from_col1: [f32; 4],
+                from_col2: [f32; 4],
+                tin0: [f32; 4],
+                tin1: [f32; 4],
+                tin2: [f32; 4],
+                tout0: [f32; 4],
+                tout1: [f32; 4],
+                tout2: [f32; 4],
+                slo0: [f32; 4],
+                slo1: [f32; 4],
+                slo2: [f32; 4],
+            }
+            let pack10 = |v: &[f32; 10]| {
+                [
+                    [v[0], v[1], v[2], v[3]],
+                    [v[4], v[5], v[6], v[7]],
+                    [v[8], v[9], 0.0, 0.0],
+                ]
+            };
+            let (tin, tout, slo) = (
+                pack10(&mp.tone_in),
+                pack10(&mp.tone_out),
+                pack10(&mp.tone_slopes),
+            );
+            let magazine_params = MagazineParams {
+                n_pixels,
+                cctf_kind: mp.cctf_kind,
+                encoded: u32::from(mp.encoded),
+                _pad0: 0,
+                strength_pad: [mp.strength, 0.0, 0.0, 0.0],
+                to_col0: [mp.to_lab[0][0], mp.to_lab[1][0], mp.to_lab[2][0], 0.0],
+                to_col1: [mp.to_lab[0][1], mp.to_lab[1][1], mp.to_lab[2][1], 0.0],
+                to_col2: [mp.to_lab[0][2], mp.to_lab[1][2], mp.to_lab[2][2], 0.0],
+                from_col0: [mp.from_lab[0][0], mp.from_lab[1][0], mp.from_lab[2][0], 0.0],
+                from_col1: [mp.from_lab[0][1], mp.from_lab[1][1], mp.from_lab[2][1], 0.0],
+                from_col2: [mp.from_lab[0][2], mp.from_lab[1][2], mp.from_lab[2][2], 0.0],
+                tin0: tin[0],
+                tin1: tin[1],
+                tin2: tin[2],
+                tout0: tout[0],
+                tout1: tout[1],
+                tout2: tout[2],
+                slo0: slo[0],
+                slo1: slo[1],
+                slo2: slo[2],
+            };
+            let params_buf = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("magazine_params"),
+                    contents: bytemuck::bytes_of(&magazine_params),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+            let pipe = self.cached_pipeline(
+                concat!(
+                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                    include_str!("../../../spektrafilm-shaders/wgsl/magazine.wgsl")
+                ),
+                &[
+                    wgpu::BufferBindingType::Uniform,
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                ],
+            );
+            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("bg_magazine"),
+                layout: &pipe.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buf_b.as_entire_binding(),
+                    },
+                ],
+            });
+            stages.push(super::pipe::ChainStage::Gpu {
+                name: "magazine",
+                encode: Box::new(move |encoder| {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("magazine"),
                         timestamp_writes: None,
                     });
                     pass.set_pipeline(&pipe.pipeline);
