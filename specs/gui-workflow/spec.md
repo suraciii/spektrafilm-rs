@@ -3,6 +3,7 @@
 ## Contract
 
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
+- Every settable parameter must have a control on its page, and no control may exist for a value outside the one parameter set of the [preset specification](../presets/spec.md#parameter-set). A diagnostics, performance, or test switch must not become a settable parameter.
 - Preview renders a bounded disposable image. Scan renders the original working resolution. Both use the current runtime controls.
 - Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](../gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.

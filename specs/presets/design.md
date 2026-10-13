@@ -4,36 +4,34 @@
 - *Calibration* stays reserved for the Convert device-correction matrix and its worker. Names that mirror the pinned upstream (`apply_grain_preset`, `HALATION_PRESETS`, `v2_profile` and its values) keep their upstream spelling for parity traceability.
 - The preset document, strict validation, resolution, capture, the library directory policy, discovery, name conflict rejection, and atomic writes belong to `core`. The Rust document type is `presets::Preset`, named after its module like `profile::Profile`. Its payload type stores the sparse map from canonical parameter paths to values the document supplies, so one payload type serves a whole look, a section, and a single leaf.
 - Built-in preset documents are repository files in `crates/spektrafilm-core/assets/presets`. The build must compile them in, so built-in listing and name resolution must not require a data directory, and packaged data directories must not carry copies.
-- A document is valid when every path it carries belongs to the [parameter classes](#parameter-classes) look class, its values pass the same validators as a sparse parameter source, and it carries at least one path. A document must not declare a scope and must not be required to be complete.
+- A document is valid when every path it carries belongs to the [parameter set](#parameter-set), its values pass the same validators as a sparse parameter source, and it carries at least one path. A document must not declare a scope and must not be required to be complete.
 - The payload must follow the parameter-file leaf discipline: only supplied leaves are edited, unknown fields and duplicate keys fail, and omitted values must not be filled from defaults. Applying a document edits exactly its supplied paths and registers those values as explicit, so neither stock initialization nor database calibration rewrites them, and it must not clear explicit values outside its supplied paths.
 - Writes, atomicity, rename, delete, duplicate, import, and export must treat every document through one code path. The resolver must reuse the parameter-file leaf-merge implementation for presets instead of adding a second merge.
 - The library directory is `<config_dir>/presets`. The configuration directory policy is shared by the GUI and the CLI. `SPEKTRAFILM_CONFIG_DIR` must override it; there is no separate preset directory override. The library directory must not require a data directory.
 
-## Parameter classes
+## Parameter set
 
-Every runtime parameter leaf carries one class. The class is a property of the leaf in the parameter metadata, next to its type, bounds, default, and unit, so one authoritative table serves the CLI, the GUI, the API, and preset validation.
+Every runtime parameter leaf carries exactly one class, and the class together with the capture attribute defines the one set every input surface offers. Both are properties of the leaf in the parameter metadata, next to its type, bounds, default, and unit, so one authoritative table serves the CLI, the GUI, the API, and preset validation.
 
-| Class | Meaning | Preset content |
+| Class | Meaning | Settable by |
 |---|---|---|
-| `look` | A user control edits it, the render or the output reads it, and it describes the look | yes |
-| `context` | A user control edits it, and it describes the source, viewer, export, or runtime environment | no |
-| `internal` | No user control edits it, or the pipeline never reads it | no |
+| `parameter` | A user control edits it | the GUI, the CLI, a preset, and the API |
+| `internal` | No control edits it, it is derived, or the pipeline never reads it | nowhere |
 
-The parameter metadata must expose this class through `spektrafilm describe` and `spektrafilm describe --field`, so the accepted preset vocabulary is discoverable without reading a preset by trial.
+`capture` is a second attribute of a `parameter` leaf: a whole-look capture writes the leaves with `capture=true`, which are the values a user tunes while simulating. A `capture=false` leaf is a source, geometry, delivery, viewer, or environment value that a document may still carry explicitly.
+
+The parameter metadata must expose both attributes through `spektrafilm describe` and `spektrafilm describe --field`, so the settable set is discoverable without reading a preset by trial, and `describe --module` must cover every group.
 
 The leaf table lives in [preset parameters](parameters.md). Counts from the current tree:
 
-| Class | Leaves | A preset may carry it |
+| Class | Leaves | of which `capture=true` |
 |---|---|---|
-| `look` | 182 | yes |
-| `context` | 23 | no |
-| `internal` | 13 | no |
+| `parameter` | 198 | 182 |
+| `internal` | 20 | 0 |
 
-A class must be checked per leaf, never per group: every `camera.*` leaf is taking-side style content (film format, taking filters, lens blur, diffusion), while `enlarger.*` carries three calibration baselines that no control edits. Thirteen leaves that change the rendered result are excluded by the shipped contract and need an owner decision before implementation; [preset parameters](parameters.md) lists them under Review items.
+Twenty of the leaves the runtime accepts today have no control anywhere. They must lose their settable paths, because a value the user cannot edit must not be reachable through the CLI or a preset either; three of them are taking-side style values that need a control instead. [preset parameters](parameters.md) lists all twenty-three with their evidence.
 
-The three `enlarger.*_filter_neutral` axes keep their command-line pin as the one documented exception: they are calibration baselines that no control edits, they must never be preset content, and a sparse parameter source may set them explicitly to pin a measured neutral.
-
-The table must be regenerated from the metadata rather than maintained by hand, so a new leaf cannot enter the runtime without a class.
+The table must be regenerated from the metadata rather than maintained by hand, so a new leaf cannot enter the runtime without a class, a control decision, and a capture attribute.
 
 ## Migration
 
@@ -53,7 +51,7 @@ Schema version 4 changes the document from a scoped payload with profile referen
 | `provenance` | unchanged | implementation and model versions |
 | version 1 or 2 | version 4 | the existing version 1 and version 2 rules apply first, then this table |
 
-A migrated document that carries a path outside the look class must be rejected with the offending path named, so a legacy document never gains a class it cannot have. A migrated section must preserve sparse omission and must not acquire leaves. Migration must not capture or replace caller `io` settings, and it must not invent a profile identity.
+A migrated document that carries a path outside the parameter set must be rejected with the offending path named, so a legacy document never gains a class it cannot have. A migrated section must preserve sparse omission and must not acquire leaves. Migration must not capture or replace caller `io` settings, and it must not invent a profile identity.
 
 ## Everyday flows
 
@@ -97,13 +95,13 @@ The flows a user actually runs must be short; every one below is two or three st
 - Export must default its file name to the preset name with the carrier extension and must not write into the library directory unless the user picks it.
 - Export into the library must use the document name as its file stem and must create a new name. It must not replace an existing library document; Update owns replacement.
 - Deleting or updating one document must not modify another document or a built-in document.
-- Update must rewrite exactly the paths the stored document supplies, with their active values. Save as must write the complete look class, or the paths of the capturing section.
+- Update must rewrite exactly the paths the stored document supplies, with their active values. Save as must write every leaf whose capture attribute is true, or the paths of the capturing section.
 
 ## Boundaries
 
 - The GUI state keeps its complete-state contract. The panel width, the expanded state, and the last applied group and name belong to the versioned Rust extension and must not enter the Python-compatible sections. They must not change the meaning of a saved preset document.
 - Modified detection compares the active value of every path the applied document supplies with the value in that document, including `film.stock` and `print.stock`. It must not compare a path the document omits, GUI state, or a prepared runtime parameter tree. A document that supplies a subset must show as modified only for that subset.
-- A whole-look capture must collect the look class through the existing control sections and must never collect an `IoParams` snapshot, output gamut settings, debug switches, or a neutral axis. A section capture collects that section's paths only.
+- A whole-look capture must collect the leaves whose capture attribute is true through the existing control sections and must never collect an `IoParams` snapshot, output gamut settings, debug switches, or a neutral axis. A section capture collects that section's paths only.
 - Built-in documents must stay read-only at run time. A user edit must produce a user document or no change. The `My Presets` group header must show the resolved library directory path, must offer to reveal it, and must offer to refresh discovery, so a document placed while the GUI runs becomes visible without a restart. Only user documents have a path.
 - Renaming the applied user preset must follow the marker to the new name. Deleting it must leave the controls untouched and must show the remembered name as missing.
 - Restoring GUI state must restore the stored controls and must not re-apply the remembered preset document. The applied marker is recomputed against the restored controls.

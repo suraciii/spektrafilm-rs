@@ -47,7 +47,7 @@ The discarded draft paths `reproduction.*`, `io.finished_rgb_output_processing`,
 
 ## Output mix
 
-`output_mix.amount` must be f64, finite in [0,1], and default to 1. It mixes the prepared source with the complete result after output gamut processing, scanner-domain effects, and optional Magazine appearance, before saving conversion. Both branches must use the same output-space linear RGB and the same orientation, rotation, crop, and resize. This is one look-class Output control, not an additional workflow, per-stage opacity, or Magazine Strength alias.
+`output_mix.amount` must be f64, finite in [0,1], and default to 1. It mixes the prepared source with the complete result after output gamut processing, scanner-domain effects, and optional Magazine appearance, before saving conversion. Both branches must use the same output-space linear RGB and the same orientation, rotation, crop, and resize. This is one parameter of the settable set, not an additional workflow, per-stage opacity, or Magazine Strength alias.
 
 The prepared source includes decoding, RAW white balance, and requested lens correction. It excludes virtual camera metering and exposure compensation, film, print, scanner interpretation, output gamut processing, and Magazine appearance. It uses the existing input-to-output color-space conversion, without a new creative tone curve. A negative-capture source remains negative. Final mixing does not guarantee an in-gamut or nonnegative result; float headroom and normal integer clipping rules still apply.
 
