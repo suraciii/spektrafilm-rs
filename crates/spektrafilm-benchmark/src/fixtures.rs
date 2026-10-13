@@ -4,30 +4,67 @@ use crate::{
 };
 use image::{Rgb, RgbImage};
 use serde_json::{Value, json};
-use std::{fs, path::Path};
+use std::{fs, path::Path, process::Command};
 
 const NATURAL_SOURCE: &str = include_str!("../assets/natural-source.json");
-fn configuration(grain: bool, spatial: bool) -> Value {
+const PRESET_SELECTOR: &str = "built-in:Kodak Gold 200";
+fn configuration(spatial: bool, stochastic: bool, overlay: &[&str]) -> Value {
     let mut edits = vec![
         "camera.auto_exposure=false".to_owned(),
+        "camera.exposure_compensation_ev=0".into(),
+        "camera.film_format_mm=35".into(),
+        "scanner.auto_setup=off".into(),
+        "scanner.finish=neutral".into(),
+        "magazine_print_color.active=false".into(),
         "io.output_color_space=sRGB".into(),
         "io.output_cctf_encoding=true".into(),
+        "io.crop=false".into(),
+        "io.upscale_factor=1".into(),
+        "settings.preview_mode=false".into(),
+        "settings.use_enlarger_lut=false".into(),
+        "settings.use_scanner_lut=false".into(),
         format!("debug.deactivate_spatial_effects={}", !spatial),
-        format!("debug.deactivate_stochastic_effects={}", !grain),
-        format!("film_render.grain.active={grain}"),
+        format!("debug.deactivate_stochastic_effects={}", !stochastic),
     ];
-    if grain {
-        edits.extend(
-            [
-                "film_render.grain.engine=procedural",
-                "film_render.grain.v2_profile=custom",
-                "film_render.grain.v2_mode=noise",
-                "film_render.grain.v2_amount=25",
-            ]
-            .map(str::to_owned),
+    edits.extend(overlay.iter().map(|edit| (*edit).to_owned()));
+    json!({"presets":["look.toml"],"route":"input > film > print > scan","set_files":[],"set":edits})
+}
+fn export_look(renderer: &Path, data_dir: &Path, out: &Path) -> Result<()> {
+    let output = Command::new(renderer)
+        .args([
+            "preset",
+            "show",
+            PRESET_SELECTOR,
+            "--format",
+            "toml",
+            "--data-dir",
+        ])
+        .arg(data_dir)
+        .output()
+        .map_err(|error| {
+            Error::new("preset_export", format!("{error}; stderr: "))
+                .at(renderer.display().to_string())
+                .boundary("renderer")
+        })?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let failure = if !output.status.success() {
+        Some(format!("Preset export exited with {}", output.status))
+    } else if output.stdout.is_empty() {
+        Some("Preset export returned empty stdout".to_owned())
+    } else {
+        std::str::from_utf8(&output.stdout)
+            .err()
+            .map(|error| format!("Preset export stdout is not UTF-8: {error}"))
+    };
+    if let Some(message) = failure {
+        return Err(
+            Error::new("preset_export", format!("{message}; stderr: {stderr}"))
+                .at(renderer.display().to_string())
+                .boundary("renderer"),
         );
     }
-    json!({"film":"kodak_gold_200","paper":"kodak_portra_endura","route":"input > film > print > scan","presets":[],"set_files":[],"set":edits})
+    fs::write(out.join("look.toml"), &output.stdout)?;
+    Ok(())
 }
 fn region(id: &str, rect: [usize; 4], families: &[&str], role: &str) -> Value {
     json!({"id":id,"label":human_label(id),"role":role,"geometry":rect,"measurements":families})
@@ -48,11 +85,11 @@ fn make_case(
     path: &Path,
     families: &[&str],
     regions: Vec<Value>,
-    grain: bool,
-    spatial: bool,
+    config: Value,
+    seeds: &[u32],
     probe: Value,
 ) -> Result<Value> {
-    let mut value = json!({"id":id,"kind":"probe","input":{"kind":"raster","path":path.file_name().and_then(|s|s.to_str()),"sha256":sha256_file(path)?,"color_space":"sRGB","cctf_decoding":true},"configuration":configuration(grain,spatial),"seeds":if grain {vec![0,42,99]} else {vec![0]},"regions":regions,"measurements":families});
+    let mut value = json!({"id":id,"kind":"probe","input":{"kind":"raster","path":path.file_name().and_then(|s|s.to_str()),"sha256":sha256_file(path)?,"color_space":"sRGB","cctf_decoding":true},"configuration":config,"seeds":seeds,"regions":regions,"measurements":families});
     if !probe.is_null() {
         value["probe"] = probe;
     }
@@ -81,6 +118,13 @@ pub fn create_fixtures(
     download_natural: bool,
 ) -> Result<Value> {
     create_destination(out)?;
+    export_look(renderer, data_dir, out)?;
+    let color_tone = configuration(false, false, &["film_render.grain.active=false"]);
+    let appearance = configuration(true, true, &[]);
+    documents::validate_shape("configuration", &color_tone)?;
+    documents::validate_shape("configuration", &appearance)?;
+    dump(&out.join("color-tone.json"), &color_tone)?;
+    dump(&out.join("appearance.json"), &appearance)?;
     let colors = [
         [0.45, 0.45, 0.45],
         [0.65, 0.42, 0.32],
@@ -107,8 +151,8 @@ pub fn create_fixtures(
             region("skin", [16, 32, 16, 64], &["color", "tone"], "skin"),
             region("gray", [0, 32, 16, 64], &["color", "tone"], "neutral"),
         ],
-        false,
-        false,
+        color_tone.clone(),
+        &[0],
         Value::Null,
     )?;
     let path = out.join("exposure.png");
@@ -123,8 +167,8 @@ pub fn create_fixtures(
         &path,
         &["numeric", "color", "tone", "flip"],
         vec![],
-        false,
-        false,
+        color_tone.clone(),
+        &[0],
         json!({"tone_response":response}),
     )?;
     let path = out.join("flat_fields.png");
@@ -145,8 +189,18 @@ pub fn create_fixtures(
                 )
             })
             .collect(),
-        true,
-        false,
+        configuration(
+            false,
+            true,
+            &[
+                "film_render.grain.active=true",
+                "film_render.grain.engine=procedural",
+                "film_render.grain.v2_profile=custom",
+                "film_render.grain.v2_mode=noise",
+                "film_render.grain.v2_amount=25",
+            ],
+        ),
+        &[0, 42, 99],
         Value::Null,
     )?;
     let path = out.join("bright_point.png");
@@ -162,8 +216,8 @@ pub fn create_fixtures(
         &path,
         &["numeric", "color", "flip", "halation"],
         vec![],
-        false,
-        true,
+        configuration(true, false, &["film_render.grain.active=false"]),
+        &[0],
         json!({"halation":{"center_px":[63.5,63.5],"core_radius_px":3.0,"background_inner_radius_px":45.0,"background_outer_radius_px":58.0,"extent_px":40.0,"bin_width_px":1.0,"domain":"linear_srgb"}}),
     )?;
     let path = out.join("edge.png");
@@ -174,15 +228,33 @@ pub fn create_fixtures(
         &path,
         &["numeric", "color", "flip", "edge"],
         vec![],
-        false,
-        true,
+        configuration(true, false, &["film_render.grain.active=false"]),
+        &[0],
         json!({"edge":{"axis":"x","plateau_fraction":0.2,"domain":"linear_srgb","input_contrast":contrast,"input_exposure_stops":0.0}}),
+    )?;
+    let final_appearance = make_case(
+        "final_appearance",
+        &out.join("chart.png"),
+        &["numeric", "color", "tone", "flip"],
+        vec![],
+        appearance.clone(),
+        &[0, 42, 99],
+        Value::Null,
     )?;
     let protocol = json!({"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0,4.0,16.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":4.0,"border_px":1},"spectrum":{"window":"hann"}},"hotspots":{"count":6,"min_area_px":1024}});
     let mut quick =
         json!({"schema_version":1,"id":"quick-probes","protocol":protocol,"cases":[chart,tone]});
-    let mut complete = json!({"schema_version":1,"id":"complete-probes","protocol":protocol,"cases":[chart,tone,grain,point,edge]});
-    let mut provenance = json!({"schema_version":1,"controlled_images":"Deterministic RGB probes generated by this package; not measured spectral or physical film references.","natural_scene":null});
+    let mut complete = json!({"schema_version":1,"id":"complete-probes","protocol":protocol,"cases":[chart,tone,grain,point,edge,final_appearance]});
+    let mut provenance = json!({"schema_version":1,"controlled_images":"Deterministic RGB probes generated by this package; not measured spectral or physical film references.","natural_scene":null,"standard_configurations":{
+        "revision":"standard-print-scan-v1",
+        "preset_selector":PRESET_SELECTOR,
+        "renderer":{"path":fs::canonicalize(renderer)?,"sha256":sha256_file(renderer)?},
+        "files":[
+            {"path":"look.toml","sha256":sha256_file(&out.join("look.toml"))?},
+            {"path":"color-tone.json","sha256":sha256_file(&out.join("color-tone.json"))?},
+            {"path":"appearance.json","sha256":sha256_file(&out.join("appearance.json"))?}
+        ]
+    }});
     let mut suites = vec!["quick.json", "complete.json"];
     if natural_input.is_some() || download_natural {
         let source: Value = serde_json::from_str(NATURAL_SOURCE)?;
@@ -210,7 +282,7 @@ pub fn create_fixtures(
             )
             .at(destination.display().to_string()));
         }
-        let mut config = configuration(false, false);
+        let mut config = color_tone.clone();
         config["raw"] = json!({"white_balance":"as-shot","lens_correction":false});
         if fs::metadata(&destination)?.len()
             != source["bytes"].as_u64().ok_or_else(|| {
@@ -224,6 +296,11 @@ pub fn create_fixtures(
             .at(destination.display().to_string()));
         }
         let natural = json!({"id":"kodak_dc50_scene","kind":"scene","input":{"kind":"raw","adapter":"spektrafilm-raw","path":"natural.KDC","sha256":source["sha256"]},"configuration":config,"seeds":[0],"regions":[region("shadow",[64,64,160,128],&["color","tone"],"shadow"),region("texture",[320,192,160,128],&["color","tone"],"texture")],"measurements":["numeric","color","tone","flip"]});
+        let mut natural_appearance = natural.clone();
+        natural_appearance["id"] = json!("natural_appearance");
+        natural_appearance["configuration"] = appearance.clone();
+        natural_appearance["configuration"]["raw"] = config["raw"].clone();
+        natural_appearance["seeds"] = json!([0, 42, 99]);
         dump(
             &out.join("natural.json"),
             &json!({"schema_version":1,"id":"natural-scene","protocol":protocol,"cases":[natural]}),
@@ -234,6 +311,10 @@ pub fn create_fixtures(
         complete["id"] = json!("complete-probes-and-scene");
         quick["cases"].as_array_mut().unwrap().push(natural.clone());
         complete["cases"].as_array_mut().unwrap().push(natural);
+        complete["cases"]
+            .as_array_mut()
+            .unwrap()
+            .push(natural_appearance);
     }
     dump(&out.join("quick.json"), &quick)?;
     dump(&out.join("complete.json"), &complete)?;
@@ -257,17 +338,41 @@ pub fn create_fixtures(
     }
     let policy = json!({"schema_version":1,"id":"exploratory-color","protocol_digest":documents::protocol_digest(&complete)?,"calibration":{"status":"exploratory","evidence":[]},"rules":[{"id":"skin-color","purpose":"protect","selector":{"case_id":"color_chart","region_id":"skin"},"metric":"delta_e00.p95","max":2.0,"required":true}]});
     dump(&out.join("exploratory-policy.json"), &policy)?;
-    dump(&out.join("provenance.json"), &provenance)?;
     for suite in &suites {
         documents::load_suite(&out.join(suite))?;
     }
     documents::load_policy(&out.join("exploratory-policy.json"))?;
-    Ok(json!({"schema_version":1,"execution_status":"completed","artifact":out,"suites":suites}))
+    dump(&out.join("provenance.json"), &provenance)?;
+    Ok(
+        json!({"schema_version":1,"command":"fixtures","execution_status":"completed","artifact":out,"suites":suites,"preset":"look.toml","configurations":{"color_tone":"color-tone.json","appearance":"appearance.json"}}),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    const LOOK: &str = "schema_version = 1\nname = \"Kodak Gold 200\"\n[settings]\nfilm_profile = \"kodak_gold_200\"";
+
+    #[cfg(unix)]
+    fn stub_renderer(root: &Path, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let renderer = root.join("renderer");
+        fs::write(&renderer, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&renderer, fs::Permissions::from_mode(0o755)).unwrap();
+        renderer
+    }
+
+    #[cfg(unix)]
+    fn successful_renderer(root: &Path) -> std::path::PathBuf {
+        stub_renderer(
+            root,
+            &format!(
+                "[ \"$#\" -eq 7 ] && [ \"$1\" = preset ] && [ \"$2\" = show ] && [ \"$3\" = 'built-in:Kodak Gold 200' ] && [ \"$4\" = --format ] && [ \"$5\" = toml ] && [ \"$6\" = --data-dir ] && [ \"$7\" = '{}' ] || exit 2\nprintf '%s' '{LOOK}'\nprintf '%s' 'export diagnostic' >&2",
+                root.display()
+            ),
+        )
+    }
     #[test]
     fn probes_use_numpy_ties_even_quantization() {
         let temp = tempfile::tempdir().unwrap();
@@ -277,17 +382,126 @@ mod tests {
         assert_eq!(image.get_pixel(0, 0).0, [26; 3]);
         assert_eq!(image.get_pixel(1, 0).0, [128; 3]);
     }
+    #[cfg(unix)]
     #[test]
     fn generated_suites_targets_policy_and_provenance_are_complete() {
         let temp = tempfile::tempdir().unwrap();
         let out = temp.path().join("fixtures");
-        let renderer = std::env::current_exe().unwrap();
+        let renderer = successful_renderer(temp.path());
         let result = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap();
         assert_eq!(result["suites"], json!(["quick.json", "complete.json"]));
+        assert_eq!(result["schema_version"], 1);
+        assert_eq!(result["command"], "fixtures");
+        assert_eq!(result["execution_status"], "completed");
+        assert_eq!(result["artifact"], json!(out));
+        assert_eq!(result["preset"], "look.toml");
+        assert_eq!(
+            result["configurations"],
+            json!({"color_tone":"color-tone.json","appearance":"appearance.json"})
+        );
+        assert_eq!(fs::read(out.join("look.toml")).unwrap(), LOOK.as_bytes());
+        let shared = vec![
+            "camera.auto_exposure=false",
+            "camera.exposure_compensation_ev=0",
+            "camera.film_format_mm=35",
+            "scanner.auto_setup=off",
+            "scanner.finish=neutral",
+            "magazine_print_color.active=false",
+            "io.output_color_space=sRGB",
+            "io.output_cctf_encoding=true",
+            "io.crop=false",
+            "io.upscale_factor=1",
+            "settings.preview_mode=false",
+            "settings.use_enlarger_lut=false",
+            "settings.use_scanner_lut=false",
+        ];
+        let mut isolated_set = shared.clone();
+        isolated_set.extend([
+            "debug.deactivate_spatial_effects=true",
+            "debug.deactivate_stochastic_effects=true",
+            "film_render.grain.active=false",
+        ]);
+        let mut appearance_set = shared.clone();
+        appearance_set.extend([
+            "debug.deactivate_spatial_effects=false",
+            "debug.deactivate_stochastic_effects=false",
+        ]);
+        let color_tone = documents::load_json_document(&out.join("color-tone.json")).unwrap();
+        let appearance = documents::load_json_document(&out.join("appearance.json")).unwrap();
+        assert_eq!(
+            color_tone,
+            json!({"presets":["look.toml"],"route":"input > film > print > scan","set_files":[],"set":isolated_set})
+        );
+        assert_eq!(
+            appearance,
+            json!({"presets":["look.toml"],"route":"input > film > print > scan","set_files":[],"set":appearance_set})
+        );
         let quick = documents::load_suite(&out.join("quick.json")).unwrap();
         let complete = documents::load_suite(&out.join("complete.json")).unwrap();
         assert_eq!(quick["cases"].as_array().unwrap().len(), 2);
-        assert_eq!(complete["cases"].as_array().unwrap().len(), 5);
+        assert_eq!(complete["cases"].as_array().unwrap().len(), 6);
+        assert_eq!(
+            complete["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|case| case["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "color_chart",
+                "exposure_response",
+                "grain_fields",
+                "halation_point",
+                "edge_response",
+                "final_appearance"
+            ]
+        );
+        for case in complete["cases"].as_array().unwrap() {
+            assert_eq!(case["configuration"]["presets"], json!(["look.toml"]));
+            assert!(case["configuration"].get("film").is_none());
+            assert!(case["configuration"].get("paper").is_none());
+        }
+        for index in [0, 1] {
+            assert_eq!(quick["cases"][index]["configuration"], color_tone);
+            assert_eq!(quick["cases"][index]["seeds"], json!([0]));
+        }
+        assert_eq!(complete["cases"][5]["configuration"], appearance);
+        assert_eq!(complete["cases"][5]["seeds"], json!([0, 42, 99]));
+        assert_eq!(complete["cases"][5]["kind"], "probe");
+        assert_eq!(complete["cases"][5]["input"], complete["cases"][0]["input"]);
+        assert_eq!(complete["cases"][5]["regions"], json!([]));
+        assert!(complete["cases"][5].get("probe").is_none());
+        assert_eq!(
+            complete["cases"][5]["measurements"],
+            json!(["numeric", "color", "tone", "flip"])
+        );
+        let mut grain_set = shared.clone();
+        grain_set.extend([
+            "debug.deactivate_spatial_effects=true",
+            "debug.deactivate_stochastic_effects=false",
+            "film_render.grain.active=true",
+            "film_render.grain.engine=procedural",
+            "film_render.grain.v2_profile=custom",
+            "film_render.grain.v2_mode=noise",
+            "film_render.grain.v2_amount=25",
+        ]);
+        assert_eq!(
+            complete["cases"][2]["configuration"]["set"],
+            json!(grain_set)
+        );
+        let mut spatial_set = shared;
+        spatial_set.extend([
+            "debug.deactivate_spatial_effects=false",
+            "debug.deactivate_stochastic_effects=true",
+            "film_render.grain.active=false",
+        ]);
+        for index in [3, 4] {
+            assert_eq!(
+                complete["cases"][index]["configuration"]["set"],
+                json!(spatial_set)
+            );
+            assert_eq!(complete["cases"][index]["seeds"], json!([0]));
+        }
         assert_eq!(complete["cases"][2]["seeds"], json!([0, 42, 99]));
         assert_eq!(
             complete["cases"][1]["probe"]["tone_response"]
@@ -316,24 +530,44 @@ mod tests {
             sha256_file(&renderer).unwrap()
         );
         assert!(!out.join("natural.KDC").exists());
-        assert!(
-            documents::load_json_document(&out.join("provenance.json")).unwrap()["natural_scene"]
-                .is_null()
+        let provenance = documents::load_json_document(&out.join("provenance.json")).unwrap();
+        assert!(provenance["natural_scene"].is_null());
+        assert_eq!(
+            provenance["standard_configurations"],
+            json!({
+                "revision":"standard-print-scan-v1",
+                "preset_selector":"built-in:Kodak Gold 200",
+                "renderer":{"path":fs::canonicalize(&renderer).unwrap(),"sha256":sha256_file(&renderer).unwrap()},
+                "files":[
+                    {"path":"look.toml","sha256":sha256_file(&out.join("look.toml")).unwrap()},
+                    {"path":"color-tone.json","sha256":sha256_file(&out.join("color-tone.json")).unwrap()},
+                    {"path":"appearance.json","sha256":sha256_file(&out.join("appearance.json")).unwrap()}
+                ]
+            })
         );
+        let retained_provenance = fs::read(out.join("provenance.json")).unwrap();
+        fs::write(&renderer, "#!/bin/sh\nexit 2\n").unwrap();
         assert_eq!(
             create_fixtures(&renderer, temp.path(), &out, None, false)
                 .unwrap_err()
                 .code,
             "destination_exists"
         );
+        assert_eq!(
+            fs::read(out.join("provenance.json")).unwrap(),
+            retained_provenance
+        );
+        assert_eq!(fs::read(out.join("look.toml")).unwrap(), LOOK.as_bytes());
     }
+    #[cfg(unix)]
     #[test]
     fn supplied_natural_input_must_match_pinned_hash() {
         let temp = tempfile::tempdir().unwrap();
+        let renderer = successful_renderer(temp.path());
         let input = temp.path().join("wrong.KDC");
         fs::write(&input, b"not the pinned RAW").unwrap();
         let error = create_fixtures(
-            &std::env::current_exe().unwrap(),
+            &renderer,
             temp.path(),
             &temp.path().join("fixtures"),
             Some(&input),
@@ -341,5 +575,32 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.code, "dependency_hash");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preset_export_failures_leave_no_generated_files() {
+        for body in [
+            "printf '%s' 'partial preset'; printf '%s' 'export rejected' >&2; exit 2",
+            "printf '%s' 'export rejected' >&2; exit 0",
+            "printf '\\377'; printf '%s' 'export rejected' >&2; exit 0",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let renderer = stub_renderer(temp.path(), body);
+            let out = temp.path().join("fixtures");
+            let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
+            assert_eq!(error.code, "preset_export");
+            assert_eq!(error.path, Some(renderer.display().to_string()));
+            assert!(error.message.contains("export rejected"));
+            assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let renderer = temp.path().join("missing-renderer");
+        let out = temp.path().join("fixtures");
+        let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
+        assert_eq!(error.code, "preset_export");
+        assert_eq!(error.path, Some(renderer.display().to_string()));
+        assert!(error.message.contains("stderr:"));
+        assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
     }
 }
