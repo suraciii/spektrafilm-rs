@@ -1,6 +1,6 @@
 //! Portable offline presentation of retained evidence; no rendering or measurement.
 use crate::{
-    common::{Error, Result, create_destination, dump, sha256_file},
+    common::{self, Error, Result, create_destination, destination_exists, dump, sha256_file},
     documents::{load_json_document, safe_artifact_path, validate_generated_document},
     image_data::read_npy,
 };
@@ -131,6 +131,12 @@ impl Assets {
             let path = record["path"]
                 .as_str()
                 .ok_or_else(|| Error::new("invalid_document", "artifact must identify a path"))?;
+            if ["comparison.json", "report.json", "index.html"].contains(&path) {
+                return Err(Error::new(
+                    "invalid_artifact",
+                    format!("artifact path conflicts with report output: {path}"),
+                ));
+            }
             safe_artifact_path(root, path)?;
             let retained = if let Some(prior) = this.index.get(path) {
                 if !prior["sha256"].is_null()
@@ -218,12 +224,7 @@ impl Assets {
                     format!("artifact hash mismatch: {path}"),
                 ));
             }
-            let destination = if path == "comparison.json" {
-                format!("evidence/{path}")
-            } else {
-                path.clone()
-            };
-            let target = safe_artifact_path(&self.out, &destination)?;
+            let target = safe_artifact_path(&self.out, &path)?;
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -237,15 +238,38 @@ impl Assets {
             if entry.get("id").is_none() {
                 entry["id"] = json!(format!("artifact-{:06}", self.manifest.len()));
             }
-            entry["path"] = json!(destination);
             entry["sha256"] = json!(digest);
-            entry["availability"] = json!("available");
+            if entry.get("availability").is_none() {
+                entry["availability"] = json!("available");
+            }
         }
         self.manifest.push(entry.clone());
         self.copied.insert(path, entry.clone());
         Ok(Some(entry))
     }
+    fn generated_path(&self, suffix: &str) -> Result<(String, PathBuf)> {
+        let mut index = self.manifest.len();
+        loop {
+            let path = format!("artifacts/{index:06}-{suffix}");
+            if !self.index.contains_key(&path) {
+                let target = safe_artifact_path(&self.out, &path)?;
+                if !target.exists() {
+                    if let Some(parent) = target.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    return Ok((path, target));
+                }
+            }
+            index += 1;
+        }
+    }
     fn image(&mut self, reference: &Value) -> Result<Option<Value>> {
+        if self
+            .record(reference)
+            .is_some_and(|entry| entry["availability"] == "unavailable")
+        {
+            return Ok(None);
+        }
         let Some(entry) = self.copy(reference)? else {
             return Ok(None);
         };
@@ -265,8 +289,26 @@ impl Assets {
             let signed = !matches!(get(&entry, "metric", ""), "delta_e00" | "flip");
             let high = if entry["metric"] == "flip" { 1.0 } else { 10.0 };
             let low = if signed { -high } else { 0.0 };
-            let mut image = image::RgbImage::new(shape[1] as u32, shape[0] as u32);
-            for (pixel, value) in image.pixels_mut().zip(values) {
+            let valid = if let Some(mask) = entry.get("valid_mask_artifact_id") {
+                let Some(mask) = self
+                    .copy(mask)?
+                    .filter(|e| e["availability"] == "available")
+                else {
+                    return Ok(None);
+                };
+                let (valid, width, height) = retained_mask(&self.out.join(get(&mask, "path", "")))?;
+                if width != shape[1] || height != shape[0] {
+                    return Err(Error::new(
+                        "invalid_artifact",
+                        "difference map mask dimensions differ",
+                    ));
+                }
+                Some(valid)
+            } else {
+                None
+            };
+            let mut image = image::RgbaImage::new(shape[1] as u32, shape[0] as u32);
+            for (i, (pixel, value)) in image.pixels_mut().zip(values).enumerate() {
                 let value = value.clamp(low, high);
                 let intensity = value.abs() / high;
                 let rgb = if signed {
@@ -278,11 +320,21 @@ impl Assets {
                 } else {
                     [intensity; 3]
                 };
-                *pixel = image::Rgb(rgb.map(|v| (v * 255.0).round_ties_even() as u8));
+                let [r, g, b] = rgb.map(|v| (v * 255.0).round_ties_even() as u8);
+                *pixel = image::Rgba([
+                    r,
+                    g,
+                    b,
+                    if valid.as_ref().is_none_or(|mask| mask[i]) {
+                        255
+                    } else {
+                        0
+                    },
+                ]);
             }
-            let relative = format!("artifacts/{:06}-map.png", self.manifest.len());
+            let (relative, target) = self.generated_path("map.png")?;
             image
-                .save(self.out.join(&relative))
+                .save(target)
                 .map_err(|e| Error::new("image_write", e.to_string()))?;
             let mut display = entry.clone();
             display["path"] = json!(relative);
@@ -321,10 +373,10 @@ impl Assets {
                 "region outside retained full image",
             ));
         }
-        let path = format!("artifacts/{:06}-detail.png", self.manifest.len());
+        let (path, target) = self.generated_path("detail.png")?;
         image
             .crop_imm(x, y, w, h)
-            .save(self.out.join(&path))
+            .save(target)
             .map_err(|e| Error::new("image_write", e.to_string()))?;
         let result = json!({"path":path,"sha256":sha256_file(&self.out.join(&path))?,"media_type":"image/png","role":"detail","availability":"available","dimensions":[w,h],"source_path":entry["source_path"],"source_sha256":entry["sha256"],"rectangle":[x,y,w,h],"method":"crop_completed_full_image","resampling":"none","bit_depth":entry.get("bit_depth").cloned().unwrap_or(json!(8))});
         self.manifest.push(result.clone());
@@ -412,7 +464,8 @@ impl Assets {
                                 continue;
                             }
                             if entry["role"] == "reference_material_curve"
-                                && !["baseline", "candidate", "reference"].contains(&name.as_str())
+                                && !["baseline", "candidate", "reference", "simulation"]
+                                    .contains(&name.as_str())
                             {
                                 continue;
                             }
@@ -490,6 +543,19 @@ impl Assets {
     }
 }
 fn role_reference(case: &Value, role: &str, assets: &Assets) -> Value {
+    if case.get("pair_id").is_some() {
+        let key = match role {
+            "baseline" => "left",
+            "candidate" => "right",
+            other => other,
+        };
+        let value = &case["review"][key];
+        return value
+            .get("display_artifact_id")
+            .or_else(|| value.get("artifact_id"))
+            .unwrap_or(value)
+            .clone();
+    }
     let names: &[&str] = match role {
         "baseline" => &["baseline_review", "baseline_image", "baseline"],
         "candidate" => &["candidate_review", "candidate_image", "candidate"],
@@ -560,12 +626,18 @@ fn image_html(entry: Option<&Value>, label: &str) -> String {
         ),
     }
 }
-fn viewer(a: Option<&Value>, b: Option<&Value>, detail: bool) -> String {
+fn viewer(
+    a: Option<&Value>,
+    b: Option<&Value>,
+    detail: bool,
+    labels: (&str, &str),
+    aligned: bool,
+) -> String {
     let (Some(a), Some(b)) = (a, b) else {
         return format!(
             "<div class=\"grid\">{}{}</div>",
-            image_html(a, "Baseline"),
-            image_html(b, "Candidate")
+            image_html(a, labels.0),
+            image_html(b, labels.1)
         );
     };
     let left = url(a);
@@ -591,14 +663,81 @@ fn viewer(a: Option<&Value>, b: Option<&Value>, detail: bool) -> String {
         })
         .collect::<String>();
     format!(
-        r#"<div class="viewer" data-mode="split"><div class="controls"><label>查看 <select data-mode><option value="split">分割对照</option><option value="side">左右对照</option><option value="baseline">基准</option><option value="candidate">候选</option></select></label><button type="button" data-alternate>切换 A/B</button><label>倍率 <select data-zoom>{options}</select></label><label>分割 <input type="range" min="0" max="100" value="50" data-split aria-label="A/B split position"></label><span data-scale-label class="small"></span></div><div class="panes"><div class="side-pane"><p>基准 Baseline</p><div class="viewport" tabindex="0" aria-label="Baseline pan area"><div class="canvas"><img src="{ls}" {la} alt="Baseline" loading="lazy"></div></div></div><div class="side-pane"><p>候选 Candidate</p><div class="viewport" tabindex="0" aria-label="Candidate pan area"><div class="canvas"><img src="{rs}" {ra} alt="Candidate" loading="lazy"></div></div></div><div class="split-pane"><p>基准在左 / 候选在右 · 拖动分割线</p><div class="viewport" tabindex="0" aria-label="Split pan area"><div class="canvas split"><img src="{ls}" {la} alt="Baseline" loading="lazy"><img class="candidate" src="{rs}" {ra} alt="Candidate" loading="lazy"><button type="button" class="split-handle" data-split-handle role="slider" aria-label="拖动分割线" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" style="left:50%">↔</button></div></div></div></div><p><a href="{left}">Baseline image</a> · <a href="{right}">Candidate image</a>{}</p></div>"#,
+        r#"<div class="viewer" data-mode="{mode}" data-aligned="{aligned}"><div class="controls"><label>查看 <select data-mode>{split_option}<option value="side">左右对照</option><option value="baseline">{left_label}</option><option value="candidate">{right_label}</option></select></label><button type="button" data-view-mode="baseline">A · {left_label}</button><button type="button" data-view-mode="candidate">B · {right_label}</button><button type="button" data-alternate>切换 A/B</button><label>倍率 <select data-zoom>{options}</select></label><button type="button" data-fullscreen>全屏</button><label {split_hidden}>分割 <input type="range" min="0" max="100" value="50" data-split aria-label="A/B split position"></label><span data-scale-label class="small"></span></div><div class="panes"><div class="side-pane" data-side="baseline"><p>{left_label}</p><div class="viewport" tabindex="0" aria-label="{left_label} pan area"><div class="canvas"><img src="{ls}" {la} alt="{left_label}" loading="lazy"></div></div></div><div class="side-pane" data-side="candidate"><p>{right_label}</p><div class="viewport" tabindex="0" aria-label="{right_label} pan area"><div class="canvas"><img src="{rs}" {ra} alt="{right_label}" loading="lazy"></div></div></div><div class="split-pane"><p>{left_label}在左 / {right_label}在右 · 拖动分割线</p><div class="viewport" tabindex="0" aria-label="Split pan area"><div class="canvas split"><img src="{ls}" {la} alt="{left_label}" loading="lazy"><img class="candidate" src="{rs}" {ra} alt="{right_label}" loading="lazy"><button type="button" class="split-handle" data-split-handle role="slider" aria-label="拖动分割线" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" style="left:50%">↔</button></div></div></div></div><p><a href="{left}">{left_label} image</a> · <a href="{right}">{right_label} image</a>{}</p></div>"#,
         if a["bit_depth"] == 16 {
             " · 16-bit PNG，无抖动；屏幕显示精度由浏览器与显示设备决定。"
         } else {
             ""
-        }
+        },
+        mode = if aligned { "split" } else { "side" },
+        split_option = if aligned {
+            "<option value=\"split\">分割对照</option>"
+        } else {
+            ""
+        },
+        split_hidden = if aligned { "" } else { "hidden" },
+        left_label = escape(labels.0),
+        right_label = escape(labels.1)
     )
 }
+fn difference_metadata(entry: Option<&Value>) -> Value {
+    let mut metadata = json!({});
+    for key in [
+        "metric",
+        "units",
+        "scale",
+        "clipping",
+        "amplification",
+        "palette",
+    ] {
+        metadata[key] = entry
+            .and_then(|entry| entry.get(key))
+            .cloned()
+            .unwrap_or(json!("不可用"));
+    }
+    metadata
+}
+
+fn crop_thumbnail(
+    region: &Value,
+    method: &str,
+    crops: [Option<&Value>; 2],
+    labels: (&str, &str),
+) -> String {
+    let id = get(region, "id", get(region, "region_id", "不可用"));
+    let mut previews = String::new();
+    for (entry, label) in crops.into_iter().zip([labels.0, labels.1]) {
+        if let Some(entry) = entry {
+            let fit = entry
+                .get("fit_entry")
+                .filter(|value| !value.is_null())
+                .unwrap_or(entry);
+            let size = entry["dimensions"]
+                .as_array()
+                .filter(|size| size.len() == 2)
+                .map(|size| format!("{} × {}", size[0], size[1]))
+                .unwrap_or_else(|| "尺寸未记录".into());
+            previews.push_str(&format!("<span class=\"crop-preview\"><img src=\"{}\" alt=\"{} crop\" loading=\"lazy\"><span class=\"crop-size\">{} · {}</span></span>", url(fit), escape(label), escape(label), escape(&size)));
+        } else {
+            previews.push_str(&format!(
+                "<span class=\"crop-preview unavailable\">{} crop：不可用</span>",
+                escape(label)
+            ));
+        }
+    }
+    let kind = if method == "自动差异" {
+        "automatic"
+    } else {
+        "manual"
+    };
+    format!(
+        "<button type=\"button\" class=\"crop-thumbnail\" data-crop-target=\"{}\" data-crop-kind=\"{kind}\" aria-pressed=\"false\"><span class=\"crop-kind crop-type\">{}</span><strong class=\"crop-label\">{}</strong><span class=\"crop-previews\">{previews}</span></button>",
+        escape(id),
+        escape(method),
+        escape(get(region, "label", &human(id)))
+    )
+}
+
 fn rectangle(region: &Value) -> Result<Option<[u32; 4]>> {
     let geometry = &region["geometry"];
     let rect = region
@@ -664,17 +803,43 @@ fn metric_table(case: &Value) -> String {
         "<div class=\"unavailable\">Metric table: unavailable</div>".into()
     } else {
         format!(
-            "<table><thead><tr><th>Region</th><th>Metric</th><th>Units</th><th>Estimator</th><th>Samples</th><th>Value/status</th></tr></thead><tbody>{body}</tbody></table>"
+            "<div class=\"table-scroll\"><table><thead><tr><th>Region</th><th>Metric</th><th>Units</th><th>Estimator</th><th>Samples</th><th>Value/status</th></tr></thead><tbody>{body}</tbody></table></div>"
         )
     }
 }
-fn metric_summary(case: &Value) -> String {
+fn metric_summary(case: &Value, labels: (&str, &str)) -> String {
     let mut cards = String::new();
     for (metric, label, direction) in [
-        ("delta_e00.p95", "色差 P95", "越小越接近基准"),
-        ("flip.mean", "FLIP 平均差异", "越小越接近基准"),
-        ("delta_l_star.mean", "平均亮度变化", "正值更亮；候选 − 基准"),
-        ("numeric.rmse", "像素 RMS 差异", "越小越接近基准"),
+        (
+            "delta_e00.p95",
+            "色差 P95",
+            format!("越小越接近{}", labels.0),
+        ),
+        (
+            "flip.mean",
+            "FLIP 平均差异",
+            format!("越小越接近{}", labels.0),
+        ),
+        (
+            "delta_l_star.mean",
+            "平均亮度变化",
+            format!("正值更亮；{} − {}", labels.1, labels.0),
+        ),
+        (
+            "numeric.rmse",
+            "像素 RMS 差异",
+            format!("越小越接近{}", labels.0),
+        ),
+        (
+            "reference.delta_e00.p95.simulation_distance",
+            "对比图色差 P95",
+            "越小越接近对比图".into(),
+        ),
+        (
+            "reference.flip.mean.simulation_distance",
+            "对比图 FLIP 平均差异",
+            "越小越接近对比图".into(),
+        ),
     ] {
         if let Some(row) = measurements(case).iter().find(|r| {
             r["region_id"] == "full_image"
@@ -812,13 +977,120 @@ fn retained_mask(path: &Path) -> Result<(Vec<bool>, usize, usize)> {
         ))
     }
 }
+fn geometry_rectangle(geometry: &Value, assets: &mut Assets) -> Result<Option<[u32; 4]>> {
+    if let Some(path) = geometry["path"].as_str() {
+        let Some(entry) = assets
+            .copy(&json!(path))?
+            .filter(|e| e["availability"] == "available")
+        else {
+            return Ok(None);
+        };
+        let (mask, w, h) = retained_mask(&assets.out.join(get(&entry, "path", "")))?;
+        let mut bounds = [w, h, 0, 0];
+        let mut found = false;
+        for (i, valid) in mask.iter().enumerate() {
+            if *valid {
+                found = true;
+                bounds[0] = bounds[0].min(i % w);
+                bounds[1] = bounds[1].min(i / w);
+                bounds[2] = bounds[2].max(i % w);
+                bounds[3] = bounds[3].max(i / w);
+            }
+        }
+        if !found {
+            return Err(Error::new("region_bounds", "retained region mask is empty"));
+        }
+        return Ok(Some([
+            bounds[0] as u32,
+            bounds[1] as u32,
+            (bounds[2] - bounds[0] + 1) as u32,
+            (bounds[3] - bounds[1] + 1) as u32,
+        ]));
+    }
+    rectangle(&json!({"geometry":geometry}))
+}
+
+fn pair_case(case: &Value, pair: &Value) -> Value {
+    let mut view = pair.clone();
+    for key in [
+        "case_id",
+        "seed",
+        "source_dimensions",
+        "source_geometry",
+        "preparation",
+        "input",
+    ] {
+        view[key] = case[key].clone();
+    }
+    view["pair_id"] = pair["id"].clone();
+    view
+}
+
+// Fragment identities are retained case/seed/pair/region values, never display ordinals.
+fn fragment_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            write!(encoded, "%{byte:02X}").unwrap();
+        }
+    }
+    encoded
+}
+
+fn navigation_fragment(
+    case_id: &str,
+    seed: &Value,
+    pair: Option<&str>,
+    region: Option<&str>,
+) -> String {
+    let mut fragment = format!(
+        "#case={}&seed={}",
+        fragment_component(case_id),
+        fragment_component(&text(seed))
+    );
+    if let Some(pair) = pair {
+        fragment.push_str(&format!("&pair={}", fragment_component(pair)));
+    }
+    if let Some(region) = region {
+        fragment.push_str(&format!("&region={}", fragment_component(region)));
+    }
+    fragment
+}
+
+fn navigation_links(fragment: &str, label: &str) -> String {
+    format!(
+        "<span class=\"navigation-links\"><a href=\"{}\">打开{label}链接</a> <button type=\"button\" data-copy-link=\"{}\">复制{label}链接</button></span>",
+        escape(fragment),
+        escape(fragment)
+    )
+}
+
 /// Publish a self-contained offline report from a validated comparison directory.
+///
+/// Offline navigation uses `#case=<id>&seed=<seed>[&pair=<id>[&region=<id>]]`.
+/// Every value is percent-encoded UTF-8 and denotes the exact retained identity.
+/// The seed is its decimal representation; a region requires an explicit pair.
+/// An omitted pair selects the retained default (or the first retained pair when
+/// absent); version comparisons use `baseline/candidate`. Unknown identities,
+/// duplicate/unknown keys, empty values and malformed encoding show an alert and
+/// hide the case panels until a valid link or case selection is chosen.
 pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
+    let root = crate::documents::normalize_path(out)?;
+    let preexisting = fs::symlink_metadata(out).is_ok();
+    let result = build_report_impl(comparison, out);
+    if preexisting {
+        result
+    } else {
+        result.map_err(|error| common::incomplete_destination(error, &root, "report.json"))
+    }
+}
+
+fn build_report_impl(comparison: &Path, out: &Path) -> Result<()> {
     if fs::symlink_metadata(out).is_ok() {
-        return Err(Error::new(
-            "destination_exists",
-            format!("report destination already exists: {}", out.display()),
-        ));
+        return Err(destination_exists(out));
     }
     let root = comparison.canonicalize()?;
     let document = safe_artifact_path(&root, "comparison.json")?;
@@ -837,29 +1109,19 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
     let records = normalized_artifacts(&comparison["artifacts"])?;
     let mut assets = Assets::new(&root, out, records)?;
     create_destination(out)?;
-    fs::create_dir(out.join("artifacts"))?;
+    fs::create_dir_all(out.join("artifacts"))?;
     for record in assets.records.clone() {
         assets.copy(&record)?;
     }
     fs::write(out.join("comparison.json"), &snapshot)?;
     assets.manifest.push(json!({"path":"comparison.json","source_path":"comparison.json","sha256":format!("{:x}",Sha256::digest(&snapshot)),"role":"comparison","media_type":"application/json","availability":"available"}));
-    let mut ordered: Vec<_> = cases.iter().collect();
+    let ordered: Vec<_> = cases.iter().collect();
     if ordered.iter().any(|c| !c.is_object()) {
         return Err(Error::new(
             "invalid_document",
             "case result must be an object",
         ));
     }
-    ordered.sort_by_key(|c| {
-        let id = get(c, "case_id", get(c, "id", "unavailable"));
-        (
-            if id == "color_chart_30mp" { 0 } else { 1 },
-            id.to_owned(),
-            c.get("seed")
-                .map(short)
-                .unwrap_or_else(|| "unavailable".into()),
-        )
-    });
     let mut html = format!(
         "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'\"><title>SpektraFilm benchmark review</title><style>{CSS}</style><body><h1>SpektraFilm 人工审查</h1><p>选择场景查看 A/B；细节、差异图和完整数据按需展开。</p><nav class=\"case-nav\" aria-label=\"案例与种子\"><label>案例 / 种子 <select data-case-nav>"
     );
@@ -871,7 +1133,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
             escape(get(case, "status", "unknown"))
         ));
     }
-    html.push_str("</select></label><span class=\"small\">所有案例和失败状态均可访问</span></nav><p class=\"small\">");
+    html.push_str("</select></label><span class=\"small\">所有案例和失败状态均可访问</span></nav><p data-navigation-error role=\"alert\" hidden></p><p data-copy-status role=\"status\"></p><p class=\"small\">");
     html.push_str(
         &[
             ("selected_cases", "案例"),
@@ -882,10 +1144,30 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
         .map(|(key, label)| {
             format!(
                 "{label}：{}",
-                comparison["summary"]
-                    .get(key)
-                    .map(text)
-                    .unwrap_or_else(|| "未记录".into())
+                comparison["summary"].get(key).map(text).unwrap_or_else(|| {
+                    if comparison["mode"] != "single_run" {
+                        return "未记录".into();
+                    }
+                    match *key {
+                        "selected_cases" => cases
+                            .iter()
+                            .filter_map(|case| case["case_id"].as_str())
+                            .collect::<BTreeSet<_>>()
+                            .len()
+                            .to_string(),
+                        "completed_results" => cases
+                            .iter()
+                            .filter(|case| case["status"] == "completed")
+                            .count()
+                            .to_string(),
+                        "failed_results" => cases
+                            .iter()
+                            .filter(|case| case["status"] == "failed")
+                            .count()
+                            .to_string(),
+                        _ => "未记录".into(),
+                    }
+                })
             )
         })
         .collect::<Vec<_>>()
@@ -900,7 +1182,11 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
         ("rules", "规则"),
         ("baseline", "基准来源"),
         ("candidate", "候选来源"),
+        ("run", "运行来源"),
     ] {
+        if comparison["mode"] == "single_run" && ["baseline", "candidate"].contains(&key) {
+            continue;
+        }
         html.push_str(&folded(
             label,
             comparison.get(key).unwrap_or(&json!("不可用")),
@@ -915,240 +1201,418 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
     html.push_str("</details>");
     for (index, case) in ordered.iter().enumerate() {
         let id = get(case, "case_id", get(case, "id", "unavailable"));
-        let mut images = BTreeMap::new();
-        for role in ["source", "baseline", "candidate", "reference", "difference"] {
-            let reference = role_reference(case, role, &assets);
-            let mut image = assets.image(&reference)?;
-            if let Some(entry) = image.as_mut()
-                && let Some(preview) = entry.get("fit_preview").cloned()
-                && let Some(fit) = assets.image(&preview)?
-            {
-                entry["fit_entry"] = fit;
-            }
-            images.insert(role, image);
-        }
-        let a = images["baseline"].as_ref();
-        let b = images["candidate"].as_ref();
-        html.push_str(&format!("<section id=\"case-{index}\" class=\"case-panel\" data-case-panel=\"case-{index}\"{}><h2>{} <small>· seed {}</small></h2><p class=\"status\">状态：{}{}</p>",if index==0{""}else{" hidden"},escape(&human(id)),field(case,"seed"),escape(get(case,"status","unavailable")),case.get("reason").map(|v|format!(" · {}",text(v))).unwrap_or_default()));
-        html.push_str(&change_summary(case, &comparison));
-        if case["pixel_aligned"] != false
-            && let (Some(a), Some(b)) = (a, b)
-        {
-            let da = image::image_dimensions(out.join(get(a, "path", "")))
-                .map_err(|e| Error::new("invalid_artifact", e.to_string()))?;
-            let db = image::image_dimensions(out.join(get(b, "path", "")))
-                .map_err(|e| Error::new("invalid_artifact", e.to_string()))?;
-            if da == db {
-                html.push_str(&viewer(Some(a), Some(b), false));
-            } else {
-                html.push_str("<p class=\"unavailable\">图像尺寸不同，仅提供并列检查，未声明共同观察尺度。</p><div class=\"grid\">");
-                html.push_str(&image_html(Some(a), "基准"));
-                html.push_str(&image_html(Some(b), "候选"));
-                html.push_str("</div>");
-            }
+        html.push_str(&format!("<section id=\"case-{index}\" class=\"case-panel\" data-case-panel=\"case-{index}\" data-case-id=\"{}\" data-seed=\"{}\"{}><h2>{} <small>· seed {}</small></h2>{}", escape(id), field(case, "seed"), if index == 0 { "" } else { " hidden" }, escape(&human(id)), field(case, "seed"), navigation_links(&navigation_fragment(id, &case["seed"], None, None), "案例")));
+        let pairs = rows(&case["pairs"]);
+        let views: Vec<Value> = if pairs.is_empty() {
+            vec![(**case).clone()]
         } else {
-            html.push_str("<p class=\"unavailable\">同步 A/B 不可用：证据缺失或图像未对齐。</p><div class=\"grid\">");
-            html.push_str(&image_html(a, "基准"));
-            html.push_str(&image_html(b, "候选"));
-            html.push_str("</div>");
-        }
-        html.push_str(&metric_summary(case));
-        let mut regions: Vec<(Value, String)> = rows(&case["regions"])
-            .iter()
-            .cloned()
-            .map(|v| (v, "固定语义区域".into()))
-            .collect();
-        regions.extend(
-            rows(
-                case.get("automatic_regions")
-                    .or_else(|| case.get("hotspots"))
-                    .unwrap_or(&Value::Null),
-            )
-            .iter()
-            .cloned()
-            .map(|v| (v, "自动差异区域".into())),
-        );
-        regions.extend(rows(&case["detail_regions"]).iter().cloned().map(|v| {
-            let method =
-                get(&v, "selection_method", get(&v, "method", "保留的细节区域")).to_owned();
-            (v, method)
-        }));
-        if !regions.is_empty() {
-            html.push_str("<details><summary>细节区域（坐标、定位和 A/B 裁剪）</summary>");
-        }
-        for (mut region, method) in regions.iter().cloned() {
-            let mut mask_entry = None;
-            if let Some(path) = region["geometry"]["path"].as_str() {
-                if case["status"] != "completed" && !assets.index.contains_key(path) {
-                    html.push_str(&format!(
-                        "<p class=\"unavailable\">{}：渲染失败，区域掩膜证据不可用。</p>",
-                        field(&region, "label")
-                    ));
-                    continue;
-                }
-                let entry = assets.copy(&json!(path))?;
-                if entry
-                    .as_ref()
-                    .is_none_or(|e| e["availability"] != "available")
-                {
-                    html.push_str(&format!(
-                        "<p class=\"unavailable\">{}：区域掩膜证据不可用。</p>",
-                        field(&region, "label")
-                    ));
-                    continue;
-                }
-                let entry = entry.unwrap();
-                let (mask, w, h) = retained_mask(&out.join(get(&entry, "path", "")))?;
-                let mut xmin = w;
-                let mut ymin = h;
-                let mut xmax = 0;
-                let mut ymax = 0;
-                let mut count = 0;
-                for (i, v) in mask.iter().enumerate() {
-                    if *v {
-                        xmin = xmin.min(i % w);
-                        ymin = ymin.min(i / w);
-                        xmax = xmax.max(i % w);
-                        ymax = ymax.max(i / w);
-                        count += 1;
-                    }
-                }
-                if count == 0 {
-                    return Err(Error::new("region_bounds", "retained region mask is empty"));
-                }
-                region["rectangle"] = json!([xmin, ymin, xmax - xmin + 1, ymax - ymin + 1]);
-                mask_entry = Some(entry);
-            }
-            let rect = rectangle(&region)?;
-            let region_id = get(&region, "id", get(&region, "region_id", "不可用"));
-            html.push_str(&format!("<details><summary>{}</summary><p>坐标 [x, y, width, height]：{} · 选择方式：{}</p>",escape(get(&region,"label",&human(region_id))),rect.map(|v|text(&json!(v))).unwrap_or_else(||"不可用".into()),escape(&method)));
-            html.push_str(&folded("选择依据与区域元数据", &region));
-            if let Some(entry) = mask_entry {
+            pairs.iter().map(|pair| pair_case(case, pair)).collect()
+        };
+        let default = get(&comparison, "default_pair", "input");
+        let default = if pairs.iter().any(|pair| pair["id"] == default) {
+            default
+        } else {
+            pairs
+                .first()
+                .map(|pair| get(pair, "id", ""))
+                .unwrap_or("baseline/candidate")
+        };
+        if !pairs.is_empty() {
+            html.push_str("<nav class=\"pair-nav\" aria-label=\"比较对象\"><label>比较对象 <select data-pair-nav>");
+            for (pair_index, pair) in pairs.iter().enumerate() {
                 html.push_str(&format!(
-                    "<p>测量使用保留掩膜（含排除像素）：<a href=\"{}\">区域掩膜</a></p>",
-                    url(&entry)
+                    "<option value=\"pair-{index}-{pair_index}\"{}>{} / 模拟</option>",
+                    if pair["id"] == default {
+                        " selected"
+                    } else {
+                        ""
+                    },
+                    if pair["left_role"] == "input" {
+                        "输入"
+                    } else {
+                        "对比图"
+                    }
                 ));
             }
-            if let (Some(a), Some([x, y, w, h])) = (a, rect) {
-                let (width, height) = image::image_dimensions(out.join(get(a, "path", "")))
-                    .map_err(|e| Error::new("invalid_artifact", e.to_string()))?;
-                html.push_str(&format!("<div class=\"locator\"><img src=\"{}\" alt=\"Full-image region locator\"><span class=\"rectangle\" style=\"left:{}%;top:{}%;width:{}%;height:{}%\"></span></div>",url(a),100.0*x as f64/width as f64,100.0*y as f64/height as f64,100.0*w as f64/width as f64,100.0*h as f64/height as f64));
+            html.push_str("</select></label></nav>");
+        }
+        for (pair_index, case) in views.iter().enumerate() {
+            let labels = if case.get("pair_id").is_some() {
+                (
+                    if case["left_role"] == "input" {
+                        "输入"
+                    } else {
+                        "对比图"
+                    },
+                    "模拟",
+                )
             } else {
-                html.push_str("<div class=\"unavailable\">Full-image locator: unavailable</div>");
-            }
-            let mut crops = vec![];
-            for (role, image) in [("baseline", a), ("candidate", b)] {
-                let reference = role_reference(&region, role, &assets);
-                let retained = assets.image(&reference)?.filter(|e| {
-                    !matches!(
-                        Path::new(get(e, "path", ""))
-                            .extension()
-                            .and_then(|v| v.to_str()),
-                        Some("jpg" | "jpeg")
-                    )
-                });
-                crops.push(if retained.is_some() {
-                    retained
-                } else {
-                    assets.crop(image, rect)?
-                });
-            }
-            html.push_str(&viewer(crops[0].as_ref(), crops[1].as_ref(), true));
-            let findings: Vec<_> = rows(&comparison["findings"])
-                .iter()
-                .filter(|f| f["case_id"] == id && f["region_id"] == region_id)
-                .cloned()
-                .collect();
-            html.push_str(&folded("该区域 findings", &json!(findings)));
-            html.push_str("</details>");
-        }
-        if !regions.is_empty() {
-            html.push_str("</details>");
-        }
-        html.push_str("<details><summary>来源输入与参考图</summary><div class=\"grid\">");
-        for (role, label) in [("source", "来源输入"), ("reference", "参考图")] {
-            if let Some(entry) = images[role].as_ref() {
-                html.push_str(&image_html(Some(entry), label));
-            }
-        }
-        html.push_str("</div>");
-        if images["reference"].is_some() || case.get("reference").is_some() {
-            html.push_str(&format!(
-                "<pre>{}</pre>",
-                case.get("reference")
-                    .map(text)
-                    .unwrap_or_else(|| "参考范围和来源限制不可用".into())
-            ));
-        }
-        html.push_str("</details><details><summary>差异图与显示元数据</summary>");
-        html.push_str(&image_html(images["difference"].as_ref(), "差异图"));
-        let mut metadata = json!({});
-        for key in [
-            "metric",
-            "units",
-            "scale",
-            "clipping",
-            "amplification",
-            "palette",
-        ] {
-            metadata[key] = images["difference"]
-                .as_ref()
-                .and_then(|e| e.get(key))
-                .cloned()
-                .unwrap_or(json!("不可用"));
-        }
-        html.push_str(&format!("<pre>{}</pre></details>", text(&metadata)));
-        let plot_roles = [
-            "tone_response",
-            "grain_radial_spectrum",
-            "halation_profile",
-            "halation_edge_spill_profile",
-            "edge_response",
-            "edge_sfr",
-            "reference_material_curve",
-            "reference_regional_statistics",
-        ];
-        let mut plots = String::new();
-        for artifact in rows(&case["artifacts"]) {
-            if plot_roles.contains(&get(artifact, "role", "")) {
-                let label = get(artifact, "id", get(artifact, "role", ""));
-                if let Some(plot) = assets.plot(artifact, label)?
-                    && let Some(entry) = assets.copy(artifact)?
+                ("基准", "候选")
+            };
+            let pair_id = get(case, "pair_id", "baseline/candidate");
+            html.push_str(&format!("<div class=\"image-review\" data-pair-panel=\"pair-{index}-{pair_index}\" data-pair-id=\"{}\" data-default-pair=\"{}\"{}>", escape(pair_id), pair_id == default, if pair_id == default { "" } else { " hidden" }));
+            let mut images = BTreeMap::new();
+            for role in ["source", "baseline", "candidate", "reference", "difference"] {
+                let reference = role_reference(case, role, &assets);
+                let mut image = assets.image(&reference)?;
+                if let Some(entry) = image.as_mut()
+                    && let Some(preview) = entry.get("fit_preview").cloned()
+                    && let Some(fit) = assets.image(&preview)?
                 {
-                    plots.push_str(&format!("<details><summary>{}</summary>{plot}<a href=\"{}\">保留的数值样本</a></details>",escape(&human(label)),url(&entry)));
+                    entry["fit_entry"] = fit;
+                }
+                images.insert(role, image);
+            }
+            let a = images["baseline"].as_ref();
+            let b = images["candidate"].as_ref();
+            html.push_str("<div class=\"review-actions\"><button type=\"button\" data-review-reset aria-pressed=\"true\">全图</button>");
+            html.push_str(&format!("<button type=\"button\" data-difference-toggle aria-pressed=\"false\"{}>差异图</button></div><div data-review-full>", if images["difference"].is_some() { "" } else { " disabled" }));
+            if case["pixel_aligned"] != false
+                && let (Some(a), Some(b)) = (a, b)
+            {
+                let da = image::image_dimensions(out.join(get(a, "path", "")))
+                    .map_err(|e| Error::new("invalid_artifact", e.to_string()))?;
+                let db = image::image_dimensions(out.join(get(b, "path", "")))
+                    .map_err(|e| Error::new("invalid_artifact", e.to_string()))?;
+                if da == db {
+                    html.push_str(&viewer(Some(a), Some(b), false, labels, true));
+                } else {
+                    html.push_str("<p class=\"unavailable\">图像尺寸不同，仅提供并列检查，未声明共同观察尺度。</p><div class=\"grid\">");
+                    html.push_str(&viewer(Some(a), Some(b), false, labels, false));
+                    html.push_str("</div>");
+                }
+            } else {
+                html.push_str(
+                    "<p class=\"unavailable\">同步 A/B 不可用：证据缺失或图像未对齐。</p>",
+                );
+                html.push_str(&viewer(a, b, false, labels, false));
+            }
+            html.push_str("</div><div data-review-difference hidden>");
+            html.push_str(&image_html(images["difference"].as_ref(), "差异图"));
+            html.push_str(&format!(
+                "<pre>{}</pre></div>",
+                text(&difference_metadata(images["difference"].as_ref()))
+            ));
+            let mut regions: Vec<(Value, String)> = rows(&case["regions"])
+                .iter()
+                .cloned()
+                .map(|v| (v, "指定 crop".into()))
+                .collect();
+            regions.extend(
+                rows(
+                    case.get("automatic_regions")
+                        .or_else(|| case.get("hotspots"))
+                        .unwrap_or(&Value::Null),
+                )
+                .iter()
+                .cloned()
+                .map(|v| (v, "自动差异".into())),
+            );
+            regions.extend(rows(&case["detail_regions"]).iter().cloned().map(|v| {
+                let method =
+                    get(&v, "selection_method", get(&v, "method", "保留的细节区域")).to_owned();
+                (v, method)
+            }));
+            let mut thumbnails = String::new();
+            let region_start = html.len();
+            for (mut region, method) in regions.iter().cloned() {
+                let region_id = get(&region, "id", get(&region, "region_id", "不可用")).to_owned();
+                html.push_str(&format!(
+                    "<details data-region-id=\"{}\" data-review-region hidden><summary>{}</summary>{}",
+                    escape(&region_id),
+                    escape(get(&region, "label", &human(&region_id))),
+                    navigation_links(
+                        &navigation_fragment(id, &case["seed"], Some(pair_id), Some(&region_id)),
+                        "区域"
+                    )
+                ));
+                let region_viewer_start = html.len();
+                let mut mask_entry = None;
+                if let Some(path) = region["geometry"]["path"].as_str() {
+                    if case["status"] != "completed" && !assets.index.contains_key(path) {
+                        html.push_str(&format!(
+                            "<p class=\"unavailable\">{}：渲染失败，区域掩膜证据不可用。</p>",
+                            field(&region, "label")
+                        ));
+                        html.push_str("</details>");
+                        thumbnails.push_str(&crop_thumbnail(
+                            &region,
+                            &method,
+                            [None, None],
+                            labels,
+                        ));
+                        continue;
+                    }
+                    let entry = assets.copy(&json!(path))?;
+                    if entry
+                        .as_ref()
+                        .is_none_or(|e| e["availability"] != "available")
+                    {
+                        html.push_str(&format!(
+                            "<p class=\"unavailable\">{}：区域掩膜证据不可用。</p>",
+                            field(&region, "label")
+                        ));
+                        html.push_str("</details>");
+                        thumbnails.push_str(&crop_thumbnail(
+                            &region,
+                            &method,
+                            [None, None],
+                            labels,
+                        ));
+                        continue;
+                    }
+                    let entry = entry.unwrap();
+                    let (mask, w, h) = retained_mask(&out.join(get(&entry, "path", "")))?;
+                    let mut xmin = w;
+                    let mut ymin = h;
+                    let mut xmax = 0;
+                    let mut ymax = 0;
+                    let mut count = 0;
+                    for (i, v) in mask.iter().enumerate() {
+                        if *v {
+                            xmin = xmin.min(i % w);
+                            ymin = ymin.min(i / w);
+                            xmax = xmax.max(i % w);
+                            ymax = ymax.max(i / w);
+                            count += 1;
+                        }
+                    }
+                    if count == 0 {
+                        return Err(Error::new("region_bounds", "retained region mask is empty"));
+                    }
+                    region["rectangle"] = json!([xmin, ymin, xmax - xmin + 1, ymax - ymin + 1]);
+                    mask_entry = Some(entry);
+                }
+                let rect = rectangle(&region)?;
+                html.push_str(&format!(
+                    "<p>坐标 [x, y, width, height]：{} · 选择方式：{}</p>",
+                    rect.map(|v| text(&json!(v)))
+                        .unwrap_or_else(|| "不可用".into()),
+                    escape(get(
+                        &region,
+                        "selection_method",
+                        get(&region, "method", &method)
+                    ))
+                ));
+                html.push_str(&folded("选择依据与区域元数据", &region));
+                if let Some(entry) = mask_entry {
+                    html.push_str(&format!(
+                        "<p>测量使用保留掩膜（含排除像素）：<a href=\"{}\">区域掩膜</a></p>",
+                        url(&entry)
+                    ));
+                }
+                for (image, geometry_key, label) in [
+                    (a, "left_geometry", labels.0),
+                    (b, "right_geometry", labels.1),
+                ] {
+                    let locator_rect = if let Some(geometry) = region.get(geometry_key) {
+                        geometry_rectangle(geometry, &mut assets)?
+                    } else if case["pixel_aligned"] != false {
+                        rect
+                    } else {
+                        None
+                    };
+                    if let (Some(image), Some([x, y, w, h])) = (image, locator_rect) {
+                        let (width, height) =
+                            image::image_dimensions(out.join(get(image, "path", "")))
+                                .map_err(|e| Error::new("invalid_artifact", e.to_string()))?;
+                        html.push_str(&format!("<figure class=\"locator\" data-region-locator><div class=\"locator-image\"><img src=\"{}\" alt=\"{}区域定位\"><span class=\"rectangle\" style=\"left:{}%;top:{}%;width:{}%;height:{}%\"></span></div><figcaption>{} · {}</figcaption></figure>",url(image),escape(label),100.0*x as f64/width as f64,100.0*y as f64/height as f64,100.0*w as f64/width as f64,100.0*h as f64/height as f64,escape(label),text(&json!([x,y,w,h]))));
+                    } else {
+                        html.push_str(&format!(
+                            "<div class=\"unavailable\">{}区域定位：不可用</div>",
+                            escape(label)
+                        ));
+                    }
+                }
+                let mut crops = vec![];
+                for (role, image) in [("baseline", a), ("candidate", b)] {
+                    if case.get("pair_id").is_some() {
+                        region["pair_id"] = case["pair_id"].clone();
+                    }
+                    let reference = role_reference(&region, role, &assets);
+                    let retained = assets.image(&reference)?.filter(|e| {
+                        !matches!(
+                            Path::new(get(e, "path", ""))
+                                .extension()
+                                .and_then(|v| v.to_str()),
+                            Some("jpg" | "jpeg")
+                        )
+                    });
+                    crops.push(if retained.is_some() {
+                        retained
+                    } else {
+                        let geometry_key = if role == "baseline" {
+                            "left_geometry"
+                        } else {
+                            "right_geometry"
+                        };
+                        let crop_rect = if let Some(geometry) = region.get(geometry_key) {
+                            geometry_rectangle(geometry, &mut assets)?
+                        } else if case["pixel_aligned"] != false {
+                            rect
+                        } else {
+                            None
+                        };
+                        assets.crop(image, crop_rect)?
+                    });
+                }
+                for entry in crops.iter_mut().flatten() {
+                    if let Ok((width, height)) =
+                        image::image_dimensions(out.join(get(entry, "path", "")))
+                    {
+                        entry["dimensions"] = json!([width, height]);
+                    }
+                    if let Some(preview) = entry.get("fit_preview").cloned()
+                        && let Some(fit) = assets.image(&preview)?
+                    {
+                        entry["fit_entry"] = fit;
+                    }
+                }
+                thumbnails.push_str(&crop_thumbnail(
+                    &region,
+                    &method,
+                    [crops[0].as_ref(), crops[1].as_ref()],
+                    labels,
+                ));
+                let crop_aligned = case["pixel_aligned"] != false
+                    && crops[0]
+                        .as_ref()
+                        .zip(crops[1].as_ref())
+                        .is_some_and(|(left, right)| {
+                            left["dimensions"].is_array()
+                                && left["dimensions"] == right["dimensions"]
+                        });
+                html.insert_str(
+                    region_viewer_start,
+                    &viewer(
+                        crops[0].as_ref(),
+                        crops[1].as_ref(),
+                        true,
+                        labels,
+                        crop_aligned,
+                    ),
+                );
+                let findings: Vec<_> = rows(&comparison["findings"])
+                    .iter()
+                    .filter(|f| {
+                        f["case_id"] == id
+                            && f["region_id"] == region_id
+                            && (case.get("pair_id").is_none() || f["pair_id"] == case["pair_id"])
+                    })
+                    .cloned()
+                    .collect();
+                html.push_str(&folded("该区域 findings", &json!(findings)));
+                html.push_str("</details>");
+            }
+            let region_panels = html.split_off(region_start);
+            html.push_str(&region_panels);
+            if regions.is_empty() {
+                html.push_str(
+                    "<p class=\"crop-empty\" data-crop-empty>没有可查看的 crop；当前显示全图。</p>",
+                );
+            } else {
+                html.push_str("<div class=\"crop-tabs\" role=\"group\" aria-label=\"crop 类型\"><button type=\"button\" data-crop-filter=\"all\" aria-pressed=\"true\">全部 crop</button><button type=\"button\" data-crop-filter=\"manual\" aria-pressed=\"false\">指定 crop</button><button type=\"button\" data-crop-filter=\"automatic\" aria-pressed=\"false\">自动差异</button></div>");
+                html.push_str(&format!("<div class=\"crop-strip\" aria-label=\"指定 crop 与自动差异区域\">{thumbnails}</div>"));
+            }
+            html.push_str(&metric_summary(case, labels));
+            html.push_str(&format!(
+                "{}<p class=\"status\">状态：{} {}</p>",
+                navigation_links(
+                    &navigation_fragment(id, &case["seed"], Some(pair_id), None),
+                    "比较"
+                ),
+                escape(get(case, "status", "unavailable")),
+                case.get("reason").map(text).unwrap_or_default()
+            ));
+            if case.get("pair_id").is_none() {
+                html.push_str(&change_summary(case, &comparison));
+            } else {
+                html.push_str(&folded("比较角色、对应关系与适用范围", case));
+            }
+            html.push_str("<details><summary>来源输入与参考图</summary><div class=\"grid\">");
+            for (role, label) in [("source", "来源输入"), ("reference", "参考图")] {
+                html.push_str(&image_html(images[role].as_ref(), label));
+            }
+            html.push_str("</div>");
+            if images["reference"].is_some() || case.get("reference").is_some() {
+                html.push_str(&format!(
+                    "<pre>{}</pre>",
+                    case.get("reference")
+                        .map(text)
+                        .unwrap_or_else(|| "参考范围和来源限制不可用".into())
+                ));
+            }
+            html.push_str("</details><details><summary>差异图与显示元数据</summary>");
+            html.push_str(&image_html(images["difference"].as_ref(), "差异图"));
+            let metadata = difference_metadata(images["difference"].as_ref());
+            html.push_str(&format!("<pre>{}</pre></details>", text(&metadata)));
+            let plot_roles = [
+                "tone_response",
+                "grain_radial_spectrum",
+                "halation_profile",
+                "halation_edge_spill_profile",
+                "edge_response",
+                "edge_sfr",
+                "reference_material_curve",
+                "reference_regional_statistics",
+            ];
+            let mut plots = String::new();
+            for artifact in rows(&case["artifacts"]) {
+                if plot_roles.contains(&get(artifact, "role", "")) {
+                    let label = get(artifact, "id", get(artifact, "role", ""));
+                    if let Some(plot) = assets.plot(artifact, label)?
+                        && let Some(entry) = assets.copy(artifact)?
+                    {
+                        plots.push_str(&format!("<details><summary>{}</summary>{plot}<a href=\"{}\">保留的数值样本</a></details>",escape(&human(label)),url(&entry)));
+                    }
                 }
             }
-        }
-        if !plots.is_empty() {
-            html.push_str(&format!(
-                "<details><summary>曲线与频谱证据</summary>{plots}</details>"
-            ));
-        }
-        for (role, label) in [("baseline", "基准"), ("candidate", "候选")] {
-            let entry =
-                assets.copy(case.get(format!("{role}_resolved")).unwrap_or(&Value::Null))?;
-            html.push_str(&format!(
-                "<details><summary>{label}执行与渲染配置</summary><pre>{}</pre>",
-                case.get(format!("{role}_execution"))
-                    .map(text)
-                    .unwrap_or_else(|| "不可用".into())
-            ));
-            if let Some(entry) = entry.filter(|e| e["availability"] == "available") {
-                html.push_str(&format!("<a href=\"{}\">已解析配置</a>", url(&entry)));
+            if !plots.is_empty() {
+                html.push_str(&format!(
+                    "<details><summary>曲线与频谱证据</summary>{plots}</details>"
+                ));
             }
-            html.push_str("</details>");
+            for (role, label) in if case.get("pair_id").is_some() {
+                [("left", labels.0), ("right", labels.1)]
+            } else {
+                [("baseline", labels.0), ("candidate", labels.1)]
+            } {
+                let entry =
+                    assets.copy(case.get(format!("{role}_resolved")).unwrap_or(&Value::Null))?;
+                html.push_str(&format!(
+                    "<details><summary>{label}执行与渲染配置</summary><pre>{}</pre>",
+                    case.get(format!("{role}_execution"))
+                        .map(text)
+                        .unwrap_or_else(|| "不可用".into())
+                ));
+                if let Some(entry) = entry.filter(|e| e["availability"] == "available") {
+                    html.push_str(&format!("<a href=\"{}\">已解析配置</a>", url(&entry)));
+                }
+                html.push_str("</details>");
+            }
+            html.push_str("<details><summary>完整测量（原样保留）</summary>");
+            html.push_str(&metric_table(case));
+            for (key, label) in [
+                ("curves", "Retained response curves"),
+                ("spectra", "Retained spectra"),
+            ] {
+                if let Some(value) = case.get(key) {
+                    html.push_str(&format!("<h4>{label}</h4><pre>{}</pre>", text(value)));
+                }
+            }
+            html.push_str("</details></div>");
         }
-        html.push_str("<details><summary>完整测量（原样保留）</summary>");
-        html.push_str(&metric_table(case));
         for (key, label) in [
-            ("curves", "Retained response curves"),
-            ("spectra", "Retained spectra"),
+            ("source_dimensions", "原始输入尺寸"),
+            ("source_geometry", "输入解码与模拟几何"),
+            ("preparation", "输入准备来源与操作记录"),
+            ("input", "输入来源与文件身份"),
         ] {
-            if let Some(value) = case.get(key) {
-                html.push_str(&format!("<h4>{label}</h4><pre>{}</pre>", text(value)));
+            if let Some(value) = case.get(key).filter(|value| !value.is_null()) {
+                html.push_str(&folded(label, value));
             }
         }
-        html.push_str("</details></section>");
+        html.push_str("</section>");
     }
     let omissions: Vec<_> = assets
         .manifest
@@ -1179,6 +1643,22 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn semantic_fragments_encode_exact_identities() {
+        assert_eq!(
+            navigation_fragment(
+                "色 / &%?#",
+                &json!(17),
+                Some("reference/a&b"),
+                Some("patch + β")
+            ),
+            "#case=%E8%89%B2%20%2F%20%26%25%3F%23&seed=17&pair=reference%2Fa%26b&region=patch%20%2B%20%CE%B2"
+        );
+        assert_eq!(
+            navigation_fragment("case", &json!(0), None, None),
+            "#case=case&seed=0"
+        );
+    }
     #[test]
     fn redistribution_denial_never_copies_bytes() {
         let source = tempfile::tempdir().unwrap();
@@ -1242,24 +1722,70 @@ mod tests {
         assert_eq!(image.get_pixel(0, 1).0, codes[3]);
     }
     #[test]
-    fn retained_npy_curves_exclude_count_columns() {
+    fn single_pair_missing_assets_never_fall_back_to_other_pair() {
         let source = tempfile::tempdir().unwrap();
         let out = tempfile::tempdir().unwrap();
-        crate::image_data::write_npy(
-            &source.path().join("curve.npy"),
-            &[0.0, 1.0, 999.0, 1.0, 2.0, 999.0],
-            &[2, 3],
-        )
-        .unwrap();
+        fs::write(source.path().join("wrong.png"), b"another pair").unwrap();
         let mut assets = Assets::new(
             source.path(),
             out.path(),
-            vec![json!({"path":"curve.npy","columns":["x","response","count"]})],
+            vec![
+                json!({"id":"wrong","path":"wrong.png","role":"baseline_review","case_id":"local"}),
+            ],
         )
         .unwrap();
-        let plot = assets.plot(&json!("curve.npy"), "curve").unwrap().unwrap();
-        assert!(plot.contains("y [1,2]"));
+        let case = pair_case(
+            &json!({"case_id":"local","seed":0,"baseline_review":"wrong"}),
+            &json!({"id":"reference","review":{"left":"missing.png"}}),
+        );
+        let reference = role_reference(&case, "baseline", &assets);
+        assert_eq!(reference, "missing.png");
+        assert!(assets.image(&reference).unwrap().is_none());
+        assert_eq!(assets.manifest[0]["reason"], "missing_artifact");
+        assert!(role_reference(&case, "candidate", &assets).is_null());
+        assert!(role_reference(&case, "difference", &assets).is_null());
     }
+
+    #[test]
+    fn corresponding_region_masks_keep_independent_crop_geometry() {
+        let source = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        fs::create_dir(out.path().join("artifacts")).unwrap();
+        crate::image_data::write_npy(
+            &source.path().join("mask.npy"),
+            &[0.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+            &[2, 3],
+        )
+        .unwrap();
+        let mut assets =
+            Assets::new(source.path(), out.path(), vec![json!({"path":"mask.npy"})]).unwrap();
+        assert_eq!(
+            geometry_rectangle(&json!({"path":"mask.npy"}), &mut assets).unwrap(),
+            Some([1, 0, 2, 1])
+        );
+        assert_eq!(
+            geometry_rectangle(&json!([0, 1, 1, 1]), &mut assets).unwrap(),
+            Some([0, 1, 1, 1])
+        );
+    }
+
+    #[test]
+    fn reference_difference_display_keeps_valid_mask_exclusions() {
+        let source = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        fs::create_dir(out.path().join("artifacts")).unwrap();
+        crate::image_data::write_npy(&source.path().join("map.npy"), &[1.0, 2.0], &[1, 2]).unwrap();
+        crate::image_data::write_npy(&source.path().join("mask.npy"), &[1.0, 0.0], &[1, 2])
+            .unwrap();
+        let mut assets = Assets::new(source.path(), out.path(), vec![json!({"id":"map","path":"map.npy","role":"difference_map","metric":"delta_e00","valid_mask_artifact_id":"mask"}),json!({"id":"mask","path":"mask.npy"})]).unwrap();
+        let display = assets.image(&json!("map")).unwrap().unwrap();
+        let pixels = image::open(out.path().join(display["path"].as_str().unwrap()))
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(pixels.get_pixel(0, 0)[3], 255);
+        assert_eq!(pixels.get_pixel(1, 0)[3], 0);
+    }
+
     #[test]
     fn malformed_rectangles_are_errors() {
         assert_eq!(

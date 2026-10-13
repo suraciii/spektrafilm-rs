@@ -1,7 +1,6 @@
 use super::blur::DispatchJob;
 use super::*;
 
-#[cfg(feature = "wgpu-backend")]
 pub(super) struct HighlightBoostState {
     _buffers: Vec<wgpu::Buffer>,
     reductions: Vec<(DispatchJob, u32)>,
@@ -9,7 +8,6 @@ pub(super) struct HighlightBoostState {
     n_values: u32,
 }
 
-#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_highlight_boost_state(
     device: &ObservedDevice,
     hp: &crate::HighlightBoostGpuParams,
@@ -157,7 +155,6 @@ pub(super) fn build_highlight_boost_state(
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl HighlightBoostState {
     pub(super) fn encode_passes(&self, encoder: &mut ObservedEncoder) {
         for (job, blocks) in &self.reductions {

@@ -632,18 +632,7 @@ pub(crate) fn explicit_stock_values(params: &RuntimeParams) -> Option<ParameterE
     let mut payload = serde_json::json!({});
     for path in &params.explicit_section_paths {
         if let Some(value) = root.pointer(&format!("/{}", path.replace('.', "/"))) {
-            let mut parts = path.split('.').peekable();
-            let mut current = &mut payload;
-            while let Some(part) = parts.next() {
-                if parts.peek().is_none() {
-                    current[part] = value.clone();
-                    break;
-                }
-                if current.get(part).is_none() {
-                    current[part] = serde_json::json!({});
-                }
-                current = &mut current[part];
-            }
+            crate::params::sources::insert(&mut payload, path, value.clone());
         }
     }
     Some(ParameterEdits::from_value(payload).expect("validated explicit paths"))

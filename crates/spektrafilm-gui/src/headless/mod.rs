@@ -20,8 +20,17 @@ impl Drop for Session {
     }
 }
 
-fn data_dir() -> PathBuf {
+/// Workspace `data/` directory, resolved from this crate's manifest directory.
+///
+/// Shared by every GUI acceptance/unit test that needs real profiles or presets.
+pub(crate) fn data_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
+}
+
+/// Repository root (the parent of [`data_dir`]), for assertions that generated
+/// artifacts stay outside the checkout.
+pub(crate) fn repository_root() -> PathBuf {
+    data_dir().parent().unwrap().to_path_buf()
 }
 
 fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
@@ -36,7 +45,7 @@ fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
 }
 
 fn session() -> Session {
-    session_stochastic(true)
+    session_fixture()
 }
 
 /// Queue a chooser result and forbid falling back to a native dialog.
@@ -48,8 +57,8 @@ fn script(h: &mut Harness<'_, App>, result: chooser::ChooserResult) {
 }
 
 /// The shared harness deactivates stochastic effects so preview and scan
-/// comparisons stay deterministic; grain acceptance needs them active.
-fn session_stochastic(deactivate_stochastic_effects: bool) -> Session {
+/// comparisons stay deterministic.
+fn session_fixture() -> Session {
     let directory = tempfile::tempdir().unwrap();
     let image_path = directory.path().join("asymmetric-ramp.png");
     let mut image = ImageBuf::new(160, 80);
@@ -82,7 +91,7 @@ fn session_stochastic(deactivate_stochastic_effects: bool) -> Session {
     params.settings.preview_max_size = 128;
     params.camera.auto_exposure = false;
     params.debug.deactivate_spatial_effects = true;
-    params.debug.deactivate_stochastic_effects = deactivate_stochastic_effects;
+    params.debug.deactivate_stochastic_effects = true;
     params.io.crop = false;
     let mut initial =
         state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
@@ -96,6 +105,41 @@ fn session_stochastic(deactivate_stochastic_effects: bool) -> Session {
         .build_eframe(move |_| app(state_path, image_path, browser_path));
     assert_eq!(harness.state().image.as_ref().unwrap().width, 160);
     click(&mut harness, "◀");
+    Session { harness, directory }
+}
+
+/// Build a session whose App starts without an image, so a test can drive its
+/// own import path. Shares the deterministic runtime settings with
+/// [`session_fixture`]; only the synthetic image and the initial click differ.
+fn empty_session() -> Session {
+    let directory = tempfile::tempdir().unwrap();
+    let factory = state::GuiState::factory();
+    let mut params = factory.runtime_params().unwrap();
+    params.settings.preview_max_size = 128;
+    params.camera.auto_exposure = false;
+    params.debug.deactivate_spatial_effects = true;
+    params.debug.deactivate_stochastic_effects = true;
+    params.io.crop = false;
+    let mut initial =
+        state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
+            .unwrap();
+    initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
+    let state_path = directory.path().join("initial.json");
+    initial.save(&state_path).unwrap();
+    let browser_path = directory.path().join("browser.json");
+    let harness = Harness::builder()
+        .with_size(egui::vec2(1500.0, 1400.0))
+        .build_eframe(move |_| {
+            App::new_with_browser_path(
+                Arc::new(CpuBackend),
+                None,
+                Some(state_path),
+                None,
+                browser_path,
+                data_dir(),
+            )
+        });
+    assert!(harness.state().image.is_none());
     Session { harness, directory }
 }
 
@@ -732,13 +776,7 @@ mod layout_snapshots {
                 directory.is_absolute(),
                 "snapshot directory must be absolute"
             );
-            let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .canonicalize()
-                .unwrap();
+            let repository = repository_root().canonicalize().unwrap();
             std::fs::create_dir_all(&directory).unwrap();
             let directory = directory.canonicalize().unwrap();
             assert!(

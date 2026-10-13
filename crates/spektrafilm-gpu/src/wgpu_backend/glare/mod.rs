@@ -10,7 +10,6 @@ use super::*;
 /// scan_spectral) in place; the lognormal noise is held in a fresh
 /// scratch buffer, blurred via the existing 3-channel separable
 /// Gaussian.
-#[cfg(feature = "wgpu-backend")]
 pub(super) struct GlareState {
     _scratch: wgpu::Buffer,
     gen_dispatch: DispatchJob,
@@ -20,7 +19,6 @@ pub(super) struct GlareState {
     blur_pipe_v: CachedPipelineRef,
 }
 
-#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_glare_state(
     device: &ObservedDevice,
     gp: &crate::GlareGpuParams,
@@ -236,7 +234,6 @@ pub(super) fn build_glare_state(
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl GlareState {
     pub(super) fn encode_passes(
         &self,

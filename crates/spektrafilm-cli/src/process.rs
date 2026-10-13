@@ -12,8 +12,7 @@ use spektrafilm_core::runtime::{DigestMode, Runtime};
 use spektrafilm_math::image::ImageBuf;
 
 use super::{
-    Backend, DataSelection, DiscoveryFormat, format_name, preset, process_report, select_data_dir,
-    telemetry,
+    Backend, DataSelection, DiscoveryFormat, preset, process_report, select_data_dir, telemetry,
 };
 
 #[derive(clap::Args)]
@@ -135,12 +134,7 @@ impl OutputFormat {
     }
 
     fn name(self) -> &'static str {
-        match self {
-            Self::Jpeg => "jpeg",
-            Self::Png => "png",
-            Self::Tiff => "tiff",
-            Self::Exr => "exr",
-        }
+        self.image_format().name()
     }
 }
 
@@ -213,7 +207,7 @@ impl OutputPlan {
             bail!(
                 "--format {} disagrees with output extension ({})",
                 format.name(),
-                format_name(extension_format)
+                extension_format.name()
             );
         }
         let default_depth = match format {
@@ -221,26 +215,35 @@ impl OutputPlan {
             OutputFormat::Tiff | OutputFormat::Exr => 16,
         };
         let depth = BitDepth::try_from(bit_depth.unwrap_or(default_depth))?;
-        if matches!(format, OutputFormat::Jpeg | OutputFormat::Png) && depth != BitDepth::Eight {
-            bail!("{} output requires 8-bit depth", format.name());
-        }
-        if matches!(format, OutputFormat::Exr) && depth == BitDepth::Eight {
-            bail!("EXR output requires 16-bit or 32-bit depth");
-        }
-        if matches!(format, OutputFormat::Jpeg) {
-            if let Some(quality) = jpeg_quality
-                && !(1..=100).contains(&quality)
-            {
-                bail!("JPEG quality must be in 1..=100");
+        // The container rules live in core; the saving-space rules are checked
+        // once the transfer resolves, so only the container variants are read.
+        let options = SaveOptions {
+            depth,
+            color_space: "sRGB",
+            cctf_encoding: true,
+            jpeg_quality,
+            jpeg_subsampling: jpeg_subsampling.map(JpegSubsamplingArg::core),
+            compression: compression.map(CompressionArg::core),
+        };
+        use spektrafilm_core::image_io::SaveOptionViolation as V;
+        for violation in image_io::save_option_violations(format.image_format(), &options, false) {
+            match violation {
+                V::Depth if format == OutputFormat::Exr => {
+                    bail!("EXR output requires 16-bit or 32-bit depth")
+                }
+                V::Depth => bail!("{} output requires 8-bit depth", format.name()),
+                V::JpegQualityRange => bail!("JPEG quality must be in 1..=100"),
+                V::JpegQualityNotApplicable => {
+                    bail!("--jpeg-quality is only valid for JPEG output")
+                }
+                V::JpegSubsamplingNotApplicable => {
+                    bail!("--jpeg-subsampling is only valid for JPEG output")
+                }
+                V::CompressionNotConfigurable => {
+                    bail!("--compression is only valid for TIFF or EXR output")
+                }
+                V::RequiresEncoded | V::RequiresLinear | V::ExrColorSpace | V::ExrCompression => {}
             }
-        } else if jpeg_quality.is_some() {
-            bail!("--jpeg-quality is only valid for JPEG output");
-        }
-        if !matches!(format, OutputFormat::Jpeg) && jpeg_subsampling.is_some() {
-            bail!("--jpeg-subsampling is only valid for JPEG output");
-        }
-        if matches!(format, OutputFormat::Jpeg | OutputFormat::Png) && compression.is_some() {
-            bail!("--compression is only valid for TIFF or EXR output");
         }
         Ok(Self {
             format,
@@ -283,21 +286,24 @@ impl OutputPlan {
     /// Reject the saving/container combinations the selected container cannot
     /// represent.
     fn validate_saving(&self) -> Result<()> {
-        if matches!(self.format, OutputFormat::Jpeg | OutputFormat::Png) && !self.saving_encoded {
-            bail!(
-                "{} output requires encoded saving output",
-                self.format.name()
-            );
-        }
-        if self.format == OutputFormat::Exr {
-            if self.saving_encoded {
-                bail!("EXR output requires linear saving output");
-            }
-            if !matches!(self.saving_space.as_str(), "sRGB" | "ACES2065-1") {
-                bail!("EXR color space must be sRGB or ACES2065-1");
-            }
-            if matches!(self.compression, Some(Compression::None)) {
-                bail!("EXR compression is always zip");
+        use spektrafilm_core::image_io::SaveOptionViolation as V;
+        let violations = image_io::save_option_violations(
+            self.format.image_format(),
+            &self.save_options(),
+            false,
+        );
+        for violation in violations {
+            match violation {
+                V::RequiresEncoded => {
+                    bail!(
+                        "{} output requires encoded saving output",
+                        self.format.name()
+                    )
+                }
+                V::RequiresLinear => bail!("EXR output requires linear saving output"),
+                V::ExrColorSpace => bail!("EXR color space must be sRGB or ACES2065-1"),
+                V::ExrCompression => bail!("EXR compression is always zip"),
+                _ => {}
             }
         }
         Ok(())

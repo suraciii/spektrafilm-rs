@@ -124,6 +124,36 @@ pub enum ImageFormat {
     Tiff = 2,
     Exr = 3,
 }
+
+/// Canonical lowercase container tag shared by every CLI report, GUI label
+/// and state document. The single spelling for each container lives here so a
+/// caller cannot invent a second one.
+impl ImageFormat {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpeg",
+            Self::Png => "png",
+            Self::Tiff => "tiff",
+            Self::Exr => "exr",
+        }
+    }
+
+    /// Every extension this container owns, in loader order.
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Self::Jpeg => &["jpg", "jpeg"],
+            Self::Png => &["png"],
+            Self::Tiff => &["tif", "tiff"],
+            Self::Exr => &["exr"],
+        }
+    }
+
+    /// The extension a writer appends when the destination carries none.
+    pub fn extension(self) -> &'static str {
+        self.extensions()[0]
+    }
+}
+
 /// Container extensions the loader resolves, paired with their format. The
 /// file dialog and `detect` read this one table, so a new container cannot be
 /// offered by the dialog without being loadable, or the reverse.
@@ -196,6 +226,140 @@ pub struct SaveOptions<'a> {
     pub jpeg_quality: Option<u8>,
     pub jpeg_subsampling: Option<JpegSubsampling>,
     pub compression: Option<Compression>,
+}
+
+/// One way a container/option pair breaks the writer contract. The rules live
+/// here once; callers that reject map each variant to their own wording, and
+/// the GUI export dialog maps them to the coerced selection instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOptionViolation {
+    /// JPEG/PNG require 8-bit, EXR requires 16- or 32-bit.
+    Depth,
+    /// JPEG and PNG must write encoded samples.
+    RequiresEncoded,
+    /// EXR must write linear samples.
+    RequiresLinear,
+    /// EXR only carries sRGB or ACES2065-1.
+    ExrColorSpace,
+    /// JPEG quality is set for a container that does not carry it.
+    JpegQualityNotApplicable,
+    /// JPEG subsampling is set for a container that does not carry it.
+    JpegSubsamplingNotApplicable,
+    /// JPEG quality is outside 1..=100.
+    JpegQualityRange,
+    /// Compression is set for JPEG or PNG.
+    CompressionNotConfigurable,
+    /// EXR compression is always zip.
+    ExrCompression,
+}
+
+/// Every writer-contract violation of one [`SaveOptions`] value, in the order
+/// the writer used to check them so the first error stays stable. `rendered_output`
+/// selects the GUI save path, which preserves the selected transfer encoding for
+/// every format instead of requiring linear EXR and encoded JPEG/PNG.
+pub fn save_option_violations(
+    format: ImageFormat,
+    options: &SaveOptions<'_>,
+    rendered_output: bool,
+) -> Vec<SaveOptionViolation> {
+    let mut violations = Vec::new();
+    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && options.depth != BitDepth::Eight {
+        violations.push(SaveOptionViolation::Depth);
+    }
+    if format == ImageFormat::Exr && options.depth == BitDepth::Eight {
+        violations.push(SaveOptionViolation::Depth);
+    }
+    if !rendered_output
+        && matches!(format, ImageFormat::Jpeg | ImageFormat::Png)
+        && !options.cctf_encoding
+    {
+        violations.push(SaveOptionViolation::RequiresEncoded);
+    }
+    if !rendered_output && format == ImageFormat::Exr && options.cctf_encoding {
+        violations.push(SaveOptionViolation::RequiresLinear);
+    }
+    if !rendered_output
+        && format == ImageFormat::Exr
+        && !matches!(options.color_space, "sRGB" | "ACES2065-1")
+    {
+        violations.push(SaveOptionViolation::ExrColorSpace);
+    }
+    if format != ImageFormat::Jpeg && options.jpeg_quality.is_some() {
+        violations.push(SaveOptionViolation::JpegQualityNotApplicable);
+    }
+    if format != ImageFormat::Jpeg && options.jpeg_subsampling.is_some() {
+        violations.push(SaveOptionViolation::JpegSubsamplingNotApplicable);
+    }
+    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && options.compression.is_some() {
+        violations.push(SaveOptionViolation::CompressionNotConfigurable);
+    }
+    if format == ImageFormat::Exr && matches!(options.compression, Some(Compression::None)) {
+        violations.push(SaveOptionViolation::ExrCompression);
+    }
+    if let Some(quality) = options.jpeg_quality
+        && !(1..=100).contains(&quality)
+    {
+        violations.push(SaveOptionViolation::JpegQualityRange);
+    }
+    violations
+}
+
+/// The writer rules a container imposes on one [`SaveOptions`] value,
+/// independent of the destination path. Callers that resolve a container from
+/// a path (the CLI's `--output`) pass `ImageFormat::detect(path)`; callers that
+/// already hold the container pass it directly. `rendered_output` selects the
+/// GUI save path, which preserves the selected transfer encoding for every
+/// format instead of requiring linear EXR and encoded JPEG/PNG.
+pub fn validate_save_options(
+    format: ImageFormat,
+    options: &SaveOptions<'_>,
+    rendered_output: bool,
+) -> Result<(), ImageIoError> {
+    let name = format.name();
+    match save_option_violations(format, options, rendered_output).first() {
+        None => Ok(()),
+        Some(SaveOptionViolation::Depth) if format == ImageFormat::Exr => {
+            Err(ImageIoError::ExrDepth(8))
+        }
+        Some(SaveOptionViolation::Depth) => Err(ImageIoError::InvalidExport {
+            format: name,
+            reason: "only 8-bit output is supported",
+        }),
+        Some(SaveOptionViolation::RequiresEncoded) => Err(ImageIoError::InvalidExport {
+            format: name,
+            reason: "JPEG and PNG require encoded output",
+        }),
+        Some(SaveOptionViolation::RequiresLinear) => Err(ImageIoError::InvalidExport {
+            format: "EXR",
+            reason: "EXR output must be linear",
+        }),
+        Some(SaveOptionViolation::ExrColorSpace) => Err(ImageIoError::InvalidExport {
+            format: "EXR",
+            reason: "EXR color space must be sRGB or ACES2065-1",
+        }),
+        Some(SaveOptionViolation::JpegQualityNotApplicable) => Err(ImageIoError::InvalidExport {
+            format: name,
+            reason: "JPEG quality is only valid for JPEG",
+        }),
+        Some(SaveOptionViolation::JpegSubsamplingNotApplicable) => {
+            Err(ImageIoError::InvalidExport {
+                format: name,
+                reason: "JPEG subsampling is only valid for JPEG",
+            })
+        }
+        Some(SaveOptionViolation::CompressionNotConfigurable) => Err(ImageIoError::InvalidExport {
+            format: name,
+            reason: "compression is not configurable for JPEG or PNG",
+        }),
+        Some(SaveOptionViolation::ExrCompression) => Err(ImageIoError::InvalidExport {
+            format: "EXR",
+            reason: "EXR compression is always zip",
+        }),
+        Some(SaveOptionViolation::JpegQualityRange) => Err(ImageIoError::InvalidExport {
+            format: "JPEG",
+            reason: "quality must be between 1 and 100",
+        }),
+    }
 }
 #[derive(Debug, Default)]
 pub struct SaveReport {
@@ -404,80 +568,7 @@ fn prepare_inner(
     observation: Option<&ObservationContext>,
 ) -> Result<PreparedImageOutput, ImageIoError> {
     let format = ImageFormat::detect(path)?;
-    let format_name = match format {
-        ImageFormat::Jpeg => "JPEG",
-        ImageFormat::Png => "PNG",
-        ImageFormat::Tiff => "TIFF",
-        ImageFormat::Exr => "EXR",
-    };
-    match format {
-        ImageFormat::Jpeg | ImageFormat::Png if options.depth != BitDepth::Eight => {
-            return Err(ImageIoError::InvalidExport {
-                format: format_name,
-                reason: "only 8-bit output is supported",
-            });
-        }
-        ImageFormat::Exr if options.depth == BitDepth::Eight => {
-            return Err(ImageIoError::ExrDepth(8));
-        }
-        _ => {}
-    }
-    if !rendered_output
-        && matches!(format, ImageFormat::Jpeg | ImageFormat::Png)
-        && !options.cctf_encoding
-    {
-        return Err(ImageIoError::InvalidExport {
-            format: format_name,
-            reason: "JPEG and PNG require encoded output",
-        });
-    }
-    if !rendered_output && format == ImageFormat::Exr && options.cctf_encoding {
-        return Err(ImageIoError::InvalidExport {
-            format: "EXR",
-            reason: "EXR output must be linear",
-        });
-    }
-    if !rendered_output
-        && format == ImageFormat::Exr
-        && !matches!(options.color_space, "sRGB" | "ACES2065-1")
-    {
-        return Err(ImageIoError::InvalidExport {
-            format: "EXR",
-            reason: "EXR color space must be sRGB or ACES2065-1",
-        });
-    }
-    if format != ImageFormat::Jpeg && options.jpeg_quality.is_some() {
-        return Err(ImageIoError::InvalidExport {
-            format: format_name,
-            reason: "JPEG quality is only valid for JPEG",
-        });
-    }
-    if format != ImageFormat::Jpeg && options.jpeg_subsampling.is_some() {
-        return Err(ImageIoError::InvalidExport {
-            format: format_name,
-            reason: "JPEG subsampling is only valid for JPEG",
-        });
-    }
-    if matches!(format, ImageFormat::Jpeg | ImageFormat::Png) && options.compression.is_some() {
-        return Err(ImageIoError::InvalidExport {
-            format: format_name,
-            reason: "compression is not configurable for JPEG or PNG",
-        });
-    }
-    if format == ImageFormat::Exr && matches!(options.compression, Some(Compression::None)) {
-        return Err(ImageIoError::InvalidExport {
-            format: "EXR",
-            reason: "EXR compression is always zip",
-        });
-    }
-    if let Some(quality) = options.jpeg_quality
-        && !(1..=100).contains(&quality)
-    {
-        return Err(ImageIoError::InvalidExport {
-            format: "JPEG",
-            reason: "quality must be between 1 and 100",
-        });
-    }
+    validate_save_options(format, &options, rendered_output)?;
     if image.width == 0
         || image.height == 0
         || image.data.len() != image.width as usize * image.height as usize * 3

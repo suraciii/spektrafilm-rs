@@ -31,15 +31,10 @@ pub enum ProfileError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use crate::test_support::data_dir;
 
     fn data_profile(name: &str) -> Option<Profile> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("data/profiles/{name}.json"));
+        let path = data_dir().join(format!("profiles/{name}.json"));
         if !path.exists() {
             eprintln!("Skipping test — profile not found at {}", path.display());
             return None;
@@ -177,12 +172,7 @@ mod tests {
     #[test]
     fn test_load_kodak_portra_400() {
         // This test requires the data directory to be present
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data/profiles/kodak_portra_400.json");
+        let path = data_dir().join("profiles/kodak_portra_400.json");
         if !path.exists() {
             eprintln!("Skipping test — profile not found at {}", path.display());
             return;

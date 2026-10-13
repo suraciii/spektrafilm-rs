@@ -207,9 +207,10 @@ impl DensityCalibration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::data_dir;
+
     fn profile(name: &str) -> Profile {
-        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
-        crate::profile::load_profile_by_name(&data, name).unwrap()
+        crate::profile::load_profile_by_name(&data_dir(), name).unwrap()
     }
     #[test]
     fn coupled_real_receivers_recover_chromatic_density_and_exposure() {

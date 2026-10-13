@@ -42,15 +42,3 @@ pub(crate) struct FrontParams {
     pub(super) col1: [f32; 4],
     pub(super) col2: [f32; 4],
 }
-
-/// Uniform parameters for `halation/add_scaled.wgsl`: accumulate `scale * src`
-/// into `dst`, clearing `dst` first when `clear_first` is set. Owned here so the
-/// halation accumulation and the DIR coupler spatial blend cannot drift apart.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub(super) struct AddScaledParams {
-    pub(super) n_pixels: u32,
-    pub(super) scale: f32,
-    pub(super) clear_first: u32,
-    pub(super) _pad: u32,
-}

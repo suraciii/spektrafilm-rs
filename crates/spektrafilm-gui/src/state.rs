@@ -410,12 +410,19 @@ impl GuiState {
         Self::from_value(serde_json::from_str(&text).context("Invalid GUI state JSON")?)
     }
     pub fn save(&self, path: &Path) -> Result<()> {
+        self.validate()?;
         self.runtime_params()?;
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, serde_json::to_vec_pretty(&self.sections)?)?;
         Ok(())
+    }
+    /// Reject a state the runtime cannot accept. Load, import and save each
+    /// call this once; [`Self::runtime_params`] is a pure projection that no
+    /// longer re-validates.
+    pub fn validate(&self) -> Result<()> {
+        validate_state_parameters(&mut self.sections.clone(), false)
     }
     pub fn film(&self) -> &str {
         self.sections["simulation"]["film_stock"]
@@ -432,8 +439,29 @@ impl GuiState {
             .as_bool()
             .unwrap_or(true)
     }
+    pub fn display_profile(&self) -> Option<&str> {
+        self.sections["rust"]["display_profile"].as_str()
+    }
+    pub fn saving_color_space(&self) -> &str {
+        self.sections["simulation"]["saving_color_space"]
+            .as_str()
+            .unwrap_or("sRGB")
+    }
+    pub fn saving_cctf_encoding(&self) -> bool {
+        self.sections["simulation"]["saving_cctf_encoding"]
+            .as_bool()
+            .unwrap_or(true)
+    }
+    pub fn special(&self) -> &Value {
+        &self.sections["special"]
+    }
+    pub fn dialog_dirs(&self) -> &Value {
+        &self.sections["rust"]["dialog_dirs"]
+    }
+    /// Project the sections into runtime parameters. Validation is split from
+    /// projection: the load, import and save paths each validate once, so this
+    /// is a pure read that never clones or re-checks the carriers.
     pub fn runtime_params(&self) -> Result<RuntimeParams> {
-        validate_state_parameters(&mut self.sections.clone(), false)?;
         let s = &self.sections;
         let mut runtime = serde_json::to_value(RuntimeParams::default())?;
         if let Some(extra) = s["rust"].get("runtime") {
@@ -546,13 +574,45 @@ impl GuiState {
             {
                 bail!("Saving bit depth must be 8, 16 or 32");
             }
+            use spektrafilm_core::image_io::{
+                BitDepth, ImageFormat, SaveOptionViolation as V, SaveOptions,
+                save_option_violations,
+            };
+            let format = rust
+                .get("export_format")
+                .and_then(Value::as_str)
+                .and_then(|name| match name {
+                    "jpeg" => Some(ImageFormat::Jpeg),
+                    "png" => Some(ImageFormat::Png),
+                    "tiff" => Some(ImageFormat::Tiff),
+                    "exr" => Some(ImageFormat::Exr),
+                    _ => None,
+                });
+            // The container rules live in core; each site maps a violation to
+            // its own wording, so this document check reads the shared table
+            // instead of restating it.
+            fn options<'a>(depth: BitDepth, color_space: &'a str, cctf: bool) -> SaveOptions<'a> {
+                SaveOptions {
+                    depth,
+                    color_space,
+                    cctf_encoding: cctf,
+                    jpeg_quality: None,
+                    jpeg_subsampling: None,
+                    compression: None,
+                }
+            }
             if let Some(space) = rust.get("export_saving_color_space") {
                 let space = space
                     .as_str()
                     .context("Export saving color space must be a string")?;
                 spektrafilm_math::colorspace::resolve(space).map_err(anyhow::Error::msg)?;
-                if rust.get("export_format").and_then(Value::as_str) == Some("exr")
-                    && !matches!(space, "sRGB" | "ACES2065-1")
+                if format == Some(ImageFormat::Exr)
+                    && save_option_violations(
+                        ImageFormat::Exr,
+                        &options(BitDepth::Sixteen, space, true),
+                        false,
+                    )
+                    .contains(&V::ExrColorSpace)
                 {
                     bail!("EXR saving color space must be sRGB or ACES2065-1");
                 }
@@ -561,15 +621,20 @@ impl GuiState {
                 let encoded = encoded
                     .as_bool()
                     .context("Export saving CCTF encoding must be a boolean")?;
-                if rust.get("export_format").and_then(Value::as_str) == Some("exr") && encoded {
-                    bail!("EXR exports must use linear color");
-                }
-                if matches!(
-                    rust.get("export_format").and_then(Value::as_str),
-                    Some("jpeg" | "png")
-                ) && !encoded
-                {
-                    bail!("JPEG and PNG exports require encoded color");
+                if let Some(format) = format {
+                    for violation in save_option_violations(
+                        format,
+                        &options(BitDepth::Sixteen, "sRGB", encoded),
+                        false,
+                    ) {
+                        match violation {
+                            V::RequiresLinear => bail!("EXR exports must use linear color"),
+                            V::RequiresEncoded => {
+                                bail!("JPEG and PNG exports require encoded color")
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
             if let Some(export_format) = rust.get("export_format") {
@@ -598,15 +663,25 @@ impl GuiState {
                 ) {
                     bail!("Unknown export compression");
                 }
-                let depth = rust
+                let depth = match rust
                     .get("save_bit_depth")
                     .and_then(Value::as_u64)
-                    .unwrap_or(16);
-                if matches!(export_format, "jpeg" | "png") && depth != 8 {
+                    .unwrap_or(16)
+                {
+                    8 => BitDepth::Eight,
+                    32 => BitDepth::ThirtyTwo,
+                    _ => BitDepth::Sixteen,
+                };
+                // Only the depth variant carries a state-document message; the
+                // transfer and color variants were already rejected above.
+                let format = format.expect("export format validated above");
+                if save_option_violations(format, &options(depth, "sRGB", true), false)
+                    .contains(&V::Depth)
+                {
+                    if format == ImageFormat::Exr {
+                        bail!("EXR exports require 16- or 32-bit depth");
+                    }
                     bail!("{export_format} exports require 8-bit depth");
-                }
-                if export_format == "exr" && !matches!(depth, 16 | 32) {
-                    bail!("EXR exports require 16- or 32-bit depth");
                 }
             }
         }

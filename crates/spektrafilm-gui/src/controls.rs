@@ -3,10 +3,12 @@ use crate::numeric::{numeric, numeric_field};
 use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::{
-    PositiveInterpretation, ReceiverProfile, RuntimeParams, ScannerAutoSetup, ScannerFinish,
+    PositiveInterpretation, PrintCurvesMorphParams, ReceiverProfile, RuntimeParams,
+    ScannerAutoSetup, ScannerFinish,
     diffusion::DiffusionFilterParams,
     grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
+use spektrafilm_core::profile::Profile;
 use spektrafilm_model::grain::v2::PROFILE_NAMES;
 
 const COLOR_SPACES: &[&str] = &[
@@ -69,6 +71,18 @@ impl ScanMedium {
     }
 }
 
+/// Scan medium implied by a film profile: negative, positive (slide), or
+/// none when the stock is not a filming-stage film.
+pub(crate) fn scan_medium(film: &Profile) -> ScanMedium {
+    if film.is_film() && film.is_negative() {
+        ScanMedium::Negative
+    } else if film.is_film() && film.is_positive() {
+        ScanMedium::Slide
+    } else {
+        ScanMedium::None
+    }
+}
+
 /// Normalize only GUI transitions; imported states and recipes retain validation errors.
 pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medium: ScanMedium) {
     let medium = film_medium.for_route(&params.workflow.route);
@@ -99,7 +113,12 @@ pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medi
     }
 }
 
-fn enum_choice<T: Copy + PartialEq>(
+/// Re-normalize scanner selections after a profile or route transition.
+pub(crate) fn normalize_scan_output(params: &mut RuntimeParams, film_medium: ScanMedium) {
+    normalize_scanner_selections(params, film_medium);
+}
+
+pub(crate) fn enum_choice<T: Copy + PartialEq>(
     ui: &mut Ui,
     label: &str,
     value: &mut T,
@@ -122,6 +141,93 @@ fn enum_choice<T: Copy + PartialEq>(
         .response
         .on_hover_text(tooltip);
     changed
+}
+
+fn render_chemistry(
+    ui: &mut Ui,
+    params: &mut PrintCurvesMorphParams,
+    flags: &mut ChangeFlags,
+    film: bool,
+) {
+    let what = if film { "film" } else { "print" };
+    flags.runtime_changed |= toggle(
+        ui,
+        "active",
+        &mut params.active,
+        &format!("Enable {what} density-curve morphing."),
+    );
+    flags.runtime_changed |= numeric(
+        ui,
+        "gamma factor",
+        &mut params.gamma_factor,
+        0.25,
+        4.0,
+        0.05,
+        2,
+        &format!("Global coupled gamma multiplier for the {what} density curves."),
+    );
+    flags.runtime_changed |= numeric(
+        ui,
+        "gamma factor fast",
+        &mut params.gamma_factor_fast,
+        0.25,
+        4.0,
+        0.05,
+        2,
+        "Gamma factor applied to the fast sub-layer.",
+    );
+    flags.runtime_changed |= numeric(
+        ui,
+        "gamma factor slow",
+        &mut params.gamma_factor_slow,
+        0.25,
+        4.0,
+        0.05,
+        2,
+        "Gamma factor applied to the mid and slow sub-layers.",
+    );
+    flags.runtime_changed |= numeric(
+        ui,
+        "gamma factor red",
+        &mut params.gamma_factor_red,
+        0.25,
+        4.0,
+        0.02,
+        2,
+        "Per-channel gamma factor applied to the red channel.",
+    );
+    flags.runtime_changed |= numeric(
+        ui,
+        "gamma factor green",
+        &mut params.gamma_factor_green,
+        0.25,
+        4.0,
+        0.02,
+        2,
+        "Per-channel gamma factor applied to the green channel.",
+    );
+    flags.runtime_changed |= numeric(
+        ui,
+        "gamma factor blue",
+        &mut params.gamma_factor_blue,
+        0.25,
+        4.0,
+        0.02,
+        2,
+        "Per-channel gamma factor applied to the blue channel.",
+    );
+    flags.runtime_changed |= numeric(
+        ui,
+        "developer exhaustion",
+        &mut params.developer_exhaustion,
+        0.0,
+        1.0,
+        0.02,
+        2,
+        &format!(
+            "Blend all three {what} sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset."
+        ),
+    );
 }
 
 fn preflash_controls(ui: &mut Ui, params: &mut RuntimeParams, flags: &mut ChangeFlags) {
@@ -273,24 +379,10 @@ pub(crate) fn show(
             });
         }
         if section == "Film chemistry" {
-            flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.chemistry.active, "Enable film density-curve morphing.");
-            flags.runtime_changed |= numeric(ui, "gamma factor", &mut params.film_render.chemistry.gamma_factor, 0.25, 4.0, 0.05, 2, "Global coupled gamma multiplier for the film density curves.");
-            flags.runtime_changed |= numeric(ui, "gamma factor fast", &mut params.film_render.chemistry.gamma_factor_fast, 0.25, 4.0, 0.05, 2, "Gamma factor applied to the fast sub-layer.");
-            flags.runtime_changed |= numeric(ui, "gamma factor slow", &mut params.film_render.chemistry.gamma_factor_slow, 0.25, 4.0, 0.05, 2, "Gamma factor applied to the mid and slow sub-layers.");
-            flags.runtime_changed |= numeric(ui, "gamma factor red", &mut params.film_render.chemistry.gamma_factor_red, 0.25, 4.0, 0.02, 2, "Per-channel gamma factor applied to the red channel.");
-            flags.runtime_changed |= numeric(ui, "gamma factor green", &mut params.film_render.chemistry.gamma_factor_green, 0.25, 4.0, 0.02, 2, "Per-channel gamma factor applied to the green channel.");
-            flags.runtime_changed |= numeric(ui, "gamma factor blue", &mut params.film_render.chemistry.gamma_factor_blue, 0.25, 4.0, 0.02, 2, "Per-channel gamma factor applied to the blue channel.");
-            flags.runtime_changed |= numeric(ui, "developer exhaustion", &mut params.film_render.chemistry.developer_exhaustion, 0.0, 1.0, 0.02, 2, "Blend all three film sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset.");
+            render_chemistry(ui, &mut params.film_render.chemistry, &mut flags, true);
         }
         if section == "Print chemistry" {
-            flags.runtime_changed |= toggle(ui, "active", &mut params.print_render.density_curves_morph.active, "Enable print density-curve morphing.");
-            flags.runtime_changed |= numeric(ui, "gamma factor", &mut params.print_render.density_curves_morph.gamma_factor, 0.25, 4.0, 0.05, 2, "Global coupled gamma multiplier for the print density curves.");
-            flags.runtime_changed |= numeric(ui, "gamma factor fast", &mut params.print_render.density_curves_morph.gamma_factor_fast, 0.25, 4.0, 0.05, 2, "Gamma factor applied to the fast sub-layer.");
-            flags.runtime_changed |= numeric(ui, "gamma factor slow", &mut params.print_render.density_curves_morph.gamma_factor_slow, 0.25, 4.0, 0.05, 2, "Gamma factor applied to the mid and slow sub-layers.");
-            flags.runtime_changed |= numeric(ui, "gamma factor red", &mut params.print_render.density_curves_morph.gamma_factor_red, 0.25, 4.0, 0.02, 2, "Per-channel gamma factor applied to the red channel.");
-            flags.runtime_changed |= numeric(ui, "gamma factor green", &mut params.print_render.density_curves_morph.gamma_factor_green, 0.25, 4.0, 0.02, 2, "Per-channel gamma factor applied to the green channel.");
-            flags.runtime_changed |= numeric(ui, "gamma factor blue", &mut params.print_render.density_curves_morph.gamma_factor_blue, 0.25, 4.0, 0.02, 2, "Per-channel gamma factor applied to the blue channel.");
-            flags.runtime_changed |= numeric(ui, "developer exhaustion", &mut params.print_render.density_curves_morph.developer_exhaustion, 0.0, 1.0, 0.02, 2, "Blend all three print sub-layers toward the matched Gumbel shoulder while preserving midgray via a common horizontal offset.");
+            render_chemistry(ui, &mut params.print_render.density_curves_morph, &mut flags, false);
         }
         if section == "Glare" {
             egui::CollapsingHeader::new("Print viewing glare").default_open(false).show(ui, |ui| {
@@ -392,14 +484,12 @@ pub(crate) fn show(
             ui.scope(|ui| {
                 let grain = &mut params.film_render.grain;
                 flags.runtime_changed |= toggle(ui, "active", &mut grain.active, "Add grain to the negative");
-                egui::ComboBox::from_label("Engine")
-                    .selected_text(match grain.engine { GrainEngine::Spektra => "Spektra", GrainEngine::Procedural => "Procedural", GrainEngine::Dye => "Dye", GrainEngine::Fotufilm => "Fotufilm Film" })
-                    .show_ui(ui, |ui| {
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Spektra, "Spektra").on_hover_text("Material grain in developed film density.").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Procedural, "Procedural").on_hover_text("Post-scan grain appearance in encoded RGB.").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Dye, "Dye").on_hover_text("Material grain formed in a film-coordinate dye field.").changed();
-                        flags.runtime_changed |= ui.selectable_value(&mut grain.engine, GrainEngine::Fotufilm, "Fotufilm Film").on_hover_text("Effective-appearance film population grain model.").changed();
-                    });
+                flags.runtime_changed |= enum_choice(ui, "Engine", &mut grain.engine, &[
+                    (GrainEngine::Spektra, "Spektra"),
+                    (GrainEngine::Procedural, "Procedural"),
+                    (GrainEngine::Dye, "Dye"),
+                    (GrainEngine::Fotufilm, "Fotufilm Film"),
+                ], "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model.");
                 if grain.engine == GrainEngine::Procedural {
                     let mut profile = grain.v2_profile.clone();
                     egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {
@@ -411,18 +501,14 @@ pub(crate) fn show(
                         flags.runtime_changed = true;
                     }
                     if grain.v2_profile == "custom" {
-                        egui::ComboBox::from_label("Film Type")
-                            .selected_text(match grain.v2_film_type { GrainV2FilmType::Negative => "Negative", GrainV2FilmType::Positive => "Positive" })
-                            .show_ui(ui, |ui| {
-                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_film_type, GrainV2FilmType::Negative, "Negative").changed();
-                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_film_type, GrainV2FilmType::Positive, "Positive").changed();
-                            });
-                        egui::ComboBox::from_label("Processing Mode")
-                            .selected_text(match grain.v2_mode { GrainV2Mode::Analogue => "Analogue", GrainV2Mode::Noise => "Noise" })
-                            .show_ui(ui, |ui| {
-                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_mode, GrainV2Mode::Analogue, "Analogue").changed();
-                                flags.runtime_changed |= ui.selectable_value(&mut grain.v2_mode, GrainV2Mode::Noise, "Noise").changed();
-                            });
+                        flags.runtime_changed |= enum_choice(ui, "Film Type", &mut grain.v2_film_type, &[
+                            (GrainV2FilmType::Negative, "Negative"),
+                            (GrainV2FilmType::Positive, "Positive"),
+                        ], "Film polarity for procedural grain.");
+                        flags.runtime_changed |= enum_choice(ui, "Processing Mode", &mut grain.v2_mode, &[
+                            (GrainV2Mode::Analogue, "Analogue"),
+                            (GrainV2Mode::Noise, "Noise"),
+                        ], "Procedural grain processing mode.");
                         let resolved = grain.resolved_grain_v2();
                         flags.runtime_changed |= optional_numeric(ui, "Size", &mut grain.v2_size, resolved.size, 1.0, 48.0, 0.5, 1, "Grain particle size.");
                         flags.runtime_changed |= optional_numeric(ui, "Shadows", &mut grain.v2_shadows, resolved.shadows * 100.0, 0.0, 100.0, 1.0, 1, "Shadow grain amount.");
@@ -451,12 +537,12 @@ pub(crate) fn show(
                         flags.runtime_changed |= fotufilm_sublayer_shares(ui, &mut fotufilm.sublayer_shares);
                         flags.runtime_changed |= numeric(ui, "Coating density scale", &mut fotufilm.coating_density_scale, 0.25, 4.0, 0.05, 2, "Effective coating density scale.");
                         flags.runtime_changed |= numeric(ui, "Fog density", &mut fotufilm.fog_density, 0.0, 0.3, 0.005, 3, "Effective fog density.");
-                        egui::ComboBox::from_label("Material").selected_text(match fotufilm.material { FotufilmMaterial::Auto => "Auto", FotufilmMaterial::Silver => "Silver", FotufilmMaterial::DyeNegative => "Dye negative", FotufilmMaterial::DyeReversal => "Dye reversal" }).show_ui(ui, |ui| {
-                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::Auto, "Auto").changed();
-                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::Silver, "Silver").changed();
-                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::DyeNegative, "Dye negative").changed();
-                            flags.runtime_changed |= ui.selectable_value(&mut fotufilm.material, FotufilmMaterial::DyeReversal, "Dye reversal").changed();
-                        });
+                        flags.runtime_changed |= enum_choice(ui, "Material", &mut fotufilm.material, &[
+                            (FotufilmMaterial::Auto, "Auto"),
+                            (FotufilmMaterial::Silver, "Silver"),
+                            (FotufilmMaterial::DyeNegative, "Dye negative"),
+                            (FotufilmMaterial::DyeReversal, "Dye reversal"),
+                        ], "Effective grain material.");
                     });
                 } else if grain.engine == GrainEngine::Dye {
                     flags.runtime_changed |= numeric(ui, "Dye support (µm)", &mut grain.v3_dye_support_um, 1.0, 32.0, 0.5, 1, "Gaussian sigma of the dye support in film micrometers; it conditions the field, which is read in film coordinates.");

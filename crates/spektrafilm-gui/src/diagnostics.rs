@@ -10,6 +10,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use spektrafilm_core::params::RuntimeParams;
+
 #[derive(Default)]
 pub(crate) struct Diagnostics {
     pub mode: CollectionMode,
@@ -130,6 +132,19 @@ impl Diagnostics {
             }
         });
         save
+    }
+}
+
+/// Effective backend label for Scan and Export reports. An active Dye field
+/// resolves on the CPU and never enters the resident chain, so the selected
+/// backend name alone would misreport the executed path.
+pub(crate) fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
+    if spektrafilm_core::stages::grain_v3::active(params) {
+        format!("{selected} · grain Dye on CPU")
+    } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
+        format!("{selected} · grain Fotufilm on CPU")
+    } else {
+        selected.to_owned()
     }
 }
 

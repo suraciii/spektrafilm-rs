@@ -14,11 +14,9 @@ precision-f64 = [
 spektrafilm-math.workspace = true
 spektrafilm-gpu.workspace = true
 rayon.workspace = true
-rand.workspace = true
-rand_distr.workspace = true
 rand_mt = "5"
 libm.workspace = true
-thiserror.workspace = true
+half = "2.7"
 tracing.workspace = true
 
 [dev-dependencies]

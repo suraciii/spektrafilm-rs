@@ -35,66 +35,41 @@ pub(super) struct BlurJob {
     pub(super) bg_v: wgpu::BindGroup,
 }
 
-#[cfg(feature = "wgpu-backend")]
-pub(super) struct DispatchJob {
-    pub(super) _params_buf: wgpu::Buffer,
-    pub(super) pipeline: CachedPipelineRef,
-    pub(super) bg: wgpu::BindGroup,
-}
-
-#[cfg(feature = "wgpu-backend")]
-pub(super) struct SimpleBlurState {
-    _dst: wgpu::Buffer,
-    blur: BlurJob,
-    blur_pipe_h: CachedPipelineRef,
-    blur_pipe_v: CachedPipelineRef,
-    n_bytes: u64,
-}
-
-#[cfg(feature = "wgpu-backend")]
+/// Build a single H/V blur job from source → output, using `mid` as scratch.
+///
+/// The caller must create the pipeline refs (`blur_pipe_h`, `blur_pipe_v`)
+/// and the `out` buffer. The returned `BlurJob` owns the kernel buffer,
+/// params buffer, and bind groups.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn build_simple_blur_state(
+pub(super) fn make_blur_job(
     device: &ObservedDevice,
     sigma: f32,
     width: u32,
     height: u32,
     src: &wgpu::Buffer,
     mid: &wgpu::Buffer,
+    out: &wgpu::Buffer,
     label: &str,
-    backend: &WgpuBackend,
-) -> SimpleBlurState {
-    let n_bytes = (width as u64) * (height as u64) * 3 * 4;
-    let dst = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(&format!("{label}_blur_dst")),
-        size: n_bytes,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h = backend.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), blur_layout);
-    let blur_pipe_v = backend.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), blur_layout);
-
+    blur_pipe_h: &CachedPipelineRef,
+    blur_pipe_v: &CachedPipelineRef,
+) -> BlurJob {
     let sigma = sigma.max(0.01);
     let (radius, kernel_f32) = gaussian_kernel(sigma);
+
     let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{label}_blur_kernel")),
         contents: bytemuck::cast_slice(&kernel_f32),
         usage: wgpu::BufferUsages::STORAGE,
     });
+    let params = BlurParams {
+        width,
+        height,
+        radius,
+        _pad: 0,
+    };
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("{label}_blur_params")),
-        contents: bytemuck::bytes_of(&BlurParams {
-            width,
-            height,
-            radius,
-            _pad: 0,
-        }),
+        contents: bytemuck::bytes_of(&params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -137,26 +112,82 @@ pub(super) fn build_simple_blur_state(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: dst.as_entire_binding(),
+                resource: out.as_entire_binding(),
             },
         ],
     });
+    BlurJob {
+        _kernel_buf: kernel_buf,
+        _params_buf: params_buf,
+        bg_h,
+        bg_v,
+    }
+}
+
+pub(super) struct DispatchJob {
+    pub(super) _params_buf: wgpu::Buffer,
+    pub(super) pipeline: CachedPipelineRef,
+    pub(super) bg: wgpu::BindGroup,
+}
+
+pub(super) struct SimpleBlurState {
+    _dst: wgpu::Buffer,
+    blur: BlurJob,
+    blur_pipe_h: CachedPipelineRef,
+    blur_pipe_v: CachedPipelineRef,
+    n_bytes: u64,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_simple_blur_state(
+    device: &ObservedDevice,
+    sigma: f32,
+    width: u32,
+    height: u32,
+    src: &wgpu::Buffer,
+    mid: &wgpu::Buffer,
+    label: &str,
+    backend: &WgpuBackend,
+) -> SimpleBlurState {
+    let n_bytes = (width as u64) * (height as u64) * 3 * 4;
+    let dst = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(&format!("{label}_blur_dst")),
+        size: n_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let blur_layout = &[
+        wgpu::BufferBindingType::Uniform,
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: false },
+    ];
+    let blur_pipe_h = backend.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), blur_layout);
+    let blur_pipe_v = backend.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), blur_layout);
+
+    let blur = make_blur_job(
+        device,
+        sigma,
+        width,
+        height,
+        src,
+        mid,
+        &dst,
+        label,
+        &blur_pipe_h,
+        &blur_pipe_v,
+    );
 
     SimpleBlurState {
         _dst: dst,
-        blur: BlurJob {
-            _kernel_buf: kernel_buf,
-            _params_buf: params_buf,
-            bg_h,
-            bg_v,
-        },
+        blur,
         blur_pipe_h,
         blur_pipe_v,
         n_bytes,
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl SimpleBlurState {
     pub(super) fn encode_passes(
         &self,

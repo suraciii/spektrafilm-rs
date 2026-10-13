@@ -23,6 +23,7 @@ mod color;
 mod convex_hull;
 mod report;
 mod stimulus;
+use crate::math::mat_vec;
 use color::{Color, color};
 use convex_hull::volume;
 pub use report::write_report;
@@ -318,9 +319,7 @@ fn make_pipeline(
     data: &Path,
     unbounded: bool,
 ) -> Result<Runtime, String> {
-    let film = profile::load_profile_by_name(data, &bundle.spec.film_profile)
-        .map_err(|e| e.to_string())?;
-    let paper = profile::load_profile_by_name(data, print).map_err(|e| e.to_string())?;
+    let (film, paper) = crate::lut_baker::resolve_profiles(&bundle.spec.film_profile, print, data)?;
     let mut params = if let Some(params) = bundle.baked_params.get(print) {
         params.clone()
     } else if let Some(snapshot) = bundle
@@ -381,7 +380,9 @@ fn process_linear(
     )?;
     let rows: Vec<_> = out
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| [to_f64(p[0]), to_f64(p[1]), to_f64(p[2])])
         .collect();
     if rows.iter().flatten().any(|x| !x.is_finite()) {
@@ -411,157 +412,72 @@ fn reference(
         .collect())
 }
 
-fn mul(m: [[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
-    std::array::from_fn(|i| (0..3).map(|j| m[i][j] * v[j]).sum())
-}
 fn xyz(cs: &ColorSpaceEntry, rgb: [f64; 3]) -> [f64; 3] {
-    mul(
-        color(cs).m,
+    mat_vec(
+        &color(cs).m,
         cs.decode_rgb(rgb).map(|v| v / cs.output_gain()),
     )
 }
 fn oklab(v: [f64; 3]) -> [f64; 3] {
-    mul(
-        [
-            [0.2104542553, 0.7936177850, -0.0040720468],
-            [1.9779984951, -2.4285922050, 0.4505937099],
-            [0.0259040371, 0.7827717662, -0.8086757660],
-        ],
-        mul(
-            [
-                [0.8189330101, 0.3618667424, -0.1288597137],
-                [0.0329845436, 0.9293118715, 0.0361456387],
-                [0.0482003018, 0.2643662691, 0.6338517070],
-            ],
-            v,
-        )
-        .map(f64::cbrt),
-    )
+    let m1 = [
+        [0.2104542553, 0.7936177850, -0.0040720468],
+        [1.9779984951, -2.4285922050, 0.4505937099],
+        [0.0259040371, 0.7827717662, -0.8086757660],
+    ];
+    let m2 = [
+        [0.8189330101, 0.3618667424, -0.1288597137],
+        [0.0329845436, 0.9293118715, 0.0361456387],
+        [0.0482003018, 0.2643662691, 0.6338517070],
+    ];
+    mat_vec(&m1, mat_vec(&m2, v).map(f64::cbrt))
 }
 fn okxyz(v: [f64; 3]) -> [f64; 3] {
-    mul(
+    let m1 = [
+        [1.2270138511035211, -0.5577999806518222, 0.2812561489664678],
+        [-0.0405801784232806, 1.1122568696168302, -0.0716766786656012],
+        [-0.0763812845057069, -0.4214819784180127, 1.586163220440795],
+    ];
+    let m2 = [
+        [0.9999999984505196, 0.3963377921737678, 0.21580375806075877],
         [
-            [1.2270138511035211, -0.5577999806518222, 0.2812561489664678],
-            [-0.0405801784232806, 1.1122568696168302, -0.0716766786656012],
-            [-0.0763812845057069, -0.4214819784180127, 1.586163220440795],
+            1.0000000088817607,
+            -0.10556134232365633,
+            -0.0638541747717059,
         ],
-        mul(
-            [
-                [0.9999999984505196, 0.3963377921737678, 0.21580375806075877],
-                [
-                    1.0000000088817607,
-                    -0.10556134232365633,
-                    -0.0638541747717059,
-                ],
-                [
-                    1.0000000546724108,
-                    -0.08948418209496574,
-                    -1.2914855378640917,
-                ],
-            ],
-            v,
-        )
-        .map(|v| v * v * v),
-    )
-}
-fn lab(xyz: [f64; 3]) -> [f64; 3] {
-    let white = [0.3127 / 0.329, 1., (1. - 0.3127 - 0.329) / 0.329];
-    let f: [f64; 3] = std::array::from_fn(|i| {
-        let t = xyz[i] / white[i];
-        if t > (6f64 / 29.).powi(3) {
-            t.cbrt()
-        } else {
-            t / (3. * (6f64 / 29.).powi(2)) + 4. / 29.
-        }
-    });
-    [
-        116. * f[1] - 16.,
-        500. * (f[0] - f[1]),
-        200. * (f[1] - f[2]),
-    ]
+        [
+            1.0000000546724108,
+            -0.08948418209496574,
+            -1.2914855378640917,
+        ],
+    ];
+    mat_vec(&m1, mat_vec(&m2, v).map(|x| x * x * x))
 }
 /// CIE 142:2001 CIEDE2000, unit weights.
-pub fn delta_e_2000(a: [f64; 3], b: [f64; 3]) -> f64 {
-    let [l1, a1, b1] = a;
-    let [l2, a2, b2] = b;
-    let c1 = a1.hypot(b1);
-    let c2 = a2.hypot(b2);
-    let cm = (c1 + c2) / 2.;
-    let g = 0.5 * (1. - (cm.powi(7) / (cm.powi(7) + 25f64.powi(7))).sqrt());
-    let ap1 = (1. + g) * a1;
-    let ap2 = (1. + g) * a2;
-    let cp1 = ap1.hypot(b1);
-    let cp2 = ap2.hypot(b2);
-    let h1 = b1.atan2(ap1).to_degrees().rem_euclid(360.);
-    let h2 = b2.atan2(ap2).to_degrees().rem_euclid(360.);
-    let dl = l2 - l1;
-    let dc = cp2 - cp1;
-    let mut dh = h2 - h1;
-    if cp1 * cp2 == 0. {
-        dh = 0.;
-    } else if dh > 180. {
-        dh -= 360.;
-    } else if dh < -180. {
-        dh += 360.;
-    }
-    let d_h = 2. * (cp1 * cp2).sqrt() * (dh / 2.).to_radians().sin();
-    let lm = (l1 + l2) / 2.;
-    let cm = (cp1 + cp2) / 2.;
-    let hm = if cp1 * cp2 == 0. {
-        h1 + h2
-    } else if (h1 - h2).abs() <= 180. {
-        (h1 + h2) / 2.
-    } else if h1 + h2 < 360. {
-        (h1 + h2 + 360.) / 2.
-    } else {
-        (h1 + h2 - 360.) / 2.
-    };
-    let t = 1. - 0.17 * (hm - 30.).to_radians().cos()
-        + 0.24 * (2. * hm).to_radians().cos()
-        + 0.32 * (3. * hm + 6.).to_radians().cos()
-        - 0.20 * (4. * hm - 63.).to_radians().cos();
-    let sl = 1. + 0.015 * (lm - 50.).powi(2) / (20. + (lm - 50.).powi(2)).sqrt();
-    let sc = 1. + 0.045 * cm;
-    let sh = 1. + 0.015 * cm * t;
-    let rt = -2.
-        * (cm.powi(7) / (cm.powi(7) + 25f64.powi(7))).sqrt()
-        * (60. * (-((hm - 275.) / 25.).powi(2)).exp())
-            .to_radians()
-            .sin();
-    let x = dl / sl;
-    let y = dc / sc;
-    let z = d_h / sh;
-    (x * x + y * y + z * z + rt * y * z).max(0.).sqrt()
-}
+pub use spektrafilm_math::lab::delta_e_2000;
+/// CIE L*a*b* from XYZ under the sRGB white point.
+pub use spektrafilm_math::lab::xyz_to_lab;
 fn ictcp(xyz: [f64; 3]) -> [f64; 3] {
-    let rgb = mul(
-        [
-            [1.716651187971268, -0.355670783776392, -0.253366281373660],
-            [-0.666684351832489, 1.616481236634939, 0.015768545813911],
-            [0.017639857445311, -0.042770613257809, 0.942103121235474],
-        ],
-        xyz,
-    );
-    let lms = mul(
-        [
-            [1688. / 4096., 2146. / 4096., 262. / 4096.],
-            [683. / 4096., 2951. / 4096., 462. / 4096.],
-            [99. / 4096., 309. / 4096., 3688. / 4096.],
-        ],
-        rgb,
-    )
-    .map(|v| {
+    let m1 = [
+        [1.716651187971268, -0.355670783776392, -0.253366281373660],
+        [-0.666684351832489, 1.616481236634939, 0.015768545813911],
+        [0.017639857445311, -0.042770613257809, 0.942103121235474],
+    ];
+    let m2 = [
+        [1688. / 4096., 2146. / 4096., 262. / 4096.],
+        [683. / 4096., 2951. / 4096., 462. / 4096.],
+        [99. / 4096., 309. / 4096., 3688. / 4096.],
+    ];
+    let m3 = [
+        [0.5, 0.5, 0.],
+        [6610. / 4096., -13613. / 4096., 7003. / 4096.],
+        [17933. / 4096., -17390. / 4096., -543. / 4096.],
+    ];
+    let rgb = mat_vec(&m1, xyz);
+    let lms = mat_vec(&m2, rgb).map(|v| {
         let y = (v.abs() / 10000.).powf(2610. / 16384.);
         ((3424. / 4096. + 2413. / 128. * y) / (1. + 2392. / 128. * y)).powf(2523. / 32.)
     });
-    mul(
-        [
-            [0.5, 0.5, 0.],
-            [6610. / 4096., -13613. / 4096., 7003. / 4096.],
-            [17933. / 4096., -17390. / 4096., -543. / 4096.],
-        ],
-        lms,
-    )
+    mat_vec(&m3, lms)
 }
 fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f64>().sqrt()
@@ -605,11 +521,11 @@ fn xy(v: [f64; 3]) -> [f64; 2] {
 }
 fn adapt(rgb: [f64; 3], from: Color, to: Color) -> [f64; 3] {
     let w = |v: [f64; 2]| [v[0] / v[1], 1., (1. - v[0] - v[1]) / v[1]];
-    mul(
-        to.inv,
-        mul(
-            chromatic_adaptation_matrix_cat16_f64(w(from.white), w(to.white)),
-            mul(from.m, rgb),
+    mat_vec(
+        &to.inv,
+        mat_vec(
+            &chromatic_adaptation_matrix_cat16_f64(w(from.white), w(to.white)),
+            mat_vec(&from.m, rgb),
         ),
     )
 }
@@ -694,15 +610,11 @@ fn inside(p: [f64; 2], polygon: &[[f64; 2]]) -> bool {
 }
 
 fn bundle_input_gain(bundle: &Bundle, input: &ColorSpaceEntry) -> Result<f64, String> {
-    let stops = bundle
+    let _ = bundle
         .spec
         .stops_above_midgray
         .ok_or("QA spec stops_above_midgray was not normalized")?;
-    Ok(if bundle.spec.uses_native_input_gain() {
-        input.native_input_gain()
-    } else {
-        input.input_gain_for_stops(stops)
-    })
+    Ok(crate::lut_baker::effective_input_gain(&bundle.spec, input))
 }
 #[allow(clippy::too_many_arguments)]
 fn run_print(
@@ -732,8 +644,11 @@ fn run_print(
             for (&p, &t) in samples.iter().zip(&truth) {
                 let a = xyz(output, lut.sample(p));
                 let b = xyz(output, t);
-                tri.push(delta_e_2000(lab(a), lab(b)));
-                tet.push(delta_e_2000(lab(xyz(output, tetra(lut, p))), lab(b)));
+                tri.push(delta_e_2000(xyz_to_lab(a), xyz_to_lab(b)));
+                tet.push(delta_e_2000(
+                    xyz_to_lab(xyz(output, tetra(lut, p))),
+                    xyz_to_lab(b),
+                ));
                 let a = ictcp(a);
                 let b = ictcp(b);
                 itp.push(
@@ -957,7 +872,7 @@ fn run_print(
         let pts: Vec<_> = before
             .iter()
             .chain(&after)
-            .map(|&p| xy(mul(color(output).m, p)))
+            .map(|&p| xy(mat_vec(&color(output).m, p)))
             .collect();
         let colors = vec![[1., 0.4, 0.2]; before.len()]
             .into_iter()
@@ -1030,7 +945,7 @@ fn run_print(
     for i in 0..16 {
         let t = 2700. + 7300. * i as f64 / 15.;
         let (x, y) = cct_xy(t);
-        let rgb = mul(color(input).inv, [x / y, 1., (1. - x - y) / y]);
+        let rgb = mat_vec(&color(input).inv, [x / y, 1., (1. - x - y) / y]);
         let peak = max(&rgb).max(1e-6);
         planck.push(
             input
@@ -1353,7 +1268,7 @@ fn input_compression(
     let mut pts = Vec::new();
     let mut colors = Vec::new();
     for &p in inputs {
-        let v = mul(cat, mul(source.m, input.decode_rgb(p)));
+        let v = mat_vec(&cat, mat_vec(&source.m, input.decode_rgb(p)));
         let b = v.iter().sum::<f64>();
         let q = if b > 1e-12 {
             [v[0] / b, v[1] / b]
@@ -1420,7 +1335,7 @@ fn input_compression(
 }
 fn gamut_chroma(cs: &ColorSpaceEntry, l: f64, h: f64) -> f64 {
     let ok = |c: f64| {
-        let rgb = mul(color(cs).inv, okxyz([l, c * h.cos(), c * h.sin()]));
+        let rgb = mat_vec(&color(cs).inv, okxyz([l, c * h.cos(), c * h.sin()]));
         rgb.iter().all(|v| (0.0..=1.).contains(v))
     };
     let mut lo = 0.;
@@ -1460,7 +1375,7 @@ fn picture(
             .into_iter()
             .flat_map(|c| (0..16).map(move |i| (c, std::f64::consts::TAU * i as f64 / 16.))),
     ) {
-        let rgb = mul(color(input).inv, okxyz([l, c * h.cos(), c * h.sin()]));
+        let rgb = mat_vec(&color(input).inv, okxyz([l, c * h.cos(), c * h.sin()]));
         if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
             let enc = input.encode_rgb(rgb.map(|v| v / gain));
             if enc.iter().all(|v| *v > 0.006 && *v < 0.994) {
@@ -1516,7 +1431,7 @@ fn picture(
         for col in 0..side {
             let h = std::f64::consts::TAU * col as f64 / side as f64;
             let c = 0.96 * weight * gamut_chroma(input, light, h);
-            let rgb = mul(color(input).inv, okxyz([light, c * h.cos(), c * h.sin()]));
+            let rgb = mat_vec(&color(input).inv, okxyz([light, c * h.cos(), c * h.sin()]));
             if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
                 in_gamut += 1;
             }
@@ -1716,7 +1631,7 @@ fn noise_figure(
         for col in 0..grid {
             let a = -extent + 2. * extent * col as f64 / (grid - 1) as f64;
             let b = -extent + 2. * extent * row as f64 / (grid - 1) as f64;
-            let rgb = mul(color(input).inv, okxyz([l, a, b]));
+            let rgb = mat_vec(&color(input).inv, okxyz([l, a, b]));
             if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
                 let p = input
                     .encode_rgb(rgb.map(|v| v / gain))
@@ -1743,7 +1658,10 @@ fn noise_figure(
     let mut scale = 0f64;
     for i in 0..16 {
         let h = std::f64::consts::TAU * i as f64 / 16.;
-        let rgb = mul(color(input).inv, okxyz([l, 0.14 * h.cos(), 0.14 * h.sin()]));
+        let rgb = mat_vec(
+            &color(input).inv,
+            okxyz([l, 0.14 * h.cos(), 0.14 * h.sin()]),
+        );
         if rgb.iter().all(|v| (0.0..=1.).contains(v)) {
             let p = input.encode_rgb(rgb.map(|v| v / gain));
             if p.iter().all(|v| *v > 0.006 && *v < 0.994) {
@@ -1770,6 +1688,7 @@ fn noise_figure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::data_dir;
     #[test]
     fn magazine_roles_follow_provenance_on_any_route() {
         let mut bundle: Bundle = serde_json::from_value(json!({
@@ -1813,7 +1732,7 @@ mod tests {
     }
     #[test]
     fn early_figure_failure_preserves_later_measurements_and_reports() {
-        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let data = data_dir();
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
         let spec=serde_json::from_value(json!({"name":"scenario_isolation","film_profile":"kodak_portra_400","print_profiles":["kodak_portra_endura"],"input_color_space":"sRGB","output_color_space":"sRGB","resolution":3})).unwrap();
         let bundle = crate::lut_baker::BundleBuilder::new(spec)

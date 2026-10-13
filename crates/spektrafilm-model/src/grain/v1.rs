@@ -9,15 +9,7 @@ use spektrafilm_math::precision::{Scalar, ZERO, from_f64, to_f64};
 use spektrafilm_math::stats::{self, FastStatsRng};
 use std::time::Instant;
 
-fn stage_timings_enabled() -> bool {
-    std::env::var_os("SPEKTRAFILM_STAGE_TIMINGS").is_some()
-}
-
-fn print_stage_timing(enabled: bool, stage: &str, start: Instant) {
-    if enabled {
-        eprintln!("stage {stage}: {} ms", start.elapsed().as_millis());
-    }
-}
+use spektrafilm_gpu::timing::{print_stage_timing, stage_timings_enabled};
 
 /// Seed of the micro-structure clumping field. Python draws it from numba's
 /// unseeded thread-global RNG (`add_micro_structure` never reseeds), so the
@@ -348,24 +340,6 @@ fn apply_multiplicative_unsharp_mask(
     out
 }
 
-/// Apply layered (per-sublayer) grain to a CMY density image.
-///
-/// Port of Python `apply_grain_to_density_layers` (the
-/// `grain.sublayers_active == true` path). `density_cmy_layers` holds the
-/// per-sublayer densities from `interp_density_cmy_layers` as
-/// `[sublayer][channel]` planes and `density_max_layers` the per-sublayer
-/// curve maxima (`np.nanmax(density_curves_layers, axis=0)`) in the same
-/// `[sublayer][channel]` layout.
-///
-/// Per sublayer: the density maximum splits into fractions that scale both
-/// the per-layer `density_min` offset and the particle count
-/// (`pixel_area · fraction / (particle_area · scale · scale_layer)`), each
-/// layer samples its own Poisson-binomial field seeded `ch + sl·10` (0 for
-/// every channel when `monochrome`), and the dye-cloud blur runs inside the
-/// particle model at `blur_particle · sqrt(od_particle)`. The summed layers
-/// are multiplied by the lognormal micro-structure, offset by the base
-/// `density_min`, and finally blurred by `grain_blur` (gated `> 0`, unlike
-/// the composite path's `> 0.4`).
 /// Derive the coarsest-sub-layer particle area from the datasheet RMS
 /// granularity, matching the upstream multilayer peak calculation.
 pub fn particle_area_from_rms_granularity(
@@ -410,6 +384,24 @@ pub fn particle_area_from_rms_granularity(
     ]
 }
 
+/// Apply layered (per-sublayer) grain to a CMY density image.
+///
+/// Port of Python `apply_grain_to_density_layers` (the
+/// `grain.sublayers_active == true` path). `density_cmy_layers` holds the
+/// per-sublayer densities from `interp_density_cmy_layers` as
+/// `[sublayer][channel]` planes and `density_max_layers` the per-sublayer
+/// curve maxima (`np.nanmax(density_curves_layers, axis=0)`) in the same
+/// `[sublayer][channel]` layout.
+///
+/// Per sublayer: the density maximum splits into fractions that scale both
+/// the per-layer `density_min` offset and the particle count
+/// (`pixel_area · fraction / (particle_area · scale · scale_layer)`), each
+/// layer samples its own Poisson-binomial field seeded `ch + sl·10` (0 for
+/// every channel when `monochrome`), and the dye-cloud blur runs inside the
+/// particle model at `blur_particle · sqrt(od_particle)`. The summed layers
+/// are multiplied by the lognormal micro-structure, offset by the base
+/// `density_min`, and finally blurred by `grain_blur` (gated `> 0`, unlike
+/// the composite path's `> 0.4`).
 #[allow(clippy::too_many_arguments)]
 pub fn apply_grain_to_density_layers(
     density_cmy_layers: &[[Vec<Scalar>; 3]; 3],

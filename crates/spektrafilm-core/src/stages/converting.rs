@@ -586,9 +586,11 @@ pub fn neutralize_filters(
 #[cfg(test)]
 mod action_tests {
     use super::*;
+    use crate::test_support::data_dir;
+
     #[test]
     fn print_neutralization_is_independent_of_negative_to_positive_mode() {
-        let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let data = data_dir();
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
         let mut params = RuntimeParams::default();

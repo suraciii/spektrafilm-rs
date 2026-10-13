@@ -8,7 +8,6 @@ use super::*;
 /// aliasing); `encode_passes` then `copy_buffer_to_buffer`s the result
 /// back into buf_b so the rest of the pipeline doesn't need to know
 /// about the temporary.
-#[cfg(feature = "wgpu-backend")]
 pub(super) struct UnsharpState {
     blur: BlurJob,
     combine: DispatchJob,
@@ -17,7 +16,6 @@ pub(super) struct UnsharpState {
     out_buf: wgpu::Buffer, // combine target; copied back to buf_b at the end
 }
 
-#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_unsharp_state(
     device: &ObservedDevice,
     up: &crate::UnsharpGpuParams,
@@ -212,7 +210,6 @@ pub(super) fn build_unsharp_state(
     state
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl UnsharpState {
     pub(super) fn encode_passes(
         &self,

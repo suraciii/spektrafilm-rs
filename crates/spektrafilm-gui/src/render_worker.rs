@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -15,7 +14,6 @@ use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, ObservationSco
 use spektrafilm_math::image::ImageBuf;
 
 use super::display;
-use super::panic_message;
 use super::render::{RenderSnapshot, RuntimeCache};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +63,6 @@ pub(super) struct RenderRequest {
     pub(super) backend: Arc<dyn ComputeBackend>,
     pub(super) source_metadata: Option<ImageMetadata>,
     pub(super) display_enabled: bool,
-    pub(super) display_profile: Option<PathBuf>,
     pub(super) ctx: egui::Context,
     pub(super) operation: Operation,
     pub(super) worker_wait: ObservationScope,
@@ -85,7 +82,6 @@ pub(super) struct RenderResult {
     pub(super) preview: display::DisplayRaster,
     pub(super) display_status: String,
     pub(super) display_enabled: bool,
-    pub(super) display_profile: Option<PathBuf>,
     pub(super) display_max_size: u32,
     pub(super) output_color_space: String,
     pub(super) output_cctf_encoding: bool,
@@ -189,7 +185,7 @@ impl RenderWorker {
                             &runtime_params.io.output_color_space,
                             runtime_params.io.output_cctf_encoding,
                             request.display_enabled,
-                            request.display_profile.as_deref(),
+                            None,
                             runtime_params.settings.preview_max_size as usize,
                         );
                         let (preview, display_status) = observed_result(
@@ -207,7 +203,6 @@ impl RenderWorker {
                             preview,
                             display_status,
                             display_enabled: request.display_enabled,
-                            display_profile: request.display_profile,
                             display_max_size: runtime_params.settings.preview_max_size,
                             input_clone_ms: request.input_clone_ms,
                             scale_ms,
@@ -290,4 +285,17 @@ pub(super) fn observed_result<T, E>(
     };
     scope.finish(outcome);
     result
+}
+
+/// Extract the human-readable payload from a caught panic. Panics carry
+/// either a `&str` (literal messages) or a `String` (formatted ones);
+/// anything else gets a generic label.
+pub(super) fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        format!("panic: {s}")
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        format!("panic: {s}")
+    } else {
+        "panic (no message)".to_string()
+    }
 }

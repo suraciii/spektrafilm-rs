@@ -1,6 +1,7 @@
 //! Full-render export preferences and a cancellable options draft.
 use std::path::{Path, PathBuf};
 
+use crate::controls::enum_choice;
 use eframe::egui;
 use serde_json::{Value, json};
 use spektrafilm_core::image_io::{
@@ -56,14 +57,19 @@ pub(crate) enum ExportFormat {
     Exr,
 }
 impl ExportFormat {
-    pub(crate) fn argument(self) -> &'static str {
+    pub(crate) fn image_format(self) -> ImageFormat {
         match self {
-            Self::Jpeg => "jpeg",
-            Self::Png => "png",
-            Self::Tiff => "tiff",
-            Self::Exr => "exr",
+            Self::Jpeg => ImageFormat::Jpeg,
+            Self::Png => ImageFormat::Png,
+            Self::Tiff => ImageFormat::Tiff,
+            Self::Exr => ImageFormat::Exr,
         }
     }
+    pub(crate) fn argument(self) -> &'static str {
+        self.image_format().name()
+    }
+    /// Extension appended when the destination carries none. TIFF keeps the
+    /// longer spelling here (not core's first loader extension `tif`).
     pub(crate) fn extension(self) -> &'static str {
         match self {
             Self::Jpeg => "jpg",
@@ -73,12 +79,7 @@ impl ExportFormat {
         }
     }
     pub(crate) fn extensions(self) -> &'static [&'static str] {
-        match self {
-            Self::Jpeg => &["jpg", "jpeg"],
-            Self::Png => &["png"],
-            Self::Tiff => &["tif", "tiff"],
-            Self::Exr => &["exr"],
-        }
+        self.image_format().extensions()
     }
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -101,13 +102,6 @@ impl ExportFormat {
             path.to_path_buf()
         } else {
             path.with_extension(self.extension())
-        }
-    }
-    fn depths(self) -> &'static [BitDepth] {
-        match self {
-            Self::Jpeg | Self::Png => &[BitDepth::Eight],
-            Self::Tiff => &[BitDepth::Eight, BitDepth::Sixteen, BitDepth::ThirtyTwo],
-            Self::Exr => &[BitDepth::Sixteen, BitDepth::ThirtyTwo],
         }
     }
 }
@@ -184,36 +178,35 @@ impl ExportOptions {
         options
     }
 
-    /// Apply the same format constraints as core image I/O before submission.
+    /// Apply the same container rules as core image I/O, coercing the draft
+    /// selection rather than rejecting it: the dialog must stay usable after
+    /// any combination of choices.
     pub(crate) fn normalize(&mut self) {
+        use spektrafilm_core::image_io::SaveOptionViolation as V;
         self.jpeg_quality = self.jpeg_quality.clamp(1, 100);
-        match self.format {
-            ExportFormat::Jpeg | ExportFormat::Png => {
-                self.depth = BitDepth::Eight;
-                self.saving_cctf_encoding = true;
-            }
-            ExportFormat::Exr => {
-                if self.depth == BitDepth::Eight {
-                    self.depth = BitDepth::Sixteen;
+        let format = self.image_format();
+        let violations =
+            spektrafilm_core::image_io::save_option_violations(format, &self.save_options(), false);
+        for violation in violations {
+            match violation {
+                V::Depth if format == ImageFormat::Exr => self.depth = BitDepth::Sixteen,
+                V::Depth => self.depth = BitDepth::Eight,
+                V::RequiresEncoded => self.saving_cctf_encoding = true,
+                V::RequiresLinear => self.saving_cctf_encoding = false,
+                V::ExrColorSpace => self.saving_color_space = "sRGB".into(),
+                V::ExrCompression | V::CompressionNotConfigurable => {
+                    self.compression = ExportCompression::Zip
                 }
-                self.compression = ExportCompression::Zip;
-                self.saving_cctf_encoding = false;
-                if !EXR_COLOR_SPACES.contains(&self.saving_color_space.as_str()) {
-                    self.saving_color_space = "sRGB".into();
-                }
+                V::JpegQualityNotApplicable
+                | V::JpegSubsamplingNotApplicable
+                | V::JpegQualityRange => {}
             }
-            ExportFormat::Tiff => {}
         }
     }
 
     /// Container the writer receives for this format.
     pub(crate) fn image_format(&self) -> ImageFormat {
-        match self.format {
-            ExportFormat::Jpeg => ImageFormat::Jpeg,
-            ExportFormat::Png => ImageFormat::Png,
-            ExportFormat::Tiff => ImageFormat::Tiff,
-            ExportFormat::Exr => ImageFormat::Exr,
-        }
+        self.format.image_format()
     }
 
     /// Writer options for this format — the one mapping from export-dialog
@@ -279,36 +272,37 @@ impl ExportDialog {
             .id(egui::Id::new("full_render_export_options"))
             .open(&mut open).collapsible(false).resizable(false)
             .show(ctx, |ui| {
-                egui::ComboBox::from_label("Backend").selected_text(draft.backend.label()).show_ui(ui, |ui| {
-                    for backend in [ExportBackend::Cpu, ExportBackend::Gpu] {
-                        ui.selectable_value(&mut draft.backend, backend, backend.label());
-                    }
-                });
-                egui::ComboBox::from_label("Format").selected_text(draft.format.label()).show_ui(ui, |ui| {
-                    for format in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Exr] {
-                        ui.selectable_value(&mut draft.format, format, format.label());
-                    }
-                });
+                let cpu_label: &str = if cfg!(feature = "precision-f64") { "CPU (f64)" } else { "CPU (f32)" };
+                enum_choice(ui, "Backend", &mut draft.backend, &[
+                    (ExportBackend::Cpu, cpu_label),
+                    (ExportBackend::Gpu, "GPU (WGPU f32)"),
+                ], "Select the rendering backend.");
+                enum_choice(ui, "Format", &mut draft.format, &[
+                    (ExportFormat::Jpeg, "JPEG"),
+                    (ExportFormat::Png, "PNG"),
+                    (ExportFormat::Tiff, "TIFF"),
+                    (ExportFormat::Exr, "EXR"),
+                ], "Select the image format.");
                 draft.normalize();
-                egui::ComboBox::from_label("Bit depth").selected_text(format!("{} bit", draft.depth.bits())).show_ui(ui, |ui| {
-                    for &depth in draft.format.depths() {
-                        ui.selectable_value(&mut draft.depth, depth, format!("{} bit", depth.bits()));
-                    }
-                });
+                let depth_choices: &[(BitDepth, &str)] = match draft.format {
+                    ExportFormat::Jpeg | ExportFormat::Png => &[(BitDepth::Eight, "8 bit")],
+                    ExportFormat::Tiff => &[(BitDepth::Eight, "8 bit"), (BitDepth::Sixteen, "16 bit"), (BitDepth::ThirtyTwo, "32 bit")],
+                    ExportFormat::Exr => &[(BitDepth::Sixteen, "16 bit"), (BitDepth::ThirtyTwo, "32 bit")],
+                };
+                enum_choice(ui, "Bit depth", &mut draft.depth, depth_choices, "Select the bit depth.");
                 if draft.format == ExportFormat::Jpeg {
                     ui.label("JPEG uses lossy compression, including at quality 100. Use PNG, TIFF or EXR to preserve image detail.");
                     ui.add(egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text("JPEG quality"));
-                    egui::ComboBox::from_label("JPEG subsampling").selected_text(draft.jpeg_subsampling.as_str()).show_ui(ui, |ui| {
-                        for subsampling in [JpegSubsampling::Yuv444, JpegSubsampling::Yuv420] {
-                            ui.selectable_value(&mut draft.jpeg_subsampling, subsampling, subsampling.as_str());
-                        }
-                    });
+                    enum_choice(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &[
+                        (JpegSubsampling::Yuv444, "Yuv444"),
+                        (JpegSubsampling::Yuv420, "Yuv420"),
+                    ], "Select the JPEG chroma subsampling.");
                 }
                 if draft.format == ExportFormat::Tiff {
-                    egui::ComboBox::from_label("Compression").selected_text(draft.compression.argument()).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut draft.compression, ExportCompression::Zip, "ZIP");
-                        ui.selectable_value(&mut draft.compression, ExportCompression::None, "None");
-                    });
+                    enum_choice(ui, "Compression", &mut draft.compression, &[
+                        (ExportCompression::Zip, "ZIP"),
+                        (ExportCompression::None, "None"),
+                    ], "Select the TIFF compression method.");
                 }
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
                 egui::ComboBox::from_label("Saving color space").selected_text(&draft.saving_color_space).show_ui(ui, |ui| {

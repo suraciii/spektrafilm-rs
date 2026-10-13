@@ -40,9 +40,7 @@ impl App {
             &self.output_color_space,
             self.output_cctf_encoding,
             self.viewer.settings.use_display_transform,
-            self.gui_state.sections["rust"]["display_profile"]
-                .as_str()
-                .map(Path::new),
+            self.gui_state.display_profile().map(Path::new),
         );
         self.viewer.invalidate_display();
     }
@@ -215,7 +213,7 @@ impl App {
 
     pub(super) fn file_dialog(&self, key: &str) -> rfd::FileDialog {
         let dialog = rfd::FileDialog::new();
-        match self.gui_state.sections["rust"]["dialog_dirs"][key].as_str() {
+        match self.gui_state.dialog_dirs()[key].as_str() {
             Some(path) => dialog.set_directory(path),
             None => dialog,
         }
@@ -729,7 +727,7 @@ impl eframe::App for App {
         if !self.metal_colorspace_tagged
             && raw_window_handle::HasWindowHandle::window_handle(frame).is_ok()
         {
-            match tag_metal_layer_srgb(frame) {
+            match crate::platform::tag_metal_layer_srgb(frame) {
                 Ok(()) => {
                     eprintln!("[spektrafilm] CAMetalLayer.colorspace = sRGB — tagged OK");
                     self.metal_colorspace_tagged = true;

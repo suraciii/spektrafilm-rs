@@ -1,5 +1,6 @@
-use crate::common::{Error, Result};
-use crate::documents;
+use crate::common::{
+    self, Availability, Error, EvidenceBuilder, Measurement as SharedMeasurement, Result,
+};
 use crate::image_data::{self, ImageData};
 use rustfft::{FftPlanner, num_complex::Complex};
 use serde::Serialize;
@@ -178,37 +179,7 @@ fn erode(mask: &mut Vec<bool>, width: usize, height: usize, iterations: usize) {
 }
 fn geometry_mask(geometry: &Value, width: usize, height: usize) -> Result<Vec<bool>> {
     // The integration owner rewrites mask paths to retained absolute paths.
-    documents::geometry_mask(geometry, width, height, Path::new("/"))
-}
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Availability {
-    Available,
-    Unavailable,
-}
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum TerminalState {
-    Completed,
-    Failed,
-}
-#[derive(Serialize)]
-struct Measurement {
-    case_id: Option<String>,
-    seed_population: Vec<Value>,
-    region_id: String,
-    metric: String,
-    metric_version: &'static str,
-    domain: String,
-    units: String,
-    estimator: String,
-    sample_count: usize,
-    artifact_refs: Vec<String>,
-    availability: Availability,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    value: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<String>,
+    crate::documents::geometry_mask(geometry, width, height, Path::new("/"))
 }
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -227,6 +198,15 @@ enum ArtifactRole {
     EdgeSfr,
     LocalContrastMap,
     ToneResponse,
+}
+/// Appearance measurements add the case identity the shared metric payload
+/// does not carry; `serde(flatten)` keeps the published key set unchanged.
+#[derive(Serialize)]
+struct Measurement {
+    case_id: Option<String>,
+    seed_population: Vec<Value>,
+    #[serde(flatten)]
+    shared: common::Measurement,
 }
 #[derive(Serialize)]
 struct Artifact {
@@ -256,10 +236,7 @@ struct Evidence {
     out: PathBuf,
     case_id: Option<String>,
     seeds: Vec<Value>,
-    measurements: Vec<Measurement>,
-    findings: Vec<Finding>,
-    artifacts: Vec<Artifact>,
-    status: TerminalState,
+    body: EvidenceBuilder<Measurement, Finding, Artifact>,
     extra: BTreeMap<String, Value>,
 }
 impl Evidence {
@@ -275,10 +252,7 @@ impl Evidence {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
-            measurements: Vec::new(),
-            findings: Vec::new(),
-            artifacts: Vec::new(),
-            status: TerminalState::Completed,
+            body: EvidenceBuilder::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -290,7 +264,7 @@ impl Evidence {
         refs: &[String],
         execution: bool,
     ) {
-        self.findings.push(Finding {
+        self.body.findings.push(Finding {
             id: format!("{region}:{metric}:{}", error.code),
             case_id: self.case_id.clone(),
             region_id: region.into(),
@@ -301,7 +275,7 @@ impl Evidence {
             evidence: refs.to_vec(),
         });
         if execution {
-            self.status = TerminalState::Failed;
+            self.body.mark_failed();
         }
     }
     // Numeric payload is kept explicit at this boundary; grouping it would obscure metric schema fields.
@@ -328,27 +302,29 @@ impl Evidence {
                 true,
             );
         }
-        self.measurements.push(Measurement {
+        self.body.measurements.push(Measurement {
             case_id: self.case_id.clone(),
             seed_population: self.seeds.clone(),
-            region_id: region.into(),
-            metric: metric.into(),
-            metric_version: METRIC_VERSION,
-            domain: domain.into(),
-            units: units.into(),
-            estimator: estimator.into(),
-            sample_count: count,
-            artifact_refs: refs.to_vec(),
-            availability: if valid {
-                Availability::Available
-            } else {
-                Availability::Unavailable
-            },
-            value: if valid { value } else { None },
-            reason: if valid {
-                None
-            } else {
-                Some(reason.unwrap_or("computation_failure").into())
+            shared: SharedMeasurement {
+                region_id: region.into(),
+                metric: metric.into(),
+                metric_version: METRIC_VERSION,
+                domain: domain.into(),
+                units: units.into(),
+                estimator: estimator.into(),
+                sample_count: count,
+                artifact_refs: refs.to_vec(),
+                availability: if valid {
+                    Availability::Available
+                } else {
+                    Availability::Unavailable
+                },
+                value: if valid { value } else { None },
+                reason: if valid {
+                    None
+                } else {
+                    Some(reason.unwrap_or("computation_failure").into())
+                },
             },
         });
     }
@@ -380,7 +356,7 @@ impl Evidence {
         }
         image_data::write_npy(&path, values, shape)?;
         let id = format!("{name}_artifact");
-        self.artifacts.push(Artifact {
+        self.body.artifacts.push(Artifact {
             id: id.clone(),
             path: filename,
             sha256: crate::common::sha256_file(&path)?,
@@ -397,11 +373,10 @@ impl Evidence {
         Ok(id)
     }
     fn finish(self) -> Value {
-        let mut result = json!({"measurements":self.measurements,"findings":self.findings,"artifacts":self.artifacts,"numeric_health":{},"execution_status":self.status,"metric_version":METRIC_VERSION,"color_transform":COLOR_TRANSFORM});
-        for (key, value) in self.extra {
-            result[key] = value;
-        }
-        result
+        let mut extra = self.extra;
+        extra.insert("metric_version".into(), json!(METRIC_VERSION));
+        extra.insert("color_transform".into(), json!(COLOR_TRANSFORM));
+        self.body.finish(extra)
     }
 }
 // Numeric metric sides share schema fields; explicit arguments preserve the frozen output mapping.
@@ -2433,14 +2408,6 @@ pub fn metric_supported_with_protocol(
         };
     }
     metric_definitions(case, region_id, protocol).contains(metric)
-}
-pub fn metric_supported(metric: &str, case: &Value, region_id: &str) -> bool {
-    metric_supported_with_protocol(
-        metric,
-        case,
-        region_id,
-        case.get("protocol").unwrap_or(case),
-    )
 }
 
 #[cfg(test)]

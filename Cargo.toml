@@ -29,10 +29,10 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 rayon = "1.10"
 rand = "0.9"
 rand_distr = "0.5"
-image = { version = "0.25", default-features = false, features = ["tiff", "png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 exr = "1.73"
 wgpu = "24"
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4", features = ["derive"] }
 eframe = { version = "0.31", default-features = false, features = ["wgpu", "glow", "default_fonts", "wayland", "x11"] }
 egui = "0.31"
 tracing = "0.1"
