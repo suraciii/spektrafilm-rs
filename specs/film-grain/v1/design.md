@@ -1,6 +1,6 @@
 # Spektra grain design
 - Spektra is called from the filming stage after film density and DIR chemistry are prepared.
 - The composite path samples one density field. The layered path derives sublayer densities from the fitted film model and samples each sublayer independently before recomposition.
-- The sampler preserves the reference f64 parameter values and random-number operation order. f32 conversion is not allowed before Poisson or binomial decisions.
-- The CPU implementation is the only Spektra grain execution implementation. GPU execution resumes at a later compatible stage after the CPU grain result is produced.
+- The sampler preserves the reference f64 parameter values and random-number operation order under [stochastic alignment](../../gpu-execution/design.md#stochastic-alignment). f32 conversion is not allowed before Poisson or binomial decisions; a device without native f64 must use exact integer or extended-precision conditioning or fail under [numerical alignment](../../gpu-execution/design.md#numerical-alignment).
+- CPU f64 remains the numerical reference, and GPU must execute the same composite/layered algorithm with the same layer and channel identities. GPU execution must not satisfy full-GPU scope with CPU image-stage work. Source/reference parity evidence and CPU/GPU alignment evidence are separate: source comparisons retain upstream precision and operation order, while executor comparisons use identical conditioning and exact discrete decisions; neither is replaced by statistics-only agreement.
 - Film-profile validation belongs at pipeline construction so a bad layered profile fails before processing.
