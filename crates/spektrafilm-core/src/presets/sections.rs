@@ -2,7 +2,6 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Section {
-    Fotufilm,
     Film,
     Grain,
     Halation,
@@ -24,7 +23,6 @@ pub enum PresetKind {
     Section(Section),
 }
 pub const SECTIONS: &[Section] = &[
-    Section::Fotufilm,
     Section::Film,
     Section::Grain,
     Section::Halation,
@@ -42,7 +40,6 @@ pub const SECTIONS: &[Section] = &[
 impl Section {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Fotufilm => "fotufilm",
             Self::Film => "film",
             Self::Grain => "grain",
             Self::Halation => "halation",
@@ -60,7 +57,6 @@ impl Section {
     }
     pub fn paths(self) -> &'static [&'static str] {
         match self {
-            Self::Fotufilm => &["engine", "fotufilm"],
             Self::Film => &[
                 "film_render.density_curve_gamma",
                 "film_render.development_time",
@@ -107,9 +103,6 @@ fn flatten(prefix: &str, value: &Value, out: &mut Vec<(String, Value)>) {
 }
 pub fn extract_section(section: Section, params: &RuntimeParams) -> Result<Value, String> {
     crate::params::sources::validate_finite(params)?;
-    if section == Section::Fotufilm {
-        return Ok(serde_json::json!({"engine":params.engine,"fotufilm":params.fotufilm}));
-    }
     let root = serde_json::to_value(LookParameters::capture(params)).map_err(|e| e.to_string())?;
     let mut leaves = Vec::new();
     flatten("", &root, &mut leaves);
@@ -137,7 +130,7 @@ pub fn section_from_payload(payload: &Value) -> Result<Section, String> {
         })
 }
 pub fn section_matches(preset: &Preset, params: &RuntimeParams) -> Result<bool, String> {
-    let PresetKind::Section(section) = preset.kind()? else {
+    let PresetKind::Section(_) = preset.kind()? else {
         return Ok(false);
     };
     let PresetParameters::Section(payload) = &preset.parameters else {
@@ -145,9 +138,6 @@ pub fn section_matches(preset: &Preset, params: &RuntimeParams) -> Result<bool, 
     };
     crate::params::sources::validate_finite(params)?;
     let applied = preset.overlay_section(params)?;
-    if section == Section::Fotufilm {
-        return Ok(params.engine == applied.engine && params.fotufilm == applied.fotufilm);
-    }
     let expected =
         serde_json::to_value(LookParameters::capture(&applied)).map_err(|e| e.to_string())?;
     let current =

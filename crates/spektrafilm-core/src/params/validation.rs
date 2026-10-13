@@ -292,10 +292,6 @@ pub(crate) fn validate_v2_timer(value: f64) -> Result<(), String> {
 /// validated but not enumerable (for example `BB<kelvin>` blackbody sources).
 pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
     let values: Vec<String> = match path {
-        "engine" => ["spektrafilm", "fotufilm"]
-            .iter()
-            .map(|s| (*s).into())
-            .collect(),
         "scanner.receiver_profile" => [
             "legacy_colorimetric",
             "lab_scan_approx",
@@ -417,7 +413,6 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
 /// Per-leaf vocabulary validation, independent of cross-field state.
 pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
     let valid = match path {
-        "engine" => matches!(value, "spektrafilm" | "fotufilm"),
         "scanner.receiver_profile" => matches!(
             value,
             "legacy_colorimetric" | "lab_scan_approx" | "digital_reference"
@@ -524,27 +519,6 @@ pub(crate) fn validate_film_format_mm(value: f64) -> Result<(), String> {
 
 /// Validate cross-field runtime vocabulary before producing a pipeline artifact.
 pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
-    if params.engine == super::SimulationEngine::Fotufilm {
-        crate::params::sources::validate_finite(params)?;
-        params.validate_color()?;
-        if params.fotufilm.stock.trim().is_empty() {
-            return Err("fotufilm.stock must select an original source stock".into());
-        }
-        if !params.io.upscale_factor.is_finite() || params.io.upscale_factor <= 0.0 {
-            return Err("io.upscale_factor must be finite and positive".into());
-        }
-        for name in [&params.taps.inject, &params.taps.collect]
-            .into_iter()
-            .flatten()
-        {
-            if !matches!(Tap::parse(name)?, Tap::RgbIn | Tap::CmyFilm | Tap::RgbOut) {
-                return Err(format!(
-                    "Fotufilm tap {name:?} has no source equivalent; supported: rgb_in, cmy_film, rgb_out"
-                ));
-            }
-        }
-        return Ok(());
-    }
     validate_film_format_mm(f64::from(params.camera.film_format_mm))?;
     params.output_mix.validate()?;
     if params.workflow.route == REMOVED_MAGAZINE_ROUTE {

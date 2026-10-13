@@ -1937,18 +1937,6 @@ pub fn output_display_raster(
     profile: Option<&std::path::Path>,
     max_edge: usize,
 ) -> Result<(DisplayRaster, String), String> {
-    if space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE {
-        let mut transmission = capped_raster(image, max_edge)?;
-        for pixel in Arc::make_mut(&mut transmission.rgb) {
-            for density in pixel {
-                *density = 10.0f32.powf(-*density);
-            }
-        }
-        return Ok((
-            transmission,
-            "Fotufilm gross record density · transmission preview".into(),
-        ));
-    }
     let raw = capped_raster(image, max_edge)?;
     let srgb = enabled
         .then(|| input_display_raster(image, space, encoded, max_edge))

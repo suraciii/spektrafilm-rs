@@ -28,7 +28,6 @@ mod diagnostics;
 mod display;
 mod export;
 mod export_job;
-mod fotufilm;
 #[cfg(test)]
 mod headless;
 mod numeric;
@@ -266,9 +265,6 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
 /// resolves on the CPU and never enters the resident chain, so the selected
 /// backend name alone would misreport the executed path.
 fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
-    if params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
-        return "Fotufilm original CPU (f32)".to_owned();
-    }
     if spektrafilm_core::stages::grain_v3::active(params) {
         format!("{selected} · grain Dye on CPU")
     } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
@@ -281,7 +277,6 @@ fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
 struct App {
     backend: Arc<dyn ComputeBackend>,
     data_dir: PathBuf,
-    fotufilm_catalogue: fotufilm::CatalogueCache,
     /// Profiles where `info.support == "film"`.
     films: Vec<ProfileEntry>,
     /// Print stocks usable as the print stage (`Profile::is_print_stock`:
@@ -466,7 +461,6 @@ impl App {
         let mut app = Self {
             backend,
             data_dir,
-            fotufilm_catalogue: fotufilm::CatalogueCache::default(),
             films,
             papers,
             observed_browser_state: presets.state.clone(),
@@ -688,12 +682,6 @@ impl App {
         };
         // Report the Dye field's effective CPU route next to the selected backend.
         let backend_name = effective_backend_name(self.backend.name(), &params);
-        let backend: Arc<dyn ComputeBackend> =
-            if params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
-                Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend)
-            } else {
-                self.backend.clone()
-            };
         let parameter_revision = self.parameter_revision;
         let snapshot = self
             .render_snapshot(params)
@@ -713,7 +701,7 @@ impl App {
             image,
             input_clone_ms,
             snapshot,
-            backend,
+            backend: self.backend.clone(),
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
             display_profile: self.gui_state.sections["rust"]["display_profile"]
@@ -899,21 +887,10 @@ impl App {
         let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"]
             .as_bool()
             .unwrap_or(true);
-        let density = self.output_color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE;
-        let destination = if density {
-            spektrafilm_fotufilm::RECORD_DENSITY_SPACE
-        } else {
-            destination
-        };
-        let encoded = !density && encoded;
         let save_options = SaveOptions {
-            depth: if density {
-                BitDepth::ThirtyTwo
-            } else {
-                match actual_format {
-                    image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
-                    image_io::ImageFormat::Tiff | image_io::ImageFormat::Exr => BitDepth::Sixteen,
-                }
+            depth: match actual_format {
+                image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
+                image_io::ImageFormat::Tiff | image_io::ImageFormat::Exr => BitDepth::Sixteen,
             },
             color_space: destination,
             cctf_encoding: encoded,
@@ -931,17 +908,13 @@ impl App {
         }
         let saving_convert =
             operation.scope("saving_convert", ObservationKind::Phase, Purpose::Image);
-        let converted = match if density {
-            Ok(out.as_ref().clone())
-        } else {
-            image_io::convert_image(
-                out,
-                &self.output_color_space,
-                self.output_cctf_encoding,
-                destination,
-                encoded,
-            )
-        } {
+        let converted = match image_io::convert_image(
+            out,
+            &self.output_color_space,
+            self.output_cctf_encoding,
+            destination,
+            encoded,
+        ) {
             Ok(image) => image,
             Err(error) => {
                 self.status = format!("Save error: {error}");

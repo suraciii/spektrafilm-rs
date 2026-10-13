@@ -195,17 +195,11 @@ pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> 
     .map_err(anyhow::Error::msg)
     .context("resolving the fit chain configuration")?;
 
-    let film = resolved
-        .film
-        .context("profile fitting requires the SpektraFilm engine and historical film profile")?;
-    let print = resolved
-        .print
-        .context("profile fitting requires a historical print profile")?;
-    let mut fitted_profile = film.clone();
+    let mut fitted_profile = resolved.film.clone();
     let report = spektrafilm_core::fit::fit(FitRequest {
         params: resolved.params.clone(),
-        film,
-        print,
+        film: resolved.film,
+        print: resolved.print,
         data_dir: data_dir.to_path_buf(),
         layout,
         scene,
