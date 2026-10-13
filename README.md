@@ -264,6 +264,10 @@ Preset names are their portable identities. Core reads schema v1/v2 documents an
 
 Built-in looks enable their film profile's adaptation surface by default; see the [preset contract](specs/presets/spec.md). To turn it off for a CLI render, add `--set settings.apply_hanatos2025_adaptation_surface=false`.
 
+Choose **American Reminiscence** in the GUI preset browser, or pass `--preset 'American Reminiscence'` to `process`. It pairs Kodak Gold 200 with Kodak Portra Endura. Virtual film exposure is +0.5 EV with auto metering off (`center_weighted` remains the stored method). The enlarger uses Y shift −3, M shift 0, print exposure 1, and automatic print exposure compensation. Print density-curve morph is active with overall and blue gamma factors 0.95, the other gamma factors 1, and developer exhaustion 0. Grain, halation, and print glare are off; the film adaptation surface is on.
+
+Newly saved looks include virtual film exposure and metering. Older look documents without the camera group keep your current values when applied and do not mark the look modified when those values change. RAW/source exposure correction and input color interpretation remain your image settings; see [look ownership](specs/presets/spec.md#look-ownership).
+
 The GUI remembers the preset browser selection and layout independently of startup controls. An ordinary restart restores that metadata and recomputes the applied, modified, or missing marker; it does not apply the preset again. Loading an explicit GUI state uses that file's browser metadata. Use **Save current as default** to change startup controls. A failed preset application preserves the current controls and temporary black/white correction state.
 
 Section files can be saved and exported without an active workflow. Their application validates the current scan configuration; CLI composition validates after explicit workflow choices. Library writes reject names already owned by another document, including concurrent writes with different letter case or carriers. Export into My Presets creates a new name; use Update to replace an existing document.

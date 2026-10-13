@@ -152,7 +152,7 @@ pub(crate) fn show(
             });
         }
         if section == "Camera" {
-            egui::CollapsingHeader::new("Camera").default_open(true).show(ui, |ui| {
+            ui.scope(|ui| {
                 flags.runtime_changed |= numeric(ui, "exposure compensation ev", &mut params.camera.exposure_compensation_ev, -100.0, 100.0, 0.25, 2, "Add a bias to the auto-exposure of the camera.");
                 flags.runtime_changed |= toggle(ui, "auto exposure", &mut params.camera.auto_exposure, "Use the auto-exposure feature of the virtual camera.");
                 flags.runtime_changed |= numeric(ui, "film format mm", &mut params.camera.film_format_mm, 1.0, 1000.0, 0.5, 2, "Exposed full-image long edge in millimeters: 36 for a 24×36 mm frame, 56 for a 56×56 mm frame, 127 for 4×5 inch sheet film. This is not the roll width or the 120 roll-film designation. Physical film effects, including Grain Dye, use this scale. The editor holds to 1-1000 mm; recipes, presets and CLI parameters carry any strictly positive value.");

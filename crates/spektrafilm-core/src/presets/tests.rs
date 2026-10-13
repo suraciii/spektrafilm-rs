@@ -452,7 +452,7 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     current
         .explicit_section_paths
         .insert("film_render.grain.rms_granularity".into());
-    // A valid editable path outside the section table must survive restoration.
+    // Editable exposure values must survive preparation-state restoration.
     current
         .explicit_section_paths
         .insert("camera.exposure_compensation_ev".into());
