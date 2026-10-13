@@ -800,6 +800,28 @@ impl WgpuBackend {
                 encode: Box::new(move |encoder| hs.encode_passes(encoder)),
             });
         }
+        // 1a'. Capability fence (pipe architecture, S3): the camera
+        //     diffusion filter's discrete PSF convolution runs on the host
+        //     over the linear raw — after highlight reconstruction, before
+        //     the camera lens blur (the CPU filming order).
+        if let Some(cpu) = p.camera_diffusion_cpu_stage.as_ref() {
+            let buf_b = buf_b.clone();
+            let (w, h) = (image.width, image.height);
+            let img_bytes_u64 = img_bytes as u64;
+            stages.push(super::pipe::ChainStage::Cpu {
+                name: "camera_diffusion_cpu_stage",
+                fence: Box::new(move |pipe| {
+                    let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
+                    let diffused = cpu(&ImageBuf::from_data(
+                        w,
+                        h,
+                        crate::gpu_helpers::f32_to_scalars(host),
+                    ));
+                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&diffused.data);
+                    pipe.write_image_buffer(&buf_b, &out_f32);
+                }),
+            });
+        }
         // 1b. Camera lens blur on raw before halation.
         if let Some(bs) = camera_lens_blur_state.take() {
             let buf_b = buf_b.clone();
