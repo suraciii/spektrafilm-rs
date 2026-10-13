@@ -350,6 +350,13 @@ pub struct FilmChainParams<'a> {
     /// Optional highlight reconstruction on the raw film exposure buffer,
     /// immediately after the front pass and before optical scatter.
     pub highlight_boost: Option<HighlightBoostGpuParams>,
+    /// Optional CPU stage on the film density buffer between the film
+    /// density curve and DIR/printing — the assembled fence for an
+    /// unported grain engine (pipe architecture, capability class). The
+    /// closure receives the materialized density_cmy image and returns
+    /// the grained image, which is written back to the same device
+    /// buffer.
+    pub density_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.

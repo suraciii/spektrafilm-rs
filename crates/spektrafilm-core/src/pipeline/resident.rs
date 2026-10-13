@@ -96,14 +96,9 @@ impl Pipeline {
         {
             reasons.push(ResidentFallbackReason::ActiveOpticalDiffusion);
         }
-        if self.params.film_render.grain.active
-            && matches!(
-                self.params.film_render.grain.engine,
-                crate::params::grain::GrainEngine::Spektra
-            )
-        {
-            reasons.push(ResidentFallbackReason::FaithfulGrainDistribution);
-        }
+        // Spektra grain no longer declines: it runs on the host as an
+        // assembled fence on the film density buffer (pipe architecture,
+        // capability class — see `density_cpu_stage` in `try_gpu_resident`).
         // An active Dye field is resolved on the CPU from the full developed
         // film density; this decision is the capability authority for every
         // resident entry point.
@@ -466,6 +461,38 @@ impl Pipeline {
         } else {
             None
         };
+        // Spektra grain runs on the host as an assembled fence on the film
+        // density buffer: the resident chain keeps device residency for
+        // every other stage, transferring 2 + 2 × 1 times total.
+        let density_cpu_stage = if self.params.film_render.grain.active
+            && matches!(
+                self.params.film_render.grain.engine,
+                crate::params::grain::GrainEngine::Spektra
+            ) {
+            let film = &self.film;
+            let grain = &self.params.film_render.grain;
+            let norm_curves = film_curves_norm;
+            let use_fast_stats = self.params.settings.use_fast_stats;
+            let random_seed = self.params.random_seed;
+            let seed_backend = backend;
+            let closure: Box<dyn Fn(&ImageBuf) -> ImageBuf + '_> = Box::new(move |density| {
+                let observation = crate::stages::StageObservation::new(seed_backend, "grain_v1");
+                let observed = observation.backend(seed_backend);
+                crate::stages::filming::apply_spektra_grain(
+                    density.clone(),
+                    film,
+                    grain,
+                    norm_curves,
+                    use_fast_stats,
+                    random_seed,
+                    pixel_size_um,
+                    observed,
+                )
+            });
+            Some(closure)
+        } else {
+            None
+        };
 
         let params = spektrafilm_gpu::FilmChainParams {
             image,
@@ -503,6 +530,7 @@ impl Pipeline {
             camera_lens_blur_px,
             scanner_lens_blur_px,
             highlight_boost,
+            density_cpu_stage,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
@@ -628,14 +656,13 @@ mod tests {
         pipeline.params.settings.rgb_to_raw_method = "hanatos2025".into();
 
         pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
-        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("Spektra grain must remain on the per-stage path");
-        };
-        assert!(
-            reasons.iter().any(|reason| {
-                matches!(reason, ResidentFallbackReason::FaithfulGrainDistribution)
-            })
-        );
+        // Spektra no longer declines: it runs on the resident chain as an
+        // assembled CPU fence on the film density buffer (pipe
+        // architecture, capability class).
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
 
         // Dye resolves its field on the CPU from the full developed density,
         // so no resident entry point may run it.
@@ -696,5 +723,53 @@ mod tests {
             pipeline.resident_decision(),
             ResidentDecision::UseResident
         ));
+    }
+
+    /// The default Spektra grain runs on the resident chain as an assembled
+    /// CPU fence on the film density buffer (pipe architecture, capability
+    /// class). The fence readback narrows the grain's density conditioning
+    /// to f32, which perturbs Poisson count decisions at their boundaries;
+    /// this re-frozen budget (pipe-architecture spec, fence-error mode) is
+    /// one decade wider than the pure-resident budget for exactly that
+    /// reason. Transfer accounting: 1 readback per fence plus the final
+    /// readback — 2 + 2 × fence_count total.
+    #[test]
+    fn spektra_grain_resident_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        // Defaults keep Spektra grain active — the fence scenario.
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "fence mean divergence: {mean}");
+        assert!(max_diff < 5e-1, "fence max divergence: {max_diff}");
     }
 }
