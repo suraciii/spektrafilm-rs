@@ -4,6 +4,11 @@ use super::*;
 use egui_kittest::{Harness, kittest::Queryable};
 use spektrafilm_gpu::cpu_backend::CpuBackend;
 use tempfile::TempDir;
+mod files;
+mod lifecycle;
+mod raw;
+mod viewer;
+mod workflow;
 
 struct Session {
     harness: Harness<'static, App>,
@@ -32,6 +37,14 @@ fn app(state_path: PathBuf, image_path: PathBuf, browser_path: PathBuf) -> App {
 
 fn session() -> Session {
     session_stochastic(true)
+}
+
+/// Queue a chooser result and forbid falling back to a native dialog.
+/// A scripted action with no seeded result cancels instead, so a missing
+/// expectation fails the test rather than opening a desktop dialog.
+fn script(h: &mut Harness<'_, App>, result: chooser::ChooserResult) {
+    h.state_mut().chooser.set_strict(true);
+    h.state_mut().chooser.scripted(result);
 }
 
 /// The shared harness deactivates stochastic effects so preview and scan
@@ -91,6 +104,34 @@ fn click(h: &mut Harness<'_, App>, label: &str) {
     h.run_steps(3);
 }
 
+/// Click an export action. The sidebar button that opens the modal and the
+/// modal's own submit share one label; the sidebar action is disabled while
+/// the modal is open, so the single enabled node is the actionable one.
+fn export_action(h: &mut Harness<'_, App>) {
+    let buttons: Vec<_> = h
+        .query_all_by_label("Export…")
+        .filter(|node| !node.node().is_disabled())
+        .collect();
+    assert_eq!(buttons.len(), 1, "expected one enabled export action");
+    buttons[0].simulate_click();
+    h.run_steps(3);
+}
+
+/// Click the import button of one section. Both import sections expose a
+/// `select file` button, so the section's position in the tree disambiguates.
+fn import_file(h: &mut Harness<'_, App>, raw: bool) {
+    click(h, "MAIN");
+    click(h, if raw { "Import Raw" } else { "Import RGB" });
+    let buttons: Vec<_> = h.query_all_by_label("select file").collect();
+    let index = if raw { buttons.len() - 1 } else { 0 };
+    assert!(
+        !buttons.is_empty(),
+        "no import action found after expanding the section"
+    );
+    buttons[index].simulate_click();
+    h.run_steps(3);
+}
+
 fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
     h.get_by_role_and_label(egui::accesskit::Role::ComboBox, label)
         .simulate_click();
@@ -144,7 +185,7 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
             "App completion timed out: {}",
             h.state().status
         );
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::yield_now();
     }
 }
 
