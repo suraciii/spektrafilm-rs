@@ -19,6 +19,10 @@ mod cache;
 mod film_chain;
 #[cfg(feature = "wgpu-backend")]
 use cache::{CachedPipelineRef, PipelineCache};
+#[cfg(feature = "wgpu-backend")]
+mod pipe;
+#[cfg(feature = "wgpu-backend")]
+use pipe::GpuPipe;
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
@@ -54,6 +58,7 @@ pub struct WgpuBackend {
     device: ObservedDevice,
     queue: ObservedQueue,
     pipeline_cache: std::sync::Arc<PipelineCache>,
+    pipe: GpuPipe,
     name: String,
     adapter: AdapterDescription,
 }
@@ -154,22 +159,30 @@ impl WgpuBackend {
             "wgpu backend initialized"
         );
 
+        let device = ObservedDevice {
+            raw: device,
+            context: ObservationContext::default(),
+            batch: None,
+        };
+        let queue = ObservedQueue {
+            raw: queue,
+            context: ObservationContext::default(),
+            batch: None,
+        };
+        let pipeline_cache = std::sync::Arc::new(PipelineCache::default());
         Some(Self {
             name: format!(
                 "WGPU f32 · {} ({:?}, {:?})",
                 adapter_info.name, adapter_info.device_type, adapter_info.backend
             ),
-            device: ObservedDevice {
-                raw: device,
-                context: ObservationContext::default(),
-                batch: None,
-            },
-            queue: ObservedQueue {
-                raw: queue,
-                context: ObservationContext::default(),
-                batch: None,
-            },
-            pipeline_cache: std::sync::Arc::new(PipelineCache::default()),
+            pipe: GpuPipe::new(
+                device.clone(),
+                queue.clone(),
+                std::sync::Arc::clone(&pipeline_cache),
+            ),
+            device,
+            queue,
+            pipeline_cache,
             adapter: description,
         })
     }
@@ -177,7 +190,9 @@ impl WgpuBackend {
     /// Generic GPU compute dispatch helper.
     ///
     /// The cache key includes both shader identity and binding layout so a
-    /// shader reused by two passes cannot receive the wrong bind-group layout.
+    /// shader reused by two passes cannot receive the wrong bind-group
+    /// layout. Execution, buffer reuse, and the readback live on the
+    /// [pipe](pipe) core.
     fn dispatch_compute(
         &self,
         shader_source: &'static str,
@@ -186,103 +201,14 @@ impl WgpuBackend {
         output_idx: usize,
         name: &'static str,
     ) -> Vec<f32> {
-        let binding_types: Vec<wgpu::BufferBindingType> =
-            bindings.iter().map(|b| b.binding_type).collect();
-        let (cached, hit) =
-            self.pipeline_cache
-                .get_or_compile(&self.device, shader_source, &binding_types);
-        if self.device.context.enabled() {
-            let mut work = WorkCounters::default();
-            if hit {
-                work.pipeline_cache_hit_count = Some(1);
-            } else {
-                work.pipeline_cache_miss_count = Some(1);
-            }
-            self.device.context.record_work(&work);
-        }
-        let pipeline = &cached.pipeline;
-        let bind_group_layout = &cached.layout;
-
-        // Create GPU buffers
-        let gpu_buffers: Vec<wgpu::Buffer> = bindings
-            .iter()
-            .enumerate()
-            .map(|(index, b)| {
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(if index == 1 {
-                            "image_input"
-                        } else if index == output_idx {
-                            "scratch_init"
-                        } else {
-                            "spectral_resource"
-                        }),
-                        contents: &b.data,
-                        usage: b.usage,
-                    })
-            })
-            .collect();
-
-        let bind_entries: Vec<wgpu::BindGroupEntry> = gpu_buffers
-            .iter()
-            .enumerate()
-            .map(|(i, buf)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: buf.as_entire_binding(),
-            })
-            .collect();
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_bind_group"),
-            layout: bind_group_layout,
-            entries: &bind_entries,
-        });
-
-        // Readback buffer
-        let output_size = bindings[output_idx].data.len() as u64;
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: output_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Dispatch
-        // Linear kernels flatten a two-dimensional workgroup grid in WGSL.
-
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(name),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            dispatch_linear(&mut pass, n_pixels);
-        }
-        encoder.copy_buffer_to_buffer(&gpu_buffers[output_idx], 0, &readback, 0, output_size);
-        self.queue.submit(Some(encoder.finish()));
-
-        // Read back
-        self.read_mapped_f32(&readback, output_size)
+        self.pipe
+            .dispatch_host(shader_source, bindings, n_pixels, output_idx, name)
     }
 
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
     /// materialized bytes, then copy the mapped range out as f32.
     fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
-        let slice = buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-        self.device.materialized(bytes);
-        let data = slice.get_mapped_range();
-        let out: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
-        drop(data);
-        buffer.unmap();
-        out
+        self.pipe.read_mapped_f32(buffer, bytes)
     }
 
     /// Get or compile a pipeline using the shared shader-and-layout cache.
@@ -356,17 +282,20 @@ impl ComputeBackend for WgpuBackend {
         if context.mode() == CollectionMode::GpuTiming && !self.adapter.timestamp_enabled {
             context.set_effective_mode(CollectionMode::Summary);
         }
+        let device = ObservedDevice {
+            raw: self.device.raw.clone(),
+            context: context.clone(),
+            batch: None,
+        };
+        let queue = ObservedQueue {
+            raw: self.queue.raw.clone(),
+            context,
+            batch: None,
+        };
         Some(Box::new(Self {
-            device: ObservedDevice {
-                raw: self.device.raw.clone(),
-                context: context.clone(),
-                batch: None,
-            },
-            queue: ObservedQueue {
-                raw: self.queue.raw.clone(),
-                context,
-                batch: None,
-            },
+            pipe: GpuPipe::new(device.clone(), queue.clone(), self.pipeline_cache.clone()),
+            device,
+            queue,
             pipeline_cache: self.pipeline_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
