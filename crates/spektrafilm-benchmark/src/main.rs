@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use spektrafilm_benchmark::{
-    Error, Result, common, compare, documents, local_input, report, runner,
+    Error, Result, common, compare, documents, inspect, local_input, report, runner, target,
 };
 use std::path::{Path, PathBuf};
 
@@ -95,6 +95,11 @@ enum Command {
             conflicts_with = "input"
         )]
         case_ids: Vec<String>,
+        #[arg(
+            long,
+            help = "Resolve all selected configurations without decoding or rendering; retain preflight.json"
+        )]
+        dry_run: bool,
     },
     /// Compare retained runs or input/reference against one run's simulation.
     Compare {
@@ -133,6 +138,34 @@ enum Command {
             conflicts_with = "run"
         )]
         gate: bool,
+    },
+    /// Read retained measurements without recomputing or invoking a renderer.
+    Inspect {
+        #[arg(long, help = "Comparison directory")]
+        comparison: PathBuf,
+        #[arg(long = "case", help = "Exact case identity; repeat to select multiple")]
+        case_ids: Vec<String>,
+        #[arg(
+            long = "region",
+            help = "Exact region identity; repeat to select multiple"
+        )]
+        region_ids: Vec<String>,
+        #[arg(
+            long = "metric",
+            help = "Exact metric identity; repeat to select multiple"
+        )]
+        metrics: Vec<String>,
+    },
+    /// Pin a renderer executable in an existing target document.
+    Target {
+        #[arg(long, help = "Renderer executable")]
+        renderer: PathBuf,
+        #[arg(long, help = "Explicit profile/data directory")]
+        data_dir: PathBuf,
+        #[arg(long, help = "Requested compute backend; availability is checked during rendering", value_parser = ["cpu", "gpu"])]
+        backend: String,
+        #[arg(long, help = "New target JSON file; must not exist")]
+        out: PathBuf,
     },
     /// Publish an offline review of retained comparison evidence.
     Report {
@@ -189,9 +222,14 @@ fn execute(command: Command) -> Result<(Value, i32)> {
             target,
             out,
             case_ids,
+            dry_run,
         } => {
             if let Some(suite) = suite {
-                runner::run(&suite, &target, &out, &case_ids)
+                if dry_run {
+                    runner::preflight(&suite, &target, &out, &case_ids)
+                } else {
+                    runner::run(&suite, &target, &out, &case_ids)
+                }
             } else {
                 let configuration = configuration
                     .ok_or_else(|| Error::new("argument_syntax", "Missing configuration"))?;
@@ -207,7 +245,11 @@ fn execute(command: Command) -> Result<(Value, i32)> {
                     reference_info,
                     preparation,
                 };
-                runner::run_suite(adapter.suite()?, &configuration, &target, &out, &[])
+                if dry_run {
+                    runner::preflight_suite(adapter.suite()?, &configuration, &target, &out, &[])
+                } else {
+                    runner::run_suite(adapter.suite()?, &configuration, &target, &out, &[])
+                }
             }
         }
         Command::Compare {
@@ -237,6 +279,21 @@ fn execute(command: Command) -> Result<(Value, i32)> {
                 )
             }
         }
+        Command::Inspect {
+            comparison,
+            case_ids,
+            region_ids,
+            metrics,
+        } => Ok((
+            inspect::inspect(&comparison, &case_ids, &region_ids, &metrics)?,
+            0,
+        )),
+        Command::Target {
+            renderer,
+            data_dir,
+            backend,
+            out,
+        } => Ok((target::create(&renderer, &data_dir, &backend, &out)?, 0)),
         Command::Report { comparison, out } => {
             let out = runner::absolute(&out)?;
             report::build_report(&comparison, &out)?;
@@ -255,6 +312,8 @@ fn run() -> i32 {
         Command::Run { .. } => "run",
         Command::Compare { .. } => "compare",
         Command::Report { .. } => "report",
+        Command::Inspect { .. } => "inspect",
+        Command::Target { .. } => "target",
     };
     match execute(cli.command) {
         Ok((value, status)) => {

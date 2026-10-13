@@ -1,28 +1,191 @@
 
 'use strict';
 const caseNav = document.querySelector('[data-case-nav]');
+const casePanels = [...document.querySelectorAll('[data-case-panel]')];
+const navigationError = document.querySelector('[data-navigation-error]');
+let navigationRevision = 0;
 function refreshViewers() {
   requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
 }
+function fragment(panel, pair = null, region = null) {
+  let hash = `#case=${encodeURIComponent(panel.dataset.caseId)}&seed=${encodeURIComponent(panel.dataset.seed)}`;
+  if (pair) hash += `&pair=${encodeURIComponent(pair.dataset.pairId)}`;
+  if (region) hash += `&region=${encodeURIComponent(region.dataset.regionId)}`;
+  return hash;
+}
+// An explicit button exposes every disclosure in accessibility snapshots, including
+// browsers that omit native summary controls. Native details still owns visibility.
+document.querySelectorAll('details').forEach((detail, index) => {
+  const summary = detail.querySelector(':scope > summary');
+  if (!summary) return;
+  detail.id = `disclosure-${index}`;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'disclosure-button';
+  button.textContent = summary.textContent;
+  button.setAttribute('aria-controls', detail.id);
+  button.setAttribute('aria-expanded', String(detail.open));
+  detail.before(button);
+  summary.hidden = true;
+  button.addEventListener('click', () => {
+    detail.open = !detail.open;
+    button.setAttribute('aria-expanded', String(detail.open));
+    if (detail.dataset.regionId !== undefined) {
+      const panel = detail.closest('[data-case-panel]');
+      const pair = detail.closest('[data-pair-panel]');
+      location.hash = fragment(panel, pair, detail.open ? detail : null);
+    }
+    refreshViewers();
+  });
+  detail.addEventListener('toggle', () => {
+    button.setAttribute('aria-expanded', String(detail.open));
+    if (detail.open) refreshViewers();
+  });
+});
+function parseFragment(hash) {
+  const values = new Map();
+  for (const field of hash.slice(1).split('&')) {
+    const parts = field.split('=');
+    if (parts.length !== 2) throw new Error('链接参数格式无效');
+    const key = decodeURIComponent(parts[0]);
+    const value = decodeURIComponent(parts[1]);
+    if (!['case', 'seed', 'pair', 'region'].includes(key) || values.has(key) || !value) {
+      throw new Error('链接包含未知、重复或空参数');
+    }
+    values.set(key, value);
+  }
+  if (!values.has('case') || !values.has('seed') || (values.has('region') && !values.has('pair'))) {
+    throw new Error('链接需要案例、种子；区域链接还需要比较对象');
+  }
+  return values;
+}
+function identityMatch(items, predicate, label) {
+  const matches = items.filter(predicate);
+  if (matches.length > 1) throw new Error(`链接中的${label}身份不唯一`);
+  return matches[0];
+}
+async function navigate() {
+  const revision = ++navigationRevision;
+  try {
+    const values = location.hash ? parseFragment(location.hash) : null;
+    const panel = values
+      ? identityMatch(casePanels, item => item.dataset.caseId === values.get('case') && item.dataset.seed === values.get('seed'), '案例或种子')
+      : casePanels[0];
+    if (!panel) throw new Error('链接中的案例或种子不存在');
+    const pairs = [...panel.querySelectorAll('[data-pair-panel]')];
+    const pair = values && values.has('pair')
+      ? identityMatch(pairs, item => item.dataset.pairId === values.get('pair'), '比较对象')
+      : identityMatch(pairs, item => item.dataset.defaultPair === 'true', '默认比较对象');
+    if (!pair) throw new Error('链接中的比较对象不存在');
+    const region = values && values.has('region')
+      ? identityMatch([...pair.querySelectorAll('[data-region-id]')], item => item.dataset.regionId === values.get('region'), '区域')
+      : null;
+    if (values && values.has('region') && !region) throw new Error('链接中的区域不存在');
+    navigationError.hidden = true;
+    navigationError.textContent = '';
+    casePanels.forEach(item => { item.hidden = item !== panel; });
+    caseNav.value = panel.dataset.casePanel;
+    pairs.forEach(item => { item.hidden = item !== pair; });
+    const pairNav = panel.querySelector('[data-pair-nav]');
+    if (pairNav) pairNav.value = pair.dataset.pairPanel;
+    const target = region || (values && values.has('pair') ? pair : panel);
+    for (let ancestor = target; ancestor && ancestor !== panel; ancestor = ancestor.parentElement) {
+      if (ancestor.tagName === 'DETAILS') {
+        ancestor.open = true;
+        ancestor.previousElementSibling.setAttribute('aria-expanded', 'true');
+      }
+    }
+    const scrollTarget = region ? region.previousElementSibling : target;
+    if (location.hash) scrollTarget.scrollIntoView({block:'start'});
+    // Start only displayed images eagerly: hidden disclosures and inactive panes
+    // must not delay navigation. Repeat after resize switches preview/native URLs.
+    for (let pass = 0; pass < 2; pass += 1) {
+      if (revision !== navigationRevision) return;
+      window.dispatchEvent(new Event('resize'));
+      const images = [...target.querySelectorAll('img')].filter(image => {
+        if (!image.getClientRects().length) return false;
+        for (let ancestor = image; ancestor; ancestor = ancestor.parentElement) {
+          const style = getComputedStyle(ancestor);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+        }
+        return true;
+      });
+      await Promise.all(images.map(image => {
+        image.loading = 'eager';
+        if (image.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          const finished = () => {
+            image.removeEventListener('load', finished);
+            image.removeEventListener('error', finished);
+            resolve();
+          };
+          image.addEventListener('load', finished);
+          image.addEventListener('error', finished);
+          if (image.complete) finished();
+        });
+      }));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    if (revision === navigationRevision && location.hash) scrollTarget.scrollIntoView({block:'start'});
+  } catch (error) {
+    casePanels.forEach(panel => { panel.hidden = true; });
+    navigationError.hidden = false;
+    navigationError.textContent = `无法打开报告链接：${error instanceof URIError ? 'URL 编码无效' : error.message}。请用案例选择器重新选择。`;
+    if (casePanels.length) {
+      const recovery = document.createElement('a');
+      recovery.href = fragment(casePanels[0]);
+      recovery.textContent = '打开首个案例';
+      navigationError.append(' ', recovery);
+    }
+  }
+}
 if (caseNav) {
   caseNav.addEventListener('change', () => {
-    document.querySelectorAll('[data-case-panel]').forEach(panel => {
-      panel.hidden = panel.dataset.casePanel !== caseNav.value;
-    });
-    refreshViewers();
+    const panel = casePanels.find(item => item.dataset.casePanel === caseNav.value);
+    location.hash = fragment(panel);
   });
 }
 document.querySelectorAll('[data-pair-nav]').forEach(nav => {
   nav.addEventListener('change', () => {
-    nav.closest('[data-case-panel]').querySelectorAll('[data-pair-panel]').forEach(panel => {
-      panel.hidden = panel.dataset.pairPanel !== nav.value;
-    });
-    refreshViewers();
+    const panel = nav.closest('[data-case-panel]');
+    const pair = [...panel.querySelectorAll('[data-pair-panel]')].find(item => item.dataset.pairPanel === nav.value);
+    location.hash = fragment(panel, pair);
   });
 });
-document.querySelectorAll('details').forEach(detail => {
-  detail.addEventListener('toggle', () => { if (detail.open) refreshViewers(); });
+document.querySelectorAll('.navigation-links a').forEach(link => {
+  link.addEventListener('click', event => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    if (link.hash === location.hash) {
+      event.preventDefault();
+      navigate();
+    }
+  });
 });
+document.querySelectorAll('[data-copy-link]').forEach(button => {
+  button.addEventListener('click', async () => {
+    const link = new URL(button.dataset.copyLink, location.href).href;
+    const status = document.querySelector('[data-copy-status]');
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(link);
+      } else {
+        const input = document.createElement('textarea');
+        input.value = link;
+        input.setAttribute('aria-label', '报告链接');
+        document.body.append(input);
+        input.select();
+        const copied = document.execCommand('copy');
+        input.remove();
+        button.focus({preventScroll:true});
+        if (!copied) throw new Error('clipboard unavailable');
+      }
+      status.textContent = '报告链接已复制';
+    } catch (_) {
+      status.textContent = `无法自动复制；请复制此链接：${link}`;
+    }
+  });
+});
+window.addEventListener('hashchange', navigate);
 document.querySelectorAll('.viewer').forEach(viewer => {
   const panes = [...viewer.querySelectorAll('.viewport')];
   const images = [...viewer.querySelectorAll('.canvas img')];
@@ -134,3 +297,4 @@ document.querySelectorAll('.viewer').forEach(viewer => {
   });
   resize();
 });
+if (casePanels.length) navigate();

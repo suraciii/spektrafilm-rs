@@ -1,6 +1,6 @@
 use crate::{
     common::{Error, Result, create_destination, dump, sha256_file},
-    documents, image_data,
+    documents, image_data, target,
 };
 use image::{Rgb, RgbImage};
 use serde_json::{Value, json};
@@ -237,18 +237,22 @@ pub fn create_fixtures(
     }
     dump(&out.join("quick.json"), &quick)?;
     dump(&out.join("complete.json"), &complete)?;
-    let renderer_path = renderer.canonicalize()?;
-    let data_path = data_dir.canonicalize()?;
-    let hash = sha256_file(renderer)?;
+    let mut target = target::construct(
+        renderer,
+        data_dir,
+        "cpu",
+        "baseline",
+        json!({"set_files":[],"set":[]}),
+        json!({"RAYON_NUM_THREADS":"8","OPENBLAS_NUM_THREADS":"1","OMP_NUM_THREADS":"1"}),
+    )?;
     for (name, edits) in [
         ("baseline", vec![]),
         ("candidate", vec!["camera.exposure_compensation_ev=0.25"]),
         ("grain-candidate", vec!["film_render.grain.v2_amount=35"]),
     ] {
-        dump(
-            &out.join(format!("{name}.json")),
-            &json!({"schema_version":1,"id":name,"renderer":{"path":renderer_path,"sha256":hash},"data_dir":data_path,"backend":"cpu","changes":{"set_files":[],"set":edits},"environment":{"RAYON_NUM_THREADS":"8","OPENBLAS_NUM_THREADS":"1","OMP_NUM_THREADS":"1"}}),
-        )?;
+        target["id"] = json!(name);
+        target["changes"]["set"] = json!(edits);
+        dump(&out.join(format!("{name}.json")), &target)?;
         documents::load_target(&out.join(format!("{name}.json")))?;
     }
     let policy = json!({"schema_version":1,"id":"exploratory-color","protocol_digest":documents::protocol_digest(&complete)?,"calibration":{"status":"exploratory","evidence":[]},"rules":[{"id":"skin-color","purpose":"protect","selector":{"case_id":"color_chart","region_id":"skin"},"metric":"delta_e00.p95","max":2.0,"required":true}]});
