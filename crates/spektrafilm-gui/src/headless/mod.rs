@@ -29,6 +29,7 @@ pub(crate) fn data_dir() -> PathBuf {
 
 /// Repository root (the parent of [`data_dir`]), for assertions that generated
 /// artifacts stay outside the checkout.
+#[cfg(feature = "gui-snapshots")]
 pub(crate) fn repository_root() -> PathBuf {
     data_dir().parent().unwrap().to_path_buf()
 }
@@ -111,6 +112,7 @@ fn session_fixture() -> Session {
 /// Build a session whose App starts without an image, so a test can drive its
 /// own import path. Shares the deterministic runtime settings with
 /// [`session_fixture`]; only the synthetic image and the initial click differ.
+#[cfg(feature = "gui-raw")]
 fn empty_session() -> Session {
     let directory = tempfile::tempdir().unwrap();
     let factory = state::GuiState::factory();

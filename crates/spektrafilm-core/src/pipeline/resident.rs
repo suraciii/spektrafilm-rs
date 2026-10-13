@@ -2072,7 +2072,7 @@ mod tests {
         params.film_render.grain.active = true;
         params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
-        let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
+        let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5; 48]);
         let err = pipeline
             .process(img, &gpu)
             .expect_err("explicit GPU request must fail on a capability gap");
