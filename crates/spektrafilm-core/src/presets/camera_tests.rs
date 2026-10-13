@@ -217,6 +217,47 @@ fn look_camera_requires_all_three_fields_and_rejects_unknown_fields() {
 }
 
 #[test]
+fn look_camera_metering_method_must_match_the_sparse_source_vocabulary() {
+    let preset = captured_look(&exposure_params());
+    let mut document = serde_json::to_value(&preset).unwrap();
+    document["parameters"]["camera"]["auto_exposure_method"] = "typo".into();
+    assert!(Preset::from_json_str(&document.to_string()).is_err());
+    let mut toml: toml::Value = toml::from_str(&preset.to_toml().unwrap()).unwrap();
+    toml["parameters"]["camera"]["auto_exposure_method"] = toml::Value::String("typo".into());
+    assert!(Preset::from_toml_str(&toml::to_string(&toml).unwrap()).is_err());
+
+    // A valid method still resolves and reaches the runtime parameters.
+    let mut valid = serde_json::to_value(captured_look(&exposure_params())).unwrap();
+    valid["parameters"]["camera"]["auto_exposure_method"] = "multi_zone".into();
+    let imported = Preset::from_json_str(&valid.to_string()).unwrap();
+    let resolved = imported.resolve(&data(), &current_params()).unwrap();
+    assert_eq!(resolved.params.camera.auto_exposure_method, "multi_zone");
+}
+
+#[test]
+fn legacy_schema_versions_reject_the_schema_three_camera_group() {
+    let preset = captured_look(&exposure_params());
+    for version in [1, 2] {
+        let mut document = serde_json::to_value(&preset).unwrap();
+        document["schema_version"] = version.into();
+        document["parameters"]
+            .as_object_mut()
+            .unwrap()
+            .remove("output_mix");
+        let error = Preset::from_json_str(&document.to_string()).unwrap_err();
+        assert!(error.contains("legacy preset parameters.camera is unknown"));
+        let mut toml: toml::Value = toml::from_str(&preset.to_toml().unwrap()).unwrap();
+        let table = toml.as_table_mut().unwrap();
+        table.insert("schema_version".into(), version.into());
+        table["parameters"]
+            .as_table_mut()
+            .unwrap()
+            .remove("output_mix");
+        assert!(Preset::from_toml_str(&toml::to_string(&toml).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn camera_section_applies_only_its_leaves_and_records_explicit_paths() {
     let source = exposure_params();
     let preset =
