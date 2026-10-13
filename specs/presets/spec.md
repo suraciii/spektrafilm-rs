@@ -2,41 +2,55 @@
 
 ## Contract
 
-A **preset** is a named, reusable set of film and print profile selections and visual simulation controls. A preset is not a complete GUI state, an input image, a viewer state, an export configuration, a LUT, a calibration profile, or a workflow selection. A preset is either **built-in** or **user-owned**.
+A **preset** is a named, reusable **parameter document**: a sparse set of canonical parameter paths and their values, plus the name that identifies it. A preset is not a complete GUI state, an input image, a viewer state, an export configuration, a LUT, a calibration profile, or a workflow selection. A preset is either **built-in** or **user-owned**.
 
-A preset document is a **look preset** or a **section preset**. A look preset carries both profile references and every required look-owned group. Its optional camera group follows the [file format rules](#file-formats). A section preset carries exactly one section of the look and no profile reference; a section is a named set of look-owned parameter paths, defined by the [preset design](design.md). The kind is derived from the carried scope, never declared by a field, and a document that carries neither a whole look nor exactly one section must be rejected.
+A preset document declares no scope and no kind. The paths it supplies are its content, and every admissible subset of the [parameter set](#parameter-set) is a valid document. A document that supplies no path at all is rejected as empty. The withdrawn vocabulary — *look preset*, *section preset*, and the derived-kind rule — must not appear in a document, an error, or an API name.
 
-Built-in look presets must enable the selected film profile's Hanatos2025 adaptation surface. The surface coefficients belong to the film profile. The user may turn the surface off after applying the preset.
+Built-in presets that select a film profile must enable the selected film profile's Hanatos2025 adaptation surface. The surface coefficients belong to the film profile. The user may turn the surface off after applying the preset.
 
 A preset **name** is its identity: the document `name`, the document file stem, and the selector used by the GUI and the CLI. A name must be unique inside its group and may repeat across groups. The groups are `Built-in` and `My Presets`. The [preset design](design.md) owns the name rules, file locations, discovery, conflicts, and writes.
 
-The GUI provides a Presets browser for look presets in a collapsible panel on the left of the window, and one preset menu per section for section presets. The browser shows the two groups. Each row shows the preset name and its film and print references. The active row is marked. A modified marker appears while the active look controls differ from the applied document. The MAIN control panel must not repeat the browser list. User presets must not be implemented by reusing complete `GuiState`.
+The GUI provides a Presets browser in a collapsible panel on the left of the window, and one preset menu per control section. The browser shows the two groups. Each row shows the preset name and the film and print stocks the document supplies, and must show no reference for a stock it does not supply. The active row is marked. A modified marker appears while any path the applied document supplies differs from the active value. The MAIN control panel must not repeat the browser list. User presets must not be implemented by reusing complete `GuiState`.
 
-A section preset must appear only in the menu of its own section, never in the browser. Every section of the section table must carry that menu, because Save as lives there: an empty list must offer to save the section's current controls and must state that a preset file can also be placed in the library. A section menu must report the issues of the documents it would carry. A section menu must show the name of the section preset whose controls match the section and `custom` otherwise. That match must be derived from the section's controls and must not be stored as separate state.
+A preset must appear in the browser, in the menu of each section whose paths it supplies, or in both. A section menu must report the issues of the documents it would carry. A section menu must show the name of the preset whose supplied paths equal that section and `custom` otherwise. That match must be derived from the document's supplied paths and the section's controls and must not be stored as separate state.
 
 Browser rows and section menus must be ordered by name, case-insensitively, with a deterministic tie-break, so one library always presents one order. User-selectable sorting is outside this contract.
+
+## Parameter set
+
+One parameter set serves every input surface. The GUI controls, the CLI parameter language, preset documents, and the API must offer exactly the same settable leaves, and the [preset design](design.md#parameter-set) owns the table that lists them with a class and a capture attribute for every leaf. A leaf that no user control edits must not be settable through any of those surfaces, except a `debug` leaf, which the CLI admits only under its debug mode and which no preset may carry; and a leaf that has a control must be settable through all of them. A new runtime leaf must therefore arrive with a control and a non-`debug` class, or it must stay module-owned and unsettable.
+
+A preset document may carry any leaf of that set. An unknown path, a path outside the set, and a path removed from the set must be rejected with the offending path named. An absent path means "preserve the active value": a reader must never materialize, default-fill, or reset a path the document does not supply, and an exporter must write exactly the paths it carries.
+
+Each leaf also carries a **capture** attribute. A whole-look capture writes the leaves whose capture attribute is true, which are the values a user tunes while simulating. A document may carry a leaf whose capture attribute is false; a capture must not write one, and the marker together with the Update, Revert, and Save as actions follow the paths a document supplies rather than the class of those paths.
+
+A leaf whose class is `debug` is a diagnostics or verification switch. The GUI must not expose a control for it, a preset document must reject it in every mode, and the CLI must admit it only when the [debug mode](../cli/spec.md#process-syntax) is requested. Debug leaves keep the paths that verification, parity, and calibration harnesses need — the measured neutral axes, the spectral grid, the LUT and performance switches, the preview switch, the tap hooks, and the diagnostics switches — without offering them as user parameters. A leaf whose class is `internal` is module-owned and must not be settable through any surface.
+
+Film and print selection are leaves of the set: `film.stock` and `print.stock`, whose values are stock names. A document that supplies them selects those profiles on application; a document that omits them leaves the active selection unchanged. Profile identity — a profile version or a content hash — is not a parameter, and a reader must reject it as an unknown field.
+
+One leaf-merge implementation must serve a preset document, a sparse parameter source, and a command-line assignment, with one value vocabulary. A path supplied by any of those sources must count as an explicit value, so the database-calibration protection, the modified marker, and every later derivation treat a sparse file, a preset, and a command-line assignment alike.
 
 ## User library
 
 A user preset is a valid preset document in the preset library directory. Placing such a document in that directory makes it available to the GUI browser and to preset name resolution. The browser and the CLI must use the same discovery and name rules.
 
-The GUI must support these library operations for look presets:
+The GUI must support these library operations:
 
-- **Save as**: capture the active look controls as a new look preset under a name the user edits.
-- **Update**: replace the stored document of the active user preset with the active look controls.
-- **Revert**: restore the look controls of the applied document and clear the modified marker.
-- **Rename**: rename the document file and its name together, and preserve its look values.
+- **Save as**: capture controls as a new preset under a name the user edits.
+- **Update**: replace the stored document of the active user preset with the active values of the paths that document supplies.
+- **Revert**: restore the paths the applied document supplies and clear the modified marker.
+- **Rename**: rename the document file and its name together, and preserve its values.
 - **Duplicate**: copy a built-in or user preset into `My Presets` under a new name.
 - **Delete**: remove a user preset document after confirmation.
 - **Import**: copy an external document into `My Presets` as a new preset. An existing name in `My Presets` must not be replaced; a conflicting import must offer a renamed copy.
 - **Export**: write the selected document to a chosen path.
 - **Show file**: reveal the document path of a user preset. A built-in preset has no path, so this action must be unavailable for it.
 
-A section menu must offer the same operations for the section presets it lists: **Save as** captures that section's controls, and Rename, Duplicate, Delete, Export, and Show file act on that section's documents. Both kinds must share one discovery, write, and validation implementation.
+A section menu must offer the same operations for the presets it lists: **Save as** captures that section's controls, and Rename, Duplicate, Delete, Export, and Show file act on those documents. Every operation must share one discovery, write, and validation implementation for both entry points.
 
-The remembered applied document is always a look preset; a section application is an edit and never becomes the applied preset. The GUI writes look presets through Save as and Update, and a section preset is authored as a file or through a section menu until an arbitrary scope-capture action exists.
+The remembered applied document and the library operations must work on documents of any scope. The GUI captures a whole look through the browser and a section through a section menu; an arbitrary scope-capture action remains outside this contract.
 
-A name that exists in both groups must remain reachable in both. Editing look controls after an application must mark the active preset modified and must not rewrite any document. Built-in presets must remain immutable.
+A name that exists in both groups must remain reachable in both. Editing controls after an application must mark the active preset modified and must not rewrite any document. Built-in presets must remain immutable.
 
 The browser must list, with its path, every document that cannot be read, parsed, or accepted. An issue must not hide the remaining library. An empty library must state how to save the current look.
 
@@ -44,31 +58,30 @@ The browser must remember the applied preset group and name across restarts. A r
 
 Ordinary startup must restore the browser metadata independently of the configured startup controls. An explicitly loaded GUI state must supply its own browser metadata and must not inherit the remembered selection. Remembering a browser selection must not save current controls as the startup default.
 
-Renaming or deleting the applied user preset must update the marker: a rename follows the new name, and a delete leaves the look controls untouched and shows the remembered name as missing.
+Renaming or deleting the applied user preset must update the marker: a rename follows the new name, and a delete leaves the controls untouched and shows the remembered name as missing.
 
-Browser rows must show the preset name, the film reference, and the print reference. Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
+Live thumbnails, favorites, search, sorting options, collections, per-scope preset memory, arbitrary scope capture, and batch application are outside this contract.
 
 ### Apply
 
-- Selecting a preset validates the document, or the section it carries, before changing active controls.
-- A look preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
-- A preset does not store or directly apply a workflow. A look preset selects the corresponding workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`. The user may then choose another supported workflow manually. A section preset carries no film reference and must not change the workflow.
-- Applying a look preset replaces all carried look-owned controls together, including the controls of every carried section, so a section preset must be applied after a look change to take effect. An omitted camera group preserves the active virtual film exposure and metering controls. Application clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
-- Applying a look preset normalizes the scanner output: when the resolved film is positive or the selected workflow route is not `input > film > scan`, the output becomes the direct-scan mode. `core` owns that rule once for the GUI and the CLI.
-- Applying a look preset does not change recorded explicit-leaf ownership. Only a section preset or a sparse parameter source marks its own leaves explicit, and those marks survive a later look application.
-- Applying a section preset replaces exactly the controls of its section, and those values count as explicit. Every other control retains its value, including explicit values from an earlier preset or parameter source, so the result does not re-derive them from stock defaults. It clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
-- Applying a section preset that would introduce a scanner-output, workflow-route, scan-film, film-profile, scanner-correction, or grain-engine combination the pipeline rejects must fail without changing any control. A state that already fails that check may still receive an unrelated section edit.
-- Applying a section preset must not replace the remembered applied preset. It is an edit, so an applied look preset becomes modified.
-- Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure correction, input color interpretation, crop, resize, rotation, viewer/display state, Save settings, and Export settings.
+- Selecting a preset validates the document before changing any control and must fail without changing any control when the document is invalid.
+- Applying a preset writes exactly the paths the document supplies, in one transaction. Every other control retains its value, its explicit or derived origin, and its enabled state. An application must never reset, re-derive, or re-materialize a control the document does not supply.
+- A supplied path is explicit after the application, so neither stock initialization nor database calibration rewrites it, and an application must not clear explicit values outside its supplied paths.
+- A document that supplies `film.stock` or `print.stock` resolves those profiles before any control changes. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
+- A document that supplies a film stock also selects that film's workflow default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`. A document that supplies no film stock must not change the workflow. A preset does not store or directly apply a workflow, and the user may choose another supported workflow manually.
+- A document that supplies no scanner output keeps the active scanner output; the existing scanner-output normalization applies when the application changes the film stock to a positive film or selects a workflow route that is not `input > film > scan`.
+- Applying a preset that would introduce a scanner-output, workflow-route, scan-film, film-profile, scanner-correction, or grain-engine combination the pipeline rejects must fail without changing any control. A state that already fails that check may still receive an unrelated preset edit.
+- Applying a preset preserves loaded image and metadata, RAW/source settings, source exposure correction, input color interpretation, crop, resize, rotation, viewer/display state, Save settings, and Export settings: a captured look never writes them, and a document that does not supply them leaves them unchanged.
+- Applying a preset clears transient Scan-for-print state, invalidates dependent render state, and schedules a render according to Auto preview.
 - Built-in presets are immutable. Editing controls after an apply never rewrites the built-in definition.
 
 ### Workflow defaulting
 
-Changing a film profile selects the corresponding workflow default while the workflow remains user-editable:
+Changing a film stock selects the corresponding workflow default while the workflow remains user-editable:
 
 ```mermaid
 flowchart LR
-    F["Selected film profile"] --> T{"film_type"}
+    F["Selected film stock"] --> T{"film_type"}
     T -->|"negative"| N["Default: input > film > print > scan"]
     T -->|"positive"| P["Default: input > film > scan"]
     N --> W["Workflow selector"]
@@ -77,49 +90,63 @@ flowchart LR
     W --> R["Resolved RuntimeParams"]
 ```
 
-A profile change must not apply hidden stock-specific look values. The workflow selector remains editable until the next film profile change. The positive path does not execute print stages; its explicit print profile remains part of the portable pair.
+A stock change must not apply hidden stock-specific look values. The workflow selector remains editable until the next film stock change. The positive path does not execute print stages; its explicit print stock remains part of the portable pair.
 
 A serialized `route` or `workflow` field is unknown and rejected.
 
-### Look ownership
+### Marker and capture
 
-A look preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, glare, base, chemistry, scanner, and output-mix controls. Existing material controls and `output_mix` follow [Output mix and material controls](../output-mix/spec.md). A section preset owns exactly the controls of its section. Virtual film exposure compensation and metering belong to the look through the optional `parameters.camera` group. Other camera controls remain outside this group; camera diffusion remains a separate look-owned group. A look also owns look-relevant processing settings: hanatos2025 adaptation window/surface switches, spectral Gaussian blur, and CAT16 (`LookSettingsParams`, a subset of `SettingsParams` with the same defaults). It does not own the working wavelength grid, LUT wiring, performance toggles, or other `SettingsParams` fields. Scanner look controls include receiver, negative conversion method, finish, finish strength, and acquisition and interpretation controls exposed by the film-chain contract. A preset preserves enabled states, inactive controls, and f64 values; receiver and finish provenance remain attached. It does not own any `io` controls, including output gamut processing, or workflow, source declarations, RAW/source correction, geometry, viewer/display, export destination, preview limits, cache, debug/taps, startup state, dialog directories, or random seed. Applying a look preserves caller `io` except existing scanner-output normalization in Apply.
+The modified marker compares the active value of every path the applied document supplies with the value in that document, including `film.stock` and `print.stock`. A path the document does not supply must not affect the marker, and the comparison must not read GUI state or a prepared runtime parameter tree.
 
-### Implementation rules
+Capture writes every leaf whose capture attribute is true for a whole-look capture, and the paths of its section for a section capture, so a captured document does not depend on implicit defaults and preserves the active values of every path it writes, including an unset optional value.
 
-- `core` owns the typed look model, strict schema validation, profile compatibility, profile-driven workflow defaulting, capture, candidate resolution, the library directory policy, discovery, name conflict rejection, and atomic document writes.
+## Implementation rules
+
+- `core` owns the typed parameter document, strict schema validation, profile compatibility, profile-driven workflow defaulting, capture, candidate resolution, the library directory policy, discovery, name conflict rejection, and atomic document writes.
 - `gui` owns browser presentation, group and row state, library actions, active and modified state, transient state, and user-editable workflow controls.
-- `GuiState` remains complete GUI-state persistence and is not a look payload.
-- `core` owns strict parsing, profile resolution, stock-baseline construction, explicit look-value overlay, workflow-default derivation, and `RuntimeParams` validation. Explicit preset neutral filters must survive subsequent runtime preparation without changing the user's database-calibration setting.
+- `GuiState` remains complete GUI-state persistence and is not a preset payload.
+- `core` owns strict parsing, profile resolution, stock-baseline construction, explicit look-value overlay, workflow-default derivation, and `RuntimeParams` validation. Explicit neutral filters must survive subsequent runtime preparation without changing the user's database-calibration setting.
+- One leaf-merge implementation must serve a preset document, a sparse parameter source, and a command-line assignment. A preset must not add a second merge, scope, or ownership rule.
 - Existing `--params` invocations, RenderRecipe, LUT behavior, CPU f64 semantics, WGPU f32 semantics, Grain V2 algorithm, Python parity, and raw profile assets must retain their results with `output_mix.amount = 1`, except for the explicit [output lightness retirement](../output-mix/spec.md#output-boundary-and-retirement) and [optical-order cutover](../film-chain/spec.md#optical-order-cutover). The cutover does not change stored blur units, grain selectors, or print-glare ownership. The [CLI parameter language](../cli/spec.md) owns command syntax and composition rules.
 
 The portable canonical snake-case schema contains:
 
 - `schema_version`, `name`, optional `author` and `description`;
-- `film_profile` and `print_profile`, each with stock, optional profile version, and optional `sha256-<lowercase-hex>` content identity; both are required in a look preset and absent from a section preset;
-
-- `parameters`, the typed look-owned parameter object: every required group and the optional camera group in a look preset, the paths of its section in a section preset;
+- `parameters`, the sparse parameter payload of the paths this document carries;
 - `provenance`, the SpektraFilm implementation and model versions.
 
-It must not contain `route`, `workflow`, image pixels/paths, RAW data, LUT pixels, viewer rasters, GUI paths, credentials, random seeds, or Dehancer-specific fields. Unknown fields are rejected. The resolved candidate is returned without mutating active GUI state; GUI commits only after successful resolution.
+It must not contain `film_profile`, `print_profile`, `route`, `workflow`, image pixels/paths, RAW data, LUT pixels, viewer rasters, GUI paths, credentials, random seeds, or Dehancer-specific fields. Unknown fields are rejected. The resolved candidate is returned without mutating active GUI state; GUI commits only after successful resolution.
 
 ### File formats
 
-TOML must be the default preset export format. Readers must accept `.toml` and `.json` files as carriers of the same typed schema. The file extension must select the parser. A reader must not try another parser after a parse failure. Both carriers must apply the same version, ownership, profile, type, and value validation.
+TOML must be the default preset export format. Readers must accept `.toml` and `.json` files as carriers of the same typed schema. The file extension must select the parser. A reader must not try another parser after a parse failure. Both carriers must apply the same version, parameter, profile, type, and value validation.
 
-The preset schema version must be 3 because a whole look adds `output_mix`. A version 3 look must carry that group in addition to the existing look. It does not expand preset ownership into `io`; `parameters.io` remains invalid. A reader must accept version 1 and version 2 documents through an explicit migration. Version 1 migration must discard the old `id`. Migration of an older whole look must supply `output_mix.amount = 1` and retain existing material controls, enlarger neutral values, and M/Y shifts. An older section must preserve sparse omission and must not acquire new leaves. Resolving, exporting, or updating a migrated whole look must not capture or replace caller `io` settings. Exporters must write version 3. The unshipped `film_render.response`, `print_render.response`, `enlarger.c_filter_shift`, `reproduction`, and `io.finished_rgb_output_processing` fields must fail normal unknown-field validation in every accepted version, including draft version 3 documents. The unshipped `output response` section must be rejected. None has a compatibility alias, default, or migration.
+A document must not be required to carry `provenance`. When it carries it, `implementation_version` and `model_version` are metadata: a reader must not compare them and they must not gate application. A `scanner` snapshot belongs to render diagnostics and GUI state, not to a document.
 
-A look preset must contain every required look-owned group. An exporter must write every non-optional editable look control so a newly captured preset does not depend on implicit defaults. Readers must retain the existing omitted-field and JSON null decoding rules of the typed model, subject to the camera group rule below. Readers must materialize other omitted controls before resolution or re-export. TOML absence must represent an unset optional control; an exporter must omit unset optional controls in TOML. The two carriers must not introduce a separate schema version or field vocabulary. A future change to accepted omitted-field behavior must use an explicit schema migration rather than silently rejecting existing documents.
+The preset schema version must be 4 because the document is a parameter payload that declares no scope or profile reference. A reader must accept version 1, 2, and 3 documents through the explicit migration of the [preset design](design.md#migration), apply the same profile and value validation to the migrated result, and reject a path the migration leaves outside the vocabulary. Exporters must write version 4. The unshipped `film_render.response`, `print_render.response`, `enlarger.c_filter_shift`, `reproduction`, and `io.finished_rgb_output_processing` fields must fail normal unknown-field validation in every accepted version, including draft version 4 documents. The unshipped `output response` group must be rejected. None has a compatibility alias, default, or migration.
 
-`parameters.camera` is an additive optional group in schema version 3. When present, it must contain exactly three required fields: `exposure_compensation_ev` (f32), `auto_exposure` (boolean), and `auto_exposure_method` (string). Readers must reject a partial group, a null group, and unknown fields within it. Look presets in any accepted schema version that omit the group must retain its absence during migration, reading, and re-export. Applying such a document must preserve the active values of all three controls. Look matching and the modified marker must ignore these controls when the applied document omits the group. A new look capture must emit the complete group with the three active values. A version 1 or version 2 document that carries the group must be rejected as a schema violation rather than migrated, because the field has no legacy vocabulary. `auto_exposure_method` must satisfy the same vocabulary as a sparse parameter source, and that validation must apply before resolution so a whole look cannot admit a value the metering dispatcher does not implement.
+An exporter must write every path a capture carries. A reader must not materialize omitted paths: the document is its supplied paths, and resolution overlays them on the active values. TOML absence must represent an unset optional path; an exporter must omit an unset optional path in TOML. The two carriers must not introduce a separate schema version or field vocabulary. A future change to accepted omitted-field behavior must use an explicit schema migration rather than silently rejecting existing documents.
 
-A section preset must carry exactly the parameter paths of its section and must not carry a profile reference. Its payload must follow the leaf-merge rules of a parameter-file source in the [CLI parameter language](../cli/spec.md), including the rejection of unknown fields, duplicate keys, and omitted values acquired by default-filled deserialization, and an exporter must write exactly what it carries rather than filling omitted controls. Both kinds use the same schema version, the same name rules, and the same profile and value validation for what they carry.
+`parameters.camera.exposure_compensation_ev`, `parameters.camera.auto_exposure`, and `parameters.camera.auto_exposure_method` are ordinary sparse paths. A document may supply any subset of them; supplying one must not require the others. `auto_exposure_method` must satisfy the same vocabulary as a sparse parameter source, and that validation must apply before resolution so a preset cannot admit a value the metering dispatcher does not implement.
+
+A document whose supplied path no longer exists in the vocabulary must be reported with the offending path named, and must not be silently dropped. A document that carries a numeric value outside its declared type domain, a non-finite value, or an unsupported carrier type must be rejected.
 
 Export and reload must preserve the represented finite f32 and f64 values. Export must not reduce numeric precision for shorter text. Readers must accept TOML comments. Re-export need not preserve comments or source formatting.
 
 Readers must reject non-finite numeric controls and numeric values that overflow their declared f32 or f64 type. TOML `nan`, `inf`, date/time values, and numbers that become non-finite during typed conversion must not reach the resolver. Readers must not convert unsupported carrier types to strings. This rule must apply before runtime validation so JSON and TOML cannot admit different numeric domains.
 
 Preset files must not support includes, inheritance, expressions, environment interpolation, or references to GUI state files.
+
+### Validation negative list
+
+A reader must reject, with the offending path named:
+
+- a path outside the parameter set, including a `debug`-class leaf (`settings.preview_mode`, `settings.lut_resolution`, `settings.use_enlarger_lut`, `settings.use_scanner_lut`, `settings.use_fast_stats`, `settings.spectral_shape`, `settings.neutral_print_filters_from_database`, `enlarger.*_filter_neutral`, `film_render.glare.*`, `taps.*`, `debug.*`) and a module-owned leaf;
+- an unknown field at any level, a duplicate key, a `film_profile` or `print_profile` field, a `version` or `content_identity` field, and a `provenance.scanner` field;
+- a value outside its declared bounds, a value that overflows its declared type, and a non-finite value;
+- a document that supplies no path.
+
+A reader must accept any subset of the set, including a single path, a control section, and a whole look.
 
 ### GUI state compatibility
 
@@ -129,7 +156,7 @@ Saving state after applying or editing a preset must store the actual controls a
 
 Complete GUI states and render recipes must default an absent new `output_mix.amount` to 1. Their versioned legacy complete-document migration must apply the [output lightness retirement rule](../output-mix/spec.md#output-boundary-and-retirement): allow an absent or null `io.output_gamut_compress.lightness_compression`, but reject every explicit numeric triplet even when the old gamut algorithm ignored it. The error must identify that exact path, state that no automatic replacement exists, and require explicit removal. It must not suggest a deleted response group. Other caller `io` settings must remain intact. Current complete documents, sparse sources, and inline assignments must reject the retired leaf even when null. New writers must never emit it. The unshipped response and Cyan-shift fields must fail normal unknown-field validation rather than gain defaults or migration support. A migration failure must preserve the source document, active state, and existing output.
 
-Capturing a preset from the GUI must use the active look controls. Applying it must preserve the excluded context defined in [Look ownership](#look-ownership). A captured section must carry an unset optional control as an explicit null, so re-applying the capture restores the captured unset value; a capture that carries explicit nulls uses the JSON carrier.
+Capturing a preset from the GUI must use the active look controls. Applying it must preserve the excluded context defined in [Parameter set](#parameter-set). A captured section must carry an unset optional control as an explicit null, so re-applying the capture restores the captured unset value; a capture that carries explicit nulls uses the JSON carrier.
 
 ### Resolution flow
 
@@ -137,23 +164,19 @@ The preset and active render context are separate inputs to the same runtime:
 
 ```mermaid
 flowchart LR
-    P["Preset"] --> V["Strict validation"]
+    P["Preset (sparse parameters)"] --> V["Strict validation"]
     C["Active render context"] --> R["Core resolver"]
     V --> R
-    R --> B["Profile baseline"]
-    B --> L["Explicit look values"]
-    L --> W["Profile-driven workflow default"]
-    W --> Q["RuntimeParams validation"]
+    R --> B["Explicit parameter overlay"]
+    B --> Q["RuntimeParams validation"]
     Q --> O["Preview / Scan / Save / Export"]
 ```
 
-The resolver must preserve image/source, geometry, viewer, display, Save, Export,
-debug, precision, backend, and random-seed context. The GUI commits the returned
-candidate only after resolution succeeds.
+The resolver must preserve image/source, geometry, viewer, display, Save, Export, debug, precision, backend, and random-seed context, and must derive stock baselines only for the paths the document does not supply. The GUI commits the returned candidate only after resolution succeeds.
 
 ### Transaction and stale results
 
-Applying a preset validates and resolves first, commits film/print/look parameters together, selects the profile-derived workflow default, preserves excluded context, clears transient Scan-for-print, increments a parameter revision, invalidates caches, and marks the render dirty. Render workers carry the parameter revision and stale results cannot replace a newer preset result.
+Applying a preset validates and resolves first, commits the supplied parameters together with any profile selection they carry, selects the profile-derived workflow default, preserves excluded context, clears transient Scan-for-print, increments a parameter revision, invalidates caches, and marks the render dirty. Render workers carry the parameter revision and stale results cannot replace a newer preset result.
 
 A failed application must preserve active controls, the applied marker, transient Scan-for-print state, and the parameter revision. Only the error status may change.
 

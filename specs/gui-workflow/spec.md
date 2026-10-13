@@ -3,6 +3,7 @@
 ## Contract
 
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
+- Every settable parameter must have a control on its page, and no control may exist for a value outside the one parameter set of the [preset specification](../presets/spec.md#parameter-set), including a `debug`-class leaf. A diagnostics, performance, or test switch must not become a settable parameter.
 - Preview renders a bounded disposable image. Scan renders the original working resolution. Both use the current runtime controls.
 - Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](../gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.
@@ -45,7 +46,7 @@ Preflash help must explain that, on negative-to-photographic-paper printing, it 
 
 FILM and PRINT must retain their existing chemistry and development controls. Developer exhaustion must keep its model-specific development meaning and capability conditions. It must not be renamed as a generic highlight or high-dynamic-range control. Profile and route feedback must identify unsupported or inactive controls without clearing stored values or fabricating model support. Film-development controls are inactive when converting a real captured negative; print-development controls remain available only on admitted printing routes. Finished RGB must mark material and Scanner controls inapplicable. Existing Scanner black and white points retain their medium-specific meaning; the GUI must not add duplicate generic levels.
 
-Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. Resets and section presets must retain existing ownership without new response resets or preset sections.
+Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. Resets and section menus must retain existing ownership without new response resets or control sections.
 
 MAIN Output must expose Overall effect amount as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Overall effect amount returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
@@ -55,7 +56,7 @@ Loading retired settings must follow [Output boundary and retirement](../output-
 
 MAIN Scanner must distinguish Lens blur (readout optics) from Unsharp mask (digital sharpening). Identity point controls must not imply a different optical order. Tooltips must explain the [optical-order cutover](../film-chain/spec.md#optical-order-cutover) without offering a legacy late-blur mode.
 
-PRINT may retain the `print_render.glare` controls in its existing preset section, but their visible group must be labeled Print viewing glare. Its description must identify readout stray light, not preflash or a change in material density. Preflash and Enlarger diffusion must remain separately labeled exposure and optical controls. Group location must not imply that all Print controls execute during development.
+PRINT may retain the `print_render.glare` controls in its existing section, but their visible group must be labeled Print viewing glare. Its description must identify readout stray light, not preflash or a change in material density. Preflash and Enlarger diffusion must remain separately labeled exposure and optical controls. Group location must not imply that all Print controls execute during development.
 
-The existing grain selector must retain its stable engine names and preset section. It must identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Selecting Procedural must describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution. No duplicate grain selector or automatic engine conversion is required.
+The existing grain selector must retain its stable engine names and its section. It must identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Selecting Procedural must describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution. No duplicate grain selector or automatic engine conversion is required.
 

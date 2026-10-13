@@ -37,7 +37,7 @@ Externally preparing all images would keep the benchmark smaller but would disca
 
 ### Standard configuration ownership
 
-The [standard configurations](standard-configurations/spec.md) extend fixture generation instead of adding a benchmark preset kind. A special film profile would mix test conditions with material data. A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
+The [standard configurations](standard-configurations/spec.md) extend fixture generation instead of adding a benchmark preset kind. A special film profile would mix test conditions with material data. A preset cannot carry source interpretation, route, geometry, or seed paths. Existing configuration and suite documents own those settings.
 
 The fixture generator must use one construction rule for each standard rendering purpose. It must write standalone configurations and embed equivalent values into suite cases from that rule. It must not maintain separate handwritten defaults for local-image and suite execution.
 

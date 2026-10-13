@@ -54,7 +54,7 @@ Neutral finishing must expose the reference conversion before shared output proc
 
 Existing film-scan black and white points use an exposure-reconstruction axis. Until reference-axis semantics are specified, Digital Reference must accept only their identity values. A nonidentity point window must fail validation rather than being ignored or reinterpreted.
 
-The conversion must integrate with Preview, Scan, Save, and Export. Complete state and recipes must retain the accepted treatment, reference placement, manual controls, and model declaration. Render diagnostics must retain the prepared spectral source identities. Static state must not claim prepared asset identities. Preset ownership remains governed by the [preset contract](../../presets/spec.md#look-ownership).
+The conversion must integrate with Preview, Scan, Save, and Export. Complete state and recipes must retain the accepted treatment, reference placement, manual controls, and model declaration. Render diagnostics must retain the prepared spectral source identities. Static state must not claim prepared asset identities. Preset content remains governed by the [preset contract](../../presets/spec.md#parameter-set).
 
 GUI, CLI dry run, parameter-file resolution, and rendering must apply the same capability rules. Invalid imports must retain accepted GUI parameters and retained images. Existing settings and defaults must keep their previous meaning.
 

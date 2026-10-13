@@ -94,7 +94,7 @@ The [Print exposure composition](../output-mix/design.md#print-exposure-composit
 - `scanner.finish` selects `neutral` or `lab_scan` for a converted negative image. `neutral` is the default. `scanner.finish_strength` ranges from 0 to 1 and defaults to 1 when `lab_scan` is selected.
 - Scanner finishing runs after negative conversion and before output gamut compression, unsharp masking, transfer encoding, and output handoff. It must not run on a direct negative output.
 - Scanner finishing must be independently disableable from the receiver profile and negative conversion. Disabling it must return the converted image before scanner finishing, subject to the shared output stages.
-- Receiver profiles, negative conversion methods, per-frame setup, and scanner finishes must be serialized in complete GUI state and render recipes. Preset documents may carry only the scanner controls allowed by the [preset specification](../presets/spec.md#look-ownership), with receiver and finish provenance retained when present. An unavailable profile or invalid combination must fail before output publication.
+- Receiver profiles, negative conversion methods, per-frame setup, and scanner finishes must be serialized in complete GUI state and render recipes. Preset documents may carry only the scanner controls allowed by the [preset specification](../presets/spec.md#parameter-set), with receiver and finish provenance retained when present. An unavailable profile or invalid combination must fail before output publication.
 
 ## Film-scan black and white points
 
