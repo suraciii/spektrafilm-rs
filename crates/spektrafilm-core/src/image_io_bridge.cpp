@@ -43,6 +43,25 @@ public:
 struct FileCloser {
     void operator()(FILE* file) const { if (file) std::fclose(file); }
 };
+// OIIO probes every registered plugin when opening a file, including its
+// LibRaw-based reader. Probing bytes that are not a supported container can
+// corrupt the heap inside that plugin and abort the process, so the container
+// is identified from its own magic bytes before OIIO is asked to open it.
+bool supported_container(const std::string& path, std::string& reason) {
+    std::unique_ptr<FILE, FileCloser> file(OIIO::Filesystem::fopen(path.c_str(), "rb"));
+    if (!file) { reason = "Cannot open image file"; return false; }
+    unsigned char magic[16] = {0};
+    const auto read = std::fread(magic, 1, sizeof(magic), file.get());
+    if (read < 4) { reason = "File is too small to be an image"; return false; }
+    // JPEG, PNG, TIFF (both byte orders) and OpenEXR.
+    if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) return true;
+    if (magic[0] == 0x89 && magic[1] == 'P' && magic[2] == 'N' && magic[3] == 'G') return true;
+    if ((magic[0] == 'I' && magic[1] == 'I' && magic[2] == 0x2A && magic[3] == 0x00) ||
+        (magic[0] == 'M' && magic[1] == 'M' && magic[2] == 0x00 && magic[3] == 0x2A)) return true;
+    if (magic[0] == 0x76 && magic[1] == 0x2F && magic[2] == 0x31 && magic[3] == 0x01) return true;
+    reason = "Unrecognized image container";
+    return false;
+}
 void lock_xmp_namespace(void* pointer, bool lock) {
     auto& mutex = *static_cast<std::mutex*>(pointer);
     if (lock) mutex.lock();
@@ -103,6 +122,11 @@ void* sf_metadata_read(const char* path) {
 }
 int sf_image_load(const char* path, unsigned* width, unsigned* height, double** samples, char** err) {
     try {
+        std::string container_reason;
+        if (!supported_container(path, container_reason)) {
+            error(err, container_reason);
+            return 0;
+        }
         auto input = OIIO::ImageInput::open(path);
         if (!input) { error(err, OIIO::geterror()); return 0; }
         auto spec = input->spec();
@@ -131,6 +155,11 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
         if (format == 2) type = depth == 8 ? OIIO::TypeDesc::UINT8 : depth == 16 ? OIIO::TypeDesc::UINT16 : OIIO::TypeDesc::FLOAT;
         if (format == 3) type = depth == 16 ? OIIO::TypeDesc::HALF : OIIO::TypeDesc::FLOAT;
         OIIO::ImageSpec spec(width, height, 3, type);
+        const bool record_density = std::strcmp(color_space, "Fotufilm record density") == 0;
+        if (record_density) {
+            spec.channelnames = {"C", "M", "Y"};
+            spec.attribute("spektrafilm:sample_domain", "Fotufilm gross record optical density");
+        }
         if (format == 0) {
             if (jpeg_quality > 0) spec.attribute("CompressionQuality", jpeg_quality);
             if (jpeg_subsampling != 0)
@@ -140,7 +169,7 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
             spec.attribute("Compression", compression == 0 ? "none" : "zip");
         if (format == 2)
             spec.attribute("tiff:write_exif", 0);
-        if (format == 3 && export_metadata) {
+        if (format == 3 && export_metadata && !record_density) {
             const float srgb[] = {0.64f, 0.33f, 0.30f, 0.60f, 0.15f, 0.06f, 0.3127f, 0.3290f};
             const float aces[] = {0.7347f, 0.2653f, 0.0f, 1.0f, 0.0001f, -0.0770f, 0.32168f, 0.33767f};
             const float* chromaticities = std::strcmp(color_space, "ACES2065-1") == 0 ? aces : srgb;
@@ -211,6 +240,11 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
 }
 int sf_image_validate(const char* path, char** err) {
     try {
+        std::string container_reason;
+        if (!supported_container(path, container_reason)) {
+            error(err, container_reason);
+            return 0;
+        }
         auto input = OIIO::ImageInput::open(path);
         if (!input) { error(err, "Image container is unreadable after metadata failure"); return 0; }
         const auto spec = input->spec();

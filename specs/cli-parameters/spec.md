@@ -39,7 +39,7 @@ Without a preset, a print target must accept `support=paper` or `support=film` w
 
 `--scan-output direct_scan|negative_to_positive` must override `scanner.scan_output` after all parameter sources. The shared resolver must enforce the [negative-film scan output contract](../film-chain/spec.md#direct-negative-film-scan-output) before runtime constraints and for the effective parameters. `negative_to_positive` accepts direct `input > film > scan` and real negative-capture `input > convert-film > scan`; paper, print-paper, and scan-minus-base routes remain direct-only. `scanner.receiver_profile`, `scanner.positive_interpretation`, `scanner.auto_setup`, `scanner.finish`, and `scanner.finish_strength` must use the same parameter source, preset, dry-run, and rendering validation as GUI state. Dry run and rendering must reject the same unsupported scan combinations.
 
-Digital Reference selection and manual reference controls use `--set` under the [Digital Reference contract](../film-chain/digital-reference.md). The shared resolver must reject incompatible receiver, reconstruction controls, automatic setup, point windows, profiles, and routes before either dry run or rendering.
+Digital Reference selection and manual reference controls use `--set` under the [Digital Reference contract](../film-chain/digital-reference/spec.md). The shared resolver must reject incompatible receiver, reconstruction controls, automatic setup, point windows, profiles, and routes before either dry run or rendering.
 
 ### Input declaration
 

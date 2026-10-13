@@ -22,11 +22,13 @@ use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 mod calibration;
+mod chooser;
 mod controls;
 mod diagnostics;
 mod display;
 mod export;
 mod export_job;
+mod fotufilm;
 #[cfg(test)]
 mod headless;
 mod numeric;
@@ -264,6 +266,9 @@ fn gui_backend() -> Arc<dyn ComputeBackend> {
 /// resolves on the CPU and never enters the resident chain, so the selected
 /// backend name alone would misreport the executed path.
 fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
+    if params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+        return "Fotufilm original CPU (f32)".to_owned();
+    }
     if spektrafilm_core::stages::grain_v3::active(params) {
         format!("{selected} · grain Dye on CPU")
     } else if spektrafilm_core::stages::grain_fotufilm::active(params) {
@@ -276,6 +281,7 @@ fn effective_backend_name(selected: &str, params: &RuntimeParams) -> String {
 struct App {
     backend: Arc<dyn ComputeBackend>,
     data_dir: PathBuf,
+    fotufilm_catalogue: fotufilm::CatalogueCache,
     /// Profiles where `info.support == "film"`.
     films: Vec<ProfileEntry>,
     /// Print stocks usable as the print stage (`Profile::is_print_stock`:
@@ -283,6 +289,12 @@ struct App {
     papers: Vec<ProfileEntry>,
     presets: presets::Browser,
     browser_state_path: PathBuf,
+    /// Directory owning startup defaults, remembered dialog directories and
+    /// the preset library. Production resolves it to the platform
+    /// configuration directory; acceptance supplies an isolated one.
+    config_directory: PathBuf,
+    /// Native chooser boundary; acceptance scripts its result.
+    chooser: chooser::Chooser,
     observed_browser_state: presets::BrowserState,
     browser_state_changed_at: Option<Instant>,
     film_name: String,
@@ -389,11 +401,18 @@ impl App {
         data_dir: PathBuf,
     ) -> Self {
         let explicit_state = initial_state.is_some();
+        // Startup state, remembered dialog directories and the preset library
+        // share one session directory; the browser state names it.
+        let config_directory = browser_state_path
+            .parent()
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
         let gui_state = match initial_state {
             Some(path) => state::GuiState::load(&path),
-            None => state::startup(browser_state_path.parent().unwrap_or(Path::new("."))),
+            None => state::startup(&config_directory),
         }
         .and_then(|state| {
             // A startup state the runtime cannot accept (a removed workflow
@@ -427,12 +446,7 @@ impl App {
         let export_options = ExportOptions::from_state(&gui_state.sections);
         let mut presets = presets::Browser::new(
             &gui_state.sections,
-            spektrafilm_core::presets::PresetLibrary::new(
-                browser_state_path
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .join("presets"),
-            ),
+            spektrafilm_core::presets::PresetLibrary::new(config_directory.join("presets")),
         );
         match presets::BrowserState::restore(
             &gui_state.sections,
@@ -452,12 +466,15 @@ impl App {
         let mut app = Self {
             backend,
             data_dir,
+            fotufilm_catalogue: fotufilm::CatalogueCache::default(),
             films,
             papers,
             observed_browser_state: presets.state.clone(),
             browser_state_changed_at: explicit_state.then(Instant::now),
             film_medium,
             browser_state_path,
+            config_directory,
+            chooser: chooser::Chooser::default(),
             presets,
             film_name,
             print_name,
@@ -671,6 +688,12 @@ impl App {
         };
         // Report the Dye field's effective CPU route next to the selected backend.
         let backend_name = effective_backend_name(self.backend.name(), &params);
+        let backend: Arc<dyn ComputeBackend> =
+            if params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+                Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend)
+            } else {
+                self.backend.clone()
+            };
         let parameter_revision = self.parameter_revision;
         let snapshot = self
             .render_snapshot(params)
@@ -690,7 +713,7 @@ impl App {
             image,
             input_clone_ms,
             snapshot,
-            backend: self.backend.clone(),
+            backend,
             source_metadata: self.source_metadata.clone(),
             display_enabled: self.viewer.settings.use_display_transform,
             display_profile: self.gui_state.sections["rust"]["display_profile"]
@@ -832,12 +855,11 @@ impl App {
             }
             None => "output.jpg".into(),
         };
-        let Some(path) = self
-            .file_dialog("save_output")
-            .add_filter("Image", &image_io::container_extensions())
-            .set_file_name(&default_name)
-            .save_file()
-        else {
+        let Some(path) = self.chooser.save_file(
+            self.file_dialog("save_output")
+                .add_filter("Image", &image_io::container_extensions())
+                .set_file_name(&default_name),
+        ) else {
             return;
         };
         self.save_to_path(&path);
@@ -877,10 +899,21 @@ impl App {
         let encoded = self.gui_state.sections["simulation"]["saving_cctf_encoding"]
             .as_bool()
             .unwrap_or(true);
+        let density = self.output_color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE;
+        let destination = if density {
+            spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+        } else {
+            destination
+        };
+        let encoded = !density && encoded;
         let save_options = SaveOptions {
-            depth: match actual_format {
-                image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
-                image_io::ImageFormat::Tiff | image_io::ImageFormat::Exr => BitDepth::Sixteen,
+            depth: if density {
+                BitDepth::ThirtyTwo
+            } else {
+                match actual_format {
+                    image_io::ImageFormat::Jpeg | image_io::ImageFormat::Png => BitDepth::Eight,
+                    image_io::ImageFormat::Tiff | image_io::ImageFormat::Exr => BitDepth::Sixteen,
+                }
             },
             color_space: destination,
             cctf_encoding: encoded,
@@ -898,13 +931,17 @@ impl App {
         }
         let saving_convert =
             operation.scope("saving_convert", ObservationKind::Phase, Purpose::Image);
-        let converted = match image_io::convert_image(
-            out,
-            &self.output_color_space,
-            self.output_cctf_encoding,
-            destination,
-            encoded,
-        ) {
+        let converted = match if density {
+            Ok(out.as_ref().clone())
+        } else {
+            image_io::convert_image(
+                out,
+                &self.output_color_space,
+                self.output_cctf_encoding,
+                destination,
+                encoded,
+            )
+        } {
             Ok(image) => image,
             Err(error) => {
                 self.status = format!("Save error: {error}");

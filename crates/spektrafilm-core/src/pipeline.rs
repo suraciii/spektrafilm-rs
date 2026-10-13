@@ -207,6 +207,12 @@ impl Pipeline {
     /// the spectral source data; rebuild and validation failures are returned
     /// instead of retaining stale calibration.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
+        if params.engine == crate::params::SimulationEngine::Fotufilm {
+            return Err(
+                "Fotufilm requires the selected Runtime source engine, not the historical Pipeline"
+                    .into(),
+            );
+        }
         let mut params = params;
         crate::params_builder::normalize_runtime_topology(&self.film, &mut params);
         params.validate()?;
@@ -379,6 +385,9 @@ impl Pipeline {
         params: RuntimeParams,
         data_dir: &Path,
     ) -> Result<Self, String> {
+        if params.engine == crate::params::SimulationEngine::Fotufilm {
+            return Err("Fotufilm requires Runtime::from_params; historical spectral calibration does not apply".into());
+        }
         let original_film = Arc::new(film.clone());
         let fotufilm_prepared = stages::grain_fotufilm::Prepared::new(
             &original_film,

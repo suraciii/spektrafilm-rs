@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine print color entry-point contract](../magazine-print-color/spec.md#enablement).
+- The simulation engine selects the owning film model. `spektrafilm` is the historical default. Its film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine print color entry-point contract](../magazine-print-color/spec.md#enablement).
 - A photographic print route must provide a photographic print profile.
 - Optional magazine finishing must satisfy the [Magazine print color](../magazine-print-color/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
@@ -11,8 +11,33 @@
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
 - Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). CPU f64 remains the numerical reference; GPU execution must cover the selected chain without replacing its model.
+- The Fotufilm engine retains its original CPU binary32 arithmetic in both executable precision configurations.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
+
+## Original Fotufilm engine
+
+`engine=fotufilm` selects the complete Fotufilm model pinned at `59d43471dbef45c85ae442e507a291fdebfb2ec5`. It is independent of the adapted `film_render.grain.engine=fotufilm` appearance model inside SpektraFilm.
+
+`fotufilm.stock` selects an original stock. `fotufilm.controls` carries original editor controls. `fotufilm.native` carries original engine options that are not editor controls. The original source owns defaults, control applicability, and option validation. Missing or invalid selected resources and unknown option names must fail before output publication.
+
+The engine must retain the original spectral reconstruction, scene metering, film exposure, characteristic curves, DIR, donor layers, grain, optical transport, print or scan medium, and output processing. The selected original Standard or Film grain model must not fall back to a different model. Layered transport must retain the original render-plan components, fourth donor record, preflash, and texture-stage semantics.
+
+The full source image must supply original metering, flare, and tone measurements before crop, resize, or preview delivery. Preview, Scan, and Export must use the same original simulation semantics for the same source, controls, and seed. Preview may resize the completed image for delivery; it must not disable simulation effects.
+
+Full and print stages produce linear Display P3. The negative stage produces gross optical record densities, including base density. The print stage consumes those densities without an input RGB transform. The texture stage uses the original linear Rec2020 basis. Destination color conversion and encoding apply only to RGB outputs.
+
+Negative output must preserve floating densities in unencoded 32-bit TIFF or EXR. It must identify the C, M, and Y record channels rather than claim RGB primaries or embed a display ICC profile. A density viewer may show transmission `10^-D` only in its disposable viewing raster. Save and Export must retain the density samples.
+
+The host owns the per-render UInt64 seed. It must preserve all bits for Fotufilm. The original frame index remains independent. Historical SpektraFilm seed admission remains unchanged.
+
+Unsupported legacy diagnostic taps must fail explicitly. `rgb_in`, `cmy_film`, and `rgb_out` must use actual source stage boundaries rather than surrogate outputs.
+Collecting `cmy_film` selects the density contract regardless of the requested native stage. Injecting `cmy_film` and collecting `rgb_out` selects the print RGB contract. Equal `rgb_in` taps retain the declared input color space and transfer state; equal `cmy_film` taps retain the input densities. Output interpretation, preview geometry, saving, and diagnostics must follow these effective boundaries.
+
+The effective configuration must identify the original revision, selected original stock and options, CPU execution, and binary32 arithmetic. Selecting a GPU backend must not misreport the source engine as GPU execution.
+
+Cancellation must discard canceled results before output publication. Native cold graph compilation may complete before cancellation is observed.
+
 
 ## Scanner language
 
@@ -24,7 +49,7 @@ Image correction, scanner finishing, and digital output must not select a differ
 
 `scanner.scan_output` accepts only `direct_scan` and `negative_to_positive`. The removed value `positive_scan` must fail validation in CLI options, runtime parameters, sparse sources, presets, render recipes, and imported GUI state. Readers must not alias it or silently reset it. Omitted scan output retains the `direct_scan` default. Existing schema versions and parameter field names remain unchanged.
 
-The [Digital Reference contract](digital-reference.md) defines a common reference conversion within Scan. It does not add a scan output polarity.
+The [Digital Reference contract](digital-reference/spec.md) defines a common reference conversion within Scan. It does not add a scan output polarity.
 
 ## Scan output naming acceptance
 
@@ -82,7 +107,7 @@ The [Print exposure composition](../material-response/design.md#print-exposure-c
 - A receiver profile changes scanner acquisition only. It must not change film exposure, development, film-domain grain, halation, print exposure, or the input camera exposure.
 - The receiver profile must be resolved before scan calibration. Direct film scans and capture-based positive interpretations must use the same receiver capture for one render.
 - `input > convert-film > scan` must treat the incoming image as the input capture for the conversion stage. The selected receiver applies to the output scan stage and must not be applied a second time to the input capture.
-- `scanner.positive_interpretation` selects `density`, `separable`, `coupled`, or `digital_reference` when `scanner.scan_output=negative_to_positive`. `density` is the default. The matched receiver, controls, route restrictions, and reference response for `digital_reference` follow the [Digital Reference contract](digital-reference.md).
+- `scanner.positive_interpretation` selects `density`, `separable`, `coupled`, or `digital_reference` when `scanner.scan_output=negative_to_positive`. `density` is the default. The matched receiver, controls, route restrictions, and reference response for `digital_reference` follow the [Digital Reference contract](digital-reference/spec.md).
 - `density` reads record densities through the film's own monotone characteristic curves. It acquires no receiver capture and must produce identical output for identical record densities and scanner controls, whatever `scanner.receiver_profile` selects.
 - `separable` uses the per-channel monotone inverse defined by [Direct negative-film scan output](#direct-negative-film-scan-output).
 - `coupled` uses a three-channel inverse of the resolved film, receiver, and output response. It must be prepared once per render configuration and evaluated per pixel through a finite lookup table or an equivalent bounded interpolation structure.

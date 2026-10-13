@@ -19,6 +19,7 @@ gui-snapshots = ["egui_kittest/wgpu"]
 
 [dependencies]
 spektrafilm-core.workspace = true
+spektrafilm-fotufilm = { path = "../spektrafilm-fotufilm" }
 spektrafilm-gpu.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-model.workspace = true
@@ -49,6 +50,7 @@ foreign-types = "0.5"
 [dev-dependencies]
 egui_kittest = { version = "=0.31.1", default-features = false, features = ["eframe"] }
 tempfile = "3"
+sha2 = "0.10"
 
 [lints]
 workspace = true

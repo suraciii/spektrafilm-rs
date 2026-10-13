@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use parking_lot::Mutex;
-use spektrafilm_core::image_io::{self};
+use spektrafilm_core::image_io::{self, BitDepth};
 use spektrafilm_core::telemetry::OperationKind;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, Outcome};
@@ -32,6 +32,29 @@ pub(super) struct ExportJob {
         Option<Arc<Mutex<Option<spektrafilm_core::telemetry::RenderConfiguration>>>>,
     pub(super) backend: ExportBackend,
     pub(super) operation: Operation,
+    #[cfg(test)]
+    pub(super) pause: Option<Arc<ExportPause>>,
+}
+
+/// Armed only by cancellation acceptance tests, after the real writer has staged output.
+#[cfg(test)]
+pub(super) struct ExportPause {
+    pub(super) staged: mpsc::Sender<()>,
+    pub(super) released: (Mutex<bool>, parking_lot::Condvar),
+    pub(super) cancelled: (Mutex<bool>, parking_lot::Condvar),
+}
+
+#[cfg(test)]
+impl ExportPause {
+    pub(super) fn notify_cancelled(&self) {
+        *self.cancelled.0.lock() = true;
+        self.cancelled.1.notify_all();
+    }
+
+    pub(super) fn release(&self) {
+        *self.released.0.lock() = true;
+        self.released.1.notify_all();
+    }
 }
 
 pub(super) struct ExportResult {
@@ -49,6 +72,23 @@ impl App {
             return;
         }
         options.normalize();
+        if !self.params.fotufilm_output_is_density() {
+            options.reset_density_saving_contract();
+        }
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+            options.backend = ExportBackend::Cpu;
+            if self.params.fotufilm_output_is_density() {
+                if !matches!(
+                    options.format,
+                    super::export::ExportFormat::Tiff | super::export::ExportFormat::Exr
+                ) {
+                    options.format = super::export::ExportFormat::Tiff;
+                }
+                options.depth = BitDepth::ThirtyTwo;
+                options.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+                options.saving_cctf_encoding = false;
+            }
+        }
         let stem = self
             .image_path
             .as_ref()
@@ -61,12 +101,11 @@ impl App {
             options.backend.argument(),
             options.format.extension()
         );
-        let Some(chosen_path) = self
-            .file_dialog("export")
-            .add_filter(options.format.label(), options.format.extensions())
-            .set_file_name(&default_name)
-            .save_file()
-        else {
+        let Some(chosen_path) = self.chooser.save_file(
+            self.file_dialog("export")
+                .add_filter(options.format.label(), options.format.extensions())
+                .set_file_name(&default_name),
+        ) else {
             return;
         };
         self.start_export_to_path(ctx, options, &chosen_path);
@@ -90,13 +129,47 @@ impl App {
     pub(super) fn start_export_to_path(
         &mut self,
         ctx: &egui::Context,
+        options: ExportOptions,
+        chosen_path: &Path,
+    ) {
+        self.start_export_to_path_inner(
+            ctx,
+            options,
+            chosen_path,
+            #[cfg(test)]
+            None,
+        );
+    }
+
+    pub(super) fn start_export_to_path_inner(
+        &mut self,
+        ctx: &egui::Context,
         mut options: ExportOptions,
         chosen_path: &Path,
+        #[cfg(test)] pause: Option<Arc<ExportPause>>,
     ) {
         let Some(image) = self.export_input() else {
             return;
         };
         options.normalize();
+        if !self.params.fotufilm_output_is_density() {
+            options.reset_density_saving_contract();
+        }
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+            options.backend = ExportBackend::Cpu;
+            if self.params.fotufilm_output_is_density() {
+                if !matches!(
+                    options.format,
+                    super::export::ExportFormat::Tiff | super::export::ExportFormat::Exr
+                ) {
+                    self.status = "Gross record density export requires 32-bit TIFF or EXR.".into();
+                    return;
+                }
+                options.depth = BitDepth::ThirtyTwo;
+                options.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+                options.saving_cctf_encoding = false;
+            }
+        }
         let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
         operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
@@ -153,6 +226,8 @@ impl App {
         }
         let observation = attempt.context().clone();
         let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
+        #[cfg(test)]
+        let worker_pause = pause.clone();
         let handle = std::thread::Builder::new()
             .name("spektrafilm-export".into())
             .spawn(move || {
@@ -173,6 +248,24 @@ impl App {
                                 .with_cancellation(Some(Arc::clone(&cancel_for_worker)));
                         if let Some(setup) = setup {
                             pipeline = pipeline.with_scanner_setup(setup);
+                        }
+                        let density = pipeline.params().fotufilm_output_is_density();
+                        anyhow::ensure!(
+                            density
+                                == (options.saving_color_space
+                                    == spektrafilm_fotufilm::RECORD_DENSITY_SPACE),
+                            "Export saving domain does not match the rendered output"
+                        );
+                        if density {
+                            anyhow::ensure!(
+                                matches!(
+                                    options.format,
+                                    super::export::ExportFormat::Tiff
+                                        | super::export::ExportFormat::Exr
+                                ) && options.depth == BitDepth::ThirtyTwo
+                                    && !options.saving_cctf_encoding,
+                                "Gross record density export requires unencoded 32-bit TIFF or EXR"
+                            );
                         }
                         if let Some(slot) = &worker_configuration {
                             *slot.lock() = Some(pipeline.telemetry_configuration());
@@ -226,13 +319,19 @@ impl App {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let converted = image_io::convert_image(
-                            &output,
-                            &pipeline.params().io.output_color_space,
-                            pipeline.params().io.output_cctf_encoding,
-                            &options.saving_color_space,
-                            options.saving_cctf_encoding,
-                        );
+                        let converted = if density {
+                            Ok(output.clone())
+                        } else {
+                            let (output_space, output_encoding) =
+                                pipeline.params().rgb_output_interpretation();
+                            image_io::convert_image(
+                                &output,
+                                output_space,
+                                output_encoding,
+                                &options.saving_color_space,
+                                options.saving_cctf_encoding,
+                            )
+                        };
                         let converted = observed_result(
                             saving_convert,
                             converted,
@@ -254,6 +353,14 @@ impl App {
                             IssueCategory::Writing,
                             IssueBoundary::FileWrite,
                         )?;
+                        #[cfg(test)]
+                        if let Some(pause) = &worker_pause {
+                            let _ = pause.staged.send(());
+                            let mut released = pause.released.0.lock();
+                            while !*released {
+                                pause.released.1.wait(&mut released);
+                            }
+                        }
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
@@ -292,6 +399,8 @@ impl App {
             backend: export_backend,
             operation,
             configuration,
+            #[cfg(test)]
+            pause,
         });
     }
 
@@ -301,6 +410,10 @@ impl App {
             return;
         };
         if !job.cancel.swap(true, Ordering::SeqCst) {
+            #[cfg(test)]
+            if let Some(pause) = &job.pause {
+                pause.notify_cancelled();
+            }
             self.status = "Cancelling export…".into();
         }
     }

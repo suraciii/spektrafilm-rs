@@ -29,11 +29,24 @@ A renderer-integrated benchmark would remove subprocess setup but would bind eva
 
 The benchmark must not add a second parameter DSL. Suite and target documents may reference the renderer's existing `--preset`, `--params`, and `--set` carriers. The benchmark validates their shape and passes them to the renderer in the renderer's defined precedence order. Benchmark-only settings use typed JSON fields and have no shell or expression evaluation.
 
-The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters. The executable must not require the Python benchmark at runtime.
+The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery/spec.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters. The executable must not require the Python benchmark at runtime.
 
 The single-image CLI adapter must build the existing suite and case representation and call the existing run orchestrator. It must resolve each authored dependency against its owning document before producing the retained suite. It must not add chart detection or a separate simulation-parameter vocabulary.
 
 Externally preparing all images would keep the benchmark smaller but would discard original metering and film-scale context for simulation crops. A benchmark image editor would duplicate those rules. The chosen boundary accepts prepared local files, delegates simulation geometry to the renderer, and owns only completed-result measurement and detail regions. Preparation provenance remains passive evidence.
+
+### Standard configuration ownership
+
+The [standard configurations](standard-configurations/spec.md) extend fixture generation instead of adding a benchmark preset kind. A special film profile would mix test conditions with material data. A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
+
+The fixture generator must use one construction rule for each standard rendering purpose. It must write standalone configurations and embed equivalent values into suite cases from that rule. It must not maintain separate handwritten defaults for local-image and suite execution.
+
+The renderer's preset export and parameter resolver remain authoritative for look fields, defaults, and profile compatibility. The benchmark must not reconstruct the preset schema or scrape a human listing. Effect-specific probes must apply explicit existing parameter overlays after the exported look.
+
+Generation must complete validation before publishing its final provenance record. Renderer export output must remain a file dependency rather than hidden generator state. Run orchestration, comparison, and report generation must consume the generated documents without a special standard-mode path.
+
+Preset export captures the selected renderer's look at generation time. Reusing that file separates an algorithm revision from a bundled-look revision. Existing run identity must still include the renderer and selected data; a fixed preset file does not freeze material data or promise historical parameter-language compatibility.
+
 
 ## Component responsibilities
 
@@ -107,4 +120,4 @@ A comparison can complete with `insufficient_evidence`, but a qualified pass req
 
 ## Migration and delivery
 
-[Rust delivery](rust-delivery.md) defines migration scope, numerical acceptance, resource measurements, supported-platform packaging, and cutover. The delivered implementation is the Rust workspace crate. The pinned Python reference and acceptance evidence remain outside the repository after cutover.
+[Rust delivery](rust-delivery/spec.md) defines migration scope, numerical acceptance, resource measurements, supported-platform packaging, and cutover. The delivered implementation is the Rust workspace crate. The pinned Python reference and acceptance evidence remain outside the repository after cutover.

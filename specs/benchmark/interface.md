@@ -20,7 +20,7 @@ spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ..
 spektrafilm-bench target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
 ```
 
-Every option must have help. Help, version, and schema discovery must work without a renderer, image decoder, input assets, or graphics device. Version must identify the benchmark implementation and supported document versions. The executable and fixture entry point must satisfy [Rust delivery](rust-delivery.md).
+Every option must have help. Help, version, and schema discovery must work without a renderer, image decoder, input assets, or graphics device. Version must identify the benchmark implementation and supported document versions. The executable and fixture entry point must satisfy [Rust delivery](rust-delivery/spec.md).
 
 `schema` must emit the authoritative JSON Schema for one document kind. It must describe the required nested records and explain fields whose units, coordinate space, or applicability are not evident from their type. `validate` must validate a document and resolve the local dependencies needed for that kind. It must not render images. Its existing `unchecked` list must identify checks that require another document or runtime observations. Standalone policy validation must not imply that selectors, measurement selection, or protocol binding have been checked against a suite. A valid target document must not imply that a GPU is available.
 
@@ -120,7 +120,7 @@ The runner must isolate user preset configuration and remove inherited simulatio
 
 A policy must contain `schema_version`, `id`, `protocol_digest`, `calibration`, and `rules`. It must bind to the resolved measurement protocol. `calibration` must identify hashed evidence, its case population, reviewed labels, observation scale, and scope. An uncalibrated exploratory policy must identify that state and must not produce `passed` qualification.
 
-The resolved protocol digest must include case source declarations and hashes, selected measurement families, probe definitions, region geometry and mask hashes, reference dependencies, and seed populations. It must also include the benchmark implementation revision, metric and color-transform versions, relevant numerical dependency versions, and the LittleCMS version and transform settings for ICC references. `validate --kind suite` must expose this digest for policy authors. Cross-implementation evidence and policy handling must follow [Rust delivery](rust-delivery.md#existing-evidence-and-protocol-identity).
+The resolved protocol digest must include case source declarations and hashes, selected measurement families, probe definitions, region geometry and mask hashes, reference dependencies, and seed populations. It must also include the benchmark implementation revision, metric and color-transform versions, relevant numerical dependency versions, and the LittleCMS version and transform settings for ICC references. `validate --kind suite` must expose this digest for policy authors. Cross-implementation evidence and policy handling must follow [Rust delivery](rust-delivery/spec.md#existing-evidence-and-protocol-identity).
 
 Each rule must contain `id`, `purpose`, `selector`, `metric`, and its constraints. `purpose` must be `protect`, `expect`, or `reference`. `selector` must identify exact case and region identities or the explicit full-image region. Wildcards, expressions, and implicit aggregate selectors must not be accepted.
 
@@ -169,3 +169,64 @@ A gate failure must preserve the completed comparison. A report-generation failu
 The implementation must ship schema-validated examples for every authored document kind. Command examples must execute with packaged fixture assets and the real renderer. The schema, parser, examples, and validator must change together. The interface must not claim executable examples or a validated schema before these artifacts are exercised.
 
 The main help must identify the existing fixture entry point. An executable example must use fixture generation, `validate`, `run`, `compare`, and `report` to complete a comparison without source-code inspection. The example must read metric identities, units, availability, and evidence links from the resulting measurements before authoring a policy. It must identify the exploratory policy's qualification limit. This workflow must use the existing commands and document fields; it must not require a new discovery language.
+
+## Standard configuration generation
+
+The existing fixture executable must accept this grammar without a new selector or configuration language:
+
+```text
+spektrafilm-bench-fixtures --renderer FILE --data-dir DIRECTORY --out DIRECTORY [--natural-input FILE | --download-natural]
+```
+
+`--natural-input` and `--download-natural` must be mutually exclusive. The generator must preserve the existing pinned natural-source validation and attribution rules.
+
+Every invocation must generate the existing probe assets, suites, targets, exploratory policy, and provenance. It must also generate `look.toml`, `color-tone.json`, and `appearance.json`. `look.toml` must use the renderer's portable preset schema. The two JSON files must contain the existing standalone `configuration` object, not a new document envelope. The [standard configuration product contract](standard-configurations/spec.md) defines their rendering purposes and suite coverage.
+
+Both configurations must reference `look.toml` through `presets: ["look.toml"]`. They must use existing `route`, `set_files`, and `set` carriers. Their paths must resolve relative to the containing configuration file. Generated suite cases must carry the equivalent configuration objects because the suite schema has no configuration include field.
+
+Both configuration objects must set `route` to `input > film > print > scan` and `set_files` to an empty array. Their ordered `set` arrays must begin with these shared assignments:
+
+```json
+[
+  "camera.auto_exposure=false",
+  "camera.exposure_compensation_ev=0",
+  "camera.film_format_mm=35",
+  "scanner.auto_setup=off",
+  "scanner.finish=neutral",
+  "magazine_print_color.active=false",
+  "io.output_color_space=sRGB",
+  "io.output_cctf_encoding=true",
+  "io.crop=false",
+  "io.upscale_factor=1",
+  "settings.preview_mode=false",
+  "settings.use_enlarger_lut=false",
+  "settings.use_scanner_lut=false"
+]
+```
+
+`color-tone.json` must append `debug.deactivate_spatial_effects=true`, `debug.deactivate_stochastic_effects=true`, and `film_render.grain.active=false`. `appearance.json` must append `debug.deactivate_spatial_effects=false` and `debug.deactivate_stochastic_effects=false`. Neither object may add `film` or `paper` selections that compete with the exported look. The generator must use the renderer's resolution to validate the effective settings; standalone shape validation is not proof of supported renderer parameters.
+
+The generator must obtain the look through the selected renderer's public `preset show built-in:Kodak Gold 200 --format toml --data-dir DIRECTORY` command. It must capture child output and diagnostics separately. It must not copy a preset from the checkout or resolve a bare user-library name. Preset export or validation failure must fail generation without selecting a substitute look. Profile references must permit intentional runtime profile revisions rather than require baseline content hashes.
+
+The generator must validate both configuration documents and all generated suites and targets before publishing success. `provenance.json` must record the standard configuration revision `standard-print-scan-v1`, selected built-in preset selector, renderer SHA-256, and relative paths and SHA-256 values for the three new files:
+
+```json
+"standard_configurations": {
+  "revision": "standard-print-scan-v1",
+  "preset_selector": "built-in:Kodak Gold 200",
+  "renderer": {"path": "ABSOLUTE_RENDERER_PATH", "sha256": "RENDERER_SHA256"},
+  "files": [
+    {"path": "look.toml", "sha256": "LOOK_SHA256"},
+    {"path": "color-tone.json", "sha256": "COLOR_TONE_SHA256"},
+    {"path": "appearance.json", "sha256": "APPEARANCE_SHA256"}
+  ]
+}
+```
+
+Existing natural-source provenance must remain intact. A change to authored standard settings or appearance-case coverage must update this revision; runtime dependency hashes remain authoritative for file identity.
+
+The successful stdout result must include `schema_version`, `command: fixtures`, `execution_status: completed`, the output directory as `artifact`, the existing `suites` list, `preset: look.toml`, and `configurations` with `color_tone: color-tone.json` and `appearance: appearance.json`. Returned file paths must be relative to `artifact`. Failure must use the existing structured error and exit-status contract. A partial directory without a successful final provenance record must not count as a generated bundle.
+
+The generator must refuse any existing destination. It must not invoke rendering or device discovery. It must not create runs, comparisons, or calibrated policy evidence. Generated baseline and candidate target files remain examples, not completed baseline or candidate runs.
+
+The packaged usage example must generate once, use `color-tone.json` and `appearance.json` with a declared local image, and select seeds `0`, `42`, and `99` explicitly for full appearance. It must show how to construct a second target and reuse the same bundle for a version comparison. It must use the existing `run`, `compare`, `inspect`, and `report` commands. These examples must be executed during delivery acceptance rather than presented as already supported.

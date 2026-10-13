@@ -4,6 +4,11 @@ set dotenv-load := false
 default:
     @just --list
 
+
+# Install the pinned official native Fotufilm compiler dependency.
+install-halide prefix:
+    bash scripts/install_halide.sh "{{prefix}}"
+
 # Build the portable default (wgpu/WGSL) release binaries.
 build: build-gui build-cli build-f64 decode-raw build-benchmark
 
@@ -64,8 +69,19 @@ benchmark-test:
     cargo test --locked -p spektrafilm-benchmark
 
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
+# Optimize the WASI interpreter so original preparation fits worker deadlines.
 gui-headless:
-    cargo test --locked -p spektrafilm-gui --features precision-f64 headless::
+    cargo test --release --locked -p spektrafilm-gui --features precision-f64 headless::
+
+# Exercise the real App RAW import, Preview/Scan and Export with the pinned
+# Kodak DC50 fixture. The fixture is not redistributed; provide it explicitly.
+# A missing or mismatched fixture fails the run instead of skipping it.
+gui-raw:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fixture="${SPEKTRAFILM_GUI_RAW_FIXTURE:?Set SPEKTRAFILM_GUI_RAW_FIXTURE to the pinned Kodak DC50 KDC file}"
+    SPEKTRAFILM_GUI_RAW_FIXTURE="$fixture" \
+        cargo test --locked -p spektrafilm-gui --features precision-f64 headless::raw::
 
 # Render focused GUI layouts offscreen; requires a usable WGPU adapter.
 gui-layout:

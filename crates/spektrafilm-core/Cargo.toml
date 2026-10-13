@@ -15,6 +15,7 @@ precision-f64 = [
 spektrafilm-math.workspace = true
 spektrafilm-gpu.workspace = true
 spektrafilm-model.workspace = true
+spektrafilm-fotufilm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
