@@ -1042,6 +1042,76 @@ impl WgpuBackend {
                 encode: Box::new(move |encoder| gs.encode_pass(encoder, n_pixels, &buf_b)),
             });
         }
+        // 6f. Output transfer (pipe architecture, S4): encode the native
+        //     destination RGB (same-space roundtrip matrix + the space's
+        //     encoding transfer), or restore linear for a Procedural-grain
+        //     output when the caller requested no encoding. Runs in place
+        //     on buf_b after every scanner effect, so the readback below
+        //     observes the finalized samples.
+        if let Some(tp) = p.output_transfer.as_ref() {
+            let buf_b = buf_b.clone();
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct TransferParams {
+                n_pixels: u32,
+                mode: u32,
+                cctf_kind: u32,
+                _pad: u32,
+                col0: [f32; 4],
+                col1: [f32; 4],
+                col2: [f32; 4],
+            }
+            let m = tp.matrix;
+            let transfer_params = TransferParams {
+                n_pixels,
+                mode: if tp.decode { 1 } else { 0 },
+                cctf_kind: tp.cctf_kind,
+                _pad: 0,
+                col0: [m[0][0], m[1][0], m[2][0], 0.0],
+                col1: [m[0][1], m[1][1], m[2][1], 0.0],
+                col2: [m[0][2], m[1][2], m[2][2], 0.0],
+            };
+            let params_buf = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("cctf_transfer_params"),
+                    contents: bytemuck::bytes_of(&transfer_params),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+            let pipe = self.cached_pipeline(
+                include_str!("../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl"),
+                &[
+                    wgpu::BufferBindingType::Uniform,
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                ],
+            );
+            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("bg_cctf_transfer"),
+                layout: &pipe.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buf_b.as_entire_binding(),
+                    },
+                ],
+            });
+            stages.push(super::pipe::ChainStage::Gpu {
+                name: "output_transfer",
+                encode: Box::new(move |encoder| {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("output_transfer"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&pipe.pipeline);
+                    pass.set_bind_group(0, &bg, &[]);
+                    dispatch_linear(&mut pass, n_pixels);
+                }),
+            });
+        }
         // Zero-copy path: when buf_b is mappable, skip the blit and map it
         // directly below. Otherwise stage it into the MAP_READ readback
         // buffer, still inside the single submission.

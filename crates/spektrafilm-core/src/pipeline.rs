@@ -2775,26 +2775,32 @@ mod spectral_invalidation_tests {
     }
 
     #[test]
-    fn resident_finishing_applies_magazine_before_procedural_export_decode() {
-        use spektrafilm_math::colorspace::{cctf_decode, encode_rgb, resolve};
+    fn resident_finishing_applies_magazine_on_normalized_readback() {
+        use spektrafilm_math::colorspace::{encode_rgb, resolve};
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
         let mut pipeline = build();
         pipeline.params.io.output_color_space = "sRGB".into();
         pipeline.params.magazine_print_color.active = true;
         pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
         let space = resolve("sRGB").unwrap();
+        // The pipe-tail output transfer (S4) normalizes the readback state
+        // before the host tail: samples arrive encoded exactly when the
+        // caller requested encoding, regardless of the grain engine.
+        // `apply_post_scan` therefore sees that state and applies the
+        // magazine without any encode/decode of its own.
         for procedural in [false, true] {
             pipeline.params.film_render.grain.active = procedural;
             for encoded in [false, true] {
                 pipeline.params.io.output_cctf_encoding = encoded;
-                let native = ImageBuf::from_data(
+                let linear = ImageBuf::from_data(
                     2,
                     1,
                     [0.07, 0.4, 0.8, 0.3, 0.5, 0.9].map(from_f64).to_vec(),
                 );
-                let mut expected = native.clone();
-                if !procedural && encoded {
-                    for pixel in expected.data.as_chunks_mut::<3>().0 {
+                // The readback state the host tail receives.
+                let mut readback = linear.clone();
+                if encoded {
+                    for pixel in readback.data.as_chunks_mut::<3>().0 {
                         let rgb = encode_rgb(
                             [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])],
                             space,
@@ -2804,18 +2810,14 @@ mod spectral_invalidation_tests {
                         }
                     }
                 }
+                let mut expected = readback.clone();
                 crate::magazine_print_color::apply(
                     &mut expected,
                     &pipeline.params.magazine_print_color,
                     space,
-                    procedural || encoded,
+                    encoded,
                 );
-                if procedural && !encoded {
-                    for value in &mut expected.data {
-                        *value = from_f64(cctf_decode(to_f64(*value), space.cctf));
-                    }
-                }
-                let actual = pipeline.apply_post_scan(native, &backend);
+                let actual = pipeline.apply_post_scan(readback, &backend);
                 assert_eq!(actual.data, expected.data);
             }
         }

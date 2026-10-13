@@ -399,6 +399,23 @@ pub struct FilmChainParams<'a> {
     /// convolution (pipe architecture, capability class). Receives the
     /// front-pass raw and returns the diffused raw, written back in place.
     pub camera_diffusion_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional output transfer encoding/decoding pass on the final buffer
+    /// after every scanner effect (pipe architecture, S4). Encode applies
+    /// the stored same-space roundtrip matrix and the space's encoding
+    /// transfer; decode restores linear for a Procedural-grain output when
+    /// the caller requested no encoding.
+    pub output_transfer: Option<OutputTransferGpuParams>,
+}
+
+/// One pipe-tail transfer pass (pipe architecture, S4).
+pub struct OutputTransferGpuParams {
+    /// false = encode (matrix + cctf), true = decode (cctf only).
+    pub decode: bool,
+    /// `Cctf` discriminant: 0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto,
+    /// 4 Rec2020, 5 Adobe RGB (1998), 6 Gamma 2.6.
+    pub cctf_kind: u32,
+    /// Same-space RGB roundtrip matrix (`rgb_to_rgb_identity`).
+    pub matrix: [[f32; 3]; 3],
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.
