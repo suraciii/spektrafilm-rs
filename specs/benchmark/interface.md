@@ -9,11 +9,15 @@ The executable must accept the following command grammar:
 ```text
 spektrafilm-bench --help
 spektrafilm-bench --version
-spektrafilm-bench schema --kind suite|target|policy|run|comparison
-spektrafilm-bench validate --kind suite|target|policy|run|comparison --file FILE
-spektrafilm-bench run --suite FILE --target FILE --out DIRECTORY [--case ID ...]
+spektrafilm-bench schema --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation
+spektrafilm-bench validate --kind suite|target|policy|run|comparison|configuration|reference|regions|preparation --file FILE
+spektrafilm-bench run --suite FILE --target FILE --out DIRECTORY [--case ID ...] [--dry-run]
+spektrafilm-bench run --input FILE --configuration FILE --target FILE --out DIRECTORY [--input-kind raster|raw] [--input-color-space NAME --input-cctf-decoding true|false] [--seed UINT32 ...] [--regions FILE] [--reference FILE --reference-info FILE] [--preparation FILE] [--dry-run]
 spektrafilm-bench compare --baseline DIRECTORY --candidate DIRECTORY --out DIRECTORY [--policy FILE] [--gate]
+spektrafilm-bench compare --run DIRECTORY --against input|reference|both --out DIRECTORY
 spektrafilm-bench report --comparison DIRECTORY --out DIRECTORY
+spektrafilm-bench inspect --comparison DIRECTORY [--case ID ...] [--region ID ...] [--metric ID ...]
+spektrafilm-bench target --renderer FILE --data-dir DIRECTORY --backend cpu|gpu --out FILE
 ```
 
 Every option must have help. Help, version, and schema discovery must work without a renderer, image decoder, input assets, or graphics device. Version must identify the benchmark implementation and supported document versions. The executable and fixture entry point must satisfy [Rust delivery](rust-delivery.md).
@@ -22,11 +26,31 @@ Every option must have help. Help, version, and schema discovery must work witho
 
 `run` must resolve the suite and target before rendering. Repeatable `--case` must select exact case identities in suite order. Duplicate selections and unknown identities must fail. Omitting `--case` must select all cases.
 
+`run --dry-run` must use the same renderer configuration resolution, seed, environment isolation, selected profile containment, and case-owned geometry checks as execution. It must process all selected cases and seeds without decoding or rendering images. Identical seed failures must be grouped with their affected seed values and retained renderer logs. Unknown or duplicate case selections must identify the rejected identities and available choices. Renderer configuration errors must retain the actionable child error text and evidence paths.
+
+The dry-run destination must retain `preflight.json`, suite and target snapshots, resolved configurations, logs, and hashed evidence. A successful preflight must identify `mode: dry_run` and `execution_status: validated`; a failed preflight must identify `execution_status: failed` and structured errors. It must never publish `run.json` or completed render masters. Its `unchecked` list must identify image decoding, compute-device availability, observed output geometry, and numerical results. Preflight does not qualify a run or replace execution-time checks.
+
+`run` must require exactly one of `--suite` and `--input`. Single-input options must conflict with `--suite`; `--case` must apply only to suite execution. `--configuration` must contain the existing case configuration object, with its file paths resolved relative to that file. `--input-kind` must default to `raster`; RAW must be selected explicitly and must use the renderer adapter. Raster input must require both source declaration flags. Repeated `--seed` must select distinct unsigned 32-bit seeds and default to `[0]`. `--regions` must contain the existing region array; omission must select no fixed regions. `--reference` and `--reference-info` must require each other. Reference info must contain the existing reference object except `path` and `sha256`, which the CLI must derive from the selected local file. Nested dependencies must resolve relative to the reference-info file.
+
+`configuration`, `regions`, and `preparation` schema kinds must expose their existing case subdocuments. The `reference` kind must expose reference info without `path` and `sha256`. Standalone validation must check their shape and available local dependencies and identify remaining cross-document applicability checks. It must not establish scene correspondence, successful rendering, or reference suitability without the required observations.
+
+The single-input form must construct and validate one `scene` case with identity `image`, suite identity `local-image`, full-image families `numeric`, `color`, `tone`, and `flip`, and the versioned standard appearance protocol (60 pixels per degree, scales `[1,0.4,0.16]`, flat-mean grain residual, high-pass radius 4, border 1, Hann spectrum, six hotspots of minimum area 151). These settings must be retained in the generated suite, not hidden evaluator state. Case configuration must remain authoritative for crop, resize, and simulation parameters; target overrides must keep their existing applicability. The generated suite must be retained within the run without writing into the source repository.
+
+`--preparation` must contain `original` with `path` and `sha256`, and a nonempty `operations` array of descriptive strings. The original path must resolve relative to that file and enter retained dependencies. The benchmark must record but must not execute these operations. Suite cases may contain the same optional `preparation` object. The actual prepared input hash must remain authoritative.
+
 `compare` must load completed run records and masters. It must not invoke a renderer. It must match cases by case identity and seeds by their explicit value, not directory order. It must reject incompatible suite or protocol identities. It must retain declared target differences. Reference objectives must use the reference associated with the case.
+
+Single-run `compare` must require `--run` and `--against` together and conflict with `--baseline`, `--candidate`, `--policy`, and `--gate`. It must load retained input and simulation masters without invoking the renderer. `input` must select input/simulation, `reference` must select reference/simulation, and `both` must retain both pairs with reference selected by default. Reference selection must fail if a selected case has no reference. Measurements must obey reference scope and processing limits; visual-only pairs must retain an inspectable unavailable measurement reason instead of a numeric score. Signed processing changes must mean simulation minus input. Reference distance must identify simulation distance to reference and must not fabricate a baseline improvement. Single-run comparisons must remain `not_evaluated`.
 
 `--gate` must require `--policy`. It must make a non-pass evaluation produce a failing command status after the comparison has been published. Without `--gate`, a successfully published comparison must not fail solely because its evaluation is non-pass.
 
 `report` must derive its views from the comparison and cited artifacts. It must not recompute metrics. Its output must remain usable without the run directories by copying required review artifacts and retaining their provenance. An external original that cannot be redistributed must remain excluded from a distributable report; the report must identify the omission rather than substitute another image.
+
+`inspect` must validate and read a retained comparison without invoking a renderer or computing measurements. It must emit the retained comparison identity, execution and evaluation states, conditions, summary, failures, findings, and compact measurements. Per-seed/pair observations and cross-seed `seed_measurements` must remain separate. Measurement identity, domain, units, estimator, sample count, availability, value or reason, seed population, and artifact references must remain intact. Exact repeatable case, region, and metric filters must reject unknown selections with available choices; they must not silently return an empty result. Referenced evidence must resolve relative to the emitted `artifact_base`. A valid read of a failed comparison must complete successfully while exposing its failed comparison state. Inspection must not modify evidence, rank unlike units, or infer acceptance.
+
+`target` must construct the existing target document with canonical renderer/data paths, the actual renderer SHA-256, an ID derived from the destination filename, the explicit backend, and empty changes. It must reuse target validation and refuse any existing destination, including a symlink. It must not invoke the renderer, probe a GPU, select simulation settings, or generate test inputs. Fixture targets must share this construction rule while retaining their own IDs, edits, and environment.
+
+Report location links must use `#case=ENCODED_ID&seed=UINT32[&pair=ENCODED_ID[&region=ENCODED_ID]]`, with percent-encoded exact identities. Version pairs use `baseline/candidate`; single-run pairs use their retained IDs. A location must select the matching case/seed/pair, open the requested region, and scroll to it after layout. Navigation must update the fragment and support reload and browser history offline. Detail disclosures must expose keyboard-operable, accessible controls. Malformed or unknown locations must show an accessible error without displaying an unrelated selected result.
 
 ## Machine output and command status
 
@@ -116,6 +140,8 @@ A run directory must contain `run.json`, the suite and target snapshots, resolve
 
 Each case result must identify case identity, seed, terminal status, input and output dimensions, configuration artifact, master artifact, diagnostics artifact, and errors when present. Actual backend, execution path, host precision, GPU precision, and adapter facts must come from observed diagnostics. Missing observations must remain unavailable.
 
+Completed runs must retain a floating `source_raw` with `source_raw_metadata` from the real renderer's input route, including source color interpretation and observed dimensions. The input route must use the same RAW decoding options and case-owned geometry as simulation, force output to linear ACES2065-1, disable the independent magazine finishing treatment, and force `taps.inject=rgb_in` and `taps.collect=rgb_out`. Source configuration and observed diagnostics must remain retained dependencies of an input comparison. Original source dimensions and preparation metadata must remain separately identified. Input output geometry must be checked before declaring pixelwise correspondence with simulation.
+
 Completed case artifact references must be objects with an indexed `path`. A malformed required reference must return a structured command failure.
 
 The artifact index must identify relative path, content hash, media type, role, and dimensions or sample layout when applicable. All retained paths must resolve. Partial work must not be indexed as a complete master. A failed run must retain successfully completed cases and explicit failures, but must not be reused as a qualified baseline.
@@ -124,7 +150,7 @@ The artifact index must identify relative path, content hash, media type, role, 
 
 A comparison directory must contain `comparison.json`, input run identities, the policy snapshot when selected, scalar measurements, map and curve artifacts, and selected detail-region records. Every finding must resolve to retained artifacts or verified source run artifacts.
 
-`comparison.json` must contain `schema_version`, `id`, `execution_status`, `evaluation_status`, `baseline`, `candidate`, `protocol`, `selection`, `condition_differences`, `cases`, `findings`, `summary`, and `artifacts`. It must contain `policy` when a policy is selected.
+`comparison.json` must contain `schema_version`, `id`, `execution_status`, `evaluation_status`, `protocol`, `selection`, `condition_differences`, `cases`, `findings`, `summary`, and `artifacts`. Version comparisons must contain `baseline` and `candidate`, and must contain `policy` when selected. Single-run comparisons must contain `mode` equal to `single_run`, `run`, and `default_pair` equal to `input` or `reference`. Each case must retain a `pairs` array with unique `id`, `left_role`, `right_role`, `pixel_aligned`, `status`, pair-owned measurements and review artifacts, and reference applicability when selected. Input pairs must use roles `input` and `simulation`; reference pairs must use `reference` and `simulation`. Unavailable image evidence must remain labeled and must not fall back to another role. Pair ids must also identify scalar measurements and findings in single-run results.
 
 `evaluation_status` must be `not_evaluated`, `passed`, `review_required`, `failed`, or `insufficient_evidence`. No policy must select `not_evaluated`. A protected or expected-change rule violation must select `failed`. A missing required rule measurement or an uncalibrated policy must select `insufficient_evidence` unless an observed violation already selects `failed`. An unresolved compatibility difference or required human decision must select `review_required` unless a stronger failure applies. `passed` must require all required rules and qualification conditions to be satisfied.
 

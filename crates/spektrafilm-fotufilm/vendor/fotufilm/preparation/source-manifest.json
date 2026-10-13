@@ -1432,7 +1432,7 @@
     }
   ],
   "adapter": "ProfileClient/main.swift",
-  "adapterSHA256": "c8a7cc2b00f819e269f03ef1ec86ee302734d35ae31affae7c4818ad0c09c7e8",
+  "adapterSHA256": "ad76cc3a25853fd70f86f4dc900bb179fcff11f7d320afa50b85dcffcfa4ba79",
   "packet": "FSA1 v2, fourteen u32 LE header fields",
   "buildScript": "scripts/build_fotufilm_preparation.sh",
   "targetNativeMath": {
@@ -1465,8 +1465,8 @@
   ],
   "module": {
     "path": "data/fotufilm/preparation.wasm",
-    "sha256": "88ecef165999befaa5c0262e031c223a2aa7c3c6074de61a16f950473db6db8b",
-    "bytes": 57684534,
+    "sha256": "e8273cbfea16d02beb29e3c0c9e93191bcb0f1bded7558b18a09cb1199bd78c7",
+    "bytes": 57691980,
     "strip": "llvm-objcopy --strip-all; all original noncustom sections identical"
   },
   "toolchainSource": "https://download.swift.org/swift-6.4.0-release/ubuntu2404/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE-ubuntu24.04.tar.gz",

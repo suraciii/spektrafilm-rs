@@ -30,6 +30,7 @@ Negative output must preserve floating densities in unencoded 32-bit TIFF or EXR
 The host owns the per-render UInt64 seed. It must preserve all bits for Fotufilm. The original frame index remains independent. Historical SpektraFilm seed admission remains unchanged.
 
 Unsupported legacy diagnostic taps must fail explicitly. `rgb_in`, `cmy_film`, and `rgb_out` must use actual source stage boundaries rather than surrogate outputs.
+Collecting `cmy_film` selects the density contract regardless of the requested native stage. Injecting `cmy_film` and collecting `rgb_out` selects the print RGB contract. Equal `rgb_in` taps retain the declared input color space and transfer state; equal `cmy_film` taps retain the input densities. Output interpretation, preview geometry, saving, and diagnostics must follow these effective boundaries.
 
 The effective configuration must identify the original revision, selected original stock and options, CPU execution, and binary32 arithmetic. Selecting a GPU backend must not misreport the source engine as GPU execution.
 
@@ -38,13 +39,15 @@ Cancellation must discard canceled results before output publication. Native col
 
 ## Scanner language
 
-A scanned medium is the film or photographic paper read by the scanner. Its native polarity is separate from the polarity of the output image. A reversal-film scan and a photographic-paper scan already read positive images.
+Scanner terms follow the [Film simulation language](../../CONTEXT.md). A reversal-film scan and a photographic-paper scan already read positive images.
 
-Negative conversion maps negative-film record densities or a negative-film capture to a positive image through a calibrated inverse and a base positive tone response. The scan output value `negative_to_positive` selects this conversion. Automatic image correction and scanner finishing remain independent controls; conversion must work with `scanner.auto_setup=off` and `scanner.finish=neutral`.
+The scan output value `negative_to_positive` selects negative conversion. The existing `density`, `separable`, and `coupled` methods reconstruct relative exposure through the selected film's response, then apply a base positive tone response. Automatic image correction and scanner finishing remain independent controls; conversion must work with `scanner.auto_setup=off` and `scanner.finish=neutral`.
 
-Image correction adjusts image brightness, color balance, or contrast through automatic setup or manual controls. Scanner finishing applies an optional appearance to the converted image. Digital output sets the saving color space, transfer encoding, geometry, and file format. These concepts must not select a different scanned medium or a photographic print route.
+Image correction, scanner finishing, and digital output must not select a different scanned medium or a photographic print route.
 
 `scanner.scan_output` accepts only `direct_scan` and `negative_to_positive`. The removed value `positive_scan` must fail validation in CLI options, runtime parameters, sparse sources, presets, render recipes, and imported GUI state. Readers must not alias it or silently reset it. Omitted scan output retains the `direct_scan` default. Existing schema versions and parameter field names remain unchanged.
+
+The [Digital Reference contract](digital-reference.md) defines a common reference conversion within Scan. It does not add a scan output polarity.
 
 ## Scan output naming acceptance
 
@@ -82,7 +85,7 @@ Image correction adjusts image brightness, color balance, or contrast through au
 - A receiver profile changes scanner acquisition only. It must not change film exposure, development, film-domain grain, halation, print exposure, or the input camera exposure.
 - The receiver profile must be resolved before scan calibration. Direct film scans and capture-based positive interpretations must use the same receiver capture for one render.
 - `input > convert-film > scan` must treat the incoming image as the input capture for the conversion stage. The selected receiver applies to the output scan stage and must not be applied a second time to the input capture.
-- `scanner.positive_interpretation` selects the `density`, `separable`, or `coupled` negative conversion method when `scanner.scan_output=negative_to_positive`. `density` is the default.
+- `scanner.positive_interpretation` selects `density`, `separable`, `coupled`, or `digital_reference` when `scanner.scan_output=negative_to_positive`. `density` is the default. The matched receiver, controls, route restrictions, and reference response for `digital_reference` follow the [Digital Reference contract](digital-reference.md).
 - `density` reads record densities through the film's own monotone characteristic curves. It acquires no receiver capture and must produce identical output for identical record densities and scanner controls, whatever `scanner.receiver_profile` selects.
 - `separable` uses the per-channel monotone inverse defined by [Direct negative-film scan output](#direct-negative-film-scan-output).
 - `coupled` uses a three-channel inverse of the resolved film, receiver, and output response. It must be prepared once per render configuration and evaluated per pixel through a finite lookup table or an equivalent bounded interpolation structure.
@@ -151,7 +154,7 @@ Image correction adjusts image brightness, color balance, or contrast through au
   A real negative-capture `input > convert-film > scan` route and the exact-cell
   scan path interpret their capture with one of these methods; `density` behaves
   as `separable` where the incoming image is a capture.
-- Every method estimates relative log exposure, subtracts camera exposure
+- Every exposure-reconstruction method estimates relative log exposure, subtracts camera exposure
   compensation only on the simulated `input > film > scan` route, applies the
   configured density brightness, RGB balance, contrast, and maximum-density
   controls, then emits output-space linear RGB. Zero balance renders a grey lit

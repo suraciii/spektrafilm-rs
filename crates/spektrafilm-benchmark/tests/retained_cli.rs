@@ -47,6 +47,10 @@ fn record(evidence: &mut Evidence, name: &str, role: &str, value: Value) -> Valu
 
 // Retained masters exercise the public CLI without requiring a renderer or network in PR.
 fn retained_run(root: &Path, value: f64, masked: bool) {
+    retained_run_with_review_regions(root, value, masked, false);
+}
+
+fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops: bool) {
     fs::create_dir(root).unwrap();
     let mut evidence = Evidence::new(root);
     let source = root.join("input.png");
@@ -74,7 +78,10 @@ fn retained_run(root: &Path, value: f64, masked: bool) {
         regions.push(json!({"id":"patch","label":"Patch","role":"other","geometry":{"path":"mask.png","sha256":retained["sha256"],"width":4,"height":4},"measurements":["numeric"]}));
         dependencies.push(retained);
     }
-    let suite = json!({"schema_version":1,"id":"retained","protocol":{"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.0,"border_px":0},"spectrum":{"window":"hann"}},"hotspots":{"count":0,"min_area_px":1}},"cases":[{"id":"probe","kind":"probe","input":{"kind":"raster","path":"input.png","sha256":input["sha256"],"color_space":"sRGB","cctf_decoding":true},"configuration":{},"seeds":[0],"regions":regions,"measurements":["numeric"]}]});
+    if crops {
+        regions.push(json!({"id":"detail","label":"Detail","role":"other","geometry":[1,1,2,2],"measurements":["numeric"]}));
+    }
+    let suite = json!({"schema_version":1,"id":"retained","protocol":{"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.0,"border_px":0},"spectrum":{"window":"hann"}},"hotspots":{"count":if crops { 1 } else { 0 },"min_area_px":1}},"cases":[{"id":"probe","kind":"probe","input":{"kind":"raster","path":"input.png","sha256":input["sha256"],"color_space":"sRGB","cctf_decoding":true},"configuration":{},"seeds":[0],"regions":regions,"measurements":["numeric"]}]});
     let mut suite_record = record(&mut evidence, "suite.json", "suite", suite.clone());
     suite_record["digest"] = json!(common::digest(&suite).unwrap());
     suite_record["source_path"] = json!(root.parent().unwrap().join("original/suite.json"));
@@ -186,6 +193,109 @@ fn policy(path: &Path, suite: &Value) -> Value {
 }
 
 #[test]
+fn cli_report_opens_images_and_exposes_real_manual_and_automatic_crops() {
+    let temp = TempDir::new().unwrap();
+    let baseline = temp.path().join("baseline");
+    let candidate = temp.path().join("candidate");
+    retained_run_with_review_regions(&baseline, 0.2, false, true);
+    retained_run_with_review_regions(&candidate, 0.3, false, true);
+    let comparison = temp.path().join("comparison");
+    compare(&baseline, &candidate, &comparison, 0);
+    let report = temp.path().join("report");
+    invoke(
+        &["report"],
+        &[("--comparison", &comparison), ("--out", &report)],
+        0,
+    );
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    let full = html
+        .split_once("<div data-review-full>")
+        .expect("main image view must be present")
+        .1
+        .split_once("<div data-review-difference")
+        .unwrap()
+        .0;
+    assert!(full.contains("class=\"viewer\" data-mode=\"split\" data-aligned=\"true\""));
+    assert!(full.contains("data-split-handle"));
+    assert!(full.contains("data-fullscreen"));
+    assert!(full.contains("data-native=\""));
+    assert!(html.contains("data-difference-toggle"));
+    assert!(html.contains("data-crop-target=\"detail\" data-crop-kind=\"manual\""));
+    assert!(html.contains("data-crop-target=\"automatic_001\" data-crop-kind=\"automatic\""));
+    for region in ["detail", "automatic_001"] {
+        let card = html
+            .split_once(&format!("data-crop-target=\"{region}\""))
+            .unwrap()
+            .1
+            .split_once("</button>")
+            .unwrap()
+            .0;
+        for image in card.split("<img src=\"").skip(1) {
+            let path = image.split_once('"').unwrap().0;
+            let pixels = image::open(report.join(path)).unwrap();
+            assert_eq!(pixels.color(), image::ColorType::Rgb16);
+            if region == "detail" {
+                assert_eq!((pixels.width(), pixels.height()), (2, 2));
+            }
+            assert!(pixels.width() > 0 && pixels.height() > 0);
+        }
+        assert_eq!(card.matches("<img src=\"").count(), 2);
+        let detail = html
+            .split_once(&format!(
+                "data-region-id=\"{region}\" data-review-region hidden"
+            ))
+            .expect("thumbnail must target a retained detail view")
+            .1
+            .split("<details data-region-id=")
+            .next()
+            .unwrap();
+        assert!(detail.contains("class=\"viewer\""));
+        assert!(detail.contains("class=\"locator-image\""));
+    }
+    let difference = html
+        .split_once("<div data-review-difference hidden>")
+        .unwrap()
+        .1
+        .split_once("</pre></div>")
+        .unwrap()
+        .0;
+    let metadata = difference.split_once("<pre>").unwrap().1;
+    let metadata: Value = serde_json::from_str(&metadata.replace("&quot;", "\"")).unwrap();
+    let manifest = read(&report.join("report.json"));
+    let display = manifest["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|artifact| artifact["role"] == "difference_display")
+        .unwrap();
+    for key in ["units", "scale", "clipping", "amplification"] {
+        assert_eq!(metadata[key], display[key]);
+        assert!(!metadata[key].is_null());
+    }
+}
+
+#[test]
+fn cli_report_without_regions_has_an_explicit_crop_empty_state() {
+    let temp = TempDir::new().unwrap();
+    let baseline = temp.path().join("baseline");
+    let candidate = temp.path().join("candidate");
+    retained_run(&baseline, 0.2, false);
+    retained_run(&candidate, 0.3, false);
+    let comparison = temp.path().join("comparison");
+    compare(&baseline, &candidate, &comparison, 0);
+    let report = temp.path().join("report");
+    invoke(
+        &["report"],
+        &[("--comparison", &comparison), ("--out", &report)],
+        0,
+    );
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    assert!(html.contains("data-review-full"));
+    assert!(html.contains("data-crop-empty"));
+    assert!(!html.contains("data-crop-target="));
+}
+
+#[test]
 fn offline_masked_comparison_preserves_native_linear_samples() {
     let temp = TempDir::new().unwrap();
     let a = temp.path().join("a");
@@ -206,6 +316,40 @@ fn offline_masked_comparison_preserves_native_linear_samples() {
         0,
     );
     assert_eq!(read(&report.join("comparison.json")), d);
+    let snapshot_hash = common::sha256_file(&out.join("comparison.json")).unwrap();
+    fs::remove_dir_all(&a).unwrap();
+    fs::remove_dir_all(&b).unwrap();
+    fs::remove_dir_all(&out).unwrap();
+    assert_eq!(
+        common::sha256_file(&report.join("comparison.json")).unwrap(),
+        snapshot_hash
+    );
+    validate(&report, "comparison.json", 0);
+    let manifest = read(&report.join("report.json"));
+    for artifact in d["artifacts"].as_array().unwrap() {
+        let path = artifact["path"].as_str().unwrap();
+        assert_eq!(
+            common::sha256_file(&report.join(path)).unwrap(),
+            artifact["sha256"].as_str().unwrap()
+        );
+        assert!(
+            manifest["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| {
+                    entry["path"] == artifact["path"] && entry["sha256"] == artifact["sha256"]
+                })
+        );
+    }
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    assert!(html.contains("data-case-id=\"probe\" data-seed=\"0\""));
+    assert!(html.contains("data-pair-id=\"baseline/candidate\" data-default-pair=\"true\""));
+    assert!(html.contains(
+        "href=\"#case=probe&amp;seed=0&amp;pair=baseline%2Fcandidate&amp;region=patch\""
+    ));
+    assert!(html.contains("data-region-id=\"patch\""));
+    assert!(html.contains("data-navigation-error role=\"alert\""));
 }
 
 #[test]
@@ -658,4 +802,103 @@ fn historical_parent_relative_and_current_directory_inputs_compare_offline() {
             0.0
         );
     }
+}
+
+#[test]
+fn offline_pair_report_preserves_unavailable_maps_and_redistribution_omissions() {
+    let temp = TempDir::new().unwrap();
+    let comparison = temp.path().join("comparison");
+    fs::create_dir_all(comparison.join("evidence")).unwrap();
+    let mut evidence = Evidence::new(&comparison);
+    let mut images = vec![];
+    for (name, role, color) in [
+        ("input", "baseline_review", [12, 34, 56]),
+        ("simulation", "simulation_review", [65, 43, 21]),
+        ("private", "reference_review", [90, 80, 70]),
+    ] {
+        let path = comparison.join(format!("evidence/{name}.png"));
+        RgbImage::from_pixel(4, 4, Rgb(color)).save(&path).unwrap();
+        images.push(
+            evidence
+                .add(
+                    &path,
+                    role,
+                    "image/png",
+                    json!({"case_id":"image","seed":0}),
+                )
+                .unwrap(),
+        );
+    }
+    let map_path = comparison.join("evidence/unavailable.npy");
+    fs::write(&map_path, b"Unavailable map: no numeric samples").unwrap();
+    let mut map = evidence.add(&map_path, "difference_map", "application/octet-stream", json!({"metric":"delta_e00","availability":"unavailable","reason":"visual_reference_only"})).unwrap();
+    map["pair_id"] = json!("reference");
+    let mut restricted = images[2].clone();
+    restricted["redistribution"] = json!("unknown");
+    restricted["attribution"] = json!("Private local reference");
+    let mut artifacts = evidence.values();
+    for artifact in &mut artifacts {
+        if artifact["path"] == restricted["path"] {
+            *artifact = restricted.clone();
+        } else if artifact["path"] == map["path"] {
+            *artifact = map.clone();
+        }
+    }
+    let unavailable = json!({"case_id":"image","pair_id":"reference","seed_population":[0],"region_id":"full_image","metric":"reference.visual","domain":"visual","units":"not applicable","estimator":"reference scope","sample_count":0,"availability":"unavailable","reason":"visual_reference_only","artifact_refs":[map["path"]]});
+    let input = json!({"id":"input","left_role":"input","right_role":"simulation","pixel_aligned":true,"status":"completed","measurements":[],"review":{"left":images[0],"right":images[1]},"regions":[],"automatic_regions":[]});
+    let reference = json!({"id":"reference","left_role":"reference","right_role":"simulation","pixel_aligned":false,"status":"completed","reference":{"scope":"visual","geometry":"side_by_side"},"measurements":[unavailable],"review":{"left":restricted,"right":images[1],"difference":map},"artifacts":[map],"regions":[],"automatic_regions":[]});
+    save_manifest(
+        &comparison,
+        "comparison.json",
+        json!({"schema_version":1,"mode":"single_run","execution_status":"completed","evaluation_status":"not_evaluated","run":{"id":"retained","manifest_sha256":"a".repeat(64)},"default_pair":"reference","protocol":{},"selection":{"case_ids":["image"],"full_suite":true},"condition_differences":[],"cases":[{"case_id":"image","seed":0,"status":"completed","pairs":[input,reference]}],"findings":[],"summary":{"selected_cases":1,"completed_results":1,"failed_results":0},"artifacts":artifacts}),
+    );
+    let snapshot = fs::read(comparison.join("comparison.json")).unwrap();
+    let report = temp.path().join("report");
+    invoke(
+        &["report"],
+        &[("--comparison", &comparison), ("--out", &report)],
+        0,
+    );
+    fs::remove_dir_all(&comparison).unwrap();
+    assert_eq!(fs::read(report.join("comparison.json")).unwrap(), snapshot);
+    let manifest = read(&report.join("report.json"));
+    let retained = manifest["artifacts"].as_array().unwrap();
+    let omitted = retained
+        .iter()
+        .find(|entry| entry["source_path"] == restricted["path"])
+        .unwrap();
+    assert!(omitted["path"].is_null());
+    assert_eq!(omitted["availability"], "unavailable");
+    assert_eq!(omitted["reason"], "redistribution_not_permitted");
+    assert_eq!(omitted["redistribution"], "unknown");
+    assert_eq!(omitted["attribution"], restricted["attribution"]);
+    assert!(!report.join(restricted["path"].as_str().unwrap()).exists());
+    let retained_map = retained
+        .iter()
+        .find(|entry| entry["source_path"] == map["path"])
+        .unwrap();
+    assert_eq!(retained_map["path"], map["path"]);
+    assert_eq!(retained_map["availability"], "unavailable");
+    assert_eq!(retained_map["reason"], "visual_reference_only");
+    for entry in retained.iter().filter(|entry| !entry["path"].is_null()) {
+        assert_eq!(
+            common::sha256_file(&report.join(entry["path"].as_str().unwrap())).unwrap(),
+            entry["sha256"].as_str().unwrap()
+        );
+    }
+    assert!(
+        !retained
+            .iter()
+            .any(|entry| entry["role"] == "difference_display")
+    );
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    assert!(html.contains("href=\"#case=image&amp;seed=0&amp;pair=input\""));
+    assert!(html.contains("href=\"#case=image&amp;seed=0&amp;pair=reference\""));
+    assert!(html.contains("data-pair-id=\"reference\" data-default-pair=\"true\""));
+    let reference_panel = html.split_once("data-pair-panel=\"pair-0-1\"").unwrap().1;
+    assert!(!reference_panel.contains("src=\"evidence/input.png\""));
+    assert!(!reference_panel.contains("src=\"evidence/private.png\""));
+    assert!(!reference_panel.contains("src=\"evidence/unavailable.npy\""));
+    assert!(reference_panel.contains("src=\"evidence/simulation.png\""));
+    assert!(html.contains("redistribution_not_permitted"));
 }

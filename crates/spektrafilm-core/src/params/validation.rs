@@ -102,7 +102,10 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         "magazine_print_color.strength" => Some((0.0, Some(1.0))),
         "scanner.black_point" | "scanner.white_point" => Some((0.0, Some(1.0))),
         "scanner.finish_strength" => Some((0.0, Some(1.0))),
-        "scanner.positive_density_ev" | "scanner.positive_balance_ev" => Some((-16.0, Some(16.0))),
+        "scanner.positive_density_ev"
+        | "scanner.positive_balance_ev"
+        | "scanner.reference_exposure_ev"
+        | "scanner.reference_balance_ev" => Some((-16.0, Some(16.0))),
         "scanner.positive_contrast" | "scanner.positive_dmax" => Some((0.0, Some(16.0))),
         _ => None,
     }
@@ -292,14 +295,20 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
             .iter()
             .map(|s| (*s).into())
             .collect(),
-        "scanner.receiver_profile" => ["legacy_colorimetric", "lab_scan_approx"]
-            .iter()
-            .map(|v| (*v).into())
-            .collect(),
-        "scanner.positive_interpretation" => ["density", "separable", "coupled"]
-            .iter()
-            .map(|v| (*v).into())
-            .collect(),
+        "scanner.receiver_profile" => [
+            "legacy_colorimetric",
+            "lab_scan_approx",
+            "digital_reference",
+        ]
+        .iter()
+        .map(|v| (*v).into())
+        .collect(),
+        "scanner.positive_interpretation" => {
+            ["density", "separable", "coupled", "digital_reference"]
+                .iter()
+                .map(|v| (*v).into())
+                .collect()
+        }
         "scanner.auto_setup" => ["off", "per_frame"].iter().map(|v| (*v).into()).collect(),
         "scanner.finish" => ["neutral", "lab_scan"]
             .iter()
@@ -408,8 +417,14 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
 pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String> {
     let valid = match path {
         "engine" => matches!(value, "spektrafilm" | "fotufilm"),
-        "scanner.receiver_profile" => matches!(value, "legacy_colorimetric" | "lab_scan_approx"),
-        "scanner.positive_interpretation" => matches!(value, "density" | "separable" | "coupled"),
+        "scanner.receiver_profile" => matches!(
+            value,
+            "legacy_colorimetric" | "lab_scan_approx" | "digital_reference"
+        ),
+        "scanner.positive_interpretation" => matches!(
+            value,
+            "density" | "separable" | "coupled" | "digital_reference"
+        ),
         "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
         "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
         "scanner.scan_output" => matches!(value, "direct_scan" | "negative_to_positive"),
@@ -634,6 +649,46 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
     }
     validate_enum_value("scanner.scan_output", &params.scanner.scan_output)?;
     let scanner = &params.scanner;
+    let reference =
+        scanner.positive_interpretation == super::PositiveInterpretation::DigitalReference;
+    if reference != (scanner.receiver_profile == super::ReceiverProfile::DigitalReference) {
+        return Err("Digital Reference requires matching digital_reference receiver and positive interpretation".into());
+    }
+    for value in
+        std::iter::once(&scanner.reference_exposure_ev).chain(scanner.reference_balance_ev.iter())
+    {
+        if !value.is_finite() || !(-16.0..=16.0).contains(value) {
+            return Err("scanner.reference_exposure_ev and reference_balance_ev: must be finite and in -16..=16 stops".into());
+        }
+    }
+    if reference {
+        if params.workflow.route != "input > film > scan"
+            || scanner.scan_output != "negative_to_positive"
+        {
+            return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
+        }
+        if scanner.auto_setup != super::ScannerAutoSetup::Off {
+            return Err(
+                "Digital Reference Reference Exposure requires scanner.auto_setup=off".into(),
+            );
+        }
+        if scanner.black_point != [0.0; 3] || scanner.white_point != [1.0; 3] {
+            return Err("Digital Reference requires identity scanner black/white points".into());
+        }
+        let defaults = super::ScannerParams::default();
+        if scanner.positive_density_ev != defaults.positive_density_ev
+            || scanner.positive_balance_ev != defaults.positive_balance_ev
+            || scanner.positive_contrast != defaults.positive_contrast
+            || scanner.positive_dmax != defaults.positive_dmax
+        {
+            return Err("Digital Reference requires default reconstruction controls; use reference_exposure_ev and reference_balance_ev".into());
+        }
+    } else if scanner.reference_exposure_ev != 0.0 || scanner.reference_balance_ev != [0.0; 3] {
+        return Err(
+            "scanner.reference_exposure_ev and reference_balance_ev require Digital Reference"
+                .into(),
+        );
+    }
     if !scanner.finish_strength.is_finite() || !(0.0..=1.0).contains(&scanner.finish_strength) {
         return Err("scanner.finish_strength: must be finite and in 0..=1".into());
     }

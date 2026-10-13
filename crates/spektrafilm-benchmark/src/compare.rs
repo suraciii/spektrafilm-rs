@@ -90,7 +90,6 @@ fn retain_metrics(
             "sha256",
             "media_type",
             "role",
-            "availability",
             "case_id",
             "seed",
         ] {
@@ -100,7 +99,7 @@ fn retain_metrics(
         metadata["id"] = json!(format!("{case_id}/seed-{seed}/{id}"));
         metadata["case_id"] = json!(case_id);
         metadata["seed"] = json!(seed);
-        let record = evidence.add(
+        let mut record = evidence.add(
             &documents::safe_artifact_path(folder, text(artifact, "path")?)?,
             text(artifact, "role")?,
             artifact["media_type"]
@@ -108,6 +107,17 @@ fn retain_metrics(
                 .unwrap_or("application/octet-stream"),
             metadata,
         )?;
+        if let Some(value) = record
+            .get("valid_mask_artifact_id")
+            .and_then(Value::as_str)
+            .and_then(|id| refs.get(id))
+            .cloned()
+        {
+            record["valid_mask_artifact_id"] = json!(value);
+            evidence
+                .records
+                .insert(text(&record, "path")?.into(), record.clone());
+        }
         refs.insert(id.into(), text(&record, "path")?.into());
         records.push(record);
     }
@@ -137,13 +147,21 @@ fn retain_metrics(
         }
     }
     if let Some(review) = measured["reference_review"].as_object_mut() {
-        for (key, value) in review {
+        for (key, value) in &mut *review {
             if key.ends_with("_artifact_id") {
                 if let Some(path) = value.as_str().and_then(|s| refs.get(s)) {
                     *value = json!(path);
                 }
             } else if key == "artifact_refs" {
                 rewrite_list(value, &refs);
+            }
+        }
+        if let Some(regions) = review
+            .get_mut("automatic_regions")
+            .and_then(Value::as_array_mut)
+        {
+            for region in regions {
+                rewrite_list(&mut region["artifact_refs"], &refs);
             }
         }
     }
@@ -272,7 +290,21 @@ fn retained_case(
     }
     if let Some(retained) = clone["reference"].get("correspondence_review") {
         let mut review = documents::load_json_document(Path::new(text(retained, "path")?))?;
-        visit(&mut review, &context, evidence, true)?;
+        let original_review = authored
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(text(&case["reference"]["correspondence_review"], "path")?);
+        let resolved_review = dependencies
+            .get(original_review.as_path())
+            .or_else(|| dependencies.get(lexical_absolute(&original_review).as_path()))
+            .and_then(|dependency| dependency["resolved_source_path"].as_str())
+            .map(Path::new)
+            .unwrap_or(&original_review);
+        let review_context = Context {
+            authored: resolved_review,
+            ..context
+        };
+        visit(&mut review, &review_context, evidence, true)?;
         let path = root
             .join("retained")
             .join(case_id)
@@ -685,7 +717,7 @@ pub fn compare(
                     }
                 }
             }
-            findings.push(json!({"id":common::digest(&json!([case_id,seed,"failed_render"]))?,"case_id":case_id,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
+            findings.push(json!({"id":common::digest(&json!([case_id,seed,"failed_render"]))?,"case_id":case_id,"seed":seed,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
             cases.push(record);
             continue;
         }
@@ -958,6 +990,8 @@ pub fn compare(
     }
     runner::finalize(&root, "comparison.json", &mut manifest)?;
     let mut result = json!({"schema_version":1,"command":"compare","execution_status":manifest["execution_status"],"evaluation_status":evaluation,"artifact":root.join("comparison.json"),"comparison_id":manifest["id"]});
+    result["summary"] = manifest["summary"].clone();
+    result["condition_differences"] = manifest["condition_differences"].clone();
     if !completed {
         result["errors"] = json!([{"code":"measurement_failure","boundary":"comparison","message":"One or more selected results failed; inspect comparison cases and findings"}]);
     }
@@ -965,6 +999,407 @@ pub fn compare(
         result,
         i32::from(!completed || (gate && evaluation != "passed")),
     ))
+}
+
+/// Compare retained input/reference evidence against one simulation run without rendering.
+pub fn compare_single(run_path: &Path, against: &str, out: &Path) -> Result<(Value, i32)> {
+    let pair_ids: &[&str] = match against {
+        "input" => &["input"],
+        "reference" => &["reference"],
+        "both" => &["input", "reference"],
+        _ => {
+            return Err(Error::new(
+                "invalid_pair_selection",
+                "Select input, reference, or both",
+            ));
+        }
+    };
+    let run_root = run_path.canonicalize()?;
+    let (run, suite) = load_run(&run_root)?;
+    let definitions: BTreeMap<_, _> = array(&suite, "cases")?
+        .iter()
+        .map(|case| (case["id"].as_str().unwrap_or(""), case))
+        .collect();
+    // Resolve the entire requested population before creating a publication directory.
+    for row in array(&run, "cases")? {
+        let definition = definitions
+            .get(text(row, "case_id")?)
+            .ok_or_else(|| Error::new("run_selection", "Unknown retained case"))?;
+        if pair_ids.contains(&"reference") && definition.get("reference").is_none_or(Value::is_null)
+        {
+            return Err(
+                Error::new("missing_reference", "Selected case has no reference")
+                    .at(text(row, "case_id")?),
+            );
+        }
+        if row["status"] == "completed"
+            && pair_ids.contains(&"input")
+            && !row["source_raw"].is_object()
+        {
+            return Err(Error::new(
+                "missing_source_master",
+                "Input comparison requires the observed floating input-route master",
+            )
+            .at(text(row, "case_id")?));
+        }
+    }
+    let root = runner::absolute(out)?;
+    common::create_destination(&root)?;
+    let mut evidence = Evidence::new(&root);
+    let mut cases = Vec::new();
+    let mut findings = Vec::new();
+    for row in array(&run, "cases")? {
+        let case_id = text(row, "case_id")?;
+        let seed = row["seed"]
+            .as_u64()
+            .ok_or_else(|| Error::new("run_seed", "Missing retained seed"))?;
+        let definition = definitions[case_id];
+        let folder = root
+            .join("cases")
+            .join(case_id)
+            .join(format!("seed-{seed}"));
+        fs::create_dir_all(&folder)?;
+        let mut record = json!({"case_id":case_id,"seed":seed,"status":"failed","pairs":[]});
+        if row["status"] != "completed" {
+            let failure_path = folder.join("render-failure.json");
+            common::dump(&failure_path, row)?;
+            let failure = evidence.add(
+                &failure_path,
+                "render_failure",
+                "application/json",
+                json!({"case_id":case_id,"seed":seed}),
+            )?;
+            for stream in ["stdout", "stderr"] {
+                if let Some(log) = row.get(stream).filter(|v| v.is_object()) {
+                    evidence.copy(
+                        &documents::safe_artifact_path(&run_root, text(log, "path")?)?,
+                        &format!("cases/{case_id}/seed-{seed}/renderer.{stream}"),
+                        "renderer_log",
+                        json!({"media_type":"text/plain"}),
+                    )?;
+                }
+            }
+            for pair_id in pair_ids {
+                record["pairs"].as_array_mut().unwrap().push(json!({"id":pair_id,"left_role":pair_id,"right_role":"simulation","pixel_aligned":false,"status":"failed","reason":"failed_render","measurements":[],"review":{},"regions":[],"automatic_regions":[],"errors":row["errors"]}));
+                findings.push(json!({"id":common::digest(&json!([case_id,seed,pair_id,"failed_render"]))?,"case_id":case_id,"seed":seed,"pair_id":pair_id,"region_id":"full_image","metric":"execution","decision":"failed","evidence":[failure["path"]]}));
+            }
+            cases.push(record);
+            continue;
+        }
+        let case = retained_case(definition, &run, &run_root, &root, &mut evidence)?;
+        let simulation = raw_image(&run_root, row)?;
+        let simulation_review = review_image(
+            &simulation,
+            &folder.join("simulation.png"),
+            &mut evidence,
+            "simulation",
+            case_id,
+            seed,
+        );
+        let simulation_master = evidence.copy(&documents::safe_artifact_path(&run_root,text(&row["raw"],"path")?)?, &format!("cases/{case_id}/seed-{seed}/simulation-master.bin"), "simulation_master", json!({"color":row["raw"]["color"],"layout":row["raw"]["layout"],"case_id":case_id,"seed":seed}))?;
+        let resolved = evidence.copy(
+            &documents::safe_artifact_path(&run_root, text(&row["resolved"], "path")?)?,
+            &format!("cases/{case_id}/seed-{seed}/simulation-resolved.json"),
+            "resolved_configuration",
+            json!({}),
+        )?;
+        let diagnostics = evidence.copy(
+            &documents::safe_artifact_path(&run_root, text(&row["diagnostics"], "path")?)?,
+            &format!("cases/{case_id}/seed-{seed}/simulation-diagnostics.json"),
+            "render_diagnostics",
+            json!({}),
+        )?;
+        let execution = json!({"execution":row["execution"],"precision":row["precision"],"dimensions":row["dimensions"],"diagnostics":diagnostics});
+        let protocol = probe_protocol(&suite["protocol"], &case, seed);
+        record["source_dimensions"] = row["source_dimensions"].clone();
+        record["source_geometry"] = row["source_geometry"].clone();
+        record["input"] = definition["input"].clone();
+        if let Some(preparation) = definition.get("preparation") {
+            record["preparation"] = preparation.clone();
+        }
+        for pair_id in pair_ids {
+            let pair_folder = folder.join(pair_id);
+            fs::create_dir_all(&pair_folder)?;
+            let mut pair = json!({"id":pair_id,"left_role":pair_id,"right_role":"simulation","pixel_aligned":false,"status":"failed","measurements":[],"regions":case["regions"],"automatic_regions":[],"review":{},"right_master":simulation_master,"right_resolved":resolved,"right_execution":execution});
+            let mut pair_findings = Vec::new();
+            match &simulation_review {
+                Ok(review) => pair["review"]["right"] = review.clone(),
+                Err(error) => {
+                    pair["review_unavailable"] =
+                        json!({"right":{"code":error.code,"reason":error.message}})
+                }
+            }
+            let computation = (|| -> Result<Value> {
+                if *pair_id == "input" {
+                    let input = raw_image(&run_root, &json!({"raw":row["source_raw"]}))?;
+                    pair["left_master"] = evidence.copy(&documents::safe_artifact_path(&run_root,text(&row["source_raw"],"path")?)?, &format!("cases/{case_id}/seed-{seed}/input/input-master.bin"), "input_master", json!({"pair_id":"input","color":row["source_raw"]["color"],"layout":row["source_raw"]["layout"],"source_sha256":definition["input"]["sha256"]}))?;
+                    for (key, filename, role) in [
+                        (
+                            "source_raw_metadata",
+                            "input-master.json",
+                            "source_raw_metadata",
+                        ),
+                        (
+                            "source_resolved",
+                            "input-resolved.json",
+                            "source_configuration",
+                        ),
+                        (
+                            "source_diagnostics",
+                            "input-diagnostics.json",
+                            "source_diagnostics",
+                        ),
+                    ] {
+                        pair[key] = evidence.copy(
+                            &documents::safe_artifact_path(&run_root, text(&row[key], "path")?)?,
+                            &format!("cases/{case_id}/seed-{seed}/input/{filename}"),
+                            role,
+                            json!({"case_id":case_id,"seed":seed,"pair_id":"input"}),
+                        )?;
+                    }
+                    pair["left_resolved"] = pair["source_resolved"].clone();
+                    pair["left_execution"] = json!({
+                        "dimensions":input.dimensions(),
+                        "geometry":row["source_geometry"],
+                        "raw_metadata":pair["source_raw_metadata"],
+                        "diagnostics":pair["source_diagnostics"],
+                    });
+                    match review_image(
+                        &input,
+                        &pair_folder.join("input.png"),
+                        &mut evidence,
+                        "input",
+                        case_id,
+                        seed,
+                    ) {
+                        Ok(review) => {
+                            pair["review"]["left"] = review.clone();
+                            pair["review"]["source"] = review;
+                        }
+                        Err(error) => {
+                            if pair.get("review_unavailable").is_none() {
+                                pair["review_unavailable"] = json!({});
+                            }
+                            pair["review_unavailable"]["left"] =
+                                json!({"code":error.code,"reason":error.message});
+                        }
+                    }
+                    if input.dimensions() != simulation.dimensions()
+                        || row["source_pixel_aligned"] != true
+                        || row["source_geometry"].is_null()
+                        || row["source_geometry"] != row["simulation_geometry"]
+                    {
+                        pair["reason"] = json!("input_geometry_mismatch");
+                        return Ok(
+                            json!({"execution_status":"completed","measurements":[{"case_id":case_id,"seed_population":[seed],"region_id":"full_image","metric":"input.processing_change","domain":"unavailable_pixel_correspondence","units":"not applicable","estimator":"observed renderer geometry","sample_count":0,"availability":"unavailable","reason":"input_geometry_mismatch","artifact_refs":[pair["left_master"]["path"],simulation_master["path"]]}],"findings":[],"artifacts":[],"automatic_regions":[]}),
+                        );
+                    }
+                    pair["pixel_aligned"] = json!(true);
+                    retain_metrics(
+                        metrics::compare_images(
+                            &input,
+                            &simulation,
+                            array(&case, "regions")?,
+                            &protocol,
+                            &pair_folder,
+                        )?,
+                        &pair_folder,
+                        &mut evidence,
+                        case_id,
+                        seed,
+                    )
+                } else {
+                    let measured = retain_metrics(
+                        references::compare_reference_single(
+                            &simulation,
+                            &case,
+                            &protocol,
+                            &pair_folder,
+                            &root,
+                        )?,
+                        &pair_folder,
+                        &mut evidence,
+                        case_id,
+                        seed,
+                    )?;
+                    pair["reference"] = measured["reference_review"].clone();
+                    pair["pixel_aligned"] =
+                        json!(measured["reference_review"]["geometry"] == "pixel_aligned");
+                    for (key, id_key) in [
+                        ("left", "display_artifact_id"),
+                        ("reference", "native_display_artifact_id"),
+                        ("difference", "difference_artifact_id"),
+                    ] {
+                        if let Some(path) = measured["reference_review"][id_key].as_str()
+                            && let Some(artifact) = measured["artifacts"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .find(|artifact| artifact["path"] == path)
+                        {
+                            pair["review"][key] = artifact.clone();
+                        }
+                    }
+                    pair["left_execution"] = measured["reference_review"].clone();
+                    pair["left_resolved"] = case["reference"].clone();
+                    if let Some(source) = row.get("source_raw").filter(|v| v.is_object())
+                        && let Ok(image) = raw_image(&run_root, &json!({"raw":source}))
+                    {
+                        match review_image(
+                            &image,
+                            &pair_folder.join("source.png"),
+                            &mut evidence,
+                            "source",
+                            case_id,
+                            seed,
+                        ) {
+                            Ok(review) => pair["review"]["source"] = review,
+                            Err(error) => {
+                                if pair.get("review_unavailable").is_none() {
+                                    pair["review_unavailable"] = json!({});
+                                }
+                                pair["review_unavailable"]["source"] =
+                                    json!({"code":error.code,"reason":error.message});
+                            }
+                        }
+                    }
+                    pair["automatic_regions"] = measured["reference_review"]["automatic_regions"]
+                        .as_array()
+                        .cloned()
+                        .map_or(json!([]), |v| json!(v));
+                    if case["reference"]["scope"] == "regional" {
+                        pair["regions"] = json!(array(&case["reference"],"regions")?.iter().map(|reference_region| {
+                            let render = case["regions"].as_array().into_iter().flatten().find(|region| region["id"] == reference_region["id"]);
+                            json!({"id":reference_region["id"],"label":render.map(|r| &r["label"]),"left_geometry":reference_region["geometry"],"right_geometry":render.map(|r| &r["geometry"]),"geometry":render.map(|r| &r["geometry"])})
+                        }).collect::<Vec<_>>());
+                    }
+                    Ok(measured)
+                }
+            })();
+            match computation {
+                Ok(mut measured) => {
+                    for key in ["measurements", "findings", "artifacts", "automatic_regions"] {
+                        if let Some(rows) = measured[key].as_array_mut() {
+                            for item in rows {
+                                item["pair_id"] = json!(pair_id);
+                            }
+                        }
+                    }
+                    if let Some(rows) = pair["automatic_regions"].as_array_mut() {
+                        for region in rows {
+                            region["pair_id"] = json!(pair_id);
+                        }
+                    }
+                    for artifact in measured["artifacts"].as_array().into_iter().flatten() {
+                        if let Some(path) = artifact["path"].as_str()
+                            && let Some(indexed) = evidence.records.get_mut(path)
+                        {
+                            indexed["pair_id"] = json!(pair_id);
+                        }
+                    }
+                    pair["measurements"] = measured["measurements"].clone();
+                    if *pair_id == "input" {
+                        pair["automatic_regions"] = measured["automatic_regions"].clone();
+                        if let Some(artifact) =
+                            measured["artifacts"].as_array().into_iter().flatten().find(
+                                |artifact| {
+                                    artifact["role"] == "difference_map"
+                                        && artifact["metric"] == "delta_e00"
+                                },
+                            )
+                        {
+                            pair["review"]["difference"] = artifact.clone();
+                        }
+                    }
+                    pair["artifacts"] = measured["artifacts"].clone();
+                    pair["status"] = measured["execution_status"].clone();
+                    pair_findings = measured["findings"].as_array().cloned().unwrap_or_default();
+                }
+                Err(error) => {
+                    pair["reason"] = json!(error.code);
+                    pair["errors"] = json!([{"code":error.code,"boundary":"measurement","message":error.message}]);
+                }
+            }
+            // Published geometry paths must stay local to the comparison.
+            fn relative_paths(value: &mut Value, root: &Path) {
+                match value {
+                    Value::Object(map) => {
+                        if let Some(path) = map
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .and_then(|p| Path::new(p).strip_prefix(root).ok())
+                        {
+                            map.insert(
+                                "path".into(),
+                                json!(path.to_string_lossy().replace('\\', "/")),
+                            );
+                        }
+                        for child in map.values_mut() {
+                            relative_paths(child, root);
+                        }
+                    }
+                    Value::Array(values) => {
+                        for child in values {
+                            relative_paths(child, root);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            relative_paths(&mut pair["regions"], &root);
+            relative_paths(&mut pair["reference"], &root);
+            relative_paths(&mut pair["left_resolved"], &root);
+            relative_paths(&mut pair["left_execution"], &root);
+            let path = pair_folder.join("measurements.json");
+            common::dump(&path, &pair["measurements"])?;
+            pair["measurement_artifact"] = evidence.add(
+                &path,
+                "measurements",
+                "application/json",
+                json!({"case_id":case_id,"seed":seed,"pair_id":pair_id}),
+            )?;
+            for mut finding in pair_findings {
+                finding["id"] = json!(common::digest(&json!([
+                    case_id,
+                    seed,
+                    pair_id,
+                    finding["id"]
+                ]))?);
+                if finding["evidence"]
+                    .as_array()
+                    .is_none_or(|refs| refs.is_empty())
+                {
+                    finding["evidence"] = json!([pair["measurement_artifact"]["path"]]);
+                }
+                findings.push(finding);
+            }
+            record["pairs"].as_array_mut().unwrap().push(pair);
+        }
+        record["status"] = json!(if array(&record, "pairs")?
+            .iter()
+            .all(|p| p["status"] == "completed")
+        {
+            "completed"
+        } else {
+            "failed"
+        });
+        cases.push(record);
+    }
+    let completed = cases.iter().all(|case| case["status"] == "completed");
+    let completed_cases: BTreeSet<_> = cases
+        .iter()
+        .filter(|case| case["status"] == "completed")
+        .filter_map(|case| case["case_id"].as_str())
+        .collect();
+    let mut manifest = json!({"schema_version":1,"mode":"single_run","run":{"id":run["id"],"manifest_sha256":common::sha256_file(&run_root.join("run.json"))?},"default_pair":if pair_ids.contains(&"reference") {"reference"} else {"input"},"execution_status":if completed {"completed"} else {"failed"},"evaluation_status":"not_evaluated","protocol":suite["protocol"],"protocol_digest":documents::protocol_digest(&suite)?,"selection":run["selection"],"condition_differences":[],"cases":cases,"findings":findings,"summary":{"selected_cases":run["selection"]["case_ids"].as_array().map_or(0,Vec::len),"completed_cases":completed_cases.len(),"required_rules":0,"unavailable_rules":0,"protected_failures":0,"worst_case_findings":[]},"artifacts":evidence.values()});
+    runner::finalize(&root, "comparison.json", &mut manifest)?;
+    let mut result = json!({"schema_version":1,"command":"compare","execution_status":manifest["execution_status"],"evaluation_status":"not_evaluated","artifact":root.join("comparison.json"),"comparison_id":manifest["id"]});
+    result["summary"] = manifest["summary"].clone();
+    result["condition_differences"] = manifest["condition_differences"].clone();
+    if !completed {
+        result["errors"] = json!([{"code":"measurement_failure","boundary":"comparison","message":"One or more selected pairs failed; inspect comparison evidence"}]);
+    }
+    Ok((result, i32::from(!completed)))
 }
 
 #[cfg(test)]

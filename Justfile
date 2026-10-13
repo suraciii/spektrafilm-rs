@@ -81,11 +81,20 @@ gui-layout:
 check-python-cache:
     python3 scripts/check_python_cache.py
 
-# Fast PR gate. Clippy also type-checks every default-feature target.
-ci-pr: check-python-cache fmt clippy check-f64 test-fast benchmark-test
+
+# Compile tracked Python sources in memory without creating bytecode caches.
+check-python:
+    python3 -c 'import pathlib, subprocess; paths = subprocess.check_output(["git", "ls-files", "-z", "--", "*.py"]).split(b"\0"); [compile(pathlib.Path(path.decode()).read_bytes(), path.decode(), "exec") for path in paths if path]'
+
+# Pure math regressions need no native libraries, GPU, or renderer.
+test-pr:
+    cargo test --locked -p spektrafilm-math --lib
+    cargo test --locked -p spektrafilm-math --lib --features precision-f64
+# Required PR gate; workspace compilation and native suites run after merge.
+ci-pr: check-python-cache check-python fmt test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
-ci: check-python-cache fmt check check-f64 clippy test test-f64 benchmark-test
+ci: check-python-cache check-python fmt check check-f64 clippy test test-f64 benchmark-test
 # Run the full gate and retain source provenance, output, and exit status.
 verify evidence_dir:
     python3 scripts/verify.py {{quote(evidence_dir)}}

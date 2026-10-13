@@ -369,15 +369,7 @@ impl Runtime {
     ) -> Result<ImageBuf, String> {
         if self.fotufilm.is_some() {
             let output = self.process(image, backend)?;
-            if self
-                .params()
-                .fotufilm
-                .native
-                .get("stage")
-                .and_then(serde_json::Value::as_str)
-                == Some("negative")
-                || self.params().taps.collect.as_deref() == Some("cmy_film")
-            {
+            if self.params().fotufilm_output_is_density() {
                 return Ok(output);
             }
             return Ok(crate::params_builder::resize_for_preview(&output, max_size));
@@ -408,7 +400,6 @@ impl Runtime {
     }
 
     pub fn update(&mut self, params: RuntimeParams) -> Result<(), String> {
-        params.validate()?;
         if params.engine == SimulationEngine::Fotufilm {
             self.fotufilm = Some(crate::fotufilm_engine::FotufilmEngine::new(
                 params,
@@ -435,7 +426,16 @@ impl Runtime {
     }
     /// Return a runtime with updated parameters while retaining the facade state.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
-        self.update(params)?;
+        if params.engine == SimulationEngine::Fotufilm || self.pipeline.is_none() {
+            self.update(params)?;
+        } else {
+            self.pipeline = Some(
+                self.pipeline
+                    .take()
+                    .expect("selected legacy pipeline")
+                    .with_params(params)?,
+            );
+        }
         Ok(self)
     }
 
@@ -486,7 +486,6 @@ impl Runtime {
         if let Some(value) = update.y_filter_neutral {
             params.enlarger.y_filter_neutral = value;
         }
-        params.validate()?;
         let mut film = self
             .pipeline
             .as_ref()
@@ -530,13 +529,20 @@ impl Runtime {
             return crate::telemetry::RenderConfiguration::from_fotufilm(self.params());
         }
         let pipeline = self.pipeline.as_ref().expect("selected legacy pipeline");
-        crate::telemetry::RenderConfiguration::from_runtime(
+        let mut configuration = crate::telemetry::RenderConfiguration::from_runtime(
             &pipeline.params,
             &pipeline.film,
             &pipeline.print,
-        )
+        );
+        configuration.reference = self.reference_provenance().cloned();
+        configuration
     }
 
+    pub fn reference_provenance(&self) -> Option<&crate::digital_reference::ReferenceProvenance> {
+        self.pipeline
+            .as_ref()
+            .and_then(Pipeline::reference_provenance)
+    }
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }

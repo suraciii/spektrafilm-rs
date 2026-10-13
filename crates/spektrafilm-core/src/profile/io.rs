@@ -7,11 +7,14 @@ use super::{Profile, ProfileError, development_time_index, validate_profile};
 
 /// Load a profile from a JSON file on disk.
 pub fn load_profile(path: &Path) -> Result<Profile, ProfileError> {
-    let file =
-        std::fs::File::open(path).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
-    let reader = std::io::BufReader::new(file);
-    let mut profile: Profile = serde_json::from_reader(reader)
-        .map_err(|e| ProfileError::Parse(path.display().to_string(), e))?;
+    let bytes = std::fs::read(path).map_err(|e| ProfileError::Io(path.display().to_string(), e))?;
+    load_profile_bytes(&bytes, &path.display().to_string())
+}
+
+/// Parse and resolve exactly the bytes whose content identity a caller retains.
+pub fn load_profile_bytes(bytes: &[u8], source: &str) -> Result<Profile, ProfileError> {
+    let mut profile: Profile =
+        serde_json::from_slice(bytes).map_err(|e| ProfileError::Parse(source.to_owned(), e))?;
     validate_profile(&profile)?;
     // Resolve the default base+fog column so the field is usable straight
     // after load. `resolve_for_render` re-selects it for B&W development-time

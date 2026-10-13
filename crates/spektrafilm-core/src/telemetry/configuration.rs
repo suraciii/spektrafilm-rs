@@ -249,6 +249,7 @@ pub enum PositiveInterpretation {
     Density,
     Separable,
     Coupled,
+    DigitalReference,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +301,12 @@ pub struct RenderConfiguration {
     pub finish: String,
     #[serde(default = "default_finish_strength")]
     pub finish_strength: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<crate::digital_reference::ReferenceProvenance>,
+    #[serde(default)]
+    pub reference_exposure_ev: f64,
+    #[serde(default)]
+    pub reference_balance_ev: [f64; 3],
     pub gamut_algorithm: GamutAlgorithm,
     pub grain: GrainConfiguration,
     pub spatial: SpatialConfiguration,
@@ -312,10 +319,36 @@ fn default_finish_strength() -> f64 {
 impl RenderConfiguration {
     /// Source settings are preserved verbatim; legacy spatial flags describe host additions only.
     pub fn from_fotufilm(params: &RuntimeParams) -> Self {
+        let density = params.fotufilm_output_is_density();
+        let inject = params.taps.inject.as_deref().unwrap_or("rgb_in");
+        let collect = params.taps.collect.as_deref().unwrap_or("rgb_out");
+        let passthrough = inject == collect;
+        let stage = params
+            .fotufilm
+            .native
+            .get("stage")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("full");
+        let source_output = if density {
+            "gross_cmy_record_density"
+        } else if passthrough {
+            "declared_input"
+        } else if inject == "rgb_in" && stage == "texture" {
+            "linear_rec2020"
+        } else {
+            "linear_display_p3"
+        };
+        let source_input = if passthrough {
+            "declared_input"
+        } else if inject == "cmy_film" || stage == "print" {
+            "gross_cmy_record_density"
+        } else {
+            "linear_rec2020"
+        };
         Self {
             engine: crate::params::SimulationEngine::Fotufilm,
             source_configuration: Some(
-                serde_json::json!({"revision":spektrafilm_fotufilm::SOURCE_REVISION,"executor":"cpu","arithmetic":"binary32","request":params.fotufilm,"input":"linear_rec2020","output":"linear_display_p3","geometry":"full_source_then_delivery","stages":"original_source_graph"}),
+                serde_json::json!({"revision":spektrafilm_fotufilm::SOURCE_REVISION,"executor":"cpu","arithmetic":"binary32","request":params.fotufilm,"input":source_input,"output":source_output,"geometry":if density { "full_source" } else { "full_source_then_delivery" },"stages":"original_source_graph"}),
             ),
             workflow_route: WorkflowRoute::Custom,
             film_stock: Some(StockId(bounded_text(&format!(
@@ -325,9 +358,21 @@ impl RenderConfiguration {
             print_stock: None,
             rgb_to_raw_algorithm: RgbToRawAlgorithm::Custom,
             input_color_space: ColorSpaceRole::parse(&params.io.input_color_space),
-            output_color_space: ColorSpaceRole::parse(&params.io.output_color_space),
-            input_transfer_decoded: params.io.input_cctf_decoding,
-            output_transfer_encoded: params.io.output_cctf_encoding,
+            output_color_space: if density {
+                ColorSpaceRole::Custom
+            } else if passthrough {
+                ColorSpaceRole::parse(&params.io.input_color_space)
+            } else {
+                ColorSpaceRole::parse(&params.io.output_color_space)
+            },
+            input_transfer_decoded: !passthrough
+                && source_input == "linear_rec2020"
+                && params.io.input_cctf_decoding,
+            output_transfer_encoded: if passthrough && !density {
+                params.io.input_cctf_decoding
+            } else {
+                !density && params.io.output_cctf_encoding
+            },
             enlarger_lut_requested: false,
             scanner_lut_requested: false,
             scan_output: ScanOutput::DirectScan,
@@ -341,6 +386,9 @@ impl RenderConfiguration {
             setup_mode: "source_scene_metering".into(),
             finish: "source".into(),
             finish_strength: 1.0,
+            reference: None,
+            reference_exposure_ev: 0.0,
+            reference_balance_ev: [0.0; 3],
             gamut_algorithm: GamutAlgorithm::Off,
             grain: GrainConfiguration {
                 active: false,
@@ -393,6 +441,9 @@ impl RenderConfiguration {
                     PositiveInterpretation::Separable
                 }
                 crate::params::PositiveInterpretation::Coupled => PositiveInterpretation::Coupled,
+                crate::params::PositiveInterpretation::DigitalReference => {
+                    PositiveInterpretation::DigitalReference
+                }
             },
             receiver: ReceiverConfiguration {
                 profile: receiver.profile.as_str().to_string(),
@@ -403,6 +454,9 @@ impl RenderConfiguration {
             setup_mode: params.scanner.auto_setup.as_str().to_string(),
             finish: params.scanner.finish.as_str().to_string(),
             finish_strength: params.scanner.finish_strength,
+            reference: None,
+            reference_exposure_ev: params.scanner.reference_exposure_ev,
+            reference_balance_ev: params.scanner.reference_balance_ev,
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
                 active: grain_active,

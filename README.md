@@ -34,7 +34,7 @@ On Windows, run `scripts/install_halide.ps1 -Prefix C:\deps\halide-21` and set `
 
 All platform packages copy the full Fotufilm preparation module, prior, stocks and notices through the existing `data/` bundle. They include Halide's recursive shared-library dependencies and official license text. Users do not need Swift. Halide compiles an original CPU graph on first use; cold JIT compilation cannot be interrupted. Cancellation is checked between spatially complete native strip calls and prevents canceled output publication.
 
-The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check and an up-to-date head branch. Refresh a stale branch by merging `origin/main-0.3.4` into it and pushing; the `PR lightweight` check runs again on the refreshed head. Inspect a run with `gh run view <run-id>` and its per-step timings with `gh api repos/suraciii/spektrafilm-rs/actions/jobs/<job-id> --jq '.steps[] | "\(.name): \(.started_at) -> \(.completed_at)"'`. PR CI runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run `Main full verification` through `just verify`. The [test architecture](eng/testing.md) defines layer responsibilities, test design rules, and the gate cost budgets. Main verification retains workspace build artifacts and dependencies in commit-keyed caches for PR reuse. An active main verification is not canceled by a newer push; pending runs coalesce to the newest commit.
+The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check and an up-to-date head branch. Refresh a stale branch by merging `origin/main-0.3.4` into it and pushing; the `PR lightweight` check runs again on the refreshed head. Inspect a run with `gh run view <run-id>` and its per-step timings with `gh api repos/suraciii/spektrafilm-rs/actions/jobs/<job-id> --jq '.steps[] | "\(.name): \(.started_at) -> \(.completed_at)"'`. PR CI runs `just ci-pr` through `just verify-pr`: Python syntax and bytecode hygiene, workspace formatting, and pure math tests in both precisions. Its separate math-only cache needs no native setup. Pushes to `main-0.3.4` and manual dispatch run workspace compilation, Clippy, and the full suite as `Main full verification` through `just verify`, and refresh the math cache for subsequent PRs. Merge once the required PR check passes; full pipeline failures are separate integration repairs. The [test architecture](eng/testing.md) defines layer responsibilities, test design rules, and the gate cost budgets. An active main verification is not canceled by a newer push; pending runs coalesce to the newest commit.
 
 Pushes to `main-0.3.4` also run the three-platform release workflow: workspace tests, native builds, package smoke, Linux Python parity, and LUT acceptance. Version tags and manual release dispatch retain this workflow. Release runs use one concurrency group per ref. An active release run is not canceled by a newer commit; pending runs coalesce to the newest commit.
 
@@ -225,7 +225,9 @@ Use release builds when exercising the original engine. Its WASI preparation run
     --backend cpu --seed 1179208781 --data-dir data
 ```
 
-Native `stage="negative"` returns gross C/M/Y optical record densities. Save and Export require unencoded 32-bit TIFF or EXR. The viewer shows a labeled transmission preview without changing retained density samples. Density output preserves source geometry; crop and resize belong after the print or RGB readout stage. Source stages and precision follow the [film-chain contract](specs/film-chain/spec.md#original-fotufilm-engine).
+Native `stage="negative"` and the `cmy_film` collection tap return gross C/M/Y optical record densities. Save and Export require unencoded 32-bit TIFF or EXR. The viewer shows a labeled transmission preview without changing retained density samples. Density output preserves source geometry, including with preview settings enabled; crop and resize belong after the print or RGB readout stage. Collecting `rgb_in` retains the declared input color space and transfer state for display and saving. Source stages and precision follow the [film-chain contract](specs/film-chain/spec.md#original-fotufilm-engine).
+
+`--fotufilm-native` accepts inline JSON objects and arrays, including nested objects. Unknown fields in structured options are rejected before rendering. Input declarations, parameter-source occurrence numbers, and RAW declaration rejection follow the shared CLI parameter contract.
 
 To rebuild the bundled preparation module, run `scripts/build_fotufilm_preparation.sh` with the official Swift 6.4.0 compiler, its matching WASI SDK, and `llvm-objcopy` installed. Set `FOTUFILM_SWIFT_COMPILER` or `FOTUFILM_WASM_OBJCOPY` when those binaries are not on `PATH`, and `FOTUFILM_PREPARATION_BUILD_DIR` to keep build artifacts outside the checkout. The source package and manifests are in `crates/spektrafilm-fotufilm/vendor/fotufilm/preparation/`. Application users need neither Swift nor the SDK.
 
@@ -251,6 +253,16 @@ The look's `negative_to_positive` tone assumes scene-linear input. `positive_con
 
 This command bypasses printing. `negative_to_positive` reads each dye record's density like a narrowband lab scanner, inverts it through that record's own profile density curve, and applies a print-like logistic tone curve. A record therefore never borrows density from the others, so saturated negatives do not clip one channel. The inverse is profile-derived and monotone, with finite endpoint slopes beyond the curves; the logistic tone keeps output within the paper range. `scanner.positive_density_ev` controls brightness in stops; `scanner.positive_balance_ev` supplies independent RGB exposure offsets (zero renders a grey lit by the film's reference illuminant neutral); `scanner.positive_contrast` and `scanner.positive_dmax` control the tone curve. Scanner lens blur acts on transmitted light before the density reading. `scanner.positive_interpretation` selects the method: `density` (the default) reads record densities as described here and ignores `scanner.receiver_profile`; `separable` and `coupled` interpret the receiver capture instead, `coupled` through a three-channel inverse sampled from the resolved film, receiver, and output response. These controls apply to direct negative-film scans and the `input > convert-film > scan` route; print-paper and scan-minus-base routes retain their existing route semantics. The displayed result is an interpretation of the film density, not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, scan illuminant and scan settings fixed when comparing results.
 For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering (`camera.auto_exposure=false`) and supply input transfer/color interpretation and the matching `film_render.convert.scan_illuminant`; convert-film estimates the record densities that the negative converter reads.
+
+Digital Reference is an optional modeled conversion for simulated negative film on `input > film > scan`. It uses a common spectral receiver and fixed positive response, preserving film-record and dye differences through a shared output convention. Select both `scanner.positive_interpretation=digital_reference` and `scanner.receiver_profile=digital_reference`; keep `scanner.auto_setup=off`, identity black/white points, and the reconstruction controls at their defaults. The GUI pairs these selections under **Digital Reference (modeled)** and shows the fixed **Reference Exposure** placement. `scanner.reference_exposure_ev` adjusts output exposure in stops; `scanner.reference_balance_ev` supplies independent linear-sRGB RGB gains before output-space conversion. Both default to zero. Optional `scanner.finish=lab_scan` applies after conversion. See the [Digital Reference contract](specs/film-chain/digital-reference.md) for scope and the [reference model](specs/film-chain/digital-reference-design.md#numerical-reference-model) for spectral sources, normalization, response, and provenance.
+
+```bash
+./target/release/spektrafilm-f64 process input.tif -o reference.tif \
+    --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
+    --film kodak_portra_400 --scan-film --scan-output negative_to_positive \
+    --set scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference \
+    --backend cpu --data-dir data
+```
 
 Film scans expose per-channel `scanner.black_point` and `scanner.white_point` for slide film and converted negatives. Defaults `[0,0,0]` and `[1,1,1]` preserve the existing rendering. Each channel requires `0 <= black_point < white_point <= 1`. Points stretch the shared relative log-exposure range for negatives or the shared scanned-density range for slides; values outside the points continue the same map without clipping. On slides, non-default points run after scanner lens blur and before white/black correction without changing that correction's references. Paper scans and direct negative captures ignore these points. See [film-scan points](specs/film-chain/spec.md#film-scan-black-and-white-points) for the range definitions.
 
@@ -455,6 +467,8 @@ The external `spektrafilm-bench` CLI renders immutable evidence, compares versio
 
 Build the native benchmark tools. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
 
+The generated grain probe selects `procedural` in custom Noise mode with three explicit seeds. Generate fresh fixtures for the current renderer; suites generated before the engine rename still contain the rejected `v2` selector.
+
 ```bash
 just build-f64
 just build-benchmark
@@ -467,6 +481,10 @@ just build-benchmark
 ./target/release/spektrafilm-bench run \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
+    --dry-run --out /tmp/spektrafilm-benchmark-preflight
+./target/release/spektrafilm-bench run \
+    --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
+    --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --out /tmp/spektrafilm-benchmark-baseline
 ./target/release/spektrafilm-bench run \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
@@ -476,17 +494,62 @@ just build-benchmark
     --baseline /tmp/spektrafilm-benchmark-baseline \
     --candidate /tmp/spektrafilm-benchmark-candidate \
     --out /tmp/spektrafilm-benchmark-comparison
+./target/release/spektrafilm-bench inspect \
+    --comparison /tmp/spektrafilm-benchmark-comparison \
+    --case color_chart --region skin --metric delta_e00.p95
 ./target/release/spektrafilm-bench report \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --out /tmp/spektrafilm-benchmark-review
 just benchmark-test
 ```
 
+For a local image, supply a configuration JSON with the same fields as a suite case's `configuration`; its preset and parameter-file paths resolve relative to that JSON. Generate a target independently of fixtures to pin the renderer executable SHA-256, data directory, and backend. Input files, prepared crops, runs, and reports may live anywhere outside the repository. This executable example reuses the generated chart; replace its path and source declaration with your image's actual color interpretation.
+
+```bash
+cat > /tmp/spektrafilm-local-configuration.json <<'JSON'
+{
+  "film": "kodak_gold_200",
+  "paper": "kodak_portra_endura",
+  "route": "input > film > print > scan",
+  "set": ["camera.auto_exposure=false"]
+}
+JSON
+./target/release/spektrafilm-bench target \
+    --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
+    --backend cpu --out /tmp/spektrafilm-local-target.json
+./target/release/spektrafilm-bench validate --kind configuration \
+    --file /tmp/spektrafilm-local-configuration.json
+./target/release/spektrafilm-bench run \
+    --input /tmp/spektrafilm-benchmark-fixtures/chart.png \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --configuration /tmp/spektrafilm-local-configuration.json \
+    --target /tmp/spektrafilm-local-target.json \
+    --out /tmp/spektrafilm-local-run
+./target/release/spektrafilm-bench compare \
+    --run /tmp/spektrafilm-local-run --against input \
+    --out /tmp/spektrafilm-local-comparison
+./target/release/spektrafilm-bench report \
+    --comparison /tmp/spektrafilm-local-comparison \
+    --out /tmp/spektrafilm-local-review
+```
+
+Add `--dry-run` to either run form with a new destination to resolve every selected case and seed without decoding or rendering. It retains `preflight.json`, configurations, and renderer logs; successful preflight reports `execution_status: validated`. Image decoding, device availability, observed geometry, and numerical results remain unchecked. Preflight is separate from completed render evidence and cannot be compared as a run. Ordinary execution repeats the same configuration checks.
+
+`inspect` reads a validated comparison without computing metrics. Repeat `--case`, `--region`, and `--metric` for exact selection; unknown selections report available identities. Its compact records preserve units, domains, unavailable reasons, and evidence links relative to `artifact_base`. Per-seed/pair `measurements` and cross-seed `seed_measurements` remain separate. The retained comparison's execution and evaluation states remain visible, including failures; inspection never produces a universal appearance score.
+
+Use `--input-kind raw` for camera RAW and omit the raster color flags. Set dedicated RAW options in the configuration's `raw` object. The run retains the real renderer's decoded input with the same crop and resize as simulation, along with the original source dimensions. Set simulation crop and resize through the configuration's existing `set_files` or `set` carriers; fixed review regions use completed-render coordinates. An externally prepared crop is a separate input; optional `--preparation FILE` records its original path, SHA-256, and descriptive operations without executing them.
+
+Add `--reference FILE --reference-info FILE` to retain a local reference. Reference info uses the existing reference declaration without `path` and `sha256`; it must declare color, provenance, processing, and scope. Then select `compare --run DIRECTORY --against reference` or `--against both`. Input/simulation reports describe processing changes; reference/simulation reports describe applicable distances to the reference. Visual and regional references remain separate native views, with explicit limits on pixelwise measurements. Both-pair reports open reference/simulation and provide a selector for input/simulation. No single-run comparison claims acceptance.
+
+The decoded input route fixes its taps to RGB input/output, so simulation diagnostic taps cannot relabel film density as source RGB. Comparisons retain source configuration, decode metadata, and observed execution diagnostics. Reports preserve the comparison snapshot and its permitted dependency paths and hashes, allowing review after the original run and comparison directories are removed.
+
 `just benchmark-test` includes public CLI regressions for failed renders, nonfinite masters, evidence integrity, mask populations, RAW declaration applicability, policy qualification, and measurement availability. These tests use isolated retained artifacts and do not require network access or an external renderer.
 
-Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time, prioritizes `color_chart_30mp` when present, and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows synchronized baseline/candidate imagery, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither a renderer nor the original run directories. Reference artifacts with unknown or denied redistribution permission remain omitted and identified in the report manifest.
+Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time in request order and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows the selected comparison pair, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available for aligned pairs. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither the original input files nor the renderer.
 
 The viewer opens in split mode: drag the divider on the image, use the range control, or move the focused divider with arrow keys (Shift for larger steps; Home/End for endpoints). Display copies use 16-bit RGB sRGB PNG without dither. Fit views resize floating samples before 16-bit quantization; native 100%, 200%, and 400% views switch to the full-size image, and detail crops preserve its 16-bit samples. Browser and screen precision still limit the displayed result. Preview resampling never feeds measurements.
+
+Case, pair, and region links preserve exact identities in the report fragment, for example `#case=color_chart&seed=0&pair=baseline%2Fcandidate&region=skin`. Opening or reloading a link selects the evidence and expands its requested detail offline. Detail buttons expose their names and expanded state to keyboard and browser agents. Invalid locations display an error instead of unrelated imagery.
 
 Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied policy is exploratory and cannot qualify a release. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
 
@@ -610,7 +673,12 @@ Feature ownership stays inside the existing crates:
 
 - `spektrafilm-model/src/`: `grain/{v1,v2}.rs`, `halation/`, `diffusion/`, `couplers/`, and `glare/` own their models and numerical tests; `optics/` owns shared physical blur, unsharp masking, and highlight boost.
 - `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate; serialized JSON fields are unchanged.
-- `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. Shared blur infrastructure stays in `blur/`; `film_chain.rs` owns resident orchestration and its resource lifetimes, while `mod.rs` retains device setup and shared dispatch.
+- `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. `blur/` owns Gaussian FIR weight generation and its shared uniform layout; `film_chain.rs` owns resident orchestration and its resource lifetimes, while `mod.rs` retains device setup and shared dispatch.
+- `spektrafilm-cli/src/process.rs` owns process arguments, invocation setup, preflight, rendering, and publication; `main.rs` retains command dispatch and shared data selection.
+- `spektrafilm-core/src/lut_baker/bundle.rs` owns canonical topology stage roles, taps, suffixes, and print sharing. Baking, QA, and OCIO consume those descriptors, including magazine final-stage roles.
+- `spektrafilm-core/src/pipeline_calibration.rs` applies input-gamut remapping at one boundary after method-specific spectral LUT construction; the matrix-only Mallett path stays separate.
+- `spektrafilm-gui/src/main.rs` owns contiguous parameter-revision/dirty transitions, with a separate calibration-invalidating transition. State restoration retains its explicit ordering around profile and viewer updates.
+- `spektrafilm-benchmark/src/documents.rs` owns authored-document validation and shared document helpers; `documents/evidence.rs` owns generated run/comparison validation, and `documents/masks.rs` owns render/reference geometry-mask decoding with their distinct acceptance rules.
 
 Canonical Rust paths include `spektrafilm_model::grain::v1`, `spektrafilm_model::grain::v2`, and `spektrafilm_core::params::grain::GrainParams`; the former flat module paths have been removed.
 

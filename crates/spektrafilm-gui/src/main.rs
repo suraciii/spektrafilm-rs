@@ -545,6 +545,16 @@ impl App {
         state::GuiState::from_runtime(&self.params, &self.film_name, &self.print_name, &extras)
     }
 
+    fn mark_parameters_changed(&mut self) {
+        self.parameter_revision = self.parameter_revision.wrapping_add(1);
+        self.dirty = true;
+    }
+
+    fn mark_parameters_changed_invalidating_calibration(&mut self) {
+        self.calibration_epoch = self.calibration_epoch.wrapping_add(1);
+        self.mark_parameters_changed();
+    }
+
     fn apply_state(&mut self, state: state::GuiState) -> Result<()> {
         let mut params = state.runtime_params()?;
         let film = profile::load_profile_by_name(&self.data_dir, state.film())?;

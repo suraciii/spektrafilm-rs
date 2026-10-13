@@ -600,9 +600,9 @@ fn find_equals(s: &str) -> Option<usize> {
             }
         } else if c == '"' {
             quote = true;
-        } else if c == '[' {
+        } else if matches!(c, '[' | '{') {
             depth += 1;
-        } else if c == ']' {
+        } else if matches!(c, ']' | '}') {
             depth -= 1;
         } else if c == '=' && depth == 0 {
             return Some(i);
@@ -625,12 +625,12 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
             }
         } else if c == '"' {
             quote = true;
-        } else if c == '[' {
+        } else if matches!(c, '[' | '{') {
             depth += 1;
-        } else if c == ']' {
+        } else if matches!(c, ']' | '}') {
             depth -= 1;
             if depth < 0 {
-                return Err("unbalanced array".into());
+                return Err("unbalanced array or object".into());
             }
         } else if c == ',' && depth == 0 {
             out.push(&s[start..i]);
@@ -638,7 +638,7 @@ fn split_top_level(s: &str) -> Result<Vec<&str>, String> {
         }
     }
     if quote || depth != 0 {
-        return Err("unterminated string or array".into());
+        return Err("unterminated string, array or object".into());
     }
     out.push(&s[start..]);
     Ok(out)
@@ -1037,6 +1037,22 @@ mod tests {
         assert_eq!(params.random_seed, 7);
         assert_eq!(params.film_render.grain.particle_scale_layers, [9., 8., 7.]);
         assert_eq!(params.neutral_print_filters_protected, [true, false, true]);
+    }
+
+    #[test]
+    fn inline_native_objects_preserve_nested_commas_and_following_assignments() {
+        let edits = ParameterEdits::parse(
+            r#"fotufilm.native.grade={"shadows":{"balanceX":0,"balanceY":0,"level":0},"midtones":{"balanceX":1,"balanceY":2,"level":3},"highlights":{"balanceX":4,"balanceY":5,"level":6}},fotufilm.native.format={"name":"comma, equals= name","frameHeightMM":24},camera.auto_exposure=false"#,
+        ).unwrap();
+        let mut params = RuntimeParams::default();
+        edits.apply(&mut params).unwrap();
+        assert_eq!(params.fotufilm.native["grade"]["midtones"]["level"], 3);
+        assert_eq!(params.fotufilm.native["grade"]["highlights"]["balanceY"], 5);
+        assert_eq!(
+            params.fotufilm.native["format"]["name"],
+            "comma, equals= name"
+        );
+        assert!(!params.camera.auto_exposure);
     }
 
     #[test]

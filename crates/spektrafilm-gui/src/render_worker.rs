@@ -155,14 +155,7 @@ impl RenderWorker {
                         }
                         let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
                         let runtime_params = pipeline_template.params();
-                        let density = runtime_params.engine
-                            == spektrafilm_core::params::SimulationEngine::Fotufilm
-                            && runtime_params
-                                .fotufilm
-                                .native
-                                .get("stage")
-                                .and_then(serde_json::Value::as_str)
-                                == Some("negative");
+                        let density = runtime_params.fotufilm_output_is_density();
                         let t_scale = Instant::now();
                         let input_prepare = observation.scope(
                             "input_prepare",
@@ -215,15 +208,15 @@ impl RenderWorker {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let output_space = if density {
-                            spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+                        let (output_space, output_encoding) = if density {
+                            (spektrafilm_fotufilm::RECORD_DENSITY_SPACE, false)
                         } else {
-                            &runtime_params.io.output_color_space
+                            runtime_params.rgb_output_interpretation()
                         };
                         let display_result = display::output_display_raster(
                             &output,
                             output_space,
-                            !density && runtime_params.io.output_cctf_encoding,
+                            output_encoding,
                             request.display_enabled,
                             request.display_profile.as_deref(),
                             runtime_params.settings.preview_max_size as usize,
@@ -238,8 +231,7 @@ impl RenderWorker {
                         Ok(RenderResult {
                             source_metadata: request.source_metadata,
                             output_color_space: output_space.to_owned(),
-                            output_cctf_encoding: !density
-                                && runtime_params.io.output_cctf_encoding,
+                            output_cctf_encoding: output_encoding,
                             output,
                             preview,
                             display_status,

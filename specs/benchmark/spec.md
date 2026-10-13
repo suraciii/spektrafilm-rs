@@ -28,6 +28,8 @@ A **candidate** is a run evaluated against a baseline or a reference.
 
 A **reference** is external evidence with a declared source, processing history, and permitted comparison scope.
 
+A **simulation** is a rendered result of the selected input and configuration. A **comparison pair** identifies the left and right image roles and the evidence that permits their comparison.
+
 A **region** is a named area or mask in a declared image coordinate system. A corresponding scene region is not necessarily a pixel-aligned region.
 
 A **comparison** contains measurements between identified results, applicability decisions, and findings.
@@ -39,6 +41,20 @@ A **finding** identifies a case, region, measurement, decision, and inspectable 
 A **review report** presents an existing comparison without changing its measurements or decisions.
 
 ## Evaluation tracks
+
+### Local input and simulation
+
+The benchmark must accept a user-selected local raster or RAW file without a built-in chart identity or fixture layout. An optional local reference must remain independent of the simulation input. Large input, prepared-image, run, and report assets must remain outside the source repository.
+
+Single-image execution must produce the same case and run contracts as suite execution. A source-to-simulation comparison must report processing changes. A reference-to-simulation comparison must report distance to the selected reference. Neither comparison must imply acceptance without an applicable policy.
+
+The benchmark must accept externally prepared images as new inputs. It must not infer the original framing, exposure, or film scale of such an image. Optional preparation provenance must identify the original dependency and operations without executing them.
+
+Simulation crop and resize must use the renderer's case-owned parameters and preserve its metering and spatial-scale semantics. The benchmark must not implement another simulation crop or transform engine. Measurement and review regions must be extracted from completed results. A cropped simulation must remain identified separately from a detail crop.
+
+A single-run comparison must support input-to-simulation, reference-to-simulation, or both pairs. Raster and RAW input comparisons must use an observed floating source result from the renderer's input route with the same decoding and geometry. An input-route result must remain labeled as decoded input, not an alternative film simulation.
+
+Reference correspondence must use the existing reference scopes. Equal image dimensions must not establish correspondence. Visual references must remain viewable without pixelwise scores. Region correspondence and frozen geometric transforms must not alter simulation input. Warped reference copies must remain separate from native grain and sharpness evidence.
 
 ### Version regression
 
@@ -112,12 +128,12 @@ A review report must work offline with relative local artifact links. Report gen
 
 The report must show source input, baseline, candidate, and a reference when applicable. It must label each role, rendering configuration, geometry, and reference limitation. Different scene captures must not be presented as exact A/B correspondence.
 
-The report must provide synchronized pan and zoom for pixel-aligned A/B images. It must support manual A/B alternation and default to a split view with a directly draggable divider. The divider must also support a range control and keyboard movement. An unaligned reference must use labeled side-by-side views instead of an exact-match slider.
+The report must provide synchronized pan and zoom for pixel-aligned A/B images. It must support manual A/B alternation and default to a split view with a directly draggable divider. The divider must also support a range control and keyboard movement. An unaligned reference must use labeled side-by-side views instead of an exact-match slider and identify each crop's left and right dimensions independently. A full-screen control must be available for the selected image view and remain keyboard operable. Narrow layouts must not introduce horizontal page overflow.
 
-Detail sections must include fixed semantic regions and automatically selected difference regions. Each region must have a full-image locator, its exact coordinates, its selection method, matching A/B crops, applicable findings, and individual image links.
+Detail sections must include fixed semantic regions and automatically selected difference regions. User-selected crops and automatically selected difference crops must appear as directly clickable thumbnails below the main view. Activating a crop must update the large image and expose that region's full-image locator, exact coordinates, selection method, matching A/B crops, applicable findings, and individual image links. When no crop is available, the report must show an explicit empty state rather than a broken control.
 
 Native detail must map one source image pixel to one device pixel at 100%. The viewer must account for device pixel ratio. The report must also offer 200% and 400% nearest-neighbor views. A fit-to-container view must not be labeled 100%.
-A generated human review report SHOULD open with one selected case and seed at a time. The first case SHOULD be `color_chart_30mp` when present, followed by accessible navigation for every other case and seed, including failures. The initial view SHOULD show the synchronized baseline/candidate imagery, a short retained-condition change summary, and at most four rounded full-image metrics with their units, domains, and direction. Sources, references, difference-map metadata, curves, full measurements, execution configurations, aggregate results, findings, and detail-region metadata SHOULD remain folded supporting evidence. This hierarchy keeps the default report short while preserving every retained artifact and failure.
+A generated human review report must open with the selected case and seed's image-first main view in request order, followed by accessible navigation for every other case and seed, including failures. A single-run report must open input/simulation when no reference pair is selected and reference/simulation when that pair is selected. Reports with multiple pairs must provide a pair selector. Version reports must open baseline/candidate. Labels, measurements, difference maps, and detail crops must belong to the selected pair. The initial view must show the selected imagery before supporting evidence. It SHOULD include a short retained-condition summary and at most four rounded full-image metrics with their units, domains, and direction. Supporting evidence SHOULD remain folded.
 
 Detail crops must use lossless files. Reduced full-image previews may use lossy files if their role is explicit. Previews must not replace the numerical masters or lossless detail evidence.
 
@@ -125,7 +141,7 @@ Display copies must use 16-bit RGB sRGB PNG without quantization dither. Fit pre
 
 Comparisons with different source resolutions must separate a declared common observation scale from native-pixel inspection. Every resampling operation must be identified. Registered color-comparison copies must remain separate from unwarped grain and sharpness inspection copies.
 
-Difference maps must show their units, scale, clipping, and any amplification factor. Comparable panels must use the same scale. A per-image automatically stretched map must not be presented as a comparable magnitude scale. Normal images must remain available beside difference maps.
+Difference maps must show their units, scale, clipping, and amplification factor, and provide a distinct difference-map mode alongside normal images. Comparable panels must use the same scale. A per-image automatically stretched map must not be presented as a comparable magnitude scale. Normal images must remain available beside difference maps.
 
 Automatic regions must identify their ranking measurement and merge overlapping detections. They must not displace fixed critical regions. Ties and region ordering must be deterministic. The report must retain rejected or unavailable comparisons rather than hiding them behind attractive examples.
 
@@ -141,7 +157,15 @@ Source attribution and redistribution restrictions must accompany external refer
 6. Supply an unaligned scene reference and a tone-matched reference. Enforce each reference's allowed measurement scope.
 7. Request GPU rendering and observe CPU execution. Retain the actual route and prevent an unqualified GPU result.
 8. Fail a required case or measurement. Preserve its evidence and prevent a qualified gate pass. Reject an empty suite.
-9. Generate a review from existing results with the renderer unavailable. Inspect full-image location, synchronized native detail, lossless crops, and labeled difference maps on desktop and narrow layouts.
+9. Generate a review from existing results with the renderer unavailable. Open directly on the selected images, activate user-selected and automatic crop thumbnails, inspect full-image location and synchronized native detail, toggle labeled difference maps and full-screen mode, and retain lossless crops on desktop and narrow layouts without horizontal page overflow.
 10. Reuse a run and then change a renderer or data dependency. Reject stale cached evidence. Refuse replacement of an existing completed result.
 11. Evaluate a protected skin region and an expected highlight change. Keep the skin failure visible despite the expected change.
 12. Validate machine documents and execute CLI examples through the implemented interface. Reject unknown fields, invalid bounds, nonfinite values, unsafe artifact paths, and missing evidence references.
+13. Run an arbitrary local raster and RAW input without a suite document. Compare decoded input with simulation and inspect their observed matching geometry and lossless detail.
+14. Supply a local reference and select input, reference, and both comparison pairs. Preserve pair-specific roles, measurements, maps, and crops. A visual-only or regional reference must not gain pixelwise correspondence from equal dimensions.
+15. Run an externally prepared crop and a renderer crop as distinct cases. Preserve their input identities and renderer-resolved geometry; keep full-render detail crops separate.
+16. Build and inspect a multi-pair offline report with original input files and renderer unavailable. Preserve request order and switch pairs on desktop and narrow layouts.
+17. Preflight a valid suite and an invalid renderer parameter across multiple seeds. Preserve resolved configurations and grouped failures without decoding, rendering, or publishing a completed run. Execute the valid configuration and compare its resolved parameters with preflight.
+18. Inspect a retained version or single-run comparison after original runs are unavailable. Filter exact case, region, and metric identities; preserve unavailable reasons and separate per-seed observations from seed aggregates.
+19. Generate and validate a pinned target independently of fixtures. Reject existing output and changed executable identity; use the target with a local input.
+20. Open a report location for a case, seed, pair, and region offline. Reload and use browser history on desktop and narrow layouts; activate detail controls by keyboard and expose invalid locations clearly.

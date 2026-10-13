@@ -242,13 +242,49 @@ func validateAlignmentKeys(_ data: Data) throws {
     }
     let allowed: Set<String> = ["stage", "seed", "frameIndex", "textureStages", "sceneIlluminantKelvin", "sceneIlluminantChromaticity", "sceneIlluminantSpectrum", "layeredTransport", "halationModel", "scalars", "flags", "arrays", "whiteBalance", "grade", "printer", "receiverBands", "diffusionFilter", "grainModel", "adjacencyModel", "enlarger", "digitalReference", "paper", "negativeViewing", "gradeSpace", "lensFilters", "format", "filmGrain", "printFinish", "vectors", "scanReading", "unexposedEdge"]
     if let key = native.keys.first(where: { !allowed.contains($0) }) { throw AlignmentFailure("Unknown alignment key: \(key)") }
-    let objects: [String: Set<String>] = ["format": ["name", "frameHeightMM", "frameAspectRatio", "thicknessMM", "refractiveIndex"],
-        "filmGrain": ["layers", "colour", "size", "softness"], "printFinish": ["gains", "highlights", "shadows", "saturation", "vibrance"],
-        "lensFilters": ["filters", "compensation", "lensFrontReflectance"], "whiteBalance": ["kelvin", "tint"],
-        "printer": ["lampKelvin", "exposureEV", "magenta", "yellow"], "receiverBands": ["red", "green", "blue"]]
+    // These keys mirror the original Codable stored properties; typed decoding checks values.
+    let objects: [String: Set<String>] = [
+        "format": ["name", "frameHeightMM", "frameAspectRatio", "thicknessMM", "refractiveIndex"],
+        "filmGrain": ["layers", "colour", "size", "softness"],
+        "printFinish": ["gains", "highlights", "shadows", "saturation", "vibrance"],
+        "lensFilters": ["filters", "compensation", "lensFrontReflectance"],
+        "whiteBalance": ["kelvin", "tint"],
+        "printer": ["lampKelvin", "exposureEV", "magenta", "yellow"],
+        "receiverBands": ["red", "green", "blue"],
+        "grade": ["shadows", "midtones", "highlights"],
+        "scanReading": ["border", "gains"],
+        "unexposedEdge": ["left", "right", "top", "bottom", "carrier", "fNumber", "sceneHighlightStops", "sceneChannelMedians", "sceneToneStops"],
+        "diffusionFilter": ["id", "name", "interactedFraction", "albedo", "particleRadiusUM", "sizeSpread", "substrate", "coating"],
+        "layeredTransport": ["revision", "kind", "constructionID", "wavelengthsNM", "layers", "frontIndex", "rearIndex", "rearReflectance", "rearPlateReflectance", "recordDepthMM", "angularExponent", "captureProbability", "returnedToDirect", "coreSigmaMM"]
+    ]
+    func check(_ value: Any?, keys: Set<String>, path: String) throws {
+        if let object = value as? [String: Any], let key = object.keys.sorted().first(where: { !keys.contains($0) }) {
+            throw AlignmentFailure("Unknown \(path) key: \(key)")
+        }
+    }
     for (field, keys) in objects {
-        if let object = native[field] as? [String: Any], let key = object.keys.first(where: { !keys.contains($0) }) {
-            throw AlignmentFailure("Unknown alignment.\(field) key: \(key)")
+        try check(native[field], keys: keys, path: "alignment.\(field)")
+    }
+    if let grade = native["grade"] as? [String: Any] {
+        for band in ["shadows", "midtones", "highlights"] {
+            try check(grade[band], keys: ["balanceX", "balanceY", "level"], path: "alignment.grade.\(band)")
+        }
+    }
+    if let diffusion = native["diffusionFilter"] as? [String: Any] {
+        try check(diffusion["substrate"], keys: ["a", "b"], path: "alignment.diffusionFilter.substrate")
+    }
+    if let stack = native["lensFilters"] as? [String: Any], let filters = stack["filters"] as? [Any] {
+        for (index, filter) in filters.enumerated() {
+            let path = "alignment.lensFilters.filters[\(index)]"
+            try check(filter, keys: ["id", "name", "internalTransmittance", "substrate", "coating"], path: path)
+            if let object = filter as? [String: Any] {
+                try check(object["substrate"], keys: ["a", "b"], path: "\(path).substrate")
+            }
+        }
+    }
+    if let transport = native["layeredTransport"] as? [String: Any], let layers = transport["layers"] as? [Any] {
+        for (index, layer) in layers.enumerated() {
+            try check(layer, keys: ["id", "thicknessMM", "refractiveIndex", "absorptionPerMM"], path: "alignment.layeredTransport.layers[\(index)]")
         }
     }
 }

@@ -15,13 +15,51 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  lightweight:
-    name: ${{ github.event_name == 'pull_request' && 'PR lightweight' || 'Main full verification' }}
+  pr:
+    name: PR lightweight
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    # A warm `just ci` (restored workspace cache) measured 13-16 minutes; the
-    # cap only bounds a cold or evicted cache, and the save step below keeps a
-    # partial `target` after a cancellation so the next run converges.
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 45 }}
+    timeout-minutes: 5
+    env:
+      CARGO_TARGET_DIR: target/pr-lightweight
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Identify Rust cache environment
+        id: rust-environment
+        run: echo "version=$(rustc -V | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Restore lightweight math cache
+        uses: actions/cache@v4
+        with:
+          path: target/pr-lightweight
+          key: pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', 'crates/spektrafilm-math/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', 'crates/spektrafilm-math/Cargo.toml') }}-
+            pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Run fast PR gate with evidence
+        run: just verify-pr "$RUNNER_TEMP/verification"
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: ${{ runner.temp }}/verification
+          if-no-files-found: error
+
+  main:
+    name: Main full verification
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     env:
       OPENBLAS_NUM_THREADS: '1'
       RAYON_NUM_THREADS: '2'
@@ -100,11 +138,21 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: just
-      - name: Run fast PR gate with evidence
-        if: github.event_name == 'pull_request'
-        run: just verify-pr "$RUNNER_TEMP/verification"
+      - name: Restore and refresh lightweight math cache
+        uses: actions/cache@v4
+        with:
+          path: target/pr-lightweight
+          key: pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', 'crates/spektrafilm-math/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-${{ hashFiles('Cargo.lock', 'crates/spektrafilm-math/Cargo.toml') }}-
+            pr-math-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-environment.outputs.version }}-
+      - name: Warm lightweight math cache for subsequent PRs
+        env:
+          CARGO_TARGET_DIR: target/pr-lightweight
+          CARGO_PROFILE_DEV_DEBUG: '0'
+          CARGO_PROFILE_TEST_DEBUG: '0'
+        run: just ci-pr
       - name: Run full main gate with evidence
-        if: github.event_name != 'pull_request'
         run: just verify "$RUNNER_TEMP/verification"
       - name: Save main Rust workspace cache
         # `always()` retains a partially warmed `target` after a cancelled or

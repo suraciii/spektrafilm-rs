@@ -32,8 +32,6 @@ pub enum CalibrationAction {
 pub struct ChangeFlags {
     /// A simulation input changed. Invalidate the applicable pipeline cache.
     pub runtime_changed: bool,
-    /// Display, preview-size, or saving/auto-preview workflow state changed.
-    pub display_changed: bool,
     /// Reload the selected RAW with extras.load_raw before rendering it.
     pub raw_reload: bool,
     /// The preview-size Update button was pressed, independently of auto-preview.
@@ -74,6 +72,20 @@ impl ScanMedium {
 /// Normalize only GUI transitions; imported states and recipes retain validation errors.
 pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medium: ScanMedium) {
     let medium = film_medium.for_route(&params.workflow.route);
+    if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference
+        && (film_medium != ScanMedium::Negative
+            || params.workflow.route != "input > film > scan"
+            || params.scanner.scan_output != "negative_to_positive")
+    {
+        params.scanner.positive_interpretation = PositiveInterpretation::default();
+    }
+    if params.scanner.positive_interpretation != PositiveInterpretation::DigitalReference {
+        if params.scanner.receiver_profile == ReceiverProfile::DigitalReference {
+            params.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
+        }
+        params.scanner.reference_exposure_ev = 0.0;
+        params.scanner.reference_balance_ev = [0.0; 3];
+    }
     if !matches!(medium, ScanMedium::Slide | ScanMedium::Negative) {
         params.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
     }
@@ -151,7 +163,9 @@ pub(crate) fn show(
                 if medium == ScanMedium::None {
                     return;
                 }
-                if matches!(medium, ScanMedium::Slide | ScanMedium::Negative) {
+                if matches!(medium, ScanMedium::Slide | ScanMedium::Negative)
+                    && params.scanner.positive_interpretation != PositiveInterpretation::DigitalReference
+                {
                     flags.runtime_changed |= enum_choice(ui, "receiver profile", &mut params.scanner.receiver_profile, &[
                         (ReceiverProfile::LegacyColorimetric, "legacy colorimetric"),
                         (ReceiverProfile::LabScanApprox, "lab scan (approximate)"),
@@ -176,15 +190,38 @@ pub(crate) fn show(
                     normalize_scanner_selections(params, film_medium);
                 }
                 if positive_route && params.scanner.scan_output == "negative_to_positive" {
-                    flags.runtime_changed |= enum_choice(ui, "Negative conversion method", &mut params.scanner.positive_interpretation, &[
+                    let methods = [
                         (PositiveInterpretation::Density, "density"),
                         (PositiveInterpretation::Separable, "separable"),
                         (PositiveInterpretation::Coupled, "coupled"),
-                    ], "Negative conversion method: density reads the film's own record densities without a receiver capture; separable and coupled interpret the receiver capture.");
-                    flags.runtime_changed |= enum_choice(ui, "scanner auto setup", &mut params.scanner.auto_setup, &[
-                        (ScannerAutoSetup::Off, "off"),
-                        (ScannerAutoSetup::PerFrame, "per_frame"),
-                    ], "Derive scanner exposure, balance, and contrast placement from the full input frame.");
+                        (PositiveInterpretation::DigitalReference, "Digital Reference (modeled)"),
+                    ];
+                    let methods = &methods[..if params.workflow.route == "input > film > scan" { 4 } else { 3 }];
+                    if enum_choice(ui, "Negative conversion method", &mut params.scanner.positive_interpretation, methods,
+                        "Density, separable and coupled reconstruct the selected film. Digital Reference uses a common modeled receiver and fixed positive response to preserve stock differences.") {
+                        if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
+                            let defaults = spektrafilm_core::params::ScannerParams::default();
+                            params.scanner.receiver_profile = ReceiverProfile::DigitalReference;
+                            params.scanner.auto_setup = ScannerAutoSetup::Off;
+                            params.scanner.black_point = [0.0; 3];
+                            params.scanner.white_point = [1.0; 3];
+                            params.scanner.positive_density_ev = defaults.positive_density_ev;
+                            params.scanner.positive_balance_ev = defaults.positive_balance_ev;
+                            params.scanner.positive_contrast = defaults.positive_contrast;
+                            params.scanner.positive_dmax = defaults.positive_dmax;
+                        }
+                        normalize_scanner_selections(params, film_medium);
+                        flags.runtime_changed = true;
+                    }
+                    if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
+                        ui.label("Reference Exposure: 18% neutral (fixed)")
+                            .on_hover_text("Common Kodak Endura spectral receiver sensitivity and fixed Kodak Portra 400 dye basis. One reference exposure and clear-film reading normalize each stock; no frame histogram or selected-film inverse is used.");
+                    } else {
+                        flags.runtime_changed |= enum_choice(ui, "scanner auto setup", &mut params.scanner.auto_setup, &[
+                            (ScannerAutoSetup::Off, "off"),
+                            (ScannerAutoSetup::PerFrame, "per_frame"),
+                        ], "Derive scanner exposure, balance, and contrast placement from the full input frame.");
+                    }
                     flags.runtime_changed |= enum_choice(ui, "scanner finish", &mut params.scanner.finish, &[
                         (ScannerFinish::Neutral, "neutral"),
                         (ScannerFinish::LabScan, "lab_scan"),
@@ -192,13 +229,19 @@ pub(crate) fn show(
                     if params.scanner.finish == ScannerFinish::LabScan {
                         flags.runtime_changed |= numeric(ui, "finish strength", &mut params.scanner.finish_strength, 0.0, 1.0, 0.01, 3, "Scanner finish strength. Zero returns the calibrated scan before finishing.");
                     }
-                    flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Negative conversion brightness offset in stops.");
-                    flags.runtime_changed |= tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, -16.0, 16.0, 0.05, 3, "Independent red, green, and blue negative conversion exposure offsets in stops.");
-                    flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Negative conversion logistic contrast; strictly positive.");
-                    flags.runtime_changed |= numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, 0.0001, 16.0, 0.02, 3, "Negative conversion maximum density; strictly positive.");
+                    if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
+                        flags.runtime_changed |= numeric(ui, "Reference exposure EV", &mut params.scanner.reference_exposure_ev, -16.0, 16.0, 0.05, 3, "Output exposure in stops after the fixed reference response. Zero is neutral; +1 doubles linear light.");
+                        flags.runtime_changed |= tuple(ui, "Reference balance EV", &mut params.scanner.reference_balance_ev, -16.0, 16.0, 0.05, 3, "Independent linear-sRGB red, green and blue output gains in stops after the fixed reference response. All zero is neutral.");
+                    } else {
+                        flags.runtime_changed |= numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, -16.0, 16.0, 0.05, 3, "Negative conversion brightness offset in stops.");
+                        flags.runtime_changed |= tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, -16.0, 16.0, 0.05, 3, "Independent red, green, and blue negative conversion exposure offsets in stops.");
+                        flags.runtime_changed |= numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, 0.0001, 16.0, 0.02, 3, "Negative conversion logistic contrast; strictly positive.");
+                        flags.runtime_changed |= numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, 0.0001, 16.0, 0.02, 3, "Negative conversion maximum density; strictly positive.");
+                    }
                 }
                 if medium == ScanMedium::Slide
-                    || (positive_route && params.scanner.scan_output == "negative_to_positive")
+                    || (positive_route && params.scanner.scan_output == "negative_to_positive"
+                        && params.scanner.positive_interpretation != PositiveInterpretation::DigitalReference)
                 {
                     flags.runtime_changed |= scan_points(ui, &mut params.scanner.black_point, &mut params.scanner.white_point);
                 }
@@ -477,13 +520,12 @@ pub(crate) fn show(
         }
         if section == "Output" {
             flags.runtime_changed |= choice_tip(ui, "output color space", &mut params.io.output_color_space, COLOR_SPACES, "Output color space of the simulation");
-            flags.display_changed |= extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
-            flags.display_changed |= extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");
+            extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
+            extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");
         }
         if section == "Display" {
             if numeric(ui, "preview max size", &mut params.settings.preview_max_size, 128.0, 1000000.0, 128.0, 2, "max size of the long edge of the preview image in pixels") {
                 set_extra(extras, "display", "preview_max_size", Value::from(params.settings.preview_max_size));
-                flags.display_changed = true;
             }
             flags.preview_requested |= ui.button("update").clicked();
         }

@@ -61,7 +61,7 @@
     "stocks/verita200d.json": "b5aebb6a272e12289d4208226cb41aa8d293465869faf303bf0942305451a849",
     "stocks/vision250d.json": "88398b18fdc5b7bb246f7c5cf1613dc8a33eeae0bc6cd7e02f45daef81b770cb",
     "stocks/vision500t.json": "85b370f8c10f5e7952db9aee752c9c5d2068ca97c4e1f315b97b4a6ede6928c4",
-    "preparation.wasm": "88ecef165999befaa5c0262e031c223a2aa7c3c6074de61a16f950473db6db8b"
+    "preparation.wasm": "e8273cbfea16d02beb29e3c0c9e93191bcb0f1bded7558b18a09cb1199bd78c7"
   },
   "preparation_abi": "FSA1 v2, actual source-native host measurement adapter",
   "compiler": "Swift 6.4.0 WASI, stripped custom sections only"

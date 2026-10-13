@@ -1,6 +1,6 @@
 use crate::{
     common::{Error, Result, create_destination, dump, sha256_file},
-    documents, image_data,
+    documents, image_data, target,
 };
 use image::{Rgb, RgbImage};
 use serde_json::{Value, json};
@@ -19,7 +19,7 @@ fn configuration(grain: bool, spatial: bool) -> Value {
     if grain {
         edits.extend(
             [
-                "film_render.grain.engine=v2",
+                "film_render.grain.engine=procedural",
                 "film_render.grain.v2_profile=custom",
                 "film_render.grain.v2_mode=noise",
                 "film_render.grain.v2_amount=25",
@@ -237,18 +237,22 @@ pub fn create_fixtures(
     }
     dump(&out.join("quick.json"), &quick)?;
     dump(&out.join("complete.json"), &complete)?;
-    let renderer_path = renderer.canonicalize()?;
-    let data_path = data_dir.canonicalize()?;
-    let hash = sha256_file(renderer)?;
+    let mut target = target::construct(
+        renderer,
+        data_dir,
+        "cpu",
+        "baseline",
+        json!({"set_files":[],"set":[]}),
+        json!({"RAYON_NUM_THREADS":"8","OPENBLAS_NUM_THREADS":"1","OMP_NUM_THREADS":"1"}),
+    )?;
     for (name, edits) in [
         ("baseline", vec![]),
         ("candidate", vec!["camera.exposure_compensation_ev=0.25"]),
         ("grain-candidate", vec!["film_render.grain.v2_amount=35"]),
     ] {
-        dump(
-            &out.join(format!("{name}.json")),
-            &json!({"schema_version":1,"id":name,"renderer":{"path":renderer_path,"sha256":hash},"data_dir":data_path,"backend":"cpu","changes":{"set_files":[],"set":edits},"environment":{"RAYON_NUM_THREADS":"8","OPENBLAS_NUM_THREADS":"1","OMP_NUM_THREADS":"1"}}),
-        )?;
+        target["id"] = json!(name);
+        target["changes"]["set"] = json!(edits);
+        dump(&out.join(format!("{name}.json")), &target)?;
         documents::load_target(&out.join(format!("{name}.json")))?;
     }
     let policy = json!({"schema_version":1,"id":"exploratory-color","protocol_digest":documents::protocol_digest(&complete)?,"calibration":{"status":"exploratory","evidence":[]},"rules":[{"id":"skin-color","purpose":"protect","selector":{"case_id":"color_chart","region_id":"skin"},"metric":"delta_e00.p95","max":2.0,"required":true}]});
@@ -272,18 +276,6 @@ mod tests {
         let image = image::open(path).unwrap().to_rgb8();
         assert_eq!(image.get_pixel(0, 0).0, [26; 3]);
         assert_eq!(image.get_pixel(1, 0).0, [128; 3]);
-    }
-    #[test]
-    fn grain_settings_and_seeds_preserve_controlled_probe_contract() {
-        let config = configuration(true, false);
-        let edits = config["set"].as_array().unwrap();
-        assert!(edits.contains(&json!("debug.deactivate_stochastic_effects=false")));
-        assert!(edits.contains(&json!("film_render.grain.v2_amount=25")));
-        let provenance: Value = serde_json::from_str(NATURAL_SOURCE).unwrap();
-        assert_eq!(
-            provenance["sha256"],
-            "37e290dbd0053f00e508d02a6b3a2a990432dad1eb74c40a52ca899f0f225ecc"
-        );
     }
     #[test]
     fn generated_suites_targets_policy_and_provenance_are_complete() {

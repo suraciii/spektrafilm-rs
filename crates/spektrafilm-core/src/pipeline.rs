@@ -104,6 +104,7 @@ pub struct Pipeline {
     /// stale one.
     data_dir: Option<std::path::PathBuf>,
     scanner_setup: Option<stages::scanning::ScannerSetup>,
+    digital_reference: Option<Arc<crate::digital_reference::DigitalReference>>,
     /// Original film reference captured before calibration mutates the render profile.
     original_film: Arc<Profile>,
     fotufilm_prepared: stages::grain_fotufilm::Prepared,
@@ -117,6 +118,13 @@ impl Pipeline {
 
     pub(crate) fn has_scanner_setup(&self) -> bool {
         self.scanner_setup.is_some()
+    }
+    pub(crate) fn reference_provenance(
+        &self,
+    ) -> Option<&crate::digital_reference::ReferenceProvenance> {
+        self.digital_reference
+            .as_deref()
+            .map(|reference| &reference.provenance)
     }
 
     pub(crate) fn prepare_scanner_setup(
@@ -222,6 +230,22 @@ impl Pipeline {
         let spectral_changed = crate::pipeline_calibration::spectral_changed(&self.params, &params);
         let calibration_changed =
             crate::pipeline_calibration::calibration_changed(&self.params, &params);
+        if self.params.scanner.positive_interpretation != params.scanner.positive_interpretation {
+            self.digital_reference = if params.scanner.positive_interpretation
+                == crate::params::PositiveInterpretation::DigitalReference
+            {
+                Some(Arc::new(
+                    crate::digital_reference::DigitalReference::prepare(
+                        &self.film,
+                        self.data_dir
+                            .as_deref()
+                            .ok_or("Digital Reference requires a runtime data directory")?,
+                    )?,
+                ))
+            } else {
+                None
+            };
+        }
         if spectral_changed || calibration_changed {
             return self.rebuild_spectral(params);
         }
@@ -347,6 +371,7 @@ impl Pipeline {
             output_gamut,
             data_dir: None,
             scanner_setup: None,
+            digital_reference: None,
             original_film,
             fotufilm_prepared,
             cancellation: None,
@@ -369,6 +394,15 @@ impl Pipeline {
             params.film_render.development_time,
         );
         let calibrated = crate::pipeline_calibration::build(film, print, params, data_dir)?;
+        let digital_reference = if calibrated.params.scanner.positive_interpretation
+            == crate::params::PositiveInterpretation::DigitalReference
+        {
+            Some(Arc::new(
+                crate::digital_reference::DigitalReference::prepare(&calibrated.film, data_dir)?,
+            ))
+        } else {
+            None
+        };
         Ok(Self {
             film: calibrated.film,
             print: calibrated.print,
@@ -382,6 +416,7 @@ impl Pipeline {
             output_gamut: calibrated.output_gamut,
             data_dir: calibrated.data_dir,
             scanner_setup: None,
+            digital_reference,
             original_film,
             fotufilm_prepared,
             cancellation: None,
@@ -480,13 +515,14 @@ impl Pipeline {
             Tap::CmyFilm => {
                 if self.params.io.scan_film {
                     let t = Instant::now();
-                    let out = stages::scanning::process(
+                    let out = stages::scanning::process_prepared(
                         &image,
                         &self.film,
                         &self.scan_params(),
                         backend,
                         color_ref,
                         &self.output_gamut,
+                        self.digital_reference.as_deref(),
                     )?;
                     print_stage_timing(print_timings, "scanning", t);
                     record_stage_timing(stage_timings, "scanning", t);
@@ -970,6 +1006,11 @@ impl Pipeline {
         stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
         if self.params.workflow.route == "input" {
+            let (working, _) = self.rescale_working(&image, backend)?;
+            let image = match working {
+                std::borrow::Cow::Owned(working) => working,
+                std::borrow::Cow::Borrowed(_) => image,
+            };
             let _observation = stages::StageObservation::cpu(
                 backend,
                 "post_scan",
@@ -1473,6 +1514,93 @@ mod spectral_invalidation_tests {
                 Pipeline::new_with_spectral(film, print, RuntimeParams::default(), &dir).unwrap()
             })
             .clone()
+    }
+
+    #[test]
+    fn input_route_preserves_requested_crop_pixels_without_exposure() {
+        let mut pipeline = build();
+        pipeline.params.workflow.route = "input".into();
+        pipeline.params.film_render.grain.active = false;
+        pipeline.params.magazine_print_color.active = false;
+        pipeline.params.io.input_color_space = "ACES2065-1".into();
+        pipeline.params.io.output_color_space = "ACES2065-1".into();
+        pipeline.params.io.input_cctf_decoding = false;
+        pipeline.params.io.output_cctf_encoding = false;
+        pipeline.params.camera.auto_exposure = true;
+        pipeline.params.camera.exposure_compensation_ev = 4.0;
+        pipeline.params.io.crop = true;
+        pipeline.params.io.crop_center = [0.5, 0.5];
+        pipeline.params.io.crop_size = [0.5, 0.25];
+        let image = ImageBuf::from_data(
+            8,
+            6,
+            (0..8 * 6 * 3)
+                .map(|i| from_f64(i as f64 / 100.0 - 0.1))
+                .collect(),
+        );
+        let output = pipeline
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        assert_eq!((output.width, output.height), (4, 2));
+        for y in 0..2_usize {
+            for x in 0..4_usize {
+                let source = ((y + 2) * 8 + x + 2) * 3;
+                let result = (y * 4 + x) * 3;
+                for channel in 0..3 {
+                    assert!(
+                        (to_f64(output.data[result + channel])
+                            - to_f64(image.data[source + channel]))
+                        .abs()
+                            < 1e-6
+                    );
+                }
+            }
+        }
+        pipeline.params.io.upscale_factor = 2.0;
+        let output = pipeline
+            .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        assert_eq!((output.width, output.height), (8, 4));
+    }
+    #[test]
+    fn digital_reference_preserves_formed_negative_and_prepared_identity() {
+        let mut baseline = build();
+        baseline.params.workflow.route = "input > film > scan".into();
+        baseline.params.io.scan_film = true;
+        baseline.params.film_render.grain.active = false;
+        baseline.params.film_render.halation.active = false;
+        baseline.params.film_render.dir_couplers.active = false;
+        baseline.params.camera.auto_exposure = false;
+        let mut params = baseline.params.clone();
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
+        params.scanner.positive_interpretation =
+            crate::params::PositiveInterpretation::DigitalReference;
+        let reference = baseline.clone().with_params(params).unwrap();
+        let image = ImageBuf::from_data(3, 1, vec![from_f64(0.18); 9]);
+        let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
+        let before = baseline
+            .process_with_taps(image.clone(), &cpu, None, Some(Tap::CmyFilm))
+            .unwrap();
+        let after = reference
+            .process_with_taps(image, &cpu, None, Some(Tap::CmyFilm))
+            .unwrap();
+        assert_eq!(before.data, after.data);
+        let identity = reference.digital_reference.as_ref().unwrap().clone();
+        let mut params = reference.params.clone();
+        params.scanner.reference_exposure_ev = 1.0;
+        let adjusted = reference.with_params(params).unwrap();
+        assert!(Arc::ptr_eq(
+            &identity,
+            adjusted.digital_reference.as_ref().unwrap()
+        ));
+        assert!(
+            adjusted
+                .reference_provenance()
+                .unwrap()
+                .receiver_content_identity
+                .starts_with("sha256-")
+        );
     }
     #[test]
     fn fotufilm_zero_amount_bypasses_geometry_and_cancelled_render_fails() {

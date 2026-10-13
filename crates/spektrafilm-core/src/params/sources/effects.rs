@@ -27,6 +27,7 @@ pub(super) enum Condition {
     NegativeToPositive,
     LabScanFinish,
     FilmScan,
+    DigitalReference,
     MagazineActive,
     MagazineStrength,
 }
@@ -71,6 +72,7 @@ impl Condition {
             Self::NegativeToPositive => "scanner.scan_output = negative_to_positive",
             Self::LabScanFinish => "scanner.finish = lab_scan",
             Self::FilmScan => "film-scan route",
+            Self::DigitalReference => "scanner.positive_interpretation = digital_reference",
             Self::MagazineActive => "magazine_print_color.active = true",
             Self::MagazineStrength => "magazine_print_color.strength > 0",
         }
@@ -119,6 +121,10 @@ impl Condition {
             Self::NegativeToPositive => p.scanner.scan_output == "negative_to_positive",
             Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
             Self::FilmScan => p.io.scan_film || p.workflow.route == "input > convert-film > scan",
+            Self::DigitalReference => {
+                p.scanner.positive_interpretation
+                    == crate::params::PositiveInterpretation::DigitalReference
+            }
             Self::MagazineActive => p.magazine_print_color.active,
             Self::MagazineStrength => p.magazine_print_color.strength > 0.0,
         }
@@ -200,6 +206,8 @@ pub(super) fn conditions(path: &str) -> Vec<Condition> {
         out.extend([NegativeToPositive, LabScanFinish]);
     } else if path == "scanner.receiver_profile" {
         out.push(FilmScan);
+    } else if path.starts_with("scanner.reference_") {
+        out.push(DigitalReference);
     } else if path.starts_with("scanner.positive_")
         || matches!(path, "scanner.auto_setup" | "scanner.finish")
     {

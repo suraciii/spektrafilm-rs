@@ -47,3 +47,23 @@ fn corrupted_source_resources_fail_before_rendering_including_retained_sessions(
         "{error}"
     );
 }
+
+#[test]
+fn unknown_structured_native_fields_fail_before_rendering() {
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    for grade in [
+        serde_json::json!({"shadows":{"balanceX":0,"balanceY":0,"level":0},"midtones":{"balanceX":0,"balanceY":0,"level":0},"highlights":{"balanceX":0,"balanceY":0,"level":0},"typo":1}),
+        serde_json::json!({"shadows":{"balanceX":0,"balanceY":0,"level":0,"typo":1},"midtones":{"balanceX":0,"balanceY":0,"level":0},"highlights":{"balanceX":0,"balanceY":0,"level":0}}),
+    ] {
+        let mut request = Request::default();
+        request.native.insert("grade".into(), grade);
+        let error = match Session::new(&data, request) {
+            Ok(_) => panic!("unknown grade field accepted"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("Unknown alignment.grade") && error.contains("typo"),
+            "{error}"
+        );
+    }
+}

@@ -49,16 +49,12 @@ impl App {
             return;
         }
         options.normalize();
+        if !self.params.fotufilm_output_is_density() {
+            options.reset_density_saving_contract();
+        }
         if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
             options.backend = ExportBackend::Cpu;
-            if self
-                .params
-                .fotufilm
-                .native
-                .get("stage")
-                .and_then(serde_json::Value::as_str)
-                == Some("negative")
-            {
+            if self.params.fotufilm_output_is_density() {
                 if !matches!(
                     options.format,
                     super::export::ExportFormat::Tiff | super::export::ExportFormat::Exr
@@ -118,16 +114,12 @@ impl App {
             return;
         };
         options.normalize();
+        if !self.params.fotufilm_output_is_density() {
+            options.reset_density_saving_contract();
+        }
         if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
             options.backend = ExportBackend::Cpu;
-            if self
-                .params
-                .fotufilm
-                .native
-                .get("stage")
-                .and_then(serde_json::Value::as_str)
-                == Some("negative")
-            {
+            if self.params.fotufilm_output_is_density() {
                 if !matches!(
                     options.format,
                     super::export::ExportFormat::Tiff | super::export::ExportFormat::Exr
@@ -217,6 +209,24 @@ impl App {
                         if let Some(setup) = setup {
                             pipeline = pipeline.with_scanner_setup(setup);
                         }
+                        let density = pipeline.params().fotufilm_output_is_density();
+                        anyhow::ensure!(
+                            density
+                                == (options.saving_color_space
+                                    == spektrafilm_fotufilm::RECORD_DENSITY_SPACE),
+                            "Export saving domain does not match the rendered output"
+                        );
+                        if density {
+                            anyhow::ensure!(
+                                matches!(
+                                    options.format,
+                                    super::export::ExportFormat::Tiff
+                                        | super::export::ExportFormat::Exr
+                                ) && options.depth == BitDepth::ThirtyTwo
+                                    && !options.saving_cctf_encoding,
+                                "Gross record density export requires unencoded 32-bit TIFF or EXR"
+                            );
+                        }
                         if let Some(slot) = &worker_configuration {
                             *slot.lock() = Some(pipeline.telemetry_configuration());
                         }
@@ -269,15 +279,15 @@ impl App {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let converted = if options.saving_color_space
-                            == spektrafilm_fotufilm::RECORD_DENSITY_SPACE
-                        {
+                        let converted = if density {
                             Ok(output.clone())
                         } else {
+                            let (output_space, output_encoding) =
+                                pipeline.params().rgb_output_interpretation();
                             image_io::convert_image(
                                 &output,
-                                &pipeline.params().io.output_color_space,
-                                pipeline.params().io.output_cctf_encoding,
+                                output_space,
+                                output_encoding,
                                 &options.saving_color_space,
                                 options.saving_cctf_encoding,
                             )

@@ -449,17 +449,6 @@ pub(crate) fn build(
                 Some(&adaptation),
             )?;
 
-            // Upstream Hanatos compresses around fixed D65, independently of
-            // the film reference white used for spectral adaptation.
-            let input_gamut =
-                crate::input_gamut::InputGamutCompress::build(&params.io.input_gamut_compress)?;
-            let tc_lut = if input_gamut.is_active() {
-                let (rx, ry) =
-                    spektrafilm_math::spectral::illuminant_to_xy(&select_illuminant("D65"));
-                input_gamut.remap(&tc_lut, [rx, ry])
-            } else {
-                tc_lut
-            };
             (Some(tc_lut), None)
         }
         crate::params::validation::RgbToRawMethod::Arctic2026Alpha02
@@ -475,16 +464,6 @@ pub(crate) fn build(
                 &ref_illuminant_f64,
                 None,
             )?;
-            let input_gamut =
-                crate::input_gamut::InputGamutCompress::build(&params.io.input_gamut_compress)?;
-            let tc_lut = if input_gamut.is_active() {
-                let (rx, ry) = spektrafilm_math::spectral::illuminant_to_xy(&select_illuminant(
-                    &front_illuminant,
-                ));
-                input_gamut.remap(&tc_lut, [rx, ry])
-            } else {
-                tc_lut
-            };
             (Some(tc_lut), None)
         }
         crate::params::validation::RgbToRawMethod::Mallett2019 => (
@@ -494,6 +473,29 @@ pub(crate) fn build(
                 &ref_illuminant_f64,
             )),
         ),
+    };
+    let tc_lut = if let Some(tc_lut) = tc_lut {
+        let input_gamut =
+            crate::input_gamut::InputGamutCompress::build(&params.io.input_gamut_compress)?;
+        Some(if input_gamut.is_active() {
+            // Hanatos remaps around fixed D65, independently of film adaptation.
+            // Other LUT methods set their front illuminant before this boundary.
+            let remap_illuminant = if matches!(
+                method,
+                crate::params::validation::RgbToRawMethod::Hanatos2025
+            ) {
+                "D65"
+            } else {
+                &front_illuminant
+            };
+            let (rx, ry) =
+                spektrafilm_math::spectral::illuminant_to_xy(&select_illuminant(remap_illuminant));
+            input_gamut.remap(&tc_lut, [rx, ry])
+        } else {
+            tc_lut
+        })
+    } else {
+        None
     };
 
     // Python parity: sensitivities are pre-balanced in the profile so midgray ≈ 1.0.

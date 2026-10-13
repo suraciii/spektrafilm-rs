@@ -81,11 +81,10 @@ fn render_recipe(
             contract::validate_seed(seed)?;
         }
     }
-    let density = params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm
-        && params.fotufilm.native.get("stage").and_then(Value::as_str) == Some("negative");
+    let density = params.fotufilm_output_is_density();
     if density != (recipe.output.color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE) {
         bail!(
-            "negative stage requires the raw-density 32-bit TIFF/EXR output contract; RGB stages require the RGB output contract"
+            "Fotufilm density output requires the raw-density 32-bit TIFF/EXR output contract; RGB output requires the RGB output contract"
         );
     }
     params.random_seed = recipe.seed.unwrap_or(0);
@@ -254,6 +253,33 @@ fn render_recipe(
     invocation.operation.set_saving_configuration(
         spektrafilm_core::telemetry::SavingConfiguration::from_save_options(format, &options),
     );
+    let saving_image = invocation.phase(
+        "saving_convert",
+        IssueCategory::Writing,
+        IssueBoundary::SavingConvert,
+        &context,
+        |_| {
+            if density {
+                return Ok(None);
+            }
+            let (output_color_space, output_cctf_encoding) = params.rgb_output_interpretation();
+            if output_color_space == options.color_space
+                && output_cctf_encoding == options.cctf_encoding
+            {
+                return Ok(None);
+            }
+            image_io::convert_image(
+                &result,
+                output_color_space,
+                output_cctf_encoding,
+                options.color_space,
+                options.cctf_encoding,
+            )
+            .map(Some)
+            .map_err(anyhow::Error::from)
+        },
+    )?;
+    let saving_image = saving_image.as_ref().unwrap_or(&result);
     let write_result = invocation.phase(
         "file_write",
         IssueCategory::Writing,
@@ -262,7 +288,7 @@ fn render_recipe(
         |write_context| {
             image_io::prepare_save_observed(
                 output,
-                &result,
+                saving_image,
                 options,
                 loaded.metadata.as_ref(),
                 write_context,
@@ -416,7 +442,7 @@ fn run_parity_case(
     let extension = if recipe_value.output.format == "jpeg" {
         "jpg"
     } else {
-        "png"
+        recipe_value.output.format.as_str()
     };
     let output = report.with_file_name(format!(
         ".spektrafilm-parity-{}-{index}.{extension}",

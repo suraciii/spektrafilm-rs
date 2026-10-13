@@ -474,7 +474,7 @@ fn resolve_fotufilm(
         let origin = DeclarationSource {
             kind: "set".into(),
             option: Some("--set".into()),
-            index: Some(index),
+            index: Some(index + 1),
             path: ParameterEdits::file_path(source)
                 .map(absolute_path)
                 .transpose()?,
@@ -499,11 +499,18 @@ fn resolve_fotufilm(
         ),
     ] {
         if let Some(value) = value {
-            ParameterEdits::single(path, value)?.apply(&mut params)?;
+            let edits =
+                ParameterEdits::single(path, value).map_err(|e| format!("{option}: {e}"))?;
+            if request.input_is_raw {
+                edits
+                    .validate_raw_input()
+                    .map_err(|e| format!("{option}: {e}"))?;
+            }
+            edits.apply(&mut params)?;
             declarations.insert(
                 path.into(),
                 DeclarationSource {
-                    kind: "option".into(),
+                    kind: "argument".into(),
                     option: Some(option.into()),
                     index: None,
                     path: None,
@@ -560,7 +567,19 @@ fn resolve_fotufilm(
     let edits = winning.into_iter().map(|(path, (requested, source))| {
         let value = parameter_value(&effective, &path).cloned().unwrap_or(Value::Null);
         let active = path == "engine" || path.starts_with("fotufilm.") || path.starts_with("io.") || path.starts_with("taps.") || path == "settings.preview_max_size" || path == "settings.preview_mode";
-        EditFeedback { path, requested, effective: value, source, status: if active { EditStatus::Active } else { EditStatus::Inactive }, reason: (!active).then(|| "historical SpektraFilm control does not belong to the selected original Fotufilm graph".into()) }
+        let override_option = match path.as_str() {
+            "io.input_color_space" if request.input_color_space.is_some() => Some("--input-color-space"),
+            "io.input_cctf_decoding" if request.input_cctf_decoding.is_some() => Some("--input-cctf-decoding"),
+            _ => None,
+        };
+        let (status, reason) = if let Some(option) = override_option {
+            (EditStatus::Overridden, Some(format!("replaced by {option}")))
+        } else if active {
+            (EditStatus::Active, None)
+        } else {
+            (EditStatus::Inactive, Some("historical SpektraFilm control does not belong to the selected original Fotufilm graph".into()))
+        };
+        EditFeedback { path, requested, effective: value, source, status, reason }
     }).collect();
     let stock = format!("fotufilm:{}", params.fotufilm.stock);
     Ok(ResolvedProcessParams {
@@ -1199,6 +1218,91 @@ mod tests {
             assert_eq!(edit.source.index, Some(1));
         }
         assert_eq!(result.edits[1].effective, Value::Bool(false));
+    }
+
+    #[test]
+    fn fotufilm_declarations_and_winning_edits_use_canonical_provenance() {
+        let sources = vec![
+            "engine=fotufilm,io.input_color_space=ProPhoto RGB,io.input_cctf_decoding=true".into(),
+            "io.input_color_space=sRGB,io.input_cctf_decoding=true".into(),
+        ];
+        let mut req = public_request(&sources);
+        req.film = None;
+        req.input_color_space = None;
+        let result = resolve(req, &data_dir()).unwrap();
+        assert_eq!(result.input_declaration.color_space, "sRGB");
+        assert!(!result.input_declaration.cctf_decoding);
+        let color_source = &result.input_declaration.sources.color_space;
+        assert_eq!(color_source.kind, "set");
+        assert_eq!(color_source.option.as_deref(), Some("--set"));
+        assert_eq!(color_source.index, Some(2));
+        assert!(color_source.path.is_none());
+        let decoding_source = &result.input_declaration.sources.cctf_decoding;
+        assert_eq!(decoding_source.kind, "argument");
+        assert_eq!(
+            decoding_source.option.as_deref(),
+            Some("--input-cctf-decoding")
+        );
+        assert!(decoding_source.index.is_none());
+        assert!(decoding_source.path.is_none());
+        assert_eq!(result.edits.len(), 3);
+        let edit = |path: &str| result.edits.iter().find(|edit| edit.path == path).unwrap();
+        for (path, index) in [
+            ("engine", 1),
+            ("io.input_color_space", 2),
+            ("io.input_cctf_decoding", 2),
+        ] {
+            let source = &edit(path).source;
+            assert_eq!(source.kind, "set");
+            assert_eq!(source.option.as_deref(), Some("--set"));
+            assert_eq!(source.index, Some(index));
+            assert!(source.path.is_none());
+        }
+        assert_eq!(edit("io.input_color_space").status, EditStatus::Active);
+        let decoding = edit("io.input_cctf_decoding");
+        assert_eq!(decoding.requested, Value::Bool(true));
+        assert_eq!(decoding.effective, Value::Bool(false));
+        assert_eq!(decoding.status, EditStatus::Overridden);
+        assert_eq!(
+            decoding.reason.as_deref(),
+            Some("replaced by --input-cctf-decoding")
+        );
+    }
+
+    #[test]
+    fn fotufilm_raw_rejects_incompatible_dedicated_arguments_before_preparation() {
+        let sources = vec!["engine=fotufilm".into()];
+        let absent_data = data_dir().join("unused-raw-argument-regression");
+        for (color, decoding, option) in [
+            (Some("sRGB"), Some(false), "--input-color-space"),
+            (Some("ACES2065-1"), Some(true), "--input-cctf-decoding"),
+        ] {
+            let mut req = public_request(&sources);
+            req.film = None;
+            req.input_is_raw = true;
+            req.input_color_space = color;
+            req.input_cctf_decoding = decoding;
+            let error = resolve(req, &absent_data).err().unwrap();
+            assert!(error.contains("RAW"), "{error}");
+            assert!(error.contains(option), "{error}");
+        }
+        let mut req = public_request(&sources);
+        req.film = None;
+        req.input_is_raw = true;
+        req.input_color_space = Some("ACES2065-1");
+        req.input_cctf_decoding = Some(false);
+        let result = resolve(req, &data_dir()).unwrap();
+        assert_eq!(result.input_declaration.color_space, "ACES2065-1");
+        assert!(!result.input_declaration.cctf_decoding);
+        for source in [
+            &result.input_declaration.sources.color_space,
+            &result.input_declaration.sources.cctf_decoding,
+        ] {
+            assert_eq!(source.kind, "raw");
+            assert!(source.option.is_none());
+            assert!(source.index.is_none());
+            assert!(source.path.is_none());
+        }
     }
 
     #[test]

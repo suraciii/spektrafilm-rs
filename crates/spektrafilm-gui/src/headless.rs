@@ -662,6 +662,173 @@ fn original_simulation_controls_persist_and_density_reaches_real_workers() {
         h.state().status
     );
     assert!(exported.is_file());
+
+    // Full-stage density taps retain source geometry and publish raw densities.
+    edit(h, "stage", "\"full\"");
+    h.get_by_label("Apply stage").click();
+    h.run_steps(3);
+    h.state_mut().params.taps.collect = Some("cmy_film".into());
+    let tapped_density = render(h, "PREVIEW");
+    assert_eq!((tapped_density.width, tapped_density.height), (160, 80));
+    assert_eq!(
+        h.state().output_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    assert!(!h.state().output_cctf_encoding);
+    let mut tapped_options = h.state().export_options.clone();
+    tapped_options.format = export::ExportFormat::Tiff;
+    // A stale RGB saving choice must be replaced by the actual density domain.
+    tapped_options.depth = BitDepth::Eight;
+    tapped_options.saving_color_space = "sRGB".into();
+    tapped_options.saving_cctf_encoding = true;
+    let tapped_path = s.directory.path().join("full-stage-density.tiff");
+    h.state_mut()
+        .start_export_to_path(&ctx, tapped_options, &tapped_path);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert_float_tiff(&tapped_path);
+    let published_density = image_io::load(&tapped_path).unwrap().image;
+    assert_eq!(
+        (published_density.width, published_density.height),
+        (160, 80)
+    );
+    for (&actual, &expected) in published_density.data.iter().zip(&tapped_density.data) {
+        assert!((actual as f64 - expected as f64).abs() < 2e-5);
+    }
+
+    // Returning to full RGB must clear the previous density saving contract in
+    // both the dialog and the chooser-confirmed export worker path.
+    h.state_mut().params.taps.collect = None;
+    let rgb = render(h, "SCAN");
+    assert_ne!(
+        h.state().output_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    click(h, "Export options");
+    click(h, "Export…");
+    assert!(h.query_by_label("Saving color space").is_some());
+    assert!(
+        h.query_by_label("Gross record density · 32-bit float · no RGB encoding or ICC profile")
+            .is_none()
+    );
+    click(h, "Cancel");
+    let stale_options = h.state().export_options.clone();
+    assert_eq!(
+        stale_options.saving_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    let rgb_path = s.directory.path().join("after-density-rgb.tiff");
+    h.state_mut()
+        .start_export_to_path(&ctx, stale_options, &rgb_path);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert_eq!(h.state().export_options.saving_color_space, "sRGB");
+    assert!(h.state().export_options.saving_cctf_encoding);
+    let expected_rgb = image_io::convert_image(
+        &rgb,
+        &h.state().output_color_space,
+        h.state().output_cctf_encoding,
+        "sRGB",
+        true,
+    )
+    .unwrap();
+    let published_rgb = image_io::load(&rgb_path).unwrap().image;
+    assert_eq!(
+        (published_rgb.width, published_rgb.height),
+        (rgb.width, rgb.height)
+    );
+    for (&actual, &expected) in published_rgb.data.iter().zip(&expected_rgb.data) {
+        assert!((actual as f64 - expected as f64).abs() < 2e-5);
+    }
+
+    // An RGB input tap retains the input's space and transfer state even when
+    // the requested output is encoded sRGB. Geometry controls do not alter it.
+    h.state_mut().params.io.input_color_space = "ProPhoto RGB".into();
+    h.state_mut().params.io.input_cctf_decoding = false;
+    h.state_mut().params.io.output_color_space = "sRGB".into();
+    h.state_mut().params.io.output_cctf_encoding = true;
+    h.state_mut().params.taps.collect = Some("rgb_in".into());
+    let input = h.state().image.as_ref().unwrap().clone();
+    let tapped_rgb = render(h, "SCAN");
+    assert_eq!((tapped_rgb.width, tapped_rgb.height), (160, 80));
+    assert_eq!(tapped_rgb.data, input.data);
+    assert_eq!(h.state().output_color_space, "ProPhoto RGB");
+    assert!(!h.state().output_cctf_encoding);
+    let (expected_display, _) = display::output_display_raster(
+        &input,
+        "ProPhoto RGB",
+        false,
+        h.state().viewer.settings.use_display_transform,
+        None,
+        h.state().params.settings.preview_max_size as usize,
+    )
+    .unwrap();
+    assert_eq!(
+        h.state().viewer.output.as_ref().unwrap().rgb,
+        expected_display.rgb
+    );
+    let expected_tapped_rgb =
+        image_io::convert_image(&input, "ProPhoto RGB", false, "sRGB", true).unwrap();
+
+    // Save uses the completed render's interpretation after the request changes.
+    h.state_mut().params.io.input_color_space = "sRGB".into();
+    h.state_mut().params.io.input_cctf_decoding = true;
+    let retained_rgb_path = s.directory.path().join("retained-input-rgb.png");
+    h.state_mut().save_to_path(&retained_rgb_path);
+    assert!(
+        h.state().status.starts_with("Saved retained-input-rgb.png"),
+        "{}",
+        h.state().status
+    );
+    assert_png(&retained_rgb_path, &expected_tapped_rgb);
+
+    // Export independently processes the full source with its declared input
+    // interpretation, without replacing the retained Scan.
+    h.state_mut().params.io.input_color_space = "ProPhoto RGB".into();
+    h.state_mut().params.io.input_cctf_decoding = false;
+    let mut tapped_rgb_options = h.state().export_options.clone();
+    tapped_rgb_options.format = export::ExportFormat::Tiff;
+    tapped_rgb_options.depth = BitDepth::ThirtyTwo;
+    tapped_rgb_options.saving_color_space = "sRGB".into();
+    tapped_rgb_options.saving_cctf_encoding = true;
+    let tapped_rgb_path = s.directory.path().join("input-rgb-export.tiff");
+    h.state_mut()
+        .start_export_to_path(&ctx, tapped_rgb_options, &tapped_rgb_path);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert_float_tiff(&tapped_rgb_path);
+    let published_tapped_rgb = image_io::load(&tapped_rgb_path).unwrap().image;
+    assert_eq!(
+        (published_tapped_rgb.width, published_tapped_rgb.height),
+        (input.width, input.height)
+    );
+    assert_eq!(
+        published_tapped_rgb.data.len(),
+        expected_tapped_rgb.data.len()
+    );
+    for (&actual, &expected) in published_tapped_rgb
+        .data
+        .iter()
+        .zip(&expected_tapped_rgb.data)
+    {
+        assert!((actual as f64 - expected as f64).abs() < 2e-5);
+    }
+    assert!(Arc::ptr_eq(
+        h.state().output_image.as_ref().unwrap(),
+        &tapped_rgb
+    ));
 }
 
 #[test]
@@ -821,4 +988,268 @@ mod layout_snapshots {
             image.save(directory.join("export-modal.png")).unwrap();
         }
     }
+}
+
+#[test]
+fn digital_reference_real_app_selection_render_transactions_and_outputs() {
+    use spektrafilm_core::params::{PositiveInterpretation, ReceiverProfile, ScannerAutoSetup};
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "Profiles");
+    let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    choose(h, "workflow", "input > film > scan");
+    click(h, "Scanner");
+    choose(h, "scan output", "Negative to positive");
+    choose(h, "scanner auto setup", "per_frame");
+    edit(h, "positive density ev", "1");
+    edit(h, "positive contrast", "1.5");
+    edit(h, "black point 0", "0.05");
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    let scanner = &h.state().params.scanner;
+    assert_eq!(
+        scanner.positive_interpretation,
+        PositiveInterpretation::DigitalReference
+    );
+    assert_eq!(scanner.receiver_profile, ReceiverProfile::DigitalReference);
+    assert_eq!(scanner.auto_setup, ScannerAutoSetup::Off);
+    assert_eq!(scanner.black_point, [0.0; 3]);
+    assert_eq!(scanner.white_point, [1.0; 3]);
+    let defaults = spektrafilm_core::params::ScannerParams::default();
+    assert_eq!(scanner.positive_density_ev, defaults.positive_density_ev);
+    assert_eq!(scanner.positive_contrast, defaults.positive_contrast);
+    assert!(
+        h.query_by_label("Reference Exposure: 18% neutral (fixed)")
+            .is_some()
+    );
+    for label in [
+        "receiver profile",
+        "scanner auto setup",
+        "positive density ev",
+        "positive balance ev 0",
+        "positive contrast",
+        "positive dmax",
+        "black point 0",
+        "white point 0",
+    ] {
+        assert!(
+            h.query_by_label(label).is_none(),
+            "incompatible control {label}"
+        );
+    }
+    let neutral = render(h, "PREVIEW");
+    assert!(neutral.data.iter().all(|x| x.is_finite()));
+    assert!(edge_difference(&neutral) > 0.0);
+    edit(h, "Reference exposure EV", "1");
+    let brighter = render(h, "PREVIEW");
+    assert!(mean(&brighter) > mean(&neutral));
+    edit(h, "Reference balance EV 0", "0.25");
+    edit(h, "Reference balance EV 1", "-0.125");
+    let balanced = render(h, "PREVIEW");
+    assert_ne!(balanced.data, brighter.data);
+    let accepted = h.state().current_state().unwrap();
+    let accepted_params = h.state().params.clone();
+    let accepted_input = h.state().image.as_ref().unwrap().clone();
+    let accepted_output = h.state().output_image.as_ref().unwrap().clone();
+    let revision = h.state().parameter_revision;
+    let epoch = h.state().calibration_epoch;
+    for (key, value) in [
+        ("receiver_profile", serde_json::json!("legacy_colorimetric")),
+        ("auto_setup", serde_json::json!("per_frame")),
+        ("black_point", serde_json::json!([0.1, 0.0, 0.0])),
+        ("positive_contrast", serde_json::json!(1.5)),
+    ] {
+        let mut invalid = accepted.sections.clone();
+        invalid["scanner"][key] = value;
+        let result =
+            state::GuiState::from_value(invalid).and_then(|state| h.state_mut().apply_state(state));
+        assert!(result.is_err(), "accepted incompatible {key}");
+        assert_eq!(h.state().params, accepted_params);
+        assert_eq!(
+            h.state().current_state().unwrap().sections,
+            accepted.sections
+        );
+        assert_eq!(h.state().parameter_revision, revision);
+        assert_eq!(h.state().calibration_epoch, epoch);
+        assert!(Arc::ptr_eq(
+            h.state().image.as_ref().unwrap(),
+            &accepted_input
+        ));
+        assert!(Arc::ptr_eq(
+            h.state().output_image.as_ref().unwrap(),
+            &accepted_output
+        ));
+        assert_eq!(
+            h.get_by_label("Reference exposure EV").value().as_deref(),
+            Some("1.000")
+        );
+    }
+    for (section, key, value) in [
+        ("simulation", "route", "input > convert-film > scan"),
+        ("simulation", "film_stock", "kodak_ektachrome_100"),
+    ] {
+        let mut invalid = accepted.sections.clone();
+        invalid[section][key] = serde_json::json!(value);
+        let result =
+            state::GuiState::from_value(invalid).and_then(|state| h.state_mut().apply_state(state));
+        assert!(result.is_err(), "accepted incompatible {key}");
+        assert_eq!(h.state().params, accepted_params);
+        assert_eq!(h.state().parameter_revision, revision);
+        assert_eq!(h.state().calibration_epoch, epoch);
+        assert!(Arc::ptr_eq(
+            h.state().image.as_ref().unwrap(),
+            &accepted_input
+        ));
+        assert!(Arc::ptr_eq(
+            h.state().output_image.as_ref().unwrap(),
+            &accepted_output
+        ));
+    }
+    let persisted = s.directory.path().join("reference-state.json");
+    accepted.save(&persisted).unwrap();
+    let mut restored = app(
+        persisted,
+        s.directory.path().join("asymmetric-ramp.png"),
+        s.directory.path().join("reference-browser.json"),
+    );
+    assert_eq!(restored.params.scanner, accepted_params.scanner);
+    eframe::App::on_exit(&mut restored, None);
+    let mut extension_only = accepted.sections.clone();
+    for key in [
+        "receiver_profile",
+        "positive_interpretation",
+        "reference_exposure_ev",
+        "reference_balance_ev",
+    ] {
+        extension_only["scanner"]
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+    }
+    let extension_state = state::GuiState::from_value(extension_only).unwrap();
+    assert_eq!(
+        extension_state.runtime_params().unwrap().scanner,
+        accepted_params.scanner
+    );
+    h.state_mut().apply_state(extension_state).unwrap();
+    h.run_steps(3);
+    choose(h, "scanner finish", "lab_scan");
+    edit(h, "finish strength", "0");
+    let unfinished = render(h, "PREVIEW");
+    assert_eq!(unfinished.data, balanced.data);
+    choose(h, "scanner finish", "neutral");
+    let save_path = s.directory.path().join("reference-preview.png");
+    h.state_mut().save_to_path(&save_path);
+    let expected = image_io::convert_image(
+        &balanced,
+        &h.state().output_color_space,
+        h.state().output_cctf_encoding,
+        "sRGB",
+        true,
+    )
+    .unwrap();
+    assert_png(&save_path, &expected);
+    let scan = render(h, "SCAN");
+    assert_eq!((scan.width, scan.height), (160, 80));
+    render(h, "PREVIEW");
+    let export_path = s.directory.path().join("reference-full.png");
+    let ctx = h.ctx.clone();
+    let options = h.state().export_options.clone();
+    h.state_mut()
+        .start_export_to_path(&ctx, options, &export_path);
+    wait_until(h, |a| a.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    let expected = image_io::convert_image(
+        &scan,
+        &h.state().output_color_space,
+        h.state().output_cctf_encoding,
+        "sRGB",
+        true,
+    )
+    .unwrap();
+    assert_png(&export_path, &expected);
+    choose(h, "Negative conversion method", "density");
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    assert_eq!(h.state().params.scanner.reference_exposure_ev, 0.0);
+    assert_eq!(h.state().params.scanner.reference_balance_ev, [0.0; 3]);
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "receiver profile")
+            .is_some()
+    );
+    assert!(h.query_by_label("Reference exposure EV").is_none());
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    choose(h, "workflow", "input > convert-film > scan");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
+    );
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    h.get_by_role_and_label(
+        egui::accesskit::Role::ComboBox,
+        "Negative conversion method",
+    )
+    .simulate_click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Digital Reference (modeled)").is_none());
+    h.press_key(egui::Key::Escape);
+    h.run_steps(3);
+    choose(h, "workflow", "input > film > scan");
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    choose(h, "workflow", "Finished RGB");
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
+    );
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    render(h, "PREVIEW");
+    choose(h, "workflow", "input > film > scan");
+    choose(h, "scan output", "Negative to positive");
+    choose(
+        h,
+        "Negative conversion method",
+        "Digital Reference (modeled)",
+    );
+    if h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "film profile")
+        .is_none()
+    {
+        click(h, "Profiles");
+    }
+    let slide = profile::load_profile_by_name(&data_dir(), "kodak_ektachrome_100").unwrap();
+    choose(h, "film profile", slide.info.name.as_deref().unwrap());
+    assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::Density
+    );
+    assert_eq!(
+        h.state().params.scanner.receiver_profile,
+        ReceiverProfile::LegacyColorimetric
+    );
+    render(h, "PREVIEW");
 }

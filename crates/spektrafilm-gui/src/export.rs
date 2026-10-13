@@ -208,6 +208,15 @@ impl ExportOptions {
         }
     }
 
+    /// A density marker belongs to one output domain, not subsequent RGB exports.
+    pub(crate) fn reset_density_saving_contract(&mut self) {
+        if self.saving_color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE {
+            self.saving_color_space = "sRGB".into();
+            self.saving_cctf_encoding = true;
+        }
+        self.normalize();
+    }
+
     /// Container the writer receives for this format.
     pub(crate) fn image_format(&self) -> ImageFormat {
         match self.format {
@@ -252,8 +261,17 @@ impl ExportOptions {
         });
         rust["export_compression"] = json!(self.compression.argument());
         rust["export_backend"] = json!(self.backend.argument());
-        rust["export_saving_color_space"] = json!(self.saving_color_space);
-        rust["export_saving_cctf_encoding"] = json!(self.saving_cctf_encoding);
+        let density = self.saving_color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE;
+        rust["export_saving_color_space"] = json!(if density {
+            "sRGB"
+        } else {
+            &self.saving_color_space
+        });
+        rust["export_saving_cctf_encoding"] = json!(if density {
+            self.format != ExportFormat::Exr
+        } else {
+            self.saving_cctf_encoding
+        });
     }
 }
 
@@ -268,7 +286,7 @@ impl ExportDialog {
         self.fotufilm = false;
         self.density = false;
         let mut draft = committed.clone();
-        draft.normalize();
+        draft.reset_density_saving_contract();
         self.draft = Some(draft);
     }
     pub(crate) fn open_fotufilm(&mut self, committed: &ExportOptions, density: bool) {
