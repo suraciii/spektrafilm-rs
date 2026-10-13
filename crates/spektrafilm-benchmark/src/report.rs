@@ -663,7 +663,7 @@ fn viewer(
         })
         .collect::<String>();
     format!(
-        r#"<div class="viewer" data-mode="{mode}" data-aligned="{aligned}"><div class="controls"><label>查看 <select data-mode>{split_option}<option value="side">左右对照</option><option value="baseline">{left_label}</option><option value="candidate">{right_label}</option></select></label><button type="button" data-alternate>切换 A/B</button><label>倍率 <select data-zoom>{options}</select></label><label {split_hidden}>分割 <input type="range" min="0" max="100" value="50" data-split aria-label="A/B split position"></label><span data-scale-label class="small"></span></div><div class="panes"><div class="side-pane" data-side="baseline"><p>{left_label}</p><div class="viewport" tabindex="0" aria-label="{left_label} pan area"><div class="canvas"><img src="{ls}" {la} alt="{left_label}" loading="lazy"></div></div></div><div class="side-pane" data-side="candidate"><p>{right_label}</p><div class="viewport" tabindex="0" aria-label="{right_label} pan area"><div class="canvas"><img src="{rs}" {ra} alt="{right_label}" loading="lazy"></div></div></div><div class="split-pane"><p>{left_label}在左 / {right_label}在右 · 拖动分割线</p><div class="viewport" tabindex="0" aria-label="Split pan area"><div class="canvas split"><img src="{ls}" {la} alt="{left_label}" loading="lazy"><img class="candidate" src="{rs}" {ra} alt="{right_label}" loading="lazy"><button type="button" class="split-handle" data-split-handle role="slider" aria-label="拖动分割线" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" style="left:50%">↔</button></div></div></div></div><p><a href="{left}">{left_label} image</a> · <a href="{right}">{right_label} image</a>{}</p></div>"#,
+        r#"<div class="viewer" data-mode="{mode}" data-aligned="{aligned}"><div class="controls"><label>查看 <select data-mode>{split_option}<option value="side">左右对照</option><option value="baseline">{left_label}</option><option value="candidate">{right_label}</option></select></label><button type="button" data-view-mode="baseline">A · {left_label}</button><button type="button" data-view-mode="candidate">B · {right_label}</button><button type="button" data-alternate>切换 A/B</button><label>倍率 <select data-zoom>{options}</select></label><button type="button" data-fullscreen>全屏</button><label {split_hidden}>分割 <input type="range" min="0" max="100" value="50" data-split aria-label="A/B split position"></label><span data-scale-label class="small"></span></div><div class="panes"><div class="side-pane" data-side="baseline"><p>{left_label}</p><div class="viewport" tabindex="0" aria-label="{left_label} pan area"><div class="canvas"><img src="{ls}" {la} alt="{left_label}" loading="lazy"></div></div></div><div class="side-pane" data-side="candidate"><p>{right_label}</p><div class="viewport" tabindex="0" aria-label="{right_label} pan area"><div class="canvas"><img src="{rs}" {ra} alt="{right_label}" loading="lazy"></div></div></div><div class="split-pane"><p>{left_label}在左 / {right_label}在右 · 拖动分割线</p><div class="viewport" tabindex="0" aria-label="Split pan area"><div class="canvas split"><img src="{ls}" {la} alt="{left_label}" loading="lazy"><img class="candidate" src="{rs}" {ra} alt="{right_label}" loading="lazy"><button type="button" class="split-handle" data-split-handle role="slider" aria-label="拖动分割线" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" style="left:50%">↔</button></div></div></div></div><p><a href="{left}">{left_label} image</a> · <a href="{right}">{right_label} image</a>{}</p></div>"#,
         if a["bit_depth"] == 16 {
             " · 16-bit PNG，无抖动；屏幕显示精度由浏览器与显示设备决定。"
         } else {
@@ -680,6 +680,64 @@ fn viewer(
         right_label = escape(labels.1)
     )
 }
+fn difference_metadata(entry: Option<&Value>) -> Value {
+    let mut metadata = json!({});
+    for key in [
+        "metric",
+        "units",
+        "scale",
+        "clipping",
+        "amplification",
+        "palette",
+    ] {
+        metadata[key] = entry
+            .and_then(|entry| entry.get(key))
+            .cloned()
+            .unwrap_or(json!("不可用"));
+    }
+    metadata
+}
+
+fn crop_thumbnail(
+    region: &Value,
+    method: &str,
+    crops: [Option<&Value>; 2],
+    labels: (&str, &str),
+) -> String {
+    let id = get(region, "id", get(region, "region_id", "不可用"));
+    let mut previews = String::new();
+    for (entry, label) in crops.into_iter().zip([labels.0, labels.1]) {
+        if let Some(entry) = entry {
+            let fit = entry
+                .get("fit_entry")
+                .filter(|value| !value.is_null())
+                .unwrap_or(entry);
+            let size = entry["dimensions"]
+                .as_array()
+                .filter(|size| size.len() == 2)
+                .map(|size| format!("{} × {}", size[0], size[1]))
+                .unwrap_or_else(|| "尺寸未记录".into());
+            previews.push_str(&format!("<span class=\"crop-preview\"><img src=\"{}\" alt=\"{} crop\" loading=\"lazy\"><span class=\"crop-size\">{} · {}</span></span>", url(fit), escape(label), escape(label), escape(&size)));
+        } else {
+            previews.push_str(&format!(
+                "<span class=\"crop-preview unavailable\">{} crop：不可用</span>",
+                escape(label)
+            ));
+        }
+    }
+    let kind = if method == "自动差异" {
+        "automatic"
+    } else {
+        "manual"
+    };
+    format!(
+        "<button type=\"button\" class=\"crop-thumbnail\" data-crop-target=\"{}\" data-crop-kind=\"{kind}\" aria-pressed=\"false\"><span class=\"crop-kind crop-type\">{}</span><strong class=\"crop-label\">{}</strong><span class=\"crop-previews\">{previews}</span></button>",
+        escape(id),
+        escape(method),
+        escape(get(region, "label", &human(id)))
+    )
+}
+
 fn rectangle(region: &Value) -> Result<Option<[u32; 4]>> {
     let geometry = &region["geometry"];
     let rect = region
@@ -745,7 +803,7 @@ fn metric_table(case: &Value) -> String {
         "<div class=\"unavailable\">Metric table: unavailable</div>".into()
     } else {
         format!(
-            "<table><thead><tr><th>Region</th><th>Metric</th><th>Units</th><th>Estimator</th><th>Samples</th><th>Value/status</th></tr></thead><tbody>{body}</tbody></table>"
+            "<div class=\"table-scroll\"><table><thead><tr><th>Region</th><th>Metric</th><th>Units</th><th>Estimator</th><th>Samples</th><th>Value/status</th></tr></thead><tbody>{body}</tbody></table></div>"
         )
     }
 }
@@ -1136,16 +1194,6 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
     for (index, case) in ordered.iter().enumerate() {
         let id = get(case, "case_id", get(case, "id", "unavailable"));
         html.push_str(&format!("<section id=\"case-{index}\" class=\"case-panel\" data-case-panel=\"case-{index}\" data-case-id=\"{}\" data-seed=\"{}\"{}><h2>{} <small>· seed {}</small></h2>{}", escape(id), field(case, "seed"), if index == 0 { "" } else { " hidden" }, escape(&human(id)), field(case, "seed"), navigation_links(&navigation_fragment(id, &case["seed"], None, None), "案例")));
-        for (key, label) in [
-            ("source_dimensions", "原始输入尺寸"),
-            ("source_geometry", "输入解码与模拟几何"),
-            ("preparation", "输入准备来源与操作记录"),
-            ("input", "输入来源与文件身份"),
-        ] {
-            if let Some(value) = case.get(key).filter(|value| !value.is_null()) {
-                html.push_str(&folded(label, value));
-            }
-        }
         let pairs = rows(&case["pairs"]);
         let views: Vec<Value> = if pairs.is_empty() {
             vec![(**case).clone()]
@@ -1194,7 +1242,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                 ("基准", "候选")
             };
             let pair_id = get(case, "pair_id", "baseline/candidate");
-            html.push_str(&format!("<div data-pair-panel=\"pair-{index}-{pair_index}\" data-pair-id=\"{}\" data-default-pair=\"{}\"{}>{}<p class=\"status\">状态：{} {}</p>", escape(pair_id), pair_id == default, if pair_id == default { "" } else { " hidden" }, navigation_links(&navigation_fragment(id, &case["seed"], Some(pair_id), None), "比较"), escape(get(case, "status", "unavailable")), case.get("reason").map(text).unwrap_or_default()));
+            html.push_str(&format!("<div class=\"image-review\" data-pair-panel=\"pair-{index}-{pair_index}\" data-pair-id=\"{}\" data-default-pair=\"{}\"{}>", escape(pair_id), pair_id == default, if pair_id == default { "" } else { " hidden" }));
             let mut images = BTreeMap::new();
             for role in ["source", "baseline", "candidate", "reference", "difference"] {
                 let reference = role_reference(case, role, &assets);
@@ -1209,11 +1257,8 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
             }
             let a = images["baseline"].as_ref();
             let b = images["candidate"].as_ref();
-            if case.get("pair_id").is_none() {
-                html.push_str(&change_summary(case, &comparison));
-            } else {
-                html.push_str(&folded("比较角色、对应关系与适用范围", case));
-            }
+            html.push_str("<div class=\"review-actions\"><button type=\"button\" data-review-reset aria-pressed=\"true\">全图</button>");
+            html.push_str(&format!("<button type=\"button\" data-difference-toggle aria-pressed=\"false\"{}>差异图</button></div><div data-review-full>", if images["difference"].is_some() { "" } else { " disabled" }));
             if case["pixel_aligned"] != false
                 && let (Some(a), Some(b)) = (a, b)
             {
@@ -1234,11 +1279,16 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                 );
                 html.push_str(&viewer(a, b, false, labels, false));
             }
-            html.push_str(&metric_summary(case, labels));
+            html.push_str("</div><div data-review-difference hidden>");
+            html.push_str(&image_html(images["difference"].as_ref(), "差异图"));
+            html.push_str(&format!(
+                "<pre>{}</pre></div>",
+                text(&difference_metadata(images["difference"].as_ref()))
+            ));
             let mut regions: Vec<(Value, String)> = rows(&case["regions"])
                 .iter()
                 .cloned()
-                .map(|v| (v, "固定语义区域".into()))
+                .map(|v| (v, "指定 crop".into()))
                 .collect();
             regions.extend(
                 rows(
@@ -1248,20 +1298,19 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                 )
                 .iter()
                 .cloned()
-                .map(|v| (v, "自动差异区域".into())),
+                .map(|v| (v, "自动差异".into())),
             );
             regions.extend(rows(&case["detail_regions"]).iter().cloned().map(|v| {
                 let method =
                     get(&v, "selection_method", get(&v, "method", "保留的细节区域")).to_owned();
                 (v, method)
             }));
-            if !regions.is_empty() {
-                html.push_str("<details><summary>细节区域（坐标、定位和 A/B 裁剪）</summary>");
-            }
+            let mut thumbnails = String::new();
+            let region_start = html.len();
             for (mut region, method) in regions.iter().cloned() {
                 let region_id = get(&region, "id", get(&region, "region_id", "不可用")).to_owned();
                 html.push_str(&format!(
-                    "<details data-region-id=\"{}\"><summary>{}</summary>{}",
+                    "<details data-region-id=\"{}\" data-review-region hidden><summary>{}</summary>{}",
                     escape(&region_id),
                     escape(get(&region, "label", &human(&region_id))),
                     navigation_links(
@@ -1269,6 +1318,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                         "区域"
                     )
                 ));
+                let region_viewer_start = html.len();
                 let mut mask_entry = None;
                 if let Some(path) = region["geometry"]["path"].as_str() {
                     if case["status"] != "completed" && !assets.index.contains_key(path) {
@@ -1277,6 +1327,12 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                             field(&region, "label")
                         ));
                         html.push_str("</details>");
+                        thumbnails.push_str(&crop_thumbnail(
+                            &region,
+                            &method,
+                            [None, None],
+                            labels,
+                        ));
                         continue;
                     }
                     let entry = assets.copy(&json!(path))?;
@@ -1289,6 +1345,12 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                             field(&region, "label")
                         ));
                         html.push_str("</details>");
+                        thumbnails.push_str(&crop_thumbnail(
+                            &region,
+                            &method,
+                            [None, None],
+                            labels,
+                        ));
                         continue;
                     }
                     let entry = entry.unwrap();
@@ -1318,7 +1380,11 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                     "<p>坐标 [x, y, width, height]：{} · 选择方式：{}</p>",
                     rect.map(|v| text(&json!(v)))
                         .unwrap_or_else(|| "不可用".into()),
-                    escape(&method)
+                    escape(get(
+                        &region,
+                        "selection_method",
+                        get(&region, "method", &method)
+                    ))
                 ));
                 html.push_str(&folded("选择依据与区域元数据", &region));
                 if let Some(entry) = mask_entry {
@@ -1342,7 +1408,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                         let (width, height) =
                             image::image_dimensions(out.join(get(image, "path", "")))
                                 .map_err(|e| Error::new("invalid_artifact", e.to_string()))?;
-                        html.push_str(&format!("<figure class=\"locator\"><img src=\"{}\" alt=\"{}区域定位\"><span class=\"rectangle\" style=\"left:{}%;top:{}%;width:{}%;height:{}%\"></span><figcaption>{} · {}</figcaption></figure>",url(image),escape(label),100.0*x as f64/width as f64,100.0*y as f64/height as f64,100.0*w as f64/width as f64,100.0*h as f64/height as f64,escape(label),text(&json!([x,y,w,h]))));
+                        html.push_str(&format!("<figure class=\"locator\" data-region-locator><div class=\"locator-image\"><img src=\"{}\" alt=\"{}区域定位\"><span class=\"rectangle\" style=\"left:{}%;top:{}%;width:{}%;height:{}%\"></span></div><figcaption>{} · {}</figcaption></figure>",url(image),escape(label),100.0*x as f64/width as f64,100.0*y as f64/height as f64,100.0*w as f64/width as f64,100.0*h as f64/height as f64,escape(label),text(&json!([x,y,w,h]))));
                     } else {
                         html.push_str(&format!(
                             "<div class=\"unavailable\">{}区域定位：不可用</div>",
@@ -1382,13 +1448,42 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                         assets.crop(image, crop_rect)?
                     });
                 }
-                html.push_str(&viewer(
-                    crops[0].as_ref(),
-                    crops[1].as_ref(),
-                    true,
+                for entry in crops.iter_mut().flatten() {
+                    if let Ok((width, height)) =
+                        image::image_dimensions(out.join(get(entry, "path", "")))
+                    {
+                        entry["dimensions"] = json!([width, height]);
+                    }
+                    if let Some(preview) = entry.get("fit_preview").cloned()
+                        && let Some(fit) = assets.image(&preview)?
+                    {
+                        entry["fit_entry"] = fit;
+                    }
+                }
+                thumbnails.push_str(&crop_thumbnail(
+                    &region,
+                    &method,
+                    [crops[0].as_ref(), crops[1].as_ref()],
                     labels,
-                    case["pixel_aligned"] != false,
                 ));
+                let crop_aligned = case["pixel_aligned"] != false
+                    && crops[0]
+                        .as_ref()
+                        .zip(crops[1].as_ref())
+                        .is_some_and(|(left, right)| {
+                            left["dimensions"].is_array()
+                                && left["dimensions"] == right["dimensions"]
+                        });
+                html.insert_str(
+                    region_viewer_start,
+                    &viewer(
+                        crops[0].as_ref(),
+                        crops[1].as_ref(),
+                        true,
+                        labels,
+                        crop_aligned,
+                    ),
+                );
                 let findings: Vec<_> = rows(&comparison["findings"])
                     .iter()
                     .filter(|f| {
@@ -1401,8 +1496,30 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                 html.push_str(&folded("该区域 findings", &json!(findings)));
                 html.push_str("</details>");
             }
-            if !regions.is_empty() {
-                html.push_str("</details>");
+            let region_panels = html.split_off(region_start);
+            html.push_str(&region_panels);
+            if regions.is_empty() {
+                html.push_str(
+                    "<p class=\"crop-empty\" data-crop-empty>没有可查看的 crop；当前显示全图。</p>",
+                );
+            } else {
+                html.push_str("<div class=\"crop-tabs\" role=\"group\" aria-label=\"crop 类型\"><button type=\"button\" data-crop-filter=\"all\" aria-pressed=\"true\">全部 crop</button><button type=\"button\" data-crop-filter=\"manual\" aria-pressed=\"false\">指定 crop</button><button type=\"button\" data-crop-filter=\"automatic\" aria-pressed=\"false\">自动差异</button></div>");
+                html.push_str(&format!("<div class=\"crop-strip\" aria-label=\"指定 crop 与自动差异区域\">{thumbnails}</div>"));
+            }
+            html.push_str(&metric_summary(case, labels));
+            html.push_str(&format!(
+                "{}<p class=\"status\">状态：{} {}</p>",
+                navigation_links(
+                    &navigation_fragment(id, &case["seed"], Some(pair_id), None),
+                    "比较"
+                ),
+                escape(get(case, "status", "unavailable")),
+                case.get("reason").map(text).unwrap_or_default()
+            ));
+            if case.get("pair_id").is_none() {
+                html.push_str(&change_summary(case, &comparison));
+            } else {
+                html.push_str(&folded("比较角色、对应关系与适用范围", case));
             }
             html.push_str("<details><summary>来源输入与参考图</summary><div class=\"grid\">");
             for (role, label) in [("source", "来源输入"), ("reference", "参考图")] {
@@ -1419,21 +1536,7 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
             }
             html.push_str("</details><details><summary>差异图与显示元数据</summary>");
             html.push_str(&image_html(images["difference"].as_ref(), "差异图"));
-            let mut metadata = json!({});
-            for key in [
-                "metric",
-                "units",
-                "scale",
-                "clipping",
-                "amplification",
-                "palette",
-            ] {
-                metadata[key] = images["difference"]
-                    .as_ref()
-                    .and_then(|e| e.get(key))
-                    .cloned()
-                    .unwrap_or(json!("不可用"));
-            }
+            let metadata = difference_metadata(images["difference"].as_ref());
             html.push_str(&format!("<pre>{}</pre></details>", text(&metadata)));
             let plot_roles = [
                 "tone_response",
@@ -1490,6 +1593,16 @@ pub fn build_report(comparison: &Path, out: &Path) -> Result<()> {
                 }
             }
             html.push_str("</details></div>");
+        }
+        for (key, label) in [
+            ("source_dimensions", "原始输入尺寸"),
+            ("source_geometry", "输入解码与模拟几何"),
+            ("preparation", "输入准备来源与操作记录"),
+            ("input", "输入来源与文件身份"),
+        ] {
+            if let Some(value) = case.get(key).filter(|value| !value.is_null()) {
+                html.push_str(&folded(label, value));
+            }
         }
         html.push_str("</section>");
     }

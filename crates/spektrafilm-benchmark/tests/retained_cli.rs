@@ -47,6 +47,10 @@ fn record(evidence: &mut Evidence, name: &str, role: &str, value: Value) -> Valu
 
 // Retained masters exercise the public CLI without requiring a renderer or network in PR.
 fn retained_run(root: &Path, value: f64, masked: bool) {
+    retained_run_with_review_regions(root, value, masked, false);
+}
+
+fn retained_run_with_review_regions(root: &Path, value: f64, masked: bool, crops: bool) {
     fs::create_dir(root).unwrap();
     let mut evidence = Evidence::new(root);
     let source = root.join("input.png");
@@ -74,7 +78,10 @@ fn retained_run(root: &Path, value: f64, masked: bool) {
         regions.push(json!({"id":"patch","label":"Patch","role":"other","geometry":{"path":"mask.png","sha256":retained["sha256"],"width":4,"height":4},"measurements":["numeric"]}));
         dependencies.push(retained);
     }
-    let suite = json!({"schema_version":1,"id":"retained","protocol":{"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.0,"border_px":0},"spectrum":{"window":"hann"}},"hotspots":{"count":0,"min_area_px":1}},"cases":[{"id":"probe","kind":"probe","input":{"kind":"raster","path":"input.png","sha256":input["sha256"],"color_space":"sRGB","cctf_decoding":true},"configuration":{},"seeds":[0],"regions":regions,"measurements":["numeric"]}]});
+    if crops {
+        regions.push(json!({"id":"detail","label":"Detail","role":"other","geometry":[1,1,2,2],"measurements":["numeric"]}));
+    }
+    let suite = json!({"schema_version":1,"id":"retained","protocol":{"id":"appearance-v1","pixels_per_degree":60.0,"region_sampling_scales":[1.0],"grain":{"residual":{"method":"flat_mean","high_pass_radius_px":1.0,"border_px":0},"spectrum":{"window":"hann"}},"hotspots":{"count":if crops { 1 } else { 0 },"min_area_px":1}},"cases":[{"id":"probe","kind":"probe","input":{"kind":"raster","path":"input.png","sha256":input["sha256"],"color_space":"sRGB","cctf_decoding":true},"configuration":{},"seeds":[0],"regions":regions,"measurements":["numeric"]}]});
     let mut suite_record = record(&mut evidence, "suite.json", "suite", suite.clone());
     suite_record["digest"] = json!(common::digest(&suite).unwrap());
     suite_record["source_path"] = json!(root.parent().unwrap().join("original/suite.json"));
@@ -183,6 +190,109 @@ fn policy(path: &Path, suite: &Value) -> Value {
     let p = json!({"schema_version":1,"id":"exploratory","protocol_digest":documents::protocol_digest(suite).unwrap(),"calibration":{"status":"exploratory","evidence":[]},"rules":[{"id":"zero","purpose":"protect","selector":{"case_id":"probe","region_id":"full_image"},"metric":"numeric.rmse","required":true,"max":0.0}]});
     write(path, &p);
     p
+}
+
+#[test]
+fn cli_report_opens_images_and_exposes_real_manual_and_automatic_crops() {
+    let temp = TempDir::new().unwrap();
+    let baseline = temp.path().join("baseline");
+    let candidate = temp.path().join("candidate");
+    retained_run_with_review_regions(&baseline, 0.2, false, true);
+    retained_run_with_review_regions(&candidate, 0.3, false, true);
+    let comparison = temp.path().join("comparison");
+    compare(&baseline, &candidate, &comparison, 0);
+    let report = temp.path().join("report");
+    invoke(
+        &["report"],
+        &[("--comparison", &comparison), ("--out", &report)],
+        0,
+    );
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    let full = html
+        .split_once("<div data-review-full>")
+        .expect("main image view must be present")
+        .1
+        .split_once("<div data-review-difference")
+        .unwrap()
+        .0;
+    assert!(full.contains("class=\"viewer\" data-mode=\"split\" data-aligned=\"true\""));
+    assert!(full.contains("data-split-handle"));
+    assert!(full.contains("data-fullscreen"));
+    assert!(full.contains("data-native=\""));
+    assert!(html.contains("data-difference-toggle"));
+    assert!(html.contains("data-crop-target=\"detail\" data-crop-kind=\"manual\""));
+    assert!(html.contains("data-crop-target=\"automatic_001\" data-crop-kind=\"automatic\""));
+    for region in ["detail", "automatic_001"] {
+        let card = html
+            .split_once(&format!("data-crop-target=\"{region}\""))
+            .unwrap()
+            .1
+            .split_once("</button>")
+            .unwrap()
+            .0;
+        for image in card.split("<img src=\"").skip(1) {
+            let path = image.split_once('"').unwrap().0;
+            let pixels = image::open(report.join(path)).unwrap();
+            assert_eq!(pixels.color(), image::ColorType::Rgb16);
+            if region == "detail" {
+                assert_eq!((pixels.width(), pixels.height()), (2, 2));
+            }
+            assert!(pixels.width() > 0 && pixels.height() > 0);
+        }
+        assert_eq!(card.matches("<img src=\"").count(), 2);
+        let detail = html
+            .split_once(&format!(
+                "data-region-id=\"{region}\" data-review-region hidden"
+            ))
+            .expect("thumbnail must target a retained detail view")
+            .1
+            .split("<details data-region-id=")
+            .next()
+            .unwrap();
+        assert!(detail.contains("class=\"viewer\""));
+        assert!(detail.contains("class=\"locator-image\""));
+    }
+    let difference = html
+        .split_once("<div data-review-difference hidden>")
+        .unwrap()
+        .1
+        .split_once("</pre></div>")
+        .unwrap()
+        .0;
+    let metadata = difference.split_once("<pre>").unwrap().1;
+    let metadata: Value = serde_json::from_str(&metadata.replace("&quot;", "\"")).unwrap();
+    let manifest = read(&report.join("report.json"));
+    let display = manifest["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|artifact| artifact["role"] == "difference_display")
+        .unwrap();
+    for key in ["units", "scale", "clipping", "amplification"] {
+        assert_eq!(metadata[key], display[key]);
+        assert!(!metadata[key].is_null());
+    }
+}
+
+#[test]
+fn cli_report_without_regions_has_an_explicit_crop_empty_state() {
+    let temp = TempDir::new().unwrap();
+    let baseline = temp.path().join("baseline");
+    let candidate = temp.path().join("candidate");
+    retained_run(&baseline, 0.2, false);
+    retained_run(&candidate, 0.3, false);
+    let comparison = temp.path().join("comparison");
+    compare(&baseline, &candidate, &comparison, 0);
+    let report = temp.path().join("report");
+    invoke(
+        &["report"],
+        &[("--comparison", &comparison), ("--out", &report)],
+        0,
+    );
+    let html = fs::read_to_string(report.join("index.html")).unwrap();
+    assert!(html.contains("data-review-full"));
+    assert!(html.contains("data-crop-empty"));
+    assert!(!html.contains("data-crop-target="));
 }
 
 #[test]
