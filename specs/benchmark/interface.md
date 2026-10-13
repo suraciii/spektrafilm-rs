@@ -1,6 +1,6 @@
 # Benchmark machine interface
 
-This document defines the target syntax and serialized behavior of `spektrafilm-bench`. It does not change the renderer's [CLI parameter language](../cli-parameters/spec.md). The [product specification](spec.md) owns evaluation meaning. The [measurement protocol](metrics.md) owns metrics.
+This document defines the target syntax and serialized behavior of `spektrafilm-bench`. It does not change the renderer's [CLI parameter language](../cli/spec.md). The [product specification](spec.md) owns evaluation meaning. The [measurement protocol](metrics.md) owns metrics.
 
 ## Commands
 

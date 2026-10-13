@@ -1,4 +1,4 @@
-# Profile fitting
+# Profile authoring
 
 ## Contract
 

@@ -3,7 +3,7 @@
 //!
 //! The fit renders a chart through the calibrated pipeline and minimizes the
 //! CIELAB difference between the rendered patches and a reference patch table.
-//! See `specs/profile-fit/`.
+//! See `specs/profile-authoring/`.
 
 pub mod chart;
 mod color;

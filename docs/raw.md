@@ -27,7 +27,7 @@ decode_raw_gui input.CR2 output.tif --raw-white-balance custom --raw-temperature
 
 It writes **linear ACES2065-1 float TIFF**. Configure pipeline input as ACES2065-1 with input CCTF decoding disabled.
 
-RAW CLI examples retain automatic linear ACES2065-1 declaration. See the [CLI guide](cli.md) and [source declarations](../specs/cli-parameters/spec.md#input-declaration).
+RAW CLI examples retain automatic linear ACES2065-1 declaration. See the [CLI guide](cli.md) and [source declarations](../specs/cli/spec.md#input-declaration).
 
 ## Decoder parity
 
@@ -43,4 +43,4 @@ Decoder parity is verified by [`scripts/parity/raw_reference_compare.py`](../scr
 - [RAW fixture provenance](../scripts/parity/raw_fixtures.json)
 - [Parity scripts guide](../scripts/parity/README.md)
 - [Image input specification](../specs/image-input/spec.md)
-- [CLI input declarations](../specs/cli-parameters/spec.md#input-declaration)
+- [CLI input declarations](../specs/cli/spec.md#input-declaration)

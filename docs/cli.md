@@ -31,7 +31,7 @@ This page covers CLI image processing, runtime controls, source interpretation, 
 The TIFF examples above use prepared linear ProPhoto RGB samples.
 The PNG example below uses encoded sRGB samples.
 Declare the actual source interpretation for your own files.
-See [source declarations](../specs/cli-parameters/spec.md#input-declaration) and the [image input contract](../specs/image-input/spec.md).
+See [source declarations](../specs/cli/spec.md#input-declaration) and the [image input contract](../specs/image-input/spec.md).
 RAW examples retain automatic linear ACES2065-1 declaration.
 See [RAW input](raw.md) for decoding details and [scanning](scanning.md) for negative conversion.
 
@@ -49,7 +49,7 @@ Speed depends on the adapter and active effects.
 ## Runtime edits and dry runs
 
 See [presets](presets.md) for preset composition, identity, and the library.
-The [CLI parameter contract](../specs/cli-parameters/spec.md) defines parameter editing.
+The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
 
 ```bash
 # Apply a sparse file, then an inline edit, with independent writer settings
@@ -145,7 +145,7 @@ Writer options describe the resulting pixels and never change the simulation gam
 Data-consuming commands select `--data-dir`, then `SPEKTRAFILM_DATA_DIR`, then automatic executable-relative or working-directory data.
 Explicit selections must exist and never fall back.
 Help, version, field discovery, and preset listing without an explicit selection need no data.
-See the [CLI workflow contract](../specs/cli-workflow/spec.md#data-directory-selection).
+See the [CLI workflow contract](../specs/cli/spec.md#data-directory-selection).
 Profile metadata and array dimensions are validated before construction.
 Present but malformed neutral-filter JSON is an error.
 
@@ -179,8 +179,8 @@ See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](..
 - [Presets](presets.md)
 - [Grain](grain.md)
 - [LUTs](luts.md)
-- [CLI parameter contract](../specs/cli-parameters/spec.md)
-- [Data directory selection](../specs/cli-workflow/spec.md#data-directory-selection)
+- [CLI parameter contract](../specs/cli/spec.md)
+- [Data directory selection](../specs/cli/spec.md#data-directory-selection)
 - [Image input contract](../specs/image-input/spec.md)
 - [Telemetry contract](../specs/telemetry/spec.md)
 - [Report metrics](../specs/telemetry/metrics.md)

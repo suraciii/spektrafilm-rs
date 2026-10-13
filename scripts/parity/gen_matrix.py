@@ -169,7 +169,7 @@ RUNTIME_FIELDS = {
         "input_gamut_compress.knee": (S, None, "input_gamut.rs"),
         "output_gamut_compress.algorithm": (S, None, "gamut_compression.rs"),
         "output_gamut_compress.knee": (S, None, ""),
-        "output_gamut_compress.lightness_compression": (RETIRED, None, "Intentionally retired under specs/material-response/spec.md; no replacement or parity claim"),
+        "output_gamut_compress.lightness_compression": (RETIRED, None, "Intentionally retired under specs/output-mix/spec.md; no replacement or parity claim"),
         "crop": (S, None, "resizing.rs:170-205"),
         "crop_center": (S, None, "resizing.rs:75-147"),
         "crop_size": (S, None, "resizing.rs:75-147"),
@@ -473,7 +473,7 @@ def integration_entry(status, owner, notes, source, audit_status=None):
         return {
             "rust_status": RETIRED,
             "owner_issue": owner,
-            "implementation_source": "specs/material-response/spec.md#output-boundary-and-retirement",
+            "implementation_source": "specs/output-mix/spec.md#output-boundary-and-retirement",
             "verification": "Current model rejects this path; historical audit is not a current support or parity claim.",
             "audit_baseline": {
                 "rust_status": status if audit_status is None else audit_status,

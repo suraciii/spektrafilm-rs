@@ -18,11 +18,11 @@ A review is complete only when it names the authoritative owner, the affected wi
 
 Use these pointers to reach the authoritative source for the affected model:
 
-- Runtime parameters and sparse sources: `crates/spektrafilm-core/src/params/mod.rs`, `crates/spektrafilm-core/src/params/`, `specs/cli-parameters/spec.md`, and `specs/cli-parameters/design.md`.
+- Runtime parameters and sparse sources: `crates/spektrafilm-core/src/params/mod.rs`, `crates/spektrafilm-core/src/params/`, `specs/cli/spec.md`, and `specs/cli/design.md`.
 - Presets and GUI state: `crates/spektrafilm-core/src/presets.rs`, `crates/spektrafilm-core/src/presets/`, `crates/spektrafilm-gui/src/state.rs`, `specs/presets/`, and `specs/gui-workflow/`.
 - Telemetry reports and observations: `crates/spektrafilm-core/src/telemetry/`, `crates/spektrafilm-gpu/src/telemetry.rs`, `specs/telemetry/spec.md`, and `specs/telemetry/metrics.md`.
 - LUT bundle wire data: `crates/spektrafilm-core/src/lut_baker/bundle.rs`, `crates/spektrafilm-core/src/lut_delivery.rs`, and `specs/lut-delivery/`.
-- CLI workflow structures: `crates/spektrafilm-cli/src/`, `specs/cli-workflow/spec.md`, and `specs/cli-parameters/spec.md`.
+- CLI workflow structures: `crates/spektrafilm-cli/src/`, `specs/cli/spec.md`, and `specs/cli/design.md`.
 
 ## Verification evidence
 
