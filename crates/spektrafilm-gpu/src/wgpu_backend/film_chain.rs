@@ -887,14 +887,38 @@ impl WgpuBackend {
         }
         // 4 + 5. Printing: print_spectral (buf_a → buf_b) then the print
         //     density curve (buf_b → buf_a). Skipped for scan_film — the
-        //     scan pass consumes the film density already in buf_a.
+        //     scan pass consumes the film density already in buf_a. The
+        //     PCHIP enlarger LUT and the enlarger diffusion filter run as
+        //     an assembled CPU fence that replaces the fused spectral pass
+        //     (pipe architecture, capability class); the print density
+        //     curve pass consumes the fence output unchanged.
         if !p.scan_film {
-            stages.push(pass(
-                "print_spectral",
-                print_pipe.pipeline.clone(),
-                bg_print,
-                n_pixels,
-            ));
+            if let Some(cpu) = p.print_acquisition_cpu_stage.as_ref() {
+                let buf_a = buf_a.clone();
+                let buf_b = buf_b.clone();
+                let (w, h) = (image.width, image.height);
+                let img_bytes_u64 = img_bytes as u64;
+                stages.push(super::pipe::ChainStage::Cpu {
+                    name: "print_acquisition_cpu_stage",
+                    fence: Box::new(move |pipe| {
+                        let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
+                        let log_raw = cpu(&ImageBuf::from_data(
+                            w,
+                            h,
+                            crate::gpu_helpers::f32_to_scalars(density),
+                        ));
+                        let out_f32 = crate::gpu_helpers::scalars_to_f32(&log_raw.data);
+                        pipe.write_image_buffer(&buf_b, &out_f32);
+                    }),
+                });
+            } else {
+                stages.push(pass(
+                    "print_spectral",
+                    print_pipe.pipeline.clone(),
+                    bg_print,
+                    n_pixels,
+                ));
+            }
             stages.push(pass(
                 "print_density",
                 density_pipe.pipeline,

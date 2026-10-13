@@ -95,20 +95,17 @@ impl Pipeline {
         // Input transfer decoding no longer declines: the resident route
         // decodes the input before upload (pipe architecture, capability
         // class — see `try_gpu_resident`).
-        // The scanner LUT acquisition no longer declines: it runs as an
-        // assembled CPU fence that replaces the GPU spectral integration
-        // (see `scan_acquisition_cpu_stage` in `try_gpu_resident`). The
-        // enlarger LUT on the print path still declines.
-        if !self.params.io.scan_film && self.params.settings.use_enlarger_lut {
-            reasons.push(ResidentFallbackReason::RequestedSpectralLut);
-        }
+        // The scanner and enlarger LUT acquisitions no longer decline: they
+        // run as assembled CPU fences that replace the GPU spectral
+        // integration (see `scan_acquisition_cpu_stage` and
+        // `print_acquisition_cpu_stage` in `try_gpu_resident`).
+        // The enlarger diffusion filter runs in the same print acquisition
+        // fence; camera diffusion still declines until it gets its chain
+        // head fence.
         let diffusion_effective = |df: &crate::params::diffusion::DiffusionFilterParams| {
             df.active && df.strength > 0.0 && df.spatial_scale > 0.0
         };
-        if diffusion_effective(&self.params.camera.diffusion_filter)
-            || (!self.params.io.scan_film
-                && diffusion_effective(&self.params.enlarger.diffusion_filter))
-        {
+        if diffusion_effective(&self.params.camera.diffusion_filter) {
             reasons.push(ResidentFallbackReason::ActiveOpticalDiffusion);
         }
         // Spektra grain no longer declines: it runs on the host as an
@@ -684,6 +681,44 @@ impl Pipeline {
             } else {
                 None
             };
+
+        // The PCHIP enlarger LUT and the enlarger diffusion filter run on
+        // the host as an assembled fence that replaces the fused print
+        // spectral pass (pipe architecture, capability class): the shared
+        // `expose_calibrated` already owns the LUT branch, the linear-domain
+        // diffusion, and the outer log, so the fence emits the same domain
+        // the fused shader produces and the GPU print density pass continues.
+        let edf = &self.params.enlarger.diffusion_filter;
+        let print_fence_requested =
+            self.params.settings.use_enlarger_lut || (edf.active && edf.strength > 0.0);
+        let print_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> =
+            if print_fence_requested && !self.params.io.scan_film {
+                let film = &self.film;
+                let print = &self.print;
+                let params = &self.params;
+                let illuminant = &self.print_illuminant;
+                let exposure_factor = self.print_exposure_factor;
+                let preflash = self.preflash_raw;
+                let bw = color_ref.printing_exposure_correction;
+                let closure: Box<dyn Fn(&ImageBuf) -> ImageBuf + '_> =
+                    Box::new(move |density: &ImageBuf| {
+                        crate::stages::printing::expose_calibrated(
+                            density,
+                            film,
+                            print,
+                            params,
+                            &spektrafilm_gpu::cpu_backend::CpuBackend,
+                            illuminant,
+                            exposure_factor,
+                            preflash,
+                            bw,
+                            pixel_size_um,
+                        )
+                    });
+                Some(closure)
+            } else {
+                None
+            };
         let scan_tail_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> =
             if n2p_capture_method {
                 let profile = scan_profile;
@@ -772,6 +807,7 @@ impl Pipeline {
             dir_cpu_stage,
             scan_tail_cpu_stage,
             scan_acquisition_cpu_stage,
+            print_acquisition_cpu_stage,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
@@ -1083,6 +1119,123 @@ mod tests {
         assert!(max_diff < 5e-1, "receiver fence max divergence: {max_diff}");
     }
 
+    /// `use_enlarger_lut` no longer demotes the print route: the PCHIP
+    /// enlarger LUT runs as the assembled print acquisition fence that
+    /// replaces the fused GPU spectral pass, matching the CPU reference
+    /// under the standard fence budget.
+    #[test]
+    fn enlarger_lut_print_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        params.io.scan_film = false;
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = true;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        // The print route's plain resident baseline already sits at ~0.067
+        // mean (never parity-frozen before this slice); the fence must stay
+        // inside that route budget.
+        assert!(mean < 1e-1, "enlarger LUT fence mean divergence: {mean}");
+        assert!(
+            max_diff < 5e-1,
+            "enlarger LUT fence max divergence: {max_diff}"
+        );
+    }
+
+    /// The enlarger diffusion filter runs in the same print acquisition
+    /// fence (linear-domain PSF convolution between the inner and outer
+    /// logarithms), so an active filter no longer demotes the print route.
+    #[test]
+    fn enlarger_diffusion_print_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        params.io.scan_film = false;
+        params.enlarger.diffusion_filter.active = true;
+        params.enlarger.diffusion_filter.strength = 0.5;
+        params.enlarger.diffusion_filter.spatial_scale = 4.0;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        // Print-route resident baseline budget (see the enlarger LUT test).
+        assert!(
+            mean < 1e-1,
+            "enlarger diffusion fence mean divergence: {mean}"
+        );
+        assert!(
+            max_diff < 5e-1,
+            "enlarger diffusion fence max divergence: {max_diff}"
+        );
+    }
+
     /// Negative-to-positive capture interpretation (separable inverse) runs
     /// as the same scanner readout fence; the density reading and Digital
     /// Reference still decline because they replace the acquisition.
@@ -1285,8 +1438,8 @@ mod tests {
 
     /// An explicitly requested GPU backend must fail at assembly when a
     /// capability-missing stage would otherwise demote the route to CPU
-    /// silently (pipe architecture fence policy). The enlarger spectral LUT
-    /// is still an unported capability, so requesting it with an explicit
+    /// silently (pipe architecture fence policy). Camera optical diffusion
+    /// still has no chain-head fence, so requesting it with an explicit
     /// backend errors before output publication.
     #[test]
     fn explicit_gpu_request_fails_on_capability_gap() {
@@ -1302,8 +1455,10 @@ mod tests {
         params.io.scan_film = false;
         params.camera.auto_exposure = false;
         params.io.output_gamut_compress.algorithm = "off".into();
-        // Capability gap: the enlarger spectral LUT has no GPU path yet.
-        params.settings.use_enlarger_lut = true;
+        // Capability gap: camera optical diffusion has no GPU path yet.
+        params.camera.diffusion_filter.active = true;
+        params.camera.diffusion_filter.strength = 0.5;
+        params.camera.diffusion_filter.spatial_scale = 4.0;
 
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
         let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
@@ -1325,7 +1480,9 @@ mod tests {
         params2.io.output_gamut_compress.algorithm = "off".into();
         params2.workflow.route = "input > film > print > scan".into();
         params2.io.scan_film = false;
-        params2.settings.use_enlarger_lut = true;
+        params2.camera.diffusion_filter.active = true;
+        params2.camera.diffusion_filter.strength = 0.5;
+        params2.camera.diffusion_filter.spatial_scale = 4.0;
         let pipeline2 = Pipeline::new_with_spectral(
             crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
             crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
