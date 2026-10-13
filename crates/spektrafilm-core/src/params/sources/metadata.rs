@@ -354,7 +354,7 @@ fn conditions(path: &str) -> Vec<String> {
     } else if path == "scanner.positive_interpretation" {
         out.push("density reads record densities and acquires no receiver capture, so its output is receiver-independent; separable and coupled interpret a receiver capture and apply to a real negative capture or the exact-cell scan path; density behaves as separable where the incoming image is a capture".into());
     } else if path == "scanner.scan_output" {
-        out.push("positive_scan requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain Procedural are unsupported".into());
+        out.push("negative_to_positive requires a negative film profile and direct input > film > scan or input > convert-film > scan route; scanner white/black correction and active Grain Procedural are unsupported".into());
     }
     if matches!(path, "scanner.black_point" | "scanner.white_point") {
         out.push("each channel requires 0 <= black_point < white_point <= 1; points remap without clipping".into());

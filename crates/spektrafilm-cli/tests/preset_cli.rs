@@ -624,7 +624,7 @@ fn film_scan_without_preset_keeps_legacy_print_selection() {
 #[test]
 fn scanner_selectors_report_approximation_and_reject_unsupported_routes_before_pixels() {
     let f = Fixture::new();
-    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "positive_scan", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled,scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
+    let report = f.report(&["--film", "kodak_portra_400", "--scan-film", "--scan-output", "negative_to_positive", "--set", "scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled,scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.5", "--dry-run"]);
     assert_eq!(
         report["parameters"]["scanner"]["receiver_profile"],
         "lab_scan_approx"
@@ -956,7 +956,7 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
                 "--route",
                 route,
                 "--scan-output",
-                "positive_scan",
+                "negative_to_positive",
                 "--set",
                 edits,
                 "--backend",
@@ -981,7 +981,7 @@ fn scan_output_rejects_invalid_combinations_before_dry_run_or_render() {
 }
 
 #[test]
-fn positive_scan_rejects_paper_without_sparse_parameter_edits() {
+fn negative_to_positive_rejects_paper_without_sparse_parameter_edits() {
     let f = Fixture::new();
     for dry_run in [false, true] {
         let mut args = vec![
@@ -989,7 +989,7 @@ fn positive_scan_rejects_paper_without_sparse_parameter_edits() {
             "kodak_portra_endura",
             "--scan-film",
             "--scan-output",
-            "positive_scan",
+            "negative_to_positive",
             "--backend",
             "cpu",
         ];
@@ -1015,7 +1015,7 @@ fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
         "Kodak Portra 400",
         "--scan-film",
         "--set",
-        "scanner.scan_output=\"positive_scan\",scanner.white_correction=true",
+        "scanner.scan_output=\"negative_to_positive\",scanner.white_correction=true",
         "--scan-output",
         "direct_scan",
         "--dry-run",
@@ -1038,6 +1038,158 @@ fn scan_output_flag_overrides_sources_but_invalid_source_is_rejected() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("scanner.scan_output"));
     assert!(!f.root.join("output.tif").exists());
+}
+
+#[test]
+fn removed_scan_output_rejects_all_carriers_before_publication() {
+    let f = Fixture::new();
+    let json_path = f.root.join("removed-scan-output.json");
+    let toml_path = f.root.join("removed-scan-output.toml");
+    let parameters = json!({"scanner":{"scan_output":"positive_scan"}});
+    std::fs::write(&json_path, serde_json::to_vec(&parameters).unwrap()).unwrap();
+    std::fs::write(&toml_path, "[scanner]\nscan_output = \"positive_scan\"\n").unwrap();
+    let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
+    assert!(shown.status.success());
+    let mut preset: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    preset["parameters"]["scanner"]["scan_output"] = json!("positive_scan");
+    let preset_path = f.root.join("removed-scan-output-preset.json");
+    std::fs::write(&preset_path, serde_json::to_vec(&preset).unwrap()).unwrap();
+    let raw_path = f.root.join("buffer.raw");
+    let output_path = f.root.join("output.tif");
+    let input_before = std::fs::read(&f.input).unwrap();
+    std::fs::write(&output_path, b"retained image").unwrap();
+    std::fs::write(&raw_path, b"retained buffer").unwrap();
+    let cases: &[&[&str]] = &[
+        &[
+            "--film",
+            "kodak_portra_400",
+            "--scan-film",
+            "--scan-output",
+            "positive_scan",
+        ],
+        &[
+            "--film",
+            "kodak_portra_400",
+            "--scan-film",
+            "--set",
+            "scanner.scan_output=positive_scan",
+            "--scan-output",
+            "direct_scan",
+        ],
+        &[
+            "--film",
+            "kodak_portra_400",
+            "--scan-film",
+            "--set",
+            json_path.to_str().unwrap(),
+            "--scan-output",
+            "direct_scan",
+        ],
+        &[
+            "--film",
+            "kodak_portra_400",
+            "--scan-film",
+            "--set",
+            toml_path.to_str().unwrap(),
+            "--scan-output",
+            "direct_scan",
+        ],
+        &[
+            "--film",
+            "kodak_portra_400",
+            "--scan-film",
+            "--params",
+            json_path.to_str().unwrap(),
+            "--scan-output",
+            "direct_scan",
+        ],
+        &[
+            "--preset",
+            preset_path.to_str().unwrap(),
+            "--scan-film",
+            "--scan-output",
+            "direct_scan",
+        ],
+    ];
+    for case in cases {
+        for dry_run in [false, true] {
+            let mut args = case.to_vec();
+            args.extend_from_slice(&["--backend", "cpu", "--raw-out", raw_path.to_str().unwrap()]);
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let result = f.process(&args);
+            assert!(!result.status.success(), "accepted {case:?}");
+            let error = String::from_utf8_lossy(&result.stderr);
+            assert!(error.contains("positive_scan"), "{case:?}: {error}");
+            assert!(error.contains("negative_to_positive"), "{case:?}: {error}");
+            assert_eq!(std::fs::read(&output_path).unwrap(), b"retained image");
+            assert_eq!(std::fs::read(&raw_path).unwrap(), b"retained buffer");
+            assert_eq!(std::fs::read(&f.input).unwrap(), input_before);
+        }
+    }
+
+    let input_path = f.root.join("recipe-input.tiff");
+    let file = std::fs::File::create(&input_path).unwrap();
+    let mut encoder = tiff::encoder::TiffEncoder::new(file).unwrap();
+    encoder
+        .new_image::<tiff::encoder::colortype::RGB32Float>(4, 4)
+        .unwrap()
+        .write_data(&[0.1_f32, 0.2, 0.3].repeat(16))
+        .unwrap();
+    drop(encoder);
+    let recipe_path = f.root.join("removed-scan-output-recipe.json");
+    let recipe = json!({
+        "schemaVersion":"spektrafilm-rs-params-1",
+        "filmProfile":"kodak_portra_400",
+        "printProfile":"kodak_portra_endura",
+        "parameters":parameters,
+        "output":{"format":"png","precisionBits":8,"colorSpace":"sRGB","transferFunction":"srgb","geometry":"bounded","encoding":"bounded-preview","maxEdge":4}
+    });
+    std::fs::write(&recipe_path, serde_json::to_vec(&recipe).unwrap()).unwrap();
+    let recipe_output = f.root.join("recipe-output.png");
+    let input_before = std::fs::read(&input_path).unwrap();
+    let result = f.run(&[
+        "render",
+        "--input",
+        input_path.to_str().unwrap(),
+        "--recipe",
+        recipe_path.to_str().unwrap(),
+        "--output",
+        recipe_output.to_str().unwrap(),
+        "--data-dir",
+        f.data.to_str().unwrap(),
+    ]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("positive_scan"), "{error}");
+    assert!(error.contains("negative_to_positive"), "{error}");
+    assert!(!recipe_output.exists());
+    assert_eq!(std::fs::read(&input_path).unwrap(), input_before);
+
+    #[cfg(feature = "precision-f64")]
+    {
+        let fit_report = f.root.join("fit-report.json");
+        std::fs::write(&fit_report, b"retained fit report").unwrap();
+        let result = f.run(&[
+            "fit",
+            "--layout",
+            "missing-layout.json",
+            "--scene",
+            "missing-scene.json",
+            "--reference",
+            "missing-reference.json",
+            "--report",
+            fit_report.to_str().unwrap(),
+            "--scan-output",
+            "positive_scan",
+        ]);
+        assert!(!result.status.success());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains("positive_scan"), "{error}");
+        assert!(error.contains("negative_to_positive"), "{error}");
+        assert_eq!(std::fs::read(&fit_report).unwrap(), b"retained fit report");
+    }
 }
 
 #[test]
@@ -1671,13 +1823,13 @@ fn later_look_replaces_earlier_section_and_section_only_keeps_static_route() {
 }
 
 #[test]
-fn look_preset_normalizes_inapplicable_positive_scan_to_direct_scan() {
+fn look_preset_normalizes_inapplicable_negative_to_positive_to_direct_scan() {
     let f = Fixture::new();
     let shown = f.run(&["preset", "show", "Kodak Portra 400", "--format", "json"]);
     assert!(shown.status.success());
     let mut document: Value = serde_json::from_slice(&shown.stdout).unwrap();
-    document["parameters"]["scanner"]["scan_output"] = json!("positive_scan");
-    let path = f.root.join("positive-output-look.json");
+    document["parameters"]["scanner"]["scan_output"] = json!("negative_to_positive");
+    let path = f.root.join("negative-conversion-look.json");
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
 
     let report = f.report(&["--preset", path.to_str().unwrap(), "--dry-run"]);
@@ -1696,21 +1848,21 @@ fn invalid_scanner_section_rejects_without_printing_effective_configuration() {
     let f = Fixture::new();
     library_document(
         &f,
-        "Positive scanner",
-        json!({"scanner":{"scan_output":"positive_scan"}}),
+        "Negative conversion scanner",
+        json!({"scanner":{"scan_output":"negative_to_positive"}}),
     );
     let baseline = f.report(&["--preset", "Kodak Portra 400", "--dry-run"]);
     let rejected = f.process(&[
         "--preset",
         "Kodak Portra 400",
         "--preset",
-        "Positive scanner",
+        "Negative conversion scanner",
         "--dry-run",
     ]);
     assert!(!rejected.status.success());
     let error = String::from_utf8_lossy(&rejected.stderr);
     assert!(
-        error.contains("scanner.scan_output=positive_scan")
+        error.contains("scanner.scan_output=negative_to_positive")
             && error.contains("requires a direct film scan route"),
         "{error}"
     );
@@ -1778,8 +1930,8 @@ fn scanner_sections_validate_the_final_cli_workflow() {
     let f = Fixture::new();
     library_document(
         &f,
-        "Positive scanner",
-        json!({"scanner":{"scan_output":"positive_scan"}}),
+        "Negative conversion scanner",
+        json!({"scanner":{"scan_output":"negative_to_positive"}}),
     );
     for base in [
         vec!["--preset", "Kodak Portra 400"],
@@ -1787,7 +1939,7 @@ fn scanner_sections_validate_the_final_cli_workflow() {
     ] {
         for workflow in [vec!["--scan-film"], vec!["--route", "input > film > scan"]] {
             let mut args = base.clone();
-            args.extend_from_slice(&["--preset", "Positive scanner"]);
+            args.extend_from_slice(&["--preset", "Negative conversion scanner"]);
             args.extend_from_slice(&workflow);
             args.push("--dry-run");
             let report = f.report(&args);
@@ -1798,7 +1950,7 @@ fn scanner_sections_validate_the_final_cli_workflow() {
             assert_eq!(report["parameters"]["io"]["scan_film"], true);
             assert_eq!(
                 report["parameters"]["scanner"]["scan_output"],
-                "positive_scan"
+                "negative_to_positive"
             );
         }
     }
@@ -1806,7 +1958,7 @@ fn scanner_sections_validate_the_final_cli_workflow() {
         "--preset",
         "Kodak Portra 400",
         "--preset",
-        "Positive scanner",
+        "Negative conversion scanner",
         "--set",
         "scanner.scan_output=direct_scan",
         "--dry-run",
@@ -1823,7 +1975,7 @@ fn scanner_sections_validate_the_final_cli_workflow() {
         "--preset",
         "Fujifilm Provia 100F",
         "--preset",
-        "Positive scanner",
+        "Negative conversion scanner",
         "--scan-film",
         "--dry-run",
     ]);

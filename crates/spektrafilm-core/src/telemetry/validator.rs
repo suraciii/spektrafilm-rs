@@ -318,7 +318,7 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "scanning",
         "post_scan",
         "magazine_print_color",
-        "positive_scan",
+        "negative_to_positive",
         "scanner_film_points",
         "scanner_finish",
         "input_transfer",

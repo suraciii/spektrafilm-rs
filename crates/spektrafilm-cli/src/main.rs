@@ -478,7 +478,7 @@ struct WorkflowOptions {
     #[arg(long, help_heading = "Look and workflow")]
     route: Option<String>,
     /// Film scanner output mode; applied after parameter sources.
-    #[arg(long, value_parser = ["direct_scan", "positive_scan"], help_heading = "Look and workflow")]
+    #[arg(long, value_parser = ["direct_scan", "negative_to_positive"], help_heading = "Look and workflow")]
     scan_output: Option<String>,
     /// Film density channel order: none or three comma-separated indices in 0..2.
     #[arg(long, default_value = "none", help_heading = "Look and workflow")]

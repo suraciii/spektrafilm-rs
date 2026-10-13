@@ -17,7 +17,7 @@ pub(crate) const TONE_PARAMETERS: usize = 3;
 /// The balance channel a tone fit pins.
 ///
 /// A common offset added to `positive_density_ev` and subtracted from every
-/// `positive_balance_ev` channel leaves the positive scan unchanged, so the
+/// `positive_balance_ev` channel leaves the negative conversion unchanged, so the
 /// four values are redundant by one degree of freedom. Pinning one channel
 /// makes the fitted tone unique.
 pub(crate) const PINNED_BALANCE_CHANNEL: usize = 1;
@@ -114,9 +114,9 @@ impl Evaluator {
         if params.settings.preview_mode {
             return Err("fit requires preview mode off (settings.preview_mode = false)".into());
         }
-        if params.scanner.scan_output != "positive_scan" {
+        if params.scanner.scan_output != "negative_to_positive" {
             return Err(format!(
-                "fit requires the finished positive scan (scanner.scan_output = positive_scan), \
+                "fit requires the finished negative conversion (scanner.scan_output = negative_to_positive), \
                  got {:?}",
                 params.scanner.scan_output
             ));

@@ -1,5 +1,7 @@
 # Film chain design
 
+- Scanner vocabulary follows [Scanner language](spec.md#scanner-language). The canonical conversion mode is `negative_to_positive`; scan output validation owns its accepted values. CLI, presets, recipes, GUI state, and diagnostics consume that vocabulary without aliases. The UI separates display labels from serialized values.
+- The naming change retains the existing runtime fields, document schema versions, conversion methods, defaults, calibration, processing order, and numerical operations. Telemetry uses the conversion name for its stage and execution reasons. Saved look controls and acquisition/finish provenance keep their existing ownership.
 - `core::runtime` is the production entry point. `Pipeline` owns stage topology and stage state.
 - Pipeline entry points share optical diagnostic tap admission and selector-conflict rules. Each entry point retains its validation order and topology-specific guards.
 - Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.

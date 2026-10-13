@@ -62,7 +62,9 @@ impl ScannerSetup {
             || !scanner.positive_dmax.is_finite()
             || scanner.positive_dmax <= 0.0
         {
-            return Err("scanner auto setup requires finite positive scan tone controls".into());
+            return Err(
+                "scanner auto setup requires finite negative conversion tone controls".into(),
+            );
         }
 
         let to_ev = |sample: &[f64; 3]| sample.map(|v| v / std::f64::consts::LOG10_2 - camera_ev);
