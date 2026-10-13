@@ -10,7 +10,7 @@ The CPU implementation owns reference evaluation. The WGPU backend owns device r
 
 The execution policy must be resolved once per operation from the accepted backend request and available adapter. Lower layers must not select CPU through trait defaults or effect-specific fallback. A GPU capability check must cover the complete operation before dispatch where the limitation is knowable. Mid-operation failures must preserve publication guarantees.
 
-A fixed stage sequence with explicit image-domain transitions is sufficient. A generic public effect graph, new backend, or backend-specific serialized model is not required. Separate GPU passes may preserve a domain boundary without requiring a fused shader.
+The stage sequence is carried by the internal [pipe architecture](pipe-architecture.md): nodes are assembled per operation from the resolved parameters, unported stages become explicit CPU fence nodes, and the fixed sequence in the backend is retired. Stage ordering and image-domain transitions remain explicit. A generic public effect graph, new backend, or backend-specific serialized model is still not required.
 
 ## Preparation boundary
 
@@ -28,7 +28,7 @@ Native RAW unpacking must expose the sensor samples and metadata needed by the s
 
 Device image ownership must represent dimensions, sample domain, color and transfer state, working pixel pitch, and lifetime. Stages must consume that representation without obtaining host pixels implicitly. CPU reference execution may use host images under the same domain contracts.
 
-The operation must retain device ownership through input numerical preparation, film and scan work, output composition, and final saving or display conversion. Save must consume retained output in its actual storage domain without rerendering. A final host materialization for the native writer or a diagnostic output is an explicit handoff, not an internal stage boundary.
+The operation must retain device ownership through input numerical preparation, film and scan work, output composition, and final saving or display conversion. Save must consume retained output in its actual storage domain without rerendering. A final host materialization for the native writer or a diagnostic output is an explicit handoff, not an internal stage boundary. The [pipe architecture](pipe-architecture.md) adds one further explicit handoff class: a fence around a `Cpu` capability node on the automatic route. Fences are assembled in advance, never appear on a full-GPU render, and are governed by the residency rule that a full-GPU render must not materialize intermediates on the host.
 
 A viewer must consume resident image data when compute and presentation devices can share it. Separate devices may require a final presentation transfer. Presentation must not download an image for CPU resampling or ICC evaluation and upload that computed raster as if it were full-GPU viewing. Software WGPU must remain visibly identified.
 
