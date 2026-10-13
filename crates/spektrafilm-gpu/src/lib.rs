@@ -277,6 +277,14 @@ pub trait ComputeBackend: Send + Sync {
         false
     }
 
+    /// True when the user explicitly requested this GPU backend
+    /// (`SPEKTRAFILM_BACKEND=wgpu`). An explicit request must not run a
+    /// capability-missing stage on the CPU silently: the operation fails
+    /// at assembly instead of demoting the route.
+    fn explicit_gpu_request(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &str;
 }
 
@@ -351,6 +359,90 @@ pub struct FilmChainParams<'a> {
     /// Optional highlight reconstruction on the raw film exposure buffer,
     /// immediately after the front pass and before optical scatter.
     pub highlight_boost: Option<HighlightBoostGpuParams>,
+    /// Optional CPU stage on the film density buffer between the film
+    /// density curve and DIR/printing — the assembled fence for an
+    /// unported grain engine (pipe architecture, capability class). The
+    /// closure receives the materialized density_cmy image and returns
+    /// the grained image, which is written back to the same device
+    /// buffer.
+    pub density_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage replacing the GPU DIR couplers pass when the
+    /// Langmuir chemistry uses non-default coefficients (pipe
+    /// architecture, capability class). Receives the developed density and
+    /// the log-raw exposure buffers; returns the corrected density, which
+    /// is written back in place.
+    pub dir_cpu_stage: Option<Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage on the scanner readout buffer between glare and
+    /// output gamut compression — the assembled fence for the scanner
+    /// readout interpretation (slide points, the faithful luminance remap,
+    /// negative-to-positive conversion, and the LabScan finish; pipe
+    /// architecture, capability class). Receives the acquisition RGB and
+    /// returns the interpreted image, which is written back in place. When
+    /// present, `bw_xyz_remap` must be `None`: the fence owns the remap in
+    /// the faithful order, after optical blur and glare.
+    pub scan_tail_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage replacing the GPU scan spectral pass when the CPU
+    /// route would take the PCHIP scanner LUT acquisition (the slide
+    /// luminance remap or `use_scanner_lut`; pipe architecture, capability
+    /// class). Receives the film/print density and returns the captured
+    /// RGB, which is written to the acquisition buffer.
+    pub scan_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage replacing the fused GPU print spectral pass when
+    /// the CPU route would take the PCHIP enlarger LUT or the enlarger
+    /// diffusion filter (pipe architecture, capability class). Receives the
+    /// film density and returns the print log-raw after the outer log —
+    /// the same domain the fused shader emits — so the GPU print density
+    /// curve pass continues unchanged.
+    pub print_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage on the raw film exposure buffer between
+    /// highlight reconstruction and the camera lens blur — the assembled
+    /// fence for the camera optical diffusion filter's discrete PSF
+    /// convolution (pipe architecture, capability class). Receives the
+    /// front-pass raw and returns the diffused raw, written back in place.
+    pub camera_diffusion_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional output transfer encoding/decoding pass on the final buffer
+    /// after every scanner effect (pipe architecture, S4). Encode applies
+    /// the stored same-space roundtrip matrix and the space's encoding
+    /// transfer; decode restores linear for a Procedural-grain output when
+    /// the caller requested no encoding.
+    pub output_transfer: Option<OutputTransferGpuParams>,
+    /// Optional magazine print appearance pass on the final buffer after
+    /// the output transfer (pipe architecture, S4). The residual host
+    /// finishing moves onto the device; the input state is encoded exactly
+    /// when the caller requested output encoding.
+    pub magazine: Option<MagazineGpuParams>,
+}
+
+/// One pipe-tail transfer pass (pipe architecture, S4).
+pub struct OutputTransferGpuParams {
+    /// false = encode (matrix + cctf), true = decode (cctf only).
+    pub decode: bool,
+    /// `Cctf` discriminant: 0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto,
+    /// 4 Rec2020, 5 Adobe RGB (1998), 6 Gamma 2.6.
+    pub cctf_kind: u32,
+    /// Same-space RGB roundtrip matrix (`rgb_to_rgb_identity`).
+    pub matrix: [[f32; 3]; 3],
+}
+
+/// One pipe-tail magazine appearance pass (pipe architecture, S4).
+pub struct MagazineGpuParams {
+    /// Mix strength, clamped to 0..=1 by the caller.
+    pub strength: f32,
+    /// Input/output state: true when the buffer carries encoded samples.
+    pub encoded: bool,
+    /// `Cctf` discriminant: 0 Linear, 1 ACEScct, 2 sRGB, 3 ProPhoto,
+    /// 4 Rec2020, 5 Adobe RGB (1998), 6 Gamma 2.6.
+    pub cctf_kind: u32,
+    /// Destination RGB → CIELAB D50 (Bradford-adapted).
+    pub to_lab: [[f32; 3]; 3],
+    /// CIELAB D50 → destination RGB.
+    pub from_lab: [[f32; 3]; 3],
+    /// Tone-curve input knots in CIELAB L*.
+    pub tone_in: [f32; 10],
+    /// Tone-curve output knots in CIELAB L*.
+    pub tone_out: [f32; 10],
+    /// Tone-curve Hermite slopes.
+    pub tone_slopes: [f32; 10],
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.
@@ -522,7 +614,12 @@ pub fn select_backend() -> Box<dyn ComputeBackend> {
     #[cfg(feature = "wgpu-backend")]
     {
         if requested.as_deref().is_none() || requested.as_deref() == Some("wgpu") {
-            if let Some(gpu) = wgpu_backend::WgpuBackend::new() {
+            let constructor = if requested.as_deref() == Some("wgpu") {
+                wgpu_backend::WgpuBackend::new_explicit
+            } else {
+                wgpu_backend::WgpuBackend::new
+            };
+            if let Some(gpu) = constructor() {
                 tracing::info!(
                     precision = "f32",
                     reference = false,

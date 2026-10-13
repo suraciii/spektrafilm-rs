@@ -896,7 +896,27 @@ impl Pipeline {
                 timings,
             );
         }
-        let cpu_fallback = if self.params.scanner.scan_output == "negative_to_positive" {
+        // The negative-to-positive capture methods (separable/coupled) run
+        // on the resident chain as the assembled scanner readout fence
+        // (`scan_tail_cpu_stage`); only the density reading and Digital
+        // Reference replace the acquisition and keep the whole-route CPU
+        // fallback. An explicit GPU request must fail there instead of
+        // silently demoting (pipe architecture fence policy).
+        let n2p_acquisition_replacement = self.params.scanner.scan_output == "negative_to_positive"
+            && matches!(
+                self.params.scanner.positive_interpretation,
+                crate::params::PositiveInterpretation::Density
+                    | crate::params::PositiveInterpretation::DigitalReference
+            );
+        if n2p_acquisition_replacement && backend.explicit_gpu_request() {
+            return Err(
+                "explicit GPU request cannot run the negative-to-positive density reading or \
+                 Digital Reference on WGPU (they replace the acquisition); retry with an \
+                 explicit CPU request"
+                    .into(),
+            );
+        }
+        let cpu_fallback = if n2p_acquisition_replacement {
             backend
                 .observation_context()
                 .filter(|context| context.enabled())
@@ -1187,15 +1207,13 @@ impl Pipeline {
         // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
             && let Some(out) =
-                self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)
+                self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)?
         {
             tracing::info!("pipeline: gpu-resident fast path complete");
-            let _post = stages::StageObservation::cpu(
-                backend,
-                "post_scan",
-                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-            );
-            return Ok(self.apply_post_scan(out, backend));
+            // Post-scan finishing (output transfer + magazine) already ran
+            // as pipe-tail passes; the readback is final (pipe
+            // architecture, S4).
+            return Ok(out);
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
@@ -1303,21 +1321,13 @@ impl Pipeline {
             context.set_working_dimensions(working.width, working.height);
         }
         let color_ref = self.color_reference(backend);
-        let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0) {
+        let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0)? {
             Some(out) => out,
             None => return Ok(None),
         };
-        let _post = stages::StageObservation::cpu(
-            backend,
-            "post_scan",
-            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
-        );
-        Ok(Some(self.compose_output_mix(
-            self.apply_post_scan(out, backend),
-            source,
-            backend,
-            None,
-        )?))
+        // Post-scan finishing already ran as pipe-tail passes on the
+        // resident chain (pipe architecture, S4); the readback is final.
+        Ok(Some(self.compose_output_mix(out, source, backend, None)?))
     }
 
     /// Prepare the already decoded/RAW-corrected input before virtual camera
@@ -2735,53 +2745,6 @@ mod spectral_invalidation_tests {
         let mixed = pipeline.process(image, &backend).unwrap();
         for ((s, r), actual) in source.data.iter().zip(&complete.data).zip(&mixed.data) {
             assert_eq!(*actual, from_f64(0.5 * to_f64(*s) + 0.5 * to_f64(*r)));
-        }
-    }
-
-    #[test]
-    fn resident_finishing_applies_magazine_before_procedural_export_decode() {
-        use spektrafilm_math::colorspace::{cctf_decode, encode_rgb, resolve};
-        let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
-        let mut pipeline = build();
-        pipeline.params.io.output_color_space = "sRGB".into();
-        pipeline.params.magazine_print_color.active = true;
-        pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Procedural;
-        let space = resolve("sRGB").unwrap();
-        for procedural in [false, true] {
-            pipeline.params.film_render.grain.active = procedural;
-            for encoded in [false, true] {
-                pipeline.params.io.output_cctf_encoding = encoded;
-                let native = ImageBuf::from_data(
-                    2,
-                    1,
-                    [0.07, 0.4, 0.8, 0.3, 0.5, 0.9].map(from_f64).to_vec(),
-                );
-                let mut expected = native.clone();
-                if !procedural && encoded {
-                    for pixel in expected.data.as_chunks_mut::<3>().0 {
-                        let rgb = encode_rgb(
-                            [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])],
-                            space,
-                        );
-                        for c in 0..3 {
-                            pixel[c] = from_f64(rgb[c]);
-                        }
-                    }
-                }
-                crate::magazine_print_color::apply(
-                    &mut expected,
-                    &pipeline.params.magazine_print_color,
-                    space,
-                    procedural || encoded,
-                );
-                if procedural && !encoded {
-                    for value in &mut expected.data {
-                        *value = from_f64(cctf_decode(to_f64(*value), space.cctf));
-                    }
-                }
-                let actual = pipeline.apply_post_scan(native, &backend);
-                assert_eq!(actual.data, expected.data);
-            }
         }
     }
 }

@@ -4,18 +4,26 @@ mod observation;
 use crate::telemetry::*;
 use observation::{ObservedDevice, ObservedEncoder, ObservedPass, ObservedQueue};
 
+#[cfg(feature = "wgpu-backend")]
 use spektrafilm_math::image::ImageBuf;
 
 use crate::gpu_helpers::{
     f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
 };
+#[cfg(feature = "wgpu-backend")]
 use crate::{ComputeBackend, Lut3D, cpu_backend};
 
+#[cfg(feature = "wgpu-backend")]
 mod cache;
+#[cfg(feature = "wgpu-backend")]
 mod film_chain;
-mod params;
+#[cfg(feature = "wgpu-backend")]
 use cache::{CachedPipelineRef, PipelineCache};
-pub(crate) use params::{DensityParams, FrontParams, ScanParams};
+#[cfg(feature = "wgpu-backend")]
+mod pipe;
+#[cfg(feature = "wgpu-backend")]
+use pipe::GpuPipe;
+
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
 /// monster kernel froze the display once). 256 → at
@@ -25,13 +33,16 @@ const MAX_BLUR_RADIUS: u32 = 256;
 
 // Keep in sync with the linear WGSL kernels. 256 is supported by the
 // default device limits; a two-dimensional grid preserves large-image support.
+#[cfg(feature = "wgpu-backend")]
 const LINEAR_WORKGROUP_SIZE: u32 = 256;
 
+#[cfg(feature = "wgpu-backend")]
 fn dispatch_grid(workgroups: u32) -> (u32, u32) {
     let x = workgroups.clamp(1, 65535);
     (x, workgroups.div_ceil(x))
 }
 
+#[cfg(feature = "wgpu-backend")]
 fn dispatch_linear(pass: &mut ObservedPass<'_>, n_values: u32) {
     let (x, y) = dispatch_grid(n_values.div_ceil(LINEAR_WORKGROUP_SIZE));
     pass.dispatch_workgroups(x, y, 1);
@@ -42,14 +53,18 @@ fn fir_blur_radius(sigma: f32) -> u32 {
     ((3.0_f32 * sigma).ceil() as u32).min(MAX_BLUR_RADIUS)
 }
 
+#[cfg(feature = "wgpu-backend")]
 pub struct WgpuBackend {
     device: ObservedDevice,
     queue: ObservedQueue,
     pipeline_cache: std::sync::Arc<PipelineCache>,
+    pipe: GpuPipe,
     name: String,
     adapter: AdapterDescription,
+    explicit: bool,
 }
 
+#[cfg(feature = "wgpu-backend")]
 impl WgpuBackend {
     pub fn new() -> Option<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -145,30 +160,51 @@ impl WgpuBackend {
             "wgpu backend initialized"
         );
 
+        let device = ObservedDevice {
+            raw: device,
+            context: ObservationContext::default(),
+            batch: None,
+        };
+        let queue = ObservedQueue {
+            raw: queue,
+            context: ObservationContext::default(),
+            batch: None,
+        };
+        let pipeline_cache = std::sync::Arc::new(PipelineCache::default());
         Some(Self {
             name: format!(
                 "WGPU f32 · {} ({:?}, {:?})",
                 adapter_info.name, adapter_info.device_type, adapter_info.backend
             ),
-            device: ObservedDevice {
-                raw: device,
-                context: ObservationContext::default(),
-                batch: None,
-            },
-            queue: ObservedQueue {
-                raw: queue,
-                context: ObservationContext::default(),
-                batch: None,
-            },
-            pipeline_cache: std::sync::Arc::new(PipelineCache::default()),
+            pipe: GpuPipe::new(
+                device.clone(),
+                queue.clone(),
+                std::sync::Arc::clone(&pipeline_cache),
+            ),
+            device,
+            queue,
+            pipeline_cache,
             adapter: description,
+            explicit: false,
+        })
+    }
+
+    /// Construct an explicitly requested backend
+    /// (`SPEKTRAFILM_BACKEND=wgpu`): capability-missing stages must fail
+    /// at assembly instead of silently demoting the route to CPU.
+    pub fn new_explicit() -> Option<Self> {
+        Self::new().map(|mut b| {
+            b.explicit = true;
+            b
         })
     }
 
     /// Generic GPU compute dispatch helper.
     ///
     /// The cache key includes both shader identity and binding layout so a
-    /// shader reused by two passes cannot receive the wrong bind-group layout.
+    /// shader reused by two passes cannot receive the wrong bind-group
+    /// layout. Execution, buffer reuse, and the readback live on the
+    /// [pipe](pipe) core.
     fn dispatch_compute(
         &self,
         shader_source: &'static str,
@@ -177,103 +213,14 @@ impl WgpuBackend {
         output_idx: usize,
         name: &'static str,
     ) -> Vec<f32> {
-        let binding_types: Vec<wgpu::BufferBindingType> =
-            bindings.iter().map(|b| b.binding_type).collect();
-        let (cached, hit) =
-            self.pipeline_cache
-                .get_or_compile(&self.device, shader_source, &binding_types);
-        if self.device.context.enabled() {
-            let mut work = WorkCounters::default();
-            if hit {
-                work.pipeline_cache_hit_count = Some(1);
-            } else {
-                work.pipeline_cache_miss_count = Some(1);
-            }
-            self.device.context.record_work(&work);
-        }
-        let pipeline = &cached.pipeline;
-        let bind_group_layout = &cached.layout;
-
-        // Create GPU buffers
-        let gpu_buffers: Vec<wgpu::Buffer> = bindings
-            .iter()
-            .enumerate()
-            .map(|(index, b)| {
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(if index == 1 {
-                            "image_input"
-                        } else if index == output_idx {
-                            "scratch_init"
-                        } else {
-                            "spectral_resource"
-                        }),
-                        contents: &b.data,
-                        usage: b.usage,
-                    })
-            })
-            .collect();
-
-        let bind_entries: Vec<wgpu::BindGroupEntry> = gpu_buffers
-            .iter()
-            .enumerate()
-            .map(|(i, buf)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: buf.as_entire_binding(),
-            })
-            .collect();
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_bind_group"),
-            layout: bind_group_layout,
-            entries: &bind_entries,
-        });
-
-        // Readback buffer
-        let output_size = bindings[output_idx].data.len() as u64;
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: output_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Dispatch
-        // Linear kernels flatten a two-dimensional workgroup grid in WGSL.
-
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(name),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            dispatch_linear(&mut pass, n_pixels);
-        }
-        encoder.copy_buffer_to_buffer(&gpu_buffers[output_idx], 0, &readback, 0, output_size);
-        self.queue.submit(Some(encoder.finish()));
-
-        // Read back
-        self.read_mapped_f32(&readback, output_size)
+        self.pipe
+            .dispatch_host(shader_source, bindings, n_pixels, output_idx, name)
     }
 
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
     /// materialized bytes, then copy the mapped range out as f32.
     fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
-        let slice = buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            tx.send(r).unwrap();
-        });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().unwrap();
-        self.device.materialized(bytes);
-        let data = slice.get_mapped_range();
-        let out: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
-        drop(data);
-        buffer.unmap();
-        out
+        self.pipe.read_mapped_f32(buffer, bytes)
     }
 
     /// Get or compile a pipeline using the shared shader-and-layout cache.
@@ -298,12 +245,14 @@ impl WgpuBackend {
     }
 }
 
+#[cfg(feature = "wgpu-backend")]
 struct GpuBuffer {
     data: Vec<u8>,
     binding_type: wgpu::BufferBindingType,
     usage: wgpu::BufferUsages,
 }
 
+#[cfg(feature = "wgpu-backend")]
 impl GpuBuffer {
     fn uniform(data: &[u8]) -> Self {
         Self {
@@ -328,6 +277,7 @@ impl GpuBuffer {
     }
 }
 
+#[cfg(feature = "wgpu-backend")]
 impl ComputeBackend for WgpuBackend {
     fn observation_context(&self) -> Option<&ObservationContext> {
         Some(&self.device.context)
@@ -344,20 +294,24 @@ impl ComputeBackend for WgpuBackend {
         if context.mode() == CollectionMode::GpuTiming && !self.adapter.timestamp_enabled {
             context.set_effective_mode(CollectionMode::Summary);
         }
+        let device = ObservedDevice {
+            raw: self.device.raw.clone(),
+            context: context.clone(),
+            batch: None,
+        };
+        let queue = ObservedQueue {
+            raw: self.queue.raw.clone(),
+            context,
+            batch: None,
+        };
         Some(Box::new(Self {
-            device: ObservedDevice {
-                raw: self.device.raw.clone(),
-                context: context.clone(),
-                batch: None,
-            },
-            queue: ObservedQueue {
-                raw: self.queue.raw.clone(),
-                context,
-                batch: None,
-            },
+            pipe: self.pipe.with_observed(device.clone(), queue.clone()),
+            device,
+            queue,
             pipeline_cache: self.pipeline_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            explicit: self.explicit,
         }))
     }
     fn colorspace_convert(&self, img: &ImageBuf, matrix: &[[f32; 3]; 3]) -> ImageBuf {
@@ -679,12 +633,25 @@ impl ComputeBackend for WgpuBackend {
             out
         };
         let xyz_to_rgb = &combined;
-        let n_wl = channel_density.len();
+        let n_wl = channel_density.len().min(illuminant.len());
         let n_pixels = density_cmy.pixel_count() as u32;
 
         // Pack uniform params — mat3x3 in WGSL std140 is 3 columns of vec4.
         // GPU shaders are f32-only: cast precision-preserved inputs at the shader boundary.
-        let params = ScanParams {
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            n_wavelengths: u32,
+            normalization: f32,
+            col0: [f32; 4],
+            col1: [f32; 4],
+            col2: [f32; 4],
+            bw: [f32; 4],
+        }
+
+        let params = Params {
             width: density_cmy.width,
             height: density_cmy.height,
             n_wavelengths: n_wl as u32,
@@ -720,7 +687,10 @@ impl ComputeBackend for WgpuBackend {
         // `pow(10, -d) ≈ 0`, zeroing that wavelength's contribution exactly the same
         // way Python's `density_to_light` zeros NaN-bearing wavelengths.
         let (cd_flat, mut bd) = sanitize_spectral_inputs(channel_density, base_density, n_wl);
-        let illu_f32: Vec<f32> = illuminant.iter().map(|&v| v as f32).collect();
+        let illu_f32: Vec<f32> = illuminant
+            .iter()
+            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
+            .collect();
         bd.resize(n_wl, 0.0);
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
@@ -772,7 +742,10 @@ impl ComputeBackend for WgpuBackend {
                 preflash,
             );
         }
-        let n_wl = channel_density.len();
+        let n_wl = channel_density
+            .len()
+            .min(illuminant.len())
+            .min(sensitivity.len());
         let n_pixels = density_cmy.pixel_count() as u32;
 
         #[repr(C)]
@@ -803,7 +776,10 @@ impl ComputeBackend for WgpuBackend {
             .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
             .collect();
         bd.resize(n_wl, 0.0);
-        let illu_f32: Vec<f32> = illuminant.iter().map(|&v| v as f32).collect();
+        let illu_f32: Vec<f32> = illuminant
+            .iter()
+            .map(|&v| if v.is_nan() { 0.0 } else { v as f32 })
+            .collect();
         let input_f32 = scalars_to_f32(&density_cmy.data);
         let output_bytes = vec![0u8; n_pixels as usize * 3 * 4];
 
@@ -864,9 +840,20 @@ impl ComputeBackend for WgpuBackend {
         // Pack uniform: mat3x3 in std140 = 3 vec4 columns. f32 only on GPU.
         // WGSL columns are read as columns of the matrix; storing row-major as
         // [col[0], col[1], col[2]] where col[j][i] = mat[i][j].
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            lut_size: u32,
+            _pad: u32,
+            col0: [f32; 4],
+            col1: [f32; 4],
+            col2: [f32; 4],
+        }
 
         let m = rgb_to_adapted_xyz;
-        let params = FrontParams {
+        let params = Params {
             width: image.width,
             height: image.height,
             lut_size,
@@ -916,6 +903,16 @@ impl ComputeBackend for WgpuBackend {
         let n_pixels = log_raw.pixel_count() as u32;
         let k = log_exposure.len() as u32;
 
+        #[repr(C)]
+        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            width: u32,
+            height: u32,
+            k: u32,
+            uniform_grid: u32,
+            gamma_inv: [f32; 3],
+            _pad: f32,
+        }
         // Detect uniformly-spaced log_exposure (typical case) to use the fast path.
         let uniform = is_uniform_grid_endpoint(log_exposure);
         let gamma_inv = if gamma_factor.abs() > 1e-12 {
@@ -923,7 +920,7 @@ impl ComputeBackend for WgpuBackend {
         } else {
             1.0
         };
-        let params = DensityParams {
+        let params = Params {
             width: log_raw.width,
             height: log_raw.height,
             k,
@@ -975,24 +972,44 @@ impl ComputeBackend for WgpuBackend {
         true
     }
 
+    fn explicit_gpu_request(&self) -> bool {
+        self.explicit
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
 }
 
+#[cfg(feature = "wgpu-backend")]
 mod blur;
+#[cfg(feature = "wgpu-backend")]
 mod couplers;
+#[cfg(feature = "wgpu-backend")]
 mod gamut;
+#[cfg(feature = "wgpu-backend")]
 mod glare;
+#[cfg(feature = "wgpu-backend")]
 mod grain;
+#[cfg(feature = "wgpu-backend")]
 mod halation;
+#[cfg(feature = "wgpu-backend")]
 mod highlight;
+#[cfg(feature = "wgpu-backend")]
 mod unsharp;
+#[cfg(feature = "wgpu-backend")]
 use blur::*;
+#[cfg(feature = "wgpu-backend")]
 use couplers::*;
+#[cfg(feature = "wgpu-backend")]
 use gamut::*;
+#[cfg(feature = "wgpu-backend")]
 use glare::*;
+#[cfg(feature = "wgpu-backend")]
 use grain::*;
+#[cfg(feature = "wgpu-backend")]
 use halation::*;
+#[cfg(feature = "wgpu-backend")]
 use highlight::*;
+#[cfg(feature = "wgpu-backend")]
 use unsharp::*;

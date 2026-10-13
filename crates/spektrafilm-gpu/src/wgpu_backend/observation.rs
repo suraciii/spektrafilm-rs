@@ -294,6 +294,18 @@ impl WgpuBackend {
             None
         };
         let backend = Self {
+            pipe: self.pipe.with_observed(
+                ObservedDevice {
+                    raw: self.device.raw.clone(),
+                    context: context.clone(),
+                    batch: state.clone(),
+                },
+                ObservedQueue {
+                    raw: self.queue.raw.clone(),
+                    context: context.clone(),
+                    batch: state.clone(),
+                },
+            ),
             device: ObservedDevice {
                 raw: self.device.raw.clone(),
                 context: context.clone(),
@@ -307,6 +319,7 @@ impl WgpuBackend {
             pipeline_cache: self.pipeline_cache.clone(),
             name: self.name.clone(),
             adapter: self.adapter.clone(),
+            explicit: self.explicit,
         };
         (backend, BatchGuard { scope, state })
     }
@@ -752,3 +765,8 @@ impl ObservedEncoder {
 #[cfg(test)]
 #[path = "observation_tests.rs"]
 mod tests;
+
+/// Serial lock shared by all wgpu-backend test modules: the software Vulkan
+/// driver (llvmpipe) is not safe under concurrent device use in one process.
+#[cfg(test)]
+pub(super) static TEST_DEVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
