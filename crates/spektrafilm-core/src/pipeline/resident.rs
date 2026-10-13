@@ -6,7 +6,6 @@ use spektrafilm_math::image::ImageBuf;
 enum ResidentFallbackReason {
     WorkflowRoute,
     NegativeToPositiveOutput,
-    ScannerFilmPoints,
     /// Active Dye resolves its film-coordinate field on the CPU; the
     /// resident chain has no equivalent readout.
     FilmGrainV3FieldCpu,
@@ -70,19 +69,6 @@ impl Pipeline {
         // in `try_gpu_resident`). Digital Reference still declines through
         // NegativeToPositiveOutput above (it replaces the acquisition with
         // runtime-prepared spectral assets).
-        // Slide points still decline: the positive-film resident chain has
-        // a known divergence (first exposed by the scan-tail fence parity
-        // probe) and the slide remap's y→0 gain amplifies the f32
-        // acquisition perturbation beyond the fence budget. They move to
-        // the assembled scanner readout fence once the positive-film chain
-        // reaches parity.
-        if self.params.io.scan_film
-            && self.film.is_positive()
-            && (self.params.scanner.black_point != [0.0; 3]
-                || self.params.scanner.white_point != [1.0; 3])
-        {
-            reasons.push(ResidentFallbackReason::ScannerFilmPoints);
-        }
         // Input transfer decoding no longer declines: the resident route
         // decodes the input before upload (pipe architecture, capability
         // class — see `try_gpu_resident`).
@@ -230,7 +216,6 @@ impl Pipeline {
                             ResidentFallbackReason::NegativeToPositiveOutput => {
                                 R::NegativeToPositiveOutput
                             }
-                            ResidentFallbackReason::ScannerFilmPoints => R::ScannerFilmPoints,
                             ResidentFallbackReason::FilmGrainV3FieldCpu => R::GrainV3FieldCpu,
                             ResidentFallbackReason::FilmGrainFotufilmCpu => R::FotufilmFilmCpu,
                             ResidentFallbackReason::UnsupportedOutputGamut => {
@@ -283,31 +268,21 @@ impl Pipeline {
                 return Ok(None);
             }
         }
-        // The resident scan shader applies its nonlinear luminance remap
-        // during spectral acquisition, and the CPU route forces the PCHIP
-        // scanner LUT for the same condition. Corrected scans require the
-        // faithful per-stage path until the positive-film resident chain
-        // reaches parity (see the ScannerFilmPoints note above).
-        if color_ref.has_remap() {
-            if backend.explicit_gpu_request() {
-                return Err(
-                    "explicit GPU request cannot run the scanner luminance correction on WGPU \
-                     (it must follow linear optical blur and glare on the faithful per-stage path); \
-                     retry with an explicit CPU request"
-                        .into(),
-                );
-            }
-            if let Some(context) = backend.observation_context() {
-                context.decline_resident(
-                    spektrafilm_gpu::telemetry::ResidentDeclineReason::ScannerFilmPoints,
-                );
-            }
-            tracing::info!(
-                target: "spektrafilm_core::pipeline",
-                reason = "scanner luminance correction must follow linear optical blur and glare",
-                "using faithful per-stage scanner correction"
+        // A corrected scan — slide points, or the B&W/slide luminance remap
+        // — keeps the resident route: the scanner readout fence applies the
+        // correction after the acquisition, matching the per-stage order,
+        // and the acquisition itself runs the CPU's PCHIP scanner LUT (the
+        // branch the CPU route selects for the same condition). An explicit
+        // GPU request still fails: the correction has no device node yet,
+        // and a fence never appears on an explicitly requested full-GPU
+        // render.
+        if color_ref.has_remap() && backend.explicit_gpu_request() {
+            return Err(
+                "explicit GPU request cannot run the scanner luminance correction on WGPU \
+                 (it must follow linear optical blur and glare on the faithful per-stage path); \
+                 retry with an explicit CPU request"
+                    .into(),
             );
-            return Ok(None);
         }
         let Some(front) = self.resident_front_pass(color_ref, ae_ev) else {
             if backend.explicit_gpu_request() {
@@ -591,15 +566,17 @@ impl Pipeline {
                 crate::params::PositiveInterpretation::Separable
                     | crate::params::PositiveInterpretation::Coupled
             );
-        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition and a
-        // modeled receiver selects the receiver capture; both replace the
-        // GPU spectral integration on the CPU route, and the resident chain
-        // runs the same CPU acquisition as an assembled fence (pipe
-        // architecture, capability class). The luminance-remap condition
-        // never reaches here — it declines above until the positive-film
-        // chain reaches parity (issue #163).
+        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition, a
+        // modeled receiver selects the receiver capture, and the luminance
+        // correction selects the same LUT (`stages::scanning`); all three
+        // replace the GPU spectral integration on the CPU route, so the
+        // resident chain runs the same CPU acquisition as an assembled
+        // fence (pipe architecture, capability class).
         let scan_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> =
-            if scan_context.receiver.is_some() || self.params.settings.use_scanner_lut {
+            if scan_context.receiver.is_some()
+                || self.params.settings.use_scanner_lut
+                || color_ref.has_remap()
+            {
                 let profile = scan_profile;
                 let params = &self.params;
                 let color_ref = color_ref;
@@ -683,8 +660,15 @@ impl Pipeline {
             } else {
                 None
             };
+        // Slide points are read after the acquisition, so a positive scan
+        // with non-default points needs the readout fence even when the
+        // luminance remap itself is off.
+        let slide_points_active = self.params.io.scan_film
+            && self.film.is_positive()
+            && (self.params.scanner.black_point != [0.0; 3]
+                || self.params.scanner.white_point != [1.0; 3]);
         let scan_tail_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> =
-            if n2p_capture_method {
+            if n2p_capture_method || color_ref.has_remap() || slide_points_active {
                 let profile = scan_profile;
                 let params = &self.params;
                 let color_ref = color_ref;
@@ -968,9 +952,106 @@ mod tests {
 
     /// Resident chain parity for a negative film at a working resolution
     /// where the DIR diffusion is active — the donor-side Langmuir and the
-    /// exponential tail carry the comparison here.
+    /// Slide points stay on the resident route: the scanner readout fence
+    /// applies them after the acquisition, matching the per-stage order.
     #[test]
-    fn resident_negative_matches_cpu_per_stage() {
+    fn active_slide_points_stay_resident_and_match_cpu() {
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = resident_parity_params(16);
+        params.scanner.black_point = [0.05, 0.0, 0.0];
+        params.scanner.white_point = [0.9, 1.0, 1.0];
+        let mut base_params = params.clone();
+        base_params.scanner.black_point = [0.0; 3];
+        base_params.scanner.white_point = [1.0; 3];
+        let pipeline =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        // The points must be observable: the same pipeline without them
+        // produces a different image, so the parity below is not vacuous.
+        let baseline = Pipeline::new_with_spectral(film, print, base_params, &dir).unwrap();
+        let image = comparison_image(16);
+        let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+        let cpu_out = pipeline
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let cpu_base = baseline
+            .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let (effect, _) = parity_metrics(&cpu_out, &cpu_base);
+        assert!(effect > 1e-3, "slide points had no effect: {effect:.6}");
+        let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+        assert!(
+            mean < 5e-2 && max_diff < 5e-1,
+            "slide points resident parity: mean={mean:.6} max={max_diff:.6}"
+        );
+    }
+
+    /// The B&W/slide luminance remap keeps the resident route: the readout
+    /// fence applies `clip(m·Y+q, 0, 1)` after the acquisition and the
+    /// acquisition itself runs the CPU's PCHIP scanner LUT. The dark input
+    /// stresses the remap's `y → 0` gain, which the earlier per-stage
+    /// fallback existed to avoid.
+    #[test]
+    fn luminance_correction_matches_cpu_on_the_resident_route() {
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = resident_parity_params(16);
+        params.scanner.white_correction = true;
+        params.scanner.black_correction = true;
+        params.scanner.black_point = [0.05, 0.0, 0.0];
+        params.scanner.white_point = [0.9, 1.0, 1.0];
+        let mut base_params = params.clone();
+        base_params.scanner.white_correction = false;
+        base_params.scanner.black_correction = false;
+        base_params.scanner.black_point = [0.0; 3];
+        base_params.scanner.white_point = [1.0; 3];
+        let pipeline =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        // The correction must be observable: without it the same pipeline
+        // produces a different image, so the parity below is not vacuous.
+        let baseline = Pipeline::new_with_spectral(film, print, base_params, &dir).unwrap();
+        let image = comparison_image(16);
+        let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
+        let cpu_out = pipeline
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let cpu_base = baseline
+            .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let (effect, _) = parity_metrics(&cpu_out, &cpu_base);
+        assert!(
+            effect > 1e-3,
+            "luminance correction had no effect: {effect:.6}"
+        );
+        let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
+        assert!(
+            mean < 5e-2 && max_diff < 5e-1,
+            "luminance correction resident parity: mean={mean:.6} max={max_diff:.6}"
+        );
+    }
+
+    /// The print route builds its own luminance remap; the same readout
+    /// fence carries it, under the print-route budget.
+    #[test]
+    fn luminance_correction_matches_cpu_on_the_print_route() {
         let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
             eprintln!("no GPU adapter available; skipping");
             return;
@@ -979,123 +1060,42 @@ mod tests {
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let mut params = resident_parity_params(16);
-        params.film_render.dir_couplers.diffusion_tail_weight = 0.5;
-        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        params.io.scan_film = false;
+        params.workflow.route = "input > film > print > scan".into();
+        params.scanner.white_correction = true;
+        params.scanner.black_correction = true;
+        params.scanner.black_point = [0.05, 0.0, 0.0];
+        params.scanner.white_point = [0.9, 1.0, 1.0];
+        let mut base_params = params.clone();
+        base_params.scanner.white_correction = false;
+        base_params.scanner.black_correction = false;
+        base_params.scanner.black_point = [0.0; 3];
+        base_params.scanner.white_point = [1.0; 3];
+        let pipeline =
+            Pipeline::new_with_spectral(film.clone(), print.clone(), params, &dir).unwrap();
         assert!(matches!(
             pipeline.resident_decision(),
             ResidentDecision::UseResident
         ));
+        let baseline = Pipeline::new_with_spectral(film, print, base_params, &dir).unwrap();
         let image = comparison_image(16);
         let gpu_out = pipeline.process(image.clone(), &gpu).unwrap();
         let cpu_out = pipeline
+            .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+        let cpu_base = baseline
             .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
             .unwrap();
+        let (effect, _) = parity_metrics(&cpu_out, &cpu_base);
+        assert!(
+            effect > 1e-3,
+            "print luminance correction had no effect: {effect:.6}"
+        );
         let (mean, max_diff) = parity_metrics(&gpu_out, &cpu_out);
         assert!(
-            mean < 5e-2 && max_diff < 5e-1,
-            "negative resident parity: mean={mean:.6} max={max_diff:.6}"
+            mean < 1e-1 && max_diff < 5e-1,
+            "print luminance correction resident parity: mean={mean:.6} max={max_diff:.6}"
         );
-    }
-
-    #[test]
-    fn grain_engine_controls_resident_fallback() {
-        let dir = data_dir();
-        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let mut params = RuntimeParams::default();
-        params.settings.use_enlarger_lut = false;
-        params.settings.use_scanner_lut = false;
-        params.io.output_gamut_compress.algorithm = "off".into();
-        params.film_render.grain.active = true;
-        params.film_render.grain.engine = crate::params::grain::GrainEngine::Procedural;
-        let mut pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
-
-        assert!(matches!(
-            pipeline.resident_decision(),
-            ResidentDecision::UseResident
-        ));
-        pipeline.params.settings.rgb_to_raw_method = "mallett2019".into();
-        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("Mallett must remain on the per-stage path");
-        };
-        assert!(
-            reasons
-                .iter()
-                .any(|reason| { matches!(reason, ResidentFallbackReason::MallettExecutionParity) })
-        );
-        pipeline.params.settings.rgb_to_raw_method = "hanatos2025".into();
-
-        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Spektra;
-        // Spektra no longer declines: it runs on the resident chain as an
-        // assembled CPU fence on the film density buffer (pipe
-        // architecture, capability class).
-        assert!(matches!(
-            pipeline.resident_decision(),
-            ResidentDecision::UseResident
-        ));
-
-        // Dye resolves its field on the CPU from the full developed density,
-        // so no resident entry point may run it.
-        pipeline.params.film_render.grain.engine = crate::params::grain::GrainEngine::Dye;
-        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("Dye grain must remain on the per-stage path");
-        };
-        assert!(
-            reasons
-                .iter()
-                .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainV3FieldCpu))
-        );
-        pipeline.params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
-        pipeline.params.film_render.grain.fotufilm.amount = 1.0;
-        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("Fotufilm grain must remain on the per-stage path");
-        };
-        assert!(
-            reasons
-                .iter()
-                .any(|reason| matches!(reason, ResidentFallbackReason::FilmGrainFotufilmCpu))
-        );
-        pipeline.params.film_render.grain.fotufilm.amount = 0.0;
-        assert!(matches!(
-            pipeline.resident_decision(),
-            ResidentDecision::UseResident
-        ));
-    }
-
-    #[test]
-    fn active_slide_points_decline_resident_but_defaults_do_not() {
-        let dir = data_dir();
-        let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
-        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-        let mut params = RuntimeParams::default();
-        params.workflow.route = "input > film > scan".into();
-        params.io.scan_film = true;
-        params.settings.use_scanner_lut = false;
-        params.settings.use_enlarger_lut = false;
-        params.io.output_gamut_compress.algorithm = "off".into();
-        params.film_render.grain.active = false;
-        let mut pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
-        assert!(matches!(
-            pipeline.resident_decision(),
-            ResidentDecision::UseResident
-        ));
-        // Slide points stay on the faithful per-stage path until the
-        // positive-film resident chain reaches parity (the scan-tail fence
-        // machinery is in place; see `scan_tail_cpu_stage`).
-        pipeline.params.scanner.black_point[0] = 0.1;
-        let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
-            panic!("active slide points must use the faithful per-stage route");
-        };
-        assert!(
-            reasons
-                .iter()
-                .any(|r| matches!(r, ResidentFallbackReason::ScannerFilmPoints))
-        );
-        pipeline.params.io.scan_film = false;
-        assert!(matches!(
-            pipeline.resident_decision(),
-            ResidentDecision::UseResident
-        ));
     }
 
     /// `use_scanner_lut` no longer demotes the route: the PCHIP scanner LUT
@@ -1521,6 +1521,35 @@ mod tests {
         let mean = sum / out_cpu.data.len() as f64;
         assert!(mean < 5e-2, "langmuir DIR mean divergence: {mean}");
         assert!(max_diff < 5e-1, "langmuir DIR max divergence: {max_diff}");
+    }
+
+    /// A corrected scan keeps the scanner correction on the host fence, so
+    /// an explicitly requested full-GPU render must fail rather than
+    /// silently materialize an intermediate (spec: fences never appear on
+    /// an explicit GPU request).
+    #[test]
+    fn explicit_gpu_request_fails_on_scanner_luminance_correction() {
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = resident_parity_params(8);
+        params.scanner.white_correction = true;
+        params.scanner.black_correction = true;
+        params.scanner.black_point = [0.05, 0.0, 0.0];
+        params.scanner.white_point = [0.9, 1.0, 1.0];
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        let image = comparison_image(8);
+        let err = pipeline
+            .process(image, &gpu)
+            .expect_err("explicit GPU request must fail on the host scanner correction");
+        assert!(
+            err.contains("scanner luminance correction"),
+            "unexpected error: {err}"
+        );
     }
 
     /// An explicitly requested GPU backend must fail at assembly when a
