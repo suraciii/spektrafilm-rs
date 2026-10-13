@@ -17,8 +17,8 @@ mod spectral;
 pub use setup::ScannerSetup;
 use spectral::{ForwardCapture, scan_spectral_rgb};
 
-fn positive_scan_requested(params: &RuntimeParams) -> bool {
-    params.scanner.scan_output == "positive_scan"
+fn negative_to_positive_requested(params: &RuntimeParams) -> bool {
+    params.scanner.scan_output == "negative_to_positive"
 }
 
 fn points_active(params: &RuntimeParams) -> bool {
@@ -92,7 +92,7 @@ impl PositiveCalibration {
     ) -> Result<Self, String> {
         let axis = &profile.data.log_exposure;
         if axis.len() < 2 || profile.data.density_curves.len() != axis.len() {
-            return Err("positive_scan requires matching profile calibration curves with at least two samples".into());
+            return Err("negative_to_positive requires matching profile calibration curves with at least two samples".into());
         }
         let rows = ImageBuf::from_data(
             axis.len() as u32,
@@ -127,7 +127,7 @@ impl PositiveCalibration {
                 }
                 if ended {
                     return Err(format!(
-                        "positive_scan calibration has an invalid interior sample in channel {channel}"
+                        "negative_to_positive calibration has an invalid interior sample in channel {channel}"
                     ));
                 }
                 let reference = *clear.get_or_insert(value);
@@ -171,7 +171,7 @@ impl PositiveCalibration {
             }
             if density.len() < 2 {
                 return Err(format!(
-                    "positive_scan calibration has fewer than two positive distinct samples in channel {channel}"
+                    "negative_to_positive calibration has fewer than two positive distinct samples in channel {channel}"
                 ));
             }
             channels.push(PositiveChannel {
@@ -191,14 +191,15 @@ impl PositiveCalibration {
                 .fold(f64::INFINITY, f64::min);
             if !start.is_finite() || !end.is_finite() || start >= end {
                 return Err(
-                    "positive_scan points require a finite shared log-exposure interval".into(),
+                    "negative_to_positive points require a finite shared log-exposure interval"
+                        .into(),
                 );
             }
         }
         Ok(Self {
             channels: channels
                 .try_into()
-                .map_err(|_| "positive_scan calibration requires three channels")?,
+                .map_err(|_| "negative_to_positive calibration requires three channels")?,
         })
     }
 }
@@ -790,19 +791,19 @@ fn scan_with_capture(
     include_base: bool,
     captured_rgb: Option<ImageBuf>,
 ) -> Result<ImageBuf, String> {
-    let positive_scan = positive_scan_requested(params);
+    let negative_to_positive = negative_to_positive_requested(params);
     // The density reading acquires no capture, so the spectral scan and the
     // receiver correction it feeds are skipped entirely. Where a capture does
     // arrive, `density` behaves as `separable`.
-    let density_reading = positive_scan
+    let density_reading = negative_to_positive
         && params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density
         && captured_rgb.is_none();
     let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
-    let _positive_scan = positive_scan.then(|| {
+    let _negative_to_positive = negative_to_positive.then(|| {
         super::StageObservation::cpu(
             backend,
-            "positive_scan",
-            spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+            "negative_to_positive",
+            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
         )
     });
     let _slide_points = slide_points.then(|| {
@@ -812,7 +813,7 @@ fn scan_with_capture(
             spektrafilm_gpu::telemetry::CpuReason::ScannerFilmPoints,
         )
     });
-    let cpu_fallback = positive_scan
+    let cpu_fallback = negative_to_positive
         .then(|| {
             backend
                 .observation_context()
@@ -820,12 +821,12 @@ fn scan_with_capture(
                 .map(|context| {
                     spektrafilm_gpu::bind_cpu_fallback(
                         context.clone(),
-                        spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+                        spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
                     )
                 })
         })
         .flatten();
-    let backend = if positive_scan {
+    let backend = if negative_to_positive {
         static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
             spektrafilm_gpu::cpu_backend::CpuBackend;
         cpu_fallback
@@ -960,7 +961,7 @@ fn scan_with_capture(
     // optical capture and lens blur happen before the calibrated negative
     // endpoint inversion. The density reading ran above, where it blurred
     // transmitted light record by record instead.
-    if positive_scan && !density_reading {
+    if negative_to_positive && !density_reading {
         if params.scanner.lens_blur > 0.0 {
             rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
         }
@@ -1000,11 +1001,11 @@ fn scan_with_capture(
             interpret_coupled_capture(&mut rgb, &calibration, params)?;
         }
     }
-    if positive_scan && params.scanner.finish == crate::params::ScannerFinish::LabScan {
+    if negative_to_positive && params.scanner.finish == crate::params::ScannerFinish::LabScan {
         let _finish = super::StageObservation::cpu(
             backend,
             "scanner_finish",
-            spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
         );
         finish::apply(
             &mut rgb,
@@ -1015,7 +1016,7 @@ fn scan_with_capture(
     }
 
     // Output gamut compression — direct scans preserve the historical
-    // capture order; positive scans compress only after interpretation.
+    // capture order; converted negative images compress only after interpretation.
     if gamut.is_active() {
         let _gamut = super::StageObservation::cpu(
             backend,
@@ -1032,7 +1033,7 @@ fn scan_with_capture(
 
     // Direct scans apply optical blur after gamut compression, preserving
     // the established direct-scan behavior.
-    if !positive_scan && !slide_points && params.scanner.lens_blur > 0.0 {
+    if !negative_to_positive && !slide_points && params.scanner.lens_blur > 0.0 {
         rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
     }
 
@@ -1225,7 +1226,7 @@ mod tests {
         let gamut = crate::gamut_compression::OutputGamutCompress::identity();
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Density;
         params.scanner.receiver_profile = crate::params::ReceiverProfile::LegacyColorimetric;
         let legacy = scan_with_capture(
@@ -1595,11 +1596,11 @@ mod tests {
     }
 
     #[test]
-    fn public_positive_scan_rejects_unrepresentable_window_reciprocal() {
+    fn public_negative_to_positive_rejects_unrepresentable_window_reciprocal() {
         let film = profile("kodak_portra_400");
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.film_render.grain.active = false;
         params.scanner.white_point = [1e-320; 3];
         let result = process(

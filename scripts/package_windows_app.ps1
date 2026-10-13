@@ -297,7 +297,20 @@ function Copy-NativeBundle([string]$Destination) {
     }
     if (-not (Test-Path -LiteralPath $LensfunDatabase)) { throw "Lensfun database missing: $LensfunDatabase" }
     Copy-Item -LiteralPath $LensfunDatabase -Destination (Join-Path $Destination "lensfun") -Recurse
+    $lcmsPrefix = (& $pkgConfig --variable=prefix lcms2).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $lcmsPrefix) { throw "Cannot discover the LittleCMS UCRT64 native prefix." }
+    $nativePrefixes = @($nativePrefixes + $lcmsPrefix) | Select-Object -Unique
     $queue = [System.Collections.Generic.Queue[string]]::new()
+    $lcmsFound = $false
+    foreach ($lcmsName in @("lcms2.dll", "liblcms2-2.dll")) {
+        $lcmsDll = Join-Path $lcmsPrefix "bin\$lcmsName"
+        if (-not (Test-Path -LiteralPath $lcmsDll)) { continue }
+        $lcmsTarget = Join-Path $Destination $lcmsName
+        Copy-Item -LiteralPath $lcmsDll -Destination $lcmsTarget -Force
+        $queue.Enqueue((Resolve-Path -LiteralPath $lcmsTarget).Path)
+        $lcmsFound = $true
+    }
+    if (-not $lcmsFound) { throw "LittleCMS runtime DLL missing under $lcmsPrefix\bin" }
     Get-ChildItem -LiteralPath $Destination -Filter *.exe | ForEach-Object { $queue.Enqueue($_.FullName) }
     $seen = @{}
     while ($queue.Count -gt 0) {
@@ -345,7 +358,11 @@ function Copy-NativeBundle([string]$Destination) {
         throw "Lensfun database CC BY-SA 3.0 license text missing: lensfun/LICENSE-data"
     }
     Copy-Item -LiteralPath "licenses\lensfun-cc-by-sa-3.0.txt" -Destination (Join-Path $licenses "lensfun-database-CC-BY-SA-3.0.txt")
-    if (-not (Test-Path -LiteralPath "licenses\Apache-2.0.txt")) { throw "Fotufilm Apache-2.0 license missing" }
+    Copy-Item -LiteralPath "LICENSE" -Destination (Join-Path $licenses "spektrafilm-GPL-3.0.txt")
+    foreach ($license in @("nvlabs-flip-bsd-3-clause.txt", "littlecms-mit.txt")) {
+        if (-not (Test-Path -LiteralPath (Join-Path "licenses" $license))) { throw "Benchmark license missing: $license" }
+        Copy-Item -LiteralPath (Join-Path "licenses" $license) -Destination (Join-Path $licenses $license)
+    }
     if (-not (Test-Path -LiteralPath "attribution\NOTICE")) { throw "Fotufilm attribution notice missing" }
     Copy-Item -LiteralPath "licenses\Apache-2.0.txt" -Destination (Join-Path $licenses "Fotufilm-Apache-2.0.txt")
     Copy-Item -LiteralPath "attribution\NOTICE" -Destination (Join-Path $licenses "Fotufilm-NOTICE.txt")
@@ -366,11 +383,14 @@ try {
         cargo build --release -p spektrafilm-cli --bin $binary --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building $binary" }
     }
+    cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures --target-dir $BuildTargetDir
+    if ($LASTEXITCODE -ne 0) { throw "Failed building benchmark tools" }
 
     if ($Aio) {
         cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
-
+        cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building benchmark tools" }
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $manifestPath = Join-Path $repo "target\packaging\embedded_bundle.rs"
         New-EmbedManifest -DataDir "data" -F64Exe (Join-Path $releaseDir "spektrafilm-f64.exe") -Destination $manifestPath
@@ -404,11 +424,11 @@ spektrafilm-rs Windows AIO
 Run spektrafilm-gui-aio.exe.
 
 This executable embeds application assets and the CPU f64 exporter;
-the adjacent native DLLs, external exporter, helper and Lensfun database are required.
+the adjacent native DLLs, external exporter, helper, benchmark tools and Lensfun database are required.
 - application data/profiles/LUTs
 - arctic2026alpha02 assets
 - spektrafilm-f64.exe for CPU f64 Export
-
+- spektrafilm-bench.exe and spektrafilm-bench-fixtures.exe for offline benchmark workflows
 On first launch it extracts the embedded payload to:
 %LOCALAPPDATA%\spektrafilm\embedded
 
@@ -423,6 +443,8 @@ Backends:
         if ($LASTEXITCODE -ne 0) { throw "Failed building GUI" }
         cargo build --release -p spektrafilm-cli --features precision-f64 --bin spektrafilm-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 exporter" }
+        cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --bin spektrafilm-bench-fixtures --target-dir $BuildTargetDir
+        if ($LASTEXITCODE -ne 0) { throw "Failed building benchmark tools" }
 
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $guiExe = Join-Path $releaseDir "spektrafilm-gui.exe"
@@ -441,7 +463,7 @@ Backends:
         Write-Host "Packaged: $(Resolve-Path -LiteralPath $DistDir)"
         Write-Host "Icon:     $(Resolve-Path -LiteralPath $iconPath)"
     }
-    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui")) {
+    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui", "spektrafilm-bench", "spektrafilm-bench-fixtures")) {
         Copy-Item -LiteralPath (Join-Path $releaseDir "$binary.exe") -Destination (Join-Path $DistDir "$binary.exe") -Force
     }
     Copy-NativeBundle $DistDir

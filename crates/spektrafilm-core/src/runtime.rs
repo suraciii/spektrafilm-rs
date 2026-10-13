@@ -575,6 +575,22 @@ mod tests {
             .join("data")
     }
 
+    #[test]
+    fn runtime_preparation_rejects_removed_scan_output_before_calibration() {
+        let data = data_dir();
+        let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
+        let print = profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.scanner.scan_output = "positive_scan".into();
+        let error = Runtime::new(film, print, params, &data)
+            .err()
+            .expect("removed scan output must fail runtime preparation");
+        assert!(error.contains("scanner.scan_output"));
+        assert!(error.contains("positive_scan"));
+    }
+
     fn scanner_params() -> RuntimeParams {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
@@ -584,7 +600,7 @@ mod tests {
         params.film_render.halation.active = false;
         params.film_render.dir_couplers.active = false;
         params.film_render.glare.active = false;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.auto_setup = crate::params::ScannerAutoSetup::PerFrame;
         params
     }

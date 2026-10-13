@@ -15,7 +15,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Reference export** on the CPU at f64. Historical bare-chain evidence and applicable comparison budgets are recorded in [baseline evidence](docs/parity/baseline_evidence.md); fresh integrated comparisons are required for migration acceptance.
 - **Independent GUI export.** **Export…** opens its own settings dialog, then a file chooser, and renders an immutable snapshot of the full input and simulation parameters through the GUI's Runtime worker. CPU uses the GUI build's native precision; GPU uses WGPU f32 and faithful CPU stages where required. GUI Export does not launch `spektrafilm-f64`; use that CLI separately for CPU f64 reference output. Cancellation discards work at the next boundary before atomic publication and may wait for an active computation.
 - **Profiles bundled.** 30+ film and paper profiles in `data/profiles/` — Kodak Gold/Portra/Ektar, Fuji Velvia/Provia, Kodak Endura papers, Fuji Crystal Archive papers.
-- **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|positive_scan`; calibrated `positive_scan` is supported for direct `input > film > scan` and real negative-capture `input > convert-film > scan`, while paper, positive-film, print-paper, scan-minus-base, white/black-corrected, and active-Grain-Procedural combinations remain rejected. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can reuse the calibrated positive interpretation on its direct scan route.
+- **Experimental workflow routes.** Runtime/GUI state accepts passthrough, film-scan, film-print-scan, and the three convert-film routes. Direct negative-film scans expose `scanner.scan_output=direct_scan|negative_to_positive`; calibrated `negative_to_positive` is supported for direct `input > film > scan` and real negative-capture `input > convert-film > scan`, while paper, positive-film, print-paper, scan-minus-base, white/black-corrected, and active-Grain-Procedural combinations remain rejected. Convert-film inverts the spectral scan model with bounded Gauss-Newton, supports scan illuminant/exposure/calibration controls, and can reuse the calibrated positive interpretation on its direct scan route.
 - **Magazine print color.** The optional finishing treatment applies a bundled RGB appearance to any supported base workflow — a scanned negative or a finished RGB input — after the base workflow and its scanner-domain effects: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. `magazine_print_color.active` and one appearance Strength from 0 to 1 enable it independently of the base workflow; there is no magazine route. It remains RGB-only and does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 - **Selectable grain engines.** Spektra is the default upstream experimental original. Procedural is derived from Dehancer and provides Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls; pixel parity with Dehancer is not claimed. Dye is a self-developed experimental film-coordinate dye field, opt-in, controlled by `v3_dye_support_um` and `v3_event_area_um2`. Fotufilm Film is an adapted appearance population model fitted to resolved film curves, opt-in, controlled by `film_render.grain.fotufilm.*`. It resolves on the CPU, prepares its population before the first readout of a given population identity, and reuses the prepared bank for later renders of that identity.
@@ -63,13 +63,15 @@ Image IO additionally requires OpenImageIO and Imath development headers. OIIO i
 
 Distribute the native shared libraries and their transitive dependencies with the CLI, GUI, and `decode_raw_gui`, together with the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory. LibRaw is dual LGPL 2.1/CDDL 1.0, Lensfun's library is LGPL 3.0 (database CC BY-SA 3.0), Exiv2 is GPL 2.0 or later, and GLib is LGPL 2.1 or later; include applicable license texts when packaging. The application remains GPL 3.0.
 
-On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after building the release CLI, f64 exporter, GUI and RAW helper. `BUILD_TARGET_DIR` selects Cargo's output directory and `DIST_DIR` selects the generated package directory. The script copies the actual recursive ELF dependencies, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML and native license notices; it verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`. Extract the entire archive and launch the wrappers in `bin/`; they locate bundled data and libraries relative to their own location. The host supplies glibc, the display server and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh` respectively.
+On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after `just build`. This builds the CLI, f64 exporter, GUI, RAW helper, and both native benchmark tools. `BUILD_TARGET_DIR` selects Cargo's output directory and `DIST_DIR` selects the generated package directory. The script copies recursive ELF dependencies, LittleCMS, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML, and native license notices. It verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`. Extract the entire archive and launch the wrappers in `bin/`; they locate bundled data and libraries relative to their own location. The host supplies glibc, the display server, and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh`.
 
 The release workflow runs workspace tests with `precision-f64` and `scripts/parity/package_smoke.py` on each platform before uploading the package. The smoke runner requires installed CLI, f64 exporter, RAW helper and data paths. It exercises generated float/integer files, retained EXIF/IPTC/XMP/ICC, invalid-input/depth errors, a SHA-verified Kodak RAW fixture, and delivered ZIP LUT/OCIO/QA artifacts. With `--gui`, the external native driver operates the real window and file dialogs, checks state restoration and viewer behavior, compares Save/Export output, and exercises Cancel/close cleanup. Linux uses Xvfb; Windows/macOS require an interactive desktop, and macOS requires Accessibility/Automation/Screen Recording authorization. Driver and OCR dependencies are listed in [scripts/parity/README.md](scripts/parity/README.md). CI retains screenshots, observations and command logs, including failed runs.
 The release workflow intentionally invokes package smoke without `--gui`.
 Therefore its package status covers CLI/RAW/IO/LUT/OCIO/QA and provenance, not
 native desktop interaction. GUI evidence is maintained separately and is not
 silently counted as a release pass.
+
+Package smoke also runs the installed native benchmark tools from outside the checkout. It generates fixtures, renders a color chart, compares the retained run with itself, verifies exact-zero numeric/color/FLIP measurements, validates manifests, and creates the offline report. It checks the bundled FLIP and LittleCMS licenses and records both benchmark executable hashes.
 
 The workspace tests include headless GUI acceptance with the real App, CPU
 workers, and image writer. Run `just gui-headless` for the focused scenarios.
@@ -172,18 +174,18 @@ executable.
     --backend cpu --film kodak_gold_200 --scan-film --data-dir data
 
 
-# Positive scanner interpretation with explicit receiver, inverse, setup and finish
+# Negative conversion with explicit receiver, inverse, setup and finish
 ./target/release/spektrafilm-f64 process input.tif -o positive.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --backend cpu --film kodak_portra_400 --scan-film \
     --set scanner.receiver_profile=lab_scan_approx,scanner.positive_interpretation=coupled \
     --set scanner.auto_setup=per_frame,scanner.finish=lab_scan,scanner.finish_strength=0.75 \
-    --scan-output positive_scan --data-dir data
+    --scan-output negative_to_positive --data-dir data
 
 # Inspect effective scanner selections without decoding or writing output
 ./target/release/spektrafilm process input.tif -o positive.tif --film kodak_portra_400 --scan-film \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --scan-output positive_scan --set scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan --dry-run --data-dir data
+    --scan-output negative_to_positive --set scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan --dry-run --data-dir data
 
 # Override any params via JSON (matches RuntimeParams struct)
 ... --params my_params.json
@@ -200,19 +202,21 @@ The built-in `CineStill 800T Cs41 (experimental)` look fits halation and Grain D
 
 The film chain normalizes spectral upsampling to the profile's reference illuminant, so a neutral input pixel means white under that light. For this tungsten profile, that light is `T` (CIE xy 0.4507, 0.4081; about 2812 K). An as-shot white-balanced input therefore hides the film's color balance. To evaluate tungsten balance, adapt the input from its capture light to `T`: decode RAW with `--raw-white-balance custom --raw-temperature 2812`; adapt rendered input with CAT02 from its known capture white. Daylight scenes then render blue, lamps warmer than 3200 K render orange, and a 3200 K-lit gray renders neutral.
 
-The look's `positive_scan` tone assumes scene-linear input. `positive_contrast = 0.976` and `positive_dmax = 1.986` fit two real 800T lab scans with linear scene references: a 9-step chart gray row from a RAW capture and a RAW-input frame. The mid-tone slope is 1.61 log output per log exposure; the previous fit, 0.95, came from camera-JPEG pairs that already carry about 1.35 times contrast. `positive_density_ev` keeps the previous midgray output, and `positive_balance_ev = [0.1878, 0, −0.3048]` neutralizes a 3200 K gray.
+The look's `negative_to_positive` tone assumes scene-linear input. `positive_contrast = 0.976` and `positive_dmax = 1.986` fit two real 800T lab scans with linear scene references: a 9-step chart gray row from a RAW capture and a RAW-input frame. The mid-tone slope is 1.61 log output per log exposure; the previous fit, 0.95, came from camera-JPEG pairs that already carry about 1.35 times contrast. `positive_density_ev` keeps the previous midgray output, and `positive_balance_ev = [0.1878, 0, −0.3048]` neutralizes a 3200 K gray.
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o cinestill.png \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --preset 'CineStill 800T Cs41 (experimental)' --backend cpu --data-dir data \
-    --route 'input > film > scan' --scan-output positive_scan
+    --route 'input > film > scan' --scan-output negative_to_positive
 ```
 
-This command bypasses printing. `positive_scan` reads each dye record's density like a narrowband lab scanner, inverts it through that record's own profile density curve, and applies a print-like logistic tone curve. A record therefore never borrows density from the others, so saturated negatives do not clip one channel. The inverse is profile-derived and monotone, with finite endpoint slopes beyond the curves; the logistic tone keeps output within the paper range. `scanner.positive_density_ev` controls brightness in stops; `scanner.positive_balance_ev` supplies independent RGB exposure offsets (zero renders a grey lit by the film's reference illuminant neutral); `scanner.positive_contrast` and `scanner.positive_dmax` control the tone curve. Scanner lens blur acts on transmitted light before the density reading. `scanner.positive_interpretation` selects the method: `density` (the default) reads record densities as described here and ignores `scanner.receiver_profile`; `separable` and `coupled` interpret the receiver capture instead, `coupled` through a three-channel inverse sampled from the resolved film, receiver, and output response. These controls apply to direct negative-film scans and the `input > convert-film > scan` route; print-paper and scan-minus-base routes retain their existing route semantics. The displayed result is an interpretation of the film density, not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, scan illuminant and scan settings fixed when comparing results.
-For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering (`camera.auto_exposure=false`) and supply input transfer/color interpretation and the matching `film_render.convert.scan_illuminant`; convert-film estimates the record densities that the positive interpreter reads.
+`scanner.scan_output` accepts `direct_scan` and `negative_to_positive`. Replace the removed `positive_scan` value in CLI commands, parameter files, presets, recipes, and GUI states; old values fail validation. The GUI displays **Preserve medium polarity** and **Negative to positive**, with **Negative conversion method** for the existing `scanner.positive_interpretation` field. Conversion includes the calibrated inverse and base positive tone; automatic correction and the optional LabScan finish remain separate. This rename preserves the existing methods, defaults, and numerical behavior. See [scanner language](specs/film-chain/spec.md#scanner-language).
 
-Film scans expose per-channel `scanner.black_point` and `scanner.white_point` for slide film and positive-interpreted negatives. Defaults `[0,0,0]` and `[1,1,1]` preserve the existing rendering. Each channel requires `0 <= black_point < white_point <= 1`. Points stretch the shared relative log-exposure range for negatives or the shared scanned-density range for slides; values outside the points continue the same map without clipping. On slides, non-default points run after scanner lens blur and before white/black correction without changing that correction's references. Paper scans and direct negative captures ignore these points. See [film-scan points](specs/film-chain/spec.md#film-scan-black-and-white-points) for the range definitions.
+This command bypasses printing. `negative_to_positive` reads each dye record's density like a narrowband lab scanner, inverts it through that record's own profile density curve, and applies a print-like logistic tone curve. A record therefore never borrows density from the others, so saturated negatives do not clip one channel. The inverse is profile-derived and monotone, with finite endpoint slopes beyond the curves; the logistic tone keeps output within the paper range. `scanner.positive_density_ev` controls brightness in stops; `scanner.positive_balance_ev` supplies independent RGB exposure offsets (zero renders a grey lit by the film's reference illuminant neutral); `scanner.positive_contrast` and `scanner.positive_dmax` control the tone curve. Scanner lens blur acts on transmitted light before the density reading. `scanner.positive_interpretation` selects the method: `density` (the default) reads record densities as described here and ignores `scanner.receiver_profile`; `separable` and `coupled` interpret the receiver capture instead, `coupled` through a three-channel inverse sampled from the resolved film, receiver, and output response. These controls apply to direct negative-film scans and the `input > convert-film > scan` route; print-paper and scan-minus-base routes retain their existing route semantics. The displayed result is an interpretation of the film density, not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, scan illuminant and scan settings fixed when comparing results.
+For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering (`camera.auto_exposure=false`) and supply input transfer/color interpretation and the matching `film_render.convert.scan_illuminant`; convert-film estimates the record densities that the negative converter reads.
+
+Film scans expose per-channel `scanner.black_point` and `scanner.white_point` for slide film and converted negatives. Defaults `[0,0,0]` and `[1,1,1]` preserve the existing rendering. Each channel requires `0 <= black_point < white_point <= 1`. Points stretch the shared relative log-exposure range for negatives or the shared scanned-density range for slides; values outside the points continue the same map without clipping. On slides, non-default points run after scanner lens blur and before white/black correction without changing that correction's references. Paper scans and direct negative captures ignore these points. See [film-scan points](specs/film-chain/spec.md#film-scan-black-and-white-points) for the range definitions.
 
 ```bash
 ./target/release/spektrafilm-f64 process input.tif -o slide.tif \
@@ -222,7 +226,7 @@ Film scans expose per-channel `scanner.black_point` and `scanner.white_point` fo
     --data-dir data
 ```
 
-The GUI shows scanner controls for the scanned medium: white/black correction for paper and slides, scan polarity and positive interpretation for negatives, and film-scan points for slides and positive-interpreted negatives. Selecting positive interpretation clears incompatible capture-correction flags. State files and scanner section presets retain point values.
+The GUI shows scanner controls for the scanned medium: white/black correction for paper and slides, scan polarity and positive interpretation for negatives, and film-scan points for slides and converted negatives. Selecting positive interpretation clears incompatible capture-correction flags. State files and scanner section presets retain point values.
 
 The TIFF examples above use prepared linear ProPhoto RGB samples. The PNG examples below use encoded sRGB samples. Declare the actual source interpretation for your own files; see [source declarations](specs/cli-parameters/spec.md#input-declaration). RAW examples retain automatic linear ACES2065-1 declaration.
 
@@ -386,7 +390,7 @@ transform with native input headroom.
 
 ### Profile fitting
 
-`spektrafilm-f64 fit` derives film-profile surface terms and positive-scan tone values from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the f64 reference binary.
+`spektrafilm-f64 fit` derives film-profile surface terms and negative-conversion tone values from reference patch data instead of hand measurement. It renders a chart through the calibrated chain and minimizes the CIELAB difference between the rendered patches and the reference table. The command exists only in the f64 reference binary.
 
 Inputs are three JSON files: a chart layout with the patch grid and index ranges, a scene patch table in the declared input color space, and a reference patch table of the developed film in linear sRGB. Each patch table names the `source` of its values. The fitted surface learns the errors of the scene table, so a surface fitted from camera readings describes that camera as well as the stock. Halation and grain are off in every evaluation, the scanner writes linear sRGB, and fitting the surface enables the surface toggle. `--lambda` must be finite and non-negative. A run succeeds only when the fit reduces both the color and the gray ΔE00 medians; a surface-only fit can trade gray for color, so `--fit surface,tone` is the usual choice. A successful run writes a profile copy with the fitted surface and a provenance sentence in `metadata.datasource`, a sparse parameter overlay with the fitted tone, and a report with the metrics before and after the fit, the per-patch differences, the input SHA-256 values and sources, the resolved chain, the forced settings, and the tool version. A failed run leaves none of these outputs.
 
@@ -397,7 +401,7 @@ Inputs are three JSON files: a chart layout with the patch grid and index ranges
     --layout layout.json --scene scene.json --reference reference.json \
     --fit surface,tone --surface-terms 9 --lambda 1.0 \
     --preset "CineStill 800T Cs41 (experimental)" \
-    --route "input > film > scan" --scan-output positive_scan \
+    --route "input > film > scan" --scan-output negative_to_positive \
     --input-color-space "ProPhoto RGB" --input-cctf-decoding false \
     --data-dir data \
     --out-profile fitted_profile.json --out-overlay fitted_tone.json \
@@ -409,34 +413,36 @@ See the [profile fitting contract](specs/profile-fit/spec.md).
 
 The external `spektrafilm-bench` CLI renders immutable evidence, compares versions, and creates an offline review. It reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. It preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations. The [benchmark specification](specs/benchmark/README.md) defines reference scopes and qualification rules.
 
-Install the locked Python dependencies with `uv`. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
+Build the native benchmark tools. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
 
 ```bash
 just build-f64
-uv sync --project scripts/benchmark --locked
-scripts/benchmark/.venv/bin/python scripts/benchmark/fixtures.py \
+just build-benchmark
+./target/release/spektrafilm-bench-fixtures \
     --renderer ./target/release/spektrafilm-f64 --data-dir ./data \
     --out /tmp/spektrafilm-benchmark-fixtures --download-natural
 
-scripts/benchmark/spektrafilm-bench validate --kind suite \
+./target/release/spektrafilm-bench validate --kind suite \
     --file /tmp/spektrafilm-benchmark-fixtures/complete.json
-scripts/benchmark/spektrafilm-bench run \
+./target/release/spektrafilm-bench run \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/baseline.json \
     --out /tmp/spektrafilm-benchmark-baseline
-scripts/benchmark/spektrafilm-bench run \
+./target/release/spektrafilm-bench run \
     --suite /tmp/spektrafilm-benchmark-fixtures/complete.json \
     --target /tmp/spektrafilm-benchmark-fixtures/candidate.json \
     --out /tmp/spektrafilm-benchmark-candidate
-scripts/benchmark/spektrafilm-bench compare \
+./target/release/spektrafilm-bench compare \
     --baseline /tmp/spektrafilm-benchmark-baseline \
     --candidate /tmp/spektrafilm-benchmark-candidate \
     --out /tmp/spektrafilm-benchmark-comparison
-scripts/benchmark/spektrafilm-bench report \
+./target/release/spektrafilm-bench report \
     --comparison /tmp/spektrafilm-benchmark-comparison \
     --out /tmp/spektrafilm-benchmark-review
 just benchmark-test
 ```
+
+`just benchmark-test` includes public CLI regressions for failed renders, nonfinite masters, evidence integrity, mask populations, RAW declaration applicability, policy qualification, and measurement availability. These tests use isolated retained artifacts and do not require network access or an external renderer.
 
 Open `/tmp/spektrafilm-benchmark-review/index.html`. The human review opens one case and seed at a time, prioritizes `color_chart_30mp` when present, and keeps every case, seed, failure, and artifact reachable through the selector and folded evidence. The first view shows synchronized baseline/candidate imagery, a short retained condition summary, and a small rounded full-image metric summary; sources, references, difference maps, curves, full measurements, execution settings, findings, and detail regions stay collapsed until needed. Fixed regions, automatic hotspots, lossless crops, synchronized pan and zoom, manual A/B alternation, and split view remain available. Detail zoom supports 100%, 200%, and 400% in device pixels. Report generation reads retained evidence and needs neither a renderer nor the original run directories. Reference artifacts with unknown or denied redistribution permission remain omitted and identified in the report manifest.
 
@@ -496,7 +502,7 @@ Spektra grain dispatch mirrors upstream `apply_grain`: `sublayers_active` (defau
 
 Both Spektra composite and layered grain use the CPU sampler during preview and export; no resident WGPU Spektra grain shader is maintained. Active Spektra grain rendering selects the faithful per-stage path. The separate Grain Procedural implementation remains available.
 
-Grain Dye is selected with `film_render.grain.engine: "dye"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (Gaussian sigma in micrometers, default `3.5`; the field-cell pitch is `support / 2`) and realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers` (square micrometers, default `1.28`), using the resolved `density_min` and `uniformity` and forming every channel from the film's three sublayers. Both controls must be finite and strictly positive. The channel scale is `k_c = (rms_granularity_c / 6)²`, where `6` is the preset of the reference stock `kodak_portra_800`. It is the only per-channel strength input: Dye does not read Spektra's `particle_area_um2` or `particle_scale`, whose blue-heavy default would double a coarser blue record. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. Dye supports still and cine color-negative filming profiles using the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`; it is not a roll-width designation. The reference validation remains a 36 mm long edge on `input > film > print > scan` with `io.scan_film = false`. Format changes alter physical footprints and workload, while crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound. The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `positive_scan` and `direct_scan`. Another chemistry or an unsupported route, fails with an actionable unsupported-condition error. Dye resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the Dye specification](specs/film-grain/v3/spec.md).
+Grain Dye is selected with `film_render.grain.engine: "dye"`. It conditions a mixed film-coordinate dye field on `v3_dye_support_um` (Gaussian sigma in micrometers, default `3.5`; the field-cell pitch is `support / 2`) and realizes film-space Poisson counts with event area `v3_event_area_um2 × k_c × particle_scale_sublayers` (square micrometers, default `1.28`), using the resolved `density_min` and `uniformity` and forming every channel from the film's three sublayers. Both controls must be finite and strictly positive. The channel scale is `k_c = (rms_granularity_c / 6)²`, where `6` is the preset of the reference stock `kodak_portra_800`. It is the only per-channel strength input: Dye does not read Spektra's `particle_area_um2` or `particle_scale`, whose blue-heavy default would double a coarser blue record. The field belongs to film coordinates: the pipeline develops the full frame and the readout produces the requested region at the requested grid, so a crop selects the readout region and never restarts texture. Overlapping full-frame and cropped CMY reads therefore agree within the design's **1e-5** (f32) and **1e-10** (f64) tolerances, while a rounded output grid may change footprints and only that sampling is then comparable. Dye supports still and cine color-negative filming profiles using the global `camera.film_format_mm` exposed-image long edge. This value must be finite and strictly positive. Its existing default is `35.0`; it is not a roll-width designation. The reference validation remains a 36 mm long edge on `input > film > print > scan` with `io.scan_film = false`. Format changes alter physical footprints and workload, while crop/resize determine output dimensions. Support and event area remain in film units. Large requests can fail an explicit resource bound. The diagnostic film-scan route `input > film > scan` with `io.scan_film = true` also runs for `negative_to_positive` and `direct_scan`. Another chemistry or an unsupported route, fails with an actionable unsupported-condition error. Dye resolves on the CPU — the resident chain reports `FilmGrainV3FieldCpu` and the CLI/GUI report the effective backend — and preview, LUT, stochastic and spatial deactivation bypass it before allocation, while diagnostic taps, timings and dumps still exercise it. `SPEKTRAFILM_GRAIN_V3_EXPECTATION=1` renders the deterministic expectation without changing the recipe, and `SPEKTRAFILM_GRAIN_V3_CELL_UM` may set a finer certification pitch. See [the Dye specification](specs/film-grain/v3/spec.md).
 
 When downstream spatial processing is active, Dye extends the output grid to cover the full film before those stages and extracts the requested crop afterward. Physical optical controls use the actual output pitch; scanner blur and unsharp masking remain pixel controls. See [film geometry](specs/film-grain/v3/design.md#film-geometry) for rounded and anisotropic output limits. The final Dye cell-address mapping changes the realization of prototype seeds while preserving the probability law. Dye sublayer scales must be positive; the GUI editing minimum is `0.01`.
 
@@ -546,6 +552,7 @@ crates/
   spektrafilm-cli/     `spektrafilm` / `spektrafilm-f64` (process, fit, list-profiles, lut, export-lut) + `decode_raw_gui`
   spektrafilm-gui/     egui/eframe preview (wgpu renderer, Metal-backed on macOS)
   spektrafilm-raw/     shared native LibRaw white balance and Lensfun correction
+  spektrafilm-benchmark/ native benchmark CLI, fixture generator, retained metrics and offline review
 data/
   profiles/            film + paper JSON profiles (spectral sensitivities, density curves, etc.)
   luts/                Hanatos2025 spectral basis + standard observer CMFs (.npy)

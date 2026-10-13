@@ -269,7 +269,7 @@ impl Pipeline {
         }
     }
     fn effective_backend<'a>(&self, backend: &'a dyn ComputeBackend) -> &'a dyn ComputeBackend {
-        if self.params.scanner.scan_output == "positive_scan" {
+        if self.params.scanner.scan_output == "negative_to_positive" {
             static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
                 spektrafilm_gpu::cpu_backend::CpuBackend;
             &CPU_BACKEND
@@ -868,19 +868,19 @@ impl Pipeline {
                 timings,
             );
         }
-        let cpu_fallback = if self.params.scanner.scan_output == "positive_scan" {
+        let cpu_fallback = if self.params.scanner.scan_output == "negative_to_positive" {
             backend
                 .observation_context()
                 .filter(|context| context.enabled())
                 .map(|context| {
                     if backend.is_gpu() {
                         context.decline_resident(
-                            spektrafilm_gpu::telemetry::ResidentDeclineReason::PositiveScanOutput,
+                            spektrafilm_gpu::telemetry::ResidentDeclineReason::NegativeToPositiveOutput,
                         );
                     }
                     spektrafilm_gpu::bind_cpu_fallback(
                         context.clone(),
-                        spektrafilm_gpu::telemetry::CpuReason::PositiveScanOutput,
+                        spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
                     )
                 })
         } else {
@@ -1914,7 +1914,7 @@ mod spectral_invalidation_tests {
         for (scan_film, output) in [
             (false, "direct_scan"),
             (true, "direct_scan"),
-            (true, "positive_scan"),
+            (true, "negative_to_positive"),
         ] {
             for scale in [1.0, 1.5] {
                 let mut params = RuntimeParams::default();

@@ -39,15 +39,17 @@ done
 
 release_dir="$BUILD_TARGET_DIR/$RELEASE_SUBDIR"
 [[ -d "$release_dir" ]] || fail "release directory missing: $release_dir"
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
     [[ -x "$release_dir/$executable" ]] || fail "built executable missing: $release_dir/$executable"
 done
 
 library_dirs=()
-for module in libraw lensfun exiv2 glib-2.0 OpenImageIO; do
+for module in libraw lensfun exiv2 glib-2.0 OpenImageIO lcms2; do
     directory="$(pkg-config --variable=libdir "$module" 2>/dev/null || true)"
     [[ -z "$directory" ]] || library_dirs+=("$directory")
 done
+flip_library_dir="${FLIP_LIBRARY_DIR:-}"
+[[ -z "$flip_library_dir" ]] || library_dirs+=("$flip_library_dir")
 
 loader_cache="${TMPDIR:-/tmp}/spektrafilm-ldconfig.$$"
 trap 'rm -f "$loader_cache"' EXIT
@@ -104,18 +106,31 @@ internal_library() {
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib/spektrafilm" "$DIST_DIR/share/licenses"
 
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
     canonical_file "$release_dir/$executable" >"$DIST_DIR/.source.$executable"
     cp "$(cat "$DIST_DIR/.source.$executable")" "$DIST_DIR/lib/spektrafilm/$executable"
     chmod 0755 "$DIST_DIR/lib/spektrafilm/$executable"
     rm "$DIST_DIR/.source.$executable"
 done
+lcms_library="$(resolve_dependency liblcms2.so.2 "$DIST_DIR/lib/spektrafilm/spektrafilm-bench" 2>/dev/null || true)"
+if [[ -z "$lcms_library" ]]; then
+    for directory in ${library_dirs[@]+"${library_dirs[@]}"}; do
+        [[ -f "$directory/liblcms2.so.2" ]] && { lcms_library="$directory/liblcms2.so.2"; break; }
+    done
+fi
+[[ -n "$lcms_library" ]] || fail "cannot locate LittleCMS runtime liblcms2.so.2"
+cp -L "$lcms_library" "$DIST_DIR/lib/spektrafilm/liblcms2.so.2"
+chmod 755 "$DIST_DIR/lib/spektrafilm/liblcms2.so.2"
+ln -sf liblcms2.so.2 "$DIST_DIR/lib/spektrafilm/liblcms2.so"
 
 declare -A dependency_sources
 queue=()
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
+dependency_sources[liblcms2.so.2]="$lcms_library"
+queue+=("$lcms_library")
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
     queue+=("$(canonical_file "$release_dir/$executable")")
 done
+ 
 # winit/xkbcommon-dl loads these through dlopen, so they have no ELF NEEDED edge.
 for dependency in libxkbcommon.so.0 libxkbcommon-x11.so.0; do
     source_path="$(resolve_dependency "$dependency" "$release_dir/spektrafilm-gui" || true)"
@@ -192,6 +207,10 @@ done
 ((database_files > 0)) || fail "no Lensfun XML files in $lensfun_database"
 
 cp LICENSE "$DIST_DIR/share/licenses/spektrafilm-GPL-3.0.txt"
+for benchmark_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
+    [[ -s "licenses/$benchmark_license" ]] || fail "benchmark license missing: licenses/$benchmark_license"
+    cp "licenses/$benchmark_license" "$DIST_DIR/share/licenses/$benchmark_license"
+done
 [[ -s licenses/lensfun-cc-by-sa-3.0.txt ]] || fail "full Lensfun database license missing"
 mkdir -p "$DIST_DIR/share/licenses/lensfun-database"
 cp licenses/lensfun-cc-by-sa-3.0.txt "$DIST_DIR/share/licenses/lensfun-database/LICENSE-CC-BY-SA-3.0.txt"
@@ -239,12 +258,13 @@ for required in libraw lensfun exiv2 glib openimageio; do
     ((found == 1)) || fail "required native dependency was not bundled: $required"
 done
 
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-bench spektrafilm-bench-fixtures; do
     launcher="$DIST_DIR/bin/$executable"
     cat >"$launcher" <<LAUNCHER
 #!/bin/sh
 set -eu
-root=\$(CDPATH= cd -- "\$(dirname -- "\$0")/.." && pwd)
+launcher_path=\$(readlink -f -- "\$0")
+root=\$(CDPATH= cd -- "\$(dirname -- "\$launcher_path")/.." && pwd)
 export LD_LIBRARY_PATH="\$root/lib"
 export SPEKTRAFILM_DATA_DIR="\$root/share/data"
 export SPEKTRAFILM_LENSFUN_DATABASE="\$root/share/lensfun"

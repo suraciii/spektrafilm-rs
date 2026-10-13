@@ -229,7 +229,7 @@ fn bounded_text(value: &str) -> String {
 pub enum ScanOutput {
     #[default]
     DirectScan,
-    PositiveScan,
+    NegativeToPositive,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,8 +317,8 @@ impl RenderConfiguration {
             output_transfer_encoded: params.io.output_cctf_encoding,
             enlarger_lut_requested: params.settings.use_enlarger_lut,
             scanner_lut_requested: params.settings.use_scanner_lut,
-            scan_output: if params.scanner.scan_output == "positive_scan" {
-                ScanOutput::PositiveScan
+            scan_output: if params.scanner.scan_output == "negative_to_positive" {
+                ScanOutput::NegativeToPositive
             } else {
                 ScanOutput::DirectScan
             },

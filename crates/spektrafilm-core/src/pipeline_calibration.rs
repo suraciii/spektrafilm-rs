@@ -256,14 +256,18 @@ pub(crate) fn apply_film_chemistry(
     Ok(())
 }
 pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), String> {
-    if params.scanner.scan_output != "positive_scan" {
+    crate::params::validation::validate_enum_value(
+        "scanner.scan_output",
+        &params.scanner.scan_output,
+    )?;
+    if params.scanner.scan_output != "negative_to_positive" {
         return Ok(());
     }
     let direct_film_scan = params.workflow.route == "input > film > scan";
     let convert_scan = params.workflow.route == "input > convert-film > scan";
     if !direct_film_scan && !convert_scan {
         return Err(
-            "scanner.scan_output=positive_scan requires a direct film scan route (input > film > scan or input > convert-film > scan)".into(),
+            "scanner.scan_output=negative_to_positive requires a direct film scan route (input > film > scan or input > convert-film > scan)".into(),
         );
     }
     Ok(())
@@ -271,26 +275,26 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
 
 pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<(), String> {
     validate_scan_output_route(params)?;
-    if params.scanner.scan_output != "positive_scan" {
+    if params.scanner.scan_output != "negative_to_positive" {
         return Ok(());
     }
     if !film.is_negative() || !film.is_film() || !film.is_filming() {
         return Err(
-            "scanner.scan_output=positive_scan requires a negative filming-stage film profile; positive film and paper scans use direct_scan".into(),
+            "scanner.scan_output=negative_to_positive requires a negative filming-stage film profile; positive film and paper scans use direct_scan".into(),
         );
     }
     for channel in 0..3 {
         for row in &film.data.density_curves {
             if !row[channel].is_finite() {
                 return Err(format!(
-                    "scanner.scan_output=positive_scan requires finite density curves (channel {channel})"
+                    "scanner.scan_output=negative_to_positive requires finite density curves (channel {channel})"
                 ));
             }
         }
     }
     if params.scanner.white_correction || params.scanner.black_correction {
         return Err(
-            "scanner.scan_output=positive_scan cannot be combined with scanner white/black correction"
+            "scanner.scan_output=negative_to_positive cannot be combined with scanner white/black correction"
                 .into(),
         );
     }
@@ -301,7 +305,7 @@ pub fn validate_scan_output(params: &RuntimeParams, film: &Profile) -> Result<()
         )
     {
         return Err(
-            "scanner.scan_output=positive_scan cannot be combined with active Grain Procedural"
+            "scanner.scan_output=negative_to_positive cannot be combined with active Grain Procedural"
                 .into(),
         );
     }
@@ -651,34 +655,34 @@ mod tests {
     }
 
     #[test]
-    fn positive_scan_route_rejects_print_and_accepts_direct_film_scan() {
+    fn negative_to_positive_route_rejects_print_and_accepts_direct_film_scan() {
         let mut params = RuntimeParams::default();
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.io.scan_film = true;
         params.workflow.route = "input > film > print > scan".into();
         let error = validate_scan_output_route(&params).unwrap_err();
-        assert!(error.contains("scanner.scan_output=positive_scan"));
+        assert!(error.contains("scanner.scan_output=negative_to_positive"));
         assert!(error.contains("direct film scan route"));
         params.workflow.route = "input > film > scan".into();
         assert!(validate_scan_output_route(&params).is_ok());
     }
 
     #[test]
-    fn positive_scan_accepts_only_a_direct_negative_film_route() {
+    fn negative_to_positive_accepts_only_a_direct_negative_film_route() {
         let film = profile("negative", "film", "filming");
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         assert!(validate_scan_output(&params, &film).is_ok());
     }
 
     #[test]
-    fn positive_scan_rejects_profiles_outside_the_filming_negative_case() {
+    fn negative_to_positive_rejects_profiles_outside_the_filming_negative_case() {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
 
         assert!(validate_scan_output(&params, &profile("positive", "film", "filming")).is_err());
         assert!(validate_scan_output(&params, &profile("negative", "paper", "printing")).is_err());
@@ -694,13 +698,13 @@ mod tests {
     }
 
     #[test]
-    fn positive_scan_rejects_nonfinite_density_curves() {
+    fn negative_to_positive_rejects_nonfinite_density_curves() {
         let mut film = profile("negative", "film", "filming");
         film.data.density_curves[1][2] = f64::NAN;
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         let error = validate_scan_output(&params, &film).unwrap_err();
         assert!(error.contains("finite density curves"));
         assert!(error.contains("channel 2"));

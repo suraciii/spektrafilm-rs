@@ -14,6 +14,40 @@ fn provenance() -> Provenance {
 }
 
 #[test]
+fn scanner_preset_import_rejects_removed_mode_and_preserves_canonical_or_omitted_output() {
+    let mut current = RuntimeParams::default();
+    current.workflow.route = "input > film > scan".into();
+    current.io.scan_film = true;
+    let film = test_film();
+    let mut document = serde_json::json!({
+        "schema_version": 2,
+        "name": "Negative conversion",
+        "parameters": {"scanner": {"scan_output": "negative_to_positive"}},
+        "provenance": {"implementation_version": "test", "model_version": "test"}
+    });
+    let canonical = Preset::from_json_str(&document.to_string()).unwrap();
+    for imported in [
+        Preset::from_json_str(&canonical.to_json().unwrap()).unwrap(),
+        Preset::from_toml_str(&canonical.to_toml().unwrap()).unwrap(),
+    ] {
+        let applied = imported.apply_section(&current, &film).unwrap();
+        assert_eq!(applied.scanner.scan_output, "negative_to_positive");
+    }
+    document["parameters"]["scanner"]["scan_output"] = "positive_scan".into();
+    let error = Preset::from_json_str(&document.to_string()).unwrap_err();
+    assert!(error.contains("scanner.scan_output"));
+    let removed_toml = canonical
+        .to_toml()
+        .unwrap()
+        .replace("negative_to_positive", "positive_scan");
+    assert!(Preset::from_toml_str(&removed_toml).is_err());
+    document["parameters"]["scanner"] = serde_json::json!({"lens_blur": 0.0});
+    let omitted = Preset::from_json_str(&document.to_string()).unwrap();
+    let applied = omitted.apply_section(&current, &film).unwrap();
+    assert_eq!(applied.scanner.scan_output, "direct_scan");
+}
+
+#[test]
 fn scanner_provenance_roundtrip_rejects_fabricated_calibration() {
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
@@ -478,7 +512,7 @@ fn look_resolution_normalizes_scan_output_for_film_and_route() {
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
     current.io.scan_film = true;
-    current.scanner.scan_output = "positive_scan".into();
+    current.scanner.scan_output = "negative_to_positive".into();
     for stock in ["kodak_ektachrome_100", "kodak_portra_400"] {
         let preset = Preset::capture(
             "Scan look",
@@ -506,7 +540,7 @@ fn look_resolution_normalizes_approximate_receiver_for_default_paper_route() {
     current.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
     current.scanner.finish = crate::params::ScannerFinish::LabScan;
     current.scanner.finish_strength = 0.37;
-    current.scanner.scan_output = "positive_scan".into();
+    current.scanner.scan_output = "negative_to_positive".into();
     let preset = Preset::capture(
         "Approximate scan look",
         "kodak_portra_400",
@@ -536,7 +570,7 @@ fn look_resolution_preserves_default_lab_scan_strength_on_explicit_film_scan_rou
     let mut current = RuntimeParams::default();
     current.scanner.receiver_profile = crate::params::ReceiverProfile::LabScanApprox;
     current.scanner.finish = crate::params::ScannerFinish::LabScan;
-    current.scanner.scan_output = "positive_scan".into();
+    current.scanner.scan_output = "negative_to_positive".into();
     let preset = Preset::capture(
         "Lab scan look",
         "kodak_portra_400",
@@ -555,7 +589,7 @@ fn look_resolution_preserves_default_lab_scan_strength_on_explicit_film_scan_rou
             sources: &["scanner.receiver_profile=lab_scan_approx,scanner.finish=lab_scan".into()],
             route: Some("input > film > scan"),
             scan_film: true,
-            scan_output: Some("positive_scan"),
+            scan_output: Some("negative_to_positive"),
             input_is_raw: false,
             input_color_space: Some("sRGB"),
             input_cctf_decoding: Some(false),
@@ -579,20 +613,20 @@ fn look_resolution_preserves_default_lab_scan_strength_on_explicit_film_scan_rou
 
 #[test]
 fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() {
-    let preset = Preset::from_json_str(r#"{"schema_version":2,"name":"Positive scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
+    let preset = Preset::from_json_str(r#"{"schema_version":2,"name":"Negative conversion","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > print > scan".into();
     let error = preset.apply_section(&current, &test_film()).unwrap_err();
-    assert!(error.contains("scanner.scan_output=positive_scan"));
+    assert!(error.contains("scanner.scan_output=negative_to_positive"));
     assert!(error.contains("direct film scan route"));
-    current.scanner.scan_output = "positive_scan".into();
+    current.scanner.scan_output = "negative_to_positive".into();
     assert_eq!(
         preset
             .apply_section(&current, &test_film())
             .unwrap()
             .scanner
             .scan_output,
-        "positive_scan"
+        "negative_to_positive"
     );
     let unrelated =
         Preset::capture_section("Halation", Section::Halation, &current, provenance()).unwrap();
@@ -606,7 +640,7 @@ fn section_application_rejects_new_invalid_scan_route_but_allows_legacy_state() 
             .unwrap()
             .scanner
             .scan_output,
-        "positive_scan"
+        "negative_to_positive"
     );
 }
 
@@ -616,7 +650,7 @@ fn section_application_checks_film_corrections_and_grain_before_commit() {
     let mut current = RuntimeParams::default();
     current.workflow.route = "input > film > scan".into();
     current.io.scan_film = true;
-    current.scanner.scan_output = "positive_scan".into();
+    current.scanner.scan_output = "negative_to_positive".into();
     current.scanner.white_correction = false;
     current.scanner.black_correction = false;
     current.film_render.grain.active = false;
@@ -637,7 +671,7 @@ fn section_application_checks_film_corrections_and_grain_before_commit() {
         assert!(section.apply_section(&current, &film).is_err());
         assert_eq!(current, before);
     }
-    let section = Preset::from_json_str(r#"{"schema_version":2,"name":"Positive scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
+    let section = Preset::from_json_str(r#"{"schema_version":2,"name":"Negative conversion","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#).unwrap();
     current.scanner.scan_output = "direct_scan".into();
     let positive_film = profile::load_profile_by_name(&data(), "fujifilm_provia_100f").unwrap();
     assert!(section.apply_section(&current, &positive_film).is_err());
@@ -647,7 +681,7 @@ fn section_application_checks_film_corrections_and_grain_before_commit() {
             .unwrap()
             .scanner
             .scan_output,
-        "positive_scan"
+        "negative_to_positive"
     );
     // Matching a document never applies it to the active workflow.
     assert!(!section_matches(&section, &RuntimeParams::default()).unwrap());

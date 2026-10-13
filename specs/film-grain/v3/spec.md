@@ -30,7 +30,7 @@ Changing film format must keep the requested output raster dimensions. It may ch
 
 The reference validation condition is a 36 mm long edge on the print route `input > film > print > scan` with `io.scan_film = false`. The film forms the grain. The existing enlarger, print paper, and print scan read it. The reference stock and the default controls are validated on this route. The 36 mm value is a validation reference, not a Dye format restriction.
 
-Dye must also run on the film-scan route `input > film > scan` with `io.scan_film = true`, for `scanner.scan_output = positive_scan` and `direct_scan`. This route is a diagnostic condition. It must not be described as photographically accepted until it passes the [spectral readout gate](design.md#readout-and-detail) and the acceptance procedure below. A negative capture must not be compared with a positive reference without recording the interpretation.
+Dye must also run on the film-scan route `input > film > scan` with `io.scan_film = true`, for `scanner.scan_output = negative_to_positive` and `direct_scan`. This route is a diagnostic condition. It must not be described as photographically accepted until it passes the [spectral readout gate](design.md#readout-and-detail) and the acceptance procedure below. A negative capture must not be compared with a positive reference without recording the interpretation.
 
 Each stock must resolve its grain through its granularity preset, so that a coarser stock renders stronger grain than a finer one at the same density. The reference stock `kodak_portra_800` keeps the absolute event area validated for it. Other stocks move relative to that anchor.
 

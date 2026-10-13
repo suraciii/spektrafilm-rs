@@ -217,7 +217,7 @@ mod tests {
         let dyes = crate::chain_prep::channel_density(&film);
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
         for receiver in [
             crate::params::ReceiverProfile::LegacyColorimetric,
@@ -286,7 +286,7 @@ mod tests {
         let dyes = crate::chain_prep::channel_density(&film);
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
         params.scanner.unsharp_mask = [0.0; 2];
         params.io.output_cctf_encoding = false;

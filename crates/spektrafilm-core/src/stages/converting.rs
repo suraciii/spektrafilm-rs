@@ -587,7 +587,7 @@ pub fn neutralize_filters(
 mod action_tests {
     use super::*;
     #[test]
-    fn print_neutralization_is_independent_of_positive_scan_mode() {
+    fn print_neutralization_is_independent_of_negative_to_positive_mode() {
         let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
         let film = crate::profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&data, "kodak_portra_endura").unwrap();
@@ -601,11 +601,11 @@ mod action_tests {
         params.print_render.glare.active = false;
         let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
         let direct = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         let positive = neutralize_filters(&film, &print, &params, &data, &backend).unwrap();
         assert_eq!(positive, direct);
         assert_eq!(params.workflow.route, "input > film > scan");
-        assert_eq!(params.scanner.scan_output, "positive_scan");
+        assert_eq!(params.scanner.scan_output, "negative_to_positive");
     }
 
     #[test]

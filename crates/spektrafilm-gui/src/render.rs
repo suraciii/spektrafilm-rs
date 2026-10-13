@@ -301,7 +301,7 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
-        params.scanner.scan_output = "positive_scan".into();
+        params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.auto_setup = ScannerAutoSetup::Off;
         params.scanner.white_correction = false;
         params.scanner.black_correction = false;

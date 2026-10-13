@@ -835,11 +835,11 @@ mod tests {
     }
 
     #[test]
-    fn positive_scan_section_save_and_export_need_no_runtime_or_profiles() {
+    fn negative_to_positive_section_save_and_export_need_no_runtime_or_profiles() {
         let temp = Temp::new();
         let library = PresetLibrary::new(temp.0.join("library"));
         let preset = Preset::from_json_str(
-            r#"{"schema_version":2,"name":"Positive scan","parameters":{"scanner":{"scan_output":"positive_scan"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#,
+            r#"{"schema_version":2,"name":"Negative conversion","parameters":{"scanner":{"scan_output":"negative_to_positive"}},"provenance":{"implementation_version":"test","model_version":"test"}}"#,
         )
         .unwrap();
         let missing_data = temp.0.join("no-profiles");

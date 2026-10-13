@@ -23,6 +23,7 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 - Put durable non-contract conclusions in the relevant Issue/PR. Never commit transient artifacts, even if ignored.
 
 - Documentation language rules live in [eng/documentation-language.md](eng/documentation-language.md).
+- Reviewer judgment rules for data structures, serialization, defaults, and module boundaries live in [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 ## Verification
 
