@@ -148,6 +148,31 @@ pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> 
     Ok(Some(factor))
 }
 
+/// Whether the resident chain can run the Dye field as an assembled fence on
+/// the developed film density.
+///
+/// The fence reads and writes the chain's fixed-size density buffer, so it
+/// requires the readout geometry to be the delivered raster the chain already
+/// holds: no crop and no upscale ([`geometry`]). The env-gated certification
+/// readouts are not fenceable either — the exact-cell response interleaves
+/// the field with the acquisition, and the aperture probe runs the print
+/// exposure at a finer lattice.
+pub fn resident_fence_supported(film: &Profile, params: &RuntimeParams) -> bool {
+    if !active(params) {
+        return false;
+    }
+    if validate_supported(film, params).is_err() {
+        return false;
+    }
+    if validate_cell_spectral(params).unwrap_or(true) {
+        return false;
+    }
+    if validate_aperture(params).unwrap_or(None).is_some() {
+        return false;
+    }
+    !params.io.crop && params.io.upscale_factor == 1.0
+}
+
 /// Integer rectangle, in source pixels or in the extended output grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceRect {
@@ -447,10 +472,10 @@ pub fn resolve(film: &Profile, params: &RuntimeParams) -> Result<GrainV3Params, 
 
 /// Read the requested film region out of the full developed source.
 ///
-/// The field is realized on the CPU: Dye disables the fused WGPU/resident
-/// chain (see [`crate::pipeline::Pipeline::process`]), so the reported
-/// backend for an active Dye render is CPU regardless of the selected
-/// backend of the surrounding stages.
+/// The field is realized on the CPU: on the resident chain it runs inside the
+/// assembled density fence ([`resident_fence_supported`]), and otherwise it is
+/// the per-stage readout, so the reported executor for the field is CPU
+/// regardless of the backend selected for the surrounding stages.
 pub fn readout(
     source: &ImageBuf,
     film: &Profile,
@@ -511,7 +536,7 @@ pub fn readout_with_response(
 
 /// Effective-backend note for user-visible backend/capability output.
 pub fn effective_backend_note() -> &'static str {
-    "film grain Dye: field readout on CPU (resident WGPU chain disabled)"
+    "film grain Dye: field readout on CPU"
 }
 
 fn cell_um_override() -> Option<f64> {

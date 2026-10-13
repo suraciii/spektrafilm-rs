@@ -93,7 +93,7 @@ When downstream spatial processing is active, Dye extends the output grid to cov
 
 ### CPU execution
 
-Dye resolves on the CPU. The CLI/GUI report the effective backend. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
+Dye resolves its field on the CPU. On the resident route the field runs as an assembled fence on the developed film density, and only a request the fence cannot express — a crop or an upscale, or the gated certification readouts — takes the per-stage CPU path. The CLI/GUI report the effective backend. Preview, LUT, stochastic, and spatial deactivation bypass Dye.
 
 See [the Dye specification](../specs/film-grain/v3/spec.md) for experimental readouts and diagnostic controls.
 
