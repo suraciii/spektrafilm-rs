@@ -201,7 +201,7 @@ Apply inactive, preview, spatial-deactivation, stochastic-deactivation, and LUT 
 
 Active Dye must disable resident WGPU execution and use CPU. Report the effective backend in capability and dry-run output. Unsupported conditions and resources must fail before publication. Scan and Export must share the resolved model.
 
-On the print route, Dye density enters the [print exposure composition](../../material-response/design.md#print-exposure-composition). Every scan of that material must follow [Scan optics and print viewing glare](../../film-chain/spec.md#scan-optics-and-print-viewing-glare), including direct scans. Dye must not restore the historical post-gamut optical blur or compose its grain after encoding. Convert-film remains outside active Dye support.
+On the print route, Dye density enters the [print exposure composition](../../output-mix/design.md#print-exposure-composition). Every scan of that material must follow [Scan optics and print viewing glare](../../film-chain/spec.md#scan-optics-and-print-viewing-glare), including direct scans. Dye must not restore the historical post-gamut optical blur or compose its grain after encoding. Convert-film remains outside active Dye support.
 
 CMY crop certification does not by itself establish final RGB crop equality. With an active downstream spatial operation, such as the enlarger diffusion filter, scanner blur, or unsharp mask, evaluate it on the corresponding full-film output grid and crop afterward. An implementation may use bounded halos only if it proves equivalent boundary behavior. Otherwise use full-frame downstream processing. If crop output rounding changes footprint alignment, report this sampling difference rather than claim pixel equality.
 

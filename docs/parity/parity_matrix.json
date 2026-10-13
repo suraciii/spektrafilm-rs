@@ -1047,7 +1047,7 @@
       "output_gamut_compress.lightness_compression": {
         "rust_status": "intentionally_retired",
         "owner_issue": null,
-        "implementation_source": "specs/material-response/spec.md#output-boundary-and-retirement",
+        "implementation_source": "specs/output-mix/spec.md#output-boundary-and-retirement",
         "verification": "Current model rejects this path; historical audit below is not a current support or parity claim.",
         "audit_baseline": {
           "rust_status": "supported",

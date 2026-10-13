@@ -8,7 +8,7 @@ The benchmark must distinguish change magnitude, closeness to a named reference,
 
 The benchmark must expose measurements and their evidence before an interpretation. An agent must be able to locate a reported change without reading logs or opening every image. A person must be able to inspect the same change in the full image and at native detail resolution.
 
-This capability owns appearance comparison, evaluation decisions, and review artifacts. [CLI parameters](../cli-parameters/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
+This capability owns appearance comparison, evaluation decisions, and review artifacts. [CLI parameters](../cli/spec.md) owns rendering parameter resolution. [Image input](../image-input/spec.md) owns decoding. [Photo export](../photo-export/spec.md) owns image encoding and publication. [Telemetry](../telemetry/spec.md) owns render execution observations. The benchmark must not redefine these contracts.
 
 The delivered benchmark must run as a Rust CLI without a Python runtime. [Rust delivery](rust-delivery/spec.md) defines distribution and migration acceptance. This requirement does not change the evaluation tracks, measurement meanings, or human-review behavior.
 
@@ -99,7 +99,7 @@ Missing assets and unsupported cases must remain visible. The report must state 
 
 ## Reproducible rendering
 
-Raster cases must provide the [source declaration](../cli-parameters/spec.md#input-declaration). Embedded ICC data must remain recorded as provenance and must not silently override the renderer's explicit declaration. An external reference's color interpretation must be resolved separately before comparison.
+Raster cases must provide the [source declaration](../cli/spec.md#input-declaration). Embedded ICC data must remain recorded as provenance and must not silently override the renderer's explicit declaration. An external reference's color interpretation must be resolved separately before comparison.
 
 The run must retain the source configuration, resolved settings, selected seed, actual dimensions, renderer identity, dependency identities, and observed execution conditions. Dry run must not be presented as proof of decoding, device availability, or completed rendering.
 

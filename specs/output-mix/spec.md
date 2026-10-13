@@ -1,4 +1,4 @@
-# Material controls and output composition
+# Output mix and material controls
 
 ## Product model
 
@@ -61,7 +61,7 @@ Retain MAIN, FILM, PRINT, ADVANCED, and CONFIG, existing section menus, and exis
 
 Film and Print chemistry remain distinct from optical exposure. Existing developer exhaustion stays a model-specific development control, not a universal high-dynamic-range slider. Profile and route capability feedback must identify inactive controls without clearing values or fabricating support. Existing Scanner points retain medium-specific meanings. MAIN Output exposes Overall effect amount with the existing Output section menu and identifies the negative-source endpoint when applicable. Existing gamut controls must not be duplicated across pages.
 
-Reset and section presets retain their current ownership: no new response reset or preset section. The existing Output section owns mix reset to 1; Enlarger reset follows its existing scope. [Presets](../presets/spec.md) owns version migration and complete look capture. [CLI parameters](../cli-parameters/spec.md) owns canonical paths, sparse edits, discovery, and inactive-edit feedback.
+Reset and section presets retain their current ownership: no new response reset or preset section. The existing Output section owns mix reset to 1; Enlarger reset follows its existing scope. [Presets](../presets/spec.md) owns version migration and complete look capture. [CLI parameters](../cli/spec.md) owns canonical paths, sparse edits, discovery, and inactive-edit feedback.
 
 Optical and grain labels follow [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) and [Film grain](../film-grain/spec.md). Print viewing glare is readout light, not paper exposure; Procedural is post-scan appearance, not material-grain formation. These distinctions remain required even though the digital-response proposal is withdrawn.
 

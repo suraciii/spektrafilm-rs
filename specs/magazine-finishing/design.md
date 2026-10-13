@@ -1,4 +1,4 @@
-# Magazine print color design
+# Magazine finishing design
 
 ## Ownership and entry points
 

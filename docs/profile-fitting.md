@@ -12,7 +12,7 @@ Inputs are three JSON files:
 
 Each patch table names the `source` of its values. The fitted surface learns the errors of the scene table. A surface fitted from camera readings therefore describes that camera as well as the stock.
 
-Halation and grain are off in every evaluation. The scanner writes linear sRGB. Fitting the surface enables the surface toggle. `--lambda` must be finite and non-negative. See the [profile fitting contract](../specs/profile-fit/spec.md) for the fitting requirements.
+Halation and grain are off in every evaluation. The scanner writes linear sRGB. Fitting the surface enables the surface toggle. `--lambda` must be finite and non-negative. See the [profile authoring contract](../specs/profile-authoring/spec.md) for the fitting requirements.
 
 A run succeeds only when the fit reduces both the color and the gray ΔE00 medians. A surface-only fit can trade gray for color. For this reason, `--fit surface,tone` is the usual choice. The `tone` group fits `scanner.positive_density_ev` and `scanner.positive_balance_ev`; `scanner.positive_contrast` and `scanner.positive_dmax` keep the chain configuration values.
 
@@ -30,7 +30,7 @@ A failed run leaves none of these outputs.
 
 `--cv` adds a cross validation of the color patches. It performs one extra fit per fold. Each fit trains on half of the color patches and is measured on the other half.
 
-The command reports the training and held-out medians of both folds. It leaves the written profile and overlay from the fit over every patch. See the [cross-validation contract](../specs/profile-fit/spec.md#cross-validation).
+The command reports the training and held-out medians of both folds. It leaves the written profile and overlay from the fit over every patch. See the [cross-validation contract](../specs/profile-authoring/spec.md#cross-validation).
 
 ## Shipped Portra 800 fit
 
@@ -56,8 +56,8 @@ All fitted density models refresh sampled curves on load, including `sept_norm_c
 
 ## See also
 
-- [Profile fitting contract](../specs/profile-fit/spec.md).
-- [Cross-validation contract](../specs/profile-fit/spec.md#cross-validation).
+- [Profile authoring contract](../specs/profile-authoring/spec.md).
+- [Cross-validation contract](../specs/profile-authoring/spec.md#cross-validation).
 - [Building](building.md).
 - [Scanning](scanning.md).
 - [Presets](presets.md).
