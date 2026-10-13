@@ -125,7 +125,7 @@ fn bicubic_2d_impl<T: Scalar>(
         mitchell_weight(fy - 1.0),
         mitchell_weight(fy - 2.0),
     ];
-    let mut result = vec![T::from_f64(0.0); channels];
+    let mut result = vec![0.0f64; channels];
     let mut weight_sum = 0.0f64;
     // Indices supply reflected coordinates and address weight and data arrays.
     #[allow(clippy::needless_range_loop)]
@@ -137,18 +137,16 @@ fn bicubic_2d_impl<T: Scalar>(
             weight_sum += weight;
             let base = (xi_idx * second_dim + yj_idx) * channels;
             for c in 0..channels {
-                let new_val = result[c].to_f64() + weight * data[base + c].to_f64();
-                result[c] = T::from_f64(new_val);
+                result[c] += weight * data[base + c].to_f64();
             }
         }
     }
     if weight_sum != 0.0 {
         for value in &mut result {
-            let v = value.to_f64() / weight_sum;
-            *value = T::from_f64(v);
+            *value /= weight_sum;
         }
     }
-    result
+    result.into_iter().map(T::from_f64).collect()
 }
 
 /// Mitchell-Netravali bicubic 2D interpolation on a regular grid (f32 data).
