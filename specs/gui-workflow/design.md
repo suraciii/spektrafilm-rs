@@ -2,6 +2,9 @@
 
 - The GUI is an adapter over `core::runtime`; it does not implement a second film pipeline or color model.
 - UI edits serialize to the runtime parameter model. Preview and Scan use the same model with different geometry limits.
+- Film and Print controls must use the [prepared material response](../material-response/design.md#prepared-response) owned by their actual development stages. Inactive routes disable editing without clearing stored response values. Existing section menus own response bypass, reset, and preset operations; the GUI must not implement a generic RGB response or duplicate Scanner levels.
+- The output amount control must use [core output composition](../material-response/design.md#output-composition). The GUI must not derive an output-mix source from the Input viewer raster, add an output lightness stage, or add a Finished RGB output-processing switch.
+- State and preset loading must validate and migrate a candidate before committing any UI or runtime state. Rejected retired settings leave the source, active controls, accepted render identity, and retained output intact under [Persistence and delivery](../material-response/design.md#persistence-and-delivery).
 - The profile selection module owns catalog discovery and stock and development-time pickers. The application owns selection state and render invalidation.
 - Viewer presentation uses disposable display rasters. Save and Export consume retained native output or invoke the export renderer and shared writer.
 - The private raster module owns interpolation kernels and pixel sampling. The viewer owns color transforms, caching, and presentation state.

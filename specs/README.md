@@ -5,6 +5,7 @@
 Capabilities:
 
 - [Film chain](film-chain/spec.md) — spectral film, print, and scan processing.
+- [Film and print digital response](material-response/spec.md) — stage-owned highlight and color response, print filtration, scan-reference isolation, and final output mixing.
 - [Magazine print color](magazine-print-color/spec.md) — optional magazine-style RGB finishing for scanned or completed images.
 - [Film grain](film-grain/spec.md) — shared grain contract and engine selection.
 - [Image input](image-input/spec.md) — raster and RAW ingestion.

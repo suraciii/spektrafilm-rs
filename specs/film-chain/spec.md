@@ -6,7 +6,7 @@
 - A photographic print route must provide a photographic print profile.
 - Optional magazine finishing must satisfy the [Magazine print color](../magazine-print-color/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
-- The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra grain) → the selected base route → destination color transform and encoding → scanner-domain effects (including Procedural grain) → optional magazine finishing → output handoff.
+- [Film and print digital response](../material-response/spec.md) owns creative material response, scan-reference isolation, and the retirement of Output lightness compression. Film and Print response must alter their material outputs, not completed RGB. Magazine appearance remains after scanner-domain effects. Overall output mix follows Magazine appearance before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
 - CPU f64 is the reference and export path. WGPU f32 is an interactive or explicitly selected fast path; it may use CPU stages for unsupported effects and is not f64 reference output.
@@ -32,7 +32,8 @@
   and its controls belong to `positive_scan`. A photographic-paper scan and a
   slide film scan must not expose them. See
   [Direct negative-film scan output](#direct-negative-film-scan-output).
-- A look that must apply to both a photographic-paper scan and a film scan belongs to the finishing treatment, not to scanner acquisition or interpretation controls. The optional Fotufilm-derived scanner finish is a film-scan treatment.
+- An appearance applied to a completed paper or film scan belongs to finishing. A creative adjustment to material formation belongs to [Film or Print response](../material-response/spec.md), even when it affects both delivery routes. The optional Fotufilm-derived scanner finish remains a film-scan treatment.
+- [Scan reference isolation](../material-response/spec.md#scan-reference-isolation) must apply to inverse calibration, scanner point ranges, scanner correction references, and automatic setup. Receiver capture must read effective material density; calibration must not invert away its creative adjustments.
 - The product may model a scanner receiver response. A receiver profile must identify its spectral response, reference levels, source, and calibration status.
 
 ## Scanner receiver and interpretation
@@ -95,7 +96,7 @@
   `input > film > scan` route or the real negative-capture
   `input > convert-film > scan` route. Paper profiles, print-paper routes,
   and `scan-minus-base` are not eligible.
-- Positive interpretation uses the resolved receiver capture. `separable` derives a per-channel monotone inverse from the selected profile density curves. `coupled` uses the three-channel inverse defined in [Scanner receiver and interpretation](#scanner-receiver-and-interpretation). Both modes estimate relative log exposure, subtract camera exposure compensation only on the simulated `input > film > scan` route, apply the configured density brightness, RGB balance, contrast, and maximum-density controls, then emit output-space linear RGB.
+- Positive interpretation uses the resolved receiver capture. `separable` derives a per-channel monotone inverse from the baseline profile density curves, excluding the new creative response. `coupled` uses the three-channel inverse defined in [Scanner receiver and interpretation](#scanner-receiver-and-interpretation), with the same baseline-reference boundary. Both modes estimate relative log exposure, subtract camera exposure compensation only on the simulated `input > film > scan` route, apply the configured density brightness, RGB balance, contrast, and maximum-density controls, then emit output-space linear RGB.
 - Calibration captures outside the profile range use finite endpoint tangent
   extrapolation. Negative and above-clear scanner RGB remains representable
   until the normal writer; no log-of-clipped-RGB operation is permitted.

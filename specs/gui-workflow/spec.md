@@ -32,3 +32,20 @@
 - The viewer retains the last completed frame while new composition runs. Automatic parameter updates skip reveal and crossfade. Explicit Preview and Scan retain those configured animations.
 - Base workflow selection and optional finishing controls must follow the [Magazine print enablement contract](../magazine-print-color/spec.md#enablement).
 - The workflow selector must offer exactly the routes the workflow validator supports.
+
+## Stage-owned color controls
+
+Control placement and process meaning must follow [Film and print digital response](../material-response/spec.md#user-operation). The GUI must retain the existing MAIN, FILM, PRINT, ADVANCED, and CONFIG pages. It must not introduce a generic Reproduction section.
+
+MAIN Enlarger must expose Cyan shift beside the existing Magenta and Yellow shifts, using the existing enlarger filtration units and neutral default. It must show print exposure and reference compensation in the same section. A route without actual print exposure and development must disable these controls and identify the missing stage without discarding values.
+
+FILM must expose a Digital response group owned by `film_render.response`: active bypass, highlight start in EV, highlight amount, saturation, and color density. It must retain film chemistry and development-shoulder controls as distinct controls. The digital response changes developed film record density; it is not a final RGB correction. The group must provide bypass and response-only reset. The existing Film section preset menu must carry these controls without a separate overlapping response preset section or redundant group-strength control.
+
+PRINT must expose a Digital response group owned by `print_render.response`: active bypass, highlight start in the reference material whiteward tone coordinate, highlight amount, saturation, color density, and shadows, midtones, and highlights tone. Tone controls must be labeled as warm/cool print exposure filtration, not final RGB split toning. Print chemistry, preflash, and print base controls remain distinct. The group must provide bypass and response-only reset. The existing Print section preset menu must carry these controls without a separate overlapping response preset section.
+
+Film response controls must be disabled when the route does not develop film, including conversion of a real captured negative. Print response controls must be disabled when the route does not expose and develop a print. Disabled or bypassed response controls retain their stored values. Finished RGB must mark both response sections and material and Scanner controls inapplicable. Existing Scanner black and white points retain their medium-specific meaning; the GUI must not add duplicate generic levels.
+
+MAIN Output must expose Overall effect amount as the full-result/prepared-source blend under [Output mix](../material-response/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Overall effect amount returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
+
+Loading retired settings must follow [Output boundary and retirement](../material-response/spec.md#output-boundary-and-retirement). A rejected document must identify the exact retired path and leave the source document, active controls, accepted render identity, and retained output unchanged. The GUI must not silently replace a retired numeric lightness triplet with Film or Print response settings; the user must explicitly remove it and choose any replacement.
+
