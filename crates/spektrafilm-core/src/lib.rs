@@ -5,7 +5,6 @@ pub mod data;
 pub mod enlarger;
 #[cfg(feature = "precision-f64")]
 pub mod fit;
-mod fotufilm_engine;
 pub mod gamut_compression;
 pub mod image_io;
 pub mod input_gamut;

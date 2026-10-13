@@ -12,16 +12,6 @@ RAW decoding requires native **LibRaw ≥ 0.22.0**, **Lensfun**, **Exiv2**, and 
 
 Image IO additionally requires OpenImageIO and Imath development headers. OIIO installations that forward to external fmt headers also need the fmt development package and `fmt.pc` on `PKG_CONFIG_PATH`. Homebrew supplies this dependency. Windows builds LibRaw 0.22.0 with `scripts/build_windows_libraw.sh`. Packages include the DLLs and licenses alongside system native dependencies.
 
-The original Fotufilm CPU engine requires official Halide 21 headers and its shared library. Run `just install-halide /path/to/halide-21` on Linux or macOS, then set `HALIDE_ROOT` to that prefix. The installer pins Halide 21.0.0 release archives and SHA256 digests from the [official release](https://github.com/halide/Halide/releases/tag/v21.0.0). Add its `lib64` directory to `LD_LIBRARY_PATH` on Linux or its `lib` directory to `DYLD_LIBRARY_PATH` on macOS for local unbundled execution. A Halide 21 `Halide.pc` or `halide.pc` may provide the headers and library instead. `HALIDE_LIB_DIR` overrides the library directory.
-
-On Windows, run `scripts/install_halide.ps1 -Prefix C:\deps\halide-21` and set `HALIDE_ROOT`. GNU/UCRT Rust builds retain the existing native dependencies. The Fotufilm crate alone compiles its C++ graph with `HALIDE_CXX=clang-cl` and links a C ABI DLL with `HALIDE_LINKER` pointing to the Visual Studio `link.exe`. Run from an x64 Visual Studio developer environment with LLVM `clang-cl` and MSYS2 `dlltool` on `PATH`. Packaging requires `VCToolsRedistDir` and includes the MSVC runtime, official Halide DLL and notices. Linux evidence does not establish Windows compatibility.
-
-All platform packages copy the Fotufilm preparation module, prior, stocks and notices through the existing `data/` bundle. They include Halide's recursive shared-library dependencies and official license text. Users do not need Swift. Cold Halide graph compilation cannot be interrupted; cancellation is checked between native strip calls and prevents canceled output publication.
-
-To rebuild the bundled preparation module, run `scripts/build_fotufilm_preparation.sh` with the official Swift 6.4.0 compiler, its matching WASI SDK, and `llvm-objcopy`. Set `FOTUFILM_SWIFT_COMPILER` or `FOTUFILM_WASM_OBJCOPY` when those binaries are not on `PATH`, and `FOTUFILM_PREPARATION_BUILD_DIR` to keep build artifacts outside the checkout. The source package and manifests are in `crates/spektrafilm-fotufilm/vendor/fotufilm/preparation/`. Application users need neither Swift nor the SDK.
-
-Use release builds when exercising the original engine. WASI preparation runs in the host interpreter; unoptimized debug execution can exceed GUI worker acceptance deadlines. `just gui-headless` runs the optimized host while retaining the original source arithmetic.
-
 ## Build commands
 
 ```bash

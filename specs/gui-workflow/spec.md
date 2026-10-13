@@ -7,11 +7,6 @@
 - Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](../gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.
 - Viewer-only state, such as zoom, interpolation, reveal, and canvas presentation, must not alter saved or exported pixels.
-- Simulation engine selection is independent of historical grain engine selection. SpektraFilm remains the factory default. Fotufilm displays the full original stock catalogue and executable original controls from the source ControlsManifest, dynamic menus and stock applicability. It must not relabel historical scanner or print controls as Fotufilm controls.
-- Fotufilm engine and request persist in the runtime state snapshot. Preview, Scan and Export consume that same request through the runtime worker, including original Standard/Film grain selection, media/format, source illuminant, optics and process controls. Native options remain accessible with their authoritative original types. Source validation failures remain visible and never substitute defaults.
-- Fotufilm Preview renders the complete original pipeline at source geometry, then resizes delivery. Its original grain and optics remain active. Fotufilm runs the original binary32 CPU graph independently of the historical backend selector.
-- The simulation seed is the host UInt64 field; it is not a second native override. Original options are editable JSON with explicit Apply and Reset actions, preserving numeric, Boolean, string, array and object types through state and Fotufilm section presets.
-- Original negative-stage output retains source geometry and gross record density metadata after engine or request edits. Crop, upscale and preview delivery limits do not resample retained density. Display alone may scale its transmission `10^-D` raster; Save and Export preserve the unencoded density samples in 32-bit TIFF or EXR. EXR normalization must retain the density domain rather than select an RGB color space.
 
 - The Scanner controls show exactly the controls that
   [Scan medium and scanner controls](../film-chain/spec.md#scan-medium-and-scanner-controls)
