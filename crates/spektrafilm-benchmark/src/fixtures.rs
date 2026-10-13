@@ -42,7 +42,7 @@ fn export_look(renderer: &Path, data_dir: &Path, out: &Path) -> Result<()> {
         .arg(data_dir)
         .output()
         .map_err(|error| {
-            Error::new("preset_export", format!("{error}; stderr: "))
+            Error::new("preset_export", error.to_string())
                 .at(renderer.display().to_string())
                 .boundary("renderer")
         })?;
@@ -64,6 +64,75 @@ fn export_look(renderer: &Path, data_dir: &Path, out: &Path) -> Result<()> {
         );
     }
     fs::write(out.join("look.toml"), &output.stdout)?;
+    Ok(())
+}
+/// Prove the selected renderer resolves an authored configuration before publishing it.
+fn resolve_configuration(
+    renderer: &Path,
+    data_dir: &Path,
+    out: &Path,
+    input: &Path,
+    name: &str,
+    configuration: &Value,
+) -> Result<()> {
+    let path = renderer.display().to_string();
+    let invalid = |message: String| {
+        Error::new("renderer_configuration", message)
+            .at(path.clone())
+            .boundary("renderer")
+    };
+    let mut command = Command::new(renderer);
+    command
+        .arg("process")
+        .arg(input)
+        .args(["--dry-run", "--backend", "cpu", "--output"])
+        .arg(out.join(format!("{name}.tif")))
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args([
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+        ]);
+    if let Some(route) = configuration["route"].as_str() {
+        command.args(["--route", route]);
+    }
+    for preset in configuration["presets"].as_array().into_iter().flatten() {
+        let preset = preset
+            .as_str()
+            .ok_or_else(|| invalid(format!("{name} preset reference must be a string")))?;
+        command.arg("--preset").arg(out.join(preset));
+    }
+    for assignment in configuration["set"].as_array().into_iter().flatten() {
+        let assignment = assignment
+            .as_str()
+            .ok_or_else(|| invalid(format!("{name} assignment must be a string")))?;
+        command.args(["--set", assignment]);
+    }
+    let output = command
+        .output()
+        .map_err(|error| invalid(format!("{name} resolution failed to start: {error}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let from = stderr.len().saturating_sub(2000);
+        return Err(invalid(format!(
+            "{name} resolution exited with {}; stderr: {}",
+            output.status,
+            stderr[from..].trim()
+        )));
+    }
+    let resolved: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        invalid(format!(
+            "{name} resolution returned invalid JSON: {error}; stdout: {}",
+            String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(400)])
+        ))
+    })?;
+    if !resolved["parameters"].is_object() {
+        return Err(invalid(format!(
+            "{name} resolution returned no effective parameters"
+        )));
+    }
     Ok(())
 }
 fn region(id: &str, rect: [usize; 4], families: &[&str], role: &str) -> Value {
@@ -143,6 +212,13 @@ pub fn create_fixtures(
             colors[x as usize / 16]
         }
     })?;
+    for (name, file) in [
+        ("color-tone", "color-tone.json"),
+        ("appearance", "appearance.json"),
+    ] {
+        let configuration = documents::load_json_document(&out.join(file))?;
+        resolve_configuration(renderer, data_dir, out, &path, name, &configuration)?;
+    }
     let chart = make_case(
         "color_chart",
         &path,
@@ -368,7 +444,7 @@ mod tests {
         stub_renderer(
             root,
             &format!(
-                "[ \"$#\" -eq 7 ] && [ \"$1\" = preset ] && [ \"$2\" = show ] && [ \"$3\" = 'built-in:Kodak Gold 200' ] && [ \"$4\" = --format ] && [ \"$5\" = toml ] && [ \"$6\" = --data-dir ] && [ \"$7\" = '{}' ] || exit 2\nprintf '%s' '{LOOK}'\nprintf '%s' 'export diagnostic' >&2",
+                "case \"$1\" in\npreset)\n[ \"$#\" -eq 7 ] && [ \"$2\" = show ] && [ \"$3\" = 'built-in:Kodak Gold 200' ] && [ \"$4\" = --format ] && [ \"$5\" = toml ] && [ \"$6\" = --data-dir ] && [ \"$7\" = '{}' ] || exit 2\nprintf '%s' '{LOOK}'\nprintf '%s' 'export diagnostic' >&2\n;;\nprocess)\nprintf '%s' '{{\"parameters\":{{\"seed\":0}}}}'\n;;\n*)\nprintf '%s' 'unexpected renderer invocation' >&2\nexit 9\n;;\nesac",
                 root.display()
             ),
         )
@@ -600,7 +676,25 @@ mod tests {
         let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
         assert_eq!(error.code, "preset_export");
         assert_eq!(error.path, Some(renderer.display().to_string()));
-        assert!(error.message.contains("stderr:"));
+        assert!(error.message.contains("os error"));
         assert_eq!(fs::read_dir(&out).unwrap().count(), 0);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn unresolved_configuration_blocks_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let renderer = stub_renderer(
+            temp.path(),
+            &format!(
+                "case \"$1\" in\npreset)\nprintf '%s' '{LOOK}'\n;;\nprocess)\nprintf '%s' 'unsupported assignment' >&2\nexit 3\n;;\nesac"
+            ),
+        );
+        let out = temp.path().join("fixtures");
+        let error = create_fixtures(&renderer, temp.path(), &out, None, false).unwrap_err();
+        assert_eq!(error.code, "renderer_configuration");
+        assert_eq!(error.path, Some(renderer.display().to_string()));
+        assert!(error.message.contains("unsupported assignment"));
+        assert!(!out.join("provenance.json").exists());
+        assert_eq!(fs::read(out.join("look.toml")).unwrap(), LOOK.as_bytes());
     }
 }

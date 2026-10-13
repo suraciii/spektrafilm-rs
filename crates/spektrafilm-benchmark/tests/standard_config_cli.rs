@@ -39,7 +39,7 @@ fn configuration(overlay: &[&str]) -> Value {
     })
 }
 
-fn fixture(fail_export: bool) -> TempDir {
+fn fixture(fail_export: bool, fail_resolution: bool) -> TempDir {
     let temp = TempDir::new().unwrap();
     let root = temp.path();
     fs::create_dir(root.join("data")).unwrap();
@@ -49,17 +49,46 @@ fn fixture(fail_export: bool) -> TempDir {
     } else {
         format!("printf '%s' '{PRESET}'\nprintf '%s' 'stub export diagnostic' >&2\nexit 0")
     };
+    let resolution = if fail_resolution {
+        "printf '%s' 'unsupported assignment' >&2\nexit 4".to_owned()
+    } else {
+        "printf '%s' '{\"parameters\":{\"seed\":0}}'".to_owned()
+    };
     let renderer = root.join("renderer");
     fs::write(
         &renderer,
         format!(
             r#"#!/bin/sh
-if [ "$#" -ne 7 ] || [ "$1" != preset ] || [ "$2" != show ] || [ "$3" != 'built-in:Kodak Gold 200' ] || [ "$4" != --format ] || [ "$5" != toml ] || [ "$6" != --data-dir ] || [ "$7" != "$SPEKTRAFILM_TEST_DATA_DIR" ]; then
+case "$1" in
+preset)
+    if [ "$#" -ne 7 ] || [ "$2" != show ] || [ "$3" != 'built-in:Kodak Gold 200' ] || [ "$4" != --format ] || [ "$5" != toml ] || [ "$6" != --data-dir ] || [ "$7" != "$SPEKTRAFILM_TEST_DATA_DIR" ]; then
+        printf '%s' 'unexpected renderer invocation' >&2
+        exit 9
+    fi
+    printf '%s\n' preset >> "$0.calls"
+    {body}
+    ;;
+process)
+    case "$*" in
+    *--dry-run*) ;;
+    *) printf '%s' 'resolution must be a dry run' >&2; exit 9 ;;
+    esac
+    case "$*" in
+    *look.toml*) ;;
+    *) printf '%s' 'resolution must use the generated look' >&2; exit 9 ;;
+    esac
+    count=0
+    for argument in "$@"; do
+        [ "$argument" = --set ] && count=$((count + 1))
+    done
+    printf 'process:%s\n' "$count" >> "$0.calls"
+    {resolution}
+    ;;
+*)
     printf '%s' 'unexpected renderer invocation' >&2
     exit 9
-fi
-printf '%s\n' "$3" >> "$0.calls"
-{body}
+    ;;
+esac
 "#
         ),
     )
@@ -120,7 +149,7 @@ fn directory_contents(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
 
 #[test]
 fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destination_changes() {
-    let temp = fixture(false);
+    let temp = fixture(false, false);
     let root = temp.path();
     let output = fixtures(root, "bundle").output().unwrap();
     let generated = result(&output, 0);
@@ -283,7 +312,10 @@ fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destinat
     assert_eq!(fs::read(&library_file).unwrap(), conflicting_preset);
     assert_eq!(directory_contents(&root.join("config")), library_before);
     let calls = fs::read(root.join("renderer.calls")).unwrap();
-    assert_eq!(calls, b"built-in:Kodak Gold 200\nbuilt-in:Kodak Gold 200\n");
+    assert_eq!(
+        calls,
+        b"preset\nprocess:16\nprocess:15\npreset\nprocess:16\nprocess:15\n"
+    );
 
     let before = directory_contents(&bundle);
     let repeated = fixtures(root, "bundle").output().unwrap();
@@ -298,7 +330,7 @@ fn standard_bundle_is_portable_validated_and_frozen_against_library_and_destinat
 
 #[test]
 fn renderer_export_failure_returns_structured_error_without_provenance() {
-    let temp = fixture(true);
+    let temp = fixture(true, false);
     let root = temp.path();
     let output = fixtures(root, "failed-bundle").output().unwrap();
     let failure = result(&output, 1);
@@ -313,15 +345,34 @@ fn renderer_export_failure_returns_structured_error_without_provenance() {
             .contains("export deliberately rejected")
     );
     assert!(!root.join("failed-bundle/provenance.json").exists());
+    assert_eq!(fs::read(root.join("renderer.calls")).unwrap(), b"preset\n");
+}
+
+#[test]
+fn unresolved_configuration_returns_structured_error_without_provenance() {
+    let temp = fixture(false, true);
+    let root = temp.path();
+    let output = fixtures(root, "unresolved-bundle").output().unwrap();
+    let failure = result(&output, 1);
+    assert_eq!(failure["command"], "fixtures");
+    assert_eq!(failure["execution_status"], "failed");
+    assert_eq!(failure["errors"][0]["code"], "renderer_configuration");
+    assert!(
+        failure["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported assignment")
+    );
+    assert!(!root.join("unresolved-bundle/provenance.json").exists());
     assert_eq!(
         fs::read(root.join("renderer.calls")).unwrap(),
-        b"built-in:Kodak Gold 200\n"
+        b"preset\nprocess:16\n"
     );
 }
 
 #[test]
 fn natural_input_and_download_are_mutually_exclusive_before_generation() {
-    let temp = fixture(false);
+    let temp = fixture(false, false);
     let root = temp.path();
     let input = root.join("local.KDC");
     fs::write(&input, b"never acquired: conflicting arguments").unwrap();
