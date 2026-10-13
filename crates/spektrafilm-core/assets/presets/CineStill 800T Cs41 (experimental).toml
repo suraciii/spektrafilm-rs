@@ -1,7 +1,7 @@
 schema_version = 3
 name = "CineStill 800T Cs41 (experimental)"
 author = "SpektraFilm"
-description = "Experimental Cs41 negative curve fit with borrowed Vision3 spectra, verified before printing. The Cs41 curves are anchored to the chart's 3200 K tungsten exposure light, so a 3200 K-lit gray renders neutral. Halation and Grain V3 controls are fitted to public lab scans of CineStill 800T (PhotonFolly): halation radial profile around lamps; grain RMS level, channel ratio and tonal trend on tone-matched flat windows. Neither is a measured CineStill PSF or granularity. Grain is off by default because these V3 controls are fitted at the 36 mm reference film format; enable it there. Input white is interpreted as lit by the profile reference T (about 2800 K): balance RAW to custom 2812 K, not as-shot, so scene light keeps its colour relative to the film. Negative-conversion tone is fitted to two real 800T lab scans with linear scene references (a 9-step chart gray row and a RAW-input frame) and neutralizes 3200 K; it assumes scene-linear input. Highlight boost is disabled. Optional Portra Endura settings balance synthetic midgray; they do not calibrate the film. Select workflow separately: the negative-conversion scan mode below stays selected on a film-scan route and is normalized away on other routes."
+description = "Experimental Cs41 negative curve fit with borrowed Vision3 spectra, verified before printing. The Cs41 curves are anchored to the chart's 3200 K tungsten exposure light, so a 3200 K-lit gray renders neutral. Halation and Grain V3 controls are fitted to public lab scans of CineStill 800T (PhotonFolly): halation radial profile around lamps; grain RMS level, channel ratio and tonal trend on tone-matched flat windows. Neither is a measured CineStill PSF or granularity. Grain is off by default because these V3 controls are fitted at the 36 mm reference film format; enable it there. Input white is interpreted as lit by the profile reference T (about 2800 K): balance RAW to custom 2812 K, not as-shot, so scene light keeps its colour relative to the film. Negative-conversion tone is fitted to two real 800T lab scans with linear scene references (a 9-step chart gray row and a RAW-input frame) and neutralizes 3200 K; it assumes scene-linear input. Highlight boost is disabled. Optional Portra Endura settings balance synthetic midgray; they do not calibrate the film. The neutral print filtration is not pinned by this preset: it comes from the per-paper database, fitted for each photo paper. Select workflow separately: the negative-conversion scan mode below stays selected on a film-scan route and is normalized away on other routes."
 
 [film_profile]
 stock = "cinestill_800t_cs41_approx"
@@ -26,9 +26,9 @@ print_exposure_compensation = false
 normalize_print_exposure = false
 y_filter_shift = 0.0
 m_filter_shift = 0.0
-y_filter_neutral = 27.97079412148676
-m_filter_neutral = 23.481285265386003
-c_filter_neutral = 0.0
+# Neutral print filtration is not pinned here: it comes from
+# data/filters/neutral_print_filters.json, fitted per (paper, illuminant, film), so
+# every photo paper gets its own baseline instead of one paper's pack.
 lens_blur = 0.0
 preflash_exposure = 0.0
 preflash_y_filter_shift = 0.0
