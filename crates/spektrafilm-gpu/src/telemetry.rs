@@ -45,6 +45,9 @@ pub const PHASE_NAMES: &[&str] = &[
     "worker_wait",
 ];
 
+// `Purpose::Telemetry` has no producer today. It is spec-reserved
+// vocabulary: the enum mirrors the published observation schema, so the
+// spelling is kept even while nothing emits it.
 vocabulary!(Purpose {
     Image,
     Calibration,
@@ -117,6 +120,9 @@ vocabulary!(ResidentDeclineReason {
     ScannerFilmPoints,
     ScannerReceiver,
 });
+// `ReportPersistence` and `IssueBoundary::PresentationHandoff` likewise have
+// no producer today; both are spec-reserved vocabulary retained so a future
+// producer cannot introduce an unregistered wire spelling.
 vocabulary!(IssueCategory {
     Input,
     Configuration,

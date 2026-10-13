@@ -225,7 +225,7 @@ pub fn expose_calibrated(
         let mut lin = log_raw_print;
         lin.data.par_chunks_mut(BLOCK).for_each(|chunk| {
             let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
-            spektrafilm_math::vforce::exp10_inplace(&mut tmp);
+            spektrafilm_math::precision::exp10_inplace(&mut tmp);
             for (out, &raw) in chunk.iter_mut().zip(tmp.iter()) {
                 *out = spektrafilm_math::precision::from_f64(raw * print_exposure * bw);
             }
@@ -257,7 +257,7 @@ pub fn expose_calibrated(
 
     log_raw_print.data.par_chunks_mut(BLOCK).for_each(|chunk| {
         let mut tmp: Vec<f64> = chunk.iter().map(|&v| v as f64).collect();
-        spektrafilm_math::vforce::exp10_inplace(&mut tmp);
+        spektrafilm_math::precision::exp10_inplace(&mut tmp);
         for (out, &raw) in chunk.iter_mut().zip(tmp.iter()) {
             let v = raw * print_exposure * bw;
             *out = spektrafilm_math::precision::from_f64((v.max(0.0) + 1e-10).log10());
@@ -317,39 +317,6 @@ pub fn develop(
         &curves.density,
         curves.gamma,
     ))
-}
-/// Full printing stage with pre-calibrated enlarger. `pixel_size_um`
-/// is the working-geometry pitch from
-/// [`crate::resizing::crop_and_rescale`].
-#[allow(clippy::too_many_arguments)]
-pub fn process_with_calibration(
-    cmy_film: &ImageBuf,
-    film: &Profile,
-    print: &Profile,
-    params: &RuntimeParams,
-    backend: &dyn ComputeBackend,
-    print_illuminant: &[f64],
-    exposure_factor: f64,
-    preflash: [f64; 3],
-    bw_print_correction: f64,
-    pixel_size_um: f64,
-) -> Result<ImageBuf, String> {
-    let log_raw = expose_calibrated(
-        cmy_film,
-        film,
-        print,
-        params,
-        backend,
-        print_illuminant,
-        exposure_factor,
-        preflash,
-        bw_print_correction,
-        pixel_size_um,
-    );
-    // Parity-harness probe: mirrors Python's `log_e_print` topology tap
-    // (`scripts/parity/run_parity.py` sets the env var).
-    crate::pipeline::dump_if_env("SPEKTRAFILM_DUMP_PRINT_LOG_RAW", &log_raw);
-    develop(&log_raw, print, params, backend)
 }
 /// Full printing stage (simplified — computes illuminant internally).
 pub fn process(

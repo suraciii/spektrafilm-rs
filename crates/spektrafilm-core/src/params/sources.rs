@@ -203,11 +203,11 @@ fn valid_ident(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
-fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+pub(crate) fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
         .try_fold(root, |v, key| v.as_object()?.get(key))
 }
-fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
+pub(crate) fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
     let mut cur = root;
     let mut parts = path.split('.').peekable();
     while let Some(key) = parts.next() {
@@ -223,6 +223,23 @@ fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
             .ok_or_else(|| format!("unknown parameter path: {path}"))?;
     }
     Err(format!("invalid parameter path: {path}"))
+}
+
+/// Insert `value` at `path`, creating intermediate objects as needed.
+/// Unlike `set_value`, which requires the path to already exist.
+pub(crate) fn insert(root: &mut Value, path: &str, value: Value) {
+    let mut parts = path.split('.').peekable();
+    let mut current = root;
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            current[part] = value;
+            return;
+        }
+        if current.get(part).is_none() {
+            current[part] = serde_json::json!({});
+        }
+        current = &mut current[part];
+    }
 }
 
 fn parse_inline_value(path: &str, raw: &str) -> Result<Value, String> {

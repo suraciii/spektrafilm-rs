@@ -26,10 +26,6 @@ pub fn convolve2d_reflect(channel: &[f64], h: usize, w: usize, psf: &[f64], k: u
     assert_eq!(psf.len(), k * k, "psf size mismatch");
     assert!(k % 2 == 1, "kernel side must be odd");
     let r = (k - 1) / 2;
-    assert!(
-        r < h && r < w,
-        "radius {r} too large for {h}x{w} (reflect needs r < dim)"
-    );
 
     // FFT dimensions: at least the full linear-conv length `(h+2r)+(k-1) =
     // h+4r` (so there's no circular wraparound), rounded up to the next
@@ -111,6 +107,11 @@ fn next_fast_len(target: usize) -> usize {
 /// the borders mirror across the edge samples without repeating them.
 #[inline]
 fn reflect_src(p: usize, r: usize, n: usize) -> usize {
+    if n == 1 {
+        // numpy `reflect` degrades to replicate on a 1-pixel axis:
+        // every padded coordinate maps to the single sample.
+        return 0;
+    }
     let s = p as isize - r as isize;
     if s < 0 {
         (-s) as usize

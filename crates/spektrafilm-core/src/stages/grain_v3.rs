@@ -246,10 +246,7 @@ pub fn crop_output(image: ImageBuf, rect: SourceRect) -> ImageBuf {
 /// the field is spatial by construction, and the LUT bake needs a
 /// pointwise chain. These modes must not resolve or allocate the field.
 pub fn active(params: &RuntimeParams) -> bool {
-    let grain = &params.film_render.grain;
-    grain.active
-        && matches!(grain.engine, GrainEngine::Dye)
-        && !params.debug.deactivate_spatial_effects
+    super::grain_engine_active(params, GrainEngine::Dye) && !params.debug.deactivate_spatial_effects
 }
 
 /// Fail before any work when Dye is selected outside its supported
@@ -532,6 +529,7 @@ fn expectation_requested() -> bool {
 mod tests {
     use super::*;
     use crate::params::RuntimeParams;
+    use crate::test_support::data_dir;
     use spektrafilm_math::precision::from_f64;
 
     #[test]
@@ -571,15 +569,6 @@ mod tests {
                 .unwrap_err()
                 .contains("divisible")
         );
-    }
-
-    fn data_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
     }
 
     fn load(stock: &str) -> Profile {

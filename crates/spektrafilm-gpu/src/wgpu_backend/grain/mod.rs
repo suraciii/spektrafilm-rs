@@ -102,7 +102,6 @@ pub(super) fn build_grain_v2_state(
     output_space: Option<&spektrafilm_math::colorspace::RgbColorSpace>,
     backend: &WgpuBackend,
 ) -> GrainV2State {
-    use spektrafilm_math::colorspace::Cctf;
     #[repr(C)]
     #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
     struct FilterParams {
@@ -176,15 +175,9 @@ pub(super) fn build_grain_v2_state(
             entries: &entries,
         })
     };
-    let curve = output_space.map_or(0, |space| match space.cctf {
-        Cctf::Linear => 1,
-        Cctf::Acescct => 2,
-        Cctf::Srgb => 3,
-        Cctf::ProPhoto => 4,
-        Cctf::Rec2020 => 5,
-        Cctf::AdobeRgb1998 => 6,
-        Cctf::Gamma2_6 => 7,
-    });
+    // `Cctf`'s discriminants are the codes `film_resolution.wgsl` switches
+    // on; `0` stays "already encoded" (the shader's `default` branch).
+    let curve = output_space.map_or(0, |space| space.cctf.code());
     let matrix = output_space.map_or([[0.; 4]; 3], |space| {
         space
             .rgb_to_rgb_identity()
@@ -266,5 +259,37 @@ impl GrainV2State {
         }
         run(encoder, &self.grain, &self.grain_group);
         encoder.copy_buffer_to_buffer(&self.output, 0, output, 0, self.n_bytes);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use spektrafilm_math::colorspace::Cctf;
+
+    /// The CCTF wire codes the host sends are the `case` labels in
+    /// `film_resolution.wgsl`; a renumbering on either side must fail here
+    /// rather than silently changing the encoded output.
+    ///
+    /// `Linear` (code 1) is the identity curve: the shader's `default` branch
+    /// returns the value unchanged, so it deliberately has no `case`.
+    #[test]
+    fn cctf_wire_codes_match_film_resolution_shader() {
+        const SHADER: &str = include_str!("film_resolution.wgsl");
+        assert!(SHADER.contains("default: {return v;}"));
+        assert_eq!(Cctf::Linear.code(), 1);
+        for cctf in [
+            Cctf::Acescct,
+            Cctf::Srgb,
+            Cctf::ProPhoto,
+            Cctf::Rec2020,
+            Cctf::AdobeRgb1998,
+            Cctf::Gamma2_6,
+        ] {
+            let label = format!("case {}u:", cctf.code());
+            assert!(
+                SHADER.contains(&label),
+                "film_resolution.wgsl is missing `{label}` for {cctf:?}"
+            );
+        }
     }
 }

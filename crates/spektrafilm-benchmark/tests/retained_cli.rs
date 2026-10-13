@@ -7,8 +7,12 @@ use spektrafilm_benchmark::{
 use std::{fs, path::Path, process::Command};
 use tempfile::TempDir;
 
+#[path = "support/fixtures.rs"]
+mod fixtures;
 #[path = "support/progress.rs"]
 mod progress;
+
+use fixtures::{record, save_manifest, write};
 
 fn invoke(args: &[&str], paths: &[(&str, &Path)], code: i32) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
@@ -40,24 +44,6 @@ fn invoke(args: &[&str], paths: &[(&str, &Path)], code: i32) -> Value {
 }
 fn read(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
-}
-fn write(path: &Path, value: &Value) {
-    common::dump(path, value).unwrap();
-}
-fn identify(mut value: Value) -> Value {
-    value.as_object_mut().unwrap().remove("id");
-    value["id"] = json!(common::digest(&value).unwrap());
-    value
-}
-fn save_manifest(root: &Path, name: &str, value: Value) {
-    write(&root.join(name), &identify(value));
-}
-fn record(evidence: &mut Evidence, name: &str, role: &str, value: Value) -> Value {
-    let path = evidence.root.join(name);
-    write(&path, &value);
-    evidence
-        .add(&path, role, "application/json", json!({}))
-        .unwrap()
 }
 
 // Retained masters exercise the public CLI without requiring a renderer or network in PR.

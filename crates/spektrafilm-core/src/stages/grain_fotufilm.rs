@@ -46,11 +46,9 @@ const EXECUTION_PRECISION: &str = if std::mem::size_of::<spektrafilm_math::preci
 /// predicate is the exact bypass boundary: `amount = 0` prepares no bank and
 /// changes no pixel.
 pub fn active(params: &RuntimeParams) -> bool {
-    let grain = &params.film_render.grain;
-    grain.active
+    super::grain_engine_active(params, GrainEngine::Fotufilm)
         && !params.debug.deactivate_stochastic_effects
-        && matches!(grain.engine, GrainEngine::Fotufilm)
-        && grain.fotufilm.amount > 0.0
+        && params.film_render.grain.fotufilm.amount > 0.0
 }
 
 /// Fail before any work when Fotufilm is selected outside its supported

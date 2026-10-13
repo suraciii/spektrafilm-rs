@@ -4,6 +4,7 @@ pub mod gaussian;
 pub mod grain;
 pub mod image;
 pub mod interp;
+pub mod lab;
 pub mod lut;
 pub mod lut_primaries;
 pub mod npy;
@@ -13,6 +14,5 @@ pub mod precision;
 pub mod resize;
 pub mod spectral;
 pub mod stats;
-pub mod vforce;
 
 pub use precision::Scalar;

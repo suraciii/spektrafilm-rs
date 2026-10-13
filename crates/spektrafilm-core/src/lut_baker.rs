@@ -17,11 +17,12 @@ use crate::profile;
 use crate::runtime::{DigestMode, Runtime, digest_params_with_neutral};
 
 mod bundle;
+use bundle::Stage;
+pub(crate) use bundle::effective_input_gain;
 pub use bundle::{
     BoundaryWires, Bundle, BundleMeta, BundleSpec, ColorSpaceMeta, DensityWire, InputExposureMeta,
     LogEWire, Lut, LutFileMeta, StocksMeta, Topology, normalize_stock,
 };
-use bundle::{Stage, effective_input_gain};
 
 pub const REFERENCE_COMMIT: &str = "28bf883e1672e884307edc75852549376e13644e";
 
@@ -232,9 +233,7 @@ fn make_pipeline(
     neutral: &NeutralFilters,
     base_params: Option<&RuntimeParams>,
 ) -> Result<Runtime, String> {
-    let film =
-        profile::load_profile_by_name(data_dir, &spec.film_profile).map_err(|e| e.to_string())?;
-    let print = profile::load_profile_by_name(data_dir, print_stock).map_err(|e| e.to_string())?;
+    let (film, print) = resolve_profiles(&spec.film_profile, print_stock, data_dir)?;
     let params = bake_params(
         spec,
         input,
@@ -246,6 +245,18 @@ fn make_pipeline(
         true,
     )?;
     Runtime::new(film, print, params, data_dir)
+}
+
+/// Resolve film and print profiles from stock names. Shared by
+/// `make_pipeline` (lut_baker) and `make_pipeline` (lut_qa).
+pub(crate) fn resolve_profiles(
+    film_profile: &str,
+    print_stock: &str,
+    data_dir: &Path,
+) -> Result<(profile::Profile, profile::Profile), String> {
+    let film = profile::load_profile_by_name(data_dir, film_profile).map_err(|e| e.to_string())?;
+    let print = profile::load_profile_by_name(data_dir, print_stock).map_err(|e| e.to_string())?;
+    Ok((film, print))
 }
 
 // The bake context keeps the existing parameter contract.
@@ -538,6 +549,8 @@ fn bake_recipe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "precision-f64")]
+    use crate::test_support::data_dir;
 
     fn spec(input: &str, output: &str) -> BundleSpec {
         serde_json::from_value(serde_json::json!({
@@ -579,7 +592,7 @@ mod tests {
     #[test]
     #[cfg(feature = "precision-f64")]
     fn flog_bake_matches_independent_d65_compression_reference() {
-        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let data = data_dir();
         let film = profile::load_profile_by_name(&data, "kodak_portra_400").unwrap();
         assert_eq!(film.info.reference_illuminant, "D55");
         let mut s = spec("Fujifilm F-Log", "sRGB");

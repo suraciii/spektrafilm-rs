@@ -933,7 +933,6 @@ impl DisplaySource {
         } else {
             None
         };
-        let matrix = space.map(spektrafilm_math::colorspace::display_matrix);
         let mut status = None;
         let profile = if layer == ViewLayer::Output && enabled {
             self.profile.as_deref().and_then(|path| {
@@ -972,17 +971,14 @@ impl DisplaySource {
                 );
                 rgb.push(if image_rect.contains(p) {
                     sample_image_with(source, p, image_rect, interpolation, |raw| {
-                        let value = match (space, matrix.as_ref()) {
-                            (Some(space), Some(matrix)) => {
-                                spektrafilm_math::colorspace::display_rgb(
-                                    raw.map(|v| v as f64),
-                                    space,
-                                    encoded,
-                                    matrix,
-                                )
-                                .map(|v| v.clamp(0.0, 1.0) as f32)
-                            }
-                            _ => raw,
+                        let value = match space {
+                            Some(space) => spektrafilm_math::colorspace::display_rgb(
+                                raw.map(|v| v as f64),
+                                space,
+                                encoded,
+                            )
+                            .map(|v| v.clamp(0.0, 1.0) as f32),
+                            None => raw,
                         };
                         if let Some(transform) = profile.as_ref() {
                             let mut pixel = [value.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)];
@@ -1655,17 +1651,15 @@ pub fn input_display_raster(
     decode: bool,
     max_edge: usize,
 ) -> Result<DisplayRaster, String> {
-    use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+    use spektrafilm_math::colorspace::{display_rgb, resolve};
     let space = resolve(space)?;
-    let matrix = display_matrix(space);
     let raw = capped_raster(image, max_edge)?;
     DisplayRaster::new(
         raw.size,
         raw.rgb
             .iter()
             .map(|p| {
-                display_rgb(p.map(|v| v as f64), space, decode, &matrix)
-                    .map(|v| v.clamp(0.0, 1.0) as f32)
+                display_rgb(p.map(|v| v as f64), space, decode).map(|v| v.clamp(0.0, 1.0) as f32)
             })
             .collect(),
     )
@@ -1984,14 +1978,14 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn enabled_non_srgb_output_matches_colour_conversion() {
-        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+        use spektrafilm_math::colorspace::{display_rgb, resolve};
 
         let image = ImageBuf::from_data(1, 1, vec![0.75 as _, 0.20 as _, 0.10 as _]);
         let source = image.data.clone();
         let (actual, status) =
             output_display_raster(&image, "Display P3", true, true, None, 1).unwrap();
         let space = resolve("Display P3").unwrap();
-        let expected = display_rgb([0.75, 0.20, 0.10], space, true, &display_matrix(space));
+        let expected = display_rgb([0.75, 0.20, 0.10], space, true);
 
         for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
             assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
@@ -2003,13 +1997,13 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn enabled_preview_applies_source_cctf_decoding() {
-        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+        use spektrafilm_math::colorspace::{display_rgb, resolve};
 
         let image = ImageBuf::from_data(1, 1, vec![0.18 as _, 0.18 as _, 0.18 as _]);
         let (actual, _) =
             output_display_raster(&image, "ITU-R BT.2020", true, true, None, 1).unwrap();
         let space = resolve("ITU-R BT.2020").unwrap();
-        let expected = display_rgb([0.18, 0.18, 0.18], space, true, &display_matrix(space));
+        let expected = display_rgb([0.18, 0.18, 0.18], space, true);
 
         for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
             assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
@@ -2019,7 +2013,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn enabled_preview_clips_out_of_gamut_display_values_only() {
-        use spektrafilm_math::colorspace::{display_matrix, display_rgb, resolve};
+        use spektrafilm_math::colorspace::{display_rgb, resolve};
 
         let image = ImageBuf::from_data(1, 1, vec![1.3 as _, -0.2 as _, 0.4 as _]);
         let source = image.data.clone();
@@ -2027,7 +2021,7 @@ mod tests {
         let (preview, _) =
             output_display_raster(&image, "Display P3", false, true, None, 1).unwrap();
         let space = resolve("Display P3").unwrap();
-        let expected = display_rgb([1.3, -0.2, 0.4], space, false, &display_matrix(space));
+        let expected = display_rgb([1.3, -0.2, 0.4], space, false);
 
         assert_eq!(raw.rgb[0], [1.3, -0.2, 0.4]);
         for (actual, expected) in preview.rgb[0].into_iter().zip(expected) {

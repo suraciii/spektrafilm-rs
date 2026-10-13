@@ -942,15 +942,7 @@ impl Pipeline {
 mod tests {
     use super::*;
     use crate::params::RuntimeParams;
-
-    fn data_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("data")
-    }
+    use crate::test_support::data_dir;
 
     #[test]
     fn grain_engine_controls_resident_fallback() {

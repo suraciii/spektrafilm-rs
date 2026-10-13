@@ -1,6 +1,7 @@
 //! Process-only composition of legacy baselines, complete looks and sparse edits.
 use crate::neutral_filters::NeutralFilters;
 use crate::params::RuntimeParams;
+use crate::params::sources::lookup;
 use crate::params::sources::{ParameterEdits, validate_finite};
 use crate::params::validation::REMOVED_MAGAZINE_ROUTE;
 use crate::params_builder::{
@@ -402,7 +403,7 @@ fn resolve_with_preview_mode(
     };
     let effective_params = serde_json::to_value(&params).map_err(|e| e.to_string())?;
     let edits = winning.into_iter().map(|(path, (requested, source))| {
-        let effective = parameter_value(&effective_params, &path).cloned().unwrap_or(Value::Null);
+        let effective = lookup(&effective_params, &path).cloned().unwrap_or(Value::Null);
         let override_option = match path.as_str() {
             "io.input_color_space" if request.input_color_space.is_some() => Some("--input-color-space"),
             "io.input_cctf_decoding" if request.input_cctf_decoding.is_some() => Some("--input-cctf-decoding"),
@@ -488,10 +489,6 @@ fn absolute_path(path: &Path) -> Result<PathBuf, String> {
     std::path::absolute(path).map_err(|e| format!("resolving {}: {e}", path.display()))
 }
 
-fn parameter_value<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(root, |value, key| value.get(key))
-}
-
 fn baseline_declarations(
     path: Option<&Path>,
 ) -> Result<BTreeMap<String, DeclarationSource>, String> {
@@ -503,7 +500,7 @@ fn baseline_declarations(
         )
         .map_err(|e| format!("parsing params file {}: {e}", path.display()))?;
         for leaf in ["io.input_color_space", "io.input_cctf_decoding"] {
-            if parameter_value(&value, leaf).is_some() {
+            if lookup(&value, leaf).is_some() {
                 declarations.insert(
                     leaf.into(),
                     DeclarationSource {
@@ -522,9 +519,7 @@ fn baseline_declarations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
-    }
+    use crate::test_support::data_dir;
     fn request(sources: &[String]) -> ProcessParamsRequest<'_> {
         ProcessParamsRequest {
             film: Some("kodak_portra_400"),

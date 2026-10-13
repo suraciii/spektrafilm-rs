@@ -7,13 +7,11 @@ use super::*;
 /// buffers so they outlive the encoder.
 ///
 /// CPU equivalent: `OutputGamutCompress::compress`.
-#[cfg(feature = "wgpu-backend")]
 pub(super) struct GamutState {
     _cmax_buf: wgpu::Buffer,
     dispatch: DispatchJob,
 }
 
-#[cfg(feature = "wgpu-backend")]
 pub(super) fn build_gamut_state(
     device: &ObservedDevice,
     gp: &crate::GamutGpuParams<'_>,
@@ -91,7 +89,6 @@ pub(super) fn build_gamut_state(
     }
 }
 
-#[cfg(feature = "wgpu-backend")]
 impl GamutState {
     pub(super) fn encode_passes(&self, encoder: &mut ObservedEncoder, n_pixels: u32) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
