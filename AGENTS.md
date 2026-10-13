@@ -22,6 +22,8 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 - Keep plans, research, probes, logs, build artifacts, and session state outside the repository, normally under `/data/workspaces/spektrafilm-project-context/`.
 - Put durable non-contract conclusions in the relevant Issue/PR. Never commit transient artifacts, even if ignored.
 
+- During code review, read [CODING_STANDARDS.md](CODING_STANDARDS.md) when a change touches data structures, serialization, defaults, or module boundaries.
+
 - Documentation language rules live in [eng/documentation-language.md](eng/documentation-language.md).
 
 ## Verification
