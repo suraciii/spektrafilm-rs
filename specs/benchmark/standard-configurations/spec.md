@@ -40,7 +40,7 @@ Full-image color, tone, and FLIP diagnostics must remain separate from dedicated
 
 ## Default look and output
 
-The initial standard look must use the renderer's explicit built-in `Kodak Gold 200` look preset. The preset must be exported as a materialized portable file. User-library settings must not affect its selection.
+The initial standard look must use the renderer's explicit built-in `Kodak Gold 200` preset. The preset must be exported as a materialized portable file. User-library settings must not affect its selection.
 
 Both configurations must use `input > film > print > scan`. Output must be encoded sRGB. The independent magazine finishing treatment must be disabled. The scanner must use neutral finishing with automatic setup off. Preview and optional film-chain LUT shortcuts must be disabled.
 

@@ -38,7 +38,7 @@ Section documents contain sparse editable leaves from exactly one look section. 
 
 Choose **American Reminiscence** in the GUI preset browser. You can also pass `--preset 'American Reminiscence'` to `process`. It pairs Kodak Gold 200 with Kodak Portra Endura. Virtual film exposure is +0.5 EV. Auto metering is off. The stored method remains `center_weighted`. The enlarger uses Y shift −3 and M shift 0. Print exposure is 1. Automatic print exposure compensation is enabled. Print density-curve morph is active. Overall and blue gamma factors are 0.95. The other gamma factors are 1. Developer exhaustion is 0. Grain, halation, and print glare are off. The film adaptation surface is on.
 
-Newly saved looks include virtual film exposure and metering. Older look documents without the camera group keep your current values when applied. They do not mark the look modified when those values change. RAW/source exposure correction and input color interpretation remain caller settings. See [look ownership](../specs/presets/spec.md#look-ownership).
+Newly saved presets include virtual film exposure and metering. A preset that omits those paths keeps your current values when applied, and changing them does not mark that preset modified. RAW/source exposure correction and input color interpretation remain caller settings. See [the preset vocabulary](../specs/presets/spec.md#preset-vocabulary).
 
 Versioned states and recipes permit an absent or null `io.output_gamut_compress.lightness_compression`. A stored triplet must be removed. Current documents and sparse edits reject the retired field even when null. Rejection preserves the active controls and retained output.
 
