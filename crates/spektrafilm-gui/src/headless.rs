@@ -708,9 +708,13 @@ fn original_simulation_controls_persist_and_density_reaches_real_workers() {
         h.state().output_color_space,
         spektrafilm_fotufilm::RECORD_DENSITY_SPACE
     );
+    click(h, "Original native options");
     click(h, "Export options");
     click(h, "Export…");
-    assert!(h.query_by_label("Saving color space").is_some());
+    assert!(
+        h.query_by_role_and_label(egui::accesskit::Role::ComboBox, "Saving color space")
+            .is_some()
+    );
     assert!(
         h.query_by_label("Gross record density · 32-bit float · no RGB encoding or ICC profile")
             .is_none()
