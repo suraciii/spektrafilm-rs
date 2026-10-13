@@ -15,7 +15,8 @@ mod interpretation;
 mod setup;
 mod spectral;
 pub use setup::ScannerSetup;
-use spectral::{ForwardCapture, scan_spectral_rgb};
+use spectral::ForwardCapture;
+pub(crate) use spectral::scan_spectral_rgb;
 
 fn negative_to_positive_requested(params: &RuntimeParams) -> bool {
     params.scanner.scan_output == "negative_to_positive"
@@ -971,88 +972,20 @@ fn scan_with_reference(
         );
         spektrafilm_model::glare::add_glare_with_amount(&mut rgb, &glare_amount, glare_rgb_offset);
     }
-    if slide_points {
-        let points = SlidePoints::from_profile(
-            profile,
-            params,
-            backend,
-            color_ref,
-            &channel_density,
-            base_density,
-            scan_context,
-        )?;
-        points.apply(&mut rgb);
-    }
-    if !negative_to_positive && color_ref.has_remap() {
-        let to_y = match &scan_context.receiver {
-            Some(receiver) => receiver.luminance_weights(),
-            None => scan_rgb_to_y(scan_context)?,
-        };
-        rgb.data.par_chunks_exact_mut(3).for_each(|px| {
-            let y = (0..3).map(|c| to_y[c] * to_f64(px[c])).sum();
-            let scale = color_ref.xyz_scale(y);
-            if scale != 1.0 {
-                for value in px {
-                    *value = from_f64(to_f64(*value) * scale);
-                }
-            }
-        });
-    }
-
-    // Positive interpretation is scanner-domain for the capture methods:
-    // optical capture and lens blur happen before the calibrated negative
-    // endpoint inversion. The density reading ran above, where it blurred
-    // transmitted light record by record instead.
-    if negative_to_positive && !density_reading && !reference_mode {
-        if params.scanner.positive_interpretation != crate::params::PositiveInterpretation::Coupled
-        {
-            // `separable`, and `density` where the incoming image is a
-            // capture: the capture converts to density per channel before
-            // the inverse.
-            let calibration = PositiveCalibration::from_profile(
-                profile,
-                params,
-                backend,
-                color_ref,
-                &channel_density,
-                base_density,
-                scan_context,
-            )?;
-            rgb = interpret_negative_capture(rgb, &calibration, params)?;
-        } else {
-            let forward = ForwardCapture::prepare(
-                profile,
-                params,
-                &channel_density,
-                base_density,
-                scan_context,
-                color_ref,
-            );
-            let calibration = prepare_exposure_calibration(
-                profile,
-                params,
-                color_ref,
-                scan_context,
-                &channel_density,
-                base_density,
-                &forward,
-            )?;
-            interpret_coupled_capture(&mut rgb, &calibration, params)?;
-        }
-    }
-    if negative_to_positive && params.scanner.finish == crate::params::ScannerFinish::LabScan {
-        let _finish = super::StageObservation::cpu(
-            backend,
-            "scanner_finish",
-            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
-        );
-        finish::apply(
-            &mut rgb,
-            output_space,
-            params.scanner.finish_strength,
-            !profile.is_bw(),
-        );
-    }
+    apply_scan_readout_interpretation(
+        &mut rgb,
+        profile,
+        params,
+        backend,
+        color_ref,
+        &channel_density,
+        base_density,
+        scan_context,
+        output_space,
+        negative_to_positive,
+        reference_mode,
+        density_reading,
+    )?;
 
     // Output gamut compression — direct scans preserve the historical
     // capture order; converted negative images compress only after interpretation.
@@ -1156,6 +1089,115 @@ fn scan_with_reference(
     }
 
     Ok(rgb)
+}
+
+/// Scanner-domain readout interpretation shared by the per-stage route and
+/// the resident GPU chain fence (pipe architecture, capability class):
+/// slide points, the faithful B&W/slide luminance remap,
+/// negative-to-positive interpretation, and the LabScan finish, in the CPU
+/// scanning order — after optical blur and glare, before output gamut
+/// compression. The per-stage route supplies its acquisition variants;
+/// the resident fence always interprets a captured image, so it passes
+/// `reference_mode = false, density_reading = false`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_scan_readout_interpretation(
+    rgb: &mut ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    channel_density: &[[f64; 3]],
+    base_density: &[f64],
+    scan_context: &crate::chain_prep::ScanColorContext,
+    output_space: &colorspace::RgbColorSpace,
+    negative_to_positive: bool,
+    reference_mode: bool,
+    density_reading: bool,
+) -> Result<(), String> {
+    let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
+    if slide_points {
+        let points = SlidePoints::from_profile(
+            profile,
+            params,
+            backend,
+            color_ref,
+            channel_density,
+            base_density,
+            scan_context,
+        )?;
+        points.apply(rgb);
+    }
+    if !negative_to_positive && color_ref.has_remap() {
+        let to_y = match &scan_context.receiver {
+            Some(receiver) => receiver.luminance_weights(),
+            None => scan_rgb_to_y(scan_context)?,
+        };
+        rgb.data.par_chunks_exact_mut(3).for_each(|px| {
+            let y = (0..3).map(|c| to_y[c] * to_f64(px[c])).sum();
+            let scale = color_ref.xyz_scale(y);
+            if scale != 1.0 {
+                for value in px {
+                    *value = from_f64(to_f64(*value) * scale);
+                }
+            }
+        });
+    }
+
+    // Positive interpretation is scanner-domain for the capture methods:
+    // optical capture and lens blur happen before the calibrated negative
+    // endpoint inversion. The density reading ran above, where it blurred
+    // transmitted light record by record instead.
+    if negative_to_positive && !density_reading && !reference_mode {
+        if params.scanner.positive_interpretation != crate::params::PositiveInterpretation::Coupled
+        {
+            // `separable`, and `density` where the incoming image is a
+            // capture: the capture converts to density per channel before
+            // the inverse.
+            let calibration = PositiveCalibration::from_profile(
+                profile,
+                params,
+                backend,
+                color_ref,
+                channel_density,
+                base_density,
+                scan_context,
+            )?;
+            *rgb = interpret_negative_capture(rgb.clone(), &calibration, params)?;
+        } else {
+            let forward = ForwardCapture::prepare(
+                profile,
+                params,
+                channel_density,
+                base_density,
+                scan_context,
+                color_ref,
+            );
+            let calibration = prepare_exposure_calibration(
+                profile,
+                params,
+                color_ref,
+                scan_context,
+                channel_density,
+                base_density,
+                &forward,
+            )?;
+            interpret_coupled_capture(rgb, &calibration, params)?;
+        }
+    }
+    if negative_to_positive && params.scanner.finish == crate::params::ScannerFinish::LabScan {
+        let _finish = super::StageObservation::cpu(
+            backend,
+            "scanner_finish",
+            spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
+        );
+        finish::apply(
+            rgb,
+            output_space,
+            params.scanner.finish_strength,
+            !profile.is_bw(),
+        );
+    }
+    Ok(())
 }
 
 /// Scan with the profile's own viewing illuminant and the film base included

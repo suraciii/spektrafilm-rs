@@ -902,8 +902,32 @@ impl WgpuBackend {
                 n_pixels,
             ));
         }
-        // 6. Scan spectral: buf_a → buf_b (linear RGB).
-        stages.push(pass("scan_spectral", scan_pipe.pipeline, bg_scan, n_pixels));
+        // 6. Scan acquisition: the PCHIP scanner LUT (the slide luminance
+        //     remap or `use_scanner_lut` forces it on the CPU route for
+        //     Python parity) runs as an assembled CPU fence that replaces
+        //     the direct spectral integration (pipe architecture,
+        //     capability class): buf_a (density) → fence → buf_b (RGB).
+        if let Some(cpu) = p.scan_acquisition_cpu_stage.as_ref() {
+            let buf_a = buf_a.clone();
+            let buf_b = buf_b.clone();
+            let (w, h) = (image.width, image.height);
+            let img_bytes_u64 = img_bytes as u64;
+            stages.push(super::pipe::ChainStage::Cpu {
+                name: "scan_acquisition_cpu_stage",
+                fence: Box::new(move |pipe| {
+                    let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
+                    let captured = cpu(&ImageBuf::from_data(
+                        w,
+                        h,
+                        crate::gpu_helpers::f32_to_scalars(density),
+                    ));
+                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&captured.data);
+                    pipe.write_image_buffer(&buf_b, &out_f32);
+                }),
+            });
+        } else {
+            stages.push(pass("scan_spectral", scan_pipe.pipeline, bg_scan, n_pixels));
+        }
         // 6a. Scanner readout optics on the linear acquisition, before
         //     glare, gamut correction, and unsharp mask.
         if let Some(bs) = scanner_lens_blur_state.take() {
@@ -918,6 +942,30 @@ impl WgpuBackend {
             stages.push(super::pipe::ChainStage::Gpu {
                 name: "glare",
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels, wg_xy)),
+            });
+        }
+        // 6b'. Capability fence (pipe architecture, S3): the scanner
+        //     readout interpretation — slide points, the faithful B&W/slide
+        //     luminance remap, negative-to-positive conversion, and the
+        //     LabScan finish — runs on the host over the acquisition RGB
+        //     after scanner lens blur and glare, before output gamut
+        //     compression and unsharp (the CPU scanning order).
+        if let Some(cpu) = p.scan_tail_cpu_stage.as_ref() {
+            let buf_b = buf_b.clone();
+            let (w, h) = (image.width, image.height);
+            let img_bytes_u64 = img_bytes as u64;
+            stages.push(super::pipe::ChainStage::Cpu {
+                name: "scan_tail_cpu_stage",
+                fence: Box::new(move |pipe| {
+                    let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
+                    let interpreted = cpu(&ImageBuf::from_data(
+                        w,
+                        h,
+                        crate::gpu_helpers::f32_to_scalars(host),
+                    ));
+                    let out_f32 = crate::gpu_helpers::scalars_to_f32(&interpreted.data);
+                    pipe.write_image_buffer(&buf_b, &out_f32);
+                }),
             });
         }
         // 6c. Output gamut compression (in place on buf_b) — after glare,
