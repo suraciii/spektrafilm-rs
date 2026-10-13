@@ -25,7 +25,7 @@ The experimental spectral registry ships these methods:
 - `jakob2019`
 - `otsu2018`
 
-Runtime parameters can select a method and an illuminant. The supported illuminants are `A`, `D50`, `D55`, `D60`, `D65`, `D75`, `E`, `T`, `TH-KG3`, `TH-KG3-L`, and `K75P`. `BB<temperature>` selects a temperature in the supported 1667–25000 K range.
+Runtime parameters can select a method and an illuminant. Selectable illuminants come from [`data/illuminants/catalog.json`](../data/illuminants/catalog.json): the CIE standard illuminants plus its fluorescent, LED, sodium, mercury, metal-halide, incandescent, and ISO 7589 studio and photoflood sources. The bundled `T`, `TH-KG3`, `TH-KG3-L`, and `K75P` selections are always available. `BB<temperature>` selects a temperature in the supported 1667–25000 K range.
 
 See [LUTs](luts.md) for the corresponding LUT-build controls.
 

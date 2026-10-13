@@ -82,7 +82,7 @@ The model exposure origin does not establish absolute ISO. It does not prove tha
 ## Experimental CineStill 800T Cs41 look
 
 The built-in `CineStill 800T Cs41 (experimental)` look sets halation and Grain Dye controls.
-Grain Dye requires a 36 mm frame, so the look keeps grain off; enable it with `camera.film_format_mm=36,film_render.grain.active=true`.
+The look keeps grain off because its grain controls were fitted at the 36 mm reference frame; enable them with `film_render.grain.active=true`. Another positive `camera.film_format_mm` changes the physical sampling and does not establish calibration there.
 
 ### Reference illuminant and tungsten balance
 

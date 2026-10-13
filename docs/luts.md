@@ -4,7 +4,8 @@ This page describes LUT baker inputs, bundle contents, and format orders. The [L
 
 ## Baker inputs
 
-The calibrated LUT creator uses the Python 0.3.4 spectral runtime in deterministic `lut_mode`.
+The calibrated LUT creator mirrors the upstream LUT path in deterministic `lut_mode`.
+It bakes against upstream reference commit `28bf883e1672e884307edc75852549376e13644e`.
 It includes non-spatial DIR chemistry and neutral-print calibration.
 It supports one through four LUTs.
 It supports shared film stages across repeated `--print` stocks.
@@ -69,7 +70,7 @@ PQ and HLG outputs apply the inverse midgray bridge before encoding.
 Intermediate wires retain the probed log-exposure margins and below-fog density headroom.
 
 Params-first baking preserves runtime gamut and look controls.
-It forces the film-print-scan route.
+It replaces the passthrough `input` route with `input > film > print > scan`.
 It clears taps and preview mode.
 LUT digestion disables crop, resize, and internal spectral acceleration LUTs.
 It neutralizes per-image exposure, enlarger filter shifts, and preflash.
@@ -107,7 +108,7 @@ Baker tables remain blue-fast.
 For Rust consumers, `BundleBuilder::build` returns typed `Bundle`, `Lut`, and `BundleMeta` values.
 `Lut::table` is blue-fast `[r][g][b]`, indexed by `(r * resolution + g) * resolution + b`.
 Format writers reorder at serialization.
-`export-lut` calls the same baker for a single combined ProPhoto RGB to sRGB transform with native input headroom.
+`export-lut` calls the same baker for a single combined ProPhoto RGB to sRGB transform at the default `auto` input stops.
 
 ## OCIO and QA artifacts
 

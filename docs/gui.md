@@ -20,15 +20,16 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 **Open…** loads standard images or camera RAW. RAW processing uses LibRaw. It exposes as-shot/daylight/tungsten/custom Kelvin+tint white balance and Lensfun correction. RAW enters the runtime as linear ACES2065-1. See [RAW input](raw.md) for white balance details.
 
-**Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Picking a film automatically selects its paired paper (`target_print` in the profile).
+**Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Selecting a film keeps the current paper; applying a look preset selects the paper that the look resolves.
 
 **Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the sidebar. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field.
 
 The GUI shows scanner controls for the scanned medium:
 
 - Paper and slides expose white/black correction.
-- Negatives expose scan polarity and positive interpretation.
-- Slides and converted negatives expose film-scan points.
+- Slides and negatives expose the receiver profile.
+- Negatives expose scan polarity; negative conversion controls appear on `input > film > scan` and `input > convert-film > scan`.
+- Slides and negative conversion outside Digital Reference expose film-scan points.
 
 Selecting positive interpretation clears incompatible capture-correction flags. State files and scanner section presets retain point values. See [scanning](scanning.md) for scanner mode semantics.
 
@@ -78,7 +79,7 @@ Export uses the in-memory input pixels with the simulation parameters. It runs a
 
 The single default-collapsed **MAIN → Output → Export options** area opens the independent settings dialog or cancels its active worker. Import RGB/Raw contain only import controls. Bottom SAVE uses the chosen filename extension independently of Export preferences.
 
-Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. JPEG exposes quality (1–100) and 4:4:4/4:2:0 chroma sampling. TIFF/EXR expose their supported depth/compression settings. See the [shared writer contract](cli.md) and [photo-export specification](../specs/photo-export/spec.md) for supported output combinations.
+Export's saving color space and transfer encoding are independent of Save's current simulation saving settings. JPEG exposes quality (1–100) and 4:4:4/4:2:0 chroma sampling. TIFF/EXR expose their supported depth/compression settings. See the [CLI image output](cli.md#image-output) and [photo-export specification](../specs/photo-export/spec.md) for supported output combinations.
 
 The status bar shows elapsed time. **Cancel** discards the result before publication. Cancellation may wait for active computation or writing.
 

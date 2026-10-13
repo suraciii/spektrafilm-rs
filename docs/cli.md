@@ -82,7 +82,7 @@ The resulting exposure scales source samples before geometry and filming decode,
 Cropping preserves the source film pixel pitch.
 Resizing divides it by the requested factor.
 Lens blur, halation, and DIR consume that retained pitch on CPU and supported resident GPU paths.
-Grain and faithful optical diffusion remain on the CPU per-stage path.
+Spektra grain and faithful optical diffusion remain on the CPU per-stage path.
 Resize uses cubic B-spline interpolation with half-pixel coordinates, mirror boundaries, Gaussian antialiasing for downscale, ties-to-even dimensions, and source-range clipping.
 Interpolation computes in f64 before the configured image precision boundary.
 
@@ -93,7 +93,8 @@ Color management follows the pinned Python 0.3.4 registry for sRGB, ProPhoto RGB
 It decodes input for film exposure after source exposure scaling and geometry.
 RAW loaders supply linear values.
 `io.output_cctf_encoding` selects the destination's own transfer function.
-Floating scan output retains negative and super-white values with encoding enabled or disabled.
+Floating scan output retains negative and super-white values.
+Encoding preserves them only through sign-preserving transfer functions; Adobe RGB (1998) and gamma 2.6 destinations do not preserve negative values.
 Bounded image writers and the display preview perform their own clipping.
 
 Input gamut compression uses `active`, `algorithm` (`xy` or `oklch`), and `knee`.
@@ -127,7 +128,9 @@ Integer output clips to [0,1], scales, and truncates.
 Float TIFF/EXR preserves negative and super-white samples.
 The writer's color space/CCTF describes the pixels it receives and controls ICC/color tags.
 It applies no extra transfer function.
-It does not force ACES or linear encoding for EXR.
+CLI `process` requires linear EXR output and limits the EXR saving space to `sRGB` or `ACES2065-1`.
+Omitting `--saving-color-space` selects `ACES2065-1` for EXR and the scanner output space for other formats.
+Omitting `--saving-cctf-encoding` selects linear for EXR and inherits the scanner output encoding otherwise.
 GUI Save converts retained output using the current simulation saving settings.
 GUI Export uses its independent saving settings.
 Matching profiles in `data/icc` include encoded/linear variants.

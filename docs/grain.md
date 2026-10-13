@@ -19,7 +19,7 @@ Spektra grain dispatch mirrors upstream `apply_grain`. `sublayers_active` runs t
 
 `settings.use_fast_stats` switches the layered sampler to the `fast_stats` kernels like upstream. The micro-structure clumping field always uses them, as upstream does. This field uses a documented deterministic seed because Python draws it from numba's unseeded thread-global RNG.
 
-Both Spektra composite and layered grain use the CPU sampler during preview and export. No resident WGPU Spektra grain shader is maintained. Active Spektra grain rendering selects the faithful per-stage path. The separate Grain Procedural implementation remains available.
+Both Spektra composite and layered grain use the CPU sampler. No resident WGPU Spektra grain shader is maintained. Active Spektra grain rendering selects the faithful per-stage path. Preview disables active Spektra grain. The separate Grain Procedural implementation remains available.
 
 ## Procedural
 
@@ -45,7 +45,7 @@ Select `"custom"` to edit these controls:
 
 Custom values omitted or null inherit `35mm250`. Switching to Custom in the GUI copies the current preset and Amount. Selecting a preset restores its Amount. All numeric controls must be finite and within their stated ranges.
 
-Film Resolution 100 preserves detail. Lower values increase resolution blur. Film Type selects the reference host's resolution branch.
+Film Resolution 100 preserves detail. Lower values increase resolution blur.
 
 `v2_resolution_type` selects Film Resolution for Analogue only. `0` selects OpticalResolution. `1` selects FastBlur. Noise uses the single-pass image-resolution path and ignores Film Resolution controls.
 

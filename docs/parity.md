@@ -19,7 +19,7 @@ Budgets apply to different measurements:
 
 End-to-end preview and other spatial budgets in the [baseline evidence](parity/baseline_evidence.md) remain provisional until actual scenario measurements are recorded. Adapter initialization or compilation alone does not establish parity.
 
-The executed f64 LUT-reduction runs use a **1e-5** maximum absolute-error budget. See [LUTs](luts.md) for the LUT-reduction scenarios.
+The executed f64 LUT-reduction runs use a **1e-5** maximum absolute-error budget. The scenario identities live in [`scripts/parity/scenarios.py`](../scripts/parity/scenarios.py) and their retained results in the [parity matrix](parity/parity_matrix.json).
 
 ## Backend selection
 

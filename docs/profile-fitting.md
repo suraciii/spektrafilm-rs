@@ -14,15 +14,15 @@ Each patch table names the `source` of its values. The fitted surface learns the
 
 Halation and grain are off in every evaluation. The scanner writes linear sRGB. Fitting the surface enables the surface toggle. `--lambda` must be finite and non-negative. See the [profile fitting contract](../specs/profile-fit/spec.md) for the fitting requirements.
 
-A run succeeds only when the fit reduces both the color and the gray ΔE00 medians. A surface-only fit can trade gray for color. For this reason, `--fit surface,tone` is the usual choice.
+A run succeeds only when the fit reduces both the color and the gray ΔE00 medians. A surface-only fit can trade gray for color. For this reason, `--fit surface,tone` is the usual choice. The `tone` group fits `scanner.positive_density_ev` and `scanner.positive_balance_ev`; `scanner.positive_contrast` and `scanner.positive_dmax` keep the chain configuration values.
 
 ## Outputs
 
-A successful run writes:
+A successful run writes one file per selected group, plus the report:
 
-- A profile copy with the fitted surface and a provenance sentence in `metadata.datasource`.
-- A sparse parameter overlay with the fitted tone.
-- A report with the metrics before and after the fit, the per-patch differences, the input SHA-256 values and sources, the resolved chain, the forced settings, and the tool version.
+- The `--out-profile` destination receives the profile copy with the fitted surface and a provenance sentence in `metadata.datasource`. It is required with the `surface` group.
+- The `--out-overlay` destination receives the sparse parameter overlay with the fitted tone. It is required with the `tone` group.
+- `--report` receives the metrics before and after the fit, the per-patch differences, the input SHA-256 values and sources, the resolved chain, the forced settings, and the tool version.
 
 A failed run leaves none of these outputs.
 
@@ -34,7 +34,7 @@ The command reports the training and held-out medians of both folds. It leaves t
 
 ## Shipped Portra 800 fit
 
-The shipped `kodak_portra_800` surface came from this command; its recorded metrics live in the profile's `metadata.datasource`.
+The shipped `kodak_portra_800` surface came from this command. The profile's `metadata.datasource` records the fitted sources and provenance; the fit report carries the metrics.
 
 ## Example
 
