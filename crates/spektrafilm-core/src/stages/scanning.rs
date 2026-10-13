@@ -300,6 +300,19 @@ fn interpret_negative_capture(
     Ok(rgb)
 }
 
+/// Record-density acquisition for the assembled scanner acquisition fence:
+/// the `density_reading` branch of `scan_with_reference`, with the same
+/// calibration preparation.
+pub(crate) fn interpret_negative_density_stage(
+    density_cmy: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+) -> Result<ImageBuf, String> {
+    let calibration = interpretation::DensityCalibration::prepare(profile)?;
+    interpret_negative_density(density_cmy, &calibration, params, backend)
+}
+
 /// Record-density interpretation: the narrowband lab-scanner inverse of the
 /// film's own characteristic curves. Scanner optics blur transmitted light
 /// record by record, before the sensor reads density, so the blur runs here in
