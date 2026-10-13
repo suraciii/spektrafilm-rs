@@ -21,7 +21,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 // runs at four threads, 0 of 12 serial). The guard is returned first so that
 // pattern bindings (dropped in reverse declaration order) destroy the backend
 // before releasing DEVICE_IN_USE; every caller holds it for the whole test.
-static DEVICE_IN_USE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use super::TEST_DEVICE_LOCK as DEVICE_IN_USE;
 
 fn fresh_backend(
     features: wgpu::Features,
@@ -100,6 +100,19 @@ fn fresh_backend(
     Some((
         device_guard,
         WgpuBackend {
+            pipe: super::pipe::GpuPipe::new(
+                ObservedDevice {
+                    raw: device.clone(),
+                    context: ObservationContext::default(),
+                    batch: None,
+                },
+                ObservedQueue {
+                    raw: queue.clone(),
+                    context: ObservationContext::default(),
+                    batch: None,
+                },
+                Arc::new(PipelineCache::default()),
+            ),
             device: ObservedDevice {
                 raw: device,
                 context: ObservationContext::default(),
