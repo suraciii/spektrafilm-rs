@@ -30,14 +30,17 @@
   the same accepted setup for one input and parameter revision.
 - Digital Reference selection, labels, control visibility, and compatible receiver pairing follow the [Digital Reference contract](../film-chain/digital-reference/spec.md#integration-and-control-ownership). Its fixed Reference Exposure placement exposes reference output gain and balance while hiding exposure-reconstruction controls and automatic setup.
 - Numeric parameter fields use text editing and the default text cursor. Each original wheel event over a field changes its value by the declared step. Smoothed scroll residue must not repeat that change in later frames. Invalid or incomplete text must not enter runtime parameters.
+- A numeric editor must offer a usable range and step, and must not accept a value the parameter validator rejects. [Numeric editor ranges](#numeric-editor-ranges) owns both rules.
 - Preview computation and viewer composition run outside the UI thread. Queued requests retain only the latest snapshot. Results from older requests, input images, or parameter revisions must not replace current output.
-- The viewer retains the last completed frame while new composition runs. Automatic parameter updates skip reveal and crossfade. Explicit Preview and Scan retain those configured animations.
+- The viewer retains the last completed frame while new composition runs. The development animation is fixed viewer behaviour under [Viewer presentation](#viewer-presentation).
 - Base workflow selection and optional finishing controls must follow the [Magazine finishing enablement contract](../magazine-finishing/spec.md#enablement).
 - The workflow selector must offer exactly the routes the workflow validator supports.
 
 ## Material controls and output composition
 
 Control placement and process meaning must follow [Output mix and material controls](../output-mix/spec.md#user-operation). The GUI must retain the existing MAIN, FILM, PRINT, ADVANCED, and CONFIG pages and section menus. It must not add Digital response panels, a Reproduction section, saturation or color-density groups, or tonal-mask controls.
+
+Each page owns one stage of the workflow. [Page ownership](#page-ownership) assigns every section to exactly one page.
 
 MAIN Enlarger must expose existing print exposure, Magenta and Yellow shifts, and preflash exposure with its independent Magenta and Yellow filter shifts. Calibrated cyan remains part of the neutral filter pack without a new Cyan shift control. Preflash must retain its existing units, defaults, bounds, and section ownership under [Preflash](../output-mix/spec.md#preflash). Zero preflash exposure must disable flash without clearing its filters. A route without print exposure and development must identify these controls as inactive and retain their values.
 
@@ -58,4 +61,78 @@ MAIN Scanner must distinguish Lens blur (readout optics) from Unsharp mask (digi
 PRINT may retain the `print_render.glare` controls in its existing preset section, but their visible group must be labeled Print viewing glare. Its description must identify readout stray light, not preflash or a change in material density. Preflash and Enlarger diffusion must remain separately labeled exposure and optical controls. Group location must not imply that all Print controls execute during development.
 
 The existing grain selector must retain its stable engine names and preset section. It must identify Spektra and Dye as material grain and Procedural as post-scan grain appearance. Selecting Procedural must describe its Film Resolution control as part of that appearance algorithm, not as scanner lens resolution. No duplicate grain selector or automatic engine conversion is required.
+
+## Page ownership
+
+Each page owns one stage of the workflow. A visible section belongs to exactly one page.
+
+MAIN owns image intake and the delivered look. It holds Import RGB, Import Raw, Crop and upscale, Input, Camera, Profiles, Enlarger, Scanner, Output, and Export options.
+
+FILM owns the film material. It holds Chemistry for film, Film base, Halation, Couplers, Grain, Camera diffusion, and Convert.
+
+PRINT owns the print material. It holds Chemistry for print, Print base, Glare, and Enlarger diffusion.
+
+ADVANCED owns processing controls that most sessions never change. It holds Spectral upsampling, Magazine print color, Input gamut compress, and Output gamut compress.
+
+CONFIG owns session configuration. It holds Diagnostics, GUI parameters, and Display.
+
+The Enlarger and Scanner sections belong to MAIN even though the scanner reads a medium the print route produces. The section-preset menus are unaffected by page ownership: they follow the [preset section table](../presets/design.md).
+
+A section that a route makes inactive must state that it is inactive and retain its stored values. An inactive section must not present a disabled control block as if it were editable.
+
+A visible section must not be duplicated across pages.
+
+## Numeric editor ranges
+
+An editor range is a usability bound. It is not the parameter's document bound.
+
+Each numeric editor must declare a minimum, a maximum, and a step. The parameter discovery description must declare the same usable range. That usable range may be narrower than the accepted document range. The editor must accept every value inside the usable range and must reject values outside it.
+
+The parameter validator owns the accepted document range. Recipes, presets, CLI parameters, and saved state must carry every value the validator accepts, including values outside the editor range.
+
+An editor must reject input that the validator would reject, before the value enters runtime parameters. The editor must not accept a value that fails at render time.
+
+`camera.film_format_mm` is the model for this rule: its editor holds a 1-1000 mm editing range and clamps typed values to it, while recipes, presets, CLI parameters, and saved state carry any strictly positive value under [Film geometry](../film-grain/v3/design.md#film-geometry).
+
+## Viewer presentation
+
+The viewer presents the retained input, the retained output, or the paper back. Its presentation state is viewer-only under the [GUI workflow design](design.md).
+
+The viewer footer owns the layer selector. It is the only surface that exposes it. CONFIG must not repeat it.
+
+The development animation is fixed viewer behaviour. It must not have an editor, and it must not be persisted as an editable control. An automatic parameter update skips it; an explicit Preview or Scan retains it.
+
+The viewer must let the user select a display ICC profile. The selected profile applies to the disposable viewer raster only. Windows discovers the primary display profile when the user selects none. An explicitly selected profile applies on every platform that supports LittleCMS. Without a usable profile, the encoded sRGB preview is used directly.
+
+The viewer must expose a tonal-distribution readout of the retained output. It must be viewer-only: it must not alter saved or exported pixels.
+
+The readout must derive from the retained output. It must not require a second render.
+
+An empty or absent output must present an explicit empty state instead of a blank or broken readout.
+
+## Deleted surfaces
+
+The GUI must not expose these controls. Their parameters remain valid document fields where a specification owns them.
+
+- The `print illuminant` selector. The GUI fixes the print illuminant to the bundled value. The parameter remains a document field.
+- The input gamut-compression algorithm selector. The GUI fixes the input algorithm to `xy`. The parameter remains a document field.
+- The Spektra `rms granularity` control. The Spektra stage does not read it.
+- The `Experimental` section, including its channel-swap controls. A channel swap is a quality-control operation, not a GUI control.
+- A `reveal` or `crossfade` editor.
+
+The GUI must not present a selector that offers one choice.
+
+A parameter that no control can change and that no pipeline stage reads must not own a GUI section under the [preset section rule](../presets/design.md).
+
+## Labels and surfaces
+
+A label must name the current product concept. A label must not name a removed implementation, a development tool, or a file format of a former dependency.
+
+An operation status must appear on exactly one surface. It must be short and must describe the last accepted operation, under the [telemetry status rule](../telemetry/spec.md#local-surfaces).
+
+A control that changes a persisted value must be reachable from the GUI. A persisted value with no control, no pipeline consumer, and no owning specification must be removed from the document.
+
+Two controls that edit the same persisted value must not both be editable. When two surfaces must show one value, one is read-only.
+
+Two different parameters that share a label must carry a qualifier that distinguishes them.
 

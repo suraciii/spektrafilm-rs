@@ -22,7 +22,9 @@ spektrafilm-gui IMAGE --state GUI_STATE.json
 
 **Input image / Profiles** selects the input/output color workflow, film stock, and print paper. Selecting a film keeps the current paper; applying a look preset selects the paper that the look resolves.
 
-**Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the sidebar. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field.
+**Numeric fields** accept typed exposure, film format, halation, DIR couplers, grain, glare, scanner, enlarger, and output values. Click a field to type with the text cursor. Scrolling over a field changes its value by the control's step. Scrolling elsewhere moves the sidebar. Valid edits follow Auto preview. Incomplete or invalid text keeps the last valid parameter value. The text resets when focus leaves the field. The editor range and its relation to the accepted document range follow [numeric editor ranges](../specs/gui-workflow/spec.md#numeric-editor-ranges).
+
+Pages and their section assignment follow [page ownership](../specs/gui-workflow/spec.md#page-ownership).
 
 The GUI shows scanner controls for the scanned medium:
 
@@ -53,7 +55,7 @@ The `Finished RGB` workflow color-manages an already rendered image to the outpu
 
 **Preview** renders a reduced image using the configured preview long-edge limit and preview digestion. Explicitly update it when auto-preview is disabled. Crop, spectral adaptation/blur, UV/IR, layered grain, and both diffusion filters apply to the runtime.
 
-New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip development animations. Explicit Preview and Scan retain the configured reveal or crossfade.
+New edits replace queued work. Stale results cannot replace the latest output. The viewer retains its last frame until the current frame is ready. Automatic parameter updates skip the development animation; explicit Preview and Scan retain it.
 
 **Scan** renders the full-resolution input with spatial and stochastic effects. It prefers GPU execution with CPU fallback. The resulting full-resolution output is retained for Save and inspection in the viewport.
 
@@ -69,15 +71,19 @@ See the [GUI workflow specification](../specs/gui-workflow/spec.md) for the acti
 
 `100%`, `200%`, and `400%` map image pixels to exact device-pixel percentages. Reset view returns to fit. Full-resolution Scan remains available in the viewport at these zoom levels. The preview long-edge limit controls Preview rendering, not Scan's available detail.
 
-**Viewer** switches between Input / Output / Paper back. Output supports nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling. Input retains the upstream nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
+**Viewer** switches between Input / Output / Paper back from one selector in the viewer footer. Output supports nearest, linear, cubic, spline16, spline36, Lanczos, or Blackman sampling. Input retains the upstream nearest interpolation. Paper back uses spline36. The viewport samples the retained full-resolution image for visible detail.
 
-The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Reveal and crossfade affect the disposable viewing frame. Hovering reports the original floating RGB pixel.
+The viewer shows a tonal-distribution readout of the retained output. It is viewer-only. Its empty state and its source follow [viewer presentation](../specs/gui-workflow/spec.md#viewer-presentation).
+
+The canvas uses the pinned 18% gray (`#767676`) or black. It includes normalized white padding and the upstream paper watermark. Hovering reports the original floating RGB pixel.
+
+The operation status appears in the controls footer. Its content and its single-surface rule follow [labels and surfaces](../specs/gui-workflow/spec.md#labels-and-surfaces).
 
 ### Display transform and ICC
 
-When **Display transform / Display ICC…** is enabled, every platform converts output-space pixels to encoded sRGB for the disposable viewer raster. Save and Export use their respective saving color and encoding settings.
+When the display transform is enabled, every platform converts output-space pixels to encoded sRGB for the disposable viewer raster. Save and Export use their respective saving color and encoding settings. The profile selection rule and the no-profile fallback follow [viewer presentation](../specs/gui-workflow/spec.md#viewer-presentation).
 
-Windows discovers the primary display ICC profile. An explicitly selected ICC profile is applied on every platform that supports LittleCMS. On macOS, the Metal surface is tagged sRGB. Without an ICC profile, the encoded sRGB preview is used directly.
+On macOS, the Metal surface is tagged sRGB.
 
 ## Independent Export
 
@@ -130,6 +136,12 @@ A failed preset application preserves the current controls and temporary black/w
 **Save report** writes local JSON without rendering. Save reports identify the retained render that supplied their pixels. This includes renders made with collection off or removed from history.
 
 Launching with `SPEKTRAFILM_GUI_DIAGNOSTICS_DIR` set to an existing directory publishes every completed operation's report there as a new `operation-<id>.json`. It selects summary collection for the session, as a CLI report request does. See the [telemetry specification](../specs/telemetry/spec.md) for report semantics.
+
+## Session configuration
+
+The CONFIG page holds the Diagnostics section, startup state management, and the viewer presentation settings. See [page ownership](../specs/gui-workflow/spec.md#page-ownership).
+
+The viewer interpolation mode, canvas, white padding, and display transform affect the disposable viewer raster. See [Viewer](#viewer).
 
 ## See also
 

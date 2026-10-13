@@ -21,3 +21,6 @@
 - Numeric editors associate visible labels with their text inputs. Tuple editors identify each component. Profile and development-time selectors associate their visible labels with the selection control.
 - Native Save and Export actions select a path before entering the shared output operation. Headless acceptance enters at that path boundary and executes the same worker and writer.
 - Headless App acceptance exercises production controls and real workers. CPU coverage, hardware-GPU computation coverage, offscreen layout checks, and native desktop acceptance have separate evidence scopes under [GPU acceptance](../gpu-execution/spec.md#acceptance) and the [GUI acceptance guide](../../scripts/parity/README.md#headless-gui-acceptance).
+- The numeric editor owns its presentation range. The parameter validator owns the accepted document range. One control implementation serves both, so an editor cannot accept a value the validator rejects.
+- The viewer tonal-distribution readout is presentation state. It reads the retained output and must not allocate a second render, a retained source copy, or a pipeline stage.
+- A GUI surface has one owner. Duplicated rendering of one value from two surfaces is a defect, not a convenience.
