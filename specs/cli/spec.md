@@ -8,7 +8,7 @@ The `process` command must support [presets](../presets/spec.md), sparse paramet
 
 A **parameter override** is a sparse set of explicit edits to runtime controls for one invocation. It may contain look-owned and non-look controls. It must not change profile references or rewrite its source preset. A parameter override is not a preset, GUI state, or render recipe.
 
-The parameter contract below owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md). Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications. Help, data-directory selection, command status, and human feedback belong to the [workflow contract](#workflow-contract).
+The parameter contract owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md). Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications. Help, data-directory selection, command status, and human feedback belong to the [workflow contract](#workflow-contract).
 
 ## Process syntax
 
