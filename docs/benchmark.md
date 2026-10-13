@@ -2,7 +2,7 @@
 
 The external `spektrafilm-bench` CLI renders immutable evidence, compares versions, and creates an offline review. It reports color, tone, official LDR-FLIP, grain, halation, edge response, and numerical health by case and region. It preserves floating masters, full-resolution maps, curves, spectra, and per-seed observations.
 
-The [benchmark specification](../specs/benchmark/README.md) defines reference scopes and qualification rules.
+The [benchmark specification](../specs/benchmark/spec.md) defines reference scopes and qualification rules.
 
 ## Generate and compare suite evidence
 
@@ -176,7 +176,7 @@ The generated complete suite adds `final_appearance`, which renders the chart wi
 
 ## See also
 
-- [Benchmark specification](../specs/benchmark/README.md)
+- [Benchmark specification](../specs/benchmark/spec.md)
 - [Building](building.md)
 - [CLI](cli.md)
 - [RAW input](raw.md)
