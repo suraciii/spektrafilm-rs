@@ -40,5 +40,5 @@
 - Working pixel pitch is carried with the image through crop and resize and is consumed by spatial stages; stages do not infer it from the current raster size.
 - Color-domain transitions are explicit. The chain does not apply an implicit transfer curve or primaries conversion inside an effect.
 - No generic graph or backend-specific public parameter schema is required; runtime parameters remain the single caller-facing model.
-- [Material controls and output composition](../material-response/design.md) owns preflash exposure composition, Output lightness retirement, and final mixing. Per-stage, resident, converted-film, and diagnostic paths execute only material operations present in their route. Existing chemistry and scanner reference ownership remain unchanged.
-- The shared output finishing boundary delegates magazine color to [Magazine print color](../magazine-print-color/design.md). It must also serve the film-free `input` workflow without preparing a spectral chain.
+- [Output mix and material controls](../output-mix/design.md) owns preflash exposure composition, Output lightness retirement, and final mixing. Per-stage, resident, converted-film, and diagnostic paths execute only material operations present in their route. Existing chemistry and scanner reference ownership remain unchanged.
+- The shared output finishing boundary delegates magazine color to [Magazine finishing](../magazine-finishing/design.md). It must also serve the film-free `input` workflow without preparing a spectral chain.

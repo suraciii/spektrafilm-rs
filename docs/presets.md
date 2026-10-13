@@ -24,7 +24,7 @@ Use these value forms:
 - `[1,2,3]` for arrays.
 - `null` to clear optional controls.
 
-The [CLI parameter language](../specs/cli-parameters/spec.md) defines editable paths and composition.
+The [CLI parameter language](../specs/cli/spec.md) defines editable paths and composition.
 
 Built-in looks enable their film profile's adaptation surface by default. See the [preset contract](../specs/presets/spec.md). To turn it off for a CLI render, add `--set settings.apply_hanatos2025_adaptation_surface=false`.
 
@@ -54,4 +54,4 @@ Library writes reject names already owned by another document. This includes con
 - [GUI](gui.md)
 - [Grain engines and controls](grain.md)
 - [Preset specification](../specs/presets/spec.md)
-- [CLI parameter language](../specs/cli-parameters/spec.md)
+- [CLI parameter language](../specs/cli/spec.md)

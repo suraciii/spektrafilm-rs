@@ -2,12 +2,12 @@
 
 ## Contract
 
-- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine print color entry-point contract](../magazine-print-color/spec.md#enablement).
+- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine finishing entry-point contract](../magazine-finishing/spec.md#enablement).
 - A photographic print route must provide a photographic print profile.
-- Optional magazine finishing must satisfy the [Magazine print color](../magazine-print-color/spec.md) contract. It must not determine base workflow topology.
+- Optional magazine finishing must satisfy the [Magazine finishing](../magazine-finishing/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → destination color transform and encoding → scanner-domain effects (including Procedural grain) → optional magazine finishing → output handoff.
-- [Material controls and output composition](../material-response/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
+- [Output mix and material controls](../output-mix/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
 - Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). CPU f64 remains the numerical reference; GPU execution must cover the selected chain without replacing its model.
@@ -73,7 +73,7 @@ The historical direct-scan sequence that blurs after output gamut processing mus
 
 The implementation must identify the new ordering in its render/model version and user-facing change notes. Recipe replay must report the model version used and must not claim historical pixel identity. It must not silently rescale blur or scanner points to emulate the old order. Existing before/after budgets and photographic evidence must isolate this cutover from preflash branch separation and output mixing.
 
-The [Print exposure composition](../material-response/design.md#print-exposure-composition) fixes the print optical boundary. Separating a uniform preflash must preserve the old result within its numerical budget where the old linear constant-preserving operator was equivalent, including existing exposure gains and finite-exposure floors. This separation is not a general exemption from numerical preservation.
+The [Print exposure composition](../output-mix/design.md#print-exposure-composition) fixes the print optical boundary. Separating a uniform preflash must preserve the old result within its numerical budget where the old linear constant-preserving operator was equivalent, including existing exposure gains and finite-exposure floors. This separation is not a general exemption from numerical preservation.
 
 
 ## Scanner receiver and interpretation

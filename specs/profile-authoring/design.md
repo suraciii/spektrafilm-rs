@@ -1,4 +1,4 @@
-# Profile fitting design
+# Profile authoring design
 
 ## Boundaries
 
