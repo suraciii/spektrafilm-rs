@@ -121,6 +121,8 @@ It must not contain `film_profile`, `print_profile`, `route`, `workflow`, image 
 
 TOML must be the default preset export format. Readers must accept `.toml` and `.json` files as carriers of the same typed schema. The file extension must select the parser. A reader must not try another parser after a parse failure. Both carriers must apply the same version, parameter, profile, type, and value validation.
 
+A document must not be required to carry `provenance`. When it carries it, `implementation_version` and `model_version` are metadata: a reader must not compare them and they must not gate application. A `scanner` snapshot belongs to render diagnostics and GUI state, not to a document.
+
 The preset schema version must be 4 because the document is a parameter payload that declares no scope or profile reference. A reader must accept version 1, 2, and 3 documents through the explicit migration of the [preset design](design.md#migration), apply the same profile and value validation to the migrated result, and reject a path the migration leaves outside the vocabulary. Exporters must write version 4. The unshipped `film_render.response`, `print_render.response`, `enlarger.c_filter_shift`, `reproduction`, and `io.finished_rgb_output_processing` fields must fail normal unknown-field validation in every accepted version, including draft version 4 documents. The unshipped `output response` group must be rejected. None has a compatibility alias, default, or migration.
 
 An exporter must write every path a capture carries. A reader must not materialize omitted paths: the document is its supplied paths, and resolution overlays them on the active values. TOML absence must represent an unset optional path; an exporter must omit an unset optional path in TOML. The two carriers must not introduce a separate schema version or field vocabulary. A future change to accepted omitted-field behavior must use an explicit schema migration rather than silently rejecting existing documents.
@@ -139,8 +141,8 @@ Preset files must not support includes, inheritance, expressions, environment in
 
 A reader must reject, with the offending path named:
 
-- a path outside the parameter set, including a module-owned leaf and a path that no control edits, such as `enlarger.*_filter_neutral`, `film_render.glare.*`, `taps.*`, `debug.*`, and the derived `settings.preview_mode`;
-- an unknown field at any level, a duplicate key, and a `film_profile` or `print_profile` field;
+- a path outside the parameter set, including a `debug`-class leaf (`settings.preview_mode`, `settings.lut_resolution`, `settings.use_enlarger_lut`, `settings.use_scanner_lut`, `settings.use_fast_stats`, `settings.spectral_shape`, `settings.neutral_print_filters_from_database`, `enlarger.*_filter_neutral`, `film_render.glare.*`, `taps.*`, `debug.*`) and a module-owned leaf;
+- an unknown field at any level, a duplicate key, a `film_profile` or `print_profile` field, a `version` or `content_identity` field, and a `provenance.scanner` field;
 - a value outside its declared bounds, a value that overflows its declared type, and a non-finite value;
 - a document that supplies no path.
 

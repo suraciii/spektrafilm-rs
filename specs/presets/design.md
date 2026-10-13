@@ -13,6 +13,10 @@
 
 Every runtime parameter leaf carries exactly one class, and the class together with the capture attribute defines the one set every input surface offers. Both are properties of the leaf in the parameter metadata, next to its type, bounds, default, and unit, so one authoritative table serves the CLI, the GUI, the API, and preset validation.
 
+A whole-look capture must write every leaf whose capture attribute is true, so a saved document determines its look by itself: a later change to a default, to a stock-derived seed, or to a fitted profile value must not change what the document reproduces. A sparse document stays legal for a hand-authored or built-in look, and Update rewrites exactly the paths a stored document supplies, so a short document stays short. The leaves with a false capture attribute are the delivery and environment values, which is why a preset never moves the caller's crop, resize, rotation, input declaration, or export settings.
+
+GUI state and a render recipe are snapshots rather than parameter surfaces: they keep carrying the value of a `debug` leaf, and only the settable surfaces gate it.
+
 | Class | Meaning | Settable by |
 |---|---|---|
 | `parameter` | A user control edits it | the GUI, the CLI, a preset, and the API |
@@ -49,10 +53,16 @@ Schema version 4 changes the document from a scoped payload with profile referen
 | `parameters.camera` (atomic optional group) | `parameters.camera.*` | the three fields become ordinary sparse paths; supplying a subset is valid |
 | section document (exactly one section) | unchanged content | its paths already belong to the vocabulary; the document simply carries them |
 | `output_mix.amount` | unchanged | version 3 already carries it |
-| `provenance` | unchanged | implementation and model versions |
+| `provenance` | `implementation_version` and `model_version` kept, `scanner` dropped | provenance is optional metadata; the scanner snapshot repeats the `scanner.*` paths |
 | version 1 or 2 | version 4 | the existing version 1 and version 2 rules apply first, then this table |
 
 A migrated document that carries a path outside the parameter set must be rejected with the offending path named, so a legacy document never gains a class it cannot have. A migrated section must preserve sparse omission and must not acquire leaves. Migration must not capture or replace caller `io` settings, and it must not invent a profile identity.
+
+## Profile identity
+
+A version 4 document carries no profile identity. The stock name is the identity a preset needs: `film.stock` and `print.stock` name the material, and the profile files that implement them are versioned data of the data directory. A byte or version pin would turn a later improvement of a profile into a failure of a document the user cannot repair from any control, and a built-in document would need its pins regenerated on every fitted-value change. A reader must therefore drop `version` and the `sha256-<hex>` content identity on migration and must reject either as an unknown field in a version 4 document.
+
+`provenance` stays optional metadata. A capture writes the implementation and model versions; no reader requires them and no provenance field is a parameter or a validation gate. The scanner snapshot is removed because it repeats the `scanner.*` values the document already carries.
 
 ## Everyday flows
 
