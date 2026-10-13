@@ -336,6 +336,9 @@ def main():
             'Factory reference is not the retained independent upstream oracle')
     require(sha(oracle_dir/'control_metadata.json') == provenance['artifact_sha256']['control_metadata.json'],
             'Control metadata reference hash differs')
+    # Preserve the independent oracle; only the explicitly retired lightness leaf
+    # is outside the current shared contract.
+    factory['output_gamut_compress'].pop('lightness_compression')
     rust_factory = json.loads((repo/'crates/spektrafilm-gui/src/factory_state.json').read_text())
     require(parameters_equal({key: value for key, value in rust_factory.items() if key != 'rust'},
                              {key: value for key, value in factory.items() if key != 'rust'}),

@@ -19,10 +19,7 @@ struct Params {
     n_h: u32,
     // x=threshold, y=limit, z=power (Reinhard knee on normalized chroma).
     knee: vec4<f32>,
-    // x=threshold, y=limit, z=power, w=enable. One-sided lightness
-    // compression applied before the C_max lookup.
-    lightness: vec4<f32>,
-    // x=l_white (perceptual white), y=l_min, z=l_max (table L-axis bounds).
+    // x=l_min, y=l_max (table L-axis bounds).
     lspace: vec4<f32>,
 }
 
@@ -219,8 +216,8 @@ fn cam16ucs_to_xyz(jab: vec3<f32>) -> vec3<f32> {
 
 // Bilinear C_max(L, h) lookup — L clamped to the table bounds, h wraps.
 fn c_max_lookup(l_in: f32, h: f32) -> f32 {
-    let l_min = params.lspace.y;
-    let l_max = params.lspace.z;
+    let l_min = params.lspace.x;
+    let l_max = params.lspace.y;
     let n_l = i32(params.n_l);
     let n_h = i32(params.n_h);
     let l = clamp(l_in, l_min, l_max);
@@ -270,14 +267,7 @@ fn compress_perceptual(rgb: vec3<f32>) -> vec3<f32> {
     } else {
         lab = xyz_to_oklab(xyz);
     }
-    // One-sided lightness compression first (so C_max is looked up at the
-    // corrected L), normalized by the perceptual white.
-    var l = lab.x;
-    let l_white = params.lspace.x;
-    if params.lightness.w != 0.0 {
-        l = reinhard_knee(l / l_white, params.lightness.x, params.lightness.y, params.lightness.z)
-            * l_white;
-    }
+    let l = lab.x;
     let c = length(lab.yz);
     // Guard h at c == 0: atan2(0, 0) is indeterminate in WGSL and would
     // propagate NaN through cos/sin (Rust's f64 atan2(0,0) returns 0).

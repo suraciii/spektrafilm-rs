@@ -13,7 +13,7 @@
 
 A section is a named set of look-owned parameter paths. This table is authoritative for routing, and a section preset carries exactly its section's paths.
 
-A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` stays a document field for upstream parity but is not a section, because the pipeline never reads it and no control surface edits it. The print-stage glare belongs to `print` through `print_render`.
+A section must be a group of editable controls that a user can see and that can change the render. A parity-only, never-read, derived, or control-less parameter must not own a section: `film_render.glare` stays a document field for upstream parity but is not a section, because the pipeline never reads it and no control surface edits it. Print viewing glare remains in `print` through `print_render`; its [readout boundary](../film-chain/spec.md#scan-optics-and-print-viewing-glare) must not be inferred from that storage location.
 
 - `film`: `film_render.density_curve_gamma`, `film_render.development_time`, `film_render.chemistry`
 - `grain`: `film_render.grain`
@@ -26,6 +26,7 @@ A section must be a group of editable controls that a user can see and that can 
 - `enlarger`: `enlarger` without `enlarger.diffusion_filter`
 - `scanner`: `scanner`
 - `print`: `print_render`
+- `output mix`: `output_mix`
 
 - The browser lists look presets only. A section preset must not appear in it and must not be applicable from it.
 - A section preset loads from the menu of its own section. The menu must show the preset whose carried controls equal the section's current controls, or `custom`. The comparison must use the carried editable controls and never derived or prepared values, and equal matches must resolve deterministically by name order.
@@ -80,6 +81,7 @@ The flows a user actually runs must be short; every one below is two or three st
 
 - The GUI state keeps its complete-state contract. The panel width, the expanded state, and the last applied group and name belong to the versioned Rust extension and must not enter the Python-compatible sections. They must not change the meaning of a saved preset document.
 - Modified detection compares the captured look controls and the film and print references with the applied document. It must not compare GUI state or a prepared runtime parameter tree.
+- Look capture must collect existing material controls through their existing sections and output mix through its own section. It must never collect an `IoParams` snapshot or output gamut settings. Schema migration must follow the [preset file-format contract](spec.md#file-formats): older whole looks gain full output mix, while older sections retain sparse omission. Capture, apply, and migrated export must not expand `io` ownership. Preparation must preserve existing material capability, scan-inverse, and calibration semantics under [Material controls and output composition](../material-response/spec.md). Unshipped response groups and the Cyan-shift field are unknown fields, including in draft version 3 documents; neither capture nor migration may materialize them.
 - Built-in documents must stay read-only at run time. A user edit must produce a user document or no change. The `My Presets` group header must show the resolved library directory path, must offer to reveal it, and must offer to refresh discovery, so a document placed while the GUI runs becomes visible without a restart. Only user documents have a path.
 - Renaming the applied user preset must follow the marker to the new name. Deleting it must leave the look controls untouched and must show the remembered name as missing.
 - Restoring GUI state must restore the stored controls and must not re-apply the remembered preset document. The applied marker is recomputed against the restored controls.

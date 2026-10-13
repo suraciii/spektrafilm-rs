@@ -377,7 +377,7 @@ def run(args, report):
             knee=(0.815, 1.0, 1.2)))
         kwargs.setdefault("output_gamut_compress", OutputGamutCompressSpec(
             algorithm="oklch", knee=(0.95, 1.0, 1.6),
-            lightness_compression=(0.95, 1.0, 1.6)))
+            lightness_compression=None))
         return UpstreamBundleSpec(**kwargs)
 
     from spektrafilm_lut_creator.builders import BundleBuilder

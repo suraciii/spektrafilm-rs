@@ -255,6 +255,7 @@ fn render_recipe(
                 "implementation": contract::IMPLEMENTATION,
                 "adapterVersion": contract::ADAPTER_VERSION,
                 "parameterSchemaVersion": contract::PARAMETER_SCHEMA_VERSION,
+                "modelVersion": spektrafilm_core::runtime::MODEL_VERSION,
                 "parameterDigest": contract::parameter_digest(&recipe.parameters),
                 "scannerProvenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),
                 "input": {"path": input, "width": input_size[0], "height": input_size[1]},

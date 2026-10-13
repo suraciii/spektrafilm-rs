@@ -97,6 +97,14 @@ fn validate_report(report: &Report) -> Result<(), ValidationError> {
     validate_unavailable(&report.configuration.unavailable_fields)?;
     validate_unavailable(&report.execution.unavailable_fields)?;
     if let Some(render) = &report.configuration.render {
+        validate_finite(
+            render.output_mix_amount,
+            "configuration.render.output_mix_amount",
+        )?;
+        if !(0.0..=1.0).contains(&render.output_mix_amount) {
+            return Err(ValidationError::InvalidMeasurement);
+        }
+        validate_text(&render.model_version)?;
         for stock in [&render.film_stock, &render.print_stock]
             .into_iter()
             .flatten()
@@ -318,6 +326,7 @@ fn validate_observation_name(observation: &Observation) -> Result<(), Validation
         "scanning",
         "post_scan",
         "magazine_print_color",
+        "output_mix",
         "negative_to_positive",
         "scanner_film_points",
         "scanner_finish",

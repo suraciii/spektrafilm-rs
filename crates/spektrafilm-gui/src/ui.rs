@@ -95,10 +95,12 @@ impl App {
                     .add_filter("JSON", &["json"])
                     .pick_file()
             {
-                self.remember_dialog("state", &path);
                 let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
                 self.status = match result {
-                    Ok(()) => format!("Loaded GUI state from {}", path.display()),
+                    Ok(()) => {
+                        self.remember_dialog("state", &path);
+                        format!("Loaded GUI state from {}", path.display())
+                    }
                     Err(e) => format!("State load error: {e:#}"),
                 };
             }
@@ -439,6 +441,7 @@ impl App {
             "Enlarger diffusion" => Some((Section::EnlargerFilter, "Diffusion", false)),
             "Enlarger" => Some((Section::Enlarger, "Enlarger", true)),
             "Scanner" => Some((Section::Scanner, "Scanner", false)),
+            "Output" => Some((Section::OutputMix, "Output", true)),
             _ => None,
         };
         if let Some((kind, label, default_open)) = preset_section {
@@ -650,12 +653,8 @@ impl App {
                 for section in ["Enlarger", "Scanner"] {
                     self.parameter_section(ui, section);
                 }
-                egui::CollapsingHeader::new("Output")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        self.parameter_section(ui, "Output");
-                        self.export_actions(ui);
-                    });
+                self.parameter_section(ui, "Output");
+                self.export_actions(ui);
             }
             GuiTab::Film => {
                 self.chemistry_section(ui, true);
@@ -672,7 +671,7 @@ impl App {
             }
             GuiTab::Print => {
                 self.chemistry_section(ui, false);
-                for section in ["Print base", "Preflash", "Glare", "Enlarger diffusion"] {
+                for section in ["Print base", "Glare", "Enlarger diffusion"] {
                     self.parameter_section(ui, section);
                 }
             }
