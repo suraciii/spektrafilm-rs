@@ -61,7 +61,7 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
     --saving-color-space 'ProPhoto RGB' --saving-cctf-encoding true --data-dir data
 ```
 
-`--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy.
+`--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy. It also prints `print_filtration`, which reports each dichroic axis's neutral baseline, its shift, their effective CC total, and whether the baseline came from a `--set` leaf, the resolved paper's database entry, or the runtime default. A paper change therefore shows up as a moved baseline before any render.
 Omit `--output` when checking parameters without choosing a destination. The report keeps `output.path` as `null`; `output.format` is also `null` unless `--format` is supplied. A normal process invocation still requires a destination.
 Without a format, container-specific defaults such as bit depth and compression remain `null`. Supply `--format` to validate codec-specific options such as JPEG quality or compression.
 
