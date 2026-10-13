@@ -166,7 +166,7 @@ fn scan_spectral_via_lut(
 /// switch, so a new path condition cannot desynchronize them.
 // Both scan paths share the complete spectral context.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn scan_spectral_rgb(
+pub(crate) fn scan_spectral_rgb(
     density_cmy: &ImageBuf,
     profile: &Profile,
     params: &RuntimeParams,

@@ -55,7 +55,19 @@ impl Pipeline {
         ) {
             reasons.push(ResidentFallbackReason::WorkflowRoute);
         }
-        if self.params.scanner.scan_output == "negative_to_positive" {
+        // Negative-to-positive interpretation no longer declines for the
+        // capture methods (separable/coupled): it runs as an assembled CPU
+        // fence on the scanner readout (pipe architecture, capability
+        // class — see `scan_tail_cpu_stage` in `try_gpu_resident`). The
+        // density reading and Digital Reference replace the acquisition
+        // itself, so they still decline.
+        if self.params.scanner.scan_output == "negative_to_positive"
+            && matches!(
+                self.params.scanner.positive_interpretation,
+                crate::params::PositiveInterpretation::Density
+                    | crate::params::PositiveInterpretation::DigitalReference
+            )
+        {
             reasons.push(ResidentFallbackReason::NegativeToPositiveOutput);
         }
         if self.params.scanner.receiver_profile
@@ -63,6 +75,12 @@ impl Pipeline {
         {
             reasons.push(ResidentFallbackReason::ScannerReceiver);
         }
+        // Slide points still decline: the positive-film resident chain has
+        // a known divergence (first exposed by the scan-tail fence parity
+        // probe) and the slide remap's y→0 gain amplifies the f32
+        // acquisition perturbation beyond the fence budget. They move to
+        // the assembled scanner readout fence once the positive-film chain
+        // reaches parity.
         if self.params.io.scan_film
             && self.film.is_positive()
             && (self.params.scanner.black_point != [0.0; 3]
@@ -70,21 +88,17 @@ impl Pipeline {
         {
             reasons.push(ResidentFallbackReason::ScannerFilmPoints);
         }
-        let dir = &self.params.film_render.dir_couplers;
-        let coefficients = if self.film.is_positive() {
-            &dir.langmuir_receiver_k_rgb
-        } else {
-            &dir.langmuir_donor_k_rgb
-        };
         // Non-default Langmuir chemistry no longer declines: DIR runs as
         // an assembled CPU fence (pipe architecture, capability class —
         // see `dir_cpu_stage` in `try_gpu_resident`).
         // Input transfer decoding no longer declines: the resident route
         // decodes the input before upload (pipe architecture, capability
         // class — see `try_gpu_resident`).
-        if self.params.settings.use_scanner_lut
-            || (!self.params.io.scan_film && self.params.settings.use_enlarger_lut)
-        {
+        // The scanner LUT acquisition no longer declines: it runs as an
+        // assembled CPU fence that replaces the GPU spectral integration
+        // (see `scan_acquisition_cpu_stage` in `try_gpu_resident`). The
+        // enlarger LUT on the print path still declines.
+        if !self.params.io.scan_film && self.params.settings.use_enlarger_lut {
             reasons.push(ResidentFallbackReason::RequestedSpectralLut);
         }
         let diffusion_effective = |df: &crate::params::diffusion::DiffusionFilterParams| {
@@ -297,8 +311,10 @@ impl Pipeline {
             }
         }
         // The resident scan shader applies its nonlinear luminance remap
-        // during spectral acquisition. Corrected scans require that remap
-        // after optical blur and print glare, so use the faithful stage path.
+        // during spectral acquisition, and the CPU route forces the PCHIP
+        // scanner LUT for the same condition. Corrected scans require the
+        // faithful per-stage path until the positive-film resident chain
+        // reaches parity (see the ScannerFilmPoints note above).
         if color_ref.has_remap() {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
@@ -603,6 +619,116 @@ impl Pipeline {
             None
         };
 
+        // Scanner readout interpretation (slide points, faithful B&W/slide
+        // luminance remap, negative-to-positive conversion, LabScan finish)
+        // runs on the host as an assembled fence on the acquisition buffer
+        // — after scanner lens blur and glare, before output gamut (the CPU
+        // scanning order; pipe architecture, capability class). The capture
+        // methods (separable/density/coupled) interpret a captured image;
+        // Digital Reference replaces the acquisition itself and still
+        // declines above.
+        let scan_output_space =
+            spektrafilm_math::colorspace::resolve(&self.params.io.output_color_space)
+                .expect("validated output colour space");
+        let scan_channel_density: &[[f64; 3]] = if self.params.io.scan_film {
+            &film_channel_density
+        } else {
+            &print_channel_density
+        };
+        let scan_base_density: &[f64] = if self.params.io.scan_film {
+            film_base_density
+        } else {
+            print_base_density
+        };
+        let n2p_requested = self.params.scanner.scan_output == "negative_to_positive";
+        // Only the capture methods (separable/coupled) interpret the
+        // acquired image; the density reading and Digital Reference replace
+        // the acquisition and decline in `resident_decision`.
+        let n2p_capture_method = n2p_requested
+            && matches!(
+                self.params.scanner.positive_interpretation,
+                crate::params::PositiveInterpretation::Separable
+                    | crate::params::PositiveInterpretation::Coupled
+            );
+        // `use_scanner_lut` selects the PCHIP scanner LUT acquisition on
+        // the CPU route; the resident chain runs the same CPU LUT as an
+        // assembled acquisition fence (pipe architecture, capability
+        // class). The luminance-remap condition never reaches here — it
+        // declines above until the positive-film chain reaches parity.
+        let scan_lut_requested = self.params.settings.use_scanner_lut;
+        let scan_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> =
+            if scan_lut_requested && scan_context.receiver.is_none() {
+                let profile = scan_profile;
+                let params = &self.params;
+                let color_ref = color_ref;
+                let channel_density = scan_channel_density;
+                let base_density = scan_base_density;
+                let defer_correction = !n2p_requested;
+                let closure: Box<dyn Fn(&ImageBuf) -> ImageBuf + '_> =
+                    Box::new(move |density: &ImageBuf| {
+                        crate::stages::scanning::scan_spectral_rgb(
+                            density,
+                            profile,
+                            params,
+                            &spektrafilm_gpu::cpu_backend::CpuBackend,
+                            color_ref,
+                            channel_density,
+                            base_density,
+                            scan_context,
+                            defer_correction,
+                        )
+                    });
+                Some(closure)
+            } else {
+                None
+            };
+        let scan_tail_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + '_>> =
+            if n2p_capture_method {
+                let profile = scan_profile;
+                let params = &self.params;
+                let color_ref = color_ref;
+                let channel_density = scan_channel_density;
+                let base_density = scan_base_density;
+                let n2p = n2p_requested;
+                let seed_backend = backend;
+                let closure: Box<dyn Fn(&ImageBuf) -> ImageBuf + '_> =
+                    Box::new(move |rgb: &ImageBuf| {
+                        let observation =
+                            crate::stages::StageObservation::new(seed_backend, "scan_tail");
+                        let observed = observation.backend(seed_backend);
+                        // Negative-to-positive binds its calibration
+                        // captures to the CPU backend, exactly like the
+                        // per-stage route.
+                        static CPU_BACKEND: spektrafilm_gpu::cpu_backend::CpuBackend =
+                            spektrafilm_gpu::cpu_backend::CpuBackend;
+                        let interp_backend: &dyn spektrafilm_gpu::ComputeBackend =
+                            if n2p { &CPU_BACKEND } else { observed };
+                        let mut image = rgb.clone();
+                        crate::stages::scanning::apply_scan_readout_interpretation(
+                            &mut image,
+                            profile,
+                            params,
+                            interp_backend,
+                            color_ref,
+                            channel_density,
+                            base_density,
+                            scan_context,
+                            scan_output_space,
+                            n2p,
+                            false,
+                            false,
+                        )
+                        .expect(
+                            "scanner readout calibration failed on the resident fence; the \
+                             per-stage route reports the same failure to the caller",
+                        );
+                        image
+                    });
+                Some(closure)
+            } else {
+                None
+            };
+
         let params = spektrafilm_gpu::FilmChainParams {
             image,
             front,
@@ -624,11 +750,12 @@ impl Pipeline {
             viewing_illuminant: viewing_illu,
             scan_normalization: scan_norm,
             scan_xyz_to_rgb: &scan_xyz_to_rgb,
-            scan_output_space: spektrafilm_math::colorspace::resolve(
-                &self.params.io.output_color_space,
-            )
-            .expect("validated output colour space"),
-            bw_xyz_remap: color_ref.xyz_remap(),
+            scan_output_space,
+            bw_xyz_remap: if scan_tail_cpu_stage.is_some() {
+                None
+            } else {
+                color_ref.xyz_remap()
+            },
             scan_film: self.params.io.scan_film,
             halation,
             dir_couplers,
@@ -641,6 +768,8 @@ impl Pipeline {
             highlight_boost,
             density_cpu_stage,
             dir_cpu_stage,
+            scan_tail_cpu_stage,
+            scan_acquisition_cpu_stage,
         };
         if !params.gpu_blurs_supported() {
             if let Some(context) = backend.observation_context() {
@@ -825,6 +954,9 @@ mod tests {
             pipeline.resident_decision(),
             ResidentDecision::UseResident
         ));
+        // Slide points stay on the faithful per-stage path until the
+        // positive-film resident chain reaches parity (the scan-tail fence
+        // machinery is in place; see `scan_tail_cpu_stage`).
         pipeline.params.scanner.black_point[0] = 0.1;
         let ResidentDecision::PerStage { reasons } = pipeline.resident_decision() else {
             panic!("active slide points must use the faithful per-stage route");
@@ -839,6 +971,120 @@ mod tests {
             pipeline.resident_decision(),
             ResidentDecision::UseResident
         ));
+    }
+
+    /// `use_scanner_lut` no longer demotes the route: the PCHIP scanner LUT
+    /// acquisition runs as an assembled CPU fence that replaces the GPU
+    /// spectral integration, so a LUT render matches the CPU reference
+    /// under the standard fence budget.
+    #[test]
+    fn scanner_lut_acquisition_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.settings.use_scanner_lut = true;
+        params.settings.use_enlarger_lut = false;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(mean < 5e-2, "scanner LUT fence mean divergence: {mean}");
+        assert!(
+            max_diff < 5e-1,
+            "scanner LUT fence max divergence: {max_diff}"
+        );
+    }
+
+    /// Negative-to-positive capture interpretation (separable inverse) runs
+    /// as the same scanner readout fence; the density reading and Digital
+    /// Reference still decline because they replace the acquisition.
+    #[test]
+    fn negative_to_positive_capture_fence_matches_cpu() {
+        use spektrafilm_math::precision::from_f64;
+
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > scan".into();
+        params.io.scan_film = true;
+        params.settings.use_scanner_lut = false;
+        params.settings.use_enlarger_lut = false;
+        params.camera.auto_exposure = false;
+        params.io.output_gamut_compress.algorithm = "off".into();
+        params.film_render.grain.active = false;
+        params.scanner.scan_output = "negative_to_positive".into();
+        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Separable;
+
+        let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let (w, h) = (16u32, 16u32);
+        let data: Vec<_> = (0..w * h * 3)
+            .map(|i| from_f64(0.05 + 0.5 * ((i * 37) % 256) as f64 / 255.0))
+            .collect();
+        let img = spektrafilm_math::image::ImageBuf::from_data(w, h, data);
+
+        let out_gpu = pipeline.process(img.clone(), &gpu).unwrap();
+        let out_cpu = pipeline
+            .process(img, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            .unwrap();
+
+        let mut max_diff = 0.0f64;
+        let mut sum = 0.0f64;
+        for (g, c) in out_gpu.data.iter().zip(out_cpu.data.iter()) {
+            let d = (*g as f64 - *c as f64).abs();
+            max_diff = max_diff.max(d);
+            sum += d;
+        }
+        let mean = sum / out_cpu.data.len() as f64;
+        assert!(
+            mean < 5e-2,
+            "negative-to-positive fence mean divergence: {mean}"
+        );
+        assert!(
+            max_diff < 5e-1,
+            "negative-to-positive fence max divergence: {max_diff}"
+        );
     }
 
     /// The default Spektra grain runs on the resident chain as an assembled
@@ -984,7 +1230,7 @@ mod tests {
 
     /// An explicitly requested GPU backend must fail at assembly when a
     /// capability-missing stage would otherwise demote the route to CPU
-    /// silently (pipe architecture fence policy). The scanner spectral LUT
+    /// silently (pipe architecture fence policy). The enlarger spectral LUT
     /// is still an unported capability, so requesting it with an explicit
     /// backend errors before output publication.
     #[test]
@@ -997,10 +1243,12 @@ mod tests {
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let mut params = RuntimeParams::default();
+        params.workflow.route = "input > film > print > scan".into();
+        params.io.scan_film = false;
         params.camera.auto_exposure = false;
         params.io.output_gamut_compress.algorithm = "off".into();
-        // Capability gap: the scanner spectral LUT has no GPU path yet.
-        params.settings.use_scanner_lut = true;
+        // Capability gap: the enlarger spectral LUT has no GPU path yet.
+        params.settings.use_enlarger_lut = true;
 
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
         let img = spektrafilm_math::image::ImageBuf::from_data(4, 4, vec![0.5_f32.into(); 48]);
@@ -1020,7 +1268,9 @@ mod tests {
         let mut params2 = RuntimeParams::default();
         params2.camera.auto_exposure = false;
         params2.io.output_gamut_compress.algorithm = "off".into();
-        params2.settings.use_scanner_lut = true;
+        params2.workflow.route = "input > film > print > scan".into();
+        params2.io.scan_film = false;
+        params2.settings.use_enlarger_lut = true;
         let pipeline2 = Pipeline::new_with_spectral(
             crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
             crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),

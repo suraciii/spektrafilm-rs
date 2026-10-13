@@ -371,6 +371,21 @@ pub struct FilmChainParams<'a> {
     /// the log-raw exposure buffers; returns the corrected density, which
     /// is written back in place.
     pub dir_cpu_stage: Option<Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage on the scanner readout buffer between glare and
+    /// output gamut compression — the assembled fence for the scanner
+    /// readout interpretation (slide points, the faithful luminance remap,
+    /// negative-to-positive conversion, and the LabScan finish; pipe
+    /// architecture, capability class). Receives the acquisition RGB and
+    /// returns the interpreted image, which is written back in place. When
+    /// present, `bw_xyz_remap` must be `None`: the fence owns the remap in
+    /// the faithful order, after optical blur and glare.
+    pub scan_tail_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage replacing the GPU scan spectral pass when the CPU
+    /// route would take the PCHIP scanner LUT acquisition (the slide
+    /// luminance remap or `use_scanner_lut`; pipe architecture, capability
+    /// class). Receives the film/print density and returns the captured
+    /// RGB, which is written to the acquisition buffer.
+    pub scan_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.
