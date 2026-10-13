@@ -43,6 +43,25 @@ public:
 struct FileCloser {
     void operator()(FILE* file) const { if (file) std::fclose(file); }
 };
+// OIIO probes every registered plugin when opening a file, including its
+// LibRaw-based reader. Probing bytes that are not a supported container can
+// corrupt the heap inside that plugin and abort the process, so the container
+// is identified from its own magic bytes before OIIO is asked to open it.
+bool supported_container(const std::string& path, std::string& reason) {
+    std::unique_ptr<FILE, FileCloser> file(OIIO::Filesystem::fopen(path.c_str(), "rb"));
+    if (!file) { reason = "Cannot open image file"; return false; }
+    unsigned char magic[16] = {0};
+    const auto read = std::fread(magic, 1, sizeof(magic), file.get());
+    if (read < 4) { reason = "File is too small to be an image"; return false; }
+    // JPEG, PNG, TIFF (both byte orders) and OpenEXR.
+    if (magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF) return true;
+    if (magic[0] == 0x89 && magic[1] == 'P' && magic[2] == 'N' && magic[3] == 'G') return true;
+    if ((magic[0] == 'I' && magic[1] == 'I' && magic[2] == 0x2A && magic[3] == 0x00) ||
+        (magic[0] == 'M' && magic[1] == 'M' && magic[2] == 0x00 && magic[3] == 0x2A)) return true;
+    if (magic[0] == 0x76 && magic[1] == 0x2F && magic[2] == 0x31 && magic[3] == 0x01) return true;
+    reason = "Unrecognized image container";
+    return false;
+}
 void lock_xmp_namespace(void* pointer, bool lock) {
     auto& mutex = *static_cast<std::mutex*>(pointer);
     if (lock) mutex.lock();
@@ -103,6 +122,11 @@ void* sf_metadata_read(const char* path) {
 }
 int sf_image_load(const char* path, unsigned* width, unsigned* height, double** samples, char** err) {
     try {
+        std::string container_reason;
+        if (!supported_container(path, container_reason)) {
+            error(err, container_reason);
+            return 0;
+        }
         auto input = OIIO::ImageInput::open(path);
         if (!input) { error(err, OIIO::geterror()); return 0; }
         auto spec = input->spec();
@@ -211,6 +235,11 @@ int sf_image_save(const char* path, unsigned width, unsigned height, const doubl
 }
 int sf_image_validate(const char* path, char** err) {
     try {
+        std::string container_reason;
+        if (!supported_container(path, container_reason)) {
+            error(err, container_reason);
+            return 0;
+        }
         auto input = OIIO::ImageInput::open(path);
         if (!input) { error(err, "Image container is unreadable after metadata failure"); return 0; }
         const auto spec = input->spec();

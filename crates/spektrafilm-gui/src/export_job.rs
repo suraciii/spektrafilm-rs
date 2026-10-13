@@ -32,6 +32,29 @@ pub(super) struct ExportJob {
         Option<Arc<Mutex<Option<spektrafilm_core::telemetry::RenderConfiguration>>>>,
     pub(super) backend: ExportBackend,
     pub(super) operation: Operation,
+    #[cfg(test)]
+    pub(super) pause: Option<Arc<ExportPause>>,
+}
+
+/// Armed only by cancellation acceptance tests, after the real writer has staged output.
+#[cfg(test)]
+pub(super) struct ExportPause {
+    pub(super) staged: mpsc::Sender<()>,
+    pub(super) released: (Mutex<bool>, parking_lot::Condvar),
+    pub(super) cancelled: (Mutex<bool>, parking_lot::Condvar),
+}
+
+#[cfg(test)]
+impl ExportPause {
+    pub(super) fn notify_cancelled(&self) {
+        *self.cancelled.0.lock() = true;
+        self.cancelled.1.notify_all();
+    }
+
+    pub(super) fn release(&self) {
+        *self.released.0.lock() = true;
+        self.released.1.notify_all();
+    }
 }
 
 pub(super) struct ExportResult {
@@ -61,12 +84,11 @@ impl App {
             options.backend.argument(),
             options.format.extension()
         );
-        let Some(chosen_path) = self
-            .file_dialog("export")
-            .add_filter(options.format.label(), options.format.extensions())
-            .set_file_name(&default_name)
-            .save_file()
-        else {
+        let Some(chosen_path) = self.chooser.save_file(
+            self.file_dialog("export")
+                .add_filter(options.format.label(), options.format.extensions())
+                .set_file_name(&default_name),
+        ) else {
             return;
         };
         self.start_export_to_path(ctx, options, &chosen_path);
@@ -90,8 +112,24 @@ impl App {
     pub(super) fn start_export_to_path(
         &mut self,
         ctx: &egui::Context,
+        options: ExportOptions,
+        chosen_path: &Path,
+    ) {
+        self.start_export_to_path_inner(
+            ctx,
+            options,
+            chosen_path,
+            #[cfg(test)]
+            None,
+        );
+    }
+
+    pub(super) fn start_export_to_path_inner(
+        &mut self,
+        ctx: &egui::Context,
         mut options: ExportOptions,
         chosen_path: &Path,
+        #[cfg(test)] pause: Option<Arc<ExportPause>>,
     ) {
         let Some(image) = self.export_input() else {
             return;
@@ -153,6 +191,8 @@ impl App {
         }
         let observation = attempt.context().clone();
         let worker_wait = operation.scope("worker_wait", ObservationKind::Phase, Purpose::Image);
+        #[cfg(test)]
+        let worker_pause = pause.clone();
         let handle = std::thread::Builder::new()
             .name("spektrafilm-export".into())
             .spawn(move || {
@@ -254,6 +294,14 @@ impl App {
                             IssueCategory::Writing,
                             IssueBoundary::FileWrite,
                         )?;
+                        #[cfg(test)]
+                        if let Some(pause) = &worker_pause {
+                            let _ = pause.staged.send(());
+                            let mut released = pause.released.0.lock();
+                            while !*released {
+                                pause.released.1.wait(&mut released);
+                            }
+                        }
                         if cancel_for_worker.load(Ordering::SeqCst) {
                             anyhow::bail!("cancelled");
                         }
@@ -292,6 +340,8 @@ impl App {
             backend: export_backend,
             operation,
             configuration,
+            #[cfg(test)]
+            pause,
         });
     }
 
@@ -301,6 +351,10 @@ impl App {
             return;
         };
         if !job.cancel.swap(true, Ordering::SeqCst) {
+            #[cfg(test)]
+            if let Some(pause) = &job.pause {
+                pause.notify_cancelled();
+            }
             self.status = "Cancelling export…".into();
         }
     }

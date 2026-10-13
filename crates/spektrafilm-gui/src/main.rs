@@ -22,6 +22,7 @@ use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_gpu::telemetry::{CollectionMode, ObservationKind, Purpose};
 use spektrafilm_math::image::ImageBuf;
 mod calibration;
+mod chooser;
 mod controls;
 mod diagnostics;
 mod display;
@@ -283,6 +284,12 @@ struct App {
     papers: Vec<ProfileEntry>,
     presets: presets::Browser,
     browser_state_path: PathBuf,
+    /// Directory owning startup defaults, remembered dialog directories and
+    /// the preset library. Production resolves it to the platform
+    /// configuration directory; acceptance supplies an isolated one.
+    config_directory: PathBuf,
+    /// Native chooser boundary; acceptance scripts its result.
+    chooser: chooser::Chooser,
     observed_browser_state: presets::BrowserState,
     browser_state_changed_at: Option<Instant>,
     film_name: String,
@@ -389,11 +396,18 @@ impl App {
         data_dir: PathBuf,
     ) -> Self {
         let explicit_state = initial_state.is_some();
+        // Startup state, remembered dialog directories and the preset library
+        // share one session directory; the browser state names it.
+        let config_directory = browser_state_path
+            .parent()
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
         let (films, papers) = scan_profiles(&data_dir);
         let mut startup_error = None;
         let gui_state = match initial_state {
             Some(path) => state::GuiState::load(&path),
-            None => state::startup(browser_state_path.parent().unwrap_or(Path::new("."))),
+            None => state::startup(&config_directory),
         }
         .and_then(|state| {
             // A startup state the runtime cannot accept (a removed workflow
@@ -427,12 +441,7 @@ impl App {
         let export_options = ExportOptions::from_state(&gui_state.sections);
         let mut presets = presets::Browser::new(
             &gui_state.sections,
-            spektrafilm_core::presets::PresetLibrary::new(
-                browser_state_path
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .join("presets"),
-            ),
+            spektrafilm_core::presets::PresetLibrary::new(config_directory.join("presets")),
         );
         match presets::BrowserState::restore(
             &gui_state.sections,
@@ -458,6 +467,8 @@ impl App {
             browser_state_changed_at: explicit_state.then(Instant::now),
             film_medium,
             browser_state_path,
+            config_directory,
+            chooser: chooser::Chooser::default(),
             presets,
             film_name,
             print_name,
@@ -832,12 +843,11 @@ impl App {
             }
             None => "output.jpg".into(),
         };
-        let Some(path) = self
-            .file_dialog("save_output")
-            .add_filter("Image", &image_io::container_extensions())
-            .set_file_name(&default_name)
-            .save_file()
-        else {
+        let Some(path) = self.chooser.save_file(
+            self.file_dialog("save_output")
+                .add_filter("Image", &image_io::container_extensions())
+                .set_file_name(&default_name),
+        ) else {
             return;
         };
         self.save_to_path(&path);

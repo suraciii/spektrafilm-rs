@@ -67,6 +67,16 @@ benchmark-test:
 gui-headless:
     cargo test --locked -p spektrafilm-gui --features precision-f64 headless::
 
+# Exercise the real App RAW import, Preview/Scan and Export with the pinned
+# Kodak DC50 fixture. The fixture is not redistributed; provide it explicitly.
+# A missing or mismatched fixture fails the run instead of skipping it.
+gui-raw:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fixture="${SPEKTRAFILM_GUI_RAW_FIXTURE:?Set SPEKTRAFILM_GUI_RAW_FIXTURE to the pinned Kodak DC50 KDC file}"
+    SPEKTRAFILM_GUI_RAW_FIXTURE="$fixture" \
+        cargo test --locked -p spektrafilm-gui --features precision-f64 headless::raw::
+
 # Render focused GUI layouts offscreen; requires a usable WGPU adapter.
 gui-layout:
     cargo test --locked -p spektrafilm-gui --features precision-f64,gui-snapshots layout_snapshots::
