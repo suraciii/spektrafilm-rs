@@ -2,9 +2,9 @@
 
 This document is the unified CLI design. Parameter composition and workflow behavior remain distinct sections of one implementation boundary.
 
-## Boundary
+## Parameter boundary
 
-The [parameter contract](spec.md#contract) owns syntax, composition, validation, and inspection behavior. The CLI adapter must parse options and choose the execution contract. Core must own preset resolution and effective parameter preparation. The adapter must not implement another film pipeline or duplicate stock calibration rules.
+The [parameter contract](spec.md#parameter-contract) owns syntax, composition, validation, and inspection behavior. The CLI adapter must parse options and choose the execution contract. Core must own preset resolution and effective parameter preparation. The adapter must not implement another film pipeline or duplicate stock calibration rules.
 
 A preset document, a sparse parameter file, and inline assignments must remain different source types. Sparse files and assignments must retain supplied leaf paths until resolution. Deserializing a file into default-filled controls before merge would discard the distinction between omission and explicit values.
 
@@ -34,7 +34,7 @@ Single-field and module discovery must use the same metadata records. Text outpu
 
 The dry-run report must combine the shared runtime result with the CLI's selected data location and RAW loading options. These adapter choices must remain outside runtime parameters. Raster input must not report RAW controls as active. Reporting the selected directory must not reselect it or load image pixels.
 
-The [workflow design](#boundaries) owns source-aware data selection, help, signed numeric argument handling, and corrective suggestions.
+The [workflow design](#workflow-boundary) owns source-aware data selection, help, signed numeric argument handling, and corrective suggestions.
 
 ## Existing contracts
 
@@ -70,7 +70,7 @@ Feedback and text presentation must build on the same prepared result after sour
 
 Implementation must run the existing formatting, relevant checks, and relevant tests defined in `Justfile`. It must additionally exercise the [real-entry-point scenarios](spec.md#image-processing-acceptance) and [publication failures](../photo-export/spec.md#publication-acceptance). The current f64-feature workspace tests alone do not establish default-f32 executable behavior. Baseline incidental-behavior tests for ambiguous route precedence must be removed or replaced by consumer-visible route invariants, not re-pinned to a new incidental order.
 
-## Boundaries
+## Workflow boundary
 
 The [workflow contract](spec.md#workflow-contract) is an adapter over the existing parameter, image-input, LUT-delivery, and telemetry capabilities. It must retain clap derive and existing command handlers. Parser replacement, shell completion, terminal prompts, and a replacement machine protocol do not belong to this change. Additive dry-run feedback and explicit text presentation belong to the [parameter contract](spec.md#discovery-and-dry-run).
 
@@ -106,7 +106,7 @@ Terminal LUT stage notices must be emitted at existing bake and QA boundaries. T
 
 ## Compatibility and verification
 
-Existing `--set` source ordering, sparse-file rules, legacy `--params` decoding, preset profile ownership, and numerical preparation must remain authoritative in the [parameter contract](spec.md#contract). This work must preserve GUI child-process, RenderRecipe, inspect, and parity contracts. Telemetry remains a separate report surface.
+Existing `--set` source ordering, sparse-file rules, legacy `--params` decoding, preset profile ownership, and numerical preparation must remain authoritative in the [parameter contract](spec.md#parameter-contract). This work must preserve GUI child-process, RenderRecipe, inspect, and parity contracts. Telemetry remains a separate report surface.
 
 Changing explicit invalid data paths from fallback to failure and moving LUT notices from stdout to stderr are intentional observable changes. Their help and documentation must describe the resulting behavior. Existing JSON defaults must not be changed according to terminal detection.
 

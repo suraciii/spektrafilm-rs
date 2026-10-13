@@ -2,7 +2,7 @@
 
 This document is the unified CLI specification. The parameter and workflow sections below form one contract; links between them use local anchors.
 
-## Contract
+## Parameter contract
 
 The `process` command must support [presets](../presets/spec.md), sparse parameter files, and individual parameter assignments through the unified `--set` option. Both `spektrafilm` and `spektrafilm-f64` must accept the same language. Backend policy and computation precision follow [GPU execution](../gpu-execution/spec.md#backend-selection).
 
@@ -288,7 +288,7 @@ Native writer behavior, including platform-specific failure and cancellation sce
 
 ## Workflow contract
 
-Both `spektrafilm` and `spektrafilm-f64` must expose the same command syntax and discovery behavior. Their computation precision contracts must remain distinct. The [parameter contract](#contract) owns preset selection, parameter overrides, field discovery, and dry run.
+Both `spektrafilm` and `spektrafilm-f64` must expose the same command syntax and discovery behavior. Their computation precision contracts must remain distinct. The [parameter contract](#parameter-contract) owns preset selection, parameter overrides, field discovery, and dry run.
 
 This capability owns help, version identification, data-directory selection, command status, and human feedback. It must not add shell completion, interactive prompts, a TUI, or a replacement argument parser. LUT publication and quality rules remain owned by [LUT delivery](../lut-delivery/spec.md).
 
