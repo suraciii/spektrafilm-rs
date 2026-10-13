@@ -1,5 +1,5 @@
 //! Stable runtime facade hiding the calibrated pipeline internals.
-use crate::params::{RuntimeParams, Tap};
+use crate::params::{RuntimeParams, SimulationEngine, Tap};
 use crate::pipeline::Pipeline;
 use crate::profile;
 pub use crate::stages::scanning::ScannerSetup;
@@ -60,6 +60,9 @@ pub fn digest_params_with_neutral(
     neutral: &crate::neutral_filters::NeutralFilters,
     mode: DigestMode,
 ) -> RuntimeParams {
+    if params.engine == SimulationEngine::Fotufilm {
+        return params;
+    }
     crate::params_builder::digest_params(
         params,
         film,
@@ -81,12 +84,18 @@ impl RuntimePhotoParams {
 
     /// Resolve user-facing parameters using the shared digest precedence.
     pub fn digested_params(&self, mode: DigestMode) -> Result<RuntimeParams, String> {
+        if self.params.engine == SimulationEngine::Fotufilm {
+            return Ok(self.params.clone());
+        }
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         Ok(self.digested_params_with_neutral(mode, &neutral))
     }
 
     /// Build a calibrated runtime after applying the selected digest policy.
     pub fn into_runtime(self, mode: DigestMode) -> Result<Runtime, String> {
+        if self.params.engine == SimulationEngine::Fotufilm {
+            return Runtime::from_params(self.params, &self.data_dir);
+        }
         let neutral = crate::neutral_filters::NeutralFilters::load(&self.data_dir)?;
         let params =
             digest_params_with_neutral(self.params, &self.film, &self.print, &neutral, mode);
@@ -103,7 +112,11 @@ impl RuntimePhotoParams {
             return self.into_runtime(mode);
         }
         let mut preparation = context.scope(
-            "spectral_prepare",
+            if self.params.engine == SimulationEngine::Fotufilm {
+                "fotufilm_source_prepare"
+            } else {
+                "spectral_prepare"
+            },
             ObservationKind::Stage,
             Purpose::Calibration,
         );
@@ -122,7 +135,8 @@ impl RuntimePhotoParams {
 
 #[derive(Clone)]
 pub struct Runtime {
-    pipeline: Pipeline,
+    pipeline: Option<Pipeline>,
+    fotufilm: Option<crate::fotufilm_engine::FotufilmEngine>,
     data_dir: std::path::PathBuf,
     timings: Arc<Mutex<Timings>>,
     last_elapsed_seconds: Arc<Mutex<Option<f64>>>,
@@ -133,7 +147,9 @@ impl Runtime {
     /// Bind a caller-owned cancellation signal while retaining prepared film grain caches.
     pub fn with_cancellation(mut self, cancellation: Option<Arc<AtomicBool>>) -> Self {
         self.cancellation = cancellation.clone();
-        self.pipeline = self.pipeline.with_cancellation(cancellation);
+        self.pipeline = self
+            .pipeline
+            .map(|pipeline| pipeline.with_cancellation(cancellation));
         self
     }
     pub fn new(
@@ -142,9 +158,13 @@ impl Runtime {
         params: RuntimeParams,
         data_dir: &Path,
     ) -> Result<Self, String> {
+        if params.engine == SimulationEngine::Fotufilm {
+            return Self::from_params(params, data_dir);
+        }
         let pipeline = Pipeline::new_with_spectral(film, print, params, data_dir)?;
         Ok(Self {
-            pipeline,
+            pipeline: Some(pipeline),
+            fotufilm: None,
             data_dir: data_dir.to_owned(),
             timings: Arc::new(Mutex::new(BTreeMap::new())),
             last_elapsed_seconds: Arc::new(Mutex::new(None)),
@@ -164,7 +184,11 @@ impl Runtime {
             return Self::new(film, print, params, data_dir);
         }
         let mut preparation = context.scope(
-            "spectral_prepare",
+            if params.engine == SimulationEngine::Fotufilm {
+                "fotufilm_source_prepare"
+            } else {
+                "spectral_prepare"
+            },
             ObservationKind::Stage,
             Purpose::Calibration,
         );
@@ -180,12 +204,47 @@ impl Runtime {
         result
     }
 
+    /// Construct the original engine without loading historical spectral profiles.
+    pub fn from_params(params: RuntimeParams, data_dir: &Path) -> Result<Self, String> {
+        if params.engine != SimulationEngine::Fotufilm {
+            return Err("SpektraFilm requires explicit film and print profiles".into());
+        }
+        Ok(Self {
+            pipeline: None,
+            fotufilm: Some(crate::fotufilm_engine::FotufilmEngine::new(
+                params, data_dir,
+            )?),
+            data_dir: data_dir.to_owned(),
+            timings: Arc::new(Mutex::new(BTreeMap::new())),
+            last_elapsed_seconds: Arc::new(Mutex::new(None)),
+            cancellation: None,
+        })
+    }
+
+    pub fn from_resolved(
+        resolved: crate::process_params::ResolvedProcessParams,
+        data_dir: &Path,
+    ) -> Result<Self, String> {
+        if resolved.params.engine == SimulationEngine::Fotufilm {
+            return Self::from_params(resolved.params, data_dir);
+        }
+        Self::new(
+            resolved.film.ok_or("missing SpektraFilm film profile")?,
+            resolved.print.ok_or("missing SpektraFilm print profile")?,
+            resolved.params,
+            data_dir,
+        )
+    }
+
     pub fn from_stocks(
         film: &str,
         print: &str,
         params: RuntimeParams,
         data_dir: &Path,
     ) -> Result<Self, String> {
+        if params.engine == SimulationEngine::Fotufilm {
+            return Self::from_params(params, data_dir);
+        }
         let film_profile = profile::load_profile_by_name(data_dir, film)
             .map_err(|e| format!("loading film profile {film:?}: {e}"))?;
         let print_profile = profile::load_profile_by_name(data_dir, print)
@@ -209,12 +268,17 @@ impl Runtime {
 
     /// Measure scanner placement on the full input before any preview geometry.
     pub fn prepare_scanner_setup(&self, full_input: &ImageBuf) -> Result<ScannerSetup, String> {
-        self.pipeline.prepare_scanner_setup(full_input)
+        match &self.pipeline {
+            Some(pipeline) => pipeline.prepare_scanner_setup(full_input),
+            None => Ok(ScannerSetup::IDENTITY),
+        }
     }
 
     /// Attach the immutable setup shared by renders of one source revision.
     pub fn with_scanner_setup(mut self, setup: ScannerSetup) -> Self {
-        self.pipeline = self.pipeline.with_scanner_setup(setup);
+        self.pipeline = self
+            .pipeline
+            .map(|pipeline| pipeline.with_scanner_setup(setup));
         self
     }
 
@@ -259,13 +323,15 @@ impl Runtime {
         backend: &dyn ComputeBackend,
         context: &ObservationContext,
     ) -> Result<Option<ImageBuf>, String> {
+        let Some(pipeline) = &self.pipeline else {
+            return Ok(None);
+        };
         if !context.enabled() {
-            return self.pipeline.process_resident_borrowed(image, backend);
+            return pipeline.process_resident_borrowed(image, backend);
         }
         let _span = context.span().map(|span| span.enter());
         let bound = spektrafilm_gpu::bind_backend(backend, context.clone());
-        self.pipeline
-            .process_resident_borrowed(image, bound.as_ref())
+        pipeline.process_resident_borrowed(image, bound.as_ref())
     }
 
     pub fn process_with_taps(
@@ -277,13 +343,20 @@ impl Runtime {
     ) -> Result<ImageBuf, String> {
         let started = Instant::now();
         let mut stage_timings = BTreeMap::new();
-        let result = self.pipeline.process_with_taps_timed(
-            image,
-            backend,
-            inject,
-            collect,
-            Some(&mut stage_timings),
-        );
+        let result = if let Some(engine) = &self.fotufilm {
+            engine.process(
+                image,
+                backend,
+                inject,
+                collect,
+                self.cancellation.as_deref(),
+            )
+        } else {
+            self.pipeline
+                .as_ref()
+                .expect("selected legacy pipeline")
+                .process_with_taps_timed(image, backend, inject, collect, Some(&mut stage_timings))
+        };
         self.record_elapsed(started, Some(stage_timings));
         result
     }
@@ -294,7 +367,27 @@ impl Runtime {
         max_size: u32,
         backend: &dyn ComputeBackend,
     ) -> Result<ImageBuf, String> {
-        if self.pipeline.has_scanner_setup() {
+        if self.fotufilm.is_some() {
+            let output = self.process(image, backend)?;
+            if self
+                .params()
+                .fotufilm
+                .native
+                .get("stage")
+                .and_then(serde_json::Value::as_str)
+                == Some("negative")
+                || self.params().taps.collect.as_deref() == Some("cmy_film")
+            {
+                return Ok(output);
+            }
+            return Ok(crate::params_builder::resize_for_preview(&output, max_size));
+        }
+        if self
+            .pipeline
+            .as_ref()
+            .expect("selected legacy pipeline")
+            .has_scanner_setup()
+        {
             let preview = crate::params_builder::resize_for_preview(&image, max_size);
             return self.process(preview, backend);
         }
@@ -316,15 +409,33 @@ impl Runtime {
 
     pub fn update(&mut self, params: RuntimeParams) -> Result<(), String> {
         params.validate()?;
+        if params.engine == SimulationEngine::Fotufilm {
+            self.fotufilm = Some(crate::fotufilm_engine::FotufilmEngine::new(
+                params,
+                &self.data_dir,
+            )?);
+            self.pipeline = None;
+            return Ok(());
+        }
+        if self.pipeline.is_none() {
+            return Err("switching to SpektraFilm requires explicit film and print profiles; construct a runtime from stocks".into());
+        }
         // Film-curve controls are absent from the spectral and calibration
         // control keys, so refresh the resolved film unconditionally and keep
         // the prepared grain cache and cancellation binding across the rebuild.
-        self.pipeline = self.pipeline.clone().rebuild_spectral(params)?;
+        self.pipeline = Some(
+            self.pipeline
+                .as_ref()
+                .expect("selected legacy pipeline")
+                .clone()
+                .rebuild_spectral(params)?,
+        );
+        self.fotufilm = None;
         Ok(())
     }
     /// Return a runtime with updated parameters while retaining the facade state.
     pub fn with_params(mut self, params: RuntimeParams) -> Result<Self, String> {
-        self.pipeline = self.pipeline.with_params(params)?;
+        self.update(params)?;
         Ok(self)
     }
 
@@ -337,8 +448,11 @@ impl Runtime {
     /// changes affect calibration state, so retaining derived values would
     /// produce stale output.
     pub fn soft_update_fields(&mut self, update: SoftUpdate) -> Result<(), String> {
+        if self.fotufilm.is_some() {
+            return Err("Fotufilm soft updates use fotufilm.controls/native via Runtime::update; legacy density and enlarger controls do not apply".into());
+        }
         if update.film_density_curves.is_none() && update.print_density_curves.is_none() {
-            let mut params = self.pipeline.params.clone();
+            let mut params = self.params().clone();
             if let Some(value) = update.exposure_compensation_ev {
                 params.camera.exposure_compensation_ev = value;
             }
@@ -356,7 +470,7 @@ impl Runtime {
             }
             return self.update(params);
         }
-        let mut params = self.pipeline.params.clone();
+        let mut params = self.params().clone();
         if let Some(value) = update.exposure_compensation_ev {
             params.camera.exposure_compensation_ev = value;
         }
@@ -373,28 +487,53 @@ impl Runtime {
             params.enlarger.y_filter_neutral = value;
         }
         params.validate()?;
-        let mut film = self.pipeline.film.clone();
-        let mut print = self.pipeline.print.clone();
+        let mut film = self
+            .pipeline
+            .as_ref()
+            .expect("selected legacy pipeline")
+            .film
+            .clone();
+        let mut print = self
+            .pipeline
+            .as_ref()
+            .expect("selected legacy pipeline")
+            .print
+            .clone();
         if let Some(curves) = update.film_density_curves {
             film.data.density_curves = curves;
         }
         if let Some(curves) = update.print_density_curves {
             print.data.density_curves = curves;
         }
-        self.pipeline = Pipeline::new_with_spectral(film, print, params, &self.data_dir)?
-            .with_cancellation(self.cancellation.clone());
+        self.pipeline = Some(
+            Pipeline::new_with_spectral(film, print, params, &self.data_dir)?
+                .with_cancellation(self.cancellation.clone()),
+        );
         Ok(())
     }
 
     pub fn params(&self) -> &RuntimeParams {
-        &self.pipeline.params
+        match &self.fotufilm {
+            Some(engine) => &engine.params,
+            None => {
+                &self
+                    .pipeline
+                    .as_ref()
+                    .expect("selected legacy pipeline")
+                    .params
+            }
+        }
     }
 
     pub fn telemetry_configuration(&self) -> crate::telemetry::RenderConfiguration {
+        if self.fotufilm.is_some() {
+            return crate::telemetry::RenderConfiguration::from_fotufilm(self.params());
+        }
+        let pipeline = self.pipeline.as_ref().expect("selected legacy pipeline");
         crate::telemetry::RenderConfiguration::from_runtime(
-            &self.pipeline.params,
-            &self.pipeline.film,
-            &self.pipeline.print,
+            &pipeline.params,
+            &pipeline.film,
+            &pipeline.print,
         )
     }
 
@@ -513,6 +652,18 @@ pub fn simulate_preview(
     digest_params_first: bool,
     print_timings: bool,
 ) -> Result<ImageBuf, String> {
+    if photo.params.engine == SimulationEngine::Fotufilm {
+        let runtime = photo.clone().into_runtime(if digest_params_first {
+            DigestMode::ApplyStockSpecifics
+        } else {
+            DigestMode::PreserveUserEdits
+        })?;
+        let output = runtime.process_configured_preview(image, backend);
+        if print_timings {
+            runtime.print_timings();
+        }
+        return output;
+    }
     if photo.params.scanner.auto_setup == crate::params::ScannerAutoSetup::Off {
         let preview = crate::params_builder::resize_for_preview(
             &image,
@@ -775,12 +926,22 @@ mod tests {
             Runtime::from_stocks("kodak_portra_400", "kodak_portra_endura", params, &dir).unwrap();
         let backend = CpuBackend;
         runtime.process(scanner_image(), &backend).unwrap();
-        let first = runtime.pipeline.fotufilm_bank_identity().unwrap();
+        let first = runtime
+            .pipeline
+            .as_ref()
+            .unwrap()
+            .fotufilm_bank_identity()
+            .unwrap();
         let mut updated = runtime.params().clone();
         updated.film_render.grain.fotufilm.amount = 2.0;
         runtime.update(updated).unwrap();
         runtime.process(scanner_image(), &backend).unwrap();
-        let second = runtime.pipeline.fotufilm_bank_identity().unwrap();
+        let second = runtime
+            .pipeline
+            .as_ref()
+            .unwrap()
+            .fotufilm_bank_identity()
+            .unwrap();
         assert_eq!(
             first, second,
             "amount-only update rebuilt the Fotufilm bank"

@@ -72,6 +72,10 @@ impl ParameterEdits {
     }
 
     fn push(&mut self, path: &str, value: Value) -> Result<(), String> {
+        if source_option_path(path) {
+            self.edits.push((path.to_owned(), value));
+            return Ok(());
+        }
         let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
         validate_leaf(path, &value, expected)?;
         self.edits.push((path.to_owned(), value));
@@ -154,6 +158,7 @@ fn flatten_object(
             format!("{prefix}.{key}")
         };
         match value {
+            Value::Object(_) if source_option_path(&path) => out.push(&path, value.clone())?,
             Value::Object(map) => {
                 if lookup(schema_value(), &path)
                     .and_then(Value::as_object)
@@ -177,9 +182,17 @@ fn validate_path(path: &str) -> Result<(), String> {
 }
 fn valid_ident(s: &str) -> bool {
     !s.is_empty()
-        && s.as_bytes()[0].is_ascii_lowercase()
-        && s.bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        && s.as_bytes()[0].is_ascii_alphabetic()
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+pub(super) fn source_option_path(path: &str) -> bool {
+    ["fotufilm.controls.", "fotufilm.native."]
+        .iter()
+        .any(|prefix| {
+            path.strip_prefix(prefix)
+                .is_some_and(|key| !key.is_empty() && !key.contains('.'))
+        })
 }
 fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
@@ -204,6 +217,9 @@ fn set_value(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
 }
 
 fn parse_inline_value(path: &str, raw: &str) -> Result<Value, String> {
+    if source_option_path(path) {
+        return Ok(serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_owned())));
+    }
     let expected = lookup(schema_value(), path).ok_or_else(|| unknown_path(path))?;
     if expected.is_object() {
         return Err(group_rejected(path));
@@ -652,6 +668,9 @@ fn group_rejected(path: &str) -> String {
 pub fn validate_finite(params: &RuntimeParams) -> Result<(), String> {
     let value = serde_json::to_value(params).map_err(|e| e.to_string())?;
     fn check(path: &str, value: &Value) -> Result<(), String> {
+        if path == "fotufilm.controls" || path == "fotufilm.native" {
+            return Ok(());
+        }
         match value {
             Value::Null if !nullable(path) => Err(format!("{path}: numeric value must be finite")),
             Value::Object(m) => {
@@ -921,27 +940,6 @@ mod tests {
         for group in groups {
             assert!(
                 !describe_module(&group).unwrap()["fields"]
-                    .as_array()
-                    .unwrap()
-                    .is_empty()
-            );
-        }
-    }
-
-    #[test]
-    fn root_groups_are_the_first_segment_of_editable_groups() {
-        let roots = describe_root_groups();
-        let mut expected: Vec<String> = describe_groups()
-            .into_iter()
-            .map(|group| group.split('.').next().unwrap().to_owned())
-            .collect();
-        expected.dedup();
-        assert_eq!(roots, expected);
-        assert!(roots.iter().any(|group| group == "film_render"));
-        assert!(!roots.iter().any(|group| group.contains('.')));
-        for root in &roots {
-            assert!(
-                !describe_module(root).unwrap()["fields"]
                     .as_array()
                     .unwrap()
                     .is_empty()

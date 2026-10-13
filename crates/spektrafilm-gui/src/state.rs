@@ -293,6 +293,12 @@ impl GuiState {
         let mut runtime = serde_json::to_value(RuntimeParams::default())?;
         if let Some(extra) = s["rust"].get("runtime") {
             merge(&mut runtime, extra);
+            // Original source controls are dynamic maps, not known SpektraFilm leaves.
+            if let Some(request) = extra.get("fotufilm") {
+                let request: spektrafilm_fotufilm::Request =
+                    serde_json::from_value(request.clone())?;
+                runtime["fotufilm"] = serde_json::to_value(request)?;
+            }
         }
         for group in ["camera", "scanner"] {
             merge(&mut runtime[group], &s[group]);
@@ -346,6 +352,11 @@ impl GuiState {
         }
         let mut params: RuntimeParams =
             serde_json::from_value(runtime).context("Invalid GUI control value")?;
+        if let Some(seed) = s["rust"].get("simulation_seed") {
+            params.random_seed = seed
+                .as_u64()
+                .context("Invalid simulation seed: expected UInt64")?;
+        }
         if let Some(preparation) = s["rust"].get("render_preparation") {
             let preparation = serde_json::from_value(preparation.clone())
                 .context("Invalid render preparation ownership")?;
@@ -527,6 +538,7 @@ impl GuiState {
             }
         }
         s["rust"]["version"] = json!(1);
+        s["rust"]["simulation_seed"] = json!(params.random_seed);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(
             spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),

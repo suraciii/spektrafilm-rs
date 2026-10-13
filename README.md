@@ -19,6 +19,7 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 - **Magazine print color.** The optional finishing treatment applies a bundled RGB appearance to any supported base workflow — a scanned negative or a finished RGB input — after the base workflow and its scanner-domain effects: warm paper/highlights, compressed print contrast, cyan-biased shadows and smooth chroma compression. `magazine_print_color.active` and one appearance Strength from 0 to 1 enable it independently of the base workflow; there is no magazine route. It remains RGB-only and does not generate CMYK or halftone output.
 - **Camera taking filters.** The measured Hoya X0, X1, Y2, YA3 and R1 transmission curves are selectable in runtime params and the GUI; changing the filter invalidates the sensitivity-dependent spectral cache.
 - **Selectable grain engines.** Spektra is the default upstream experimental original. Procedural is derived from Dehancer and provides Analogue/Noise grain with twelve format/speed profiles, Size, Amount, Shadows, Midtones, Highlights, Chroma and Film Resolution controls; pixel parity with Dehancer is not claimed. Dye is a self-developed experimental film-coordinate dye field, opt-in, controlled by `v3_dye_support_um` and `v3_event_area_um2`. Fotufilm Film is an adapted appearance population model fitted to resolved film curves, opt-in, controlled by `film_render.grain.fotufilm.*`. It resolves on the CPU, prepares its population before the first readout of a given population identity, and reuses the prepared bank for later renders of that identity.
+- **Original Fotufilm engine.** `engine=fotufilm` selects the complete pinned original model, not the adapted grain appearance inside SpektraFilm. Original stock, Standard/Film grain, native optics, layered transport, print or scan medium, and source controls run through the original preparation and Halide CPU graph. This engine retains CPU f32 arithmetic even in `spektrafilm-f64`. See the [source-engine contract](specs/film-chain/spec.md#original-fotufilm-engine).
 - **Grain Dye experiments.** Opt-in formed-cell spectral readout and compensated fixed/two-class/Gamma event-mass comparisons are available through diagnostic environment selectors. See [experiment scope](specs/film-grain/v3/experiments.md); the default field and readout remain unchanged.
 
 `film_render.grain.engine` accepts `spektra`, `procedural`, `dye`, or `fotufilm`. Replace explicit old selectors `v1`, `v2`, and `v3` with these values respectively; old selectors are invalid. Existing `v2_*` and `v3_*` control keys, internal module paths, and diagnostic environment variable names remain unchanged.
@@ -26,6 +27,12 @@ The spectral chain (RGB → film dye density → enlarger illuminant → print p
 ## Build
 
 Requires Rust stable (≥ 1.88), a C++17 compiler, pkg-config, OpenImageIO and Exiv2 development libraries. The locked `image` dependency requires Rust 1.88. Image I/O uses the same native libraries as Python 0.3.4, preserving float samples and EXIF/IPTC/XMP. On Debian/Ubuntu install `libopenimageio-dev libexiv2-dev libopenblas-dev`; Linux links the installed OpenBLAS library. On macOS use `brew install openimageio exiv2 pkg-config`. Windows packaging uses a matching MSYS2 UCRT64 native toolchain and pkg-config dependencies. The package scripts collect native runtime libraries; the build fails explicitly when required development libraries are absent.
+
+The original Fotufilm CPU engine also requires official Halide 21 headers and its shared library. Run `just install-halide /path/to/halide-21` on Linux or macOS, then set `HALIDE_ROOT` to that prefix. The installer pins Halide 21.0.0 release archives and SHA256 digests from the [official release](https://github.com/halide/Halide/releases/tag/v21.0.0). Add its `lib64` directory to `LD_LIBRARY_PATH` on Linux or its `lib` directory to `DYLD_LIBRARY_PATH` on macOS for local unbundled execution. A Halide 21 `Halide.pc` or `halide.pc` may provide the headers and library instead. `HALIDE_LIB_DIR` overrides the library directory.
+
+On Windows, run `scripts/install_halide.ps1 -Prefix C:\deps\halide-21` and set `HALIDE_ROOT`. GNU/UCRT Rust builds retain the existing native dependencies. The Fotufilm crate alone compiles its C++ graph with `HALIDE_CXX=clang-cl` and links a C ABI DLL with `HALIDE_LINKER` pointing to the Visual Studio `link.exe`. Run from an x64 Visual Studio developer environment with LLVM `clang-cl` and MSYS2 `dlltool` on `PATH`. Packaging requires `VCToolsRedistDir` and includes the MSVC runtime, official Halide DLL and notices. The release workflow must establish successful linking and relocated execution on Windows; Linux evidence does not establish Windows compatibility.
+
+All platform packages copy the full Fotufilm preparation module, prior, stocks and notices through the existing `data/` bundle. They include Halide's recursive shared-library dependencies and official license text. Users do not need Swift. Halide compiles an original CPU graph on first use; cold JIT compilation cannot be interrupted. Cancellation is checked between spatially complete native strip calls and prevents canceled output publication.
 
 The default and integration branch is `main-0.3.4`. Open pull requests against it; merging requires the `PR lightweight` check and an up-to-date head branch. Refresh a stale branch by merging `origin/main-0.3.4` into it and pushing; the `PR lightweight` check runs again on the refreshed head. Inspect a run with `gh run view <run-id>` and its per-step timings with `gh api repos/suraciii/spektrafilm-rs/actions/jobs/<job-id> --jq '.steps[] | "\(.name): \(.started_at) -> \(.completed_at)"'`. PR CI runs `just ci-pr` through `just verify-pr`. Pushes to `main-0.3.4` and manual dispatch run `Main full verification` through `just verify`. The [test architecture](eng/testing.md) defines layer responsibilities, test design rules, and the gate cost budgets. Main verification retains workspace build artifacts and dependencies in commit-keyed caches for PR reuse. An active main verification is not canceled by a newer push; pending runs coalesce to the newest commit.
 
@@ -193,6 +200,35 @@ executable.
 # List available film + paper profiles
 ./target/release/spektrafilm list-profiles --data-dir data
 ```
+
+### Original Fotufilm simulation
+
+The GUI's **Simulation engine** selector chooses Fotufilm independently of the SpektraFilm grain selector. It loads original stock-specific controls and exposes the remaining original native options through a JSON editor. Preview executes the full source simulation before resizing its RGB result. Scan and Export use the same model. Cold graph compilation and Film population preparation can delay the first render.
+
+Use release builds when exercising the original engine. Its WASI preparation runs in the host interpreter; unoptimized debug execution can exceed GUI worker acceptance deadlines. `just gui-headless` runs the optimized host while retaining the original source arithmetic.
+
+```bash
+# Inspect original controls, stock applicability, native options, and defaults.
+./target/release/spektrafilm describe --engine fotufilm --data-dir data
+
+# Complete original simulation; raster input declares its color contract.
+./target/release/spektrafilm process input.png -o output.png \
+    --engine fotufilm --fotufilm-stock portra400 \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --backend cpu --seed 1179208781 --data-dir data
+
+# Select the original crystal-population grain model.
+./target/release/spektrafilm process input.png -o film.png \
+    --engine fotufilm --fotufilm-stock portra400 \
+    --fotufilm-native 'grainModel="film"' \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --backend cpu --seed 1179208781 --data-dir data
+```
+
+Native `stage="negative"` returns gross C/M/Y optical record densities. Save and Export require unencoded 32-bit TIFF or EXR. The viewer shows a labeled transmission preview without changing retained density samples. Density output preserves source geometry; crop and resize belong after the print or RGB readout stage. Source stages and precision follow the [film-chain contract](specs/film-chain/spec.md#original-fotufilm-engine).
+
+To rebuild the bundled preparation module, run `scripts/build_fotufilm_preparation.sh` with the official Swift 6.4.0 compiler, its matching WASI SDK, and `llvm-objcopy` installed. Set `FOTUFILM_SWIFT_COMPILER` or `FOTUFILM_WASM_OBJCOPY` when those binaries are not on `PATH`, and `FOTUFILM_PREPARATION_BUILD_DIR` to keep build artifacts outside the checkout. The source package and manifests are in `crates/spektrafilm-fotufilm/vendor/fotufilm/preparation/`. Application users need neither Swift nor the SDK.
+
 
 `cinestill_800t_cs41_approx` is an experimental approximation of CineStill 800T in Cs41. It fits the manufacturer's [RGB sensitometry chart](https://cinestillfilm.com/blogs/news/what-makes-800t-the-original-and-only-true-800-speed-tungsten-balanced-film-for-still-photography) through the inherited Vision3 500T dye spectra and a fitted base-density correction. The [official Cs2 page](https://cinestillfilm.com/products/cs2-cine-simplified-ecn-2-bath-kit-low-contrast-motion-picture-color-negatives-for-ecp-scanning) identifies the source experiment as 21-step sensitometry. The chart specifies 3200 K tungsten, 1/50 s and a log-exposure reference of -1.535. Its density measurement standard and actual development time and temperature are unknown; Status M is a fitting assumption. The chart curves are anchored to its 3200 K exposure light: each layer curve is shifted by the layer log exposure of a 3200 K gray relative to the profile reference `T` (R −0.057, G 0, B +0.092), so a 3200 K gray develops to the chart's neutral densities within 0.0002.
 

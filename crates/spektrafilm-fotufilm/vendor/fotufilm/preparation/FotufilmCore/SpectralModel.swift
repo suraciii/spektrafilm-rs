@@ -1,0 +1,3418 @@
+import Foundation
+
+/// Image-dye families used by the wavelength-domain output model.
+public enum FilmDyeFamily: String, Codable, Sendable {
+    case kodakNegative
+    case fujiNegative
+    case motionNegative
+    case kodachrome
+    case monochrome
+}
+
+/// How a negative is shown when the reader asks for the film instead of the print.
+public enum NegativeViewing: String, Sendable, CaseIterable, Identifiable {
+    /// The lamp set so the clear film base sits just under white, at
+    /// `SpectralRuntime.lightBoxBaseLevel` in its brightest channel. The base keeps its colour and
+    /// the image reads below it.
+    case lightBox = "light-box"
+    /// Normalised on the film's own D-min, so the base reads white and what
+    /// is left is only the image's inversion.
+    case scanner
+
+    public var id: String { rawValue }
+
+    public var name: String {
+        switch self {
+        case .lightBox: "Light Box"
+        case .scanner: "Scanner"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .lightBox: "Keeps the film’s orange base, lit just under white."
+        case .scanner: "Divides the film base out, so clear film reads white."
+        }
+    }
+
+    /// A small stable integer for cache identities.
+    var ordinal: UInt64 {
+        switch self {
+        case .lightBox: 0
+        case .scanner: 1
+        }
+    }
+}
+
+/// Wavelength-domain description of one film's capture layers and image dyes.
+public struct FilmSpectralProfile: Sendable {
+    public var layerSensitivity: [[Float]]
+    public var imageDyeDensity: [[Float]]
+    /// Optional whole-film minimum spectrum, in diffuse optical density. With this present,
+    /// image dyes multiply density above each characteristic record's D-min. They need not
+    /// form a partition of unity. Without it, the historical total-record model is retained.
+    public var minimumDensity: [Float]?
+
+    /// How many capture layers this profile carries. Separate from the dye count on purpose:
+    /// a film senses with as many layers as it is coated with and forms three dyes regardless.
+    public var captureLayerCount: Int { layerSensitivity.count }
+
+    public init(layerSensitivity: [[Float]], imageDyeDensity: [[Float]],
+                minimumDensity: [Float]? = nil) {
+        // The layer bound is the renderer's, not film's — see
+        // `FilmStock.supportedCaptureLayerCounts`, which is where the reason lives.
+        // `FilmStockDefinition.validate()` reports a stock that exceeds it as a
+        // named failure; this precondition is the backstop for profiles built in code.
+        precondition(FilmStock.supportedCaptureLayerCounts.contains(layerSensitivity.count),
+                     "\(layerSensitivity.count) capture layers; this build renders "
+                     + "\(FilmStock.supportedCaptureLayerCounts)")
+        precondition(imageDyeDensity.count == FilmStock.dyeCount)
+        precondition(layerSensitivity.allSatisfy { $0.count == SpectralGrid.count })
+        precondition(imageDyeDensity.allSatisfy { $0.count == SpectralGrid.count })
+        precondition(minimumDensity == nil || minimumDensity!.count == SpectralGrid.count)
+        precondition(minimumDensity?.allSatisfy { $0.isFinite && $0 >= 0 } ?? true)
+        self.layerSensitivity = layerSensitivity
+        self.imageDyeDensity = imageDyeDensity
+        self.minimumDensity = minimumDensity
+    }
+
+    /// Manufacturer-graph sensitivity samples on SpectralGrid's wavelength axis.
+    public static func measured(
+        layerSensitivity: [[Float]],
+        dyeFamily: FilmDyeFamily
+    ) -> FilmSpectralProfile {
+        precondition(FilmStock.supportedCaptureLayerCounts.contains(layerSensitivity.count))
+        precondition(layerSensitivity.allSatisfy { $0.count == SpectralGrid.count })
+        let continued = layerSensitivity.map(SpectralGrid.continuedTails)
+        return FilmSpectralProfile(
+            layerSensitivity: SpectralGrid.normalizeSensitivities(continued),
+            imageDyeDensity: SpectralGrid.dyes(family: dyeFamily)
+        )
+    }
+
+    /// Smooth compatibility approximations for custom profiles without a
+    /// retained manufacturer trace.
+    public static func color(
+        peaksNM: [Float],
+        widthsNM: [Float] = [58, 46, 42],
+        dyeFamily: FilmDyeFamily
+    ) -> FilmSpectralProfile {
+        precondition(peaksNM.count == 3 && widthsNM.count == 3)
+        let layers = (0..<3).map { layer in
+            let sigmas = colorLayerSigmas(layer: layer, widthNM: widthsNM[layer])
+            return SpectralGrid.asymmetricGaussian(
+                peak: peaksNM[layer],
+                leftSigma: sigmas.left,
+                rightSigma: sigmas.right
+            )
+        }
+        return FilmSpectralProfile(
+            layerSensitivity: SpectralGrid.normalizeSensitivities(layers),
+            imageDyeDensity: SpectralGrid.dyes(family: dyeFamily)
+        )
+    }
+
+    /// How wide one layer's lobe stands on each side of its peak, for a stated bandwidth.
+    ///
+    /// A red layer is the lopsided one: its sensitising-dye response overlaps the orange band on
+    /// the way to its peak, then the emulsion becomes blind quickly past the visible-red edge.
+    /// This is public so that an editor showing the shape shows the shape the film will really
+    /// have rather than a drawing that resembles it.
+    public static func colorLayerSigmas(layer: Int,
+                                        widthNM: Float) -> (left: Float, right: Float) {
+        (left: widthNM * (layer == 0 ? 0.54 : 0.62),
+         right: widthNM * (layer == 0 ? 0.32 : (layer == 2 ? 0.62 : 0.78)))
+    }
+
+    /// One layer's sensitivity at one wavelength, on its own peak of 1 — the same lobe `color`
+    /// builds from, before the three are normalised together.
+    public static func colorLayerSensitivity(layer: Int, peakNM: Float, widthNM: Float,
+                                             atNM wavelength: Float) -> Float {
+        let sigmas = colorLayerSigmas(layer: layer, widthNM: widthNM)
+        let sigma = wavelength < peakNM ? sigmas.left : sigmas.right
+        let x = (wavelength - peakNM) / max(sigma, 1)
+        return exp(-0.5 * x * x)
+    }
+
+    /// Where a panchromatic emulsion's three bands sit, and how wide they are. The weights are
+    /// the film's own; these are not.
+    public static let monochromeBandsNM: (centres: [Float], widths: [Float]) =
+        (centres: [610, 545, 445], widths: [68, 62, 58])
+
+    /// Panchromatic silver response constructed from broad spectral bands.
+    public static func monochrome(rgbWeights: [Float]) -> FilmSpectralProfile {
+        precondition(rgbWeights.count == 3)
+        let centers = monochromeBandsNM.centres
+        let widths = monochromeBandsNM.widths
+        var response = [Float](repeating: 0, count: SpectralGrid.count)
+        for component in 0..<3 {
+            let band = SpectralGrid.asymmetricGaussian(
+                peak: centers[component], leftSigma: widths[component],
+                rightSigma: widths[component])
+            for i in response.indices { response[i] += rgbWeights[component] * band[i] }
+        }
+        let normalized = SpectralGrid.normalizeSensitivities([response, response, response])
+        return FilmSpectralProfile(
+            layerSensitivity: normalized,
+            imageDyeDensity: SpectralGrid.dyes(family: .monochrome)
+        )
+    }
+
+    /// Compatibility profile for custom stocks created with the historical
+    /// RGB sensitivity matrix but no explicit spectral data.
+    static func approximation(sensitivity: [[Float]], monochrome: Bool,
+                              reversal: Bool) -> FilmSpectralProfile {
+        if monochrome {
+            return .monochrome(rgbWeights: sensitivity[0])
+        }
+        return .color(peaksNM: [650, 550, 450],
+                      dyeFamily: reversal ? .kodachrome : .kodakNegative)
+    }
+
+    var signature: UInt64 {
+        var h: UInt64 = 0xcbf29ce484222325
+        for v in layerSensitivity.joined() {
+            h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3
+        }
+        for v in imageDyeDensity.joined() {
+            h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3
+        }
+        if let minimumDensity {
+            h = (h ^ 0x62617365) &* 0x100000001b3
+            for v in minimumDensity { h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3 }
+        }
+        return h
+    }
+}
+
+/// A compact three-channel 3D lookup table.
+public struct SpectralLUT: Sendable {
+    public let dimension: Int
+    /// RGBA-interleaved for direct upload into an rgba32Float 3D Metal texture.
+    public let values: [Float]
+
+    public init(dimension: Int, values: [Float]) {
+        precondition(values.count == dimension * dimension * dimension * 4)
+        self.dimension = dimension
+        self.values = values
+    }
+
+    @inlinable
+    public func sample(_ p: SIMD3<Float>) -> SIMD3<Float> {
+        values.withUnsafeBufferPointer { Self.sample(p, values: $0.baseAddress!,
+                                                     dimension: dimension) }
+    }
+
+    @inlinable
+    public static func sample(_ p: SIMD3<Float>, values: UnsafePointer<Float>,
+                              dimension d: Int) -> SIMD3<Float> {
+        // Video decoders and third-party hosts can emit NaN/inf on a failed frame. Keep the LUT's
+        // unchecked pointer arithmetic behind a finite-coordinate boundary so malformed input can
+        // fail at the adapter without first trapping inside a host process.
+        guard d >= 2, p.x.isFinite, p.y.isFinite, p.z.isFinite else { return .zero }
+        let q = SIMD3<Float>(
+            clamp(p.x, 0, 1) * Float(d - 1),
+            clamp(p.y, 0, 1) * Float(d - 1),
+            clamp(p.z, 0, 1) * Float(d - 1))
+        let x0 = min(Int(q.x), d - 2), y0 = min(Int(q.y), d - 2)
+        let z0 = min(Int(q.z), d - 2)
+        let f = SIMD3<Float>(q.x - Float(x0), q.y - Float(y0), q.z - Float(z0))
+
+        @inline(__always)
+        func load(_ x: Int, _ y: Int, _ z: Int) -> SIMD3<Float> {
+            // One 16-byte read: the table is RGBA-interleaved, so a corner is contiguous and
+            // its offset is a multiple of four floats. Three scalar reads fetch the same bytes
+            // through three instructions.
+            let i = ((z * d + y) * d + x) * 4
+            let rgba = UnsafeRawPointer(values + i).loadUnaligned(as: SIMD4<Float>.self)
+            return SIMD3(rgba.x, rgba.y, rgba.z)
+        }
+        // Only the corners the chosen tetrahedron actually interpolates are read. Every branch
+        // below touches four of the eight, and two of those four — the cube's near and far
+        // corners — are common to all six, so they are the only ones fetched up front. Reading
+        // all eight eagerly doubles the memory this function moves, and at 4 MB the table is far
+        // too big to be sitting in cache waiting.
+        let c000 = load(x0, y0, z0)
+        let c111 = load(x0 + 1, y0 + 1, z0 + 1)
+        if f.x >= f.y {
+            if f.y >= f.z {
+                let c100 = load(x0 + 1, y0, z0), c110 = load(x0 + 1, y0 + 1, z0)
+                return c000 + f.x * (c100 - c000) + f.y * (c110 - c100)
+                     + f.z * (c111 - c110)
+            } else if f.x >= f.z {
+                let c100 = load(x0 + 1, y0, z0), c101 = load(x0 + 1, y0, z0 + 1)
+                return c000 + f.x * (c100 - c000) + f.z * (c101 - c100)
+                     + f.y * (c111 - c101)
+            } else {
+                let c001 = load(x0, y0, z0 + 1), c101 = load(x0 + 1, y0, z0 + 1)
+                return c000 + f.z * (c001 - c000) + f.x * (c101 - c001)
+                     + f.y * (c111 - c101)
+            }
+        } else if f.x >= f.z {
+            let c010 = load(x0, y0 + 1, z0), c110 = load(x0 + 1, y0 + 1, z0)
+            return c000 + f.y * (c010 - c000) + f.x * (c110 - c010)
+                 + f.z * (c111 - c110)
+        } else if f.y >= f.z {
+            let c010 = load(x0, y0 + 1, z0), c011 = load(x0, y0 + 1, z0 + 1)
+            return c000 + f.y * (c010 - c000) + f.z * (c011 - c010)
+                 + f.x * (c111 - c011)
+        } else {
+            let c001 = load(x0, y0, z0 + 1), c011 = load(x0, y0 + 1, z0 + 1)
+            return c000 + f.z * (c001 - c000) + f.y * (c011 - c001)
+                 + f.x * (c111 - c011)
+        }
+    }
+}
+
+/// Runtime tables consumed by both the Swift reference path and Metal.
+public struct SpectralPipelineTables: Sendable {
+    /// Exposure-domain scene light -> normalized film-layer exposure. The table is indexed in the
+    /// locus-enclosing basis returned by `ColorScience.linearRec2020ToExposureDomain`; callers that
+    /// sample it directly must convert scene-linear Rec.2020 into that basis first.
+    public let exposure: SpectralLUT
+    /// Negative: density -> relative log paper exposures.
+    public let filmOutput: SpectralLUT
+    /// Paper layer density -> display-linear RGB; nil when film is viewed directly.
+    public let paperOutput: SpectralLUT?
+
+    public init(exposure: SpectralLUT, filmOutput: SpectralLUT, paperOutput: SpectralLUT?) {
+        self.exposure = exposure
+        self.filmOutput = filmOutput
+        self.paperOutput = paperOutput
+    }
+}
+
+/// Builds and caches the LUT acceleration of the wavelength-domain model.
+public enum SpectralRuntime {
+    public static let lutDimension = 33
+    private static let lock = NSCondition()
+    /// Bounded, because the key is a hash of the stock's own curves and every custom-film slider
+    /// position, aged year and viewing lamp is a stock of its own: a session that keeps every
+    /// table set it ever built holds a few megabytes per slider tick until the process is killed
+    /// for it. The limit is a working set — the pack on the strip, the medium beside it — and a
+    /// miss rebuilds what a drag asked for a hundred positions ago.
+    nonisolated(unsafe) private static var cache =
+        BoundedCache<UInt64, SpectralPipelineTables>(limit: 40)
+    /// Keys a thread is building right now.
+    nonisolated(unsafe) private static var building: Set<UInt64> = []
+    /// The negative-viewing tables, on their own lock.
+    private static let negativeLock = NSLock()
+    nonisolated(unsafe) private static var negativeCache =
+        BoundedCache<UInt64, SpectralLUT>(limit: 16)
+    /// The solved printing balance, on its own lock. `printingContrastScale` is read once per
+    /// engine invocation.
+    static let balanceLock = NSLock()
+    nonisolated(unsafe) static var balanceCache = BoundedCache<UInt64, [Float]>(limit: 256)
+    /// A positive's Digital Reference read, on the balance lock: the levels ask for it once per
+    /// invocation and once per metered frame.
+    nonisolated(unsafe) static var positiveReadCache =
+        BoundedCache<UInt64, PositiveScreenRead>(limit: 64)
+
+    /// Diagnostic: what the process is holding in table sets — how many, and how many bytes of
+    /// LUT they come to. Read by the editor soak to watch the cache grow with a session.
+    public static var retainedTables: (sets: Int, bytes: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        let bytes = cache.allValues.reduce(0) { total, tables in
+            total + (tables.exposure.values.count + tables.filmOutput.values.count
+                     + (tables.paperOutput?.values.count ?? 0)) * MemoryLayout<Float>.size
+        }
+        return (cache.count, bytes)
+    }
+
+    /// Bucket width for print-viewing temperatures, in kelvin — the same coarseness the
+    /// scene-light tables blend on, so a whole viewing session shares one paper table.
+    static let printLightBucketKelvin: Float = 100
+
+    /// The print-viewing gate. Nil or a non-positive temperature keeps the medium's reference
+    /// illuminant. Named standards retain their specified temperatures; other values are
+    /// quantized to `printLightBucketKelvin` so a viewing session shares one table.
+    public static func printLightKelvin(_ cct: Float?) -> Float? {
+        guard let cct, cct.isFinite, cct > 0 else { return nil }
+        // Bound the input before quantizing: very low blackbody temperatures underflow,
+        // and rounding a positive temperature to zero aliases the reference-light key.
+        let bounded = clamp(cct, 1000, 25000)
+        for standard: Float in [2856, 5003, 6504]
+            where abs(bounded - standard) < printLightBucketKelvin / 2 {
+            return standard
+        }
+        let bucket = (bounded / printLightBucketKelvin).rounded() * printLightBucketKelvin
+        // Canonicalization must be idempotent: 2920 -> 2900 -> 2856 used to build
+        // one spectrum under another spectrum's cache key. Snap the rounded bucket too.
+        for standard: Float in [2856, 5003, 6504]
+            where abs(bucket - standard) < printLightBucketKelvin / 2 {
+            return standard
+        }
+        return bucket
+    }
+
+    /// The lamp the finished print hangs under. CIE practice: the daylight series where it
+    /// is defined (4000 K and up — D50 proofing light, D65, overcast shade), the Planckian
+    /// radiator below (halogen and tungsten room light, CIE A at 2856 K). The seam at
+    /// 4000 K is an explicit source-family switch in this control, not a physical law:
+    /// temperature alone does not identify a lamp's spectrum.
+    static func printLightSPD(kelvin: Float) -> [Float] {
+        kelvin >= 4000 ? Illuminant.daylight(kelvin: kelvin)
+                       : Illuminant.planckian(kelvin: kelvin)
+    }
+
+    /// The illuminant a medium's own calibration is judged under. Digital outputs have no
+    /// external viewing lamp; reflection prints use D50 and projection prints use their filtered
+    /// xenon reference.
+    static func referenceViewingLight(for paper: PrintPaper) -> [Float]? {
+        if paper.isProjected { return Illuminant.xenonProjection }
+        if paper.acceptsViewingIlluminant { return Illuminant.d50 }
+        return nil
+    }
+
+    public static func tables(for stock: FilmStock,
+                              paper: PrintPaper = .default,
+                              bleachBypass: Float = 0,
+                              printViewingKelvin: Float? = nil,
+                              callier: Float = 1,
+                              printer: PrinterProfile? = nil,
+                              digitalReference: DigitalReferenceStyle = .default,
+                              screenGrade: Float = 2,
+                              screenExposureEV: Float = 0,
+                              labScanLook: Float = 1,
+                              receiverBands: ReceiverBands = .paper)
+        -> SpectralPipelineTables {
+        let paper = paper.resolved(for: stock)
+        let labScanLook = effectiveLabScanLook(labScanLook, paper: paper)
+        let receiverBands = effectiveReceiverBands(receiverBands, stock: stock, paper: paper)
+        let printer = PrinterProfile.resolved(printer, stock: stock, paper: paper)
+        let bleachBypass = retainedSilverFraction(bleachBypass, stock: stock)
+        let screenGrade = effectiveScreenGrade(screenGrade, stock: stock, paper: paper,
+                                               digitalReference: digitalReference)
+        let screenExposureEV = directViewExposure(screenExposureEV, stock: stock, paper: paper,
+                                                  digitalReference: digitalReference)
+        let printViewingKelvin = !paper.acceptsViewingIlluminant ? nil
+            : printLightKelvin(printViewingKelvin)
+        let callier = callierCoefficient(callier, stock: stock, paper: paper)
+        let key = cacheIdentifier(for: stock, paper: paper, bleachBypass: bleachBypass,
+                                  printViewingKelvin: printViewingKelvin, callier: callier,
+                                  printer: printer, digitalReference: digitalReference,
+                                  screenGrade: screenGrade, screenExposureEV: screenExposureEV,
+                                  labScanLook: labScanLook, receiverBands: receiverBands)
+        lock.lock()
+        while true {
+            if let found = cache.value(for: key) {
+                lock.unlock()
+                return found
+            }
+            if building.contains(key) {
+                lock.wait()
+                continue
+            }
+            building.insert(key)
+            break
+        }
+        lock.unlock()
+
+        let built = buildTables(for: stock, paper: paper, bleachBypass: bleachBypass,
+                                printViewingKelvin: printViewingKelvin, callier: callier,
+                                printer: printer, digitalReference: digitalReference,
+                                screenGrade: screenGrade, screenExposureEV: screenExposureEV,
+                                labScanLook: labScanLook, receiverBands: receiverBands)
+
+        lock.lock()
+        cache.insert(built, for: key)
+        building.remove(key)
+        lock.broadcast()
+        lock.unlock()
+        return built
+    }
+
+    /// Where on a colour's ray the reflectance model is evaluated, as the
+    /// peak channel of the reconstruction's input.
+    static let reconstructionAnchor: Float = 0.25
+
+    /// Direct full-grid reconstruction, exposed for validation and graph tools. `linearRGB` is in
+    /// the scene working space, linear Rec.2020.
+    public static func reconstructedReflectance(linearRGB: SIMD3<Float>) -> [Float] {
+        let rgb = SIMD3(max(linearRGB.x, 0), max(linearRGB.y, 0), max(linearRGB.z, 0))
+        let peak = max(rgb.x, rgb.y, rgb.z)
+        guard peak > 0 else { return [Float](repeating: 0, count: SpectralGrid.count) }
+        guard let model = MeasuredReflectanceTable.shared else {
+            return SpectralGrid.wavelengths.map { _ in (rgb.x + rgb.y + rgb.z) / 3 }
+        }
+        return model.reflectance(rgb)
+    }
+
+    /// The visual density of retained developmental silver per unit of dye density it was
+    /// developed alongside. Development reduces silver and forms dye in the same proportion —
+    /// the silver is the by-product the dye count is written in — and Kodak's own description
+    /// of skip-bleach (the ENR-family lab services) is a black-and-white negative of full
+    /// weight superimposed on the colour one, so the full-retention figure is one density of
+    /// silver per density of dye, scaled by how much of the bleach was skipped.
+    static let retainedSilverPerDye: Float = 1
+
+    /// The retained-silver fraction a stock actually honours: monochrome stocks *are* silver
+    /// and were never bleached, and a reversal's direct positive keeps its own balance.
+    static func retainedSilverFraction(_ requested: Float, stock: FilmStock) -> Float {
+        guard !stock.isMonochrome, !stock.isReversal else { return 0 }
+        return min(max(requested, 0), 1)
+    }
+
+    /// Spectrally flat density of the silver the bleach left behind, for one developed
+    /// density triple: proportional to development, which is density above each layer's base.
+    static func retainedSilverDensity(_ density: [Float], dMin: [Float],
+                                      fraction: Float) -> Float {
+        guard fraction > 0 else { return 0 }
+        var silver: Float = 0
+        for layer in 0..<3 {
+            silver += max(density[layer] - dMin[layer], 0)
+        }
+        return fraction * retainedSilverPerDye * silver
+    }
+
+    /// The Callier coefficient the printing path actually honours: exactly 1 wherever no
+    /// enlarger lamp house is in the path (`Enlarger.illuminates`), and never below 1 — a
+    /// diffuse read is the floor, not a setting.
+    static func callierCoefficient(_ requested: Float, stock: FilmStock,
+                                   paper: PrintPaper) -> Float {
+        guard requested.isFinite, requested > 1,
+              Enlarger.illuminates(stock: stock, paper: paper) else { return 1 }
+        return requested
+    }
+
+    /// Identity of the tables a stock needs.
+    public static func cacheIdentifier(for stock: FilmStock,
+                                       paper: PrintPaper = .default,
+                                       bleachBypass: Float = 0,
+                                       printViewingKelvin: Float? = nil,
+                                       callier: Float = 1,
+                                       printer: PrinterProfile? = nil,
+                                       digitalReference: DigitalReferenceStyle = .default,
+                                       screenGrade: Float = 2,
+                                       screenExposureEV: Float = 0,
+                                       labScanLook: Float = 1,
+                                       receiverBands: ReceiverBands = .paper)
+        -> UInt64 {
+        let paper = paper.resolved(for: stock)
+        var h = stock.spectralProfile.signature
+        func add(_ v: Float) { h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3 }
+        // The exposure LUT is normalized against the illuminant this emulsion was balanced for.
+        // Two otherwise identical stocks with different native balances must never share it.
+        add(stock.referenceIlluminantKelvin)
+        for curve in stock.curves {
+            add(curve.dMin); add(curve.gamma); add(curve.toe); add(curve.toeWidth)
+            add(curve.shoulder); add(curve.shoulderWidth)
+            if let sampled = curve.sampled {
+                add(Float(sampled.logExposure.count))
+                for value in sampled.logExposure { add(value) }
+                for value in sampled.density { add(value) }
+            }
+            if let secondary = curve.secondary {
+                add(1)
+                add(secondary.gamma); add(secondary.toe); add(secondary.toeWidth)
+                add(secondary.shoulder); add(secondary.shoulderWidth)
+            } else {
+                add(0)
+            }
+        }
+        add(stock.paperCurve.dMin); add(stock.paperCurve.gamma)
+        add(stock.paperCurve.toe); add(stock.paperCurve.toeWidth)
+        add(stock.paperCurve.shoulder); add(stock.paperCurve.shoulderWidth)
+        add(stock.isReversal ? PrintPaper.screen.midDensity : paper.midDensity)
+        h = (h ^ UInt64(stock.isReversal ? 1 : 0)) &* 0x100000001b3
+        h = (h ^ UInt64(stock.isMonochrome ? 1 : 0)) &* 0x100000001b3
+        h = (h ^ UInt64(stock.isReflectionPrint ? 1 : 0)) &* 0x100000001b3
+        if !paper.viewsFilmDirectly(for: stock) {
+            for byte in paper.rawValue.utf8 { h = (h ^ UInt64(byte)) &* 0x100000001b3 }
+        }
+        // The Digital Reference style changes the screen tables of developed film and nothing
+        // else, so every other identity is exactly what it was. A positive's reference exposure
+        // is the direct view it always was; only the levelled styles build other tables.
+        if paper == .screen, !stock.isReflectionPrint,
+           !stock.isReversal || digitalReference.usesGradedCurve {
+            for byte in digitalReference.rawValue.utf8 {
+                h = (h ^ UInt64(byte)) &* 0x9E3779B97F4A7C15
+            }
+        }
+        // The paper grade reshapes the graded output table, and a positive's direct view carries
+        // the screen exposure in its own table; both hashed only away from their rest positions.
+        let grade = effectiveScreenGrade(screenGrade, stock: stock, paper: paper,
+                                         digitalReference: digitalReference)
+        if grade != DigitalReferenceReceiver.referenceGrade { add(grade) }
+        let directExposure = directViewExposure(screenExposureEV, stock: stock, paper: paper,
+                                                digitalReference: digitalReference)
+        if directExposure != 0 { add(directExposure + 1024) }
+        // Lab Scan's finish is baked into its output table; hashed only away from the full finish.
+        let look = effectiveLabScanLook(labScanLook, paper: paper)
+        if look != 1 { add(look + 2048) }
+        // Digital Reference's bands reshape its colour negatives' print table; hashed only away
+        // from the paper's own.
+        let bands = effectiveReceiverBands(receiverBands, stock: stock, paper: paper)
+        if bands != .paper { for band in 0..<3 { add(bands[band] + 4096) } }
+        // Hashed only away from their off positions, so every identity that existed before
+        // these levers is exactly the identity it was.
+        let bleach = retainedSilverFraction(bleachBypass, stock: stock)
+        if bleach > 0 {
+            h = (h ^ UInt64(bleach.bitPattern)) &* 0x100000001b3
+        }
+        if paper.acceptsViewingIlluminant,
+           let kelvin = printLightKelvin(printViewingKelvin) {
+            h = (h ^ UInt64(kelvin.bitPattern)) &* 0x9E3779B97F4A7C15
+        }
+        // A diffuser head is the read the sheets were measured in, so it leaves the identity alone.
+        let callier = callierCoefficient(callier, stock: stock, paper: paper)
+        if callier != 1 {
+            h = (h ^ UInt64(callier.bitPattern)) &* 0xC2B2AE3D27D4EB4F
+        }
+        // The donor layer changes the exposure cube's fourth channel; empty adds the zero the
+        // fold starts from, so every pre-donor identity is untouched.
+        let donor = donorSignature(for: stock)
+        if donor != 0 { h = (h ^ donor) &* 0x100000001b3 }
+        if let printer = PrinterProfile.resolved(printer, stock: stock, paper: paper) {
+            h = (h ^ printer.spectralSignature) &* 0x100000001b3
+        }
+        return h
+    }
+
+    private static func buildTables(for stock: FilmStock,
+                                    paper: PrintPaper,
+                                    bleachBypass: Float = 0,
+                                    printViewingKelvin: Float? = nil,
+                                    callier: Float = 1,
+                                    printer: PrinterProfile? = nil,
+                                    digitalReference: DigitalReferenceStyle = .default,
+                                    screenGrade: Float = 2,
+                                    screenExposureEV: Float = 0,
+                                    labScanLook: Float = 1,
+                                    receiverBands: ReceiverBands = .paper)
+        -> SpectralPipelineTables {
+        // Output characterization is fixed at the stock's reference light. The invocation
+        // replaces this exposure table with the scene spectrum after calibration is built.
+        let exposure = exposureTable(for: stock, illuminant: filmReferenceIlluminant(for: stock))
+        if paper.levelsPositive(for: stock, digitalReference: digitalReference) {
+            // The slide's own transmittance, as the direct view renders it, handed to the paper
+            // stage as density above its 18% mid-grey so the levels can ride the paper slots.
+            // The straight positive curve adds them back and the output table transmits.
+            let read = positiveScreenRead(for: stock)
+            let shift = positiveBandShift(stock: stock, bands: receiverBands)
+            let printing = buildDensityLUT(stock: stock) { density in
+                let rgb = read.transmittance(density: shift?(density) ?? density)
+                return SIMD3(-log10(max(rgb.x, 1e-6) / 0.18), -log10(max(rgb.y, 1e-6) / 0.18),
+                             -log10(max(rgb.z, 1e-6) / 0.18))
+            }
+            let paperRanges = paper.printCurves(for: stock, digitalReference: digitalReference)
+                .map { $0.dMax - $0.dMin }
+            let paperOutput = buildLUT { activation in
+                DigitalReferenceReceiver.positiveRGB(density: SIMD3(
+                    activation.x * paperRanges[0], activation.y * paperRanges[1],
+                    activation.z * paperRanges[2]))
+            }
+            return SpectralPipelineTables(exposure: exposure, filmOutput: printing,
+                                          paperOutput: paperOutput)
+        }
+        if paper.viewsFilmDirectly(for: stock) {
+            let basis = neutralDensityBasis(for: stock)
+            func aligned(_ density: [Float]) -> [Float] { basis(density) }
+            // The direct view has no paper slots for the screen exposure to ride, so a slide's
+            // scanner gain is folded into its own table: a stop is a doubling of the light.
+            let balance = reversalBalance(for: stock, aligned: aligned)
+                * exp2(directViewExposure(screenExposureEV, stock: stock, paper: paper,
+                                          digitalReference: digitalReference))
+            let shift = positiveBandShift(stock: stock, bands: receiverBands)
+            let output = buildDensityLUT(stock: stock) { density in
+                let rgb = transmissionRGB(density: aligned(shift?(density) ?? density),
+                                          stock: stock) * balance
+                return SIMD3(max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0))
+            }
+            return SpectralPipelineTables(exposure: exposure, filmOutput: output,
+                                          paperOutput: nil)
+        }
+        if paper.isNegative {
+            return SpectralPipelineTables(
+                exposure: exposure,
+                filmOutput: negativeViewing(
+                    for: stock, look: .lightBox, bleachBypass: bleachBypass),
+                paperOutput: nil)
+        }
+
+        let printing: SpectralLUT
+        if paper.readsLayersDirectly(for: stock) {
+            let reading = screenReading(for: stock)
+            // The same film-base black a colour negative gets at a reference exposure.
+            let shadowScale = screenShadowScale(stock: stock, paper: paper,
+                                                digitalReference: digitalReference)
+            printing = buildLUT { p in
+                let read = SIMD3(interpolate(reading[0], at: p.x),
+                                 interpolate(reading[1], at: p.y),
+                                 interpolate(reading[2], at: p.z))
+                return SIMD3((0..<3).map {
+                    DigitalReferenceReceiver.stretchShadows(read[$0], scale: shadowScale) })
+            }
+        } else {
+            let dMin = stock.curves.map(\.dMin)
+            let basis = stock.isReversal ? neutralDensityBasis(for: stock) : nil
+            func aligned(_ density: [Float]) -> [Float] { basis?(density) ?? density }
+            let midDensity = aligned((0..<3).map { stock.developedDensity(layer: $0, logExposure: 0) })
+            // Retained silver darkens the mid-grey too, and the print re-anchors on it — a
+            // lab times a skip-bleach negative through its own extra density, so what
+            // survives onto the paper is the added contrast and the lost chroma, not a
+            // uniformly darker frame.
+            // Under a condenser head every density is the diffuse figure times the Callier
+            // coefficient of the material holding it: the image's own on the image densities,
+            // silver's on the silver the bleach left behind. The mid-grey scales with the rest,
+            // so the re-timing below holds it and the head shows as contrast.
+            let silverCallier = callier == 1 ? Float(1) : Enlarger.silverCallierCoefficient
+            // The relative log energy each record receives through `bands`, against mid-grey.
+            func energyReader(_ bands: ReceiverBands) -> ([Float]) -> SIMD3<Float> {
+                let paperSensitivity = paper.sensitivity(bands: bands)
+                let illumination = printingIllumination(
+                    stock: stock, paper: paper, density: midDensity.map { $0 * callier },
+                    dyes: stock.spectralProfile.imageDyeDensity,
+                    neutralDensity: silverCallier * retainedSilverDensity(
+                        midDensity, dMin: dMin, fraction: bleachBypass), densityScale: callier,
+                    receiverBands: bands)
+                let lamp = printer?.filteredSpectrum ?? illumination.lamp
+                // Keep the simulated printer's reference setup fixed when its lamp or filters move.
+                // Other media retain their existing printing illumination and calibration.
+                let midEnergy = printer == nil ? illumination.referenceEnergy : paperExposure(
+                    density: midDensity.map { $0 * callier },
+                    stock: stock,
+                    lamp: PrinterProfile.simulatedTungsten.filteredSpectrum,
+                    paperSensitivity: paperSensitivity,
+                    neutralDensity: silverCallier * retainedSilverDensity(
+                        midDensity, dMin: dMin, fraction: bleachBypass), densityScale: callier)
+                // Release film removes only the common lamp scale against its setup energy
+                // targets; an unreachable timing residual survives. On reflection paper the
+                // mid-energy ratio also approximates
+                // the enlarger's per-stock filtration. A
+                // reference-anchored medium is profiled once instead: the frame is
+                // still auto-exposed (green stays the stock's own), but red and
+                // blue keep the distance this stock's mask and mid-scale colour
+                // put between themselves and the reference's — the cast a real
+                // minilab leaves in the file.
+                let castOffset = referenceCastOffset(midEnergy: midEnergy,
+                                                     stock: stock, paper: paper)
+                return { density in
+                    let energy = paperExposure(density: aligned(density).map { $0 * callier },
+                                               stock: stock,
+                                               lamp: lamp, paperSensitivity: paperSensitivity,
+                                               neutralDensity: silverCallier * retainedSilverDensity(
+                                                   density, dMin: dMin,
+                                                   fraction: bleachBypass), densityScale: callier)
+                    return SIMD3<Float>(
+                        log10(max(energy.x, 1e-12) / max(midEnergy.x, 1e-12)),
+                        log10(max(energy.y, 1e-12) / max(midEnergy.y, 1e-12)),
+                        log10(max(energy.z, 1e-12) / max(midEnergy.z, 1e-12))) + castOffset
+                }
+            }
+            let relativeEnergy = energyReader(receiverBands)
+            // Digital Reference at a reference exposure carries the film base to display
+            // black by stretching only the shadow side of the read, so the stock's highlight
+            // contrast stays its own. The graded styles level the whole read in the kernel.
+            let shadowScale = screenShadowScale(stock: stock, paper: paper,
+                                                digitalReference: digitalReference)
+            let screenRead = paper == .screen ? screenReader(
+                stock: stock, bands: receiverBands, relativeEnergy: relativeEnergy,
+                paperRelativeEnergy: { energyReader(.paper) }) : relativeEnergy
+            let toeBalance = screenToeBalance(
+                stock: stock, digitalReference: paper == .screen ? digitalReference : .gradedPrint,
+                read: screenRead)
+            printing = buildDensityLUT(stock: stock) { density in
+                guard paper == .screen else { return relativeEnergy(density) }
+                let read = toeBalance(screenRead(density))
+                return SIMD3((0..<3).map {
+                    DigitalReferenceReceiver.stretchShadows(read[$0], scale: shadowScale) })
+            }
+        }
+
+        // Physical output media integrate through overlaid dye spectra and the observer; digital
+        // receivers deliver display RGB. Each physical dye absorbs across multiple display bands.
+        // `partition` normalizes the dye sum at every
+        // wavelength, so equal densities still transmit `10^-d` and preserve the neutral axis.
+        // One range per record: the engine hands over each channel's
+        // activation on its own curve, so each is read back through that
+        // curve's density range.
+        let paperRanges = paper.printCurves(for: stock, digitalReference: digitalReference)
+            .map { $0.dMax - $0.dMin }
+        // The lamp the finished positive is read under. A reflection print defaults to the D50
+        // judging booth used for critical print evaluation. A projected print defaults to the
+        // representative filtered 5400 K xenon screen light. Screen output
+        // stays in the renderer's fixed D65 display space, while scans have no viewing lamp.
+        //
+        // A stated temperature still wins on physical media: asking what a release print looks
+        // like on a light table, or what a paper print looks like under tungsten, is a real
+        // spectral change rather than a display white-balance control.
+        let viewingLight = printViewingKelvin.map(printLightSPD)
+            ?? referenceViewingLight(for: paper)
+        let paperOutput: SpectralLUT
+        if paper == .screen {
+            let grade = effectiveScreenGrade(screenGrade, stock: stock, paper: paper,
+                                             digitalReference: digitalReference)
+            paperOutput = buildLUT { activation in
+                DigitalReferenceReceiver.rgb(density: SIMD3(
+                    activation.x * paperRanges[0], activation.y * paperRanges[1],
+                    activation.z * paperRanges[2]), style: digitalReference, stock: stock,
+                    grade: grade)
+            }
+        } else if paper.isScan {
+            // The scan's output is a digital inversion with no viewing dyes or lamp. Lab Scan
+            // and Telecine both characterize their receiver records into display colour; the
+            // receiver bands are measurements, not display primaries.
+            let calibration = stock.isMonochrome
+                ? nil
+                : ScanOutputCalibration(paper: paper, stock: stock, exposure: exposure,
+                                        printing: printing, finish: labScanLook)
+            paperOutput = buildLUT { activation in
+                let density = SIMD3(activation.x * paperRanges[0],
+                                    activation.y * paperRanges[1],
+                                    activation.z * paperRanges[2])
+                if let calibration { return calibration(density) }
+                let rgb = SIMD3(pow(10, -density.x), pow(10, -density.y),
+                                pow(10, -density.z))
+                // A monochrome scan carries no chroma to characterize, so the receiver is the
+                // programme, finished on Lab Scan's gradation. A video transfer still delivers it
+                // inside Rec.709.
+                if paper == .labScan {
+                    return LabScanFinish.apply(rgb, strength: labScanLook, chromatic: false)
+                }
+                return paper.deliversRec709
+                    ? ColorScience.linearSRGBToDisplayP3(rgb) : rgb
+            }
+        } else if !stock.isMonochrome {
+            let receiver = printReceiver(stock: stock, paper: paper,
+                                         viewingLight: viewingLight)
+            paperOutput = buildLUT { activation in
+                receiver.rgb(density: SIMD3(activation.x * paperRanges[0],
+                                            activation.y * paperRanges[1],
+                                            activation.z * paperRanges[2]))
+            }
+        } else {
+            paperOutput = buildLUT { activation in
+                let density = [activation.x * paperRanges[0],
+                               activation.y * paperRanges[1],
+                               activation.z * paperRanges[2]]
+                return transmissionRGB(density: density, dyes: paper.dyes,
+                                       illuminant: viewingLight)
+            }
+        }
+        return SpectralPipelineTables(exposure: exposure, filmOutput: printing,
+                                      paperOutput: paperOutput)
+    }
+
+    /// The stock's own neutral density at a log exposure: the mean of its three records.
+    static func neutralDensity(_ stock: FilmStock, _ logExposure: Float) -> Float {
+        (stock.curves[0].density(logExposure: logExposure)
+         + stock.curves[1].density(logExposure: logExposure)
+         + stock.curves[2].density(logExposure: logExposure)) / 3
+    }
+
+    /// Legacy direct read for monochrome Screen output. Color negatives use the fixed
+    /// spectral receiver so their individual curves and dye interactions remain active.
+    private static let screenReadingSamples = 1024
+
+    private static func screenReading(for stock: FilmStock) -> [[Float]] {
+        let mid = neutralDensity(stock, 0)
+        return (0..<3).map { layer in
+            let curve = stock.curves[layer]
+            let range = curve.dMax - curve.dMin
+            return (0...screenReadingSamples).map { i in
+                let density = curve.dMin
+                    + range * Float(i) / Float(screenReadingSamples)
+                return mid - neutralDensity(stock, curve.logExposure(density: density))
+            }
+        }
+    }
+
+    private static func interpolate(_ table: [Float], at t: Float) -> Float {
+        let x = min(max(t, 0), 1) * Float(table.count - 1)
+        let low = Int(x)
+        let high = min(low + 1, table.count - 1)
+        return table[low] + (x - Float(low)) * (table[high] - table[low])
+    }
+
+    /// Newton inverse of a three-record spectral response, which corrects the nonlinear model
+    /// rather than fitting a matrix to one exposure level.
+    private struct SpectralResponseInverse: Sendable {
+        /// The response to a light in the exposure table's locus-enclosing basis: the renderer's
+        /// own exposure table, film curves, printing table and receiver curve, evaluated rather
+        /// than resampled, so the solve answers exactly what the renderer forms. A table of the
+        /// whole chain sampled linearly in light spends its first cell on everything from two
+        /// and a half stops under mid-grey down, where density is nowhere near linear in light,
+        /// and the solve read a film's toe there as a record that saw no light at all.
+        let response: @Sendable (SIMD3<Float>) -> SIMD3<Float>
+
+        /// The solve itself walks linear Rec.2020 — the reflectance region a characterisation
+        /// recovers, and the cube it clamps to — and steps into the table's basis only to read
+        /// the response. A solution beyond Rec.2020 would be a light no reflectance makes,
+        /// which is not what a receiver's inversion is asking for.
+        private func sample(_ scene: SIMD3<Float>) -> SIMD3<Float> {
+            response(ColorScience.linearRec2020ToExposureDomain(scene))
+        }
+
+        /// The darkest scene component the solve walks to, about twenty stops under white.
+        static let floor: Float = 1e-6
+        /// How firmly a colour the response cannot resolve is held neutral, in activation per unit
+        /// of natural-log chroma. A step the scan resolves moves the activation by far more than
+        /// this, and is inverted almost exactly; the film's toe and the receiver's shoulder barely
+        /// move it, and there the solve keeps the colour neutral instead of magnifying a few
+        /// thousandths of density into a saturated one.
+        static let neutralWeight: Float = 0.005
+
+        /// The scene, in linear Rec.2020 inside the unit cube, whose response is closest to
+        /// `target`, with log chroma the response cannot resolve held neutral. The walk is
+        /// regularized Gauss-Newton on log scene: the film answers log exposure, so a step means
+        /// the same at every level, and the neutral weight keeps every system well posed, so the
+        /// solution moves smoothly with its target everywhere, the toe included.
+        func solve(target: SIMD3<Float>, initial: SIMD3<Float>) -> SIMD3<Float> {
+            let low = log(Self.floor)
+            let weight = Self.neutralWeight * Self.neutralWeight
+            func bounded(_ x: SIMD3<Float>) -> SIMD3<Float> {
+                SIMD3(clamp(x.x, low, 0), clamp(x.y, low, 0), clamp(x.z, low, 0))
+            }
+            func chroma(_ x: SIMD3<Float>) -> SIMD3<Float> {
+                x - SIMD3(repeating: (x.x + x.y + x.z) / 3)
+            }
+            func response(_ x: SIMD3<Float>) -> SIMD3<Float> {
+                sample(SIMD3(exp(x.x), exp(x.y), exp(x.z)))
+            }
+            func cost(_ x: SIMD3<Float>, _ residual: SIMD3<Float>) -> Float {
+                let c = chroma(x)
+                return dot(residual, residual) + weight * dot(c, c)
+            }
+            var x = bounded(SIMD3(log(max(initial.x, Self.floor)), log(max(initial.y, Self.floor)),
+                                  log(max(initial.z, Self.floor))))
+            var residual = response(x) - target
+            var current = cost(x, residual)
+            for _ in 0..<24 {
+                let epsilon: Float = 0.01
+                var columns = [SIMD3<Float>](repeating: .zero, count: 3)
+                for channel in 0..<3 {
+                    var below = x
+                    var above = x
+                    below[channel] = max(x[channel] - epsilon, low)
+                    above[channel] = min(x[channel] + epsilon, 0)
+                    let span = max(above[channel] - below[channel], 1e-6)
+                    columns[channel] = (response(above) - response(below)) / span
+                }
+                // Normal equations of the data term and the neutral prior, whose chroma
+                // projector is its own square, with a vanishing ridge for the luminance a
+                // response at the floor cannot see either.
+                let gradient = SIMD3((0..<3).map { dot(columns[$0], residual) })
+                    + weight * chroma(x)
+                var normal = (0..<3).map { row in
+                    SIMD3((0..<3).map { column in dot(columns[row], columns[column]) })
+                }
+                for row in 0..<3 {
+                    for column in 0..<3 {
+                        normal[row][column] += weight * ((row == column ? 1 : 0) - 1.0 / 3)
+                    }
+                    normal[row][row] += 1e-8
+                }
+                guard let delta = normalSolve(normal, gradient) else { break }
+                var step: Float = 1
+                var accepted = false
+                for _ in 0..<10 {
+                    let candidate = bounded(x - step * delta)
+                    let candidateResidual = response(candidate) - target
+                    let candidateCost = cost(candidate, candidateResidual)
+                    if candidateCost < current {
+                        x = candidate
+                        residual = candidateResidual
+                        current = candidateCost
+                        accepted = true
+                        break
+                    }
+                    step *= 0.5
+                }
+                if !accepted || step * dot(delta, delta).squareRoot() < 1e-5 { break }
+            }
+            return SIMD3(exp(x.x), exp(x.y), exp(x.z))
+        }
+
+        /// Solves the symmetric positive-definite normal equations by Cholesky, in double
+        /// precision: the toe's systems are dominated by the prior and nearly singular in the
+        /// luminance their response cannot see.
+        private func normalSolve(_ matrix: [SIMD3<Float>], _ rhs: SIMD3<Float>) -> SIMD3<Float>? {
+            var a = matrix.map { row in (0..<3).map { Double(row[$0]) } }
+            for j in 0..<3 {
+                var diagonal = a[j][j]
+                for k in 0..<j { diagonal -= a[j][k] * a[j][k] }
+                guard diagonal > 0 else { return nil }
+                a[j][j] = diagonal.squareRoot()
+                for i in (j + 1)..<3 {
+                    var value = a[i][j]
+                    for k in 0..<j { value -= a[i][k] * a[j][k] }
+                    a[i][j] = value / a[j][j]
+                }
+            }
+            var y = [Double](repeating: 0, count: 3)
+            for i in 0..<3 {
+                var value = Double(rhs[i])
+                for k in 0..<i { value -= a[i][k] * y[k] }
+                y[i] = value / a[i][i]
+            }
+            var x = [Double](repeating: 0, count: 3)
+            for i in stride(from: 2, through: 0, by: -1) {
+                var value = y[i]
+                for k in (i + 1)..<3 { value -= a[k][i] * x[k] }
+                x[i] = value / a[i][i]
+            }
+            return SIMD3(Float(x[0]), Float(x[1]), Float(x[2]))
+        }
+
+        private func dot(_ lhs: SIMD3<Float>, _ rhs: SIMD3<Float>) -> Float {
+            lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z
+        }
+    }
+
+    /// Pulls a colour back to the nearest in-gamut point along the line to its own luminance axis,
+    /// which keeps hue and luminance and gives up only the saturation the basis cannot hold.
+    static func heldToGamut(_ colour: SIMD3<Float>, luminance: Float) -> SIMD3<Float> {
+        var scale: Float = 1
+        for channel in 0..<3 where colour[channel] < 0 {
+            scale = min(scale, luminance / (luminance - colour[channel]))
+        }
+        guard scale < 1 else { return colour }
+        return SIMD3(repeating: luminance) + scale * (colour - SIMD3(repeating: luminance))
+    }
+
+    /// Compresses colors near the SDR gamut boundary along their own luminance axis. The smooth
+    /// radius shoulder keeps all three channels inside 0...1 without a hard channel clamp, while
+    /// leaving neutrals and colors below 90% of the available chroma unchanged.
+    static func compressedToDisplayGamut(_ colour: SIMD3<Float>,
+                                         luminance: Float) -> SIMD3<Float> {
+        guard luminance > 0, luminance < 1 else {
+            return SIMD3(repeating: clamp(luminance, 0, 1))
+        }
+        let neutral = SIMD3<Float>(repeating: luminance)
+        let chroma = colour - neutral
+        var radius: Float = 0
+        for channel in 0..<3 {
+            let distance = chroma[channel] >= 0
+                ? chroma[channel] / (1 - luminance) : -chroma[channel] / luminance
+            radius = max(radius, distance)
+        }
+        let knee: Float = 0.9
+        guard radius > knee else { return colour }
+        let room = 1 - knee
+        let over = radius - knee
+        let compressed = knee + room * over / (over + room)
+        return neutral + chroma * (compressed / radius)
+    }
+
+    /// Characterizes a scan's complete response: film capture and development, image dyes, the
+    /// receiver bands the machine reads through — a minilab's LEDs, a telecine's RP 180 printing
+    /// density — its balance, and the inversion curve. The medium's tone and intended neutral cast
+    /// remain the receiver's; only the false assignment of its three measurement bands to
+    /// Display-P3 primaries is replaced, which is the job a lab profile or a TAF characterization
+    /// does on the machine.
+    private struct ScanOutputCalibration: Sendable {
+        let inverse: SpectralResponseInverse
+        let range: Float
+        let deliversRec709: Bool
+        /// How much of Lab Scan's finish the characterized scan takes; 0 on other scans.
+        let finish: Float
+        /// Actual no-light receiver level for an editable scan. A film's finite base response
+        /// can sit above the receiver curve's mathematical D-max floor.
+        let shadowFloor: Float
+        /// The raw scan's colour for greys, as log luminance against each channel's share of it.
+        let greyAxis: [(logLuminance: Float, share: SIMD3<Float>)]
+        /// The finished video transfer gives up highlight chroma near its white point.
+        let clipInterval: (Float, Float) = (0.76, 0.84)
+        /// Stops above an editable scan's no-light floor at which its colour starts to come in,
+        /// and the stops over which it does.
+        static let shadowOnset: Float = 0.5
+        static let shadowFade: Float = 3
+
+        init(paper: PrintPaper, stock: FilmStock, exposure: SpectralLUT,
+             printing: SpectralLUT, finish: Float = 1) {
+            let curve = paper.printCurve(for: stock)
+            let scanRange = curve.dMax - curve.dMin
+            range = scanRange
+            deliversRec709 = paper.deliversRec709
+            self.finish = paper == .labScan ? finish : 0
+            let midpoint = curve.logExposure(
+                density: curve.dMin + paper.anchorDensity)
+            let masking = stock.printingContrastScale(
+                correction: FotufilmEngine.Options().printCorrection, paper: paper)
+            let filmCurves = stock.curves
+            let response: @Sendable (SIMD3<Float>) -> SIMD3<Float> = { scene in
+                // On the table's face with the light scaled back out, as the renderer reads it:
+                // inside the cube a dim colour's cell spans every hue, and its exposures would
+                // not be the ones the renderer gives the same light.
+                let radiance = max(scene.x, scene.y, scene.z, 1e-6)
+                let records = exposure.sample(scene / radiance) * (radiance / 0.18)
+                let activation = SIMD3<Float>((0..<3).map { channel in
+                    let film = filmCurves[channel]
+                    return (film.density(logExposure: log10(max(records[channel], 1e-6)))
+                        - film.dMin) / (film.dMax - film.dMin)
+                })
+                let receiver = printing.sample(activation)
+                return SIMD3<Float>((0..<3).map { channel in
+                    curve.density(logExposure: midpoint + masking[channel]
+                                  * receiver[channel]) - curve.dMin
+                }) / scanRange
+            }
+            inverse = SpectralResponseInverse(response: response)
+            if deliversRec709 {
+                shadowFloor = pow(10, -scanRange)
+            } else {
+                let black = response(.zero) * scanRange
+                let w = ColorScience.displayP3LuminanceWeights
+                shadowFloor = w.0 * pow(10, -black.x) + w.1 * pow(10, -black.y)
+                    + w.2 * pow(10, -black.z)
+            }
+            let weights = ColorScience.displayP3LuminanceWeights
+            greyAxis = stride(from: Float(-20), through: 6, by: 0.125).map { stops in
+                let read = response(SIMD3(repeating: 0.18 * pow(2, stops))) * scanRange
+                let raw = SIMD3(pow(10, -read.x), pow(10, -read.y), pow(10, -read.z))
+                let level = weights.0 * raw.x + weights.1 * raw.y + weights.2 * raw.z
+                return (log(max(level, 1e-12)), raw / max(level, 1e-12))
+            }.sorted { $0.logLuminance < $1.logLuminance }
+        }
+
+        func greyShare(at luminance: Float) -> SIMD3<Float> {
+            let x = log(max(luminance, 1e-12))
+            guard let first = greyAxis.first, let last = greyAxis.last else { return .one }
+            if x <= first.logLuminance { return first.share }
+            if x >= last.logLuminance { return last.share }
+            var low = 0, high = greyAxis.count - 1
+            while high - low > 1 {
+                let middle = (low + high) / 2
+                if greyAxis[middle].logLuminance <= x { low = middle } else { high = middle }
+            }
+            let a = greyAxis[low], b = greyAxis[high]
+            let t = (x - a.logLuminance) / max(b.logLuminance - a.logLuminance, 1e-9)
+            return a.share + t * (b.share - a.share)
+        }
+
+        func callAsFunction(_ density: SIMD3<Float>) -> SIMD3<Float> {
+            let activation = density / range
+            let uncalibrated = SIMD3(pow(10, -density.x), pow(10, -density.y),
+                                     pow(10, -density.z))
+            var initial = ColorScience.linearDisplayP3ToRec2020(uncalibrated)
+            initial = SIMD3(clamp(initial.x, 0, 1), clamp(initial.y, 0, 1),
+                            clamp(initial.z, 0, 1))
+            let scene = inverse.solve(target: activation, initial: initial)
+            var calibrated = ColorScience.linearRec2020ToDisplayP3(scene)
+            let weights = ColorScience.displayP3LuminanceWeights
+            func luminance(_ value: SIMD3<Float>) -> Float {
+                weights.0 * value.x + weights.1 * value.y + weights.2 * value.z
+            }
+
+            // Reapply the medium's own balance at the recovered tone level. This retains its
+            // intentional stock-dependent neutral cast without letting the receiver bands define
+            // the hue of chromatic subjects. Lab Scan's machine times its own black point, so
+            // under the lower mid-tones the cast holds where they leave it rather than following
+            // the receiver's records into the film's toe, where they part into a warm crossover.
+            let balanceFloor: Float = deliversRec709 ? 0 : 0.045
+            let sceneLuminance = clamp(luminance(calibrated), balanceFloor, 1)
+            let neutralDensity = inverse.response(SIMD3(repeating: sceneLuminance)) * range
+            let neutralReceiver = SIMD3(pow(10, -neutralDensity.x),
+                                        pow(10, -neutralDensity.y),
+                                        pow(10, -neutralDensity.z))
+            calibrated *= neutralReceiver / max(luminance(neutralReceiver), 1e-6)
+            let recoveredLuminance = luminance(calibrated)
+            guard recoveredLuminance > 1e-6 else {
+                // A zero-light inverse has no usable color estimate. Its raw measurement
+                // bands are not display primaries; keep the scan's measured luminance.
+                return deliversRec709 ? uncalibrated
+                    : SIMD3(repeating: luminance(uncalibrated))
+            }
+
+            if deliversRec709 {
+                calibrated = SpectralRuntime.heldToGamut(calibrated,
+                                                         luminance: recoveredLuminance)
+                // A video transfer leaves the machine as a Rec.709 signal, which cannot carry
+                // colour outside those primaries. Hold the timed colour at that boundary in 709
+                // before delivering it on the engine's wider P3 basis, instead of shipping a
+                // saturation the container never had.
+                let rec709 = ColorScience.linearDisplayP3ToSRGB(calibrated)
+                let held = SpectralRuntime.heldToGamut(
+                    rec709, luminance: recoveredLuminance)
+                calibrated = ColorScience.linearSRGBToDisplayP3(held)
+            }
+            let outputLuminance = luminance(uncalibrated)
+            calibrated *= outputLuminance / recoveredLuminance
+            if !deliversRec709 {
+                // Over three stops from half a stop above the scan's no-light floor, where the
+                // film's toe leaves the inversion less and less to recover, the characterized colour
+                // gives way to the colour the scan itself reads: each colour keeps the difference
+                // between its raw read and a grey's of the same brightness. Shadows keep their
+                // colour and the operator's keys tint them as smoothly as the mid-tones, and greys
+                // and the floor itself, which that colour fades out over a quarter stop, stay
+                // neutral. Every luminance step is kept.
+                let above = log2(max(outputLuminance, 1e-12) / max(shadowFloor, 1e-12))
+                let shadow = clamp(1 - (above - Self.shadowOnset) / Self.shadowFade, 0, 1)
+                let hold = shadow * shadow * (3 - 2 * shadow)
+                let neutral = SIMD3(repeating: outputLuminance)
+                var read = uncalibrated / greyShare(at: outputLuminance)
+                read *= outputLuminance / max(luminance(read), 1e-12)
+                let held = neutral + clamp(above / 0.25, 0, 1) * (read - neutral)
+                var scanned = calibrated + hold * (held - calibrated)
+                var scannedLuminance = outputLuminance
+                if finish > 0 {
+                    scanned = LabScanFinish.apply(scanned, strength: finish, floor: shadowFloor)
+                    scannedLuminance = luminance(scanned)
+                }
+                // Keep highlight color; only compress chroma the delivery gamut cannot hold.
+                return SpectralRuntime.compressedToDisplayGamut(
+                    scanned, luminance: scannedLuminance)
+            }
+
+            // The receiver's toe and shoulder densities hold no invertible chromatic signal, so
+            // the characterization is faded out at both ends. It fades to the neutral axis rather
+            // than to the raw receiver: a machine times its own black and white points, and the
+            // receiver is not itself neutral there — a telecine's 430 nm band reads the mask into
+            // a blue clip if it is handed the ends. The shadow transition follows this curve's own
+            // black floor so it finishes at the floor rather than below it.
+            let blackFloor = pow(10, -range)
+            let shadow = clamp((blackFloor * 2 - outputLuminance)
+                                   / (blackFloor * 2 - blackFloor * 1.5), 0, 1)
+            let highlight = clamp((outputLuminance - clipInterval.0)
+                                      / (clipInterval.1 - clipInterval.0), 0, 1)
+            let endpoint = max(shadow, highlight)
+            let hold = endpoint * endpoint * (3 - 2 * endpoint)
+            return calibrated
+                + hold * (SIMD3(repeating: outputLuminance) - calibrated)
+        }
+    }
+
+    /// The light box's lamp level: the clear film base sits at this fraction of display white in
+    /// its brightest channel, so an orange mask keeps its colour and the image reads below it. A
+    /// lamp normalised to display white left an orange-masked colour negative under 0.4 in every
+    /// channel, too dark to read in a host viewer. Below white rather than at it so grain
+    /// excursions under D-min stay in range.
+    public static let lightBoxBaseLevel: Float = 0.9
+
+    /// The negative's own dyes viewed by transmission: density -> display RGB, which is the same
+    /// integration `buildTables` gives a transparency, run over a stock that would otherwise have
+    /// gone to paper.
+    public static func negativeViewing(for stock: FilmStock,
+                                       look: NegativeViewing,
+                                       bleachBypass: Float = 0) -> SpectralLUT {
+        let bleach = retainedSilverFraction(bleachBypass, stock: stock)
+        var key = stock.spectralProfile.signature
+            ^ (look.ordinal &* 0x9E3779B97F4A7C15)
+            ^ densitySignature(of: stock)
+        if bleach > 0 {
+            key = (key ^ UInt64(bleach.bitPattern)) &* 0x100000001b3
+        }
+        negativeLock.lock()
+        defer { negativeLock.unlock() }
+        if let found = negativeCache.value(for: key) { return found }
+
+        let dMin = stock.curves.map(\.dMin)
+        let ranges = stock.curves.map { $0.dMax - $0.dMin }
+        // The base carries no developed silver, so both readings measure it without the bleach's
+        // retained silver; only the image inverts.
+        let base = transmissionRGB(density: dMin, stock: stock)
+        let divisor: SIMD3<Float>
+        switch look {
+        case .lightBox:
+            // One gain for all three channels: the base's brightest channel sits at
+            // `lightBoxBaseLevel` and the other two keep their ratio to it.
+            let brightest = max(base.x, base.y, base.z, 1e-6)
+            divisor = SIMD3(repeating: brightest / lightBoxBaseLevel)
+        case .scanner:
+            divisor = SIMD3(max(base.x, 1e-6), max(base.y, 1e-6),
+                            max(base.z, 1e-6))
+        }
+
+        // Indexed by the negative's own activation, because the kernel hands it the negative's
+        // own density: FOTUFILM_CONFIG_DEVELOP_COMPLEMENT is zero here, so nothing was inverted
+        // upstream and nothing is inverted back. The picture comes out a negative because a
+        // negative's dyes are what the transmission is integrated through.
+        let table = buildLUT { p in
+            let density = [
+                dMin[0] + p.x * ranges[0],
+                dMin[1] + p.y * ranges[1],
+                dMin[2] + p.z * ranges[2],
+            ]
+            let rgb = transmissionRGB(
+                density: density, stock: stock,
+                neutralDensity: retainedSilverDensity(density, dMin: dMin,
+                                                      fraction: bleach)) / divisor
+            return SIMD3(max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0))
+        }
+        negativeCache.insert(table, for: key)
+        return table
+    }
+
+    /// The curve endpoints the table is built over, so a pack edit that moves D-min or D-max cannot
+    /// be served a table built for the old ones.
+    private static func densitySignature(of stock: FilmStock) -> UInt64 {
+        var h: UInt64 = 0xcbf29ce484222325
+        for curve in stock.curves {
+            for value in [curve.dMin, curve.dMax] {
+                h = (h ^ UInt64(value.bitPattern)) &* 0x100000001b3
+            }
+        }
+        return h
+    }
+
+    /// What a direct positive's developed dyes are divided by before they are shown, per layer.
+    static func reversalBalance(
+        for stock: FilmStock, aligned: ([Float]) -> [Float]
+    ) -> SIMD3<Float> {
+        let mid = aligned((0..<3).map {
+            stock.developedDensity(layer: $0, logExposure: 0)
+        })
+        var rawMid = transmissionRGB(density: mid, stock: stock)
+        if !stock.isReflectionPrint {
+            // Balance the reference sample as the renderer reads it. The
+            // wavelength integral is curved between LUT nodes, so balancing
+            // only its analytic midpoint leaves a small RGB cast after lookup.
+            // Evaluate just the containing cell using the same interpolation.
+            let ranges = stock.curves.map { $0.dMax - $0.dMin }
+            let q = SIMD3<Float>((0..<3).map {
+                let density = stock.developedDensity(layer: $0, logExposure: 0)
+                return clamp((density-stock.curves[$0].dMin)/max(ranges[$0], 1e-6), 0, 1)
+                    * Float(lutDimension-1)
+            })
+            let origin = (0..<3).map { min(Int(q[$0]), lutDimension-2) }
+            var values: [Float] = []
+            for z in 0..<2 { for y in 0..<2 { for x in 0..<2 {
+                let offsets = [x, y, z]
+                let density = (0..<3).map {
+                    stock.curves[$0].dMin + Float(origin[$0]+offsets[$0]) / Float(lutDimension-1)*ranges[$0]
+                }
+                let rgb = transmissionRGB(density: aligned(density), stock: stock)
+                values += [max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0), 1]
+            } } }
+            rawMid = SpectralLUT(dimension: 2, values: values).sample(
+                q - SIMD3<Float>(origin.map(Float.init)))
+        }
+        let balance = SIMD3<Float>(0.18 / max(rawMid.x, 1e-6),
+                                   0.18 / max(rawMid.y, 1e-6),
+                                   0.18 / max(rawMid.z, 1e-6))
+        guard stock.isReflectionPrint else { return balance }
+        let white = transmissionRGB(
+            density: aligned(stock.curves.map(\.dMin)), stock: stock) * balance
+        // The transmission is integrated to Display P3 — the print side's basis — so its
+        // luminance reads with the P3 weights, not the scene working space's.
+        let weights = ColorScience.displayP3LuminanceWeights
+        let level = weights.0 * white.x + weights.1 * white.y
+            + weights.2 * white.z
+        return balance / max(level, 1e-6)
+    }
+
+    /// Carries record densities onto the image-dye amount basis. Transparent
+    /// reversals use spectral Status A inversion; integral reflection profiles
+    /// retain their existing empirical neutral alignment.
+    struct NeutralDensityBasis: Sendable {
+        /// Per layer: constant through third order in published density. The cubic term is
+        /// needed by source curves with two independently shaped positive components; a
+        /// quadratic leaves their neutral records visibly separated through the bend.
+        var coefficients: [SIMD4<Float>]
+        var statusA: StatusADyeUnmix? = nil
+
+        func callAsFunction(_ density: [Float]) -> [Float] {
+            if let statusA {
+                let a = statusA.amounts(forStatusA: SIMD3(density[0], density[1], density[2]))
+                return [a.x, a.y, a.z]
+            }
+            return (0..<3).map { layer in
+                let c = coefficients[layer]
+                let d = density[layer]
+                return max(c.x + c.y * d + c.z * d * d + c.w * d * d * d, 0)
+            }
+        }
+    }
+
+    static func neutralDensityBasis(for stock: FilmStock) -> NeutralDensityBasis {
+        // A separated-base profile specifies the density basis its dye amplitudes use.
+        // Equalizing those amounts would invalidate its measured spectral constraints.
+        if stock.spectralProfile.minimumDensity != nil {
+            return NeutralDensityBasis(coefficients: Array(repeating: SIMD4(0, 1, 0, 0), count: 3))
+        }
+        if stock.isReversal && !stock.isReflectionPrint {
+            return NeutralDensityBasis(coefficients: [],
+                statusA: StatusADyeUnmix(dyes: stock.spectralProfile.imageDyeDensity))
+        }
+        let termCount = stock.isReflectionPrint ? 4 : 3
+        var normal = [[Double]](repeating: [Double](repeating: 0, count: 16), count: 3)
+        var moment = [[Double]](repeating: [Double](repeating: 0, count: 4), count: 3)
+        for logExposure in stride(from: Float(-1.5), through: 0.75, by: 0.025) {
+            let density = (0..<3).map {
+                stock.developedDensity(layer: $0, logExposure: logExposure)
+            }
+            let neutral = Double(density[0] + density[1] + density[2]) / 3
+            let weight = pow(10.0, -neutral)
+            for layer in 0..<3 {
+                let d = Double(density[layer])
+                let terms = [1, d, d * d, d * d * d]
+                for row in 0..<termCount {
+                    for column in 0..<termCount {
+                        normal[layer][row * 4 + column]
+                            += weight * terms[row] * terms[column]
+                    }
+                    moment[layer][row] += weight * terms[row] * neutral
+                }
+            }
+        }
+        let coefficients = (0..<3).map { layer in
+            solve(normal[layer], moment[layer], termCount: termCount)
+                ?? SIMD4<Float>(0, 1, 0, 0)
+        }
+        return NeutralDensityBasis(coefficients: coefficients)
+    }
+
+    /// Gaussian elimination with partial pivoting on the normal equations. Rows retain a
+    /// four-value stride so reflection prints can use the cubic term while transparencies keep
+    /// their established quadratic basis.
+    private static func solve(
+        _ matrix: [Double], _ rhs: [Double], termCount: Int
+    ) -> SIMD4<Float>? {
+        var a = matrix, b = rhs
+        for column in 0..<termCount {
+            var pivot = column
+            for row in (column + 1)..<termCount
+            where abs(a[row * 4 + column]) > abs(a[pivot * 4 + column]) {
+                pivot = row
+            }
+            guard abs(a[pivot * 4 + column]) > 1e-12 else { return nil }
+            if pivot != column {
+                for k in 0..<termCount { a.swapAt(column * 4 + k, pivot * 4 + k) }
+                b.swapAt(column, pivot)
+            }
+            for row in (column + 1)..<termCount {
+                let factor = a[row * 4 + column] / a[column * 4 + column]
+                guard factor != 0 else { continue }
+                for k in column..<termCount {
+                    a[row * 4 + k] -= factor * a[column * 4 + k]
+                }
+                b[row] -= factor * b[column]
+            }
+        }
+        var x = [Double](repeating: 0, count: 4)
+        for row in stride(from: termCount - 1, through: 0, by: -1) {
+            var sum = b[row]
+            for k in (row + 1)..<termCount { sum -= a[row * 4 + k] * x[k] }
+            x[row] = sum / a[row * 4 + row]
+        }
+        return SIMD4<Float>(Float(x[0]), Float(x[1]), Float(x[2]), Float(x[3]))
+    }
+
+    /// Evaluates the model over the 33³ grid. `fourth` fills the node's spare fourth float —
+    /// the donor capture layer's exposure, on the tables that carry one — and nil leaves the
+    /// constant 1 the slot has always held, bit for bit.
+    private static func buildLUT(_ evaluate: (SIMD3<Float>) -> SIMD3<Float>,
+                                 fourth: ((SIMD3<Float>) -> Float)? = nil) -> SpectralLUT {
+        let d = lutDimension
+        var values = [Float](repeating: 0, count: d * d * d * 4)
+        values.withUnsafeMutableBufferPointer { buffer in
+            withoutActuallyEscaping(evaluate) { evaluate in
+                ParallelWork.forEach(iterations: d) { z in
+                    for y in 0..<d {
+                        for x in 0..<d {
+                            let p = SIMD3<Float>(Float(x) / Float(d - 1),
+                                                 Float(y) / Float(d - 1),
+                                                 Float(z) / Float(d - 1))
+                            let v = evaluate(p)
+                            let i = ((z * d + y) * d + x) * 4
+                            buffer[i] = v.x; buffer[i + 1] = v.y
+                            buffer[i + 2] = v.z
+                            buffer[i + 3] = fourth?(p) ?? 1
+                        }
+                    }
+                }
+            }
+        }
+        return SpectralLUT(dimension: d, values: values)
+    }
+
+    private static func buildDensityLUT(
+        stock: FilmStock,
+        _ evaluate: ([Float]) -> SIMD3<Float>
+    ) -> SpectralLUT {
+        let ranges = stock.curves.map { $0.dMax - $0.dMin }
+        return buildLUT { p in
+            evaluate([
+                stock.curves[0].dMin + p.x * ranges[0],
+                stock.curves[1].dMin + p.y * ranges[1],
+                stock.curves[2].dMin + p.z * ranges[2],
+            ])
+        }
+    }
+
+    /// The fixed illuminant this emulsion was balanced under. This is a property of the stock,
+    /// not an automatic white-balance estimate and not a digital RGB adaptation.
+    static func filmReferenceIlluminant(for stock: FilmStock) -> [Float] {
+        Illuminant.atLocus(kelvin: stock.referenceIlluminantKelvin)
+    }
+
+    /// Film-layer exposure for a scene colour: the reflectance model
+    /// evaluated once per *chromaticity*, at `reconstructionAnchor`, and
+    /// scaled back out. `illuminant` is the scene light the layers integrate
+    /// against; D65 is the default scene light, while the denominator remains stock-native.
+    static func anchoredExposure(_ rgb: SIMD3<Float>, stock: FilmStock,
+                                 illuminant: [Float] = SpectralGrid.d65,
+                                 referenceIlluminant: [Float]? = nil,
+                                 filter: SpectralFilter? = nil) -> SIMD3<Float> {
+        let peak = max(rgb.x, rgb.y, rgb.z)
+        guard peak > 0 else { return SIMD3(repeating: 0) }
+        let radiance = peak / reconstructionAnchor
+        return spectralExposure(rgb / radiance, stock: stock,
+                                illuminant: illuminant,
+                                referenceIlluminant: referenceIlluminant,
+                                filter: filter) * radiance
+    }
+
+    /// Exposure is calibrated against the stock's native reference illuminant. The numerator uses
+    /// the scene's
+    /// actual SPD, so a spectrally flat subject changes the relative record exposures under a
+    /// different illuminant just as a daylight-balanced film does. Both SPDs are normalized to
+    /// equal photometric Y so their tabular scale is not mistaken for scene intensity.
+    /// A lens filter in the form this integration wants it: the stack's transmittance on the
+    /// grid, the exposure scale the shoot's metering applied, and the per-layer ratio the
+    /// compact fallback needs when there is no reconstruction model to filter band by band.
+    /// Built once per exposure table rather than per sample.
+    struct SpectralFilter {
+        var transmittance: [Float]
+        var gain: Float
+        var layerRatio: SIMD3<Float>
+    }
+
+    /// Layer exposure under a stated light, optionally through a filter.
+    ///
+    /// The filter and the scene illuminant multiply the numerator; the emulsion's fixed calibration
+    /// denominator stays fixed. Their light loss and record imbalance therefore survive into
+    /// exposure. The metering scale in `gain` is the only compensation applied here.
+    static func spectralExposure(_ rgb: SIMD3<Float>, stock: FilmStock,
+                                 illuminant: [Float] = SpectralGrid.d65,
+                                 referenceIlluminant suppliedReference: [Float]? = nil,
+                                 filter: SpectralFilter? = nil) -> SIMD3<Float> {
+        let referenceIlluminant = suppliedReference ?? filmReferenceIlluminant(for: stock)
+        precondition(illuminant.count == SpectralGrid.count)
+        precondition(referenceIlluminant.count == SpectralGrid.count)
+        guard let model = MeasuredReflectanceTable.shared else {
+            // The compact fallback was fitted against the P3 basis, so the working-space
+            // colour steps back through the seam matrix before the dot. With no spectrum to
+            // filter band by band, the filter can only land as the per-layer ratio it works
+            // out to under this light — exact for a neutral reflectance, and an approximation
+            // for a saturated one, which is the same trade the fallback already makes.
+            let s = stock.sensitivity
+            let p3 = ColorScience.linearRec2020ToDisplayP3(rgb)
+            let plain = SIMD3(dot(s[0], p3), dot(s[1], p3), dot(s[2], p3))
+            let sceneY = Illuminant.luminance(illuminant)
+            let referenceY = Illuminant.luminance(referenceIlluminant)
+            var sceneIntegral = SIMD3<Float>(repeating: 0)
+            var referenceIntegral = SIMD3<Float>(repeating: 0)
+            for i in 0..<SpectralGrid.count {
+                let light = illuminant[i] / sceneY
+                let reference = referenceIlluminant[i] / referenceY
+                for layer in 0..<3 {
+                    sceneIntegral[layer] += light * stock.spectralProfile.layerSensitivity[layer][i]
+                    referenceIntegral[layer] += reference
+                        * stock.spectralProfile.layerSensitivity[layer][i]
+                }
+            }
+            let denominator = SIMD3(max(referenceIntegral.x, 1e-12),
+                                    max(referenceIntegral.y, 1e-12),
+                                    max(referenceIntegral.z, 1e-12))
+            let illuminantRatio = sceneIntegral / denominator
+            guard let filter else { return plain * illuminantRatio }
+            return plain * illuminantRatio * filter.layerRatio * filter.gain
+        }
+        let reflectance = model.reflectance(rgb)
+        var exposure = SIMD3<Float>(repeating: 0)
+        var referenceExposure = SIMD3<Float>(repeating: 0)
+        let sceneY = Illuminant.luminance(illuminant)
+        let referenceY = Illuminant.luminance(referenceIlluminant)
+        for i in 0..<SpectralGrid.count {
+            let light = illuminant[i] / sceneY
+            let referenceLight = referenceIlluminant[i] / referenceY
+            let through = filter.map { reflectance[i] * $0.transmittance[i] } ?? reflectance[i]
+            exposure.x += through * light * stock.spectralProfile.layerSensitivity[0][i]
+            exposure.y += through * light * stock.spectralProfile.layerSensitivity[1][i]
+            exposure.z += through * light * stock.spectralProfile.layerSensitivity[2][i]
+            referenceExposure.x += referenceLight * stock.spectralProfile.layerSensitivity[0][i]
+            referenceExposure.y += referenceLight * stock.spectralProfile.layerSensitivity[1][i]
+            referenceExposure.z += referenceLight * stock.spectralProfile.layerSensitivity[2][i]
+        }
+        let gain = filter?.gain ?? 1
+        return SIMD3(gain * exposure.x / max(referenceExposure.x, 1e-12),
+                     gain * exposure.y / max(referenceExposure.y, 1e-12),
+                     gain * exposure.z / max(referenceExposure.z, 1e-12))
+    }
+
+    private static func dot(_ row: [Float], _ rgb: SIMD3<Float>) -> Float {
+        row[0] * rgb.x + row[1] * rgb.y + row[2] * rgb.z
+    }
+
+    // MARK: - The exposure table's domain
+
+    /// A cell of the exposure table, read as the light it stands for. The table is indexed in a
+    /// basis whose chromaticity triangle encloses the spectral locus (`ColorScience
+    /// .linearRec2020ToExposureDomain`), and what a cell holds depends on where its colour
+    /// lies: inside the Rec.2020 cube it is a reflectance under the scene's light, recovered
+    /// from the measured prior exactly as before; outside the cube but inside the locus it is
+    /// a real light no reflectance can reach, and beyond the locus there is no light at all.
+    enum SceneLight {
+        /// A colour the reflectance prior covers, negatives of rounding size clamped away.
+        case reflectance(SIMD3<Float>)
+        /// A colour of non-positive luminance: darkness.
+        case none
+        /// A colour just past the cube's face, within the margin: the reflectance model
+        /// continued by its own slope, from the face point and its mirror image inside.
+        case extrapolated(face: SIMD3<Float>, mirror: SIMD3<Float>)
+        /// A colour past the margin, as the mixture that stands for it.
+        case locus(LocusLight)
+    }
+
+    /// The reflectance model continued by its own slope across the face: the face point's
+    /// exposure plus the step from the mirror point inside the cube to the face, which is the
+    /// same first derivative on both sides. The old boundary held the face value flat across
+    /// every cell outside — a slope break that tetrahedral interpolation carried into the
+    /// in-gamut colours next to it.
+    static func extrapolatedExposure(face: SIMD3<Float>, mirror: SIMD3<Float>) -> SIMD3<Float> {
+        let continued = face * 2 - mirror
+        return SIMD3(max(continued.x, 0), max(continued.y, 0), max(continued.z, 0))
+    }
+
+    /// The donor record's single value, continued the same way.
+    static func extrapolatedExposure(face: Float, mirror: Float) -> Float {
+        max(face * 2 - mirror, 0)
+    }
+
+    /// A colour beyond the margin outside the Rec.2020 cube, modelled as the reflectance model's
+    /// continuation at the margin mixed with monochromatic light at the hue's dominant
+    /// wavelength, just enough of it to reach the stated chromaticity. The mixture is linear
+    /// in the spectrum, so its layer exposures are the same mixture of the two lights'
+    /// exposures; at the margin the monochromatic share is zero and the table continues
+    /// without a step. It is steeper outside than in: monochromatic light moves the layers
+    /// further per unit of chromaticity than any reflectance can, which is the physics, not a
+    /// seam — and the margin keeps that steepness out of every in-gamut interpolation cell.
+    struct LocusLight {
+        /// The cube-edge colour of the same hue and luminance, linear Rec.2020.
+        let face: SIMD3<Float>
+        /// The face's mirror image of the margin point, inside the cube.
+        let mirror: SIMD3<Float>
+        /// The colour's CIE luminance, which the monochromatic light is scaled to as well.
+        let luminance: Float
+        /// The two observer bands whose mixture sits on the locus at this hue, as grid
+        /// indices; across the purple line they are the locus's two ends.
+        let lowerBand: Int
+        let upperBand: Int
+        /// The upper band's share of that mixture's luminance.
+        let upperShare: Float
+        /// The share of the colour's luminance the monochromatic light supplies: 0 at the
+        /// cube's face, 1 at and beyond the locus.
+        let share: Float
+    }
+
+    /// The spectral locus as the table builder sees it: each observer band in the Rec.2020
+    /// working space, normalised to unit luminance and taken about the neutral axis. In that
+    /// zero-luminance plane every real chromaticity lies inside the polygon the bands trace,
+    /// closed by the purple line, and "how far along its own hue can this colour go and still
+    /// be light" is a ray from the origin against a convex polygon.
+    struct SpectralLocus: Sendable {
+        /// The observer's luminous efficiency below which a band is left off the polygon. A
+        /// light at the locus's ends carries almost no luminance per watt — 380 nm has a
+        /// twenty-thousandth of 555 nm's — so a cell asked to hold that light at a stated
+        /// luminance would hold a radiometric power no table cell can interpolate against and
+        /// no half-precision copy can carry. Those tips are the least visible colours there
+        /// are; a colour beyond the trimmed polygon takes the nearest light on it.
+        static let luminousEfficiencyFloor: Float = 0.01
+
+        /// Grid indices of the bands on the polygon, in wavelength order.
+        let bands: [Int]
+        /// Each polygon vertex: the band's unit-luminance colour less the neutral axis.
+        let chroma: [SIMD3<Double>]
+
+        static let shared = SpectralLocus()
+
+        init() {
+            bands = (0..<SpectralGrid.count).filter {
+                SpectralGrid.yBar[$0] >= Self.luminousEfficiencyFloor
+            }
+            chroma = bands.map { band in
+                let rgb = SpectralGrid.linearRec2020(fromXYZ: SIMD3(
+                    SpectralGrid.xBar[band], SpectralGrid.yBar[band],
+                    SpectralGrid.zBar[band]))
+                return SIMD3<Double>(rgb) / Double(SpectralGrid.yBar[band])
+                    - SIMD3(repeating: 1)
+            }
+        }
+
+        /// Where the ray from the neutral axis along `direction` — a colour's chroma at unit
+        /// luminance — leaves the locus: the multiple of `direction` at the boundary, the two
+        /// grid bands bracketing the crossing, and the upper band's share of the crossing's
+        /// luminance.
+        func boundary(along direction: SIMD3<Double>)
+            -> (reach: Double, lowerBand: Int, upperBand: Int, upperShare: Double)? {
+            var best: (reach: Double, lowerBand: Int, upperBand: Int, upperShare: Double)?
+            let count = chroma.count
+            for lower in 0..<count {
+                let upper = (lower + 1) % count
+                let from = chroma[lower]
+                let edge = chroma[upper] - from
+                // alpha * direction - beta * edge = from, solved in the plane's x and y: the
+                // zero-luminance plane is not parallel to z, so those two coordinates fix it.
+                let determinant = -direction.x * edge.y + edge.x * direction.y
+                guard abs(determinant) > 1e-18 else { continue }
+                let alpha = (-from.x * edge.y + edge.x * from.y) / determinant
+                let beta = (direction.x * from.y - direction.y * from.x) / determinant
+                guard alpha > 0, beta >= -1e-9, beta <= 1 + 1e-9 else { continue }
+                if best == nil || alpha < best!.reach {
+                    best = (alpha, bands[lower], bands[upper], min(max(beta, 0), 1))
+                }
+            }
+            return best
+        }
+    }
+
+    /// How far past the Rec.2020 face the reflectance model is continued by projection before
+    /// the monochromatic mixture begins, as the binding channel's depth below zero relative to
+    /// the colour's peak: a cell and a half of the table. The mixture is far steeper than the
+    /// reflectance model — monochromatic light moves the layers further per unit of chromaticity
+    /// than any reflectance can — and a table cell whose corners straddle that seam
+    /// interpolates it into the in-gamut colours next to it: a saturated blue read 5% wrong
+    /// and a yellow's hue rotated 7° before the margin. With it, no in-gamut colour shares a
+    /// cell with the mixture, and what the margin gives up is a sliver of purity no wider than
+    /// the table can resolve anyway.
+    static var projectionMargin: Float { 1.5 / Float(lutDimension - 1) }
+
+    /// Reads a Rec.2020 colour as the light a table cell stands for.
+    static func sceneLight(_ rgb: SIMD3<Float>) -> SceneLight {
+        let peak = max(rgb.x, rgb.y, rgb.z)
+        let binding = min(rgb.x, rgb.y, rgb.z)
+        // A cell on a face of the Rec.2020 cube reaches it through the seam with rounding
+        // noise; that is the reflectance model's own colour, not a light beyond it.
+        guard binding < -1e-6 * max(peak, 1) else {
+            return .reflectance(SIMD3(max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0)))
+        }
+        let weights = ColorScience.luminanceWeights
+        let luminance = weights.0 * rgb.x + weights.1 * rgb.y + weights.2 * rgb.z
+        guard luminance > 0 else { return .none }
+        var cube: Float = 1
+        var bindingChannel = 0
+        var peakChannel = 0
+        for channel in 0..<3 {
+            if rgb[channel] < 0 {
+                let reach = luminance / (luminance - rgb[channel])
+                if reach < cube { cube = reach; bindingChannel = channel }
+            }
+            if rgb[channel] > rgb[peakChannel] { peakChannel = channel }
+        }
+        let neutral = SIMD3(repeating: luminance)
+        var face = neutral + cube * (rgb - neutral)
+        face = SIMD3(max(face.x, 0), max(face.y, 0), max(face.z, 0))
+        func mirrored(_ point: SIMD3<Float>) -> SIMD3<Float> {
+            let mirror = face * 2 - point
+            return SIMD3(max(mirror.x, 0), max(mirror.y, 0), max(mirror.z, 0))
+        }
+        // Within the margin the reflectance model continues by its own slope.
+        let margin = projectionMargin
+        guard binding < -margin * peak else {
+            return .extrapolated(face: face, mirror: mirrored(rgb))
+        }
+        let direction = SIMD3<Double>(rgb) / Double(luminance) - SIMD3(repeating: 1)
+        guard let hit = SpectralLocus.shared.boundary(along: direction) else {
+            return .extrapolated(face: face, mirror: mirrored(rgb))
+        }
+        // Along the colour's own ray from the neutral axis, the colour sits at 1, the cube's
+        // face at `cube`, the margin at `start` — where the binding channel first reaches the
+        // margin's depth below zero — and the locus at `reach`. The mixture that lands on the
+        // colour is linear in that parameter, zero at the margin so it meets the continued
+        // reflectance model without a step, and clamps to 1 past the locus: the cell holds
+        // the locus light.
+        let depth = luminance - rgb[bindingChannel]
+        let rise = rgb[peakChannel] - luminance
+        let start = luminance * (1 + margin) / (depth - margin * rise)
+        let marginPoint = neutral + start * (rgb - neutral)
+        let reach = Float(hit.reach)
+        let share: Float = reach - start > 1e-6
+            ? min(max((1 - start) / (reach - start), 0), 1) : 1
+        return .locus(LocusLight(face: face, mirror: mirrored(marginPoint),
+                                 luminance: luminance,
+                                 lowerBand: hit.lowerBand, upperBand: hit.upperBand,
+                                 upperShare: Float(hit.upperShare), share: share))
+    }
+
+    /// Per-row exposure of the monochromatic half of a locus light, in the same units as
+    /// `spectralExposure`: the light is scaled so that its luminance is what a white
+    /// reflectance of the colour's luminance would reflect under the scene illuminant, then
+    /// integrated against each sensitivity row through the filter and calibrated against the
+    /// stock's reference light exactly as a reflectance is.
+    static func monochromaticExposure(_ light: LocusLight, sensitivities: [[Float]],
+                                      illuminant: [Float], referenceIlluminant: [Float],
+                                      filter: SpectralFilter?) -> [Float] {
+        let sceneY = Illuminant.luminance(illuminant)
+        let referenceY = Illuminant.luminance(referenceIlluminant)
+        var white: Float = 0
+        for i in 0..<SpectralGrid.count {
+            white += illuminant[i] / sceneY * SpectralGrid.yBar[i]
+        }
+        let target = light.luminance * white
+        let lower = light.lowerBand
+        let upper = light.upperBand
+        let lowerPower = (1 - light.upperShare) * target
+            / max(SpectralGrid.yBar[lower], 1e-12)
+        let upperPower = light.upperShare * target / max(SpectralGrid.yBar[upper], 1e-12)
+        let lowerThrough = lowerPower * (filter?.transmittance[lower] ?? 1)
+        let upperThrough = upperPower * (filter?.transmittance[upper] ?? 1)
+        let gain = filter?.gain ?? 1
+        return sensitivities.map { sensitivity in
+            let exposure = lowerThrough * sensitivity[lower] + upperThrough * sensitivity[upper]
+            var reference: Float = 0
+            for i in 0..<SpectralGrid.count {
+                reference += referenceIlluminant[i] / referenceY * sensitivity[i]
+            }
+            return gain * exposure / max(reference, 1e-12)
+        }
+    }
+
+    /// Film-layer exposure for one cell of the exposure table, `point` in the table's basis.
+    static func domainExposure(_ point: SIMD3<Float>, stock: FilmStock,
+                               illuminant: [Float],
+                               referenceIlluminant: [Float]? = nil,
+                               filter: SpectralFilter? = nil) -> SIMD3<Float> {
+        let rgb = ColorScience.linearExposureDomainToRec2020(point)
+        func reflectance(_ colour: SIMD3<Float>) -> SIMD3<Float> {
+            anchoredExposure(colour, stock: stock, illuminant: illuminant,
+                             referenceIlluminant: referenceIlluminant, filter: filter)
+        }
+        switch sceneLight(rgb) {
+        case .none:
+            return .zero
+        case .reflectance(let colour):
+            return reflectance(colour)
+        case .extrapolated(let face, let mirror):
+            return extrapolatedExposure(face: reflectance(face), mirror: reflectance(mirror))
+        case .locus(let light):
+            let edge = extrapolatedExposure(face: reflectance(light.face),
+                                            mirror: reflectance(light.mirror))
+            let mono = monochromaticExposure(
+                light, sensitivities: Array(stock.spectralProfile.layerSensitivity.prefix(3)),
+                illuminant: illuminant,
+                referenceIlluminant: referenceIlluminant ?? filmReferenceIlluminant(for: stock),
+                filter: filter)
+            return (1 - light.share) * edge
+                + light.share * SIMD3(mono[0], mono[1], mono[2])
+        }
+    }
+
+    /// The donor record's exposure for one cell of the table: the same reading of the cell.
+    static func domainDonorExposure(_ point: SIMD3<Float>, donor: DonorCaptureLayer,
+                                    illuminant: [Float], referenceIlluminant: [Float],
+                                    filter: SpectralFilter? = nil) -> Float {
+        let rgb = ColorScience.linearExposureDomainToRec2020(point)
+        func reflectance(_ colour: SIMD3<Float>) -> Float {
+            donorAnchoredExposure(colour, donor: donor, illuminant: illuminant,
+                                  referenceIlluminant: referenceIlluminant, filter: filter)
+        }
+        switch sceneLight(rgb) {
+        case .none:
+            return 0
+        case .reflectance(let colour):
+            return reflectance(colour)
+        case .extrapolated(let face, let mirror):
+            return extrapolatedExposure(face: reflectance(face), mirror: reflectance(mirror))
+        case .locus(let light):
+            let edge = extrapolatedExposure(face: reflectance(light.face),
+                                            mirror: reflectance(light.mirror))
+            let mono = monochromaticExposure(
+                light, sensitivities: [donor.sensitivity], illuminant: illuminant,
+                referenceIlluminant: referenceIlluminant, filter: filter)[0]
+            return (1 - light.share) * edge + light.share * mono
+        }
+    }
+
+    /// Positive component tables preserve the calibrated pointwise response. Gamut continuation
+    /// is performed on wavelengths; a positive per-record vertex gain reconciles that with the
+    /// legacy record-level continuation at the very edge of the domain. It is not a return matrix.
+    /// A compilation with a fourth receiver partitions a donor stock's fourth record, which the
+    /// tables then carry in their fourth channel.
+    static func transportExposureTables(stock: FilmStock, options: FotufilmEngine.Options,
+                                        compilation: TransportCompilation) throws -> TransportExposureTables {
+        let basis = try transportExposureBasis(stock: stock, options: options,
+                                               donated: compilation.core.first?.count == 4)
+        let components = compilation.kernels.count, d = lutDimension, bands = SpectralGrid.count
+        let count = d * d * d * 4, records = basis.records
+        let coreTables = (0..<components).map { _ in UnsafeMutablePointer<Float>.allocate(capacity: count) }
+        let saturatedTables = (0..<components).map { _ in UnsafeMutablePointer<Float>.allocate(capacity: count) }
+        defer { for k in 0..<components { coreTables[k].deallocate(); saturatedTables[k].deallocate() } }
+        for k in 0..<components {
+            coreTables[k].initialize(repeating: 0, count: count)
+            saturatedTables[k].initialize(repeating: 0, count: count)
+        }
+        // Each slab of the cube writes its own entries, so the slabs fill in parallel.
+        basis.weighted.withUnsafeBufferPointer { weighted in
+            ParallelWork.forEach(iterations: d) { z in
+                for point in z * d * d..<(z + 1) * d * d {
+                    for c in 0..<records {
+                        let row = weighted.baseAddress! + (point * records + c) * bands
+                        let gain = basis.gains[point * records + c]
+                        for k in 0..<components {
+                            var a: Float = 0, b: Float = 0
+                            let core = compilation.core[k][c], saturated = compilation.saturated[k][c]
+                            for band in 0..<bands {
+                                a += row[band] * core[band]
+                                b += row[band] * saturated[band]
+                            }
+                            coreTables[k][point * 4 + c] = max(a * gain, 0)
+                            saturatedTables[k][point * 4 + c] = max(b * gain, 0)
+                        }
+                    }
+                }
+            }
+        }
+        return TransportExposureTables(
+            core: coreTables.map { SpectralLUT(dimension: d, values: Array(UnsafeBufferPointer(start: $0, count: count))) },
+            saturated: saturatedTables.map { SpectralLUT(dimension: d, values: Array(UnsafeBufferPointer(start: $0, count: count))) })
+    }
+
+    /// Each lattice point's record exposure by wavelength, before a compilation's components
+    /// partition it, with the gain reconciling it to the calibrated response: the part of the
+    /// tables no construction or halation edit reaches.
+    struct TransportExposureBasis: Sendable {
+        /// Records per point: three, or four with a donor stock's fourth.
+        let records: Int
+        /// Point by record by band.
+        let weighted: [Float]
+        /// Point by record.
+        let gains: [Float]
+    }
+    private static let basisLock = NSLock()
+    nonisolated(unsafe) private static var basisCache = BoundedCache<UInt64, TransportExposureBasis>(limit: 1)
+
+    static func transportExposureBasis(stock: FilmStock, options: FotufilmEngine.Options,
+                                       donated: Bool) throws -> TransportExposureBasis {
+        let light = options.resolvedSceneSpectrum(referenceKelvin: stock.referenceIlluminantKelvin)
+        var key = cacheIdentifier(for: stock) ^ options.lensFilters.signature ^ (donated ? 1 : 0)
+        for value in light { key = (key ^ UInt64(value.bitPattern)) &* 0x100000001b3 }
+        basisLock.lock(); let found = basisCache.value(for: key); basisLock.unlock()
+        if let found { return found }
+        guard let model = MeasuredReflectanceTable.shared else {
+            throw TransportError.unsupported("spectral reconstruction data is unavailable")
+        }
+        let reference = filmReferenceIlluminant(for: stock)
+        // Match FilmEngineInvocation: an image without capture-light metadata is
+        // already balanced, so its reference is the selected film's calibration.
+        let filter = options.lensFilters.isEmpty ? nil
+            : spectralFilter(for: stock, stack: options.lensFilters, illuminant: light)
+        let sceneY = Illuminant.luminance(light), referenceY = Illuminant.luminance(reference)
+        let sourceLight = light.map { $0 / sceneY }
+        let referenceLight = reference.map { $0 / referenceY }
+        let sensitivity = stock.spectralProfile.layerSensitivity
+        let denominator = (0..<3).map { c in
+            zip(referenceLight, sensitivity[c]).reduce(Float(0)) { $0 + $1.0 * $1.1 }
+        }
+        guard denominator.allSatisfy({ $0 > 0 }) else { throw TransportError.invalid("zero reference response") }
+        let whiteY = zip(sourceLight, SpectralGrid.yBar).reduce(Float(0)) { $0 + $1.0 * $1.1 }
+        func reflected(_ rgb: SIMD3<Float>) -> [Float] {
+            zip(model.reflectance(rgb), sourceLight).map(*)
+        }
+        func continued(_ face: SIMD3<Float>, _ mirror: SIMD3<Float>) -> [Float] {
+            zip(reflected(face), reflected(mirror)).map { max(2 * $0 - $1, 0) }
+        }
+        func spectrum(_ point: SIMD3<Float>) -> [Float] {
+            let rgb = ColorScience.linearExposureDomainToRec2020(point)
+            var values: [Float]
+            switch sceneLight(rgb) {
+            case .none: values = Array(repeating: 0, count: SpectralGrid.count)
+            case .reflectance(let colour): values = reflected(colour)
+            case .extrapolated(let face, let mirror): values = continued(face, mirror)
+            case .locus(let edge):
+                values = continued(edge.face, edge.mirror).map { $0 * (1 - edge.share) }
+                let target = edge.luminance * whiteY * edge.share
+                values[edge.lowerBand] += target * (1 - edge.upperShare) / max(SpectralGrid.yBar[edge.lowerBand], 1e-12)
+                values[edge.upperBand] += target * edge.upperShare / max(SpectralGrid.yBar[edge.upperBand], 1e-12)
+            }
+            if let filter {
+                for band in values.indices { values[band] *= filter.transmittance[band] * filter.gain }
+            }
+            return values
+        }
+        let donor = donated ? stock.donorLayers.first.flatMap { layer in
+            donorChannel(for: stock, illuminant: light, filter: filter).map { (layer, $0) }
+        } : nil
+        let d = lutDimension, bands = SpectralGrid.count, records = donated ? 4 : 3
+        var weighted = [Float](repeating: 0, count: d * d * d * records * bands)
+        var gains = [Float](repeating: 0, count: d * d * d * records)
+        // Recovery and calibration are the same for every component: amount and construction do
+        // not enter this computation.
+        var failures = [Error?](repeating: nil, count: d)
+        weighted.withUnsafeMutableBufferPointer { weighted in
+            gains.withUnsafeMutableBufferPointer { gains in
+                failures.withUnsafeMutableBufferPointer { failures in
+                    ParallelWork.forEach(iterations: d) { z in
+                        do { for y in 0..<d { for x in 0..<d {
+                            let point = SIMD3(Float(x), Float(y), Float(z)) / Float(d - 1)
+                            let photons = spectrum(point)
+                            let calibrated = domainExposure(point, stock: stock, illuminant: light, filter: filter)
+                            let index = (z * d + y) * d + x
+                            func store(_ c: Int, _ values: [Float], _ target: Float, _ failure: String) throws {
+                                let total = values.reduce(0, +)
+                                guard total > 0 || target <= 1e-10 else { throw TransportError.invalid(failure) }
+                                gains[index * records + c] = total > 0 ? target / total : 0
+                                for band in 0..<bands { weighted[(index * records + c) * bands + band] = values[band] }
+                            }
+                            for c in 0..<3 {
+                                try store(c, photons.indices.map { photons[$0] * sensitivity[c][$0] / denominator[c] },
+                                          calibrated[c], "spectral partition cannot reproduce calibrated exposure")
+                            }
+                            if let (layer, calibratedDonor) = donor {
+                                try store(3, photons.indices.map { photons[$0] * layer.sensitivity[$0] },
+                                          calibratedDonor(point), "spectral partition cannot reproduce the donor's exposure")
+                            }
+                        } } } catch { failures[z] = error }
+                    }
+                }
+            }
+        }
+        if let failure = failures.lazy.compactMap({ $0 }).first { throw failure }
+        let basis = TransportExposureBasis(records: records, weighted: weighted, gains: gains)
+        basisLock.lock(); basisCache.insert(basis, for: key); basisLock.unlock()
+        return basis
+    }
+
+    /// The exposure table for a stock under a scene light, over the locus-enclosing domain.
+    static func exposureTable(for stock: FilmStock, illuminant: [Float],
+                              referenceIlluminant: [Float]? = nil,
+                              filter: SpectralFilter? = nil) -> SpectralLUT {
+        buildLUT({ point in
+            domainExposure(point, stock: stock, illuminant: illuminant,
+                           referenceIlluminant: referenceIlluminant, filter: filter)
+        }, fourth: donorChannel(for: stock, illuminant: illuminant,
+                                referenceIlluminant: referenceIlluminant, filter: filter))
+    }
+
+    /// The donor record's exposure for a scene colour: the same anchored reconstruction and
+    /// the same stock-native calibration as the dye-forming layers.
+    static func donorAnchoredExposure(_ rgb: SIMD3<Float>, donor: DonorCaptureLayer,
+                                      illuminant: [Float] = SpectralGrid.d65,
+                                      referenceIlluminant suppliedReference: [Float],
+                                      filter: SpectralFilter? = nil) -> Float {
+        let peak = max(rgb.x, rgb.y, rgb.z)
+        guard peak > 0 else { return 0 }
+        let radiance = peak / reconstructionAnchor
+        guard let model = MeasuredReflectanceTable.shared else {
+            // The compact fallback has no spectrum to weigh a fourth record with. The engine
+            // gates the donor stage on the reconstruction model being loaded, so this value
+            // is never read; 0 keeps the table well-formed.
+            return 0
+        }
+        let reflectance = model.reflectance(rgb / radiance)
+        var exposure: Float = 0
+        var referenceExposure: Float = 0
+        let sceneY = Illuminant.luminance(illuminant)
+        let referenceY = Illuminant.luminance(suppliedReference)
+        for i in 0..<SpectralGrid.count {
+            let light = illuminant[i] / sceneY
+            let through = filter.map { reflectance[i] * $0.transmittance[i] } ?? reflectance[i]
+            exposure += through * light * donor.sensitivity[i]
+            referenceExposure += suppliedReference[i] / referenceY * donor.sensitivity[i]
+        }
+        return (filter?.gain ?? 1) * exposure / max(referenceExposure, 1e-12) * radiance
+    }
+
+    /// Whether the wavelength-domain reconstruction is loaded — the condition the donor
+    /// stage, and the exposure cube's fourth channel, are gated on together.
+    static var hasReconstructionModel: Bool { MeasuredReflectanceTable.shared != nil }
+
+    /// Number of measured spectra fitted into the bundled recovery prior.
+    static var reconstructionSourceCount: Int? { MeasuredReflectanceTable.shared?.sourceCount }
+
+    /// The exposure cube's fourth channel: the donor record's exposure on the same
+    /// evaluation as the three dye-forming ones. nil — the constant 1 the slot always held —
+    /// when the stock coats no donor, or when there is no reconstruction model to integrate
+    /// one with (the same condition the engine gates the donor stage on).
+    static func donorChannel(for stock: FilmStock,
+                             illuminant: [Float] = SpectralGrid.d65,
+                             referenceIlluminant suppliedReference: [Float]? = nil,
+                             filter: SpectralFilter? = nil)
+        -> ((SIMD3<Float>) -> Float)? {
+        guard let donor = stock.donorLayers.first,
+              MeasuredReflectanceTable.shared != nil else { return nil }
+        let reference = suppliedReference ?? filmReferenceIlluminant(for: stock)
+        return { point in
+            domainDonorExposure(point, donor: donor,
+                                illuminant: illuminant,
+                                referenceIlluminant: reference, filter: filter)
+        }
+    }
+
+    /// What the donor layers add to a table identity: nothing at all — the zero the fold
+    /// starts from — for the empty array every existing stock has, so every identity that
+    /// existed before donors is exactly the identity it was.
+    static func donorSignature(for stock: FilmStock) -> UInt64 {
+        var h: UInt64 = 0
+        for donor in stock.donorLayers {
+            h = (h ^ 0x444F4E4F52) &* 0x100000001b3  // "DONOR"
+            for v in donor.sensitivity { h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3 }
+            for v in [donor.curve.dMin, donor.curve.gamma, donor.curve.toe,
+                      donor.curve.toeWidth, donor.curve.shoulder,
+                      donor.curve.shoulderWidth] {
+                h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3
+            }
+            if let secondary = donor.curve.secondary {
+                h = (h ^ 1) &* 0x100000001b3
+                for v in [secondary.gamma, secondary.toe, secondary.toeWidth,
+                          secondary.shoulder, secondary.shoulderWidth] {
+                    h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3
+                }
+            } else {
+                h = h &* 0x100000001b3
+            }
+            for v in donor.inhibition { h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3 }
+        }
+        return h
+    }
+
+    /// Internal rather than private so the negative-viewing table can be checked against the model
+    /// it claims to be a mirror of.
+    /// `density` is one entry per *developed record* and `dyes` one spectrum per *dye*, and
+    /// the sum below pairs them off by index — which is the single line that makes capture
+    /// layer *i* mean dye *i*. For every stock shipped so far the two counts are both three
+    /// and the pairing is the identity, so nothing here is wrong; it is the assumption a
+    /// fourth capture layer would have to break, by putting an N-by-dye forming matrix in
+    /// front of this sum rather than indexing straight through.
+    static func transmissionRGB(density: [Float], dyes: [[Float]],
+                                neutralDensity: Float = 0,
+                                illuminant: [Float]? = nil,
+                                densityOffset: [Float]? = nil) -> SIMD3<Float> {
+        assert(density.count == dyes.count,
+               "density must be dye-aligned: \(density.count) records, \(dyes.count) dyes")
+        var spectrum = [Float](repeating: 0, count: SpectralGrid.count)
+        for i in 0..<SpectralGrid.count {
+            var d = neutralDensity
+            for dye in 0..<dyes.count { d += density[dye] * dyes[dye][i] }
+            if let densityOffset { d += densityOffset[i] }
+            spectrum[i] = pow(10, -d)
+        }
+        guard let illuminant else {
+            return SpectralGrid.toLinearDisplayP3(reflectance: spectrum)
+        }
+        return SpectralGrid.toLinearDisplayP3(reflectance: spectrum,
+                                              under: illuminant)
+    }
+
+    // Internal so the crossover tests can mirror the print exposure path.
+    static func paperExposure(density: [Float], dyes: [[Float]],
+                                      lamp: [Float], paperSensitivity: [[Float]],
+                                      neutralDensity: Float = 0,
+                                      densityOffset: [Float]? = nil) -> SIMD3<Float> {
+        var e = SIMD3<Float>(repeating: 0)
+        for i in 0..<SpectralGrid.count {
+            var d = density[0] * dyes[0][i] + density[1] * dyes[1][i]
+                  + density[2] * dyes[2][i] + neutralDensity
+            if let densityOffset { d += densityOffset[i] }
+            let transmitted = lamp[i] * pow(10, -d)
+            e.x += transmitted * paperSensitivity[0][i]
+            e.y += transmitted * paperSensitivity[1][i]
+            e.z += transmitted * paperSensitivity[2][i]
+        }
+        return e
+    }
+
+    /// The per-channel log-exposure cast a reference-anchored medium leaves in
+    /// this stock's positive: the stock's own mid-grey red/blue-over-green
+    /// read minus the reference's. Zero for the reference itself, for every
+    /// medium that times per stock, and for monochrome — one exposure, output
+    /// forced neutral, so a colour offset would be unreachable paint. The reference and the
+    /// ceiling default to the medium's committed profile; a test hands in its own.
+    /// Shadow-side stretch that lands the stock's film base on the reference receiver's black
+    /// target: 1 everywhere except a colour negative on Digital Reference at a reference exposure.
+    /// The paper grade a render actually prints through: the stated one where a graded curve is
+    /// in the path — a negative on Digital Reference's graded styles — and the calibrated grade
+    /// everywhere else, so nothing else's identity moves with the control.
+    static func effectiveScreenGrade(_ grade: Float, stock: FilmStock, paper: PrintPaper,
+                                     digitalReference: DigitalReferenceStyle) -> Float {
+        guard paper == .screen, !stock.isReversal, digitalReference.usesGradedCurve,
+              grade.isFinite else { return DigitalReferenceReceiver.referenceGrade }
+        return min(max(grade, DigitalReferenceReceiver.gradeRange.lowerBound),
+                   DigitalReferenceReceiver.gradeRange.upperBound)
+    }
+
+    /// The screen exposure a direct view carries in its table: only a positive's reference
+    /// exposure on Digital Reference, where there is no paper stage to carry it in the slots.
+    static func directViewExposure(_ stops: Float, stock: FilmStock, paper: PrintPaper,
+                                   digitalReference: DigitalReferenceStyle) -> Float {
+        guard paper == .screen, paper.viewsFilmDirectly(for: stock), !stock.isReflectionPrint,
+              !paper.levelsPositive(for: stock, digitalReference: digitalReference),
+              stops.isFinite else { return 0 }
+        return min(max(stops, -6), 6)
+    }
+
+    /// The share of Lab Scan's finish a table bakes: the request in 0...1 on Lab Scan, the full
+    /// finish for an invalid request, and 1 on every other medium so their identities hold.
+    static func effectiveLabScanLook(_ look: Float, paper: PrintPaper) -> Float {
+        guard paper == .labScan else { return 1 }
+        return look.isFinite ? min(max(look, 0), 1) : 1
+    }
+
+    /// The bands a table reads through: the stated ones, in range, where Digital Reference reads a
+    /// colour film's dyes, negative or slide, and the paper's own everywhere else so nothing
+    /// else's identity moves. Silver is neutral, so a black-and-white film reads the same through
+    /// any bands.
+    static func effectiveReceiverBands(_ bands: ReceiverBands, stock: FilmStock,
+                                       paper: PrintPaper) -> ReceiverBands {
+        guard paper == .screen, !stock.isMonochrome, !stock.isReflectionPrint else { return .paper }
+        return bands.clamped
+    }
+
+    /// The screen exposure the paper slots carry, as a log exposure added to every read.
+    static func screenExposureShift(_ stops: Float, stock: FilmStock, paper: PrintPaper,
+                                    digitalReference: DigitalReferenceStyle,
+                                    screenGrade: Float) -> Float {
+        guard paper == .screen, !stock.isReflectionPrint, stops.isFinite,
+              !paper.viewsFilmDirectly(for: stock)
+                || paper.levelsPositive(for: stock, digitalReference: digitalReference)
+        else { return 0 }
+        let grade = effectiveScreenGrade(screenGrade, stock: stock, paper: paper,
+                                         digitalReference: digitalReference)
+        return DigitalReferenceReceiver.exposureShift(
+            stops: min(max(stops, -6), 6), stock: stock, style: digitalReference, grade: grade)
+    }
+
+    /// Auto Levels balances the toe per record the way a lab scanner's per-channel black point
+    /// does: along the stock's own neutral wedge each record's toe is carried onto green's, so the
+    /// base reads where green's does.
+    /// Its re-time can lift a thin frame's base off black, where a stock's unequal toes would
+    /// otherwise print as a cast. `read` is the receiver's read of a developed density; every
+    /// other style keeps the stock's own shadow balance.
+    static func screenToeBalance(stock: FilmStock, digitalReference: DigitalReferenceStyle,
+                                 read: ([Float]) -> SIMD3<Float>) -> ScreenToeBalance {
+        guard !stock.isReversal, !stock.isMonochrome, digitalReference == .autoLevels else {
+            return ScreenToeBalance(wedges: nil)
+        }
+        let wedge = (0...256).map { i -> SIMD3<Float> in
+            let logExposure = -8 * Float(i) / 256
+            return read((0..<3).map { stock.developedDensity(layer: $0, logExposure: logExposure) })
+        }
+        return ScreenToeBalance(wedges: (0..<3).map { channel in
+            var samples: [SIMD2<Float>] = []
+            for r in wedge where samples.last.map({ r[channel] > $0.x + 1e-5 }) ?? true {
+                samples.append(SIMD2(r[channel], r.y - r[channel]))
+            }
+            return samples
+        })
+    }
+
+    /// Digital Reference's read of a colour negative's developed densities: each record's relative
+    /// energy through `bands`, unmixed. Moved bands read the film's greys at their own per-record
+    /// contrast, which would print as a cast growing away from mid-grey; a scanner is calibrated on
+    /// the film's greys, so they are carried onto the paper bands' read of the same neutral wedge.
+    /// Greys then print as on the paper's bands, and only colours read through the moved ones.
+    static func screenReader(stock: FilmStock, bands: ReceiverBands,
+                             relativeEnergy: @escaping ([Float]) -> SIMD3<Float>,
+                             paperRelativeEnergy: () -> ([Float]) -> SIMD3<Float>)
+        -> ([Float]) -> SIMD3<Float> {
+        let unmix = DigitalReferenceReceiver.unmix(bands)
+        let read = { (density: [Float]) in unmix.read(relativeEnergy(density)) }
+        guard bands != .paper else { return read }
+        let paperUnmix = DigitalReferenceReceiver.unmix(.paper)
+        let paperEnergy = paperRelativeEnergy()
+        let neutral = ReceiverNeutralCalibration(stock: stock, read: read,
+                                                 paperRead: { paperUnmix.read(paperEnergy($0)) })
+        return { neutral(read($0)) }
+    }
+
+    /// A slide as a scanner reads it through `bands`: each band's density of the slide's own
+    /// transmittance under equal energy. Moved bands separate the dyes differently; the scanner is
+    /// calibrated on the film's greys, so those read as through the paper's bands. Each record then
+    /// moves along the film's neutral wedge by what its band reads differently from the paper's,
+    /// so the direct view and its levels show the moved scan. Nil at the paper's bands, which
+    /// leave every slide exactly as it was.
+    static func positiveBandShift(stock: FilmStock, bands: ReceiverBands) -> (([Float]) -> [Float])? {
+        guard bands != .paper else { return nil }
+        let basis = neutralDensityBasis(for: stock)
+        let dyes = stock.spectralProfile.imageDyeDensity
+        let offset = filmDensityOffset(for: stock)
+        func reader(_ sensitivity: [[Float]]) -> ([Float]) -> SIMD3<Float> {
+            let totals = sensitivity.map { max($0.reduce(0, +), 1e-12) }
+            return { density in
+                let aligned = basis(density)
+                var read = SIMD3<Float>(repeating: 0)
+                for i in 0..<SpectralGrid.count {
+                    var d = offset?[i] ?? 0
+                    for dye in 0..<dyes.count { d += aligned[dye] * dyes[dye][i] }
+                    let transmitted = pow(10, -d)
+                    for band in 0..<3 { read[band] += transmitted * sensitivity[band][i] }
+                }
+                return SIMD3((0..<3).map { -log10(max(read[$0] / totals[$0], 1e-12)) })
+            }
+        }
+        let moved = reader(bands.sensitivity), paperRead = reader(ReceiverBands.paper.sensitivity)
+        let neutral = ReceiverNeutralCalibration(stock: stock, read: moved, paperRead: paperRead)
+        // Each record's density and the paper bands' read of it, both ways along the neutral wedge.
+        let records = { (density: [Float]) in SIMD3(density[0], density[1], density[2]) }
+        let wedgeRead = ReceiverNeutralCalibration(stock: stock, read: records, paperRead: paperRead)
+        let wedgeDensity = ReceiverNeutralCalibration(stock: stock, read: paperRead, paperRead: records)
+        let ranges = stock.curves.map { $0.dMin...$0.dMax }
+        return { density in
+            let difference = neutral(moved(density)) - paperRead(density)
+            let shifted = wedgeDensity(wedgeRead(records(density)) + difference)
+            return (0..<3).map { min(max(shifted[$0], ranges[$0].lowerBound), ranges[$0].upperBound) }
+        }
+    }
+
+    static func screenShadowScale(stock: FilmStock, paper: PrintPaper,
+                                  digitalReference: DigitalReferenceStyle) -> Float {
+        guard paper == .screen, !stock.isReversal,
+              digitalReference == .referenceExposure else { return 1 }
+        return DigitalReferenceReceiver.referenceBaseTarget(for: stock)
+            / DigitalReferenceReceiver.baseRead(for: stock)
+    }
+
+    /// A transparent positive as Digital Reference reads it: the direct view's own spectral
+    /// transmittance with its mid-grey balanced to 18%, and the two readings the levelled styles
+    /// place — the clear base and the neutral wedge. Cached per stock; the tables and the
+    /// per-frame levels both ask for it.
+    struct PositiveScreenRead: Sendable {
+        let stock: FilmStock
+        let basis: NeutralDensityBasis
+        let balance: SIMD3<Float>
+        /// The clear base's brightest channel, as a density below display white: negative when
+        /// the base sits above it, which a slide balanced to 18% at mid-grey always does.
+        let base: Float
+
+        /// Display-linear RGB at record densities, mid-grey at 18%.
+        func transmittance(density: [Float]) -> SIMD3<Float> {
+            let rgb = SpectralRuntime.transmissionRGB(density: basis(density), stock: stock) * balance
+            return SIMD3(max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0))
+        }
+
+        /// The neutral wedge's luminance at `stops` over mid-grey, as a density below display
+        /// white: 0.744 at mid-grey.
+        func luminance(stops: Float) -> Float {
+            let density = (0..<3).map {
+                stock.developedDensity(layer: $0, logExposure: stops * log10(2))
+            }
+            let rgb = transmittance(density: density)
+            let weights = ColorScience.displayP3LuminanceWeights
+            let y = weights.0 * rgb.x + weights.1 * rgb.y + weights.2 * rgb.z
+            return -log10(max(y, 1e-6))
+        }
+    }
+
+    static func positiveScreenRead(for stock: FilmStock) -> PositiveScreenRead {
+        let key = cacheIdentifier(for: stock, paper: .screen)
+        balanceLock.lock()
+        if let found = positiveReadCache.value(for: key) {
+            balanceLock.unlock()
+            return found
+        }
+        balanceLock.unlock()
+        let basis = neutralDensityBasis(for: stock)
+        let balance = reversalBalance(for: stock, aligned: { basis($0) })
+        let white = transmissionRGB(density: basis(stock.curves.map(\.dMin)), stock: stock) * balance
+        let read = PositiveScreenRead(
+            stock: stock, basis: basis, balance: balance,
+            base: -log10(max(white.x, white.y, white.z, 1e-6)))
+        balanceLock.lock()
+        positiveReadCache.insert(read, for: key)
+        balanceLock.unlock()
+        return read
+    }
+
+    static func referenceCastOffset(midEnergy: SIMD3<Float>, stock: FilmStock,
+                                    paper: PrintPaper,
+                                    reference: SIMD2<Float> = PrintPaper.labScanReferenceMidRatio,
+                                    ceiling: Float = PrintPaper.labScanCastCeiling)
+        -> SIMD3<Float> {
+        guard paper.isReferenceAnchored, !stock.isMonochrome else { return .zero }
+        var red = log10(max(midEnergy.x, 1e-12) / max(midEnergy.y, 1e-12))
+            - reference.x
+        var blue = log10(max(midEnergy.z, 1e-12) / max(midEnergy.y, 1e-12))
+            - reference.y
+        // The profile's correction authority: the machine's per-frame colour
+        // pass hands small casts through as film character and pulls anything
+        // larger back to this ceiling, direction kept. Calibrated against the
+        // same-lab corpus (`labScanCastCeiling`); without it a stock far from
+        // the reference — a Fuji mid-scale, a remjet-free cine negative —
+        // scans 2-9x warmer than the lab ever lets it.
+        let magnitude = (red * red + blue * blue).squareRoot()
+        if magnitude > ceiling {
+            let held = ceiling / magnitude
+            red *= held
+            blue *= held
+        }
+        return SIMD3(red, 0, blue)
+    }
+
+    /// The density-to-display step a finished positive is read through, so the render and the
+    /// analytic mirror cannot state different prints.
+    struct PrintReceiver: Sendable {
+        let dyes: [[Float]]
+        let viewingLight: [Float]?
+        let unmix: PrintDyeUnmix?
+
+        func rgb(density: SIMD3<Float>) -> SIMD3<Float> {
+            guard let unmix else {
+                return SpectralRuntime.transmissionRGB(
+                    density: [density.x, density.y, density.z], dyes: dyes,
+                    illuminant: viewingLight)
+            }
+            let amounts = unmix.amounts(forStatusA: density)
+            return SpectralRuntime.transmissionRGB(
+                density: [amounts.x, amounts.y, amounts.z], dyes: dyes,
+                illuminant: viewingLight)
+        }
+    }
+
+    static func printReceiver(stock: FilmStock, paper: PrintPaper,
+                              viewingLight: [Float]?) -> PrintReceiver {
+        // A scan has no viewing dyes, the digital reference is not a sheet, and a monochrome
+        // print is forced neutral, so none of them unmix.
+        let unmixes = !stock.isMonochrome && !paper.isScan
+            && paper != .screen && !paper.isNegative
+        guard unmixes else {
+            return PrintReceiver(dyes: paper.dyes,
+                                 viewingLight: viewingLight, unmix: nil)
+        }
+        let unmix = PrintDyeUnmix(dyes: paper.analyticalDyes)
+        return PrintReceiver(dyes: paper.analyticalDyes,
+                             viewingLight: viewingLight, unmix: unmix)
+    }
+
+    /// The reflection print's visual setup is solved once, under D50. These density targets
+    /// are inverted through the characteristic curves into exposure offsets; they are never
+    /// added to developed densities. Cine media use their published LAD targets instead.
+    private static let reflectionPrintDensityTrims: [PrintPaper: SIMD3<Float>] = {
+        Dictionary(uniqueKeysWithValues:
+            [PrintPaper.ektacolorEdge, .enduraPremier, .crystalArchive, .ilfochromeCPS1K, .ilfochromeCLM1K].map { paper in
+                let anchor = paper.anchorDensity
+                let light = referenceViewingLight(for: paper)
+                return (paper, solveReflectionPrintSetup(
+                    unmix: PrintDyeUnmix(dyes: paper.analyticalDyes), anchor: anchor,
+                    target: SIMD3(repeating: pow(10, -paper.midDensity)),
+                    illuminant: light))
+            })
+    }()
+
+    static func reflectionPrintDensityTrim(for paper: PrintPaper) -> SIMD3<Float> {
+        reflectionPrintDensityTrims[paper] ?? .zero
+    }
+
+    /// Find a visual setup density, not a printer-light magnitude. Exposure placement belongs
+    /// to `printExposureMidpoints`; a real light adjustment translates log exposure and fades
+    /// naturally in both toe and shoulder. Hunt, sections 14.16 and 16.2.
+    private static func solveReflectionPrintSetup(unmix: PrintDyeUnmix, anchor: Float,
+                                 target: SIMD3<Float>,
+                                 illuminant: [Float]?) -> SIMD3<Float> {
+        func printed(_ offset: SIMD3<Float>) -> SIMD3<Float> {
+            let amounts = unmix.amounts(
+                forStatusA: SIMD3(repeating: anchor) + offset)
+            return transmissionRGB(density: [amounts.x, amounts.y, amounts.z],
+                                   dyes: unmix.dyes,
+                                   illuminant: illuminant)
+        }
+        var offset = SIMD3<Float>(repeating: 0)
+        for _ in 0..<24 {
+            let base = printed(offset)
+            let residual = base - target
+            if max(abs(residual.x), max(abs(residual.y), abs(residual.z))) < 1e-7 {
+                break
+            }
+            let epsilon: Float = 1e-3
+            var columns = [SIMD3<Float>](repeating: .zero, count: 3)
+            for channel in 0..<3 {
+                var stepped = offset
+                stepped[channel] += epsilon
+                columns[channel] = (printed(stepped) - base) / epsilon
+            }
+            func cross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float> {
+                SIMD3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+                      a.x * b.y - a.y * b.x)
+            }
+            func dot(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float {
+                a.x * b.x + a.y * b.y + a.z * b.z
+            }
+            let determinant = dot(columns[0], cross(columns[1], columns[2]))
+            guard abs(determinant) > 1e-12 else { break }
+            offset -= SIMD3(
+                dot(residual, cross(columns[1], columns[2])) / determinant,
+                dot(columns[0], cross(residual, columns[2])) / determinant,
+                dot(columns[0], cross(columns[1], residual)) / determinant)
+        }
+        return offset
+    }
+
+    /// The numbers `PrintPaper.labScanReferenceMidRatio` and
+    /// `labScanReferenceBalance` are committed from: the given stock's
+    /// mid-grey read through the lab scan's bands, and its solved balance on
+    /// that medium. Public so `fotufilm --dump-labscan-reference` can print
+    /// them for re-committing; the render path reads only the constants.
+    public static func labScanReferenceSolve(for stock: FilmStock)
+        -> (midRatioRed: Float, midRatioBlue: Float, balance: [Float]) {
+        let paper = PrintPaper.labScan
+        let midDensity = (0..<3).map { stock.curves[$0].density(logExposure: 0) }
+        let midEnergy = paperExposure(density: midDensity,
+                                      stock: stock,
+                                      lamp: SpectralGrid.equalEnergy,
+                                      paperSensitivity: paper.sensitivity)
+        return (log10(max(midEnergy.x, 1e-12) / max(midEnergy.y, 1e-12)),
+                log10(max(midEnergy.z, 1e-12) / max(midEnergy.y, 1e-12)),
+                neutralPrintingBalance(for: stock, paper: paper))
+    }
+}
+
+extension SpectralRuntime {
+    /// The per-channel scaling of print exposure that carries a stock's
+    /// neutral wedge onto one printed scale, on this medium.
+    static func neutralPrintingBalance(for stock: FilmStock,
+                                       paper: PrintPaper) -> [Float] {
+        guard !stock.isReversal, !stock.isMonochrome,
+              paper.acceptsPrintCorrection else { return [1, 1, 1] }
+
+        let key = cacheIdentifier(for: stock, paper: paper)
+        balanceLock.lock()
+        if let found = balanceCache.value(for: key) {
+            balanceLock.unlock()
+            return found
+        }
+        balanceLock.unlock()
+
+        let perStop = Float(log10(2.0))
+        let paperSensitivity = paper.sensitivity
+        let dyes = stock.spectralProfile.imageDyeDensity
+        let midDensity = (0..<3).map { stock.curves[$0].density(logExposure: 0) }
+        let illumination = printingIllumination(stock: stock, paper: paper,
+                                                density: midDensity, dyes: dyes)
+        let lamp = illumination.lamp
+        let midEnergy = illumination.referenceEnergy
+        let curves = paper.printCurves(for: stock)
+        let xMids = paper.printExposureMidpoints(for: stock)
+
+        let relatives: [SIMD3<Float>] = stride(from: Float(-5), through: 5, by: 0.25)
+            .map { stops in
+                let density = (0..<3).map {
+                    stock.developedDensity(layer: $0, logExposure: stops * perStop)
+                }
+                let energy = paperExposure(density: density, stock: stock,
+                                           lamp: lamp, paperSensitivity: paperSensitivity)
+                return SIMD3<Float>(
+                    log10(max(energy.x, 1e-12) / max(midEnergy.x, 1e-12)),
+                    log10(max(energy.y, 1e-12) / max(midEnergy.y, 1e-12)),
+                    log10(max(energy.z, 1e-12) / max(midEnergy.z, 1e-12)))
+            }
+
+        let viewingLight = referenceViewingLight(for: paper)
+        let receiver = printReceiver(stock: stock, paper: paper,
+                                     viewingLight: viewingLight)
+
+        /// One wedge point as the viewer has it: three printed densities,
+        /// each developed along its own record, then read through the paper's
+        /// own dyes.
+        func viewed(_ relative: SIMD3<Float>, _ scale: [Float]) -> SIMD3<Float> {
+            let printed = (0..<3).map { channel in
+                curves[channel].density(
+                    logExposure: xMids[channel]
+                        + scale[channel] * relative[channel])
+                    - curves[channel].dMin
+            }
+            return receiver.rgb(
+                density: SIMD3(printed[0], printed[1], printed[2]))
+        }
+
+        /// How far the printed wedge departs from grey, in the log domain the
+        /// densities live in, summed over the wedge.
+        func cost(_ scale: [Float]) -> Float {
+            var total: Float = 0
+            for relative in relatives {
+                let rgb = viewed(relative, scale)
+                let g = log10(max(rgb.y, 1e-6))
+                let dr = log10(max(rgb.x, 1e-6)) - g
+                let db = log10(max(rgb.z, 1e-6)) - g
+                total += dr * dr + db * db
+            }
+            return total
+        }
+
+        var solved: [Float] = [1, 1, 1]
+        /// Minimise along one channel with the others held, by a coarse sweep
+        /// and a golden-section refine.
+        func minimise(channel: Int, around centre: Float, span: Float) {
+            var trial = solved
+            func at(_ scale: Float) -> Float {
+                trial[channel] = scale
+                return cost(trial)
+            }
+            var bestScale = centre
+            var bestCost = Float.greatestFiniteMagnitude
+            for step in stride(from: max(centre - span, 0.2), through: centre + span,
+                               by: 0.01) {
+                let c = at(step)
+                if c < bestCost { bestCost = c; bestScale = step }
+            }
+            var low = max(bestScale - 0.01, 0.2)
+            var high = bestScale + 0.01
+            let phi: Float = 0.6180339887
+            var c1 = high - phi * (high - low)
+            var c2 = low + phi * (high - low)
+            var f1 = at(c1)
+            var f2 = at(c2)
+            for _ in 0..<48 {
+                if f1 < f2 {
+                    high = c2; c2 = c1; f2 = f1
+                    c1 = high - phi * (high - low)
+                    f1 = at(c1)
+                } else {
+                    low = c1; c1 = c2; f1 = f2
+                    c2 = low + phi * (high - low)
+                    f2 = at(c2)
+                }
+            }
+            solved[channel] = (low + high) / 2
+        }
+
+        minimise(channel: 0, around: 1, span: 0.6)
+        minimise(channel: 2, around: 1, span: 0.6)
+        for _ in 0..<2 {
+            minimise(channel: 0, around: solved[0], span: 0.1)
+            minimise(channel: 2, around: solved[2], span: 0.1)
+        }
+
+        balanceLock.lock()
+        balanceCache.insert(solved, for: key)
+        balanceLock.unlock()
+        return solved
+    }
+
+    /// Display-linear luminance of the finished print (or viewed transparency) for a neutral patch
+    /// at each of `stops` from metered mid-grey — the system's neutral tone scale, computed by
+    /// mirroring the pipeline's own output model rather than by fitting one.
+    static func neutralToneScale(stops: [Float], stock: FilmStock,
+                                 paper: PrintPaper = .default,
+                                 printCorrection: Float,
+                                 callier: Float = 1,
+                                 digitalReference: DigitalReferenceStyle = .default,
+                                 sceneHighlightStops: Float? = nil,
+                                 screenGrade: Float = 2,
+                                 screenExposureEV: Float = 0,
+                                 screenCMY: SIMD3<Float> = .zero,
+                                 receiverBands: ReceiverBands = .paper) -> [Float] {
+        let paper = paper.resolved(for: stock)
+        let receiverBands = effectiveReceiverBands(receiverBands, stock: stock, paper: paper)
+        let callier = callierCoefficient(callier, stock: stock, paper: paper)
+        let grade = effectiveScreenGrade(screenGrade, stock: stock, paper: paper,
+                                         digitalReference: digitalReference)
+        let exposureShift = screenExposureShift(screenExposureEV, stock: stock, paper: paper,
+                                                digitalReference: digitalReference,
+                                                screenGrade: screenGrade)
+        // Display-linear print RGB is Display P3, so its luminance uses the P3 weights.
+        let luma = ColorScience.displayP3LuminanceWeights
+        func luminance(_ rgb: SIMD3<Float>) -> Float {
+            luma.0 * rgb.x + luma.1 * rgb.y + luma.2 * rgb.z
+        }
+        let perStop = Float(log10(2.0))
+
+        if paper.levelsPositive(for: stock, digitalReference: digitalReference) {
+            // The same shift the kernel applies through its mid-point slots, on the same read.
+            let read = positiveScreenRead(for: stock)
+            let shift = DigitalReferenceReceiver.levels(
+                for: stock, style: digitalReference, sceneHighlightStops: sceneHighlightStops).shift
+                + exposureShift
+            let curve = DigitalReferenceReceiver.positiveCurve
+            let xMid = curve.logExposure(density: curve.dMin + DigitalReferenceReceiver.anchorDensity)
+            return stops.map { s in
+                let density = (0..<3).map {
+                    stock.developedDensity(layer: $0, logExposure: s * perStop)
+                }
+                let rgb = read.transmittance(density: density)
+                let printed = SIMD3<Float>((0..<3).map { c in
+                    curve.density(logExposure: xMid + shift - log10(max(rgb[c], 1e-6) / 0.18))
+                        - curve.dMin
+                })
+                return luminance(DigitalReferenceReceiver.positiveRGB(density: printed))
+            }
+        }
+        if paper.viewsFilmDirectly(for: stock) {
+            let basis = neutralDensityBasis(for: stock)
+            func aligned(_ density: [Float]) -> [Float] { basis(density) }
+            let balance = reversalBalance(for: stock, aligned: aligned)
+                * exp2(directViewExposure(screenExposureEV, stock: stock, paper: paper,
+                                          digitalReference: digitalReference))
+            return stops.map { s in
+                let density = aligned((0..<3).map {
+                    stock.developedDensity(layer: $0, logExposure: s * perStop)
+                })
+                let rgb = transmissionRGB(
+                    density: density,
+                    stock: stock) * balance
+                return luminance(SIMD3(max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0)))
+            }
+        }
+
+        if paper.isNegative {
+            return stops.map { s in
+                let density = (0..<3).map {
+                    stock.developedDensity(layer: $0, logExposure: s * perStop)
+                }
+                let rgb = transmissionRGB(density: density, stock: stock)
+                return luminance(SIMD3(max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0)))
+            }
+        }
+
+        let basis = stock.isReversal ? neutralDensityBasis(for: stock) : nil
+        func aligned(_ density: [Float]) -> [Float] { basis?(density) ?? density }
+        let midDensity = aligned((0..<3).map { stock.developedDensity(layer: $0, logExposure: 0) })
+        func energyReader(_ bands: ReceiverBands) -> ([Float]) -> SIMD3<Float> {
+            let paperSensitivity = paper.sensitivity(bands: bands)
+            let illumination = printingIllumination(stock: stock, paper: paper,
+                density: midDensity.map { $0 * callier }, dyes: stock.spectralProfile.imageDyeDensity,
+                densityScale: callier, receiverBands: bands)
+            let lamp = illumination.lamp
+            let midEnergy = illumination.referenceEnergy
+            // The same reference cast the printing LUT carries — this
+            // mirror walks a neutral wedge, and on a profiled medium a
+            // neutral wedge does not print neutral.
+            let castOffset = referenceCastOffset(midEnergy: midEnergy, stock: stock, paper: paper)
+            return { density in
+                let energy = paperExposure(density: aligned(density).map { $0 * callier },
+                                           stock: stock,
+                                           lamp: lamp, paperSensitivity: paperSensitivity,
+                                           densityScale: callier)
+                return SIMD3<Float>(
+                    log10(max(energy.x, 1e-12) / max(midEnergy.x, 1e-12)),
+                    log10(max(energy.y, 1e-12) / max(midEnergy.y, 1e-12)),
+                    log10(max(energy.z, 1e-12) / max(midEnergy.z, 1e-12))) + castOffset
+            }
+        }
+        let relativeEnergy = energyReader(receiverBands)
+        let screenRead = screenReader(stock: stock, bands: receiverBands,
+                                      relativeEnergy: relativeEnergy,
+                                      paperRelativeEnergy: { energyReader(.paper) })
+        let neutralMid = neutralDensity(stock, 0)
+        let curves = paper.printCurves(for: stock, digitalReference: digitalReference)
+        var xMids = paper.printExposureMidpoints(for: stock, digitalReference: digitalReference)
+        var masking = stock.printingContrastScale(correction: printCorrection,
+                                                  paper: paper)
+        let shadowScale = screenShadowScale(stock: stock, paper: paper,
+                                            digitalReference: digitalReference)
+        let toeBalance = screenToeBalance(
+            stock: stock,
+            digitalReference: paper == .screen && !paper.readsLayersDirectly(for: stock)
+                ? digitalReference : .gradedPrint,
+            read: screenRead)
+        if paper == .screen {
+            // The same levels the kernel applies through its mid-point and contrast slots.
+            let levels = DigitalReferenceReceiver.levels(
+                for: stock, style: digitalReference, sceneHighlightStops: sceneHighlightStops)
+            masking = masking.map { $0 * levels.scale }
+            xMids = xMids.map { $0 + paper.exposureDirection * (levels.shift + exposureShift) }
+        }
+        let colourShift = DigitalReferenceReceiver.colourShift(screenCMY, stock: stock, paper: paper)
+        for channel in 0..<3 { xMids[channel] += colourShift[channel] }
+        let viewingLight = referenceViewingLight(for: paper)
+        let receiver = printReceiver(stock: stock, paper: paper,
+                                     viewingLight: viewingLight)
+        return stops.map { s in
+            let density = (0..<3).map {
+                stock.developedDensity(layer: $0, logExposure: s * perStop)
+            }
+            var relative: SIMD3<Float>
+            if paper.readsLayersDirectly(for: stock) {
+                relative = SIMD3((0..<3).map { layer -> Float in
+                    let exposure = stock.curves[layer].logExposure(density: density[layer])
+                    return DigitalReferenceReceiver.stretchShadows(
+                        neutralMid - neutralDensity(stock, exposure), scale: shadowScale)
+                })
+            } else {
+                relative = relativeEnergy(density)
+                if paper == .screen {
+                    let read = toeBalance(screenRead(density))
+                    relative = SIMD3((0..<3).map {
+                        DigitalReferenceReceiver.stretchShadows(read[$0], scale: shadowScale) })
+                }
+            }
+            let printed = (0..<3).map { channel in
+                curves[channel].density(
+                    logExposure: xMids[channel] + masking[channel]
+                        * paper.exposureDirection * relative[channel]) - curves[channel].dMin
+            }
+            let rgb: SIMD3<Float>
+            if paper == .screen {
+                rgb = DigitalReferenceReceiver.rgb(
+                    density: SIMD3(printed[0], printed[1], printed[2]), style: digitalReference,
+                    stock: stock, grade: grade)
+            } else if paper.isScan {
+                // A scan's characterization holds the receiver's luminance exactly, so this
+                // neutral mirror needs only the receiver. The 709 delivery is likewise a
+                // luminance-preserving change of primaries.
+                rgb = SIMD3(pow(10, -printed[0]), pow(10, -printed[1]),
+                            pow(10, -printed[2]))
+            } else {
+                rgb = receiver.rgb(
+                    density: SIMD3(printed[0], printed[1], printed[2]))
+            }
+            return luminance(SIMD3(max(rgb.x, 0), max(rgb.y, 0), max(rgb.z, 0)))
+        }
+    }
+}
+
+// MARK: - Scene-light film exposure
+
+/// The film-side half of the physical-light system: the same scene temperature that already
+/// steers the camera-profile delta also decides what light the emulsion integrates. The
+/// expensive object is the per-stock 33³ exposure LUT, so exact SPDs are cached at that level.
+extension SpectralRuntime {
+    /// Validates a stated CCT without quantizing or suppressing daylight temperatures.
+    public static func sceneLightKelvin(_ cct: Float?) -> Float? {
+        guard let cct, cct.isFinite, cct > 0 else { return nil }
+        return cct
+    }
+
+    /// Weight of the warm (illuminant A) anchor at `cct` — the DNG dual-illuminant rule,
+    /// identical to `DualIlluminantMatrices.matrix(cct:)`: linear in mired between the 2856 K
+    /// and 6504 K anchors, clamped so temperatures beyond an anchor hold that anchor.
+    static func sceneLightWarmWeight(cct: Float) -> Float {
+        let coolMired = 1 / DualIlluminantMatrices.daylightKelvin
+        let warmMired = 1 / DualIlluminantMatrices.tungstenKelvin
+        let mired = 1 / max(cct, 1)
+        return clamp((mired - coolMired) / (warmMired - coolMired), 0, 1)
+    }
+
+    private static let sceneLightLock = NSLock()
+    nonisolated(unsafe) private static var sceneAnchorCache =
+        BoundedCache<UInt64, (warm: SpectralLUT, cool: SpectralLUT)>(limit: 16)
+    nonisolated(unsafe) private static var sceneBlendCache =
+        BoundedCache<UInt64, SpectralLUT>(limit: 32)
+
+    static func illuminantSignature(_ illuminant: [Float]) -> UInt64 {
+        precondition(illuminant.count == SpectralGrid.count)
+        var h: UInt64 = 0xcbf29ce484222325
+        for value in illuminant {
+            precondition(value.isFinite && value >= 0, "illuminant SPD must be finite and nonnegative")
+            h = (h ^ UInt64(value.bitPattern)) &* 0x100000001b3
+        }
+        precondition(illuminant.contains { $0 > 0 }, "illuminant SPD must contain energy")
+        return h
+    }
+
+    /// What the exposure table actually depends on: the spectral profile, plus the RGB
+    /// sensitivity matrix the no-reconstruction fallback reads.
+    private static func sceneLightKey(for stock: FilmStock) -> UInt64 {
+        var h = stock.spectralProfile.signature
+        h = (h ^ UInt64(stock.referenceIlluminantKelvin.bitPattern)) &* 0x100000001b3
+        for row in stock.sensitivity {
+            for v in row { h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3 }
+        }
+        let donor = donorSignature(for: stock)
+        if donor != 0 { h = (h ^ donor) &* 0x100000001b3 }
+        return h
+    }
+
+    /// The two common anchor exposure tables for a stock. They are explicit scene lights; the
+    /// ordinary table without capture metadata uses the stock's native reference instead.
+    static func sceneLightAnchors(for stock: FilmStock)
+        -> (warm: SpectralLUT, cool: SpectralLUT) {
+        let key = sceneLightKey(for: stock)
+        sceneLightLock.lock()
+        defer { sceneLightLock.unlock() }
+        if let found = sceneAnchorCache.value(for: key) { return found }
+        let built = (
+            warm: exposureTable(for: stock, illuminant: Illuminant.a),
+            cool: exposureTable(for: stock, illuminant: SpectralGrid.d65)
+        )
+        sceneAnchorCache.insert(built, for: key)
+        return built
+    }
+
+    /// The exposure-domain table under the exact CIE-locus SPD for the stated CCT. Direct sampling
+    /// requires coordinates returned by `ColorScience.linearRec2020ToExposureDomain`.
+    public static func sceneExposure(for stock: FilmStock, cct: Float) -> SpectralLUT {
+        sceneExposure(for: stock, illuminant: Illuminant.atLocus(kelvin: cct))
+    }
+
+    /// The exposure-domain table under a caller-supplied SPD on `SpectralGrid`. Direct sampling
+    /// requires coordinates returned by `ColorScience.linearRec2020ToExposureDomain`.
+    public static func sceneExposure(for stock: FilmStock,
+                                     illuminant: [Float]) -> SpectralLUT {
+        let key = (sceneLightKey(for: stock) ^ illuminantSignature(illuminant))
+            &* 0x100000001b3
+        sceneLightLock.lock()
+        if let found = sceneBlendCache.value(for: key) {
+            sceneLightLock.unlock()
+            return found
+        }
+        sceneLightLock.unlock()
+        let built = exposureTable(for: stock, illuminant: illuminant)
+        sceneLightLock.lock()
+        sceneBlendCache.insert(built, for: key)
+        sceneLightLock.unlock()
+        return built
+    }
+
+    /// Says what light the film integrated, on the same switch as the rest of the
+    /// FOTUFILM_ diagnostics: set FOTUFILM_PROFILE_TRACE to see one line per table selection.
+    static func traceSceneLight(stock: FilmStock, cct: Float) {
+        guard ProcessInfo.processInfo.environment["FOTUFILM_PROFILE_TRACE"] != nil else {
+            return
+        }
+        print(String(format: "film exposure: %@ at %.0f K", stock.name, cct))
+    }
+}
+
+// MARK: - Film exposure through a lens filter
+
+/// The filter's half of the exposure table. A filter sits in the beam ahead of everything, so
+/// the only thing in the engine it can touch is what light the emulsion integrated — develop and
+/// print happen in the dark. That makes it exactly the same kind of change the scene's own colour
+/// temperature is, and it is built the same way: two anchor tables blended in mired, cached per
+/// stack, nothing recomputed per pixel or per frame.
+extension SpectralRuntime {
+
+    /// The scene's light as an exact CIE-locus spectrum. Used for the metering scale, which has to
+    /// be worked out under the light the meter was pointed at — a filter's factor is not the
+    /// same number in tungsten as in daylight, and that is a real difference, not a rounding.
+    static func sceneIlluminant(cct: Float?) -> [Float] {
+        guard let cct else { return SpectralGrid.d65 }
+        return Illuminant.atLocus(kelvin: cct)
+    }
+
+    /// The filter as the integration wants it, resolved against the stock and the light: the
+    /// transmittance, the metering scale, and the per-layer ratio the compact fallback needs.
+    static func spectralFilter(for stock: FilmStock, stack: LensFilterStack,
+                               illuminant: [Float]) -> SpectralFilter {
+        SpectralFilter(
+            transmittance: stack.transmittance,
+            gain: stack.exposureGain(stock: stock, illuminant: illuminant),
+            layerRatio: stack.layerTransmittances(stock: stock, illuminant: illuminant))
+    }
+
+    private static let filterLock = NSLock()
+    nonisolated(unsafe) private static var filteredAnchorCache =
+        BoundedCache<UInt64, (warm: SpectralLUT, cool: SpectralLUT)>(limit: 16)
+    nonisolated(unsafe) private static var filteredExposureCache =
+        BoundedCache<UInt64, SpectralLUT>(limit: 32)
+
+    /// The two anchor exposure tables for a stock behind a filter, built with the metering scale
+    /// left out so that one pair serves every colour temperature. Each anchor carries the
+    /// filter's transmittance under its own light, which is the part that cannot be factored
+    /// out: the filter and the sensitivities are integrated against each other band by band.
+    static func filteredAnchors(for stock: FilmStock, stack: LensFilterStack)
+        -> (warm: SpectralLUT, cool: SpectralLUT) {
+        let key = (filterKey(for: stock) ^ stack.signature) &* 0x100000001b3
+        filterLock.lock()
+        defer { filterLock.unlock() }
+        if let found = filteredAnchorCache.value(for: key) { return found }
+        func anchor(_ illuminant: [Float]) -> SpectralLUT {
+            var filter = spectralFilter(for: stock, stack: stack, illuminant: illuminant)
+            filter.gain = 1
+            return exposureTable(for: stock, illuminant: illuminant, filter: filter)
+        }
+        let built = (warm: anchor(Illuminant.a), cool: anchor(SpectralGrid.d65))
+        filteredAnchorCache.insert(built, for: key)
+        return built
+    }
+
+    /// The exposure-domain table behind this stack. nil assumes D65. Direct
+    /// sampling requires coordinates returned by `ColorScience.linearRec2020ToExposureDomain`.
+    public static func filteredExposure(for stock: FilmStock,
+                                        illuminant supplied: [Float]?,
+                                        stack: LensFilterStack) -> SpectralLUT {
+        precondition(!stack.isEmpty, "an empty stack has no table of its own to build")
+        let illuminant = supplied ?? Illuminant.atLocus(kelvin: 6504)
+        let gain = stack.exposureGain(stock: stock, illuminant: illuminant)
+        let illuminantID = illuminantSignature(illuminant)
+
+        var key = (filterKey(for: stock) ^ stack.signature) &* 0x100000001b3
+        key = (key ^ illuminantID) &* 0x100000001b3
+        key = (key ^ UInt64(gain.bitPattern)) &* 0x100000001b3
+        filterLock.lock()
+        if let found = filteredExposureCache.value(for: key) {
+            filterLock.unlock()
+            return found
+        }
+        filterLock.unlock()
+
+        var filter = spectralFilter(for: stock, stack: stack, illuminant: illuminant)
+        filter.gain = gain
+        let table = exposureTable(for: stock, illuminant: illuminant, filter: filter)
+
+        filterLock.lock()
+        filteredExposureCache.insert(table, for: key)
+        filterLock.unlock()
+        return table
+    }
+
+    /// CCT convenience for existing clients; the exact CIE-locus SPD is used.
+    public static func filteredExposure(for stock: FilmStock, cct: Float?,
+                                        stack: LensFilterStack) -> SpectralLUT {
+        filteredExposure(for: stock,
+                         illuminant: cct.map(Illuminant.atLocus(kelvin:)),
+                         stack: stack)
+    }
+
+    /// What a filtered exposure table depends on, on the stock's side: the same identity the
+    /// unfiltered scene-light tables key on.
+    private static func filterKey(for stock: FilmStock) -> UInt64 {
+        var h = stock.spectralProfile.signature
+        h = (h ^ UInt64(stock.referenceIlluminantKelvin.bitPattern)) &* 0x100000001b3
+        for row in stock.sensitivity {
+            for v in row { h = (h ^ UInt64(v.bitPattern)) &* 0x100000001b3 }
+        }
+        let donor = donorSignature(for: stock)
+        if donor != 0 { h = (h ^ donor) &* 0x100000001b3 }
+        return h
+    }
+}
+
+public enum SpectralGrid {
+    /// Spacing of the grid in nanometres. 5 nm since the 2026-09 audit: the film records'
+    /// sensitising-dye cut-offs fall a decade in 20 nm, and 10 nm point samples of them moved
+    /// a ColorChecker patch's layer exposure by up to 0.1 stop against the dense trace.
+    public static let stepNM: Float = 5
+    public static let wavelengths: [Float] = stride(from: Float(380), through: 780, by: stepNM).map { $0 }
+    public static let count = 81
+    static let xBar: [Float] = [
+        0.001368, 0.002236, 0.004243, 0.00765, 0.01431, 0.02319, 0.04351, 0.07763,
+        0.13438, 0.21477, 0.2839, 0.3285, 0.34828, 0.34806, 0.3362, 0.3187,
+        0.2908, 0.2511, 0.19536, 0.1421, 0.09564, 0.05795001, 0.03201, 0.0147,
+        0.0049, 0.0024, 0.0093, 0.0291, 0.06327, 0.1096, 0.1655, 0.2257499,
+        0.2904, 0.3597, 0.4334499, 0.5120501, 0.5945, 0.6784, 0.7621, 0.8425,
+        0.9163, 0.9786, 1.0263, 1.0567, 1.0622, 1.0456, 1.0026, 0.9384,
+        0.8544499, 0.7514, 0.6424, 0.5419, 0.4479, 0.3608, 0.2835, 0.2187,
+        0.1649, 0.1212, 0.0874, 0.0636, 0.04677, 0.0329, 0.0227, 0.01584,
+        0.01135916, 0.008110916, 0.005790346, 0.004109457, 0.002899327, 0.00204919, 0.001439971, 0.000999949,
+        0.000690079, 0.000476021, 0.000332301, 0.000234826, 0.000166151, 0.000117413, 8.3075e-05, 5.8707e-05,
+        4.151e-05,
+    ]
+    static let yBar: [Float] = [
+        3.9e-05, 6.4e-05, 0.00012, 0.000217, 0.000396, 0.00064, 0.00121, 0.00218,
+        0.004, 0.0073, 0.0116, 0.01684, 0.023, 0.0298, 0.038, 0.048,
+        0.06, 0.0739, 0.09098, 0.1126, 0.13902, 0.1693, 0.20802, 0.2586,
+        0.323, 0.4073, 0.503, 0.6082, 0.71, 0.7932, 0.862, 0.9148501,
+        0.954, 0.9803, 0.9949501, 1, 0.995, 0.9786, 0.952, 0.9154,
+        0.87, 0.8163, 0.757, 0.6949, 0.631, 0.5668, 0.503, 0.4412,
+        0.381, 0.321, 0.265, 0.217, 0.175, 0.1382, 0.107, 0.0816,
+        0.061, 0.04458, 0.032, 0.0232, 0.017, 0.01192, 0.00821, 0.005723,
+        0.004102, 0.002929, 0.002091, 0.001484, 0.001047, 0.00074, 0.00052, 0.0003611,
+        0.0002492, 0.0001719, 0.00012, 8.48e-05, 6e-05, 4.24e-05, 3e-05, 2.12e-05,
+        1.499e-05,
+    ]
+    static let zBar: [Float] = [
+        0.006450001, 0.01054999, 0.02005001, 0.03621, 0.06785001, 0.1102, 0.2074, 0.3713,
+        0.6456, 1.0390501, 1.3856, 1.62296, 1.74706, 1.7826, 1.77211, 1.7441,
+        1.6692, 1.5281, 1.28764, 1.0419, 0.8129501, 0.6162, 0.46518, 0.3533,
+        0.272, 0.2123, 0.1582, 0.1117, 0.07824999, 0.05725001, 0.04216, 0.02984,
+        0.0203, 0.0134, 0.008749999, 0.005749999, 0.0039, 0.002749999, 0.0021, 0.0018,
+        0.001650001, 0.0014, 0.0011, 0.001, 0.0008, 0.0006, 0.00034, 0.00024,
+        0.00019, 0.0001, 5e-05, 3e-05, 2e-05, 1e-05, -0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0,
+    ]
+    public static let d65: [Float] = [
+        49.9755, 52.3118, 54.6482, 68.7015, 82.7549, 87.1204, 91.486, 92.4589,
+        93.4318, 90.057, 86.6823, 95.7736, 104.865, 110.936, 117.008, 117.41,
+        117.812, 116.336, 114.861, 115.392, 115.923, 112.367, 108.811, 109.082,
+        109.354, 108.578, 107.802, 106.296, 104.79, 106.239, 107.689, 106.047,
+        104.405, 104.225, 104.046, 102.023, 100, 98.1671, 96.3342, 96.0611,
+        95.788, 92.2368, 88.6856, 89.3459, 90.0062, 89.8026, 89.5991, 88.6489,
+        87.6987, 85.4936, 83.2886, 83.4939, 83.6992, 81.863, 80.0268, 80.1207,
+        80.2146, 81.2462, 82.2778, 80.281, 78.2842, 74.0027, 69.7213, 70.6652,
+        71.6091, 72.979, 74.349, 67.9765, 61.604, 65.7448, 69.8856, 72.4863,
+        75.087, 69.3398, 63.5927, 55.0054, 46.4182, 56.6118, 66.8054, 65.0941,
+        63.3828,
+    ]
+
+    static func asymmetricGaussian(peak: Float, leftSigma: Float,
+                                   rightSigma: Float) -> [Float] {
+        wavelengths.map { wavelength in
+            let sigma = wavelength < peak ? leftSigma : rightSigma
+            let x = (wavelength - peak) / max(sigma, 1)
+            return exp(-0.5 * x * x)
+        }
+    }
+
+    /// Slowest rate at which a digitised record is allowed to be continued past the end of its
+    /// printed trace, in log10 sensitivity per nanometre.
+    static let minimumTailDecayPerNM: Float = 0.05
+    /// How far below a record's peak the continuation runs before the layer is treated as blind.
+    static let tailDecades: Float = 3
+
+    /// Continues a measured sensitivity record beyond the wavelength span the publication printed.
+    static func continuedTails(_ layer: [Float]) -> [Float] {
+        guard let peak = layer.max(), peak > 0 else { return layer }
+        let support = layer.indices.filter { layer[$0] > 0 }
+        guard let low = support.first, let high = support.last, high > low else {
+            return layer
+        }
+        let step = stepNM
+        let cutoff = log10(peak) - tailDecades
+        var result = layer
+
+        /// Terminal slope in log10 per nm over up to 30 nm of trace, signed so that a positive
+        /// value means the record is falling outward.
+        func decay(from edge: Int, inward: Int) -> Float {
+            let reach = Int((30 / stepNM).rounded())
+            let anchor = inward > 0 ? min(high, edge + reach) : max(low, edge - reach)
+            guard anchor != edge else { return minimumTailDecayPerNM }
+            let rise = log10(layer[edge]) - log10(layer[anchor])
+            let span = Float(abs(edge - anchor)) * step
+            return max(-rise / span, minimumTailDecayPerNM)
+        }
+
+        if high < layer.count - 1 {
+            let rate = decay(from: high, inward: -1)
+            var value = log10(layer[high])
+            for i in (high + 1)..<layer.count {
+                value -= rate * step
+                result[i] = value > cutoff ? pow(10, value) : 0
+            }
+        }
+        if low > 0 {
+            let rate = decay(from: low, inward: 1)
+            var value = log10(layer[low])
+            for i in stride(from: low - 1, through: 0, by: -1) {
+                value -= rate * step
+                result[i] = value > cutoff ? pow(10, value) : 0
+            }
+        }
+        return result
+    }
+
+    static func normalizeSensitivities(_ layers: [[Float]]) -> [[Float]] {
+        layers.map { layer in
+            let integral = zip(layer, d65).reduce(Float.zero) { $0 + $1.0 * $1.1 }
+            return layer.map { $0 / max(integral, 1e-12) }
+        }
+    }
+
+    static func dyes(family: FilmDyeFamily) -> [[Float]] {
+        if family == .monochrome {
+            return [[Float](repeating: 1.0 / 3.0, count: count),
+                    [Float](repeating: 1.0 / 3.0, count: count),
+                    [Float](repeating: 1.0 / 3.0, count: count)]
+        }
+        let centers: [Float], widths: [Float], floor: Float
+        switch family {
+        case .kodakNegative:
+            centers = [665, 548, 445]; widths = [64, 50, 45]; floor = 0.035
+        case .fujiNegative:
+            centers = [675, 545, 445]; widths = [58, 46, 42]; floor = 0.025
+        case .motionNegative:
+            centers = [670, 550, 445]; widths = [56, 45, 40]; floor = 0.018
+        case .kodachrome:
+            centers = [650, 535, 440]; widths = [50, 42, 38]; floor = 0.012
+        case .monochrome:
+            fatalError("handled above")
+        }
+        var result = (0..<3).map { channel in
+            asymmetricGaussian(peak: centers[channel], leftSigma: widths[channel],
+                               rightSigma: widths[channel]).map { $0 + floor }
+        }
+        for i in 0..<count {
+            for layer in 0..<3 { result[layer][i] = pow(result[layer][i], 6.0) }
+        }
+        return partition(result)
+    }
+
+    /// Rescales three dye density spectra so equal cyan, magenta and yellow
+    /// densities come out spectrally neutral.
+    static func partition(_ densities: [[Float]]) -> [[Float]] {
+        precondition(densities.count == 3)
+        var result = densities
+        for i in 0..<count {
+            let sum = result[0][i] + result[1][i] + result[2][i]
+            for layer in 0..<3 { result[layer][i] /= max(sum, 1e-12) }
+        }
+        return result
+    }
+
+    /// The receiver supplied by PrintPaperSpectra, digitised from KODAK EKTACOLOR EDGE
+    /// publication E-7020.
+    static let paperDyeAmounts: [[Float]] =
+        zip(PrintPaperSpectra.dyeDensity, PrintPaperSpectra.neutralAmounts)
+            .map { record, amount in record.map { $0 * amount } }
+    static let paperDyes: [[Float]] = partition(paperDyeAmounts)
+    /// Extend and normalize the configured receiver sensitivity.
+    static let paperSensitivity: [[Float]] =
+        normalizeSensitivities(PrintPaperSpectra.layerSensitivity.map(continuedTails))
+
+    /// Planck's law on the grid, normalized to its own peak.
+    static func blackbody(kelvinK: Float) -> [Float] {
+        let c2: Float = 14_387_769
+        let temperature = max(kelvinK, 1)
+        var values = wavelengths.map { wavelength -> Float in
+            1 / (pow(wavelength, 5) * (exp(c2 / (wavelength * temperature)) - 1))
+        }
+        let peak = values.max() ?? 1
+        for i in values.indices { values[i] /= peak }
+        return values
+    }
+
+    /// CIE 1931 tristimulus of a spectral power distribution on the grid.
+    /// One value off a grid-sampled curve at an arbitrary wavelength, read between the two
+    /// nearest samples and held flat outside the grid.
+    static func interpolate(_ curve: [Float], atWavelength wavelength: Float) -> Float {
+        guard curve.count == count else { return 0 }
+        let position = (wavelength - wavelengths[0]) / stepNM
+        if position <= 0 { return curve[0] }
+        if position >= Float(count - 1) { return curve[count - 1] }
+        let low = Int(position)
+        let fraction = position - Float(low)
+        return curve[low] * (1 - fraction) + curve[low + 1] * fraction
+    }
+
+    static func xyz(spectrum: [Float]) -> SIMD3<Float> {
+        precondition(spectrum.count == count)
+        var result = SIMD3<Float>(repeating: 0)
+        for i in 0..<count {
+            result.x += spectrum[i] * xBar[i]
+            result.y += spectrum[i] * yBar[i]
+            result.z += spectrum[i] * zBar[i]
+        }
+        return result
+    }
+
+    static func linearDisplayP3(fromXYZ v: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3(
+            2.4934969 * v.x - 0.9313836 * v.y - 0.4027108 * v.z,
+           -0.8294890 * v.x + 1.7626641 * v.y + 0.0236247 * v.z,
+            0.0358458 * v.x - 0.0761724 * v.y + 0.9568845 * v.z)
+    }
+
+    /// XYZ into the linear Rec.2020 working space, composed through the P3 matrix and the
+    /// engine's own seam digits rather than a third independently-rounded matrix, so a colour
+    /// reaching the working space by either route lands on the same floats.
+    static func linearRec2020(fromXYZ v: SIMD3<Float>) -> SIMD3<Float> {
+        ColorScience.linearDisplayP3ToRec2020(linearDisplayP3(fromXYZ: v))
+    }
+
+    static let enlarger3200K: [Float] = blackbody(kelvinK: 3200)
+
+    /// The flat lamp a scan integrates under: its LED emission already lives in
+    /// the sensor bands.
+    static let equalEnergy = [Float](repeating: 1, count: count)
+
+    /// Display primaries for the print side of the model. The scene side reconstructs spectra
+    /// from linear Rec.2020 with the measured-reflectance prior; everything a finished print or
+    /// transparency is *viewed* as integrates to Display P3, which remains the output contract.
+    static func toLinearDisplayP3(reflectance: [Float]) -> SIMD3<Float> {
+        toLinearDisplayP3(reflectance: reflectance, under: d65)
+    }
+
+    /// The same observer under a stated light. Bradford chromatic adaptation carries the
+    /// illuminant white to the renderer's D65 white in cone-response space: a spectrally flat
+    /// reflectance reads the same grey under every illuminant, while the paper dyes' spectral
+    /// metamerism remains. Dividing Display P3 channels directly is not a von Kries transform;
+    /// display primaries are not cone-response channels and produce hue errors away from neutral.
+    static func toLinearDisplayP3(reflectance: [Float],
+                                  under illuminant: [Float]) -> SIMD3<Float> {
+        precondition(reflectance.count == count)
+        var reflected = [Float](repeating: 0, count: count)
+        for i in 0..<count { reflected[i] = illuminant[i] * reflectance[i] }
+        var reflectedXYZ = xyz(spectrum: reflected)
+        var whiteXYZ = xyz(spectrum: illuminant)
+        reflectedXYZ /= max(whiteXYZ.y, 1e-12)
+        whiteXYZ /= max(whiteXYZ.y, 1e-12)
+        let sourceLMS = bradfordLMS(fromXYZ: whiteXYZ)
+        let destinationLMS = bradfordLMS(fromXYZ: d65WhiteXYZ)
+        let reflectedLMS = bradfordLMS(fromXYZ: reflectedXYZ)
+        let adaptedLMS = SIMD3(
+            reflectedLMS.x * destinationLMS.x / max(sourceLMS.x, 1e-12),
+            reflectedLMS.y * destinationLMS.y / max(sourceLMS.y, 1e-12),
+            reflectedLMS.z * destinationLMS.z / max(sourceLMS.z, 1e-12))
+        let rgb = linearDisplayP3(fromXYZ: xyz(fromBradfordLMS: adaptedLMS))
+        // The published D65 table is sampled at 10 nm while the P3 matrix carries the analytic
+        // D65 white. This sub-per-mille normalization keeps a flat reflector exactly neutral on
+        // the sampled grid without changing the chromatic adaptation.
+        return SIMD3(rgb.x / d65DisplayP3White.x,
+                     rgb.y / d65DisplayP3White.y,
+                     rgb.z / d65DisplayP3White.z)
+    }
+
+    private static let d65WhiteXYZ: SIMD3<Float> = {
+        let white = xyz(spectrum: d65)
+        return white / max(white.y, 1e-12)
+    }()
+
+    private static let d65DisplayP3White: SIMD3<Float> =
+        linearDisplayP3(fromXYZ: d65WhiteXYZ)
+
+    private static func bradfordLMS(fromXYZ value: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3(
+             0.8951 * value.x + 0.2664 * value.y - 0.1614 * value.z,
+            -0.7502 * value.x + 1.7135 * value.y + 0.0367 * value.z,
+             0.0389 * value.x - 0.0685 * value.y + 1.0296 * value.z)
+    }
+
+    private static func xyz(fromBradfordLMS value: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3(
+             0.9869929 * value.x - 0.1470543 * value.y + 0.1599627 * value.z,
+             0.4323053 * value.x + 0.5183603 * value.y + 0.0492912 * value.z,
+            -0.0085287 * value.x + 0.0400428 * value.y + 0.9684867 * value.z)
+    }
+
+}
+
+/// Bounded spectra fitted to the Gaussian prior of the measured-reflectance corpus.
+///
+/// The engine always evaluates recovery on a fixed-peak chromaticity ray. The resource therefore
+/// stores the three peak-channel faces of that anchored cube, each as a 33 x 33 grid of complete
+/// full-grid spectra. Face interpolation is stock-independent; each stock subsequently integrates
+/// the same recovered spectrum against its own layers.
+final class MeasuredReflectanceTable: @unchecked Sendable {
+    static let shared: MeasuredReflectanceTable? = loadBundled()
+
+    let dimension: Int
+    let bandCount: Int
+    let sourceCount: Int
+    let anchor: Float
+    let data: [Float]
+
+    init(dimension: Int, bandCount: Int, sourceCount: Int, anchor: Float, data: [Float]) {
+        self.dimension = dimension
+        self.bandCount = bandCount
+        self.sourceCount = sourceCount
+        self.anchor = anchor
+        self.data = data
+    }
+
+    /// Recovers at the table anchor and then follows the engine's existing brightness ray.
+    func reflectance(_ input: SIMD3<Float>) -> [Float] {
+        let rgb = SIMD3(max(input.x, 0), max(input.y, 0), max(input.z, 0))
+        let peak = max(rgb.x, rgb.y, rgb.z)
+        guard peak > 0 else { return [Float](repeating: 0, count: bandCount) }
+        let rayScale = peak / anchor
+        let anchored = rgb / rayScale
+        var dominant = 0
+        if anchored.y >= anchored[dominant] { dominant = 1 }
+        if anchored.z >= anchored[dominant] { dominant = 2 }
+
+        let extent = Float(dimension - 1)
+        let x = clamp(anchored[(dominant + 1) % 3] / anchor * extent, 0, extent)
+        let y = clamp(anchored[(dominant + 2) % 3] / anchor * extent, 0, extent)
+        let xi = min(Int(x), dimension - 2)
+        let yi = min(Int(y), dimension - 2)
+        let xf = x - Float(xi)
+        let yf = y - Float(yi)
+
+        func value(_ dx: Int, _ dy: Int, _ band: Int) -> Float {
+            let index = (((dominant * dimension + yi + dy) * dimension + xi + dx)
+                         * bandCount + band)
+            return data[index]
+        }
+        var spectrum = [Float](repeating: 0, count: bandCount)
+        for band in spectrum.indices {
+            let lower = value(0, 0, band) + xf * (value(1, 0, band) - value(0, 0, band))
+            let upper = value(0, 1, band) + xf * (value(1, 1, band) - value(0, 1, band))
+            spectrum[band] = max((lower + yf * (upper - lower)) * rayScale, 0)
+        }
+        return spectrum
+    }
+
+    private static func loadBundled() -> MeasuredReflectanceTable? {
+        if let configured = ProcessInfo.processInfo.environment["FOTUFILM_RESOURCES"] {
+            let candidate = URL(fileURLWithPath: configured, isDirectory: true)
+                .appendingPathComponent("rec2020-reflectance-prior.coeff")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return load(contentsOf: candidate)
+            }
+        }
+        let url: URL?
+        #if SWIFT_PACKAGE
+        url = Bundle.module.url(forResource: "rec2020-reflectance-prior",
+                                withExtension: "coeff")
+        #else
+        url = Bundle.main.url(forResource: "rec2020-reflectance-prior",
+                              withExtension: "coeff")
+            ?? URL(fileURLWithPath:
+                "Sources/FotufilmCore/Resources/rec2020-reflectance-prior.coeff")
+        #endif
+        guard let url else { return nil }
+        return load(contentsOf: url)
+    }
+
+    private static func load(contentsOf url: URL) -> MeasuredReflectanceTable? {
+        guard let bytes = try? Data(contentsOf: url), bytes.count >= 24,
+              String(data: bytes.prefix(4), encoding: .ascii) == "RPR1" else { return nil }
+        func u32(_ offset: Int) -> UInt32 {
+            bytes.withUnsafeBytes {
+                UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
+            }
+        }
+        func f32(_ offset: Int) -> Float { Float(bitPattern: u32(offset)) }
+        let dimension = Int(u32(4))
+        let bandCount = Int(u32(8))
+        let sourceCount = Int(u32(12))
+        let anchor = f32(16)
+        let valueCount = Int(u32(20))
+        let expectedCount = 3 * dimension * dimension * bandCount
+        guard dimension >= 2, bandCount == SpectralGrid.count, sourceCount > 0,
+              anchor > 0, anchor.isFinite, valueCount == expectedCount,
+              bytes.count == 24 + valueCount * 4 else { return nil }
+        var offset = 24
+        var data = [Float](repeating: 0, count: valueCount)
+        for i in data.indices {
+            let value = f32(offset)
+            guard value.isFinite, value >= 0, value <= 1 else { return nil }
+            data[i] = value
+            offset += 4
+        }
+        return MeasuredReflectanceTable(dimension: dimension, bandCount: bandCount,
+                                        sourceCount: sourceCount, anchor: anchor, data: data)
+    }
+}
+
+/// Each record's toe carried onto green's along a neutral wedge. `wedges` holds, per record, its
+/// own read ascending from mid-grey to the base against green's minus its own there. The balance
+/// fades in over the toe, from `start` of the way to the base, so the mid-shadows keep the stock's
+/// own layer balance and only a thin frame's lifted base and deep toe are neutralised.
+/// Per record, moved receiver bands' read of a stock's neutral wedge against the paper bands' read
+/// of the same step, rising; a read between steps is interpolated and one past the wedge keeps the
+/// offset of its end.
+struct ReceiverNeutralCalibration {
+    let wedges: [[SIMD2<Float>]]
+
+    init(stock: FilmStock, read: ([Float]) -> SIMD3<Float>, paperRead: ([Float]) -> SIMD3<Float>) {
+        // From past the film base to well past any highlight, in log exposure over mid-grey.
+        let steps = (0...384).map { i -> (SIMD3<Float>, SIMD3<Float>) in
+            let logExposure = -8 + 12 * Float(i) / 384
+            let density = (0..<3).map { stock.developedDensity(layer: $0, logExposure: logExposure) }
+            return (read(density), paperRead(density))
+        }
+        wedges = (0..<3).map { channel in
+            var samples: [SIMD2<Float>] = []
+            for (moved, reference) in steps.sorted(by: { $0.0[channel] < $1.0[channel] })
+            where samples.last.map({ moved[channel] > $0.x + 1e-5 }) ?? true {
+                samples.append(SIMD2(moved[channel], reference[channel]))
+            }
+            return samples
+        }
+    }
+
+    func callAsFunction(_ read: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3((0..<3).map { channel in
+            let samples = wedges[channel]
+            let v = read[channel]
+            guard let first = samples.first, let last = samples.last, samples.count > 1 else {
+                return v
+            }
+            if v <= first.x { return v + first.y - first.x }
+            if v >= last.x { return v + last.y - last.x }
+            let upper = samples.firstIndex { $0.x >= v } ?? samples.count - 1
+            let a = samples[upper - 1], b = samples[upper]
+            return a.y + (b.y - a.y) * (v - a.x) / (b.x - a.x)
+        })
+    }
+}
+
+struct ScreenToeBalance {
+    let wedges: [[SIMD2<Float>]]?
+    static let start: Float = 0.5
+
+    func callAsFunction(_ read: SIMD3<Float>) -> SIMD3<Float> {
+        guard let wedges else { return read }
+        return SIMD3((0..<3).map { channel in
+            let samples = wedges[channel]
+            let v = read[channel]
+            guard let first = samples.first, let last = samples.last, last.x > first.x else {
+                return v
+            }
+            let from = first.x + Self.start * (last.x - first.x)
+            guard v > from else { return v }
+            var offset = last.y
+            if let upper = samples.firstIndex(where: { $0.x >= v }) {
+                let a = samples[upper - 1], b = samples[upper]
+                offset = a.y + (b.y - a.y) * (v - a.x) / (b.x - a.x)
+            }
+            let t = min((v - from) / (last.x - from), 1)
+            return v + t * t * (3 - 2 * t) * (offset - first.y)
+        })
+    }
+}

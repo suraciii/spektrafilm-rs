@@ -73,8 +73,8 @@ pub struct ProcessParamsRequest<'a> {
 }
 
 pub struct ResolvedProcessParams {
-    pub film: Profile,
-    pub print: Profile,
+    pub film: Option<Profile>,
+    pub print: Option<Profile>,
     pub film_name: String,
     pub print_name: String,
     pub params: RuntimeParams,
@@ -138,6 +138,18 @@ fn resolve_with_preview_mode(
     data_dir: &Path,
     preview_mode: Option<bool>,
 ) -> Result<ResolvedProcessParams, String> {
+    let mut selected = load_baseline(request.params_file)?;
+    for preset in request.presets {
+        if preset.film_profile.is_none() {
+            selected = preset.overlay_section(&selected)?;
+        }
+    }
+    for source in request.sources {
+        ParameterEdits::parse(source)?.apply(&mut selected)?;
+    }
+    if selected.engine == crate::params::SimulationEngine::Fotufilm {
+        return resolve_fotufilm(request, data_dir, preview_mode, selected);
+    }
     let supplies_film = request
         .presets
         .iter()
@@ -427,10 +439,135 @@ fn resolve_with_preview_mode(
         EditFeedback { path, requested, effective, source, status, reason }
     }).collect();
     Ok(ResolvedProcessParams {
-        film,
-        print,
+        film: Some(film),
+        print: Some(print),
         film_name,
         print_name,
+        params,
+        input_declaration,
+        edits,
+    })
+}
+
+fn resolve_fotufilm(
+    request: ProcessParamsRequest<'_>,
+    data_dir: &Path,
+    preview_mode: Option<bool>,
+    mut params: RuntimeParams,
+) -> Result<ResolvedProcessParams, String> {
+    if request.film.is_some()
+        || request.paper.is_some()
+        || request
+            .presets
+            .iter()
+            .any(|preset| preset.film_profile.is_some())
+    {
+        return Err("Fotufilm stocks are independent of historical profiles; select fotufilm.stock and use source-engine parameter sections".into());
+    }
+    let mut declarations = baseline_declarations(request.params_file)?;
+    let mut winning = BTreeMap::new();
+    for (index, source) in request.sources.iter().enumerate() {
+        let edits = ParameterEdits::parse(source)?;
+        if request.input_is_raw {
+            edits.validate_raw_input()?;
+        }
+        let origin = DeclarationSource {
+            kind: "set".into(),
+            option: Some("--set".into()),
+            index: Some(index),
+            path: ParameterEdits::file_path(source)
+                .map(absolute_path)
+                .transpose()?,
+        };
+        for (path, value) in edits.values() {
+            if matches!(path, "io.input_color_space" | "io.input_cctf_decoding") {
+                declarations.insert(path.to_owned(), origin.clone());
+            }
+            winning.insert(path.to_owned(), (value.clone(), origin.clone()));
+        }
+    }
+    for (path, value, option) in [
+        (
+            "io.input_color_space",
+            request.input_color_space.map(|v| Value::String(v.into())),
+            "--input-color-space",
+        ),
+        (
+            "io.input_cctf_decoding",
+            request.input_cctf_decoding.map(Value::Bool),
+            "--input-cctf-decoding",
+        ),
+    ] {
+        if let Some(value) = value {
+            ParameterEdits::single(path, value)?.apply(&mut params)?;
+            declarations.insert(
+                path.into(),
+                DeclarationSource {
+                    kind: "option".into(),
+                    option: Some(option.into()),
+                    index: None,
+                    path: None,
+                },
+            );
+        }
+    }
+    if request.require_input_declaration
+        && !request.input_is_raw
+        && (!declarations.contains_key("io.input_color_space")
+            || !declarations.contains_key("io.input_cctf_decoding"))
+    {
+        return Err(
+            "raster input requires both io.input_color_space and io.input_cctf_decoding".into(),
+        );
+    }
+    if request.input_is_raw {
+        force_raw_input(&mut params);
+    }
+    if let Some(mode) = preview_mode {
+        params.settings.preview_mode = mode;
+    }
+    params.validate()?;
+    spektrafilm_fotufilm::Session::new(data_dir, params.fotufilm.clone())?;
+    let source = |path: &str| {
+        if request.input_is_raw {
+            DeclarationSource {
+                kind: "raw".into(),
+                option: None,
+                index: None,
+                path: None,
+            }
+        } else {
+            declarations
+                .get(path)
+                .cloned()
+                .unwrap_or(DeclarationSource {
+                    kind: "params".into(),
+                    option: None,
+                    index: None,
+                    path: None,
+                })
+        }
+    };
+    let input_declaration = InputDeclaration {
+        color_space: params.io.input_color_space.clone(),
+        cctf_decoding: params.io.input_cctf_decoding,
+        sources: InputDeclarationSources {
+            color_space: source("io.input_color_space"),
+            cctf_decoding: source("io.input_cctf_decoding"),
+        },
+    };
+    let effective = serde_json::to_value(&params).map_err(|e| e.to_string())?;
+    let edits = winning.into_iter().map(|(path, (requested, source))| {
+        let value = parameter_value(&effective, &path).cloned().unwrap_or(Value::Null);
+        let active = path == "engine" || path.starts_with("fotufilm.") || path.starts_with("io.") || path.starts_with("taps.") || path == "settings.preview_max_size" || path == "settings.preview_mode";
+        EditFeedback { path, requested, effective: value, source, status: if active { EditStatus::Active } else { EditStatus::Inactive }, reason: (!active).then(|| "historical SpektraFilm control does not belong to the selected original Fotufilm graph".into()) }
+    }).collect();
+    let stock = format!("fotufilm:{}", params.fotufilm.stock);
+    Ok(ResolvedProcessParams {
+        film: None,
+        print: None,
+        film_name: stock.clone(),
+        print_name: stock,
         params,
         input_declaration,
         edits,
@@ -533,8 +670,8 @@ mod tests {
         let neutral = NeutralFilters::load(&data_dir()).unwrap();
         let original = digest_params(
             RuntimeParams::default(),
-            &result.film,
-            &result.print,
+            result.film.as_ref().unwrap(),
+            result.print.as_ref().unwrap(),
             Some(&neutral),
             true,
         );
@@ -567,8 +704,8 @@ mod tests {
             );
             let expected = serde_json::to_value(&resolved.params).unwrap();
             let runtime = crate::runtime::Runtime::new(
-                resolved.film,
-                resolved.print,
+                resolved.film.unwrap(),
+                resolved.print.unwrap(),
                 resolved.params,
                 &data_dir(),
             )
@@ -588,8 +725,8 @@ mod tests {
         let neutral = NeutralFilters::load(&data_dir()).unwrap();
         let original = digest_params(
             baseline,
-            &resolved.film,
-            &resolved.print,
+            resolved.film.as_ref().unwrap(),
+            resolved.print.as_ref().unwrap(),
             Some(&neutral),
             true,
         );
@@ -674,8 +811,8 @@ mod tests {
             );
             let expected = serde_json::to_value(params).unwrap();
             let runtime = crate::runtime::Runtime::new(
-                resolved.film,
-                resolved.print,
+                resolved.film.unwrap(),
+                resolved.print.unwrap(),
                 resolved.params,
                 &data_dir(),
             )
@@ -844,8 +981,8 @@ mod tests {
         ];
         let resolved = resolve(request(&sources), &data_dir()).unwrap();
         let mut runtime = crate::runtime::Runtime::new(
-            resolved.film,
-            resolved.print,
+            resolved.film.unwrap(),
+            resolved.print.unwrap(),
             resolved.params,
             &data_dir(),
         )
@@ -939,8 +1076,8 @@ mod tests {
             .unwrap();
         let illuminant = resolved.params.enlarger.illuminant.clone();
         let pipeline = crate::pipeline::Pipeline::new_with_spectral(
-            resolved.film,
-            resolved.print,
+            resolved.film.unwrap(),
+            resolved.print.unwrap(),
             resolved.params,
             &data_dir(),
         )
@@ -990,8 +1127,8 @@ mod tests {
             req.film = Some(name);
             let resolved = resolve(req, &data_dir()).unwrap();
             assert_eq!(resolved.print_name, "kodak_2383");
-            assert!(resolved.print.is_film());
-            assert!(resolved.print.is_printing());
+            assert!(resolved.print.as_ref().unwrap().is_film());
+            assert!(resolved.print.as_ref().unwrap().is_printing());
             assert!(!resolved.params.camera.auto_exposure);
 
             let mut req = request(&sources);

@@ -7,6 +7,11 @@ use super::metadata::metadata;
 
 /// Describe one editable leaf using the module discovery metadata.
 pub fn describe_field(path: &str) -> Result<Value, String> {
+    if super::source_option_path(path) {
+        return Ok(
+            serde_json::json!({"path":path,"type":"source_option","default":null,"validation":"Original pinned Fotufilm preparation producer; use engine catalogue for stock-specific options"}),
+        );
+    }
     let default = super::lookup(schema_value(), path).ok_or_else(|| super::unknown_path(path))?;
     if default.is_object() {
         return Err(format!(

@@ -1,0 +1,1474 @@
+{
+  "upstreamRevision": "59d43471dbef45c85ae442e507a291fdebfb2ec5",
+  "sourceEdits": [],
+  "files": [
+    {
+      "path": "FotufilmCore/AdjacencyModel.swift",
+      "sha256": "43d2aad1943374bd18646020dab3e09dc5d132ff502622bd8b31a35f3988ec09",
+      "upstreamPath": "Sources/FotufilmCore/AdjacencyModel.swift",
+      "upstreamSHA256": "43d2aad1943374bd18646020dab3e09dc5d132ff502622bd8b31a35f3988ec09"
+    },
+    {
+      "path": "FotufilmCore/AndroidMath.swift",
+      "sha256": "1fdb85dba68cf2150cb307fbc51ea8cf06e4eb69005c81f95cf486e4c052d978",
+      "upstreamPath": "Sources/FotufilmCore/AndroidMath.swift",
+      "upstreamSHA256": "1fdb85dba68cf2150cb307fbc51ea8cf06e4eb69005c81f95cf486e4c052d978"
+    },
+    {
+      "path": "FotufilmCore/ApproximateNegativeScan.swift",
+      "sha256": "435e3959a03ece16f012cba2001d17802efad8c683b3d56aeb97ea5d4d5c5d11",
+      "upstreamPath": "Sources/FotufilmCore/ApproximateNegativeScan.swift",
+      "upstreamSHA256": "435e3959a03ece16f012cba2001d17802efad8c683b3d56aeb97ea5d4d5c5d11"
+    },
+    {
+      "path": "FotufilmCore/ApproximateNegativeScanReading.swift",
+      "sha256": "651db40dbc9d9d92517bdb8e9729f51e7a787a33832b3a3bb916e87a7c4dd4de",
+      "upstreamPath": "Sources/FotufilmCore/ApproximateNegativeScanReading.swift",
+      "upstreamSHA256": "651db40dbc9d9d92517bdb8e9729f51e7a787a33832b3a3bb916e87a7c4dd4de"
+    },
+    {
+      "path": "FotufilmCore/AutoAdjustment.swift",
+      "sha256": "77472c0b4e81ea642842957156350a2e366aa441b3a206658aff13c69c09993a",
+      "upstreamPath": "Sources/FotufilmCore/AutoAdjustment.swift",
+      "upstreamSHA256": "77472c0b4e81ea642842957156350a2e366aa441b3a206658aff13c69c09993a"
+    },
+    {
+      "path": "FotufilmCore/AutomaticNegativeScan.swift",
+      "sha256": "3e5337f6c089e8ec6b9dccef17d2619d477629a0f8b92075899354e32a35f31c",
+      "upstreamPath": "Sources/FotufilmCore/AutomaticNegativeScan.swift",
+      "upstreamSHA256": "3e5337f6c089e8ec6b9dccef17d2619d477629a0f8b92075899354e32a35f31c"
+    },
+    {
+      "path": "FotufilmCore/BooleanGrain.swift",
+      "sha256": "f970a9c95df557e0d75e3734732e34712abb664133e3bf73cb2fa85212b71662",
+      "upstreamPath": "Sources/FotufilmCore/BooleanGrain.swift",
+      "upstreamSHA256": "f970a9c95df557e0d75e3734732e34712abb664133e3bf73cb2fa85212b71662"
+    },
+    {
+      "path": "FotufilmCore/BoundedCache.swift",
+      "sha256": "642bccb27862bf8674d10542931c4e49f3154b93b6caebc4ade4e378a28f23bc",
+      "upstreamPath": "Sources/FotufilmCore/BoundedCache.swift",
+      "upstreamSHA256": "642bccb27862bf8674d10542931c4e49f3154b93b6caebc4ade4e378a28f23bc"
+    },
+    {
+      "path": "FotufilmCore/BundledCameraProfiles.swift",
+      "sha256": "4ec3bf1d4cbf5f3efb195a1c49d3867463731f70fb886aa0600491f4062d9d9d",
+      "upstreamPath": "Sources/FotufilmCore/BundledCameraProfiles.swift",
+      "upstreamSHA256": "4ec3bf1d4cbf5f3efb195a1c49d3867463731f70fb886aa0600491f4062d9d9d"
+    },
+    {
+      "path": "FotufilmCore/CameraProfileCorrection.swift",
+      "sha256": "84a8287be139d50eda3a96138f68bb3e390e68a993b7f483b98658bb38a557d3",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfileCorrection.swift",
+      "upstreamSHA256": "84a8287be139d50eda3a96138f68bb3e390e68a993b7f483b98658bb38a557d3"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/ARRI_D21_380_780_5.json",
+      "sha256": "46637f7c575c6bcc93748d9e919d1e6583d4141d12fb85153ef269c1ac9234b2",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/ARRI_D21_380_780_5.json",
+      "upstreamSHA256": "46637f7c575c6bcc93748d9e919d1e6583d4141d12fb85153ef269c1ac9234b2"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Arashi_Vision_Insta360_X5_380_780_5.json",
+      "sha256": "c1bcb19c925dc6819d36e4cac425e18898198c664ee8e74fe555516d9400f8fa",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Arashi_Vision_Insta360_X5_380_780_5.json",
+      "upstreamSHA256": "c1bcb19c925dc6819d36e4cac425e18898198c664ee8e74fe555516d9400f8fa"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_Digital_Rebel_XTi_380_780_5.json",
+      "sha256": "ea37526e815170e836bc920f7967266cef384ef831dd11fc0c992aff59561783",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_Digital_Rebel_XTi_380_780_5.json",
+      "upstreamSHA256": "ea37526e815170e836bc920f7967266cef384ef831dd11fc0c992aff59561783"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS-1D_X_Mark_II_380_780_5.json",
+      "sha256": "719e12a54d7eb467351ea166401d9a76c2a4faa0c31ae08d53ab18648d61f0a2",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS-1D_X_Mark_II_380_780_5.json",
+      "upstreamSHA256": "719e12a54d7eb467351ea166401d9a76c2a4faa0c31ae08d53ab18648d61f0a2"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS-1Ds_Mark_III_380_780_5.json",
+      "sha256": "337420bff14a676aec6ffe7378e083fc22d1cf01237236cb3bd66ca7c8f2fe7a",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS-1Ds_Mark_III_380_780_5.json",
+      "upstreamSHA256": "337420bff14a676aec6ffe7378e083fc22d1cf01237236cb3bd66ca7c8f2fe7a"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS-1Ds_Mark_II_380_780_5.json",
+      "sha256": "f2b356ba91c51bd570db478f4dfce8d4a951b3cb8ff0dc8a539ee75a17436e1f",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS-1Ds_Mark_II_380_780_5.json",
+      "upstreamSHA256": "f2b356ba91c51bd570db478f4dfce8d4a951b3cb8ff0dc8a539ee75a17436e1f"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_100D_380_780_5.json",
+      "sha256": "a6a160d617f531430df9ee0d18dc7c84613a953a89f94e90e4b32c665fe898b9",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_100D_380_780_5.json",
+      "upstreamSHA256": "a6a160d617f531430df9ee0d18dc7c84613a953a89f94e90e4b32c665fe898b9"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_200D_380_780_5.json",
+      "sha256": "f9aaa157bf8c1499990b0c56f4f78636da650b6f4ef3fbfc6fd2a02daf7bcebc",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_200D_380_780_5.json",
+      "upstreamSHA256": "f9aaa157bf8c1499990b0c56f4f78636da650b6f4ef3fbfc6fd2a02daf7bcebc"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_200D_II_380_780_5.json",
+      "sha256": "74eae917669a1791037861ab52ff43f7c22796d200964476cab1cfa21b3c6b7e",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_200D_II_380_780_5.json",
+      "upstreamSHA256": "74eae917669a1791037861ab52ff43f7c22796d200964476cab1cfa21b3c6b7e"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_5DS_380_780_5.json",
+      "sha256": "f624c3a2b90d4986070939c9d2ee3ed4d61100e123724e3090a5024dee533091",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_5DS_380_780_5.json",
+      "upstreamSHA256": "f624c3a2b90d4986070939c9d2ee3ed4d61100e123724e3090a5024dee533091"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_5D_380_780_5.json",
+      "sha256": "cbb73ad5103aeb9a5f182b56c14e665af3036de02ad8493207d94085bb067d1d",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_5D_380_780_5.json",
+      "upstreamSHA256": "cbb73ad5103aeb9a5f182b56c14e665af3036de02ad8493207d94085bb067d1d"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_5D_Mark_III_380_780_5.json",
+      "sha256": "d8f9db387399dd6611edf5d1660764cf7b78f402e0a9bb68eeea9cdc64628e88",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_5D_Mark_III_380_780_5.json",
+      "upstreamSHA256": "d8f9db387399dd6611edf5d1660764cf7b78f402e0a9bb68eeea9cdc64628e88"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_5D_Mark_II_380_780_5.json",
+      "sha256": "3dd2394e07f00c3fff51de631394ff67b4b72463657f4383ac14855969b93c14",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_5D_Mark_II_380_780_5.json",
+      "upstreamSHA256": "3dd2394e07f00c3fff51de631394ff67b4b72463657f4383ac14855969b93c14"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_5D_Mark_IV_380_780_5.json",
+      "sha256": "c3d5bc6a271fa2d0270386e27aa5dcf258c64223322a1730b03815497375be29",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_5D_Mark_IV_380_780_5.json",
+      "upstreamSHA256": "c3d5bc6a271fa2d0270386e27aa5dcf258c64223322a1730b03815497375be29"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_600D_380_780_5.json",
+      "sha256": "9a4700eb7228c7731bcb4e92a3dae75a510dbbf1308d7f6fcb8ec7199e3d1adc",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_600D_380_780_5.json",
+      "upstreamSHA256": "9a4700eb7228c7731bcb4e92a3dae75a510dbbf1308d7f6fcb8ec7199e3d1adc"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_M_380_780_5.json",
+      "sha256": "ceb7015727f88e13bcb486e688c1aefa5c7eae1e24fc0873c84d03f23a096686",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_M_380_780_5.json",
+      "upstreamSHA256": "ceb7015727f88e13bcb486e688c1aefa5c7eae1e24fc0873c84d03f23a096686"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_R10_380_780_5.json",
+      "sha256": "288a0398decdf65699c5c88a2dc48644dcd7389bb1d922969ac1e773ba18a282",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_R10_380_780_5.json",
+      "upstreamSHA256": "288a0398decdf65699c5c88a2dc48644dcd7389bb1d922969ac1e773ba18a282"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_R5_380_780_5.json",
+      "sha256": "6d35746dc44a3e44f3cf7939e957c15bc3f3c62b07a674749b42c140fc00df29",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_R5_380_780_5.json",
+      "upstreamSHA256": "6d35746dc44a3e44f3cf7939e957c15bc3f3c62b07a674749b42c140fc00df29"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_R5m2_380_780_5.json",
+      "sha256": "b58e96628aa2021eecb2bd3965dfe4fcc2af9a6543a35c739f0247f0687d705b",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_R5m2_380_780_5.json",
+      "upstreamSHA256": "b58e96628aa2021eecb2bd3965dfe4fcc2af9a6543a35c739f0247f0687d705b"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_R6_380_780_5.json",
+      "sha256": "8ff0f7329084addeafa433c832aec6e13c5125e7373cec34b4c7d42dfcb8eceb",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_R6_380_780_5.json",
+      "upstreamSHA256": "8ff0f7329084addeafa433c832aec6e13c5125e7373cec34b4c7d42dfcb8eceb"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_R6m2_380_780_5.json",
+      "sha256": "6819e47131dfdb1836f32970017aed7b7baa4889553936c23065dfabbb527d5d",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_R6m2_380_780_5.json",
+      "upstreamSHA256": "6819e47131dfdb1836f32970017aed7b7baa4889553936c23065dfabbb527d5d"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_RP_380_780_5.json",
+      "sha256": "ed3df43361ff0f6e32075f544b0c72ad180e00234fb8c02d12c323c6c932cf7c",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_RP_380_780_5.json",
+      "upstreamSHA256": "ed3df43361ff0f6e32075f544b0c72ad180e00234fb8c02d12c323c6c932cf7c"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_EOS_R_380_780_5.json",
+      "sha256": "94069a205897ee46426e79816cca82cef641ed2ef5b4a5d1e94fbe89cacaa362",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_EOS_R_380_780_5.json",
+      "upstreamSHA256": "94069a205897ee46426e79816cca82cef641ed2ef5b4a5d1e94fbe89cacaa362"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Canon_PowerShot_S90_380_780_5.json",
+      "sha256": "30da0d87505d58f63df9f165fca4b4d76aefc9c77b3a07fc97a872a3d273c5fa",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Canon_PowerShot_S90_380_780_5.json",
+      "upstreamSHA256": "30da0d87505d58f63df9f165fca4b4d76aefc9c77b3a07fc97a872a3d273c5fa"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Fujifilm_GFX_100_380_780_5.json",
+      "sha256": "d47bd7ec461fb9b0af29c248d5a1446df3db930d1f8e899debedf871b4d0939a",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Fujifilm_GFX_100_380_780_5.json",
+      "upstreamSHA256": "d47bd7ec461fb9b0af29c248d5a1446df3db930d1f8e899debedf871b4d0939a"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Fujifilm_X-T3_380_780_5.json",
+      "sha256": "2492e22b84228497c6602d279471cd8668eda3fb9673bc7bfa38e0c5d3b05c1e",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Fujifilm_X-T3_380_780_5.json",
+      "upstreamSHA256": "2492e22b84228497c6602d279471cd8668eda3fb9673bc7bfa38e0c5d3b05c1e"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Fujifilm_X-T4_380_780_5.json",
+      "sha256": "e36299929d3d307aed599085d571a04373fe67d08c7058ee9def9bb66892d16f",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Fujifilm_X-T4_380_780_5.json",
+      "upstreamSHA256": "e36299929d3d307aed599085d571a04373fe67d08c7058ee9def9bb66892d16f"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Hasselblad_L1D-20c_380_780_5.json",
+      "sha256": "9485b3f9783a4bb78aadfa141cd64562f930d08a35c0862567a7b44a443b19ff",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Hasselblad_L1D-20c_380_780_5.json",
+      "upstreamSHA256": "9485b3f9783a4bb78aadfa141cd64562f930d08a35c0862567a7b44a443b19ff"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Hasselblad_L2D-20c_380_780_5.json",
+      "sha256": "5f46bc969ececb7e020cec091471cae264cbff95228febd57cfde753ff5aa95e",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Hasselblad_L2D-20c_380_780_5.json",
+      "upstreamSHA256": "5f46bc969ececb7e020cec091471cae264cbff95228febd57cfde753ff5aa95e"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/LICENSE",
+      "upstreamSHA256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D200_380_780_5.json",
+      "sha256": "872cacb38513d81a332eb49731b4a98ba521c539e04685453318cd10d36db94b",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D200_380_780_5.json",
+      "upstreamSHA256": "872cacb38513d81a332eb49731b4a98ba521c539e04685453318cd10d36db94b"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D3300_380_780_5.json",
+      "sha256": "c8b1ef05410719227066d4e214a949a867ff1d61ec12927cfd88b9c1a2bc3efc",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D3300_380_780_5.json",
+      "upstreamSHA256": "c8b1ef05410719227066d4e214a949a867ff1d61ec12927cfd88b9c1a2bc3efc"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D5100_380_780_5.json",
+      "sha256": "0800c28a35256c1efd7039acff31064f7a778ee040f99fedcd0f13f393bb3ee4",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D5100_380_780_5.json",
+      "upstreamSHA256": "0800c28a35256c1efd7039acff31064f7a778ee040f99fedcd0f13f393bb3ee4"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D5300_380_780_5.json",
+      "sha256": "a48420e76ccfcb60f8d0cad76dd64787e9416d44f71c99ce200a13776c6a9e29",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D5300_380_780_5.json",
+      "upstreamSHA256": "a48420e76ccfcb60f8d0cad76dd64787e9416d44f71c99ce200a13776c6a9e29"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D7000_380_780_5.json",
+      "sha256": "4002530a868b45d11ddc2e11b8db144ae2011efdda04d25ff10a2f006494ed95",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D7000_380_780_5.json",
+      "upstreamSHA256": "4002530a868b45d11ddc2e11b8db144ae2011efdda04d25ff10a2f006494ed95"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D700_380_780_5.json",
+      "sha256": "28d4e1d91335bf2aa4d0486afe3abd676e856ba904c9c31715c9b2d172b4a211",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D700_380_780_5.json",
+      "upstreamSHA256": "28d4e1d91335bf2aa4d0486afe3abd676e856ba904c9c31715c9b2d172b4a211"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D70_380_780_5.json",
+      "sha256": "8fb861c9aeae2a338931edc2358ecaf99e154e0afe5f75167aebe6378110ba1b",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D70_380_780_5.json",
+      "upstreamSHA256": "8fb861c9aeae2a338931edc2358ecaf99e154e0afe5f75167aebe6378110ba1b"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D800E_380_780_5.json",
+      "sha256": "8e8bd2ee474db73361bc4f37937966376ddc6dbcb19fd42dc63fa91bdb93ec40",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D800E_380_780_5.json",
+      "upstreamSHA256": "8e8bd2ee474db73361bc4f37937966376ddc6dbcb19fd42dc63fa91bdb93ec40"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D810_380_780_5.json",
+      "sha256": "fe768979da5b732f3a9974ed04cc81d7446ee27500893bf456207624008d1206",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D810_380_780_5.json",
+      "upstreamSHA256": "fe768979da5b732f3a9974ed04cc81d7446ee27500893bf456207624008d1206"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_D850_380_780_5.json",
+      "sha256": "8a22f9092a4c19fc128f3f8fb0dae6d5e67e17b5d9c01f646024efaacdbed9d0",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_D850_380_780_5.json",
+      "upstreamSHA256": "8a22f9092a4c19fc128f3f8fb0dae6d5e67e17b5d9c01f646024efaacdbed9d0"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Nikon_Z_f_380_780_5.json",
+      "sha256": "0fafdf21d42b5873e2d2db77bfbb075120e01697111944d12ff0529ac44d3943",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Nikon_Z_f_380_780_5.json",
+      "upstreamSHA256": "0fafdf21d42b5873e2d2db77bfbb075120e01697111944d12ff0529ac44d3943"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Panasonic_DC-GX9_380_780_5.json",
+      "sha256": "b354d7fb9b3df822e053505e784b9fbede21f0f5ae4c30e8c899497e826b3bb7",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Panasonic_DC-GX9_380_780_5.json",
+      "upstreamSHA256": "b354d7fb9b3df822e053505e784b9fbede21f0f5ae4c30e8c899497e826b3bb7"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_DSC-RX100M4_380_780_5.json",
+      "sha256": "73d081a99f4d7576a6cef75efb82ebb8398f5879ff7eb34d07c2aa30ab7e53bb",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_DSC-RX100M4_380_780_5.json",
+      "upstreamSHA256": "73d081a99f4d7576a6cef75efb82ebb8398f5879ff7eb34d07c2aa30ab7e53bb"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-6400_380_780_5.json",
+      "sha256": "9d44a700c154bc6fcdc63f2e8c8af7f1758e3181a0ccbf374b85461c8fc5fde6",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-6400_380_780_5.json",
+      "upstreamSHA256": "9d44a700c154bc6fcdc63f2e8c8af7f1758e3181a0ccbf374b85461c8fc5fde6"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7CM2_380_780_5.json",
+      "sha256": "4d8843e19d7dd85099d7533e12db638c91586651102095ebc6319ce297fcb399",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7CM2_380_780_5.json",
+      "upstreamSHA256": "4d8843e19d7dd85099d7533e12db638c91586651102095ebc6319ce297fcb399"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7M3_380_780_5.json",
+      "sha256": "c6006a237e63e530bf23e4a8b000dce6875305c9c24e54d1410bbbbb8654195f",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7M3_380_780_5.json",
+      "upstreamSHA256": "c6006a237e63e530bf23e4a8b000dce6875305c9c24e54d1410bbbbb8654195f"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7M4_380_780_5.json",
+      "sha256": "f7a8dc024ef923820c9d26ef4c31dd48deb28f0ea25cf70dd5a1bce3623576f8",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7M4_380_780_5.json",
+      "upstreamSHA256": "f7a8dc024ef923820c9d26ef4c31dd48deb28f0ea25cf70dd5a1bce3623576f8"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7RM2_380_780_5.json",
+      "sha256": "3a3d6650421e6ba835780b8879b885712d2d4f179788899ba0d735c619c5065c",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7RM2_380_780_5.json",
+      "upstreamSHA256": "3a3d6650421e6ba835780b8879b885712d2d4f179788899ba0d735c619c5065c"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7RM3_380_780_5.json",
+      "sha256": "0359aad186a62ba8be765416c0fc764d9905aa47062961e8a2d447b02e349fa8",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7RM3_380_780_5.json",
+      "upstreamSHA256": "0359aad186a62ba8be765416c0fc764d9905aa47062961e8a2d447b02e349fa8"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7RM4_380_780_5.json",
+      "sha256": "2e2efe8ca7b92ba65e54029e751d8e363ba1e40dec513fd8d65f9357bc592033",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7RM4_380_780_5.json",
+      "upstreamSHA256": "2e2efe8ca7b92ba65e54029e751d8e363ba1e40dec513fd8d65f9357bc592033"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7SM2_380_780_5.json",
+      "sha256": "14570ed48d5e93d75433a96f3402398aa5f341f14ac5f6421440f7f97ea1b493",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7SM2_380_780_5.json",
+      "upstreamSHA256": "14570ed48d5e93d75433a96f3402398aa5f341f14ac5f6421440f7f97ea1b493"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-7SM3_380_780_5.json",
+      "sha256": "de172c494bce62a65681d5451d13f34c3c6809663f07ec50d894acbd5a777d17",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-7SM3_380_780_5.json",
+      "upstreamSHA256": "de172c494bce62a65681d5451d13f34c3c6809663f07ec50d894acbd5a777d17"
+    },
+    {
+      "path": "FotufilmCore/CameraProfiles/Sony_ILCE-9_380_780_5.json",
+      "sha256": "60a9d16df752934ff0079667b7d1518228e941ca72a134e4914421667fce18d4",
+      "upstreamPath": "Sources/FotufilmCore/CameraProfiles/Sony_ILCE-9_380_780_5.json",
+      "upstreamSHA256": "60a9d16df752934ff0079667b7d1518228e941ca72a134e4914421667fce18d4"
+    },
+    {
+      "path": "FotufilmCore/CameraSourceDecode.swift",
+      "sha256": "ab834b5d20ba5ab809ff4e7c049fb45a4133fd357a3ff41215401d805b0dbe41",
+      "upstreamPath": "Sources/FotufilmCore/CameraSourceDecode.swift",
+      "upstreamSHA256": "ab834b5d20ba5ab809ff4e7c049fb45a4133fd357a3ff41215401d805b0dbe41"
+    },
+    {
+      "path": "FotufilmCore/CameraSpectralProfile.swift",
+      "sha256": "00c4440aba6f223bb261dcca04d3b07e8eefcd2b929e2d9391eeaa0e96c1db57",
+      "upstreamPath": "Sources/FotufilmCore/CameraSpectralProfile.swift",
+      "upstreamSHA256": "00c4440aba6f223bb261dcca04d3b07e8eefcd2b929e2d9391eeaa0e96c1db57"
+    },
+    {
+      "path": "FotufilmCore/CharacteristicCurve.swift",
+      "sha256": "c0a0e827e7fcc052f20fdb2c7b7eed99d9f1ca768e0ec5c7089dfb919b3d9f6e",
+      "upstreamPath": "Sources/FotufilmCore/CharacteristicCurve.swift",
+      "upstreamSHA256": "c0a0e827e7fcc052f20fdb2c7b7eed99d9f1ca768e0ec5c7089dfb919b3d9f6e"
+    },
+    {
+      "path": "FotufilmCore/ColorGrade.swift",
+      "sha256": "ed3ba5b8b2eacb6a2681e03e30d6437b57f0bf424ba48ce013d2b022773237d3",
+      "upstreamPath": "Sources/FotufilmCore/ColorGrade.swift",
+      "upstreamSHA256": "ed3ba5b8b2eacb6a2681e03e30d6437b57f0bf424ba48ce013d2b022773237d3"
+    },
+    {
+      "path": "FotufilmCore/ColorScience.swift",
+      "sha256": "235eeabe9491d67044cd003daedd2a1f3e0122323b0188afaab02f5dacf8215c",
+      "upstreamPath": "Sources/FotufilmCore/ColorScience.swift",
+      "upstreamSHA256": "235eeabe9491d67044cd003daedd2a1f3e0122323b0188afaab02f5dacf8215c"
+    },
+    {
+      "path": "FotufilmCore/CouplerGeometry.swift",
+      "sha256": "f214b981656f0c6219c61687d277855aaf24969185de624e15fb15d75cc6c487",
+      "upstreamPath": "Sources/FotufilmCore/CouplerGeometry.swift",
+      "upstreamSHA256": "f214b981656f0c6219c61687d277855aaf24969185de624e15fb15d75cc6c487"
+    },
+    {
+      "path": "FotufilmCore/CrystalArchivePaperSpectra.swift",
+      "sha256": "c10caf0bb7513c9869adae2c4bbc05440048ded7096bd7408d23dd78d0222593",
+      "upstreamPath": "Sources/FotufilmCore/CrystalArchivePaperSpectra.swift",
+      "upstreamSHA256": "c10caf0bb7513c9869adae2c4bbc05440048ded7096bd7408d23dd78d0222593"
+    },
+    {
+      "path": "FotufilmCore/CrystalGrainModel.swift",
+      "sha256": "e1d314a77dc25cecca1882b1fd136b6ebe1302bf0a000640232a973d3b7e4ef8",
+      "upstreamPath": "Sources/FotufilmCore/CrystalGrainModel.swift",
+      "upstreamSHA256": "e1d314a77dc25cecca1882b1fd136b6ebe1302bf0a000640232a973d3b7e4ef8"
+    },
+    {
+      "path": "FotufilmCore/DNGOpcodes.swift",
+      "sha256": "564994426994f420b3618c70bff74d35552ffd0d7876223ed02be0746bc2ea28",
+      "upstreamPath": "Sources/FotufilmCore/DNGOpcodes.swift",
+      "upstreamSHA256": "564994426994f420b3618c70bff74d35552ffd0d7876223ed02be0746bc2ea28"
+    },
+    {
+      "path": "FotufilmCore/Densitometry.swift",
+      "sha256": "1f38013c7d28089490d946a33ea720c3074475d2062bda4dd8a4f59d4e636d9a",
+      "upstreamPath": "Sources/FotufilmCore/Densitometry.swift",
+      "upstreamSHA256": "1f38013c7d28089490d946a33ea720c3074475d2062bda4dd8a4f59d4e636d9a"
+    },
+    {
+      "path": "FotufilmCore/DiffusionFilter.swift",
+      "sha256": "6b1b74c154d6698adcafbfb8b27a2948b07ea8fb2c0239b7aca8b4a03ff780a3",
+      "upstreamPath": "Sources/FotufilmCore/DiffusionFilter.swift",
+      "upstreamSHA256": "6b1b74c154d6698adcafbfb8b27a2948b07ea8fb2c0239b7aca8b4a03ff780a3"
+    },
+    {
+      "path": "FotufilmCore/DigitalReferenceReceiver.swift",
+      "sha256": "d78ae440ac6bacc41a33e97ecde57e9d5d130ef6fce6103b05b1d484c82f5758",
+      "upstreamPath": "Sources/FotufilmCore/DigitalReferenceReceiver.swift",
+      "upstreamSHA256": "d78ae440ac6bacc41a33e97ecde57e9d5d130ef6fce6103b05b1d484c82f5758"
+    },
+    {
+      "path": "FotufilmCore/DisplayEncoding.swift",
+      "sha256": "ecb3697da5aa94a1201af3f0f1f6070fcf32e07169f327c311e81be8a363f2fe",
+      "upstreamPath": "Sources/FotufilmCore/DisplayEncoding.swift",
+      "upstreamSHA256": "ecb3697da5aa94a1201af3f0f1f6070fcf32e07169f327c311e81be8a363f2fe"
+    },
+    {
+      "path": "FotufilmCore/EnduraPremierPaperSpectra.swift",
+      "sha256": "b5c49546717f5573211d34c699179b04fe9fcbc88f76c996488badb82a97b652",
+      "upstreamPath": "Sources/FotufilmCore/EnduraPremierPaperSpectra.swift",
+      "upstreamSHA256": "b5c49546717f5573211d34c699179b04fe9fcbc88f76c996488badb82a97b652"
+    },
+    {
+      "path": "FotufilmCore/Enlarger.swift",
+      "sha256": "ee8cdcb32f599a9abdfda52d24ddb18e9e7daf4d156caffa5ede8af6f54376ae",
+      "upstreamPath": "Sources/FotufilmCore/Enlarger.swift",
+      "upstreamSHA256": "ee8cdcb32f599a9abdfda52d24ddb18e9e7daf4d156caffa5ede8af6f54376ae"
+    },
+    {
+      "path": "FotufilmCore/EternaCPPrintSpectra.swift",
+      "sha256": "f7c24b2745628723ddef6f04d84663f28a6d67c892531d91eefdd21d23d9229a",
+      "upstreamPath": "Sources/FotufilmCore/EternaCPPrintSpectra.swift",
+      "upstreamSHA256": "f7c24b2745628723ddef6f04d84663f28a6d67c892531d91eefdd21d23d9229a"
+    },
+    {
+      "path": "FotufilmCore/ExpiredFilm.swift",
+      "sha256": "fa17f84d30c1b9c66273958ceda95f11682449505df5c1ee69f9e2d0b2618707",
+      "upstreamPath": "Sources/FotufilmCore/ExpiredFilm.swift",
+      "upstreamSHA256": "fa17f84d30c1b9c66273958ceda95f11682449505df5c1ee69f9e2d0b2618707"
+    },
+    {
+      "path": "FotufilmCore/ExposureSampler.swift",
+      "sha256": "3737fcab9777bd9512fc4d6b2248666213d3331c5bb8e77649ce616c9b109299",
+      "upstreamPath": "Sources/FotufilmCore/ExposureSampler.swift",
+      "upstreamSHA256": "3737fcab9777bd9512fc4d6b2248666213d3331c5bb8e77649ce616c9b109299"
+    },
+    {
+      "path": "FotufilmCore/FilmAbsorption.swift",
+      "sha256": "fe5ce41cf6d7a0c321356713515b152ade921bf6ae14c92fada1e5b6b939ecf1",
+      "upstreamPath": "Sources/FotufilmCore/FilmAbsorption.swift",
+      "upstreamSHA256": "fe5ce41cf6d7a0c321356713515b152ade921bf6ae14c92fada1e5b6b939ecf1"
+    },
+    {
+      "path": "FotufilmCore/FilmEngine.swift",
+      "sha256": "babeb77e5ac8ea90a4073ccf8457ff4d5239b515d86dde6ad73042669a5b2247",
+      "upstreamPath": "Sources/FotufilmCore/FilmEngine.swift",
+      "upstreamSHA256": "babeb77e5ac8ea90a4073ccf8457ff4d5239b515d86dde6ad73042669a5b2247"
+    },
+    {
+      "path": "FotufilmCore/FilmFormat.swift",
+      "sha256": "9f9e3d459e176879c0974514e5dd345d6f9b37c93f7b037f4ea1866266004c99",
+      "upstreamPath": "Sources/FotufilmCore/FilmFormat.swift",
+      "upstreamSHA256": "9f9e3d459e176879c0974514e5dd345d6f9b37c93f7b037f4ea1866266004c99"
+    },
+    {
+      "path": "FotufilmCore/FilmGrain.swift",
+      "sha256": "76ad52a3421d6f1c3cd7c5d98aabd488dcf81c1212555a317cd650f36d067fad",
+      "upstreamPath": "Sources/FotufilmCore/FilmGrain.swift",
+      "upstreamSHA256": "76ad52a3421d6f1c3cd7c5d98aabd488dcf81c1212555a317cd650f36d067fad"
+    },
+    {
+      "path": "FotufilmCore/FilmGrainAsset.swift",
+      "sha256": "5b5012e9c2d913044aebcabd2f47418e2a5b31016afc8a3e904b03225b8af44b",
+      "upstreamPath": "Sources/FotufilmCore/FilmGrainAsset.swift",
+      "upstreamSHA256": "5b5012e9c2d913044aebcabd2f47418e2a5b31016afc8a3e904b03225b8af44b"
+    },
+    {
+      "path": "FotufilmCore/FilmGrainTiles.swift",
+      "sha256": "bfcbeb6b96349f98448d776cfad9c5365f1d41e4b430f3946207ea7c60d6118a",
+      "upstreamPath": "Sources/FotufilmCore/FilmGrainTiles.swift",
+      "upstreamSHA256": "bfcbeb6b96349f98448d776cfad9c5365f1d41e4b430f3946207ea7c60d6118a"
+    },
+    {
+      "path": "FotufilmCore/FilmOutputConversion.swift",
+      "sha256": "22cb118b35069d7e596edf157a8370b4cd3795d4718b73c3b0f1796a7fb63fd3",
+      "upstreamPath": "Sources/FotufilmCore/FilmOutputConversion.swift",
+      "upstreamSHA256": "22cb118b35069d7e596edf157a8370b4cd3795d4718b73c3b0f1796a7fb63fd3"
+    },
+    {
+      "path": "FotufilmCore/FilmPackContainer.swift",
+      "sha256": "c74207abf7d4d6d0835372ce4b4c75553e0548c296ac413a64064c66110dab0b",
+      "upstreamPath": "Sources/FotufilmCore/FilmPackContainer.swift",
+      "upstreamSHA256": "c74207abf7d4d6d0835372ce4b4c75553e0548c296ac413a64064c66110dab0b"
+    },
+    {
+      "path": "FotufilmCore/FilmPackLibrary.swift",
+      "sha256": "f236bbce744701593b3c2bd1eeacd415b82de0c8bfd55e8693d06888ebf32e01",
+      "upstreamPath": "Sources/FotufilmCore/FilmPackLibrary.swift",
+      "upstreamSHA256": "f236bbce744701593b3c2bd1eeacd415b82de0c8bfd55e8693d06888ebf32e01"
+    },
+    {
+      "path": "FotufilmCore/FilmRecordExposure.swift",
+      "sha256": "15ac4cba7c5a22e2d9757a389bd2d6b97ffdf12a174ddbb5c4a7f6f53d83b17d",
+      "upstreamPath": "Sources/FotufilmCore/FilmRecordExposure.swift",
+      "upstreamSHA256": "15ac4cba7c5a22e2d9757a389bd2d6b97ffdf12a174ddbb5c4a7f6f53d83b17d"
+    },
+    {
+      "path": "FotufilmCore/FilmStock.swift",
+      "sha256": "b0b55ea1f85121c9483cd81da79f64e00694738cfbcbff997bbd3389388ae7f1",
+      "upstreamPath": "Sources/FotufilmCore/FilmStock.swift",
+      "upstreamSHA256": "b0b55ea1f85121c9483cd81da79f64e00694738cfbcbff997bbd3389388ae7f1"
+    },
+    {
+      "path": "FotufilmCore/FilmStockDefaults.swift",
+      "sha256": "564bf8721172e4389003338d04a0af8da7d9b96921d170219b1c5447c09588d3",
+      "upstreamPath": "Sources/FotufilmCore/FilmStockDefaults.swift",
+      "upstreamSHA256": "564bf8721172e4389003338d04a0af8da7d9b96921d170219b1c5447c09588d3"
+    },
+    {
+      "path": "FotufilmCore/FilmStockPack.swift",
+      "sha256": "44ada5834ba905f06866dc7b8389b414fac17e0b7e3a281b946f31c25c4ae0c2",
+      "upstreamPath": "Sources/FotufilmCore/FilmStockPack.swift",
+      "upstreamSHA256": "44ada5834ba905f06866dc7b8389b414fac17e0b7e3a281b946f31c25c4ae0c2"
+    },
+    {
+      "path": "FotufilmCore/FilmStockValidation.swift",
+      "sha256": "028931b853b41ccfeebb24525504528fefa1c0523165da21eb67f8c1c064e158",
+      "upstreamPath": "Sources/FotufilmCore/FilmStockValidation.swift",
+      "upstreamSHA256": "028931b853b41ccfeebb24525504528fefa1c0523165da21eb67f8c1c064e158"
+    },
+    {
+      "path": "FotufilmCore/FilmTileMetalBuilder.swift",
+      "sha256": "f4a001ea6fcf2aa8c91c7681f4d939e6694773b06da4494c83f8b8fa6e628c6d",
+      "upstreamPath": "Sources/FotufilmCore/FilmTileMetalBuilder.swift",
+      "upstreamSHA256": "f4a001ea6fcf2aa8c91c7681f4d939e6694773b06da4494c83f8b8fa6e628c6d"
+    },
+    {
+      "path": "FotufilmCore/GrainModel.swift",
+      "sha256": "7d64cf4742fa7b351ae589fe5b057a398487469febaea3ae9068dd3f5bf199ab",
+      "upstreamPath": "Sources/FotufilmCore/GrainModel.swift",
+      "upstreamSHA256": "7d64cf4742fa7b351ae589fe5b057a398487469febaea3ae9068dd3f5bf199ab"
+    },
+    {
+      "path": "FotufilmCore/HDRHighlightRange.swift",
+      "sha256": "18e7b1d23782dfcc34736670c1faea1c8b8b451549b6184a40afd20b7265e9df",
+      "upstreamPath": "Sources/FotufilmCore/HDRHighlightRange.swift",
+      "upstreamSHA256": "18e7b1d23782dfcc34736670c1faea1c8b8b451549b6184a40afd20b7265e9df"
+    },
+    {
+      "path": "FotufilmCore/Halation.swift",
+      "sha256": "614646c91f558b57632f8cc10e0631d5a76fd0750c18ec8bdfdb4f6f09f1f832",
+      "upstreamPath": "Sources/FotufilmCore/Halation.swift",
+      "upstreamSHA256": "614646c91f558b57632f8cc10e0631d5a76fd0750c18ec8bdfdb4f6f09f1f832"
+    },
+    {
+      "path": "FotufilmCore/HalationModel.swift",
+      "sha256": "0d202b9e6240afebcfea962e681d72134f68bf82706eec6c4f9de316651712a7",
+      "upstreamPath": "Sources/FotufilmCore/HalationModel.swift",
+      "upstreamSHA256": "0d202b9e6240afebcfea962e681d72134f68bf82706eec6c4f9de316651712a7"
+    },
+    {
+      "path": "FotufilmCore/HalationReturn.swift",
+      "sha256": "12cb1eb3d3550f0a78bcff221a7c17ae7bf09970e15613e2643faaf81d59ff88",
+      "upstreamPath": "Sources/FotufilmCore/HalationReturn.swift",
+      "upstreamSHA256": "12cb1eb3d3550f0a78bcff221a7c17ae7bf09970e15613e2643faaf81d59ff88"
+    },
+    {
+      "path": "FotufilmCore/HalationSpectrum.swift",
+      "sha256": "560c920851edefebef88a750493b1497affaf54d68663f640ccb91a124676bc4",
+      "upstreamPath": "Sources/FotufilmCore/HalationSpectrum.swift",
+      "upstreamSHA256": "560c920851edefebef88a750493b1497affaf54d68663f640ccb91a124676bc4"
+    },
+    {
+      "path": "FotufilmCore/HalideBackend.swift",
+      "sha256": "44f8c48609d20b55fb536ae612cea7624464e031b71b7d2722d52e8b918e0ecc",
+      "upstreamPath": "Sources/FotufilmCore/HalideBackend.swift",
+      "upstreamSHA256": "44f8c48609d20b55fb536ae612cea7624464e031b71b7d2722d52e8b918e0ecc"
+    },
+    {
+      "path": "FotufilmCore/Illuminant.swift",
+      "sha256": "a27cccc7756db63af669800d556c3197e04026fcaa128bb5aacadbde791503b9",
+      "upstreamPath": "Sources/FotufilmCore/Illuminant.swift",
+      "upstreamSHA256": "a27cccc7756db63af669800d556c3197e04026fcaa128bb5aacadbde791503b9"
+    },
+    {
+      "path": "FotufilmCore/ImageBuffer.swift",
+      "sha256": "93249842ccaa4d733a27c8109f0770bc80f3aa57b3fd5960d1b99926fbebcc46",
+      "upstreamPath": "Sources/FotufilmCore/ImageBuffer.swift",
+      "upstreamSHA256": "93249842ccaa4d733a27c8109f0770bc80f3aa57b3fd5960d1b99926fbebcc46"
+    },
+    {
+      "path": "FotufilmCore/LabScanFinish.swift",
+      "sha256": "fd2352193a8c91232729e51cc83cf748236b3a4b3cfaed07e703f5ae0943fe73",
+      "upstreamPath": "Sources/FotufilmCore/LabScanFinish.swift",
+      "upstreamSHA256": "fd2352193a8c91232729e51cc83cf748236b3a4b3cfaed07e703f5ae0943fe73"
+    },
+    {
+      "path": "FotufilmCore/LabScanTiming.swift",
+      "sha256": "7698a9eb860dbb32f707d66346435849cf6bc133ce8a3861893dadfac2c0c1e7",
+      "upstreamPath": "Sources/FotufilmCore/LabScanTiming.swift",
+      "upstreamSHA256": "7698a9eb860dbb32f707d66346435849cf6bc133ce8a3861893dadfac2c0c1e7"
+    },
+    {
+      "path": "FotufilmCore/LayeredTransport.swift",
+      "sha256": "c350a97b5e5d74a96e0fd2c38d963ce2eca846715e46db77a2b2ab06900b40af",
+      "upstreamPath": "Sources/FotufilmCore/LayeredTransport.swift",
+      "upstreamSHA256": "c350a97b5e5d74a96e0fd2c38d963ce2eca846715e46db77a2b2ab06900b40af"
+    },
+    {
+      "path": "FotufilmCore/LayeredTransportRenderer.swift",
+      "sha256": "d177f1d47747c3f5408725275cdbe17cdb41e551b70de9fa2a1607dd2d758a97",
+      "upstreamPath": "Sources/FotufilmCore/LayeredTransportRenderer.swift",
+      "upstreamSHA256": "d177f1d47747c3f5408725275cdbe17cdb41e551b70de9fa2a1607dd2d758a97"
+    },
+    {
+      "path": "FotufilmCore/LensCorrection.swift",
+      "sha256": "3945e2b9117dc8539648b6b23c3497426ef35ffdf4bcfe356c07d4e338ffb7af",
+      "upstreamPath": "Sources/FotufilmCore/LensCorrection.swift",
+      "upstreamSHA256": "3945e2b9117dc8539648b6b23c3497426ef35ffdf4bcfe356c07d4e338ffb7af"
+    },
+    {
+      "path": "FotufilmCore/LensFilter.swift",
+      "sha256": "2c2cfbf44ec7c3914be03079b2e1ae5ac537979d34cdc2b790d6814a55c7ebbb",
+      "upstreamPath": "Sources/FotufilmCore/LensFilter.swift",
+      "upstreamSHA256": "2c2cfbf44ec7c3914be03079b2e1ae5ac537979d34cdc2b790d6814a55c7ebbb"
+    },
+    {
+      "path": "FotufilmCore/LensFilterCatalogue.swift",
+      "sha256": "a228359e324cf9f3aee932967914ffffe4d1ecb6b1b38b2a7bcccd21e5e0ed08",
+      "upstreamPath": "Sources/FotufilmCore/LensFilterCatalogue.swift",
+      "upstreamSHA256": "a228359e324cf9f3aee932967914ffffe4d1ecb6b1b38b2a7bcccd21e5e0ed08"
+    },
+    {
+      "path": "FotufilmCore/LensFilterStack.swift",
+      "sha256": "0c112a1f3e06b30dc45907fd1d049b26d75f530faacaa715a5c42bfe663430f0",
+      "upstreamPath": "Sources/FotufilmCore/LensFilterStack.swift",
+      "upstreamSHA256": "0c112a1f3e06b30dc45907fd1d049b26d75f530faacaa715a5c42bfe663430f0"
+    },
+    {
+      "path": "FotufilmCore/LensProfile.swift",
+      "sha256": "594f1e20812729d3e3ef7ce9541511901dde025c04b95f8d1c82c5a54a50efba",
+      "upstreamPath": "Sources/FotufilmCore/LensProfile.swift",
+      "upstreamSHA256": "594f1e20812729d3e3ef7ce9541511901dde025c04b95f8d1c82c5a54a50efba"
+    },
+    {
+      "path": "FotufilmCore/MappedBuffer.swift",
+      "sha256": "936f68bfb598a8af655a81888ddd9351a587198887ad53688562e86d14768757",
+      "upstreamPath": "Sources/FotufilmCore/MappedBuffer.swift",
+      "upstreamSHA256": "936f68bfb598a8af655a81888ddd9351a587198887ad53688562e86d14768757"
+    },
+    {
+      "path": "FotufilmCore/Math.swift",
+      "sha256": "7245553a09f24b39885aae1f017089f938987a7f1ac895f0713ac5bdb585f98e",
+      "upstreamPath": "Sources/FotufilmCore/Math.swift",
+      "upstreamSHA256": "7245553a09f24b39885aae1f017089f938987a7f1ac895f0713ac5bdb585f98e"
+    },
+    {
+      "path": "FotufilmCore/NegativeFilmSuggestions.swift",
+      "sha256": "90067dfd9907387c89538a8a9516a4b5ca55f22c6673d9c649910bf4b4a79096",
+      "upstreamPath": "Sources/FotufilmCore/NegativeFilmSuggestions.swift",
+      "upstreamSHA256": "90067dfd9907387c89538a8a9516a4b5ca55f22c6673d9c649910bf4b4a79096"
+    },
+    {
+      "path": "FotufilmCore/NegativeScanPreparation.swift",
+      "sha256": "05d96208091e65935150ba1341500d2e6dad19eb775226e8da56ddb14c9ac155",
+      "upstreamPath": "Sources/FotufilmCore/NegativeScanPreparation.swift",
+      "upstreamSHA256": "05d96208091e65935150ba1341500d2e6dad19eb775226e8da56ddb14c9ac155"
+    },
+    {
+      "path": "FotufilmCore/ParallelWork.swift",
+      "sha256": "9bdfe16b7323c58cb6b0f15a15cbd0cfd60b8d9f8b5db9d6dd1b9b1269f63ae4",
+      "upstreamPath": "Sources/FotufilmCore/ParallelWork.swift",
+      "upstreamSHA256": "9bdfe16b7323c58cb6b0f15a15cbd0cfd60b8d9f8b5db9d6dd1b9b1269f63ae4"
+    },
+    {
+      "path": "FotufilmCore/PerspectiveProjection.swift",
+      "sha256": "5cf361bda7d7e1332fe00067b94f01bd85ad1757be4bd6fea49ebd9e2fad14a4",
+      "upstreamPath": "Sources/FotufilmCore/PerspectiveProjection.swift",
+      "upstreamSHA256": "5cf361bda7d7e1332fe00067b94f01bd85ad1757be4bd6fea49ebd9e2fad14a4"
+    },
+    {
+      "path": "FotufilmCore/Pipeline.swift",
+      "sha256": "0f3dca02ed69f380a8205cf37aff7aa9f3a4b632b1b4d2fbf76a4a0b8f0e376b",
+      "upstreamPath": "Sources/FotufilmCore/Pipeline.swift",
+      "upstreamSHA256": "0f3dca02ed69f380a8205cf37aff7aa9f3a4b632b1b4d2fbf76a4a0b8f0e376b"
+    },
+    {
+      "path": "FotufilmCore/PipelineStage.swift",
+      "sha256": "2fb6cfd765b4019145ffa596b7f4b4a17d74cca9965c325e2c87310989e90c59",
+      "upstreamPath": "Sources/FotufilmCore/PipelineStage.swift",
+      "upstreamSHA256": "2fb6cfd765b4019145ffa596b7f4b4a17d74cca9965c325e2c87310989e90c59"
+    },
+    {
+      "path": "FotufilmCore/PipelineWalk.swift",
+      "sha256": "427058ec3a35ad5641cf5402af121888a71035f3df19e1d00a038bd229f2d43c",
+      "upstreamPath": "Sources/FotufilmCore/PipelineWalk.swift",
+      "upstreamSHA256": "427058ec3a35ad5641cf5402af121888a71035f3df19e1d00a038bd229f2d43c"
+    },
+    {
+      "path": "FotufilmCore/PlainDevelop.swift",
+      "sha256": "8fec6071925aec1d01de5b2896da0a2d5b5655f9c777d2f99b271ac1be09e1bd",
+      "upstreamPath": "Sources/FotufilmCore/PlainDevelop.swift",
+      "upstreamSHA256": "8fec6071925aec1d01de5b2896da0a2d5b5655f9c777d2f99b271ac1be09e1bd"
+    },
+    {
+      "path": "FotufilmCore/PlainNegativeScan.swift",
+      "sha256": "0ff88c9d1dbcbbcb0a577b71d1907dfb10edb83082a0680f971896961d40c784",
+      "upstreamPath": "Sources/FotufilmCore/PlainNegativeScan.swift",
+      "upstreamSHA256": "0ff88c9d1dbcbbcb0a577b71d1907dfb10edb83082a0680f971896961d40c784"
+    },
+    {
+      "path": "FotufilmCore/PremultipliedAlpha.swift",
+      "sha256": "93c8d34b5cead72873a67a8e42682c2420fdd669b2e74ad9bbb6f08e4eca6c57",
+      "upstreamPath": "Sources/FotufilmCore/PremultipliedAlpha.swift",
+      "upstreamSHA256": "93c8d34b5cead72873a67a8e42682c2420fdd669b2e74ad9bbb6f08e4eca6c57"
+    },
+    {
+      "path": "FotufilmCore/PrintFinish.swift",
+      "sha256": "11eaac96b9ee221817861c2771ea62b6d7437b51209699bba5551ee0b3dfafd0",
+      "upstreamPath": "Sources/FotufilmCore/PrintFinish.swift",
+      "upstreamSHA256": "11eaac96b9ee221817861c2771ea62b6d7437b51209699bba5551ee0b3dfafd0"
+    },
+    {
+      "path": "FotufilmCore/PrintFrame.swift",
+      "sha256": "fbabdaf54f053d5e492de5d04717dd85ed5ff4b44c202384a0fd31f465321fe9",
+      "upstreamPath": "Sources/FotufilmCore/PrintFrame.swift",
+      "upstreamSHA256": "fbabdaf54f053d5e492de5d04717dd85ed5ff4b44c202384a0fd31f465321fe9"
+    },
+    {
+      "path": "FotufilmCore/PrintFramePlacement.swift",
+      "sha256": "746edbed626d3094ad9bee41bcc0445b88260c5323f172ba5db6c5bfacbf3b69",
+      "upstreamPath": "Sources/FotufilmCore/PrintFramePlacement.swift",
+      "upstreamSHA256": "746edbed626d3094ad9bee41bcc0445b88260c5323f172ba5db6c5bfacbf3b69"
+    },
+    {
+      "path": "FotufilmCore/PrintIllumination.swift",
+      "sha256": "b8cf3a6c222fd29db39b1d2b34a933e9bdf4946430a88bc84b4151216f10a901",
+      "upstreamPath": "Sources/FotufilmCore/PrintIllumination.swift",
+      "upstreamSHA256": "b8cf3a6c222fd29db39b1d2b34a933e9bdf4946430a88bc84b4151216f10a901"
+    },
+    {
+      "path": "FotufilmCore/PrintPaper.swift",
+      "sha256": "14634363b7f19313b79bab34aa0d65beaecc1adb1e764b3dda38ad03c5f4f427",
+      "upstreamPath": "Sources/FotufilmCore/PrintPaper.swift",
+      "upstreamSHA256": "14634363b7f19313b79bab34aa0d65beaecc1adb1e764b3dda38ad03c5f4f427"
+    },
+    {
+      "path": "FotufilmCore/PrintPaperSpectra.swift",
+      "sha256": "aea649bb34d1c89623d3a7fe0487847541a26898e7d330247f8b08fb924531c1",
+      "upstreamPath": "Sources/FotufilmCore/PrintPaperSpectra.swift",
+      "upstreamSHA256": "aea649bb34d1c89623d3a7fe0487847541a26898e7d330247f8b08fb924531c1"
+    },
+    {
+      "path": "FotufilmCore/PrintPaperTables.swift",
+      "sha256": "452f711efaf15d1563a4974da0eb735c81217188d6c61e76a2fe2c9d4da876cc",
+      "upstreamPath": "Sources/FotufilmCore/PrintPaperTables.swift",
+      "upstreamSHA256": "452f711efaf15d1563a4974da0eb735c81217188d6c61e76a2fe2c9d4da876cc"
+    },
+    {
+      "path": "FotufilmCore/PrinterMatching.swift",
+      "sha256": "0b9e4463dd7c89f6ca2175b4dd15c2559ec7ffe822ac53d81cb3b58be441613a",
+      "upstreamPath": "Sources/FotufilmCore/PrinterMatching.swift",
+      "upstreamSHA256": "0b9e4463dd7c89f6ca2175b4dd15c2559ec7ffe822ac53d81cb3b58be441613a"
+    },
+    {
+      "path": "FotufilmCore/PrinterProfile.swift",
+      "sha256": "3fab0bd8e43d0c8f74d04b134267c55d861415a2979c5affce70a8c886049b61",
+      "upstreamPath": "Sources/FotufilmCore/PrinterProfile.swift",
+      "upstreamSHA256": "3fab0bd8e43d0c8f74d04b134267c55d861415a2979c5affce70a8c886049b61"
+    },
+    {
+      "path": "FotufilmCore/ProcessMemory.swift",
+      "sha256": "285cd4b6e81b1ae89b9fc18aa8ed7f649450c958b7ddb5df6ed4d3cbe259fc68",
+      "upstreamPath": "Sources/FotufilmCore/ProcessMemory.swift",
+      "upstreamSHA256": "285cd4b6e81b1ae89b9fc18aa8ed7f649450c958b7ddb5df6ed4d3cbe259fc68"
+    },
+    {
+      "path": "FotufilmCore/PushPull.swift",
+      "sha256": "115a4b0eb19a68fb2881547c3b0fb9a338d92a58923c1a6d5233d9f2936c6b55",
+      "upstreamPath": "Sources/FotufilmCore/PushPull.swift",
+      "upstreamSHA256": "115a4b0eb19a68fb2881547c3b0fb9a338d92a58923c1a6d5233d9f2936c6b55"
+    },
+    {
+      "path": "FotufilmCore/Reciprocity.swift",
+      "sha256": "faf2aff588fce95d437d8446edc449a8a9a7e7524c179b6cdb5d5700cd9b7aba",
+      "upstreamPath": "Sources/FotufilmCore/Reciprocity.swift",
+      "upstreamSHA256": "faf2aff588fce95d437d8446edc449a8a9a7e7524c179b6cdb5d5700cd9b7aba"
+    },
+    {
+      "path": "FotufilmCore/Resources/rec2020-reflectance-prior.coeff",
+      "sha256": "41019cd9471dd032e95ce999c61d526cfb4dae957c5f157102ec488e77aa2e0f",
+      "upstreamPath": "Sources/FotufilmCore/Resources/rec2020-reflectance-prior.coeff",
+      "upstreamSHA256": "41019cd9471dd032e95ce999c61d526cfb4dae957c5f157102ec488e77aa2e0f"
+    },
+    {
+      "path": "FotufilmCore/SampledCharacteristicCurve.swift",
+      "sha256": "1c64f8d0b9c5994a30ff50781a85462523fb65565c6b8e37f39185a9989d6642",
+      "upstreamPath": "Sources/FotufilmCore/SampledCharacteristicCurve.swift",
+      "upstreamSHA256": "1c64f8d0b9c5994a30ff50781a85462523fb65565c6b8e37f39185a9989d6642"
+    },
+    {
+      "path": "FotufilmCore/ScannedNegative.swift",
+      "sha256": "7f24102b10788b9de04e7af8deb6a04d6125a9303ab9c493371ab0046de03d91",
+      "upstreamPath": "Sources/FotufilmCore/ScannedNegative.swift",
+      "upstreamSHA256": "7f24102b10788b9de04e7af8deb6a04d6125a9303ab9c493371ab0046de03d91"
+    },
+    {
+      "path": "FotufilmCore/SceneExposureCalibration.swift",
+      "sha256": "a1cb33696bf0a72acf44dafd36fc6ae7b9e71c7b6fd8699744eba1be3ea059e0",
+      "upstreamPath": "Sources/FotufilmCore/SceneExposureCalibration.swift",
+      "upstreamSHA256": "a1cb33696bf0a72acf44dafd36fc6ae7b9e71c7b6fd8699744eba1be3ea059e0"
+    },
+    {
+      "path": "FotufilmCore/SceneLinearInput.swift",
+      "sha256": "e1c5de2bc424eb85dd62ea5550c517694fdda5fba93e50e027856ad98c2f8bd9",
+      "upstreamPath": "Sources/FotufilmCore/SceneLinearInput.swift",
+      "upstreamSHA256": "e1c5de2bc424eb85dd62ea5550c517694fdda5fba93e50e027856ad98c2f8bd9"
+    },
+    {
+      "path": "FotufilmCore/SensorFrame.swift",
+      "sha256": "56a101e734e33c7c89bcf3461010c04b776e2728634668a70ecf8540016d6194",
+      "upstreamPath": "Sources/FotufilmCore/SensorFrame.swift",
+      "upstreamSHA256": "56a101e734e33c7c89bcf3461010c04b776e2728634668a70ecf8540016d6194"
+    },
+    {
+      "path": "FotufilmCore/SourceLight.swift",
+      "sha256": "e1389f6a075460c86811ace5bace57707eb74d093ba9b17e9883315b15652328",
+      "upstreamPath": "Sources/FotufilmCore/SourceLight.swift",
+      "upstreamSHA256": "e1389f6a075460c86811ace5bace57707eb74d093ba9b17e9883315b15652328"
+    },
+    {
+      "path": "FotufilmCore/SpectralControlPoints.swift",
+      "sha256": "749decd74970e864f5124601747e7dc9b9e7d5e3be9f02e889636400155bbe86",
+      "upstreamPath": "Sources/FotufilmCore/SpectralControlPoints.swift",
+      "upstreamSHA256": "749decd74970e864f5124601747e7dc9b9e7d5e3be9f02e889636400155bbe86"
+    },
+    {
+      "path": "FotufilmCore/SpectralModel.swift",
+      "sha256": "0ca0046c7274846fa389125ed23cf3b404034e338f165784b5df83095cd7c11d",
+      "upstreamPath": "Sources/FotufilmCore/SpectralModel.swift",
+      "upstreamSHA256": "0ca0046c7274846fa389125ed23cf3b404034e338f165784b5df83095cd7c11d"
+    },
+    {
+      "path": "FotufilmCore/SpectrumScene.swift",
+      "sha256": "23e71c3a744ac132d744c4d7e57f9ebe464f4ab89842feadb0e961df5390c1c5",
+      "upstreamPath": "Sources/FotufilmCore/SpectrumScene.swift",
+      "upstreamSHA256": "23e71c3a744ac132d744c4d7e57f9ebe464f4ab89842feadb0e961df5390c1c5"
+    },
+    {
+      "path": "FotufilmCore/StageTiming.swift",
+      "sha256": "55735f49b54407a65e8b98e73975ae3747fb62c217eaf7b40f2bddb322efd7bf",
+      "upstreamPath": "Sources/FotufilmCore/StageTiming.swift",
+      "upstreamSHA256": "55735f49b54407a65e8b98e73975ae3747fb62c217eaf7b40f2bddb322efd7bf"
+    },
+    {
+      "path": "FotufilmCore/StatusADyeUnmix.swift",
+      "sha256": "794222e90497c3df81dc2f061784536f9cac4b0f158c178d9a688edf31ffaeb4",
+      "upstreamPath": "Sources/FotufilmCore/StatusADyeUnmix.swift",
+      "upstreamSHA256": "794222e90497c3df81dc2f061784536f9cac4b0f158c178d9a688edf31ffaeb4"
+    },
+    {
+      "path": "FotufilmCore/Stocks/acros100.json",
+      "sha256": "592e2463a0c1d01db35e6f1515c87a6cb134234677bbec7adde8db4002be338c",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/acros100.json",
+      "upstreamSHA256": "592e2463a0c1d01db35e6f1515c87a6cb134234677bbec7adde8db4002be338c"
+    },
+    {
+      "path": "FotufilmCore/Stocks/aerochrome1443.json",
+      "sha256": "eaae9c31967ea72b8662a9345b96838817725aee9f8cab0354fd831cd1e17fcc",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/aerochrome1443.json",
+      "upstreamSHA256": "eaae9c31967ea72b8662a9345b96838817725aee9f8cab0354fd831cd1e17fcc"
+    },
+    {
+      "path": "FotufilmCore/Stocks/aerocolor2460.json",
+      "sha256": "41af3b1c19dabc3c8d5c2aab1ffc041d347294685c6ac14b92e559bfeaaa0ea4",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/aerocolor2460.json",
+      "upstreamSHA256": "41af3b1c19dabc3c8d5c2aab1ffc041d347294685c6ac14b92e559bfeaaa0ea4"
+    },
+    {
+      "path": "FotufilmCore/Stocks/agfachrome100.json",
+      "sha256": "2b8705e4d0d1edaac484fe7939d87b675db30dd7d2fb41a411e5fa14c23b594d",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/agfachrome100.json",
+      "upstreamSHA256": "2b8705e4d0d1edaac484fe7939d87b675db30dd7d2fb41a411e5fa14c23b594d"
+    },
+    {
+      "path": "FotufilmCore/Stocks/agfachrome200.json",
+      "sha256": "f26e540635cdfe3638fd91e302015c2934d854cdc3444e97da71b09128823051",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/agfachrome200.json",
+      "upstreamSHA256": "f26e540635cdfe3638fd91e302015c2934d854cdc3444e97da71b09128823051"
+    },
+    {
+      "path": "FotufilmCore/Stocks/agfachrome50.json",
+      "sha256": "361f98ad20e0f4716c05c138a7a526adf05e45589e6c5398fd406d2973171d95",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/agfachrome50.json",
+      "upstreamSHA256": "361f98ad20e0f4716c05c138a7a526adf05e45589e6c5398fd406d2973171d95"
+    },
+    {
+      "path": "FotufilmCore/Stocks/astia100f.json",
+      "sha256": "f63ee7736a19fc56003b29e769696f895928d11ac868b05148dfc2d3fcace835",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/astia100f.json",
+      "upstreamSHA256": "f63ee7736a19fc56003b29e769696f895928d11ac868b05148dfc2d3fcace835"
+    },
+    {
+      "path": "FotufilmCore/Stocks/c200.json",
+      "sha256": "a566c81a8219d431111cbe7b4f996cc4b9a97dc8e5dafb640e8834f4729871ea",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/c200.json",
+      "upstreamSHA256": "a566c81a8219d431111cbe7b4f996cc4b9a97dc8e5dafb640e8834f4729871ea"
+    },
+    {
+      "path": "FotufilmCore/Stocks/cinestill400d.json",
+      "sha256": "814a7d8253abc0dc3471ae1bd778a6e3991d042de52bf40c02563b0924841f3f",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/cinestill400d.json",
+      "upstreamSHA256": "814a7d8253abc0dc3471ae1bd778a6e3991d042de52bf40c02563b0924841f3f"
+    },
+    {
+      "path": "FotufilmCore/Stocks/cinestill800t.json",
+      "sha256": "c051fe32e497958421bf7535088556540217590d06f83efb2da3fa047f2ced15",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/cinestill800t.json",
+      "upstreamSHA256": "c051fe32e497958421bf7535088556540217590d06f83efb2da3fa047f2ced15"
+    },
+    {
+      "path": "FotufilmCore/Stocks/delta3200.json",
+      "sha256": "c036841c9c3409b3f5f96a625b73af386bfcc4650d7764e7ad3e8aba12a4d604",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/delta3200.json",
+      "upstreamSHA256": "c036841c9c3409b3f5f96a625b73af386bfcc4650d7764e7ad3e8aba12a4d604"
+    },
+    {
+      "path": "FotufilmCore/Stocks/doublex5222.json",
+      "sha256": "305a061e47a83d4ef7a5323f0e350f256a76af419d53d26751447554858ccce3",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/doublex5222.json",
+      "upstreamSHA256": "305a061e47a83d4ef7a5323f0e350f256a76af419d53d26751447554858ccce3"
+    },
+    {
+      "path": "FotufilmCore/Stocks/ektachromee100.json",
+      "sha256": "e99f9f8e343d5d0649154d56e7f1d79b7c5124c8a5a4d9c90264f846055cec6d",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/ektachromee100.json",
+      "upstreamSHA256": "e99f9f8e343d5d0649154d56e7f1d79b7c5124c8a5a4d9c90264f846055cec6d"
+    },
+    {
+      "path": "FotufilmCore/Stocks/ektar100.json",
+      "sha256": "5ec4973f8c7f65c4679bf1187e2d105784c94bc56dfefeb5597b641ca2a21cf3",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/ektar100.json",
+      "upstreamSHA256": "5ec4973f8c7f65c4679bf1187e2d105784c94bc56dfefeb5597b641ca2a21cf3"
+    },
+    {
+      "path": "FotufilmCore/Stocks/eterna500.json",
+      "sha256": "86dda3402ea26ebd29f8c721947c1cc30d6536c42c4c35153e975d536424e633",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/eterna500.json",
+      "upstreamSHA256": "86dda3402ea26ebd29f8c721947c1cc30d6536c42c4c35153e975d536424e633"
+    },
+    {
+      "path": "FotufilmCore/Stocks/eternavivid500.json",
+      "sha256": "8bb79590bdfce3c0b3a63a399fcbc260f98920a9f47e3b9b2ff399f8787b41f6",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/eternavivid500.json",
+      "upstreamSHA256": "8bb79590bdfce3c0b3a63a399fcbc260f98920a9f47e3b9b2ff399f8787b41f6"
+    },
+    {
+      "path": "FotufilmCore/Stocks/example-monochrome-100.json",
+      "sha256": "91b85bcc3ac32a471e0775dc1db6a2179c9bf0495529ed7b66aa472129f563d4",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/example-monochrome-100.json",
+      "upstreamSHA256": "91b85bcc3ac32a471e0775dc1db6a2179c9bf0495529ed7b66aa472129f563d4"
+    },
+    {
+      "path": "FotufilmCore/Stocks/example-negative-400.json",
+      "sha256": "2f3b11ef5b7085f42bfb0cb5196ae77ff6f490b859684542e2fe515aa5cd29fd",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/example-negative-400.json",
+      "upstreamSHA256": "2f3b11ef5b7085f42bfb0cb5196ae77ff6f490b859684542e2fe515aa5cd29fd"
+    },
+    {
+      "path": "FotufilmCore/Stocks/example-reversal-64.json",
+      "sha256": "19e59deb3bb00fa660273a83f58a5015a315d396ee909c72b691072d5da2d5e7",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/example-reversal-64.json",
+      "upstreamSHA256": "19e59deb3bb00fa660273a83f58a5015a315d396ee909c72b691072d5da2d5e7"
+    },
+    {
+      "path": "FotufilmCore/Stocks/f64d.json",
+      "sha256": "2b9d79c54cdfb80fb81c306bd7822234c0b362242af38d511e844766c7cf1ed6",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/f64d.json",
+      "upstreamSHA256": "2b9d79c54cdfb80fb81c306bd7822234c0b362242af38d511e844766c7cf1ed6"
+    },
+    {
+      "path": "FotufilmCore/Stocks/fp4plus125.json",
+      "sha256": "6d89119248dc0091b3dbfc035f52fe773cb26186caf16cb482d61fa43d4e2275",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/fp4plus125.json",
+      "upstreamSHA256": "6d89119248dc0091b3dbfc035f52fe773cb26186caf16cb482d61fa43d4e2275"
+    },
+    {
+      "path": "FotufilmCore/Stocks/gold200.json",
+      "sha256": "6dc96f298239a7144f591a49f3710de013d7042879574bd6ded183d5113be418",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/gold200.json",
+      "upstreamSHA256": "6dc96f298239a7144f591a49f3710de013d7042879574bd6ded183d5113be418"
+    },
+    {
+      "path": "FotufilmCore/Stocks/hp5plus400.json",
+      "sha256": "ad24baff296ef58fbd1cfeb77c2efe963b46104bded410588a9fa68771a18b9d",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/hp5plus400.json",
+      "upstreamSHA256": "ad24baff296ef58fbd1cfeb77c2efe963b46104bded410588a9fa68771a18b9d"
+    },
+    {
+      "path": "FotufilmCore/Stocks/infraredcolor.json",
+      "sha256": "06ebf090877b6109a752a70ebd477db4f3b0fd023b382ebb61af213e34d27329",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/infraredcolor.json",
+      "upstreamSHA256": "06ebf090877b6109a752a70ebd477db4f3b0fd023b382ebb61af213e34d27329"
+    },
+    {
+      "path": "FotufilmCore/Stocks/instaxmini.json",
+      "sha256": "a677c78e2fb26a22c700ffdddb756ac4ee84893aa03494cf8170e4d8a1eabcc1",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/instaxmini.json",
+      "upstreamSHA256": "a677c78e2fb26a22c700ffdddb756ac4ee84893aa03494cf8170e4d8a1eabcc1"
+    },
+    {
+      "path": "FotufilmCore/Stocks/instaxwide.json",
+      "sha256": "d6cd32530616e574ffd22e13ee9b2d8a655cc4a88c73c16cdf29da0fe1ca20fe",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/instaxwide.json",
+      "upstreamSHA256": "d6cd32530616e574ffd22e13ee9b2d8a655cc4a88c73c16cdf29da0fe1ca20fe"
+    },
+    {
+      "path": "FotufilmCore/Stocks/kodachrome200.json",
+      "sha256": "a790c10a266ededffbe4cd41514dbf400cd8141f0675ae9f095c26138801afe2",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/kodachrome200.json",
+      "upstreamSHA256": "a790c10a266ededffbe4cd41514dbf400cd8141f0675ae9f095c26138801afe2"
+    },
+    {
+      "path": "FotufilmCore/Stocks/kodachrome25.json",
+      "sha256": "e125a7e2d7fbfcf01206435ed2ab06cfd0633e787f0a96b8cfd5afed437ecb32",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/kodachrome25.json",
+      "upstreamSHA256": "e125a7e2d7fbfcf01206435ed2ab06cfd0633e787f0a96b8cfd5afed437ecb32"
+    },
+    {
+      "path": "FotufilmCore/Stocks/kodachrome64.json",
+      "sha256": "2a91791405c4cd19b539965986bc3a1a4e92f94a3c51c44caaf84e0014b79ddc",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/kodachrome64.json",
+      "upstreamSHA256": "2a91791405c4cd19b539965986bc3a1a4e92f94a3c51c44caaf84e0014b79ddc"
+    },
+    {
+      "path": "FotufilmCore/Stocks/kodacolor100.json",
+      "sha256": "17d1df3172c41ac6ecaad6c4d798206b5d2e7530272b0dbbc213440520577beb",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/kodacolor100.json",
+      "upstreamSHA256": "17d1df3172c41ac6ecaad6c4d798206b5d2e7530272b0dbbc213440520577beb"
+    },
+    {
+      "path": "FotufilmCore/Stocks/lomochromemetropolis.json",
+      "sha256": "011267e25a18c7441bb33d2d757c38bf80683e128719217bc84f15f3d23fb0df",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/lomochromemetropolis.json",
+      "upstreamSHA256": "011267e25a18c7441bb33d2d757c38bf80683e128719217bc84f15f3d23fb0df"
+    },
+    {
+      "path": "FotufilmCore/Stocks/lomochromepurple.json",
+      "sha256": "78f1927eb762a4a569d75aa40fc397020c0d5a2741001f44784cebc8b1160953",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/lomochromepurple.json",
+      "upstreamSHA256": "78f1927eb762a4a569d75aa40fc397020c0d5a2741001f44784cebc8b1160953"
+    },
+    {
+      "path": "FotufilmCore/Stocks/lomochrometurquoise.json",
+      "sha256": "784b1d7caaf53aa1bd64fc0dc158286af6861d12af7f73618434967efc237f55",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/lomochrometurquoise.json",
+      "upstreamSHA256": "784b1d7caaf53aa1bd64fc0dc158286af6861d12af7f73618434967efc237f55"
+    },
+    {
+      "path": "FotufilmCore/Stocks/lomocolor100.json",
+      "sha256": "161bf92e512b0e5cb469bca897a6a791834ea345de332914ff0d816da064b624",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/lomocolor100.json",
+      "upstreamSHA256": "161bf92e512b0e5cb469bca897a6a791834ea345de332914ff0d816da064b624"
+    },
+    {
+      "path": "FotufilmCore/Stocks/phoenix200.json",
+      "sha256": "31a81165d6483cf841209153cffb152af540bd2ca65fb7281e33acef5accafeb",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/phoenix200.json",
+      "upstreamSHA256": "31a81165d6483cf841209153cffb152af540bd2ca65fb7281e33acef5accafeb"
+    },
+    {
+      "path": "FotufilmCore/Stocks/portra400.json",
+      "sha256": "2868a843b602e386642e07db302659e713c46e9d86bff205a91ce44946a2f063",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/portra400.json",
+      "upstreamSHA256": "2868a843b602e386642e07db302659e713c46e9d86bff205a91ce44946a2f063"
+    },
+    {
+      "path": "FotufilmCore/Stocks/pro160ns.json",
+      "sha256": "04ccbc04b32840b207188848125832bb6d368609a945377cb49fbf95ed0fb630",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/pro160ns.json",
+      "upstreamSHA256": "04ccbc04b32840b207188848125832bb6d368609a945377cb49fbf95ed0fb630"
+    },
+    {
+      "path": "FotufilmCore/Stocks/pro400h.json",
+      "sha256": "7f83d4d66ea831f425b0607f49de8898064ac7c32337b0ebfb2049589ab0897b",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/pro400h.json",
+      "upstreamSHA256": "7f83d4d66ea831f425b0607f49de8898064ac7c32337b0ebfb2049589ab0897b"
+    },
+    {
+      "path": "FotufilmCore/Stocks/provia100f.json",
+      "sha256": "b7f60e03ddf49491572bc5812d79d9eeb0c1ec55de3a6ac65f6bed1af772beb7",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/provia100f.json",
+      "upstreamSHA256": "b7f60e03ddf49491572bc5812d79d9eeb0c1ec55de3a6ac65f6bed1af772beb7"
+    },
+    {
+      "path": "FotufilmCore/Stocks/reala500d.json",
+      "sha256": "22d3620be361eff3e1c8350bbc57a1a884f94b13f0be0b2ca15400bee8aa5b18",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/reala500d.json",
+      "upstreamSHA256": "22d3620be361eff3e1c8350bbc57a1a884f94b13f0be0b2ca15400bee8aa5b18"
+    },
+    {
+      "path": "FotufilmCore/Stocks/superia200.json",
+      "sha256": "dd272d2d730d4c25c7e0e7c21abada8b6ea49b81d986c8bc78c76f7a3fe65357",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/superia200.json",
+      "upstreamSHA256": "dd272d2d730d4c25c7e0e7c21abada8b6ea49b81d986c8bc78c76f7a3fe65357"
+    },
+    {
+      "path": "FotufilmCore/Stocks/superia400.json",
+      "sha256": "98f49f37828c2c23ca81684dea3ea036a1bfaef437f4df5d58def83d76200d38",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/superia400.json",
+      "upstreamSHA256": "98f49f37828c2c23ca81684dea3ea036a1bfaef437f4df5d58def83d76200d38"
+    },
+    {
+      "path": "FotufilmCore/Stocks/tmax100.json",
+      "sha256": "d777edb0b43ed11b5b88c13e75ebc8d23975db8b84ea3ac4de617e6b141a2bd3",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/tmax100.json",
+      "upstreamSHA256": "d777edb0b43ed11b5b88c13e75ebc8d23975db8b84ea3ac4de617e6b141a2bd3"
+    },
+    {
+      "path": "FotufilmCore/Stocks/trix400.json",
+      "sha256": "9d83989cb617a545ca934dc6bb053da1b5ce23f2639218c297a757f499c3e9bf",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/trix400.json",
+      "upstreamSHA256": "9d83989cb617a545ca934dc6bb053da1b5ce23f2639218c297a757f499c3e9bf"
+    },
+    {
+      "path": "FotufilmCore/Stocks/ultramax400.json",
+      "sha256": "3e1cfa70443472089f5963aeca38a89f89bfde42bb66f957554dc48c79eac0f9",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/ultramax400.json",
+      "upstreamSHA256": "3e1cfa70443472089f5963aeca38a89f89bfde42bb66f957554dc48c79eac0f9"
+    },
+    {
+      "path": "FotufilmCore/Stocks/velvia50.json",
+      "sha256": "6d5b1f1eaea341b602b8d483305675fa93c08780d954eacf28c4361d31d58620",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/velvia50.json",
+      "upstreamSHA256": "6d5b1f1eaea341b602b8d483305675fa93c08780d954eacf28c4361d31d58620"
+    },
+    {
+      "path": "FotufilmCore/Stocks/verita200d.json",
+      "sha256": "b5aebb6a272e12289d4208226cb41aa8d293465869faf303bf0942305451a849",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/verita200d.json",
+      "upstreamSHA256": "b5aebb6a272e12289d4208226cb41aa8d293465869faf303bf0942305451a849"
+    },
+    {
+      "path": "FotufilmCore/Stocks/vision250d.json",
+      "sha256": "88398b18fdc5b7bb246f7c5cf1613dc8a33eeae0bc6cd7e02f45daef81b770cb",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/vision250d.json",
+      "upstreamSHA256": "88398b18fdc5b7bb246f7c5cf1613dc8a33eeae0bc6cd7e02f45daef81b770cb"
+    },
+    {
+      "path": "FotufilmCore/Stocks/vision500t.json",
+      "sha256": "85b370f8c10f5e7952db9aee752c9c5d2068ca97c4e1f315b97b4a6ede6928c4",
+      "upstreamPath": "Sources/FotufilmCore/Stocks/vision500t.json",
+      "upstreamSHA256": "85b370f8c10f5e7952db9aee752c9c5d2068ca97c4e1f315b97b4a6ede6928c4"
+    },
+    {
+      "path": "FotufilmCore/ToneBase.swift",
+      "sha256": "d15284c8aa3245dd175f830c60b710202d6cb27382803a6a789ecbba80dab5c4",
+      "upstreamPath": "Sources/FotufilmCore/ToneBase.swift",
+      "upstreamSHA256": "d15284c8aa3245dd175f830c60b710202d6cb27382803a6a789ecbba80dab5c4"
+    },
+    {
+      "path": "FotufilmCore/TransportExposureTables.swift",
+      "sha256": "1d771fd72f61c8baa6cf9cd109ad248bebdaa225a1c6a72bbff791bf2c2a1a89",
+      "upstreamPath": "Sources/FotufilmCore/TransportExposureTables.swift",
+      "upstreamSHA256": "1d771fd72f61c8baa6cf9cd109ad248bebdaa225a1c6a72bbff791bf2c2a1a89"
+    },
+    {
+      "path": "FotufilmCore/TransportKernelCompiler.swift",
+      "sha256": "5f5954443272c44fdafbbc905bad8d9ab5d4b597b07d4dd0213069ca39309172",
+      "upstreamPath": "Sources/FotufilmCore/TransportKernelCompiler.swift",
+      "upstreamSHA256": "5f5954443272c44fdafbbc905bad8d9ab5d4b597b07d4dd0213069ca39309172"
+    },
+    {
+      "path": "FotufilmCore/TrichromaticRoll.swift",
+      "sha256": "2689cbede4c1f9e4a70622ded369362095bb08aa41d39bc744759999da978e19",
+      "upstreamPath": "Sources/FotufilmCore/TrichromaticRoll.swift",
+      "upstreamSHA256": "2689cbede4c1f9e4a70622ded369362095bb08aa41d39bc744759999da978e19"
+    },
+    {
+      "path": "FotufilmCore/TrichromaticScan.swift",
+      "sha256": "a4840d8ed23c9b0ee15370ea51241d83938b74f9a98df9ad11ca63d8ca54d7ab",
+      "upstreamPath": "Sources/FotufilmCore/TrichromaticScan.swift",
+      "upstreamSHA256": "a4840d8ed23c9b0ee15370ea51241d83938b74f9a98df9ad11ca63d8ca54d7ab"
+    },
+    {
+      "path": "FotufilmCore/UnexposedEdge.swift",
+      "sha256": "fa9f81902e44eed4c9f3fe0ea8919528ee3c0e9bd16711d2b4debe1d37f7b38e",
+      "upstreamPath": "Sources/FotufilmCore/UnexposedEdge.swift",
+      "upstreamSHA256": "fa9f81902e44eed4c9f3fe0ea8919528ee3c0e9bd16711d2b4debe1d37f7b38e"
+    },
+    {
+      "path": "FotufilmCore/Vision2383PrintSpectra.swift",
+      "sha256": "fdf52b510d187a7f1aa6606df0bcfa91cf791e58099ce9700fcf4ff6e1f0e402",
+      "upstreamPath": "Sources/FotufilmCore/Vision2383PrintSpectra.swift",
+      "upstreamSHA256": "fdf52b510d187a7f1aa6606df0bcfa91cf791e58099ce9700fcf4ff6e1f0e402"
+    },
+    {
+      "path": "FotufilmCore/Vision2393PrintSpectra.swift",
+      "sha256": "6fd6720ab39328c44c22d17270af483d41e9efda786af479ed8429d359770cc1",
+      "upstreamPath": "Sources/FotufilmCore/Vision2393PrintSpectra.swift",
+      "upstreamSHA256": "6fd6720ab39328c44c22d17270af483d41e9efda786af479ed8429d359770cc1"
+    },
+    {
+      "path": "FotufilmCore/WebFilmProfile.swift",
+      "sha256": "a6eae3c1c9e0a5a084914bd590a3396ecf3dd41ddb5e1aa7ea5d41a59982ec26",
+      "upstreamPath": "Sources/FotufilmCore/WebFilmProfile.swift",
+      "upstreamSHA256": "a6eae3c1c9e0a5a084914bd590a3396ecf3dd41ddb5e1aa7ea5d41a59982ec26"
+    },
+    {
+      "path": "FotufilmCore/WebSceneLight.swift",
+      "sha256": "e43d20bec01b7708e92190fa5b78272445dd731221e35af1a8c9443da512db1e",
+      "upstreamPath": "Sources/FotufilmCore/WebSceneLight.swift",
+      "upstreamSHA256": "e43d20bec01b7708e92190fa5b78272445dd731221e35af1a8c9443da512db1e"
+    },
+    {
+      "path": "FotufilmCore/WhiteBalance.swift",
+      "sha256": "1ca2769ca6e65b50d3bf49af9a9261d6f8e7354b7245cb83c7914a66d979cf3b",
+      "upstreamPath": "Sources/FotufilmCore/WhiteBalance.swift",
+      "upstreamSHA256": "1ca2769ca6e65b50d3bf49af9a9261d6f8e7354b7245cb83c7914a66d979cf3b"
+    },
+    {
+      "path": "FotufilmEditModel/CommandLineControls.swift",
+      "sha256": "876d0f8995d57911f3d095e1364649a60ce0d49dcdd10e7d63e2352dcfb4e355",
+      "upstreamPath": "Sources/FotufilmEditModel/CommandLineControls.swift",
+      "upstreamSHA256": "876d0f8995d57911f3d095e1364649a60ce0d49dcdd10e7d63e2352dcfb4e355"
+    },
+    {
+      "path": "FotufilmEditModel/ControlsExport.swift",
+      "sha256": "c2f24f2d1e8de203301790593c84c905096ba8508bd4707dd107b64d60ef722b",
+      "upstreamPath": "Sources/FotufilmEditModel/ControlsExport.swift",
+      "upstreamSHA256": "c2f24f2d1e8de203301790593c84c905096ba8508bd4707dd107b64d60ef722b"
+    },
+    {
+      "path": "FotufilmEditModel/ControlsManifest.swift",
+      "sha256": "729e72a0cc6d8fbddbd2ac0b85efac689922c68ceb5ff27e1aaccc7aee96428c",
+      "upstreamPath": "Sources/FotufilmEditModel/ControlsManifest.swift",
+      "upstreamSHA256": "729e72a0cc6d8fbddbd2ac0b85efac689922c68ceb5ff27e1aaccc7aee96428c"
+    },
+    {
+      "path": "FotufilmEditModel/EditDocument.swift",
+      "sha256": "5fa77beaaa8580627e655d2907ff961b0b17324249c64d0ecb86d3b53cef7fe2",
+      "upstreamPath": "Sources/FotufilmEditModel/EditDocument.swift",
+      "upstreamSHA256": "5fa77beaaa8580627e655d2907ff961b0b17324249c64d0ecb86d3b53cef7fe2"
+    },
+    {
+      "path": "FotufilmEditModel/EditorControl.swift",
+      "sha256": "de4b98dc349cef1d8d2e8ae25c10f08f7d99e76ba2ce9ba2d76efe715878a9ac",
+      "upstreamPath": "Sources/FotufilmEditModel/EditorControl.swift",
+      "upstreamSHA256": "de4b98dc349cef1d8d2e8ae25c10f08f7d99e76ba2ce9ba2d76efe715878a9ac"
+    },
+    {
+      "path": "FotufilmEditModel/EditorControlCatalogue.swift",
+      "sha256": "beb3dc9321ff7c6ad855bb3170e6910321ae2789c25be809a76dc0771b62afeb",
+      "upstreamPath": "Sources/FotufilmEditModel/EditorControlCatalogue.swift",
+      "upstreamSHA256": "beb3dc9321ff7c6ad855bb3170e6910321ae2789c25be809a76dc0771b62afeb"
+    },
+    {
+      "path": "FotufilmEditModel/EditorControlSurface.swift",
+      "sha256": "735ad8308102d63cd6c10e1b09a8edef3722f88ca7c83de64e2bddf740d5013e",
+      "upstreamPath": "Sources/FotufilmEditModel/EditorControlSurface.swift",
+      "upstreamSHA256": "735ad8308102d63cd6c10e1b09a8edef3722f88ca7c83de64e2bddf740d5013e"
+    },
+    {
+      "path": "FotufilmEditModel/EditorLensFilters.swift",
+      "sha256": "be1126bc266fc1c1e904f5ddeaa66160d7a6aa96281d46e46598f024ae606dad",
+      "upstreamPath": "Sources/FotufilmEditModel/EditorLensFilters.swift",
+      "upstreamSHA256": "be1126bc266fc1c1e904f5ddeaa66160d7a6aa96281d46e46598f024ae606dad"
+    },
+    {
+      "path": "FotufilmEditModel/EditorMediumControls.swift",
+      "sha256": "20e9e1812ac286291889692bb61b1ab57411c5c48c621fc07c30d9c2772e0126",
+      "upstreamPath": "Sources/FotufilmEditModel/EditorMediumControls.swift",
+      "upstreamSHA256": "20e9e1812ac286291889692bb61b1ab57411c5c48c621fc07c30d9c2772e0126"
+    },
+    {
+      "path": "FotufilmEditModel/FilmStripWants.swift",
+      "sha256": "66d63d11e7ae5f00a1e2e7b569e30bf408a7066228fad00f41bf2b6ed0c1e789",
+      "upstreamPath": "Sources/FotufilmEditModel/FilmStripWants.swift",
+      "upstreamSHA256": "66d63d11e7ae5f00a1e2e7b569e30bf408a7066228fad00f41bf2b6ed0c1e789"
+    },
+    {
+      "path": "FotufilmEditModel/HalationAmount.swift",
+      "sha256": "1ce36f9c00474e69ccea2049ff7d5f6c04c0a8669f6155b59ca77b94a6524785",
+      "upstreamPath": "Sources/FotufilmEditModel/HalationAmount.swift",
+      "upstreamSHA256": "1ce36f9c00474e69ccea2049ff7d5f6c04c0a8669f6155b59ca77b94a6524785"
+    },
+    {
+      "path": "FotufilmEditModel/LatestRequestGate.swift",
+      "sha256": "0f2aa23f9de20245ac217bc991da48defeade290c976aa73968a9d2fe2fd3e46",
+      "upstreamPath": "Sources/FotufilmEditModel/LatestRequestGate.swift",
+      "upstreamSHA256": "0f2aa23f9de20245ac217bc991da48defeade290c976aa73968a9d2fe2fd3e46"
+    },
+    {
+      "path": "FotufilmEditModel/LensFilterStrip.swift",
+      "sha256": "34d566e6dd71c7e0d70c31e4941a155faa5c42a741f6dd4633d76e528e4f1126",
+      "upstreamPath": "Sources/FotufilmEditModel/LensFilterStrip.swift",
+      "upstreamSHA256": "34d566e6dd71c7e0d70c31e4941a155faa5c42a741f6dd4633d76e528e4f1126"
+    },
+    {
+      "path": "FotufilmEditModel/MotionTemplateSkeleton.swift",
+      "sha256": "bc1f59673750b75e375ec74e010a21f9754c0094b4c8ff7f924b8ca34216ee13",
+      "upstreamPath": "Sources/FotufilmEditModel/MotionTemplateSkeleton.swift",
+      "upstreamSHA256": "bc1f59673750b75e375ec74e010a21f9754c0094b4c8ff7f924b8ca34216ee13"
+    },
+    {
+      "path": "FotufilmEditModel/NegativeScanPrint.swift",
+      "sha256": "0a4c4e6a3c00303f4590852c7e2db644d39763576860b5d529b52a43ca6a9e78",
+      "upstreamPath": "Sources/FotufilmEditModel/NegativeScanPrint.swift",
+      "upstreamSHA256": "0a4c4e6a3c00303f4590852c7e2db644d39763576860b5d529b52a43ca6a9e78"
+    },
+    {
+      "path": "FotufilmEditModel/NegativeScanRecipe.swift",
+      "sha256": "cc14bab60b6856c5bb9697db07fd53200056453bdf27e2b02612e532b4ad663a",
+      "upstreamPath": "Sources/FotufilmEditModel/NegativeScanRecipe.swift",
+      "upstreamSHA256": "cc14bab60b6856c5bb9697db07fd53200056453bdf27e2b02612e532b4ad663a"
+    },
+    {
+      "path": "FotufilmEditModel/NegativeScanTone.swift",
+      "sha256": "248432736091c52de1216e7eaeb3ec99ef6eec6202ffdcfa815a09a952f252ca",
+      "upstreamPath": "Sources/FotufilmEditModel/NegativeScanTone.swift",
+      "upstreamSHA256": "248432736091c52de1216e7eaeb3ec99ef6eec6202ffdcfa815a09a952f252ca"
+    },
+    {
+      "path": "FotufilmEditModel/ProUnlock.swift",
+      "sha256": "1bd84e529f91a5928d47001d714caa55e4473c0033c603e1fe8db18bc89054a4",
+      "upstreamPath": "Sources/FotufilmEditModel/ProUnlock.swift",
+      "upstreamSHA256": "1bd84e529f91a5928d47001d714caa55e4473c0033c603e1fe8db18bc89054a4"
+    },
+    {
+      "path": "FotufilmEditModel/WebAutoAdjustmentRequest.swift",
+      "sha256": "4a25d2cada77aa775d7645c80b04bf7261785d2d511f948ef174ba7c676ef828",
+      "upstreamPath": "Sources/FotufilmEditModel/WebAutoAdjustmentRequest.swift",
+      "upstreamSHA256": "4a25d2cada77aa775d7645c80b04bf7261785d2d511f948ef174ba7c676ef828"
+    },
+    {
+      "path": "FotufilmEditModel/WebLensRequest.swift",
+      "sha256": "2f513b0e2d29ab0dbd183bfcd9a3aec9c61abceb2adc06d1d3c04e3c044a88b2",
+      "upstreamPath": "Sources/FotufilmEditModel/WebLensRequest.swift",
+      "upstreamSHA256": "2f513b0e2d29ab0dbd183bfcd9a3aec9c61abceb2adc06d1d3c04e3c044a88b2"
+    },
+    {
+      "path": "FotufilmEditModel/WebNativeEdit.swift",
+      "sha256": "413f9dfc5bdb848432e4c717aabf9da64b727d851ddea83b19db830c594e161e",
+      "upstreamPath": "Sources/FotufilmEditModel/WebNativeEdit.swift",
+      "upstreamSHA256": "413f9dfc5bdb848432e4c717aabf9da64b727d851ddea83b19db830c594e161e"
+    },
+    {
+      "path": "FotufilmEditModel/WebNegativeFilmRequest.swift",
+      "sha256": "7fa1044942ecf7ca424d560fde97db040982b2c203c79d4fffd72fb48d183df1",
+      "upstreamPath": "Sources/FotufilmEditModel/WebNegativeFilmRequest.swift",
+      "upstreamSHA256": "7fa1044942ecf7ca424d560fde97db040982b2c203c79d4fffd72fb48d183df1"
+    },
+    {
+      "path": "FotufilmEditModel/WebPerspectiveRequest.swift",
+      "sha256": "5123876f8cb8701242da855098f3ff871bffc8095e792d6d2516082dcf506d31",
+      "upstreamPath": "Sources/FotufilmEditModel/WebPerspectiveRequest.swift",
+      "upstreamSHA256": "5123876f8cb8701242da855098f3ff871bffc8095e792d6d2516082dcf506d31"
+    },
+    {
+      "path": "FotufilmEditModel/WebPrintFrameRequest.swift",
+      "sha256": "be29dc2ab20b2c1bffe9cda9c4670a9787acfda3e825d15e227beed67d1f9ff5",
+      "upstreamPath": "Sources/FotufilmEditModel/WebPrintFrameRequest.swift",
+      "upstreamSHA256": "be29dc2ab20b2c1bffe9cda9c4670a9787acfda3e825d15e227beed67d1f9ff5"
+    },
+    {
+      "path": "FotufilmEditModel/WebProfileCatalogue.swift",
+      "sha256": "f8a6a76b65c8621ee29da137983e51c83646ef78fd5e7a26eed5ba97dd8d85eb",
+      "upstreamPath": "Sources/FotufilmEditModel/WebProfileCatalogue.swift",
+      "upstreamSHA256": "f8a6a76b65c8621ee29da137983e51c83646ef78fd5e7a26eed5ba97dd8d85eb"
+    },
+    {
+      "path": "FotufilmEditModel/WebProfileRequest.swift",
+      "sha256": "c2bd8f735527722dd418a1c32d18048d6f9259f5b102cb253e60b9aa86dab5e9",
+      "upstreamPath": "Sources/FotufilmEditModel/WebProfileRequest.swift",
+      "upstreamSHA256": "c2bd8f735527722dd418a1c32d18048d6f9259f5b102cb253e60b9aa86dab5e9"
+    },
+    {
+      "path": "FotufilmEditModel/WebRenderRequest.swift",
+      "sha256": "7da0e252acedd20f5c1a52d161fb3b2dad7f43adbfa3ac3ed9be44c1d8ee4c34",
+      "upstreamPath": "Sources/FotufilmEditModel/WebRenderRequest.swift",
+      "upstreamSHA256": "7da0e252acedd20f5c1a52d161fb3b2dad7f43adbfa3ac3ed9be44c1d8ee4c34"
+    },
+    {
+      "path": "FotufilmEditModel/WebStockCatalogue.swift",
+      "sha256": "fcd9bdbbfcc233e142ecbbcd6d1a3b936a143a142a172a4a58b8f56ea17305f4",
+      "upstreamPath": "Sources/FotufilmEditModel/WebStockCatalogue.swift",
+      "upstreamSHA256": "fcd9bdbbfcc233e142ecbbcd6d1a3b936a143a142a172a4a58b8f56ea17305f4"
+    }
+  ],
+  "adapter": "ProfileClient/main.swift",
+  "adapterSHA256": "c8a7cc2b00f819e269f03ef1ec86ee302734d35ae31affae7c4818ad0c09c7e8",
+  "packet": "FSA1 v2, fourteen u32 LE header fields",
+  "buildScript": "scripts/build_fotufilm_preparation.sh",
+  "targetNativeMath": {
+    "module": "fotufilm_math",
+    "unaryFloat32": ["expf", "exp2f", "logf", "log1pf", "log2f", "log10f", "tanf"],
+    "binaryFloat32": ["powf"],
+    "provider": "Target C libm, matching the native original renderer on the same platform",
+    "sourceAlgorithmChanges": false,
+    "adapterFiles": {
+      "Package.swift": "79fe58edcea3a0dbc905bd3da30ef0a8eab4767e5d8b427266445d373bad9488",
+      "NativeMath/math.c": "1e9470c59ac6fe96fd43ff3591ccbf598b9c854e3dd3df4d21aca3d4d2242b56",
+      "NativeMath/include/NativeMath.h": "895c1de4e5a19cb7d51c1d4d300c5271208b8c1bfddc23e5147618ce668e2b6d"
+    }
+  },
+  "targetNativeFilmBuilder": {
+    "module": "fotufilm_native",
+    "import": "film_tile_build",
+    "signature": "11 i32 arguments -> i32 status; original FotufilmFilmTileBuild.h pointer ABI",
+    "provider": "Original target-native fotufilm_film_tile_build Halide CPU builder",
+    "sourceAlgorithmChanges": false
+  },
+  "toolchain": "Swift 6.4.0 release + swift-6.4.0-RELEASE_wasm SDK",
+  "licenses": [
+    "../LICENSE",
+    "../NOTICE",
+    "../THIRD_PARTY_NOTICES.md",
+    "licenses/FILM-PROFILES.txt",
+    "licenses/CC-BY-SA-4.0.txt",
+    "licenses/SWIFT-APACHE-2.0-RUNTIME.txt"
+  ],
+  "module": {
+    "path": "data/fotufilm/preparation.wasm",
+    "sha256": "88ecef165999befaa5c0262e031c223a2aa7c3c6074de61a16f950473db6db8b",
+    "bytes": 57684534,
+    "strip": "llvm-objcopy --strip-all; all original noncustom sections identical"
+  },
+  "toolchainSource": "https://download.swift.org/swift-6.4.0-release/ubuntu2404/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE-ubuntu24.04.tar.gz",
+  "toolchainSHA256": "69f7b2b4dbce6090b6c92194b71149a057e16269093b5a9dded38afc4a05094e"
+}

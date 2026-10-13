@@ -123,7 +123,9 @@ impl RenderSnapshot {
         full_input: &ImageBuf,
         context: &ObservationContext,
     ) -> Result<Option<ScannerSetup>, String> {
-        if self.params.scanner.auto_setup != ScannerAutoSetup::PerFrame {
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm
+            || self.params.scanner.auto_setup != ScannerAutoSetup::PerFrame
+        {
             return Ok(None);
         }
         if let Some(setup) = self.scanner_setup.get() {
@@ -148,6 +150,7 @@ struct RuntimeCacheKey {
 #[derive(Default)]
 pub(super) struct RuntimeCache {
     entry: Option<RuntimeCacheEntry>,
+    fotufilm: Option<(RuntimeParams, PathBuf, Runtime)>,
 }
 
 struct RuntimeCacheEntry {
@@ -195,6 +198,21 @@ impl RuntimeCache {
         setup: Option<ScannerSetup>,
         context: &ObservationContext,
     ) -> Result<&mut Runtime, String> {
+        if snapshot.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+            let mut params = snapshot.params.clone();
+            params.settings.preview_mode = preview;
+            let reuse = self
+                .fotufilm
+                .as_ref()
+                .is_some_and(|(previous, directory, _)| {
+                    previous == &params && directory == &snapshot.data_dir
+                });
+            if !reuse {
+                let runtime = Runtime::from_params(params.clone(), &snapshot.data_dir)?;
+                self.fotufilm = Some((params, snapshot.data_dir.clone(), runtime));
+            }
+            return Ok(&mut self.fotufilm.as_mut().expect("Fotufilm runtime inserted").2);
+        }
         if let Some(mut cached) = self.entry.take() {
             let digested = snapshot.digested_params(
                 preview,
@@ -265,6 +283,11 @@ pub(super) fn build_runtime_observed(
 ) -> Result<Runtime, String> {
     let prepare = context.scope("runtime_prepare", ObservationKind::Phase, Purpose::Image);
     let result = (|| {
+        if snapshot.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+            let mut params = snapshot.params.clone();
+            params.settings.preview_mode = preview;
+            return Runtime::from_params(params, &snapshot.data_dir);
+        }
         let film = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.film_name)
             .map_err(|e| format!("film profile '{}': {e}", snapshot.film_name))?;
         let print = profile::load_profile_by_name(&snapshot.data_dir, &snapshot.print_name)

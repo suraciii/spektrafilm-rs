@@ -33,6 +33,7 @@ pub struct OutputContract {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderRecipe {
     pub schema_version: String,
+    #[serde(default)]
     pub film_profile: String,
     #[serde(default)]
     pub print_profile: Option<String>,
@@ -79,14 +80,8 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
         fs::File::open(path).with_context(|| format!("opening recipe {}", path.display()))?;
     let recipe: RenderRecipe = serde_json::from_reader(file)
         .with_context(|| format!("parsing recipe {}", path.display()))?;
-    if let Some(seed) = recipe.seed {
-        validate_seed(seed)?;
-    }
     if recipe.schema_version != PARAMETER_SCHEMA_VERSION {
         bail!("unsupported recipe schema {}", recipe.schema_version);
-    }
-    if recipe.film_profile.trim().is_empty() {
-        bail!("filmProfile must not be empty");
     }
     validate_output(&recipe.output)?;
     if let Some(provenance) = &recipe.scanner_provenance {
@@ -172,6 +167,8 @@ pub fn validate_output_path(path: &Path, output: &OutputContract) -> Result<()> 
     let matches = match output.format.as_str() {
         "jpeg" => extension == "jpg" || extension == "jpeg",
         "png" => extension == "png",
+        "tiff" => matches!(extension.as_str(), "tif" | "tiff"),
+        "exr" => extension == "exr",
         _ => false,
     };
     if !matches {
@@ -184,6 +181,16 @@ pub fn validate_output_path(path: &Path, output: &OutputContract) -> Result<()> 
 }
 
 pub fn validate_output(output: &OutputContract) -> Result<()> {
+    if matches!(output.format.as_str(), "tiff" | "exr")
+        && output.color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+        && output.precision_bits == 32
+        && output.transfer_function == "linear"
+        && output.geometry == "input-preserving"
+        && output.encoding == "raw-density"
+        && output.max_edge.is_none()
+    {
+        return Ok(());
+    }
     let preview = output.format == "png";
     let expected = default_output(&output.format);
     if output.format != "jpeg" && !preview {
@@ -221,6 +228,8 @@ pub fn describe() -> Value {
     let defaults =
         serde_json::to_value(RuntimeParams::default()).expect("runtime defaults serialize");
     let controls = [
+        "engine",
+        "fotufilm",
         "camera",
         "enlarger",
         "scanner",

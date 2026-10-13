@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use eframe::egui;
 use parking_lot::Mutex;
-use spektrafilm_core::image_io::{self};
+use spektrafilm_core::image_io::{self, BitDepth};
 use spektrafilm_core::telemetry::OperationKind;
 use spektrafilm_core::telemetry::{IssueBoundary, IssueCategory};
 use spektrafilm_core::telemetry::{Operation, Outcome};
@@ -49,6 +49,27 @@ impl App {
             return;
         }
         options.normalize();
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+            options.backend = ExportBackend::Cpu;
+            if self
+                .params
+                .fotufilm
+                .native
+                .get("stage")
+                .and_then(serde_json::Value::as_str)
+                == Some("negative")
+            {
+                if !matches!(
+                    options.format,
+                    super::export::ExportFormat::Tiff | super::export::ExportFormat::Exr
+                ) {
+                    options.format = super::export::ExportFormat::Tiff;
+                }
+                options.depth = BitDepth::ThirtyTwo;
+                options.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+                options.saving_cctf_encoding = false;
+            }
+        }
         let stem = self
             .image_path
             .as_ref()
@@ -97,6 +118,28 @@ impl App {
             return;
         };
         options.normalize();
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+            options.backend = ExportBackend::Cpu;
+            if self
+                .params
+                .fotufilm
+                .native
+                .get("stage")
+                .and_then(serde_json::Value::as_str)
+                == Some("negative")
+            {
+                if !matches!(
+                    options.format,
+                    super::export::ExportFormat::Tiff | super::export::ExportFormat::Exr
+                ) {
+                    self.status = "Gross record density export requires 32-bit TIFF or EXR.".into();
+                    return;
+                }
+                options.depth = BitDepth::ThirtyTwo;
+                options.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+                options.saving_cctf_encoding = false;
+            }
+        }
         let mut operation = Operation::new(OperationKind::Export, self.diagnostics.mode);
         operation.set_revisions(Some(self.input_epoch), Some(self.parameter_revision));
         operation.set_input_dimensions(image.width, image.height);
@@ -226,13 +269,19 @@ impl App {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let converted = image_io::convert_image(
-                            &output,
-                            &pipeline.params().io.output_color_space,
-                            pipeline.params().io.output_cctf_encoding,
-                            &options.saving_color_space,
-                            options.saving_cctf_encoding,
-                        );
+                        let converted = if options.saving_color_space
+                            == spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+                        {
+                            Ok(output.clone())
+                        } else {
+                            image_io::convert_image(
+                                &output,
+                                &pipeline.params().io.output_color_space,
+                                pipeline.params().io.output_cctf_encoding,
+                                &options.saving_color_space,
+                                options.saving_cctf_encoding,
+                            )
+                        };
                         let converted = observed_result(
                             saving_convert,
                             converted,

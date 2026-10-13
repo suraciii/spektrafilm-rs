@@ -61,6 +61,33 @@ fn report_round_trip_preserves_u64_above_json_float_precision() {
 }
 
 #[test]
+fn original_source_report_publishes_pinned_stock_and_cpu_stage_but_rejects_unpinned_stock() {
+    use spektrafilm_core::{params::RuntimeParams, telemetry::RenderConfiguration};
+    let mut params = RuntimeParams::default();
+    params.engine = spektrafilm_core::params::SimulationEngine::Fotufilm;
+    let mut report = collected_report();
+    report.configuration.render = Some(RenderConfiguration::from_fotufilm(&params));
+    report.stages[0].name = "fotufilm_source_cpu_binary32".into();
+    let encoded = report.to_json().unwrap();
+    let restored = Report::from_json(&encoded).unwrap();
+    assert_eq!(
+        restored
+            .configuration
+            .render
+            .as_ref()
+            .unwrap()
+            .film_stock
+            .as_ref()
+            .unwrap()
+            .as_str(),
+        "fotufilm:portra400"
+    );
+    params.fotufilm.stock = "private-user-stock".into();
+    report.configuration.render = Some(RenderConfiguration::from_fotufilm(&params));
+    assert!(report.to_json().is_err());
+}
+
+#[test]
 fn validator_rejects_nonfinite_and_missing_parent() {
     let mut report = collected_report();
     report.operation.duration = Some(f64::NAN);

@@ -837,6 +837,15 @@ pub struct RenderPreparationState {
     pub neutral_print_filters_protected: [bool; 3],
 }
 
+/// Select the complete simulation graph. Historical documents default to SpektraFilm.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SimulationEngine {
+    #[default]
+    Spektrafilm,
+    Fotufilm,
+}
+
 /// Top-level runtime parameters. Combines all sub-parameter groups.
 ///
 /// Mirrors upstream 0.3.4 `RuntimePhotoParams` minus the `film` / `print`
@@ -844,6 +853,10 @@ pub struct RenderPreparationState {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeParams {
+    #[serde(default)]
+    pub engine: SimulationEngine,
+    #[serde(default)]
+    pub fotufilm: spektrafilm_fotufilm::Request,
     /// Per-render stochastic seed. The recipe runner sets this out-of-band so
     /// it does not become part of the user parameter schema or digest.
     #[serde(skip)]
@@ -888,6 +901,9 @@ impl RuntimeParams {
             .map_err(|e| format!("io.input_color_space: {e}"))?;
         spektrafilm_math::colorspace::resolve(&self.io.output_color_space)
             .map_err(|e| format!("io.output_color_space: {e}"))?;
+        if self.engine == SimulationEngine::Fotufilm {
+            return Ok(());
+        }
         crate::input_gamut::InputGamutCompress::build(&self.io.input_gamut_compress)?;
         crate::gamut_compression::OutputGamutCompress::build(
             &self.io.output_gamut_compress,

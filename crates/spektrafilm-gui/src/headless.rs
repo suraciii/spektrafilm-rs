@@ -107,7 +107,8 @@ fn choose(h: &mut Harness<'_, App>, label: &str, option: &str) {
 }
 
 fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
-    h.get_by_label(label).focus();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, label)
+        .focus();
     h.step();
     // egui's command modifier is platform dependent; no global environment changes.
     h.input_mut().events.push(egui::Event::Key {
@@ -574,6 +575,93 @@ fn fotufilm_engine_selection_reaches_the_native_app_runtime() {
         fotufilm.data, spektra.data,
         "stochastic deactivation must bypass the selected grain engine"
     );
+}
+
+#[test]
+fn original_simulation_controls_persist_and_density_reaches_real_workers() {
+    use spektrafilm_core::params::SimulationEngine;
+    let mut s = session();
+    let h = &mut s.harness;
+    h.state_mut().diagnostics.mode = CollectionMode::Summary;
+    choose(h, "Simulation engine", "Fotufilm");
+    assert_eq!(h.state().params.engine, SimulationEngine::Fotufilm);
+    assert!(h.query_by_label("scan output").is_none());
+    edit(h, "Simulation seed", "18446744073709551615");
+    click(h, "Apply Simulation seed");
+    assert_eq!(h.state().params.random_seed, u64::MAX);
+    click(h, "Original native options");
+    edit(h, "stage", "\"negative\"");
+    h.get_by_label("Apply stage").click();
+    h.run_steps(3);
+    edit(h, "textureStages", "0");
+    h.get_by_label("Apply textureStages").click();
+    h.run_steps(3);
+    assert_eq!(h.state().params.fotufilm.native["stage"], "negative");
+    assert_eq!(h.state().params.fotufilm.native["textureStages"], 0);
+    let saved = h.state().current_state().unwrap();
+    let restored = state::GuiState::from_value(saved.sections.clone())
+        .unwrap()
+        .runtime_params()
+        .unwrap();
+    assert_eq!(restored.engine, SimulationEngine::Fotufilm);
+    assert_eq!(restored.random_seed, u64::MAX);
+    assert_eq!(restored.fotufilm, h.state().params.fotufilm);
+    h.state_mut().params.io.crop = true;
+    h.state_mut().params.io.crop_size = [0.5, 0.5];
+    h.state_mut().params.io.upscale_factor = 2.0;
+    let preview = render(h, "PREVIEW");
+    assert_eq!((preview.width, preview.height), (160, 80));
+    assert_eq!(
+        h.state().output_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    assert!(!h.state().output_cctf_encoding);
+    let scan = render(h, "SCAN");
+    assert_eq!((scan.width, scan.height), (160, 80));
+    assert!(scan.data.iter().all(|value| value.is_finite()));
+    let report_path = s.directory.path().join("original-scan-report.json");
+    h.state().diagnostics.save_selected(&report_path).unwrap();
+    let report = spektrafilm_core::telemetry::Report::from_json(
+        &std::fs::read_to_string(&report_path).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report.operation.outcome, Outcome::Succeeded);
+    assert_eq!(
+        report.configuration.render.unwrap().engine,
+        SimulationEngine::Fotufilm
+    );
+    // Retained density belongs to the completed render, even after changing the request.
+    choose(h, "Simulation engine", "SpektraFilm");
+    let path = s.directory.path().join("retained-density.tiff");
+    h.state_mut().save_to_path(&path);
+    assert!(
+        h.state().status.starts_with("Saved retained-density.tiff"),
+        "{}",
+        h.state().status
+    );
+    assert!(path.is_file());
+    let mut options = h.state().export_options.clone();
+    options.format = export::ExportFormat::Exr;
+    options.depth = BitDepth::ThirtyTwo;
+    options.saving_color_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+    options.saving_cctf_encoding = false;
+    options.normalize();
+    assert_eq!(
+        options.saving_color_space,
+        spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+    );
+    assert!(!options.saving_cctf_encoding);
+    choose(h, "Simulation engine", "Fotufilm");
+    let ctx = h.ctx.clone();
+    let exported = s.directory.path().join("original-density.exr");
+    h.state_mut().start_export_to_path(&ctx, options, &exported);
+    wait_until(h, |app| app.export_job.is_none());
+    assert!(
+        h.state().status.starts_with("Exported"),
+        "{}",
+        h.state().status
+    );
+    assert!(exported.is_file());
 }
 
 #[test]

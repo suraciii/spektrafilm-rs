@@ -82,6 +82,14 @@ enum Commands {
         /// One canonical editable parameter leaf.
         #[arg(long, conflicts_with = "module")]
         field: Option<String>,
+        /// Simulation engine whose authoritative control catalogue is shown.
+        #[arg(long, value_enum)]
+        engine: Option<EngineArg>,
+        /// Original Fotufilm stock ID used for control availability.
+        #[arg(long, default_value = "portra400")]
+        fotufilm_stock: String,
+        #[arg(long, default_value = "data")]
+        data_dir: PathBuf,
     },
     /// Render one structured recipe under the fork runner contract.
     Render {
@@ -91,6 +99,9 @@ enum Commands {
         /// RenderRecipe JSON file.
         #[arg(long)]
         recipe: PathBuf,
+        /// Override the engine stored in the recipe.
+        #[arg(long, value_enum)]
+        engine: Option<EngineArg>,
         /// Destination image path.
         #[arg(long)]
         output: PathBuf,
@@ -135,6 +146,18 @@ enum Commands {
 #[derive(clap::Args)]
 #[group(id = "Process")]
 struct ProcessArgs {
+    /// Complete simulation engine; historical SpektraFilm remains the default.
+    #[arg(long, value_enum, help_heading = "Look and workflow")]
+    engine: Option<EngineArg>,
+    /// Original Fotufilm stock ID; discover with describe --engine fotufilm.
+    #[arg(long, help_heading = "Look and workflow")]
+    fotufilm_stock: Option<String>,
+    /// Original editor control NAME=VALUE; repeat for multiple controls.
+    #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
+    fotufilm_control: Vec<String>,
+    /// Original native option NAME=VALUE; repeat; JSON arrays/objects supported.
+    #[arg(long, action = clap::ArgAction::Append, help_heading = "Look and workflow")]
+    fotufilm_native: Vec<String>,
     /// Compute backend; otherwise use SPEKTRAFILM_BACKEND/default selection.
     #[arg(long, value_enum, help_heading = "Execution and diagnostics")]
     backend: Option<Backend>,
@@ -167,12 +190,8 @@ struct ProcessArgs {
     compression: Option<CompressionArg>,
     #[command(flatten)]
     workflow: WorkflowOptions,
-    /// Film stock ID; discover with list-profiles. Required without --preset.
-    #[arg(
-        long,
-        required_unless_present = "preset",
-        help_heading = "Look and workflow"
-    )]
+    /// Historical film stock ID; discover with list-profiles.
+    #[arg(long, help_heading = "Look and workflow")]
     film: Option<String>,
     /// Print stock ID; otherwise uses film for direct scans or its target_print.
     #[arg(long, help_heading = "Look and workflow")]
@@ -214,9 +233,9 @@ struct ProcessArgs {
         help_heading = "Execution and diagnostics"
     )]
     dry_run_format: Option<DiscoveryFormat>,
-    /// Deterministic stochastic seed, from 0 through 4294967295 (default: 0).
+    /// Stochastic seed (default 0): UInt64 for Fotufilm; UInt32 for SpektraFilm.
     #[arg(long, help_heading = "Execution and diagnostics")]
-    seed: Option<u32>,
+    seed: Option<u64>,
     /// Dump pre-saving output as HxWx3 channel-interleaved f64 values.
     #[arg(long, help_heading = "Output")]
     raw_out: Option<PathBuf>,
@@ -232,6 +251,19 @@ struct ProcessArgs {
     data_dir: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum EngineArg {
+    Spektrafilm,
+    Fotufilm,
+}
+impl EngineArg {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Spektrafilm => "spektrafilm",
+            Self::Fotufilm => "fotufilm",
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Backend {
     Cpu,
@@ -591,13 +623,77 @@ fn main() -> Result<()> {
             format,
             module,
             field,
+            engine,
+            fotufilm_stock,
+            data_dir,
         } => {
-            cmd_describe(format, module.as_deref(), field.as_deref())?;
+            if engine == Some(EngineArg::Fotufilm) {
+                let data = select_data_dir(data_dir, command_matches)?;
+                let mut value = spektrafilm_fotufilm::catalogue(&data.path, &fotufilm_stock)
+                    .map_err(anyhow::Error::msg)?;
+                value["stocks"] = serde_json::to_value(
+                    spektrafilm_fotufilm::stocks(&data.path).map_err(anyhow::Error::msg)?,
+                )?;
+                if let Some(field) = field.as_deref() {
+                    if let Some(native) = field.strip_prefix("fotufilm.native.") {
+                        let (group, member) = native
+                            .split_once('.')
+                            .map_or((native, None), |(group, member)| (group, Some(member)));
+                        let descriptor = value["nativeExtensions"].get(group).cloned()
+                            .or_else(|| value["nativeDefaults"].get(group).cloned())
+                            .with_context(|| format!("unknown Fotufilm native option {native}; describe --engine fotufilm lists original native fields"))?;
+                        if let Some(member) = member {
+                            if !descriptor.as_array().is_some_and(|fields| {
+                                fields.iter().any(|field| field.as_str() == Some(member))
+                            }) {
+                                bail!("unknown Fotufilm native option {native}");
+                            }
+                            value = json!({"path":field,"group":group,"field":member,"example":value["nativeDefaults"][group][member]});
+                        } else {
+                            value = json!({"path":field,"descriptor":descriptor,"example":value["nativeDefaults"][group]});
+                        }
+                    } else {
+                        let name = field.strip_prefix("fotufilm.controls.").unwrap_or(field);
+                        let descriptor = value["manifest"]["controls"]
+                            .as_array()
+                            .and_then(|controls| {
+                                controls
+                                    .iter()
+                                    .find(|control| control["field"].as_str() == Some(name))
+                            })
+                            .cloned()
+                            .with_context(|| format!("unknown Fotufilm control {name}"))?;
+                        value = json!({"control":descriptor,"available":value["stockApplicability"][name],
+                            "simulation":value["simulationControls"].as_array().is_some_and(|fields| fields.iter().any(|field| field.as_str()==Some(name)))});
+                    }
+                }
+                if let Some(module) = module.as_deref() {
+                    value = match module {
+                        "fotufilm" => value,
+                        "fotufilm.controls" => {
+                            json!({"manifest":value["manifest"],"menus":value["menus"],"simulationControls":value["simulationControls"],"stockApplicability":value["stockApplicability"]})
+                        }
+                        "fotufilm.native" => {
+                            json!({"extensions":value["nativeExtensions"],"structured":value["nativeStructured"],"examples":value["nativeDefaults"]})
+                        }
+                        _ => bail!(
+                            "unknown Fotufilm module {module}; use fotufilm, fotufilm.controls or fotufilm.native"
+                        ),
+                    };
+                }
+                match format {
+                    DiscoveryFormat::Json => println!("{}", serde_json::to_string_pretty(&value)?),
+                    DiscoveryFormat::Text => print_metadata_record(&value),
+                }
+            } else {
+                cmd_describe(format, module.as_deref(), field.as_deref())?;
+            }
         }
         Commands::Render {
             input,
             recipe,
             output,
+            engine: _,
             data_dir,
             diagnostics,
             gpu_timings,
@@ -649,7 +745,24 @@ fn cmd_process(
     let scan_film = args.scan_film;
     let show_timings = args.timings;
     let params_file = args.params.as_deref();
-    let sources = &args.sources;
+    let mut sources = args.sources.clone();
+    if let Some(engine) = args.engine {
+        sources.push(format!("engine={}", engine.name()));
+    }
+    if let Some(stock) = &args.fotufilm_stock {
+        sources.push(format!("fotufilm.stock={stock}"));
+    }
+    for (group, assignments) in [
+        ("controls", &args.fotufilm_control),
+        ("native", &args.fotufilm_native),
+    ] {
+        for assignment in assignments {
+            if !assignment.contains('=') {
+                bail!("--fotufilm-{group} requires NAME=VALUE");
+            }
+            sources.push(format!("fotufilm.{group}.{assignment}"));
+        }
+    }
     let dry_run = args.dry_run;
     let raw_out = args.raw_out.as_deref();
     let iters = args.iters;
@@ -702,7 +815,7 @@ fn cmd_process(
                 paper: paper_name,
                 presets: &presets,
                 params_file,
-                sources,
+                sources: &sources,
                 route: workflow.route.as_deref(),
                 scan_film,
                 scan_output: workflow.scan_output.as_deref(),
@@ -728,23 +841,38 @@ fn cmd_process(
         .map_err(anyhow::Error::msg)
     };
     let resolved = resolve_params(false)?;
-    let canonical = if resolved.params.scanner.auto_setup
-        == spektrafilm_core::params::ScannerAutoSetup::PerFrame
+    let canonical = if resolved.params.engine
+        == spektrafilm_core::params::SimulationEngine::Spektrafilm
+        && resolved.params.scanner.auto_setup
+            == spektrafilm_core::params::ScannerAutoSetup::PerFrame
     {
         let mut canonical = resolve_params(true)?;
-        canonical.params.random_seed = u64::from(args.seed.unwrap_or(0));
-        apply_channel_swap(&mut canonical.film, &workflow.film_channel_swap)?;
-        apply_channel_swap(&mut canonical.print, &workflow.print_channel_swap)?;
+        canonical.params.random_seed = args.seed.unwrap_or(0);
+        if let Some(film) = &mut canonical.film {
+            apply_channel_swap(film, &workflow.film_channel_swap)?;
+        }
+        if let Some(print) = &mut canonical.print {
+            apply_channel_swap(print, &workflow.print_channel_swap)?;
+        }
         Some(canonical)
     } else {
         None
     };
     let mut film = resolved.film;
     let mut print = resolved.print;
-    apply_channel_swap(&mut film, &workflow.film_channel_swap)?;
-    apply_channel_swap(&mut print, &workflow.print_channel_swap)?;
+    if let Some(film) = &mut film {
+        apply_channel_swap(film, &workflow.film_channel_swap)?;
+    }
+    if let Some(print) = &mut print {
+        apply_channel_swap(print, &workflow.print_channel_swap)?;
+    }
     let mut params = resolved.params;
-    params.random_seed = u64::from(args.seed.unwrap_or(0));
+    params.random_seed = args.seed.unwrap_or(0);
+    if params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm
+        && params.random_seed > u64::from(u32::MAX)
+    {
+        bail!("SpektraFilm --seed must be from 0 through 4294967295");
+    }
     process_report::warn_edits(&resolved.edits);
     let inject = params
         .taps
@@ -765,30 +893,49 @@ fn cmd_process(
 
     let output_color_space = params.io.output_color_space.clone();
     let output_cctf_encoding = params.io.output_cctf_encoding;
-    let plan = plan.with_saving(workflow, &output_color_space, output_cctf_encoding);
-    let saving_space_resolved =
-        spektrafilm_math::colorspace::resolve(&plan.saving_space).map_err(|e| {
-            anyhow::anyhow!(
-                "unsupported saving color space {:?}: {e}",
-                plan.saving_space
-            )
-        })?;
-    let output_space_resolved = spektrafilm_math::colorspace::resolve(&output_color_space)
-        .map_err(|e| {
-            anyhow::anyhow!("unsupported output color space {output_color_space:?}: {e}")
-        })?;
-    let _conversion_matrix = spektrafilm_math::colorspace::conversion_matrix(
-        output_space_resolved,
-        saving_space_resolved,
-    );
-    plan.validate_saving()?;
+    let mut plan = plan.with_saving(workflow, &output_color_space, output_cctf_encoding);
+    let density = params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm
+        && params.fotufilm.native.get("stage").and_then(Value::as_str) == Some("negative");
+    if density {
+        if !matches!(plan.format, OutputFormat::Tiff | OutputFormat::Exr) {
+            bail!("Fotufilm gross record density requires 32-bit TIFF or EXR");
+        }
+        plan.depth = image_io::BitDepth::ThirtyTwo;
+        plan.saving_space = spektrafilm_fotufilm::RECORD_DENSITY_SPACE.into();
+        plan.saving_encoded = false;
+    }
+    if !density {
+        let saving_space_resolved = spektrafilm_math::colorspace::resolve(&plan.saving_space)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "unsupported saving color space {:?}: {e}",
+                    plan.saving_space
+                )
+            })?;
+        let output_space_resolved = spektrafilm_math::colorspace::resolve(&output_color_space)
+            .map_err(|e| {
+                anyhow::anyhow!("unsupported output color space {output_color_space:?}: {e}")
+            })?;
+        let _conversion_matrix = spektrafilm_math::colorspace::conversion_matrix(
+            output_space_resolved,
+            saving_space_resolved,
+        );
+        plan.validate_saving()?;
+    }
     // Active Dye resolves its field on the CPU and never enters the resident
     // WGPU chain, whatever backend the surrounding stages use. Its supported
     // condition is validated here so the dry run reports and rejects exactly
     // what a render does, and the effective backend is reported next to the
     // selected one.
-    spektrafilm_core::stages::grain_v3::validate_supported(&film, &params)
-        .map_err(anyhow::Error::msg)?;
+    if params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+        spektrafilm_fotufilm::Session::new(data_dir, params.fotufilm.clone())
+            .map_err(anyhow::Error::msg)?
+            .validate_request()
+            .map_err(anyhow::Error::msg)?;
+    } else if let Some(film) = &film {
+        spektrafilm_core::stages::grain_v3::validate_supported(film, &params)
+            .map_err(anyhow::Error::msg)?;
+    }
     let grain_v3_active = spektrafilm_core::stages::grain_v3::active(&params);
     if grain_v3_active {
         eprintln!(
@@ -866,7 +1013,13 @@ fn cmd_process(
         IssueBoundary::BackendInit,
         &context,
         |backend_context| {
-            let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match backend_choice {
+            let actual_backend =
+                if params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+                    Some(Backend::Cpu)
+                } else {
+                    backend_choice
+                };
+            let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = match actual_backend {
                 Some(Backend::Cpu) => Box::new(spektrafilm_gpu::cpu_backend::CpuBackend),
                 Some(Backend::Gpu) => Box::new(
                     spektrafilm_gpu::wgpu_backend::WgpuBackend::new().ok_or_else(|| {
@@ -914,14 +1067,9 @@ fn cmd_process(
             IssueBoundary::RuntimePrepare,
             &context,
             |prepare_context| {
-                let canonical = Runtime::new_observed(
-                    canonical.film,
-                    canonical.print,
-                    canonical.params,
-                    data_dir,
-                    prepare_context,
-                )
-                .map_err(anyhow::Error::msg)?;
+                let _ = prepare_context;
+                let canonical =
+                    Runtime::from_resolved(canonical, data_dir).map_err(anyhow::Error::msg)?;
                 canonical
                     .prepare_scanner_setup(&image)
                     .map_err(anyhow::Error::msg)
@@ -938,7 +1086,9 @@ fn cmd_process(
         IssueBoundary::InputPrepare,
         &context,
         |_| {
-            let image = if params.settings.preview_mode {
+            let image = if params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm
+                && params.settings.preview_mode
+            {
                 let resized = resize_for_preview(&image, params.settings.preview_max_size);
                 eprintln!(
                     "Preview: {}x{} → {}x{} (max edge {})",
@@ -971,14 +1121,18 @@ fn cmd_process(
         IssueBoundary::RuntimePrepare,
         &context,
         |prepare_context| {
-            Runtime::new_observed(film, print, params, data_dir, prepare_context).map_err(|e| {
-        anyhow::anyhow!(
-            "spectral pipeline construction failed: {e} — the simplified no-LUT fallback was \
-             removed; check that the profiles/data directory contains the spectral LUTs \
-             (looked under {})",
-            data_dir.display()
-        )
-    })
+            if params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+                Runtime::from_params(params, data_dir).map_err(anyhow::Error::msg)
+            } else {
+                Runtime::new_observed(
+                    film.context("missing historical film profile")?,
+                    print.context("missing historical print profile")?,
+                    params,
+                    data_dir,
+                    prepare_context,
+                )
+                .map_err(anyhow::Error::msg)
+            }
         },
     )?;
     let runtime = if let Some(setup) = scanner_setup {
@@ -1039,6 +1193,13 @@ fn cmd_process(
         eprintln!("Pipeline: {} ms", t.elapsed().as_millis());
         r
     };
+    let result = if runtime.params().engine == spektrafilm_core::params::SimulationEngine::Fotufilm
+        && runtime.params().settings.preview_mode
+    {
+        resize_for_preview(&result, runtime.params().settings.preview_max_size)
+    } else {
+        result
+    };
 
     // Save output
     let t = Instant::now();
@@ -1056,6 +1217,9 @@ fn cmd_process(
         IssueBoundary::SavingConvert,
         &context,
         |_| {
+            if density {
+                return Ok(result.clone());
+            }
             image_io::convert_image(
                 &result,
                 &output_color_space,

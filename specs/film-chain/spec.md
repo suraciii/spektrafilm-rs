@@ -2,16 +2,39 @@
 
 ## Contract
 
-- Film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine print color entry-point contract](../magazine-print-color/spec.md#enablement).
+- The simulation engine selects the owning film model. `spektrafilm` is the historical default. Its film workflows accept a normalized image, a film profile, and runtime controls. Finished RGB processing follows the [Magazine print color entry-point contract](../magazine-print-color/spec.md#enablement).
 - A photographic print route must provide a photographic print profile.
 - Optional magazine finishing must satisfy the [Magazine print color](../magazine-print-color/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
 - The default film path is: source color and exposure → spectral film exposure and development → film-domain effects (including Spektra, Dye, and Fotufilm Film grain) → the selected base route → destination color transform and encoding → scanner-domain effects (including Procedural grain) → optional magazine finishing → output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
-- CPU f64 is the reference and export path. WGPU f32 is an interactive or explicitly selected fast path; it may use CPU stages for unsupported effects and is not f64 reference output.
+- CPU f64 is the SpektraFilm reference path. WGPU f32 is an interactive or explicitly selected fast path; it may use CPU stages for unsupported effects and is not f64 reference output. The Fotufilm engine retains its original CPU binary32 arithmetic in both executable precision configurations.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
+
+## Original Fotufilm engine
+
+`engine=fotufilm` selects the complete Fotufilm model pinned at `59d43471dbef45c85ae442e507a291fdebfb2ec5`. It is independent of the adapted `film_render.grain.engine=fotufilm` appearance model inside SpektraFilm.
+
+`fotufilm.stock` selects an original stock. `fotufilm.controls` carries original editor controls. `fotufilm.native` carries original engine options that are not editor controls. The original source owns defaults, control applicability, and option validation. Missing or invalid selected resources and unknown option names must fail before output publication.
+
+The engine must retain the original spectral reconstruction, scene metering, film exposure, characteristic curves, DIR, donor layers, grain, optical transport, print or scan medium, and output processing. The selected original Standard or Film grain model must not fall back to a different model. Layered transport must retain the original render-plan components, fourth donor record, preflash, and texture-stage semantics.
+
+The full source image must supply original metering, flare, and tone measurements before crop, resize, or preview delivery. Preview, Scan, and Export must use the same original simulation semantics for the same source, controls, and seed. Preview may resize the completed image for delivery; it must not disable simulation effects.
+
+Full and print stages produce linear Display P3. The negative stage produces gross optical record densities, including base density. The print stage consumes those densities without an input RGB transform. The texture stage uses the original linear Rec2020 basis. Destination color conversion and encoding apply only to RGB outputs.
+
+Negative output must preserve floating densities in unencoded 32-bit TIFF or EXR. It must identify the C, M, and Y record channels rather than claim RGB primaries or embed a display ICC profile. A density viewer may show transmission `10^-D` only in its disposable viewing raster. Save and Export must retain the density samples.
+
+The host owns the per-render UInt64 seed. It must preserve all bits for Fotufilm. The original frame index remains independent. Historical SpektraFilm seed admission remains unchanged.
+
+Unsupported legacy diagnostic taps must fail explicitly. `rgb_in`, `cmy_film`, and `rgb_out` must use actual source stage boundaries rather than surrogate outputs.
+
+The effective configuration must identify the original revision, selected original stock and options, CPU execution, and binary32 arithmetic. Selecting a GPU backend must not misreport the source engine as GPU execution.
+
+Cancellation must discard canceled results before output publication. Native cold graph compilation may complete before cancellation is observed.
+
 
 ## Scanner language
 

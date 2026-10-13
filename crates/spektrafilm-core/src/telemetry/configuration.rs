@@ -177,6 +177,16 @@ impl StockId {
 }
 
 pub(crate) fn is_bundled_stock(value: &str) -> bool {
+    if let Some(id) = value.strip_prefix("fotufilm:") {
+        static ORIGINAL: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../data/fotufilm/source-manifest.json"
+            )))
+            .expect("pinned original resource manifest")
+        });
+        return ORIGINAL["files"].get(format!("stocks/{id}.json")).is_some();
+    }
     matches!(
         value,
         "fujifilm_c200"
@@ -265,6 +275,10 @@ impl Default for ReceiverConfiguration {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderConfiguration {
     pub workflow_route: WorkflowRoute,
+    #[serde(default)]
+    pub engine: crate::params::SimulationEngine,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_configuration: Option<serde_json::Value>,
     pub film_stock: Option<StockId>,
     pub print_stock: Option<StockId>,
     pub rgb_to_raw_algorithm: RgbToRawAlgorithm,
@@ -296,6 +310,55 @@ fn default_finish_strength() -> f64 {
 }
 
 impl RenderConfiguration {
+    /// Source settings are preserved verbatim; legacy spatial flags describe host additions only.
+    pub fn from_fotufilm(params: &RuntimeParams) -> Self {
+        Self {
+            engine: crate::params::SimulationEngine::Fotufilm,
+            source_configuration: Some(
+                serde_json::json!({"revision":spektrafilm_fotufilm::SOURCE_REVISION,"executor":"cpu","arithmetic":"binary32","request":params.fotufilm,"input":"linear_rec2020","output":"linear_display_p3","geometry":"full_source_then_delivery","stages":"original_source_graph"}),
+            ),
+            workflow_route: WorkflowRoute::Custom,
+            film_stock: Some(StockId(bounded_text(&format!(
+                "fotufilm:{}",
+                params.fotufilm.stock
+            )))),
+            print_stock: None,
+            rgb_to_raw_algorithm: RgbToRawAlgorithm::Custom,
+            input_color_space: ColorSpaceRole::parse(&params.io.input_color_space),
+            output_color_space: ColorSpaceRole::parse(&params.io.output_color_space),
+            input_transfer_decoded: params.io.input_cctf_decoding,
+            output_transfer_encoded: params.io.output_cctf_encoding,
+            enlarger_lut_requested: false,
+            scanner_lut_requested: false,
+            scan_output: ScanOutput::DirectScan,
+            positive_interpretation: PositiveInterpretation::Density,
+            receiver: ReceiverConfiguration {
+                profile: "fotufilm_source".into(),
+                calibration_status: "original_source_preparation".into(),
+                source_version: spektrafilm_fotufilm::SOURCE_REVISION.into(),
+                approximate: false,
+            },
+            setup_mode: "source_scene_metering".into(),
+            finish: "source".into(),
+            finish_strength: 1.0,
+            gamut_algorithm: GamutAlgorithm::Off,
+            grain: GrainConfiguration {
+                active: false,
+                engine: GrainEngine::Fotufilm,
+                mode: GrainMode::FotufilmFilm,
+                spektra_fast_statistics_sampler: false,
+            },
+            spatial: SpatialConfiguration {
+                lens_blur: false,
+                halation: false,
+                optical_diffusion: false,
+                dir: false,
+                glare: false,
+                unsharp: false,
+            },
+        }
+    }
+
     pub fn from_runtime(params: &RuntimeParams, film: &Profile, print: &Profile) -> Self {
         let grain = &params.film_render.grain;
         let grain_active = grain.active
@@ -307,6 +370,8 @@ impl RenderConfiguration {
         let spatial_active = !params.debug.deactivate_spatial_effects;
         let receiver = crate::scan_receiver::provenance(params.scanner.receiver_profile);
         Self {
+            engine: params.engine,
+            source_configuration: None,
             workflow_route: WorkflowRoute::parse(&params.workflow.route),
             film_stock: StockId::bundled(film),
             print_stock: StockId::bundled(print),

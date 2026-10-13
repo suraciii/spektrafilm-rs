@@ -2,7 +2,7 @@
 
 - Scanner vocabulary follows [Scanner language](spec.md#scanner-language). The canonical conversion mode is `negative_to_positive`; scan output validation owns its accepted values. CLI, presets, recipes, GUI state, and diagnostics consume that vocabulary without aliases. The UI separates display labels from serialized values.
 - The naming change retains the existing runtime fields, document schema versions, conversion methods, defaults, calibration, processing order, and numerical operations. Telemetry uses the conversion name for its stage and execution reasons. Saved look controls and acquisition/finish provenance keep their existing ownership.
-- `core::runtime` is the production entry point. `Pipeline` owns stage topology and stage state.
+- `core::runtime` is the production entry point and selects one simulation owner. `Pipeline` owns SpektraFilm stage topology and state. `FotufilmEngine` owns the original Fotufilm integration without resolving substitute legacy profiles.
 - Pipeline entry points share optical diagnostic tap admission and selector-conflict rules. Each entry point retains its validation order and topology-specific guards.
 - Stage preparation derives film curves, spectral data, scan settings, color transforms, and working pixel pitch once for the selected execution.
 - `ComputeBackend` separates stage orchestration from CPU and WGPU execution. The CPU backend preserves f64 reference order; WGPU owns f32 conversion, resources, and dispatch.
@@ -37,3 +37,24 @@
 - Color-domain transitions are explicit. The chain does not apply an implicit transfer curve or primaries conversion inside an effect.
 - No generic graph or backend-specific public parameter schema is required; runtime parameters remain the single caller-facing model.
 - The shared output finishing boundary delegates magazine color to [Magazine print color](../magazine-print-color/design.md). It must also serve the film-free `input` workflow without preparing a spectral chain.
+
+## Original source ownership
+
+`spektrafilm-fotufilm` owns the pinned original request, source resources, preparation, and native execution. Its preparation module runs the original Swift model through WASI. Its native executor uses the original Halide CPU graph and transport pipeline. The host adapter translates carriers and memory layouts; it must not introduce a second spectral, density, grain, or transport model.
+
+The original editor catalogue supplies control descriptions and stock applicability. The original engine invocation validates native options. CLI, GUI state, presets, recipes, and discovery retain the same request rather than reconstruct it from SpektraFilm controls.
+
+Preparation measures the full source in linear Rec2020. It retains the measured original invocation while preparing exposure tables, development tables, paper tables, and Film grain populations. A prepared transport frame carries the original heads, stencils, record count, and development tail. A donor stock may carry four records without selecting layered transport.
+
+The native executor binds source, accumulation, and stencil buffers to the original transport pipeline. Strip execution retains full-frame coordinates and spatial support. It must preserve the same whole-image result at strip boundaries. Shared original graph state must be serialized across calls, and caller-owned buffers must be unbound before their storage is released.
+
+`FotufilmEngine` converts RGB input to the original scene basis once. It converts source RGB output from its stage-specific basis once. Gross record densities bypass RGB conversion. Host crop and rescale run after complete source execution. The GUI preview worker resizes only the completed source output.
+
+Source manifests retain the upstream revision and per-file hashes. The preparation build uses the pinned source package rather than a workstation path. Application packages contain the preparation module, prior, original stocks, native dependencies, and their license notices; users do not need a Swift compiler.
+
+The executable pins preparation-module and stock digests in its resource manifest. A retained session must recheck the reflectance prior before each preparation, because WASI opens that file at execution time. A cached module must not allow a changed producer, stock, or prior to bypass the pinned-resource contract.
+
+WASI preparation imports the target-native Float `exp`, `exp2`, `log`, `log1p`, `log2`, `log10`, `pow`, and `tan` operations through the C ABI. The original receiver solvers, halation geometry, and strict acceptance conditions remain unchanged. Numerical acceptance compares with the original native oracle on the same platform and arithmetic provider; one platform's libm is not a universal golden for another platform.
+
+Film grain preparation calls the original native Halide bank builder through a checked WASM-memory C ABI. It must not silently select the source Swift fallback because the preparation reactor cannot link Halide itself. The builder keeps its original target, cache, seed, record index, and tile arithmetic; the host validates resident float buffer ranges before borrowing them synchronously.
+

@@ -155,13 +155,24 @@ impl RenderWorker {
                         }
                         let pipeline_build_ms = t_pipeline.elapsed().as_secs_f32() * 1000.0;
                         let runtime_params = pipeline_template.params();
+                        let density = runtime_params.engine
+                            == spektrafilm_core::params::SimulationEngine::Fotufilm
+                            && runtime_params
+                                .fotufilm
+                                .native
+                                .get("stage")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("negative");
                         let t_scale = Instant::now();
                         let input_prepare = observation.scope(
                             "input_prepare",
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
-                        let working_image = if runtime_params.settings.preview_mode {
+                        let working_image = if runtime_params.engine
+                            == spektrafilm_core::params::SimulationEngine::Spektrafilm
+                            && runtime_params.settings.preview_mode
+                        {
                             spektrafilm_core::params_builder::resize_for_preview(
                                 &request.image,
                                 runtime_params.settings.preview_max_size,
@@ -185,6 +196,18 @@ impl RenderWorker {
                             IssueCategory::Simulation,
                             IssueBoundary::Simulation,
                         )?;
+                        let output = if runtime_params.engine
+                            == spektrafilm_core::params::SimulationEngine::Fotufilm
+                            && runtime_params.settings.preview_mode
+                            && !density
+                        {
+                            spektrafilm_core::params_builder::resize_for_preview(
+                                &output,
+                                runtime_params.settings.preview_max_size,
+                            )
+                        } else {
+                            output
+                        };
                         let render_ms = t.elapsed().as_secs_f32() * 1000.0;
                         let t_preview = Instant::now();
                         let display_prepare = observation.scope(
@@ -192,10 +215,15 @@ impl RenderWorker {
                             ObservationKind::Phase,
                             Purpose::Image,
                         );
+                        let output_space = if density {
+                            spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+                        } else {
+                            &runtime_params.io.output_color_space
+                        };
                         let display_result = display::output_display_raster(
                             &output,
-                            &runtime_params.io.output_color_space,
-                            runtime_params.io.output_cctf_encoding,
+                            output_space,
+                            !density && runtime_params.io.output_cctf_encoding,
                             request.display_enabled,
                             request.display_profile.as_deref(),
                             runtime_params.settings.preview_max_size as usize,
@@ -209,8 +237,9 @@ impl RenderWorker {
                         let preview_ms = t_preview.elapsed().as_secs_f32() * 1000.0;
                         Ok(RenderResult {
                             source_metadata: request.source_metadata,
-                            output_color_space: runtime_params.io.output_color_space.clone(),
-                            output_cctf_encoding: runtime_params.io.output_cctf_encoding,
+                            output_color_space: output_space.to_owned(),
+                            output_cctf_encoding: !density
+                                && runtime_params.io.output_cctf_encoding,
                             output,
                             preview,
                             display_status,

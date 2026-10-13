@@ -196,7 +196,6 @@ fn route_conflicts_and_dry_run_format_fail_before_rendering() {
     for args in [
         vec!["--route", "input > film > scan", "--scan-film"],
         vec!["--dry-run-format", "text"],
-        vec!["--seed", "4294967296"],
         vec!["--seed", "-1"],
         vec!["--seed", "0", "--seed", "42"],
     ] {
@@ -209,6 +208,21 @@ fn route_conflicts_and_dry_run_format_fail_before_rendering() {
         );
         assert!(!f.0.join("output.tif").exists());
     }
+    let result = f.run(
+        "output.tif",
+        &[
+            "--input-color-space",
+            "sRGB",
+            "--input-cctf-decoding",
+            "true",
+            "--seed",
+            "4294967296",
+            "--dry-run",
+        ],
+    );
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("SpektraFilm --seed"));
+    assert!(!f.0.join("output.tif").exists());
     let result = f.run(
         "output.tif",
         &[

@@ -30,6 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 spektrafilm-core.workspace = true
+spektrafilm-fotufilm = { path = "../spektrafilm-fotufilm" }
 spektrafilm-gpu.workspace = true
 spektrafilm-math.workspace = true
 spektrafilm-raw.workspace = true

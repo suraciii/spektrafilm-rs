@@ -403,6 +403,11 @@ impl App {
                         name: name.to_owned(),
                     });
                 }
+                PresetKind::Section(Section::Fotufilm) => {
+                    self.params = selected
+                        .preset
+                        .apply_fotufilm_section(&current, &self.data_dir)?;
+                }
                 PresetKind::Section(_) => {
                     let film = spektrafilm_core::profile::load_profile_by_name(
                         &self.data_dir,
@@ -425,6 +430,9 @@ impl App {
         let result = match section {
             Some(section) => {
                 Preset::capture_section("New preset", section, &self.params, provenance())
+            }
+            None if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm => {
+                Preset::capture_section("New preset", Section::Fotufilm, &self.params, provenance())
             }
             None => Ok(Preset::capture(
                 "New preset",

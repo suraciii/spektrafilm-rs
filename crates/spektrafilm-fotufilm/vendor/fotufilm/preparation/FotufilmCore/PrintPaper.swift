@@ -1,0 +1,285 @@
+import Foundation
+
+/// The medium that turns developed film into a finished image, including the film itself.
+public enum PrintPaper: String, CaseIterable, Sendable {
+    /// KODAK EKTACOLOR EDGE Paper (E-7020), measured.
+    case ektacolorEdge = "ektacolor-edge"
+    /// KODAK PROFESSIONAL ENDURA Premier Paper (E-4070), measured.
+    case enduraPremier = "endura-premier"
+    /// Fujicolor Crystal Archive Type CA (AF3-0250U2), measured.
+    case crystalArchive = "crystal-archive"
+    /// KODAK VISION Color Print Film 2383 (H-1-2383), measured.
+    case vision2383 = "vision-2383"
+    /// KODAK VISION Premier Color Print Film 2393, measured.
+    case vision2393 = "vision-2393"
+    /// FUJIFILM ETERNA-CP Color Positive Film 3513DI, measured.
+    case eternaCP = "eterna-cp"
+    /// An editable positive scan: a trichromatic LED read of the negative, set up per frame by
+    /// `LabScanTiming` and finished by `LabScanFinish` the way a minilab scanner is.
+    case labScan = "lab-scan"
+    /// The video transfer: a telecine machine reads the negative through
+    /// printing-density-class sensor bands (SMPTE RP 180), characterizes that
+    /// receiver with TAF timing, and inverts it into a Rec.709 video signal.
+    case telecine
+    /// A fixed digital receiver for negatives; reversal film is viewed directly.
+    case screen
+    /// The developed negative itself, viewed by transmission rather than printed or inverted.
+    /// Its index is persisted by plugin hosts; append new media after this entry.
+    case negative
+    /// Ilfochrome Classic (formerly Cibachrome), normal and medium contrast.
+    /// Tone-scale approximations from Ilford TDS 307US; receiver spectra remain a proxy.
+    case ilfochromeCPS1K = "ilfochrome-cps-1k"
+    case ilfochromeCLM1K = "ilfochrome-clm-1k"
+
+    /// Default for engine and headless callers.
+    public static let `default`: PrintPaper = .ektacolorEdge
+
+    /// The default output for editor edits and the direct-positive destination for reversal film.
+    /// The engine's unstated, physically matched path remains `default(for:)`.
+    public static let editorDefault: PrintPaper = .screen
+
+    public var id: String { rawValue }
+
+    public var name: String {
+        switch self {
+        case .ektacolorEdge: return "Kodak Ektacolor Edge Paper"
+        case .enduraPremier: return "Kodak Professional Endura Premier Paper"
+        case .crystalArchive: return "Fujicolor Crystal Archive Paper Type CA"
+        case .vision2383: return "Kodak Vision Color Print Film 2383"
+        case .vision2393: return "Kodak Vision Premier Color Print Film 2393"
+        case .eternaCP: return "Fujifilm ETERNA-CP Color Positive Film 3513DI"
+        case .labScan: return "Lab Scan"
+        case .telecine: return "Telecine"
+        case .screen: return "Digital Reference"
+        case .negative: return "Negative"
+        case .ilfochromeCPS1K: return "Ilfochrome Classic CPS.1K (Cibachrome)"
+        case .ilfochromeCLM1K: return "Ilfochrome Classic CLM.1K (Cibachrome)"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .ektacolorEdge:
+            return "Kodak photo paper with a slightly warm color balance."
+        case .enduraPremier:
+            return "Kodak photo paper with saturated colors and deep blacks."
+        case .crystalArchive:
+            return "Fujifilm photo paper with a cooler color balance than Ektacolor Edge."
+        case .vision2383:
+            return "Kodak cinema print film with stronger contrast than photo paper."
+        case .vision2393:
+            return "Kodak cinema print film with deeper blacks and stronger color than 2383, but less shadow detail."
+        case .eternaCP:
+            return "Fujifilm cinema print film with a cooler color balance and softer contrast than Kodak print films."
+        case .labScan:
+            return "A minilab scan: each frame set up and finished with a deeper black, cool shadows, teal foliage and cyan-leaning blues. Choose TIFF for a 16-bit master."
+        case .telecine:
+            return "A Rec.709 video transfer with timed color, raised blacks and a finished contrast curve."
+        case .screen:
+            return "A fixed digital receiver preserves negative-film color and tone. Reversal films are viewed directly and support HDR output."
+        case .ilfochromeCPS1K:
+            return "Normal-contrast positive paper for slide film. Approximate color response; more paper exposure lightens the print."
+        case .ilfochromeCLM1K:
+            return "Medium-contrast positive paper for slide film, softer than CPS.1K. Approximate color response."
+        case .negative:
+            return "View the developed negative before printing or conversion to a positive."
+        }
+    }
+
+    public static func preset(id: String) -> PrintPaper? {
+        switch id {
+        case "ilfochrome", "cibachrome", "cibachrome-cps-1k": return .ilfochromeCPS1K
+        case "cibachrome-clm-1k": return .ilfochromeCLM1K
+        default: return PrintPaper(rawValue: id)
+        }
+    }
+
+    /// Whether output on this medium can hold light above display white.
+    public var showsHDR: Bool { self == .screen }
+
+    /// Whether this stock may use the medium's range above display white: only a transparency
+    /// viewed directly. Negative film keeps its full exposure latitude in the film model but is
+    /// delivered as an SDR positive, and an integral instant sheet is a reflection print whose
+    /// white is its own paper.
+    public func supportsHDRDelivery(for stock: FilmStock) -> Bool {
+        showsHDR && stock.isReversal && !stock.isReflectionPrint
+    }
+
+    /// Whether the finished output is the developed negative itself.
+    public var isNegative: Bool { self == .negative }
+
+    /// Positive-to-positive paper loses density as exposure increases.
+    public var isPositivePaper: Bool { self == .ilfochromeCPS1K || self == .ilfochromeCLM1K }
+
+    /// Direction of the paper's exposure axis, carried by the shared print configuration.
+    var exposureDirection: Float { isPositivePaper ? -1 : 1 }
+
+    /// Whether developed film is viewed directly, without exposing another emulsion.
+    func viewsFilmDirectly(for stock: FilmStock) -> Bool {
+        stock.isReversal && !isPositivePaper
+    }
+
+    /// Whether a transparent positive is delivered through the paper stage instead: Digital
+    /// Reference's graded styles normalise a slide to SDR the way a scanner does, and the gain
+    /// rides the paper slots so no table is rebuilt per frame. Nothing images the film — there is
+    /// still no enlarger and no print MTF — and an integral print is already a print.
+    public func levelsPositive(for stock: FilmStock, digitalReference: DigitalReferenceStyle) -> Bool {
+        self == .screen && stock.isReversal && !stock.isReflectionPrint
+            && digitalReference.usesGradedCurve
+    }
+
+    /// Transparent positives print onto positive paper. Integral instant sheets are already prints.
+    public static func choices(for stock: FilmStock) -> [PrintPaper] {
+        if stock.isReflectionPrint { return [.screen] }
+        if stock.isReversal { return [.screen, .ilfochromeCPS1K, .ilfochromeCLM1K] }
+        return allCases.filter { !$0.isPositivePaper }
+    }
+
+    /// The medium a stock actually reaches when the edit asks for this one: the request where it
+    /// is available, the only entry where it is not.
+    public func resolved(for stock: FilmStock) -> PrintPaper {
+        let available = Self.choices(for: stock)
+        return available.contains(self) ? self : available[0]
+    }
+
+    /// What this stock prints on when the caller expresses no preference: the medium the emulsion
+    /// was designed for where it names one, and the measured sheet where it does not.
+    ///
+    /// A motion-picture camera negative is timed onto a release print stock, and its mask density
+    /// and contrast assume that partner; developing one onto RA-4 paper is a choice a caller can
+    /// still make, but it is not what silence should mean.
+    public static func `default`(for stock: FilmStock) -> PrintPaper {
+        (stock.nativePrintMedium ?? .default).resolved(for: stock)
+    }
+
+    /// Preview media for the selected gauge, with an explicitly named native medium first.
+    /// Reversal film offers positive paper and direct viewing. Negative film offers the three photo or
+    /// projection variants; motion-picture gauges also offer Telecine.
+    public static func stripChoices(for stock: FilmStock,
+                                    gauge: FilmFormat) -> [PrintPaper] {
+        if stock.isReflectionPrint { return [.screen] }
+        if stock.isReversal { return [.ilfochromeCPS1K, .ilfochromeCLM1K, .screen] }
+        var media: [PrintPaper] = gauge.isMotionPicture
+            ? [.vision2383, .vision2393, .eternaCP, .telecine]
+            : [.ektacolorEdge, .enduraPremier, .crystalArchive]
+        if let native = stock.nativePrintMedium,
+           let index = media.firstIndex(of: native) {
+            media.remove(at: index)
+            media.insert(native, at: 0)
+        }
+        return media + [.screen]
+    }
+
+    /// Whether this finished positive is projected rather than held: a transparency on a screen
+    /// in a dark room, not a sheet under a room's light.
+    ///
+    /// It decides the reference lamp the print is read by. A paper hangs under whatever light the
+    /// viewer has and defaults to a D50 judging booth; a release print defaults to calibrated
+    /// 5400 K filtered-xenon model. This is a representative projector spectrum, not the
+    /// unspecified xenon lamp used for the manufacturer's dye measurements.
+    public var isProjected: Bool {
+        self == .vision2383 || self == .vision2393 || self == .eternaCP
+    }
+
+    /// Whether this finished positive is a scanner's file rather than a physical
+    /// sheet: the read is a flat lamp through trichromatic sensor bands, the
+    /// output has no physical viewing dyes and no viewing lamp can fall on it. Both scan paths
+    /// characterize their receiver bands into display colour.
+    public var isScan: Bool { self == .labScan || self == .telecine }
+
+    /// Whether a caller can replace the medium's reference viewing illuminant. Physical sheets
+    /// and projected positives can be inspected under another lamp. A scan is already a digital
+    /// signal, and the screen is the fixed D65 display the renderer targets, so neither takes a
+    /// second viewing-light transform.
+    public var acceptsViewingIlluminant: Bool {
+        switch self {
+        case .ektacolorEdge, .enduraPremier, .crystalArchive, .ilfochromeCPS1K, .ilfochromeCLM1K, .vision2383, .vision2393, .eternaCP:
+            return true
+        case .labScan, .telecine, .screen, .negative:
+            return false
+        }
+    }
+
+    /// Whether this output path's colour is profiled once, on a reference negative,
+    /// rather than re-timed for the stock in the carrier.
+    ///
+    /// An enlarger operator dials filtration for the negative in front of them,
+    /// so every physical paper solves its own neutral per stock. A minilab's
+    /// inversion is a fixed profile: the machine auto-exposes each frame but
+    /// does not re-solve its colour for the emulsion, which is why Gold scans
+    /// warm and Portra scans neutral from the same lab — a same-lab corpus
+    /// measures +0.019 median Oklab b between those two, where a per-stock
+    /// solve renders them 0.002 apart. The profile is anchored on Portra 400
+    /// (`labScanReferenceMidRatio`), the stock that corpus puts closest to
+    /// neutral. The telecine keeps its own convention: its chain is timed
+    /// per programme by a colourist, not left to a profile.
+    public var isReferenceAnchored: Bool { self == .labScan }
+
+    /// Whether the scan's three channels leave the machine as a Rec.709 video signal rather than
+    /// as an unrendered file. The engine's delivery basis is display-linear P3, which is wider, so
+    /// the container is honoured by holding the timed colour inside the Rec.709 primaries (sRGB
+    /// shares them) before it is carried to P3: a transfer cannot deliver a saturation the signal
+    /// could not encode. Lab Scan writes a file and is limited only by its own bands.
+    public var deliversRec709: Bool { self == .telecine }
+
+    /// Combined lens, focus, receiver, and scattering blur as Gaussian sigma in millimetres on film.
+    /// The lab-scan value is 7 µm versus a documented 5.3–6.6 µm sample pitch. Screen output has
+    /// no physical imaging stage and uses zero.
+    public var enlargerBlurMM: Float {
+        switch self {
+        case .ektacolorEdge, .enduraPremier, .crystalArchive, .ilfochromeCPS1K, .ilfochromeCLM1K: return 0.004
+        case .vision2383, .vision2393, .eternaCP: return 0.003
+        case .labScan: return 0.007
+        // The Spirit's documented geometry: a 1920-photosite detail array
+        // across the full Super 35 camera aperture it projects — 24.92 mm —
+        // is a 0.013 mm sample pitch on the film, and a Gaussian of half that
+        // pitch carries the pixel footprint with the imaging lens on top.
+        case .telecine: return 0.0065
+        case .screen, .negative: return 0
+        }
+    }
+
+    /// Fraction of pre-blur detail restored by the output medium, from 0 to 1. Optical papers use
+    /// 0. The lab-scan value of 0.65 matches measured grain amplitude and correlation after scanner
+    /// aperture blur and unsharp masking.
+    public var scanSharpening: Float {
+        switch self {
+        case .labScan: return 0.65
+        // A video chain runs aperture correction — the operator-adjustable
+        // detail peaking every telecine documented, applied film-relative
+        // before sizing — and no machine publishes a strength for it, so the
+        // figure is a stance: harder than the minilab's unsharp mask, because
+        // the electronically crisped grain is part of what a transfer looks
+        // like, and short of undoing the aperture entirely.
+        case .telecine: return 0.8
+        case .ektacolorEdge, .enduraPremier, .crystalArchive, .vision2383, .vision2393, .eternaCP,
+             .screen, .negative, .ilfochromeCPS1K, .ilfochromeCLM1K:
+            return 0
+        }
+    }
+
+    /// Monochrome keeps its established direct read. Color negatives pass through the
+    /// fixed digital receiver, preserving each layer's curve and the image-dye spectra.
+    public func readsLayersDirectly(for stock: FilmStock) -> Bool {
+        self == .screen && stock.isMonochrome
+    }
+
+    /// Whether timing can balance the film records while forming this output. A viewed negative
+    /// has no print exposure to correct. Digital Reference preserves individual channel contrast.
+    public var acceptsPrintCorrection: Bool { self != .screen && !isNegative && !isPositivePaper }
+
+    /// Nominal visual mid-grey, relative to clear white, used by
+    /// reflection/digital outputs and the single-record monochrome convention. Colour cine
+    /// prints are placed at their published gross Status A LAD aims by `printExposureMidpoints`;
+    /// those aims are not three equal densities above base or a forced 10% RGB value.
+    public var midDensity: Float { isProjected ? 1.0 : 0.744 }
+
+    /// Nominal density above base that reads at `midDensity`. The print is read as its 0/45
+    /// measurement with no viewing glare, so the two are the same.
+    /// Colour print records use `printExposureMidpoints`, including their setup calibration.
+    public var anchorDensity: Float { midDensity }
+
+    /// Compatibility entry point for callers that still pass a stock's legacy grey.
+    @available(*, deprecated, message: "Use anchorDensity; the output medium sets mid-grey.")
+    public func anchorDensity(_ legacyMidDensity: Float) -> Float { anchorDensity }
+}

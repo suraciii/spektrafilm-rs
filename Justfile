@@ -4,6 +4,11 @@ set dotenv-load := false
 default:
     @just --list
 
+
+# Install the pinned official native Fotufilm compiler dependency.
+install-halide prefix:
+    bash scripts/install_halide.sh "{{prefix}}"
+
 # Build the portable default (wgpu/WGSL) release binaries.
 build: build-gui build-cli build-f64 decode-raw build-benchmark
 
@@ -64,8 +69,9 @@ benchmark-test:
     cargo test --locked -p spektrafilm-benchmark
 
 # Exercise the real GUI App and CPU workers without a desktop or OCR.
+# Optimize the WASI interpreter so original preparation fits worker deadlines.
 gui-headless:
-    cargo test --locked -p spektrafilm-gui --features precision-f64 headless::
+    cargo test --release --locked -p spektrafilm-gui --features precision-f64 headless::
 
 # Render focused GUI layouts offscreen; requires a usable WGPU adapter.
 gui-layout:

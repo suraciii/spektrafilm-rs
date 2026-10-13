@@ -22,6 +22,10 @@ pub(super) fn cmd_render(
     gpu_timings: bool,
     matches: &clap::ArgMatches,
 ) -> Result<()> {
+    let engine = matches
+        .get_one::<crate::EngineArg>("engine")
+        .copied()
+        .map(crate::EngineArg::name);
     let facts = telemetry::run(
         OperationKind::Render,
         diagnostics,
@@ -38,7 +42,10 @@ pub(super) fn cmd_render(
             }
             invocation.boundary(IssueCategory::Configuration, IssueBoundary::Operation);
             let data = crate::select_data_dir(data_dir.to_owned(), matches)?;
-            let recipe = contract::read_recipe(recipe_path)?;
+            let mut recipe = contract::read_recipe(recipe_path)?;
+            if let Some(engine) = engine {
+                recipe.parameters["engine"] = json!(engine);
+            }
             let facts = render_recipe(input, &recipe, output, &data.path, invocation)?;
             invocation.phase(
                 "result_prepare",
@@ -65,10 +72,22 @@ fn render_recipe(
     contract::validate_output(&recipe.output)?;
     contract::validate_output_path(output, &recipe.output)?;
     contract::validate_input_path(input)?;
-    if let Some(seed) = recipe.seed {
-        contract::validate_seed(seed)?;
-    }
     let mut params = contract::normalize_parameters(recipe.parameters.clone())?;
+    if params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm {
+        if recipe.film_profile.trim().is_empty() {
+            bail!("filmProfile must not be empty for SpektraFilm");
+        }
+        if let Some(seed) = recipe.seed {
+            contract::validate_seed(seed)?;
+        }
+    }
+    let density = params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm
+        && params.fotufilm.native.get("stage").and_then(Value::as_str) == Some("negative");
+    if density != (recipe.output.color_space == spektrafilm_fotufilm::RECORD_DENSITY_SPACE) {
+        bail!(
+            "negative stage requires the raw-density 32-bit TIFF/EXR output contract; RGB stages require the RGB output contract"
+        );
+    }
     params.random_seed = recipe.seed.unwrap_or(0);
     if recipe.output.format == "png" {
         params.settings.preview_mode = true;
@@ -81,40 +100,49 @@ fn render_recipe(
     params.io.scan_film = false;
     params.validate_color().map_err(anyhow::Error::msg)?;
     invocation.boundary(IssueCategory::Configuration, IssueBoundary::RuntimePrepare);
-    let film = profile::load_profile_by_name(data_dir, &recipe.film_profile)
-        .with_context(|| format!("loading film profile {}", recipe.film_profile))?;
-    let print_name = recipe
-        .print_profile
-        .as_deref()
-        .or(film.info.target_print.as_deref())
-        .ok_or_else(|| anyhow::anyhow!("recipe does not select a print profile"))?;
-    let print = profile::load_profile_by_name(data_dir, print_name)
-        .with_context(|| format!("loading print profile {print_name}"))?;
-    let photo = RuntimePhotoParams {
-        film,
-        print,
-        params,
-        data_dir: data_dir.to_owned(),
-    };
-    let canonical_photo = if photo.params.scanner.auto_setup
-        == spektrafilm_core::params::ScannerAutoSetup::PerFrame
-    {
-        let mut canonical = photo.clone();
-        canonical.params.settings.preview_mode = false;
-        Some(canonical)
-    } else {
+    let fotufilm = params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm;
+    let photo = if fotufilm {
         None
+    } else {
+        let film = profile::load_profile_by_name(data_dir, &recipe.film_profile)
+            .with_context(|| format!("loading film profile {}", recipe.film_profile))?;
+        let print_name = recipe
+            .print_profile
+            .as_deref()
+            .or(film.info.target_print.as_deref())
+            .context("recipe does not select a print profile")?;
+        let print = profile::load_profile_by_name(data_dir, print_name)?;
+        Some(RuntimePhotoParams {
+            film,
+            print,
+            params: params.clone(),
+            data_dir: data_dir.to_owned(),
+        })
     };
+    let canonical_photo = photo
+        .as_ref()
+        .filter(|photo| {
+            photo.params.scanner.auto_setup == spektrafilm_core::params::ScannerAutoSetup::PerFrame
+        })
+        .map(|photo| {
+            let mut canonical = photo.clone();
+            canonical.params.settings.preview_mode = false;
+            canonical
+        });
     let runtime = invocation.phase(
         "runtime_prepare",
         IssueCategory::Configuration,
         IssueBoundary::RuntimePrepare,
         &context,
         |prepare_context| {
-            photo
-                .into_runtime_observed(DigestMode::ApplyStockSpecifics, prepare_context)
-                .map_err(anyhow::Error::msg)
-                .context("building spektrafilm-rs spectral runtime")
+            if let Some(photo) = photo {
+                photo
+                    .into_runtime_observed(DigestMode::ApplyStockSpecifics, prepare_context)
+                    .map_err(anyhow::Error::msg)
+            } else {
+                spektrafilm_core::runtime::Runtime::from_params(params, data_dir)
+                    .map_err(anyhow::Error::msg)
+            }
         },
     )?;
     if context.enabled() {
@@ -163,7 +191,7 @@ fn render_recipe(
         IssueBoundary::InputPrepare,
         &context,
         |_| {
-            let image = if recipe.output.format == "png" {
+            let image = if !fotufilm && recipe.output.format == "png" {
                 resize_for_preview(&loaded.image, params.settings.preview_max_size)
             } else {
                 loaded.image
@@ -177,7 +205,11 @@ fn render_recipe(
         IssueBoundary::BackendInit,
         &context,
         |backend_context| {
-            let backend = spektrafilm_gpu::select_backend();
+            let backend: Box<dyn spektrafilm_gpu::ComputeBackend> = if fotufilm {
+                Box::new(spektrafilm_gpu::cpu_backend::CpuBackend)
+            } else {
+                spektrafilm_gpu::select_backend()
+            };
             telemetry::observe_backend(backend.as_ref(), backend_context);
             Ok(backend)
         },
@@ -189,6 +221,11 @@ fn render_recipe(
             .context("running spektrafilm-rs runtime")
     });
     let result = result?;
+    let result = if fotufilm && recipe.output.format == "png" {
+        resize_for_preview(&result, recipe.output.max_edge.unwrap_or(640))
+    } else {
+        result
+    };
     invocation.operation.set_saved_attempt(attempt_id);
     invocation.boundary(IssueCategory::Writing, IssueBoundary::FileWrite);
     let parent = output
@@ -197,13 +234,21 @@ fn render_recipe(
     fs::create_dir_all(parent)?;
     let jpeg_output = recipe.output.format == "jpeg";
     let options = SaveOptions {
-        depth: BitDepth::Eight,
-        color_space: "sRGB",
-        cctf_encoding: true,
+        depth: if density {
+            BitDepth::ThirtyTwo
+        } else {
+            BitDepth::Eight
+        },
+        color_space: if density {
+            spektrafilm_fotufilm::RECORD_DENSITY_SPACE
+        } else {
+            "sRGB"
+        },
+        cctf_encoding: !density,
         jpeg_quality: jpeg_output.then_some(contract::FINISHED_JPEG_QUALITY),
         jpeg_subsampling: jpeg_output
             .then_some(spektrafilm_core::image_io::JpegSubsampling::Yuv444),
-        compression: None,
+        compression: density.then_some(image_io::Compression::Zip),
     };
     let format = image_io::ImageFormat::detect(output)?;
     invocation.operation.set_saving_configuration(
@@ -256,7 +301,8 @@ fn render_recipe(
                 "adapterVersion": contract::ADAPTER_VERSION,
                 "parameterSchemaVersion": contract::PARAMETER_SCHEMA_VERSION,
                 "parameterDigest": contract::parameter_digest(&recipe.parameters),
-                "scannerProvenance": spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params),
+                "scannerProvenance": (!fotufilm).then(|| spektrafilm_core::scan_receiver::ScannerProvenance::from_params(params)),
+                "simulation": if fotufilm { json!({"engine":"fotufilm","sourceRevision":spektrafilm_fotufilm::SOURCE_REVISION,"precision":"binary32","request":params.fotufilm}) } else { json!({"engine":"spektrafilm"}) },
                 "input": {"path": input, "width": input_size[0], "height": input_size[1]},
                 "output": {
                     "path": output,
@@ -267,7 +313,7 @@ fn render_recipe(
                     "sha256": format!("{:x}", Sha256::digest(&bytes)),
                 },
                 "seed": recipe.seed,
-                "resource": {"backend": backend.name()},
+                "resource": {"backend": if fotufilm { "Fotufilm original CPU (f32)" } else { backend.name() }},
                 "terminalOutcome": "succeeded",
             }))
         },

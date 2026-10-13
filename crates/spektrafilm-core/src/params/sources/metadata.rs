@@ -128,6 +128,21 @@ impl<'a, 'b> SerializeStruct for StructRec<'a, 'b> {
     }
 }
 
+struct MapRec;
+impl serde::ser::SerializeMap for MapRec {
+    type Ok = ();
+    type Error = RecError;
+    fn serialize_key<T: serde::Serialize + ?Sized>(&mut self, _: &T) -> Result<(), RecError> {
+        Ok(())
+    }
+    fn serialize_value<T: serde::Serialize + ?Sized>(&mut self, _: &T) -> Result<(), RecError> {
+        Ok(())
+    }
+    fn end(self) -> Result<(), RecError> {
+        Ok(())
+    }
+}
+
 impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
     type Ok = ();
     type Error = RecError;
@@ -135,7 +150,7 @@ impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
     type SerializeTuple = SeqRec<'a, 'b>;
     type SerializeTupleStruct = Impossible<(), RecError>;
     type SerializeTupleVariant = Impossible<(), RecError>;
-    type SerializeMap = Impossible<(), RecError>;
+    type SerializeMap = MapRec;
     type SerializeStruct = StructRec<'a, 'b>;
     type SerializeStructVariant = Impossible<(), RecError>;
 
@@ -263,7 +278,8 @@ impl<'a, 'b> Serializer for &'a mut Recorder<'b> {
         ))
     }
     fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, RecError> {
-        Err(serde::ser::Error::custom("maps are not parameter groups"))
+        self.record("BTreeMap<String, Value>")?;
+        Ok(MapRec)
     }
     fn serialize_struct(
         self,

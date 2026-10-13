@@ -151,35 +151,37 @@ impl App {
     fn simulation_action_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
-            if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
+            if self.params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm && self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
                 let mut scan_for_print = self.scan_for_print_snapshot.is_some();
                 if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
                     self.toggle_scan_for_print();
                 }
             }
         });
-        ui.horizontal(|ui| {
-            if controls::choice_tip_entries(
-                ui,
-                "workflow",
-                &mut self.params.workflow.route,
-                routes::entries(),
-                routes::tooltip(),
-            ) {
-                self.finish_route_change();
-            }
-            if ui
-                .checkbox(
-                    &mut self.params.magazine_print_color.active,
-                    "Magazine print",
-                )
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
-                .changed()
-            {
-                self.dirty = true;
-                self.parameter_revision = self.parameter_revision.wrapping_add(1);
-            }
-        });
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Spektrafilm {
+            ui.horizontal(|ui| {
+                if controls::choice_tip_entries(
+                    ui,
+                    "workflow",
+                    &mut self.params.workflow.route,
+                    routes::entries(),
+                    routes::tooltip(),
+                ) {
+                    self.finish_route_change();
+                }
+                if ui
+                    .checkbox(
+                        &mut self.params.magazine_print_color.active,
+                        "Magazine print",
+                    )
+                    .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                    .changed()
+                {
+                    self.dirty = true;
+                    self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                }
+            });
+        }
         ui.horizontal(|ui| {
             let busy = self.render_job.is_some()
                 || self.export_job.is_some()
@@ -187,7 +189,9 @@ impl App {
             let ready = self.image.is_some() && !busy;
             if ui
                 .add_enabled(ready, egui::Button::new("PREVIEW"))
-                .on_hover_text("run the simulation on a small preview and deactivates grain, halation, blurs, unsharp mask (diffusion filters are active)")
+                .on_hover_text(if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+                    "Run the complete original simulation on the full source, then resize for preview."
+                } else { "Run the small preview with grain, halation, blurs and unsharp mask disabled." })
                 .clicked()
             {
                 self.dirty = true;
@@ -563,7 +567,12 @@ impl App {
                         .on_hover_text("Choose settings and render the full image independently of Save.")
                         .clicked()
                     {
-                        self.export_dialog.open(&self.export_options);
+                        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm {
+                            let density = self.params.fotufilm.native.get("stage").and_then(serde_json::Value::as_str) == Some("negative");
+                            self.export_dialog.open_fotufilm(&self.export_options, density);
+                        } else {
+                            self.export_dialog.open(&self.export_options);
+                        }
                     }
                 }
             });
@@ -623,6 +632,54 @@ impl App {
             self.params.io.input_cctf_decoding,
             self.params.settings.preview_max_size,
         );
+        let mut engine_changed = false;
+        egui::ComboBox::from_label("Simulation engine")
+            .selected_text(match self.params.engine {
+                spektrafilm_core::params::SimulationEngine::Spektrafilm => "SpektraFilm",
+                spektrafilm_core::params::SimulationEngine::Fotufilm => "Fotufilm",
+            })
+            .show_ui(ui, |ui| {
+                engine_changed |= ui
+                    .selectable_value(
+                        &mut self.params.engine,
+                        spektrafilm_core::params::SimulationEngine::Spektrafilm,
+                        "SpektraFilm",
+                    )
+                    .changed();
+                engine_changed |= ui
+                    .selectable_value(
+                        &mut self.params.engine,
+                        spektrafilm_core::params::SimulationEngine::Fotufilm,
+                        "Fotufilm",
+                    )
+                    .changed();
+            });
+        if engine_changed {
+            self.parameter_revision = self.parameter_revision.wrapping_add(1);
+            self.dirty = true;
+            self.scanner_setup = None;
+        }
+        if self.params.engine == spektrafilm_core::params::SimulationEngine::Fotufilm
+            && self.gui_tab != GuiTab::Config
+        {
+            self.import_section(ui, false);
+            self.import_section(ui, true);
+            self.parameter_section(ui, "Input");
+            self.section_preset_menu(ui, Section::Fotufilm);
+            if fotufilm::show(
+                ui,
+                &mut self.params,
+                &self.data_dir,
+                &mut self.fotufilm_catalogue,
+            ) {
+                self.parameter_revision = self.parameter_revision.wrapping_add(1);
+                self.dirty = true;
+            }
+            self.parameter_section(ui, "Output");
+            self.export_actions(ui);
+            ui.label(egui::RichText::new(&self.status).small());
+            return;
+        }
         match self.gui_tab {
             GuiTab::Main => {
                 self.import_section(ui, false);

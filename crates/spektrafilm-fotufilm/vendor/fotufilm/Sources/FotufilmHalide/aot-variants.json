@@ -1,0 +1,273 @@
+{
+  "schema": 2,
+  "spans": [
+    {
+      "name": "ALL_STAGES",
+      "mask": "(MTF | MTF_LUMA | HALATION | COUPLERS | COUPLER_DIFFUSION | ADJACENCY | GRAIN | PRINT_MTF | DIFFUSION)",
+      "doc": "Full spatial-stage mask, including post-grain enlarger blur. Zero radius makes enlarger blur identity, avoiding a separate variant family. Capture glare remains opt-in through `FOTUFILM_AOT_FLARE` because most input has already passed through a lens."
+    },
+    {
+      "name": "HEAD",
+      "mask": "(ALL_STAGES & ~(GRAIN | PRINT_MTF))",
+      "doc": "The stages up to but not including grain, which is where the split schedule cuts."
+    },
+    {
+      "name": "TAIL",
+      "mask": "(GRAIN | PRINT_MTF | DENSITY_IN)",
+      "doc": "Grain and the enlarger: the half of develop that runs after the cut."
+    },
+    {
+      "name": "NEGATIVE_SPAN",
+      "mask": "((ALL_STAGES & ~PRINT_MTF) | DENSITY_OUT)",
+      "doc": "`PipelineStage.negative`: every stage up to and including grain, and nothing that images the negative afterwards. The same cut the hybrid still renderer makes, moved past grain so that what crosses the boundary is a developed negative rather than a latent one."
+    },
+    {
+      "name": "PRINT_SPAN",
+      "mask": "(PRINT_MTF | DENSITY_IN)",
+      "doc": "`PipelineStage.print`: the enlarger and the print medium, reading densities. Everything the negative span already ran is absent, which is what makes the two spans together run each stage exactly once."
+    },
+    {
+      "name": "TEXTURE_SPAN",
+      "mask": "(ALL_STAGES | TEXTURE)",
+      "doc": "`PipelineStage.texture`: the same stages the negative span runs, differenced against a development with none of them. The enlarger is in, because it is one of the selectable spatial stages here rather than the print it belongs to in a full render."
+    },
+    {
+      "name": "TEXTURE_FLAT_SPAN",
+      "mask": "(FLARE | COUPLERS | TEXTURE)",
+      "doc": "Texture span for an empty spatial selection. It requires an exact variant because unused near-identity stages would enter only one side of the density difference. Pointwise glare and coupler inhibition remain on both sides and cancel."
+    },
+    {
+      "name": "NEGATIVE",
+      "mask": "(MTF | HALATION | COUPLERS | COUPLER_DIFFUSION | ADJACENCY | GRAIN)",
+      "doc": "A colour negative: DIR couplers that diffuse, and no luminance MTF arm. This is a stock that gets printed, not the light-box view of one \u2014 that borrows the reversal flag instead."
+    },
+    {
+      "name": "SLIDE",
+      "mask": "(MTF | HALATION | ADJACENCY | GRAIN)",
+      "doc": "A transparency or a black-and-white stock without an interimage correction."
+    },
+    {
+      "name": "SLIDE_INTERIMAGE",
+      "mask": "(SLIDE | COUPLERS)",
+      "doc": "A transparency whose development carries a pointwise interimage correction."
+    },
+    {
+      "name": "SLIDE_NO_MTF",
+      "mask": "(SLIDE & ~MTF)",
+      "doc": "The same without the emulsion MTF, which is compiled out when the stock's diffusion does not reach a pixel at the frame's size."
+    },
+    {
+      "name": "FULL_STAGES",
+      "mask": "(ALL_STAGES | FLARE | GRAIN_MOTTLE | DONOR_LAYER)",
+      "doc": "Every stage a class can carry. One variant per exact class compiles all of them and the request selects at run time: a stage the frame does not ask for is bypassed, not run at zero strength, so the served frame is the requested frame."
+    },
+    {
+      "name": "BASIC_STAGES",
+      "mask": "((ALL_STAGES & ~(MTF_LUMA | DIFFUSION)) | FLOAT_IO | REALTIME)",
+      "doc": "Common float video graphs. AOT windowed twins keep the same arguments and physics, with their intermediate rows stored in bounded circular buffers; the shim picks one only for a request inside this stage set."
+    }
+  ],
+  "axes": {
+    "doc": "A stage bit is covered by any variant that carries it; an exact bit must match. The delivery encode and its transfer (ENCODE_OUT, OUTPUT_*) and the whole-frame glare measurement (FLARE_MEASURE) are neither: the pipeline chooses them at run time.",
+    "stage": [
+      "ALL_STAGES",
+      "GRAIN_MOTTLE",
+      "FLARE",
+      "DONOR_LAYER"
+    ],
+    "exact": [
+      "MONOCHROME",
+      "FLOAT_IO",
+      "REALTIME",
+      "EXACT_MATH",
+      "DENSITY_OUT",
+      "DENSITY_IN",
+      "LIGHT_OUT",
+      "FIELDS_IN",
+      "TEXTURE",
+      "NO_FILM"
+    ]
+  },
+  "variants": [
+    {
+      "name": "color",
+      "mask": "FULL_STAGES",
+      "doc": "The byte-input classes are realtime by construction: half-precision stores."
+    },
+    {
+      "name": "monochrome",
+      "mask": "FULL_STAGES | MONOCHROME"
+    },
+    {
+      "name": "color_head",
+      "mask": "FULL_STAGES | DENSITY_OUT",
+      "doc": "The split recording road: the head develops to a density seam, the tail images it. See FOTUFILM_AOT_HEAD and FOTUFILM_AOT_TAIL for the stages each half runs."
+    },
+    {
+      "name": "monochrome_head",
+      "mask": "FULL_STAGES | MONOCHROME | DENSITY_OUT"
+    },
+    {
+      "name": "color_tail",
+      "mask": "FULL_STAGES | DENSITY_IN"
+    },
+    {
+      "name": "monochrome_tail",
+      "mask": "FULL_STAGES | MONOCHROME | DENSITY_IN"
+    },
+    {
+      "name": "color_float_realtime",
+      "mask": "FULL_STAGES | FLOAT_IO | REALTIME",
+      "doc": "Deep video: float I/O on the realtime schedule, which keeps full-precision stores. The delivery encode and its transfer are chosen by the request, not the variant."
+    },
+    {
+      "name": "monochrome_float_realtime",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | REALTIME"
+    },
+    {
+      "name": "color_float_realtime_texture",
+      "mask": "FULL_STAGES | FLOAT_IO | REALTIME | TEXTURE"
+    },
+    {
+      "name": "monochrome_float_realtime_texture",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | REALTIME | TEXTURE"
+    },
+    {
+      "name": "color_float_realtime_negative",
+      "mask": "FULL_STAGES | FLOAT_IO | REALTIME | DENSITY_OUT"
+    },
+    {
+      "name": "monochrome_float_realtime_negative",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | REALTIME | DENSITY_OUT"
+    },
+    {
+      "name": "color_float_realtime_print",
+      "mask": "FULL_STAGES | FLOAT_IO | REALTIME | DENSITY_IN"
+    },
+    {
+      "name": "monochrome_float_realtime_print",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | REALTIME | DENSITY_IN"
+    },
+    {
+      "name": "color_float",
+      "mask": "FULL_STAGES | FLOAT_IO",
+      "doc": "The float still classes: the reference schedule."
+    },
+    {
+      "name": "monochrome_float",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO"
+    },
+    {
+      "name": "color_float_exact",
+      "mask": "FULL_STAGES | FLOAT_IO | EXACT_MATH"
+    },
+    {
+      "name": "monochrome_float_exact",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | EXACT_MATH"
+    },
+    {
+      "name": "color_float_texture",
+      "mask": "FULL_STAGES | FLOAT_IO | TEXTURE",
+      "doc": "An empty spatial selection is served here too: a bypassed stage is an identity on both sides of the density difference."
+    },
+    {
+      "name": "monochrome_float_texture",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | TEXTURE"
+    },
+    {
+      "name": "color_float_negative",
+      "mask": "FULL_STAGES | FLOAT_IO | DENSITY_OUT"
+    },
+    {
+      "name": "color_float_negative_exact",
+      "mask": "FULL_STAGES | FLOAT_IO | DENSITY_OUT | EXACT_MATH",
+      "doc": "Precise Float32 negative-density oracle for native Metal validation on physical iPhones."
+    },
+    {
+      "name": "monochrome_float_negative",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | DENSITY_OUT"
+    },
+    {
+      "name": "monochrome_float_negative_exact",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | DENSITY_OUT | EXACT_MATH",
+      "doc": "Precise Float32 negative-density oracle for native Metal validation on physical iPhones."
+    },
+    {
+      "name": "color_float_print",
+      "mask": "FULL_STAGES | FLOAT_IO | DENSITY_IN"
+    },
+    {
+      "name": "color_float_print_exact",
+      "mask": "FULL_STAGES | FLOAT_IO | DENSITY_IN | EXACT_MATH",
+      "doc": "Precise Float32 density-input oracle for validating Metal print stages on physical iPhones."
+    },
+    {
+      "name": "monochrome_float_print",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | DENSITY_IN"
+    },
+    {
+      "name": "monochrome_float_print_exact",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | DENSITY_IN | EXACT_MATH",
+      "doc": "Precise Float32 density-input oracle for validating Metal print stages on physical iPhones."
+    },
+    {
+      "name": "color_float_fields",
+      "mask": "FULL_STAGES | FLOAT_IO | FIELDS_IN",
+      "doc": "The two halves of the two-pass striped render; see FOTUFILM_FRAME_LIGHT_OUT and FOTUFILM_FRAME_FIELDS_IN."
+    },
+    {
+      "name": "monochrome_float_fields",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | FIELDS_IN"
+    },
+    {
+      "name": "color_float_light",
+      "mask": "FULL_STAGES | FLOAT_IO | LIGHT_OUT",
+      "doc": "Nothing past the light is compiled, so the grain bits cost nothing and cover any request."
+    },
+    {
+      "name": "color_float_light_exact",
+      "mask": "FULL_STAGES | FLOAT_IO | LIGHT_OUT | EXACT_MATH",
+      "doc": "Float32 light-stage oracle for validating native Metal on physical iPhones with the same exact-math expressions as the desktop reference."
+    },
+    {
+      "name": "monochrome_float_light",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | LIGHT_OUT"
+    },
+    {
+      "name": "monochrome_float_light_exact",
+      "mask": "FULL_STAGES | MONOCHROME | FLOAT_IO | LIGHT_OUT | EXACT_MATH"
+    },
+    {
+      "name": "no_film_float",
+      "mask": "FLOAT_IO | NO_FILM",
+      "doc": "No film in the gate: `PlainDevelop` as a kernel. Its own class rather than a corner of the others, because FOTUFILM_FRAME_NO_FILM is an exact bit \u2014 a variant that develops film is not a richer version of one that develops none, it is a different picture \u2014 so a request for it can be served by nothing else."
+    },
+    {
+      "name": "no_film_float_exact",
+      "mask": "FLOAT_IO | EXACT_MATH | NO_FILM"
+    }
+  ],
+  "windowed": {
+    "doc": "Compiled a second time with the row-window schedule, for the hosts that cannot hold a whole frame's intermediates. The shim picks a twin only when the request's stages fit BASIC_STAGES, whose reach it can bound.",
+    "variants": [
+      {
+        "name": "color_float_realtime",
+        "mask": "BASIC_STAGES"
+      },
+      {
+        "name": "monochrome_float_realtime",
+        "mask": "BASIC_STAGES | MONOCHROME"
+      }
+    ]
+  },
+  "extras": {
+    "names": [
+      "measure_tone",
+      "measure_flare",
+      "measure_flare_fast",
+      "decode",
+      "decode_realtime",
+      "halation_fields"
+    ]
+  }
+}
