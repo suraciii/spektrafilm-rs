@@ -991,6 +991,8 @@ pub fn validate_generated_document(kind: &str, v: &Value, root: &Path) -> Result
                         "stdout",
                         "stderr",
                     ] {
+                        let record = obj(req(ro, k)?)?;
+                        text(record, "path")?;
                         reference(req(ro, k)?)?
                     }
                     let layout = &row["raw"]["layout"];

@@ -48,6 +48,8 @@ Generated run and comparison readers may ignore unknown fields within a supporte
 
 Authored file paths must resolve relative to the document that contains them. Executable paths must be explicit paths, not commands resolved from `PATH`. Run and comparison artifact paths must be relative to their containing directory. Artifact paths must not contain an absolute root, parent traversal, or a symbolic link that escapes that directory. File dependencies outside the artifact directory may be consumed through authored paths but must be hashed and identified.
 
+The runner must retain bytes from the filesystem-resolved dependency path. It must preserve the absolute authored path separately for offline lookup, including parent components after symbolic links. Comparison must match that authored identity before looking up a lexically normalized identity from a historical run. Current-directory components must not distinguish equivalent authored paths. Neither lookup may resolve the original filesystem.
+
 ## Suite document
 
 A suite must contain `schema_version`, `id`, `protocol`, and a nonempty `cases` array. `id` must be a stable nonempty string. `protocol` must select `appearance-v1` and contain its declared `pixels_per_degree`, region sampling scales, grain residual and spectrum settings, and hotspot selection settings. Every protocol value that changes a measurement must contribute to the resolved protocol digest.
@@ -113,6 +115,8 @@ A run directory must contain `run.json`, the suite and target snapshots, resolve
 `run.json` must contain `schema_version`, `id`, `execution_status`, `suite`, `target`, `protocol`, `selection`, `dependencies`, `cases`, and `artifacts`. Document and dependency identities must use SHA-256. `selection` must state whether it covers the full suite.
 
 Each case result must identify case identity, seed, terminal status, input and output dimensions, configuration artifact, master artifact, diagnostics artifact, and errors when present. Actual backend, execution path, host precision, GPU precision, and adapter facts must come from observed diagnostics. Missing observations must remain unavailable.
+
+Completed case artifact references must be objects with an indexed `path`. A malformed required reference must return a structured command failure.
 
 The artifact index must identify relative path, content hash, media type, role, and dimensions or sample layout when applicable. All retained paths must resolve. Partial work must not be indexed as a complete master. A failed run must retain successfully completed cases and explicit failures, but must not be reused as a qualified baseline.
 

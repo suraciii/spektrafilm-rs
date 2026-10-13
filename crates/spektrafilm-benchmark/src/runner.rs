@@ -95,22 +95,10 @@ fn file_dependencies(
     target_path: &Path,
 ) -> Result<Vec<Value>> {
     fn dependency_path(value: &str, document: &Path) -> Result<PathBuf> {
-        documents::resolve_path(value, document)?;
-        let full = absolute(document)?
+        Ok(absolute(document)?
             .parent()
             .unwrap_or(Path::new("/"))
-            .join(value);
-        let mut normalized = PathBuf::new();
-        for component in full.components() {
-            match component {
-                std::path::Component::CurDir => {}
-                std::path::Component::ParentDir => {
-                    normalized.pop();
-                }
-                other => normalized.push(other),
-            }
-        }
-        Ok(normalized)
+            .join(value))
     }
     let mut paths = BTreeMap::<PathBuf, String>::new();
     paths.insert(
@@ -223,7 +211,8 @@ fn file_dependencies(
     paths
         .into_iter()
         .map(|(path, role)| {
-            Ok(json!({"path":path,"role":role,"sha256":common::sha256_file(&path)?}))
+            let resolved = documents::resolve_path(&path.to_string_lossy(), suite_path)?;
+            Ok(json!({"path":resolved,"source_path":path,"role":role,"sha256":common::sha256_file(&resolved)?}))
         })
         .collect()
 }
@@ -755,7 +744,7 @@ pub fn run(
                 text(dependency, "role")?,
                 json!({}),
             )?;
-            record["source_path"] = dependency["path"].clone();
+            record["source_path"] = dependency["source_path"].clone();
             retained.push(record);
         }
     }
@@ -813,4 +802,46 @@ pub fn run(
         result["errors"] = json!(errors);
     }
     Ok((result, if completed { 0 } else { 1 }))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symlink_parent_dependencies_keep_distinct_files_and_lookup_identities() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("actual/subdir")).unwrap();
+        std::os::unix::fs::symlink(root.join("actual/subdir"), root.join("linked-dir")).unwrap();
+        fs::write(root.join("actual/input.png"), b"resolved pixels").unwrap();
+        fs::write(root.join("input.png"), b"lexically adjacent pixels").unwrap();
+        fs::write(root.join("renderer"), b"renderer identity").unwrap();
+        let suite = json!({"cases":[{"input":{"path":"linked-dir/../input.png"},"configuration":{},"regions":[]},{"input":{"path":"input.png"},"configuration":{},"regions":[]}]});
+        let target = json!({"renderer":{"path":"renderer"},"changes":{}});
+        let dependencies = file_dependencies(
+            &suite,
+            &root.join("suite.json"),
+            &target,
+            &root.join("target.json"),
+        )
+        .unwrap();
+        let linked = dependencies
+            .iter()
+            .find(|row| row["source_path"] == json!(root.join("linked-dir/../input.png")))
+            .unwrap();
+        let local = dependencies
+            .iter()
+            .find(|row| row["source_path"] == json!(root.join("input.png")))
+            .unwrap();
+        assert_eq!(
+            linked["path"],
+            json!(root.join("actual/input.png").canonicalize().unwrap())
+        );
+        assert_eq!(
+            linked["sha256"],
+            json!(common::sha256_file(&root.join("actual/input.png")).unwrap())
+        );
+        assert_ne!(linked["sha256"], local["sha256"]);
+    }
 }

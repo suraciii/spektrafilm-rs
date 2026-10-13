@@ -484,3 +484,178 @@ fn raw_declaration_rejects_raster_fields_and_raster_rejects_raw_controls() {
         "inapplicable_field"
     );
 }
+
+#[test]
+fn malformed_run_file_record_returns_json_instead_of_panicking() {
+    let temp = TempDir::new().unwrap();
+    let a = temp.path().join("a");
+    retained_run(&a, 0.2, false);
+    let mut run = read(&a.join("run.json"));
+    run["cases"][0]["diagnostics"] = json!("diagnostics.json");
+    save_manifest(&a, "run.json", run);
+    let result = invoke(
+        &["validate", "--kind", "run"],
+        &[("--file", &a.join("run.json"))],
+        1,
+    );
+    assert_eq!(result["execution_status"], "failed");
+    assert_eq!(result["errors"][0]["code"], "document_type");
+    let out = temp.path().join("comparison");
+    assert_eq!(
+        compare(&a, &a, &out, 1)["errors"][0]["code"],
+        "document_type"
+    );
+    assert!(!out.exists());
+}
+
+#[test]
+fn protocol_tone_policy_remains_selected_with_empty_case_probe() {
+    let temp = TempDir::new().unwrap();
+    let a = temp.path().join("a");
+    retained_run(&a, 0.2, false);
+    let mut suite = read(&a.join("suite.json"));
+    suite["cases"][0]["measurements"] = json!(["tone"]);
+    suite["cases"][0]["probe"] = json!({});
+    suite["protocol"]["probe"] = json!({"tone_response":[{"exposure_stops":0.0,"geometry":[0,0,2,4]},{"exposure_stops":1.0,"geometry":[2,0,2,4]}]});
+    write(&a.join("suite.json"), &suite);
+    let mut run = read(&a.join("run.json"));
+    let hash = json!(common::sha256_file(&a.join("suite.json")).unwrap());
+    run["suite"]["sha256"] = hash.clone();
+    run["suite"]["digest"] = json!(common::digest(&suite).unwrap());
+    run["protocol"] = suite["protocol"].clone();
+    for artifact in run["artifacts"].as_array_mut().unwrap() {
+        if artifact["path"] == "suite.json" {
+            artifact["sha256"] = hash.clone();
+        }
+    }
+    save_manifest(&a, "run.json", run);
+    let p = temp.path().join("policy.json");
+    let mut value = policy(&p, &suite);
+    value["rules"][0]["metric"] = json!("tone.response.interval_0.linear_luminance.delta.slope");
+    write(&p, &value);
+    let out = temp.path().join("comparison");
+    let result = invoke(
+        &["compare", "--gate"],
+        &[
+            ("--baseline", &a),
+            ("--candidate", &a),
+            ("--policy", &p),
+            ("--out", &out),
+        ],
+        1,
+    );
+    assert_eq!(result["execution_status"], "completed");
+    assert_eq!(result["evaluation_status"], "insufficient_evidence");
+    let d = read(&out.join("comparison.json"));
+    assert_eq!(d["rules"][0]["status"], "passed");
+    assert_eq!(
+        measurement(
+            &d,
+            "full_image",
+            "tone.response.interval_0.linear_luminance.delta.slope"
+        )["value"],
+        0.0
+    );
+}
+
+#[test]
+fn reference_policy_requires_distance_suffix_and_corresponding_region() {
+    let temp = TempDir::new().unwrap();
+    let a = temp.path().join("a");
+    retained_run(&a, 0.2, true);
+    let mut suite = read(&a.join("suite.json"));
+    suite["cases"][0]["reference"] = json!({"id":"ref", "path":"input.png", "sha256":common::sha256_file(&a.join("input.png")).unwrap(), "scope":"regional", "color":{"color_space":"sRGB","cctf_decoding":true}, "provenance":{"source":"controlled fixture","attribution":"test","redistribution":"permitted","capture":"unknown","development":"unknown","digitization":"unknown"}, "processing":{"grading":"none","histogram_matching":"none","compression":"none","sharpening":"none","noise_reduction":"none","resampling":"none"}, "regions":suite["cases"][0]["regions"]});
+    write(&a.join("suite.json"), &suite);
+    let mut run = read(&a.join("run.json"));
+    let hash = json!(common::sha256_file(&a.join("suite.json")).unwrap());
+    run["suite"]["sha256"] = hash.clone();
+    run["suite"]["digest"] = json!(common::digest(&suite).unwrap());
+    for artifact in run["artifacts"].as_array_mut().unwrap() {
+        if artifact["path"] == "suite.json" {
+            artifact["sha256"] = hash.clone();
+        }
+    }
+    save_manifest(&a, "run.json", run);
+    let p = temp.path().join("policy.json");
+    for (i, (metric, region)) in [
+        ("reference.patch_delta_e00", "patch"),
+        ("reference.patch_delta_e00.seed_mean", "patch"),
+        ("reference.patch_delta_e00.candidate_distance", "full_image"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut value = policy(&p, &suite);
+        value["rules"][0]["metric"] = json!(metric);
+        value["rules"][0]["selector"]["region_id"] = json!(region);
+        write(&p, &value);
+        let out = temp.path().join(format!("invalid-{i}"));
+        let result = invoke(
+            &["compare"],
+            &[
+                ("--baseline", &a),
+                ("--candidate", &a),
+                ("--policy", &p),
+                ("--out", &out),
+            ],
+            1,
+        );
+        assert_eq!(result["errors"][0]["code"], "unresolved_metric");
+        assert!(!out.exists());
+    }
+    let mut value = policy(&p, &suite);
+    value["rules"][0]["metric"] = json!("reference.patch_delta_e00.distance_delta");
+    value["rules"][0]["selector"]["region_id"] = json!("patch");
+    write(&p, &value);
+    let out = temp.path().join("valid-reference");
+    let result = invoke(
+        &["compare", "--gate"],
+        &[
+            ("--baseline", &a),
+            ("--candidate", &a),
+            ("--policy", &p),
+            ("--out", &out),
+        ],
+        1,
+    );
+    assert_eq!(result["execution_status"], "completed");
+    assert_eq!(
+        read(&out.join("comparison.json"))["rules"][0]["status"],
+        "passed"
+    );
+}
+
+#[test]
+fn historical_parent_relative_and_current_directory_inputs_compare_offline() {
+    for input_path in ["../input.png", "./input.png"] {
+        let temp = TempDir::new().unwrap();
+        let a = temp.path().join("a");
+        retained_run(&a, 0.2, false);
+        let mut suite = read(&a.join("suite.json"));
+        suite["cases"][0]["input"]["path"] = json!(input_path);
+        write(&a.join("suite.json"), &suite);
+        let mut run = read(&a.join("run.json"));
+        if input_path.starts_with("..") {
+            run["suite"]["source_path"] = json!(temp.path().join("original/suite-dir/suite.json"));
+        }
+        let hash = json!(common::sha256_file(&a.join("suite.json")).unwrap());
+        run["suite"]["sha256"] = hash.clone();
+        run["suite"]["digest"] = json!(common::digest(&suite).unwrap());
+        for artifact in run["artifacts"].as_array_mut().unwrap() {
+            if artifact["path"] == "suite.json" {
+                artifact["sha256"] = hash.clone();
+            }
+        }
+        save_manifest(&a, "run.json", run);
+        let out = temp.path().join("comparison");
+        assert_eq!(compare(&a, &a, &out, 0)["execution_status"], "completed");
+        assert_eq!(
+            measurement(
+                &read(&out.join("comparison.json")),
+                "full_image",
+                "numeric.rmse"
+            )["value"],
+            0.0
+        );
+    }
+}

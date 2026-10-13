@@ -2316,8 +2316,11 @@ fn metric_definitions(case: &Value, region_id: &str, protocol: &Value) -> HashSe
                 ));
             }
             if region_id == "full_image" {
-                let probe = case.get("probe").unwrap_or(&protocol["probe"]);
-                let n = probe["tone_response"].as_array().map_or(0, Vec::len);
+                let points = case["probe"]
+                    .get("tone_response")
+                    .filter(|value| !value.is_null())
+                    .unwrap_or(&protocol["probe"]["tone_response"]);
+                let n = points.as_array().map_or(0, Vec::len);
                 for interval in 0..n.saturating_sub(1) {
                     for label in ["linear_luminance", "l_star"] {
                         definitions.insert(format!(
@@ -2395,10 +2398,12 @@ pub fn metric_supported_with_protocol(
         .or_else(|| metric.strip_suffix(".seed_std"))
         .unwrap_or(metric);
     if metric.starts_with("reference.") {
-        let base = ["baseline_distance", "candidate_distance", "distance_delta"]
+        let Some(base) = ["baseline_distance", "candidate_distance", "distance_delta"]
             .iter()
             .find_map(|side| metric.strip_suffix(&format!(".{side}")))
-            .unwrap_or(metric);
+        else {
+            return false;
+        };
         let reference = &case["reference"];
         return match reference["scope"].as_str() {
             Some("aligned_scene") => matches!(
@@ -2414,21 +2419,30 @@ pub fn metric_supported_with_protocol(
                     | "reference.tone_l_star.q95"
                     | "reference.chroma_ab.median"
             ),
-            Some("regional") => matches!(
-                base,
-                "reference.patch_delta_e00"
-                    | "reference.distribution_l_star"
-                    | "reference.patch_chroma_ab"
-            ),
-            Some("material") => base
-                .strip_prefix("reference.material.")
-                .is_some_and(|curve| {
-                    case["probe_response"]["curves"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .any(|row| row["id"].as_str() == Some(curve))
-                }),
+            Some("regional") => {
+                reference["regions"].as_array().is_some_and(|regions| {
+                    regions
+                        .iter()
+                        .any(|region| region["id"].as_str() == Some(region_id))
+                }) && matches!(
+                    base,
+                    "reference.patch_delta_e00"
+                        | "reference.distribution_l_star"
+                        | "reference.patch_chroma_ab"
+                )
+            }
+            Some("material") => {
+                region_id == "full_image"
+                    && base
+                        .strip_prefix("reference.material.")
+                        .is_some_and(|curve| {
+                            case["probe_response"]["curves"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .any(|row| row["id"].as_str() == Some(curve))
+                        })
+            }
             _ => false,
         };
     }

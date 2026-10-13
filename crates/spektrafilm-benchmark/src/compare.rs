@@ -170,13 +170,13 @@ fn retained_case(
     let authored = Path::new(text(&run["suite"], "source_path")?);
     let dependencies: BTreeMap<_, _> = array(run, "dependencies")?
         .iter()
-        .filter_map(|row| row["source_path"].as_str().map(|s| (s, row)))
+        .filter_map(|row| row["source_path"].as_str().map(|s| (Path::new(s), row)))
         .collect();
     let case_id = text(case, "id")?;
     let provenance = case["reference"]["provenance"].clone();
     struct Context<'a> {
         authored: &'a Path,
-        dependencies: &'a BTreeMap<&'a str, &'a Value>,
+        dependencies: &'a BTreeMap<&'a Path, &'a Value>,
         run_root: &'a Path,
         root: &'a Path,
         case_id: &'a str,
@@ -191,17 +191,19 @@ fn retained_case(
         match item {
             Value::Object(map) => {
                 if let Some(path) = map.get("path").and_then(Value::as_str) {
-                    // Resolve lexically; original files are deliberately not required by compare.
-                    let original = lexical_absolute(
-                        &context
-                            .authored
-                            .parent()
-                            .unwrap_or(Path::new("."))
-                            .join(path),
-                    );
+                    let original = context
+                        .authored
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .join(path);
                     let dependency = context
                         .dependencies
-                        .get(original.to_string_lossy().as_ref())
+                        .get(original.as_path())
+                        .or_else(|| {
+                            context
+                                .dependencies
+                                .get(lexical_absolute(&original).as_path())
+                        })
                         .ok_or_else(|| {
                             Error::new(
                                 "missing_dependency",
