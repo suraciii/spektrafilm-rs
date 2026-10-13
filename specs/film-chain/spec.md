@@ -10,7 +10,7 @@
 - [Material controls and output composition](../material-response/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
-- CPU f64 is the reference and export path. WGPU f32 is an interactive or explicitly selected fast path; it may use CPU stages for unsupported effects and is not f64 reference output.
+- Execution policy and CPU/GPU algorithm alignment follow [GPU execution](../gpu-execution/spec.md). CPU f64 remains the numerical reference; GPU execution must cover the selected chain without replacing its model.
 - The chain preserves floating headroom until a bounded image writer clips and encodes it.
 - Invalid color spaces, routes, dimensions, crops, resize factors, and effect parameters fail before a final output is written.
 
@@ -32,7 +32,7 @@ The [Digital Reference contract](digital-reference.md) defines a common referenc
 2. GUI controls must display `Preserve medium polarity` for `direct_scan`, `Negative to positive` for `negative_to_positive`, and `Negative conversion method` for `scanner.positive_interpretation`.
 3. Replacing the removed value with `negative_to_positive` must preserve pixels, defaults, route eligibility, correction precedence, and execution backend for identical inputs and controls. Verify density, separable, coupled, direct-negative, reversal-film, and paper paths with the same executable precision.
 4. Removed-value rejection must occur before output publication. A failed GUI import must retain the accepted parameters and image.
-5. Conversion telemetry must report stage `negative_to_positive` and CPU/resident-decline reason `negative_to_positive_output`. Other telemetry fields and schema versions retain their contracts.
+5. Conversion telemetry must identify stage `negative_to_positive` and its actual executor under [Telemetry](../telemetry/metrics.md#effective-configuration). Selecting this mode must not require a CPU reason or a resident decline.
 
 ## Scan medium and scanner controls
 
@@ -166,7 +166,7 @@ The [Print exposure composition](../material-response/design.md#print-exposure-c
   after negative conversion. Output gamut compression, unsharp mask,
   transfer encoding, and output handoff run after scanner finishing.
 - `negative_to_positive` rejects scanner white/black correction and active Procedural grain.
-  It uses the CPU per-stage backend; resident WGPU execution is not eligible.
+  Its execution follows [GPU execution](../gpu-execution/spec.md#backend-selection); conversion selection must not force CPU.
 
 ## Scanner acceptance
 
@@ -183,4 +183,4 @@ The [Print exposure composition](../material-response/design.md#print-exposure-c
 - Receiver, interpretation, setup, and finish combinations that the selected route or medium cannot support must fail before output publication and must produce the same validation result for GUI, CLI dry run, and rendering.
 - A nonuniform bright-edge capture and an active nonlinear downstream transform must distinguish blur-before-interpretation from blur-after-interpretation. Cover native negative, slide with identity and nonidentity points, print scan, and admitted positive interpretation. Zero blur must preserve the corresponding no-blur result; uniform fields must remain uniform with blur active.
 - Changing only print viewing glare must leave film and print density unchanged and alter the linear readout before downstream correction. With glare disabled, spatially varying glare must not leak into calibration or other routes.
-- CPU f64, native-f32, resident, per-stage, Preview, and Export must use the same optical order. Unsupported resident order must select a faithful route before dispatch, not append blur to an already interpreted image. Cropped and tiled readout must include the required optical context and match full-frame readout within measured budgets.
+- CPU f64, native-f32, resident, per-stage, Preview, and Export must use the same optical order. A GPU request must implement that order or fail under [GPU execution](../gpu-execution/spec.md#backend-selection), not append blur to an already interpreted image. Cropped and tiled readout must include the required optical context and match full-frame readout within measured budgets.

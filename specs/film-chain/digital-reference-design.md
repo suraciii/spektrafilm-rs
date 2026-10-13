@@ -44,7 +44,7 @@ Unblurred capture uses base-10 logarithmic spectral integration to retain finite
 
 Each prepared reference configuration must retain SHA-256 identities of both runtime-resolved source files and the model version. Missing or invalid source data, a singular matrix, a nonpositive anchor, or nonfinite input must fail explicitly. The diagnostic exact-cell capture path must reject reference conversion before rendering because it uses a different capture representation.
 
-CPU f64 is the numerical reference. Native-f32 comparisons must use measured budgets recorded with acceptance evidence. The existing negative-conversion CPU fallback supplies faithful reference execution when a GPU backend is selected.
+CPU f64 is the numerical reference. Native-f32 and GPU comparisons must use measured budgets recorded with acceptance evidence under [GPU numerical alignment](../gpu-execution/design.md#numerical-alignment). Reference conversion must execute on the requested backend without a conversion-specific CPU override.
 
 ### Additional placements and controls
 

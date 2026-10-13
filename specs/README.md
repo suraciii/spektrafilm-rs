@@ -5,6 +5,7 @@
 Capabilities:
 
 - [Film chain](film-chain/spec.md) — spectral film, print, and scan processing.
+- [GPU execution](gpu-execution/spec.md) — GPU-first full image computation, device residency, CPU reference alignment, and hardware acceptance.
 - [Digital Reference scan](film-chain/digital-reference.md) — common modeled reference conversion within Scan, with fixed Reference Exposure placement.
 - [Material controls and output composition](material-response/spec.md) — final control scope: reuse preflash and chemistry, retire Output lightness compression, and mix the complete result with its prepared source.
 - [Magazine print color](magazine-print-color/spec.md) — optional magazine-style RGB finishing for scanned or completed images.

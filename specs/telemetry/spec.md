@@ -10,7 +10,7 @@ Each collected operation must have one terminal record. The record must identify
 
 The record must distinguish the requested backend, selected compute backend, actual execution path, and numerical precision. A selected WGPU adapter must not imply that all stages ran on the GPU. Software adapters must be identified as software adapters. GUI presentation and film simulation must identify separate devices when they use separate devices.
 
-The record must identify why resident execution was declined and which stages used CPU execution. A request for an unsupported measurement must report its availability. An unavailable measurement must not be represented as zero or estimated from another duration.
+When the historical fused resident route is evaluated and declined, the record must identify why. The record must identify which image stages actually used CPU execution. A CPU reason must identify CPU image work that ran; backend selection, effect selection, host orchestration, or image-independent preparation alone must not imply CPU image execution. A request for an unsupported measurement must report its availability. An unavailable measurement must not be represented as zero or estimated from another duration.
 
 ## Local surfaces
 
@@ -34,9 +34,9 @@ A report must contain a schema version, application build identity, operation id
 
 A failure before loading, parameter resolution, or device selection must retain only the configuration observed before failure. Required fields that were not reached must report availability rather than guess their values.
 
-Summary collection must include operation duration, phase durations, execution path, fallback reasons, logical GPU transfers, submissions, and dispatches. GPU timestamp collection must be explicit. CPU profiling, driver profiling, and operating-system memory sampling are separate measurements; summary collection must not claim to supply them.
+Summary collection must include operation duration, phase durations, execution path, actual routing and CPU-stage reasons, logical GPU transfers, submissions, and dispatches. GPU timestamp collection must be explicit. CPU profiling, driver profiling, and operating-system memory sampling are separate measurements; summary collection must not claim to supply them.
 
-Reports must remain valid for CPU execution, WGPU resident execution, and WGPU per-stage execution with CPU stages. Save must report writing costs without claiming a new simulation. A report must distinguish render output configuration from file saving configuration.
+Reports must remain valid for historical and explicit CPU execution, WGPU resident execution, and WGPU per-stage execution with CPU or GPU stages. Save must report writing costs without claiming a new simulation. A report must distinguish render output configuration from file saving configuration.
 
 ## Privacy and failure
 
@@ -50,7 +50,9 @@ Recoverable collection and report persistence failures must not fail an image op
 
 With identical inputs and effective parameters, enabling summary collection must preserve output pixels and publication outcomes. Enabling GPU timestamps must preserve the same image passes and execution route.
 
-Resident and per-stage scenarios must show different observed GPU boundary counts. A Grain V1 scenario must identify its CPU grain stage even when WGPU is selected. A Grain V2 resident scenario must identify the actual dispatched grain pass. Film-coordinate grain must identify its own CPU stage: a Dye scenario must publish its field stage, and a Fotufilm Film scenario must publish `grain_fotufilm` with its CPU reason in both per-stage execution and a resident-chain decline. CPU-only execution must report zero observed GPU work and unavailable GPU timestamp measurements.
+Resident and per-stage scenarios must show different observed GPU boundary counts. A Grain V1 or film-coordinate grain scenario that actually executes CPU image sampling must identify that CPU work and its reason, including a Dye field stage or `grain_fotufilm` when applicable; selecting an engine alone must not force a CPU-stage reason or resident decline. A Grain V2 resident scenario must identify the actual dispatched grain pass. GPU execution of supported grain stages must be reported as GPU work. CPU-only execution must report zero observed GPU work and unavailable GPU timestamp measurements.
+Telemetry acceptance must also verify negative conversion and active slide film points against their actual executors: GPU execution must be reported as GPU work without a forced CPU reason, while CPU execution retains its applicable existing reason. Historical CPU and mixed reports remain valid.
+Full-GPU evidence must cover all in-scope image computation, including RAW numerical stages after native decoding, image and grain preparation, negative conversion, saving conversion, and viewer/display transforms. A report's `gpu_resident` path, backend identity, declarations, or dispatches alone must not establish this coverage. Reports must be paired with explicit executor evidence for covered work; unobserved or truncated work remains unproven. Follow the [GPU execution contract](../gpu-execution/spec.md#computation-scope), its [backend selection](../gpu-execution/spec.md#backend-selection), [algorithm alignment](../gpu-execution/spec.md#algorithm-alignment), and [acceptance](../gpu-execution/spec.md#acceptance) rules, and the [device residency](../gpu-execution/design.md#device-residency), [numerical alignment](../gpu-execution/design.md#numerical-alignment), and [stochastic alignment](../gpu-execution/design.md#stochastic-alignment) design.
 
 Concurrent GUI render and export operations must keep separate records. Superseded previews must not replace the diagnostics attached to the accepted output. Cancellation and write failure must produce the correct terminal record without publishing a successful Export record.
 

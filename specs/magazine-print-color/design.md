@@ -39,7 +39,7 @@ The study compared bounded display samples. Production headroom handling must be
 - Switching base workflows must retain Magazine settings. Enabling Magazine must not switch negative scan polarity or choose photographic paper.
 - Finished RGB must not require changing the film, paper, exposure, scanner, or grain controls, and their saved values must remain intact. The UI must state that the resolved film and print profiles are unused by Finished RGB.
 - The UI must distinguish a native negative-polarity scan from a positive interpretation. Magazine print must not implicitly invert a negative image.
-- Preview and Export use one finishing definition. Unsupported WGPU execution must use faithful CPU processing, not a disabled effect or an old appearance.
+- Preview and Export use one finishing definition. Backend execution and alignment follow [GPU execution](../gpu-execution/spec.md). An unsupported GPU operation must not disable the effect, select an old appearance, or conceal CPU image processing.
 - LUT metadata must record the base route and active finishing definition independently. Color Strength is bakeable; spatial print structure is not.
 
 ## Alternatives

@@ -4,7 +4,7 @@
 
 - The GUI exposes controls for input, film, print, scanner, output, advanced color, and configuration.
 - Preview renders a bounded disposable image. Scan renders the original working resolution. Both use the current runtime controls.
-- Save writes retained output. Export re-renders through the selected CPU f64 or WGPU f32 backend and exposes cancellation.
+- Save writes retained output. Export re-renders through the selected backend and exposes cancellation. Render, saving-conversion, and viewer execution follow [GPU execution](../gpu-execution/spec.md); selecting CPU does not imply a precision different from the actual build.
 - Startup controls may be saved and restored. Removing the startup default restores the factory profile.
 - Viewer-only state, such as zoom, interpolation, reveal, and canvas presentation, must not alter saved or exported pixels.
 
