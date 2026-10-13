@@ -5,6 +5,9 @@ use spektrafilm_benchmark::{
     compare, documents, report,
 };
 use std::{fs, path::Path};
+
+#[path = "support/progress.rs"]
+mod progress;
 fn write(path: &Path, value: &Value) {
     common::dump(path, value).unwrap();
 }
@@ -263,6 +266,13 @@ fn cli_report_opens_unaligned_reference_as_side_views() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let _: Value = serde_json::from_slice(&output.stdout).unwrap();
+        if command == "compare" {
+            let manifest: Value =
+                serde_json::from_slice(&fs::read(comparison.join("comparison.json")).unwrap())
+                    .unwrap();
+            progress::assert_case_seed_progress(&output.stderr, "compare", &manifest);
+        }
     }
     let snapshot = documents::load_json_document(&report.join("comparison.json")).unwrap();
     assert_eq!(snapshot["default_pair"], "reference");

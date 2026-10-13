@@ -14,7 +14,7 @@ This is a Rust port of [andreavolpato/spektrafilm](https://github.com/andreavolp
 - **Process in batch.** `spektrafilm` is the fast f32 processor and `spektrafilm-f64` is the CPU reference exporter; both keep floating samples in float TIFF/EXR, copy source EXIF/IPTC/XMP to non-EXR output, and write color tags or ICC profiles. See [the CLI guide](docs/cli.md).
 - **Choose a grain engine.** Spektra, Procedural (Dehancer-derived), Dye and Fotufilm Film are selectable, each with its own controls and defaults. See [grain engines](docs/grain.md).
 - **Deliver LUTs for a camera.** Bake deterministic bundles for Panasonic V-Log with CUBE, 3DL, Hald, OCIO and QA artifacts. See [LUT delivery](docs/luts.md).
-- **Compare versions.** `spektrafilm-bench` renders immutable evidence from color, tone, FLIP, grain, halation and edge measurements and builds an offline review. See [the appearance benchmark](docs/benchmark.md).
+- **Compare versions.** `spektrafilm-bench` renders immutable evidence from color, tone, FLIP, grain, halation and edge measurements. Read retained measurements through `inspect`, then use `report` for an offline visual review. See [the appearance benchmark](docs/benchmark.md).
 - **Decode camera RAW.** `decode_raw_gui` shares the native LibRaw and Lensfun path with the pipeline and writes linear ACES2065-1 TIFF. See [RAW decoding](docs/raw.md).
 
 ## Build

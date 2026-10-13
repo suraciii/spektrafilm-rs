@@ -185,9 +185,125 @@ pub fn dump(path: &Path, value: &Value) -> Result<()> {
     output.write_all(b"\n")?;
     Ok(())
 }
+pub fn destination_exists(path: &Path) -> Error {
+    Error::new(
+        "destination_exists",
+        format!(
+            "Destination already exists: {}; choose a new destination or remove the existing destination before retrying",
+            path.display()
+        ),
+    )
+    .at(path.display().to_string())
+    .boundary("publication")
+}
+
+/// Report that an operation retained evidence but did not publish its terminal manifest.
+///
+/// A failed terminal manifest is a valid, published record and is deliberately not
+/// described as incomplete. This helper is only used after a destination has been
+/// created and an operation fails before its terminal manifest is written.
+pub fn incomplete_destination(mut error: Error, root: &Path, manifest: &str) -> Error {
+    if error.code == "destination_exists" {
+        return error;
+    }
+    let terminal = root.join(manifest);
+    if root.is_dir() && !terminal.is_file() {
+        error.message = format!(
+            "{}; destination {} is incomplete evidence because {} was not published; partial evidence was retained. Remove it or choose a new destination before retrying",
+            error.message,
+            root.display(),
+            manifest,
+        );
+    }
+    error
+}
+
+pub struct Progress<'a> {
+    operation: &'static str,
+    active: Option<(&'a str, u64, std::time::Instant)>,
+    started: std::time::Instant,
+    completed: usize,
+    failed: usize,
+    summarized: bool,
+}
+
+impl<'a> Progress<'a> {
+    pub fn new(operation: &'static str) -> Self {
+        Self {
+            operation,
+            active: None,
+            started: std::time::Instant::now(),
+            completed: 0,
+            failed: 0,
+            summarized: false,
+        }
+    }
+
+    pub fn start(&mut self, case_id: &'a str, seed: u64) -> std::time::Instant {
+        eprintln!("Starting {} {} seed {}", self.operation, case_id, seed);
+        let started = std::time::Instant::now();
+        self.active = Some((case_id, seed, started));
+        started
+    }
+
+    pub fn finish(&mut self, case_id: &str, seed: u64, status: &str, started: std::time::Instant) {
+        self.active = None;
+        if matches!(status, "completed" | "validated") {
+            self.completed += 1;
+        } else {
+            self.failed += 1;
+        }
+        eprintln!(
+            "Completed {} {} seed {}: status={} elapsed_seconds={:.3}",
+            self.operation,
+            case_id,
+            seed,
+            status,
+            started.elapsed().as_secs_f64()
+        );
+    }
+
+    pub fn summary_rows(&mut self, rows: &[Value]) {
+        self.completed = rows
+            .iter()
+            .filter(|row| matches!(row["status"].as_str(), Some("completed" | "validated")))
+            .count();
+        self.failed = rows
+            .iter()
+            .filter(|row| !matches!(row["status"].as_str(), Some("completed" | "validated")))
+            .count();
+        self.summary();
+    }
+
+    pub fn summary(&mut self) {
+        if self.summarized {
+            return;
+        }
+        self.summarized = true;
+        eprintln!(
+            "{} summary: completed={} failed={} elapsed_seconds={:.3}",
+            self.operation,
+            self.completed,
+            self.failed,
+            self.started.elapsed().as_secs_f64()
+        );
+    }
+}
+
+impl Drop for Progress<'_> {
+    fn drop(&mut self) {
+        if let Some((case_id, seed, started)) = self.active.take() {
+            self.finish(case_id, seed, "failed", started);
+        }
+        if !self.summarized {
+            self.summary();
+        }
+    }
+}
+
 pub fn create_destination(path: &Path) -> Result<()> {
     if fs::symlink_metadata(path).is_ok() {
-        return Err(Error::new("destination_exists", path.display().to_string()));
+        return Err(destination_exists(path));
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

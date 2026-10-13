@@ -4,6 +4,14 @@ The external `spektrafilm-bench` CLI renders immutable evidence, compares versio
 
 The [benchmark specification](../specs/benchmark/spec.md) defines reference scopes and qualification rules.
 
+Choose the path for the task:
+
+- Compare versions: generate one bundle, run baseline and candidate targets with that bundle, then use `compare`, `inspect`, and `report`.
+- Review one image: use `run --input`, then `compare --run --against input` and `report`. Add a declared reference to review against it.
+- Check a new configuration: use `run --dry-run` before rendering. Read its grouped errors and retained renderer logs before changing the configuration.
+
+The agent prepares the evidence and reads the measurements. The reviewer opens `index.html` to inspect full images and native crops. Baseline selection and calibrated policy budgets remain explicit decisions.
+
 ## Generate and compare suite evidence
 
 Build the native benchmark tools. Generate fixtures outside the repository. The optional pinned Kodak DC50 RAW has its own attribution and license in the generated `provenance.json`; the repository does not distribute that original.
@@ -144,7 +152,9 @@ Add `--dry-run` to either run form with a new destination to resolve every selec
 
 ## Inspect a comparison
 
-`inspect` reads a validated comparison without computing metrics. Repeat `--case`, `--region`, and `--metric` for exact selection; unknown selections report available identities. Its compact records preserve units, domains, unavailable reasons, and evidence links relative to `artifact_base`. Per-seed/pair `measurements` and cross-seed `seed_measurements` remain separate. The retained comparison's execution and evaluation states remain visible, including failures; inspection never produces a universal appearance score.
+Use `inspect` to read measurements instead of parsing `comparison.json`. Version comparisons store measurements on case records; single-run comparisons store them on pair records. `inspect` exposes both as one top-level `measurements` array with the same fields. Single-run rows also carry `pair_id`.
+
+Repeat `--case`, `--region`, and `--metric` for exact selection; unknown selections report available identities. The compact records preserve units, domains, unavailable reasons, and evidence links relative to `artifact_base`. Per-seed/pair `measurements` and cross-seed `seed_measurements` remain separate. The retained comparison's execution and evaluation states remain visible, including failures; inspection never produces a universal appearance score.
 
 ## Use camera RAW and prepared inputs
 
@@ -169,6 +179,10 @@ Case, pair, and region links preserve exact identities in the report fragment, f
 ## Read command results and gates
 
 Each parsed command emits one JSON result on stdout. Diagnostic messages use stderr. Status `2` indicates argument syntax errors; status `1` indicates validation, execution, publication, or requested gate failure. Use `schema --kind suite|target|policy|run|comparison` to discover carriers. `compare --policy FILE --gate` publishes the comparison before returning failure for a non-pass evaluation. The supplied exploratory policy must not qualify acceptance. A calibrated policy must bind the digest emitted by suite validation and supply reviewed calibration evidence.
+
+`run` and `compare` write each case-seed start and completion to stderr. Completion includes its status and elapsed seconds; the final summary reports completed and failed items and total elapsed seconds. Keep stderr separate when reading JSON stdout.
+
+Every publication destination must be new. If a destination already exists, choose another destination or remove the existing one after reviewing its contents. A directory left without its terminal manifest is incomplete. A published failed manifest retains its completed items and errors, but does not qualify as a baseline. A gate failure preserves the completed comparison, so inspect it before retrying.
 
 ## Understand fixture coverage
 

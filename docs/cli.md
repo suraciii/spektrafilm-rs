@@ -62,6 +62,16 @@ The [CLI parameter contract](../specs/cli/spec.md) defines parameter editing.
 ```
 
 `--dry-run` prints effective runtime controls, writer options, profile names, and the requested backend policy.
+Omit `--output` when checking parameters without choosing a destination. The report keeps `output.path` as `null`; `output.format` is also `null` unless `--format` is supplied. A normal process invocation still requires a destination.
+Without a format, container-specific defaults such as bit depth and compression remain `null`. Supply `--format` to validate codec-specific options such as JPEG quality or compression.
+
+```bash
+./target/release/spektrafilm-f64 process input.png \
+    --preset 'built-in:Kodak Gold 200' \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --dry-run --data-dir data
+```
+
 It checks the input path and supported file kind.
 Image decoding and compute-adapter availability remain unchecked.
 Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.

@@ -7,6 +7,9 @@ use spektrafilm_benchmark::{
 use std::{fs, path::Path, process::Command};
 use tempfile::TempDir;
 
+#[path = "support/progress.rs"]
+mod progress;
+
 fn invoke(args: &[&str], paths: &[(&str, &Path)], code: i32) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"));
     command.args(args);
@@ -21,7 +24,19 @@ fn invoke(args: &[&str], paths: &[(&str, &Path)], code: i32) -> Value {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_slice(&output.stdout).unwrap()
+    let result = serde_json::from_slice(&output.stdout).unwrap();
+    if args.first() == Some(&"compare") {
+        let destination = paths
+            .iter()
+            .find(|(option, _)| *option == "--out")
+            .unwrap()
+            .1;
+        let manifest = destination.join("comparison.json");
+        if manifest.is_file() {
+            progress::assert_case_seed_progress(&output.stderr, "compare", &read(&manifest));
+        }
+    }
+    result
 }
 fn read(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
@@ -367,6 +382,81 @@ fn nonfinite_master_fails_compare_without_gate() {
     assert_eq!(d["cases"][0]["status"], "failed");
     assert_ne!(d["evaluation_status"], "passed");
     validate(&out, "comparison.json", 0);
+}
+
+#[test]
+fn failed_render_comparison_keeps_execution_finding_and_progress() {
+    let temp = TempDir::new().unwrap();
+    let baseline = temp.path().join("baseline");
+    let candidate = temp.path().join("candidate");
+    retained_run(&baseline, 0.2, false);
+    retained_run(&candidate, 0.3, false);
+    let mut failed = read(&candidate.join("run.json"));
+    failed["execution_status"] = json!("failed");
+    failed["cases"][0]["status"] = json!("failed");
+    failed["cases"][0]["error"] =
+        json!({"code":"render_failed","message":"renderer rejected the input"});
+    save_manifest(&candidate, "run.json", failed);
+    let out = temp.path().join("comparison");
+    let result = compare(&baseline, &candidate, &out, 1);
+    assert_eq!(result["execution_status"], "failed");
+    let retained = read(&out.join("comparison.json"));
+    let finding = retained["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["metric"] == "execution")
+        .unwrap();
+    assert_eq!(finding["case_id"], "probe");
+    assert_eq!(finding["seed"], 0);
+    assert_eq!(finding["decision"], "failed");
+    let evidence_path = finding["evidence"][0].as_str().unwrap();
+    let failure = read(&out.join(evidence_path));
+    assert_eq!(failure["candidate"]["error"]["code"], "render_failed");
+    validate(&out, "comparison.json", 0);
+}
+
+#[test]
+fn undecodable_master_reports_failed_progress_and_retains_incomplete_destination() {
+    let temp = TempDir::new().unwrap();
+    let run = temp.path().join("run");
+    retained_run(&run, 0.2, false);
+    let mut manifest = read(&run.join("run.json"));
+    fs::rename(run.join("master.f64"), run.join("master.npy")).unwrap();
+    manifest["cases"][0]["raw"]["path"] = json!("master.npy");
+    for artifact in manifest["artifacts"].as_array_mut().unwrap() {
+        if artifact["path"] == "master.f64" {
+            artifact["path"] = json!("master.npy");
+        }
+    }
+    save_manifest(&run, "run.json", manifest);
+    let out = temp.path().join("comparison");
+    let output = Command::new(env!("CARGO_BIN_EXE_spektrafilm-bench"))
+        .arg("compare")
+        .arg("--baseline")
+        .arg(&run)
+        .arg("--candidate")
+        .arg(&run)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["execution_status"], "failed");
+    assert!(
+        result["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("incomplete")
+    );
+    assert!(out.is_dir());
+    assert!(!out.join("comparison.json").exists());
+    progress::assert_case_seed_progress(
+        &output.stderr,
+        "compare",
+        &json!({"cases":[{"case_id":"probe","seed":0,"status":"failed"}]}),
+    );
 }
 
 #[test]

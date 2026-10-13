@@ -1,6 +1,6 @@
 use crate::{
     Error, Result,
-    common::{self, Evidence},
+    common::{self, Evidence, Progress},
     documents,
 };
 use serde_json::{Value, json};
@@ -781,22 +781,24 @@ struct RenderContext<'a> {
     root: &'a Path,
     evidence: &'a mut Evidence,
 }
-fn render_cases(
-    suite: &Value,
+fn render_cases<'a>(
+    suite: &'a Value,
     selected: &[String],
     context: &mut RenderContext,
     rows: &mut Vec<Value>,
+    progress: &mut Progress<'a>,
 ) -> Result<()> {
     for case in array(suite, "cases")? {
-        if !selected.contains(&text(case, "id")?.to_owned()) {
+        let case_id = text(case, "id")?;
+        if !selected.contains(&case_id.to_owned()) {
             continue;
         }
         for seed in array(case, "seeds")? {
             let seed = seed
                 .as_u64()
                 .ok_or_else(|| Error::new("invalid_seed", "Seed must be unsigned"))?;
-            eprintln!("Rendering {} seed {seed}", text(case, "id")?);
-            match run_case(
+            let started = progress.start(case_id, seed);
+            let row = match run_case(
                 case,
                 seed,
                 context.suite_path,
@@ -805,13 +807,14 @@ fn render_cases(
                 context.root,
                 context.evidence,
             ) {
-                Ok(row) => rows.push(row),
+                Ok(row) => row,
                 Err(error) => {
-                    let error = error.at(text(case, "id")?);
-                    rows.push(json!({"case_id":text(case, "id")?,"seed":seed,"status":"failed","error":error.to_value()}));
-                    break;
+                    json!({"case_id":case_id,"seed":seed,"status":"failed","error":error.at(case_id).to_value()})
                 }
-            }
+            };
+            let status = row["status"].as_str().unwrap_or("failed").to_owned();
+            progress.finish(case_id, seed, &status, started);
+            rows.push(row);
         }
     }
     Ok(())
@@ -841,11 +844,12 @@ pub fn preflight_suite(
     execute_suite(suite, suite_path, target_path, out, selections, true)
 }
 
-fn preflight_cases(
-    suite: &Value,
+fn preflight_cases<'a>(
+    suite: &'a Value,
     selected: &[String],
     context: &mut RenderContext,
     rows: &mut Vec<Value>,
+    progress: &mut Progress<'a>,
 ) -> Result<()> {
     for case in array(suite, "cases")? {
         let case_id = text(case, "id")?;
@@ -856,17 +860,24 @@ fn preflight_cases(
             let seed = seed
                 .as_u64()
                 .ok_or_else(|| Error::new("invalid_seed", "Seed must be unsigned"))?;
+            let started = progress.start(case_id, seed);
             let folder = context
                 .root
                 .join("cases")
                 .join(case_id)
                 .join(format!("seed-{seed}"));
-            fs::create_dir_all(&folder)?;
             let mut row = json!({"case_id":case_id,"seed":seed,"status":"failed","environment":renderer_environment(context.target,&folder).1});
-            match check_configuration(case, seed, context, &folder, &mut row) {
-                Ok(_) => row["status"] = json!("validated"),
-                Err(error) => row["error"] = error.at(case_id).to_value(),
+            let result = (|| -> Result<()> {
+                fs::create_dir_all(&folder)?;
+                check_configuration(case, seed, context, &folder, &mut row)?;
+                row["status"] = json!("validated");
+                Ok(())
+            })();
+            if let Err(error) = result {
+                row["error"] = error.at(case_id).to_value();
             }
+            let status = row["status"].as_str().unwrap_or("failed").to_owned();
+            progress.finish(case_id, seed, &status, started);
             rows.push(row);
         }
     }
@@ -990,123 +1001,143 @@ fn execute_suite(
     let data_root = documents::resolve_path(text(&target, "data_dir")?, &target_path)?;
     let root = absolute(out)?;
     common::create_destination(&root)?;
-    let mut evidence = Evidence::new(&root);
-    let inventory = tree_inventory(&data_root).map_err(|e| e.at(data_root.display().to_string()));
-    common::dump(&root.join("suite.json"), &suite)?;
-    common::dump(&root.join("target.json"), &target)?;
-    let suite_record = evidence.add(
-        &root.join("suite.json"),
-        "suite",
-        "application/json",
-        json!({"digest":common::digest(&suite)?,"id":suite["id"],"source_path":suite_path}),
-    )?;
-    let target_record = evidence.add(
-        &root.join("target.json"),
-        "target",
-        "application/json",
-        json!({"digest":common::digest(&target)?,"id":target["id"],"source_path":target_path}),
-    )?;
-    let mut retained = Vec::new();
-    for (i, dependency) in dependencies.iter().enumerate() {
-        if dependency["role"] == "renderer" {
-            retained.push(dependency.clone());
-        } else {
-            let source = Path::new(text(dependency, "path")?);
-            let ext = source
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| format!(".{s}"))
-                .unwrap_or_default();
-            let mut record = evidence.copy(
-                source,
-                &format!("dependencies/{i:04}{ext}"),
-                text(dependency, "role")?,
-                json!({}),
-            )?;
-            record["source_path"] = dependency["source_path"].clone();
-            if dependency["role"] == "correspondence_review" {
-                record["resolved_source_path"] = dependency["path"].clone();
-            }
-            retained.push(record);
-        }
-    }
-    if let Ok(inventory) = &inventory {
-        common::dump(&root.join("data-inventory.json"), inventory)?;
-        retained.push(evidence.add(
-            &root.join("data-inventory.json"),
-            "data_inventory",
+    let result = (|| -> Result<(Value, i32)> {
+        let mut evidence = Evidence::new(&root);
+        let inventory =
+            tree_inventory(&data_root).map_err(|e| e.at(data_root.display().to_string()));
+        common::dump(&root.join("suite.json"), &suite)?;
+        common::dump(&root.join("target.json"), &target)?;
+        let suite_record = evidence.add(
+            &root.join("suite.json"),
+            "suite",
             "application/json",
-            json!({}),
-        )?);
-    }
-    let mut rows = Vec::new();
-    let mut context = RenderContext {
-        suite_path: &suite_path,
-        target: &target,
-        target_path: &target_path,
-        root: &root,
-        evidence: &mut evidence,
-    };
-    if dry_run {
-        preflight_cases(&suite, &selected, &mut context, &mut rows)?;
-    } else {
-        render_cases(&suite, &selected, &mut context, &mut rows)?;
-    }
-    if let Err(error) = &inventory {
-        for row in &mut rows {
-            if row["status"] == "completed" || row["status"] == "validated" {
+            json!({"digest":common::digest(&suite)?,"id":suite["id"],"source_path":suite_path}),
+        )?;
+        let target_record = evidence.add(
+            &root.join("target.json"),
+            "target",
+            "application/json",
+            json!({"digest":common::digest(&target)?,"id":target["id"],"source_path":target_path}),
+        )?;
+        let mut retained = Vec::new();
+        for (i, dependency) in dependencies.iter().enumerate() {
+            if dependency["role"] == "renderer" {
+                retained.push(dependency.clone());
+            } else {
+                let source = Path::new(text(dependency, "path")?);
+                let ext = source
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| format!(".{s}"))
+                    .unwrap_or_default();
+                let mut record = evidence.copy(
+                    source,
+                    &format!("dependencies/{i:04}{ext}"),
+                    text(dependency, "role")?,
+                    json!({}),
+                )?;
+                record["source_path"] = dependency["source_path"].clone();
+                if dependency["role"] == "correspondence_review" {
+                    record["resolved_source_path"] = dependency["path"].clone();
+                }
+                retained.push(record);
+            }
+        }
+        if let Ok(inventory) = &inventory {
+            common::dump(&root.join("data-inventory.json"), inventory)?;
+            retained.push(evidence.add(
+                &root.join("data-inventory.json"),
+                "data_inventory",
+                "application/json",
+                json!({}),
+            )?);
+        }
+        let mut rows = Vec::new();
+        let mut progress = Progress::new("run");
+        let mut context = RenderContext {
+            suite_path: &suite_path,
+            target: &target,
+            target_path: &target_path,
+            root: &root,
+            evidence: &mut evidence,
+        };
+        let processing = if dry_run {
+            preflight_cases(&suite, &selected, &mut context, &mut rows, &mut progress)
+        } else {
+            render_cases(&suite, &selected, &mut context, &mut rows, &mut progress)
+        };
+        if let Err(error) = processing {
+            progress.summary_rows(&rows);
+            return Err(error);
+        }
+        if let Err(error) = &inventory {
+            for row in &mut rows {
+                if row["status"] == "completed" || row["status"] == "validated" {
+                    row["status"] = json!("failed");
+                    row["error"] = error.to_value();
+                }
+            }
+        }
+        let mut changed = Vec::new();
+        if let Ok(inventory) = &inventory {
+            for dependency in &dependencies {
+                if common::sha256_file(Path::new(text(dependency, "path")?))?
+                    != text(dependency, "sha256")?
+                {
+                    changed.push(dependency["path"].clone());
+                }
+            }
+            if &tree_inventory(&data_root)? != inventory {
+                changed.push(json!(data_root));
+            }
+        }
+        if !changed.is_empty() {
+            for row in &mut rows {
                 row["status"] = json!("failed");
-                row["error"] = error.to_value();
+                row["error"] = json!({"code":"dependencies_changed","message":"Dependencies changed during rendering","paths":changed});
             }
         }
-    }
-    let mut changed = Vec::new();
-    if let Ok(inventory) = &inventory {
-        for dependency in &dependencies {
-            if common::sha256_file(Path::new(text(dependency, "path")?))?
-                != text(dependency, "sha256")?
-            {
-                changed.push(dependency["path"].clone());
-            }
+        progress.summary_rows(&rows);
+        if dry_run {
+            let valid = rows.iter().all(|row| row["status"] == "validated");
+            let errors = preflight_errors(&rows, &root)?;
+            let unchecked = json!([
+                {"check":"pixel_decode","status":"unchecked","reason":"Dry-run does not decode images"},
+                {"check":"gpu_execution","status":"unchecked","reason":"Dry-run does not initialize or execute a GPU"},
+                {"check":"output_write","status":"unchecked","reason":"Dry-run does not render or publish images"},
+                {"check":"observed_output_geometry","status":"unchecked","reason":"Dry-run does not decode or render images to observe output dimensions"},
+                {"check":"numerical_output","status":"unchecked","reason":"Dry-run produces no numerical image evidence"}
+            ]);
+            let mut manifest = json!({"schema_version":1,"mode":"dry_run","execution_status":if valid{"validated"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1,"errors":errors,"unchecked":unchecked});
+            manifest["id"] = json!(common::digest(&manifest)?);
+            common::dump(&root.join("preflight.json.tmp"), &manifest)?;
+            fs::rename(root.join("preflight.json.tmp"), root.join("preflight.json"))?;
+            return Ok((
+                json!({"schema_version":1,"command":"run","mode":"dry_run","execution_status":manifest["execution_status"],"artifact":root.join("preflight.json"),"preflight_id":manifest["id"],"errors":manifest["errors"],"unchecked":manifest["unchecked"]}),
+                if valid { 0 } else { 1 },
+            ));
         }
-        if &tree_inventory(&data_root)? != inventory {
-            changed.push(json!(data_root));
+        let completed = rows.iter().all(|r| r["status"] == "completed");
+        let errors:Vec<_>=rows.iter().filter_map(|r|r.get("error").map(|e|json!({"case_id":r["case_id"],"seed":r["seed"],"boundary":"renderer","error":e}))).collect();
+        let mut manifest = json!({"schema_version":1,"execution_status":if completed{"completed"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1});
+        finalize(&root, "run.json", &mut manifest)?;
+        let mut result = json!({"schema_version":1,"command":"run","execution_status":manifest["execution_status"],"artifact":root.join("run.json"),"run_id":manifest["id"]});
+        if !completed {
+            result["errors"] = json!(errors);
         }
-    }
-    if !changed.is_empty() {
-        for row in &mut rows {
-            row["status"] = json!("failed");
-            row["error"] = json!({"code":"dependencies_changed","message":"Dependencies changed during rendering","paths":changed});
-        }
-    }
-    if dry_run {
-        let valid = rows.iter().all(|row| row["status"] == "validated");
-        let errors = preflight_errors(&rows, &root)?;
-        let unchecked = json!([
-            {"check":"pixel_decode","status":"unchecked","reason":"Dry-run does not decode images"},
-            {"check":"gpu_execution","status":"unchecked","reason":"Dry-run does not initialize or execute a GPU"},
-            {"check":"output_write","status":"unchecked","reason":"Dry-run does not render or publish images"},
-            {"check":"observed_output_geometry","status":"unchecked","reason":"Dry-run does not decode or render images to observe output dimensions"},
-            {"check":"numerical_output","status":"unchecked","reason":"Dry-run produces no numerical image evidence"}
-        ]);
-        let mut manifest = json!({"schema_version":1,"mode":"dry_run","execution_status":if valid{"validated"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1,"errors":errors,"unchecked":unchecked});
-        manifest["id"] = json!(common::digest(&manifest)?);
-        common::dump(&root.join("preflight.json.tmp"), &manifest)?;
-        fs::rename(root.join("preflight.json.tmp"), root.join("preflight.json"))?;
-        return Ok((
-            json!({"schema_version":1,"command":"run","mode":"dry_run","execution_status":manifest["execution_status"],"artifact":root.join("preflight.json"),"preflight_id":manifest["id"],"errors":manifest["errors"],"unchecked":manifest["unchecked"]}),
-            if valid { 0 } else { 1 },
-        ));
-    }
-    let completed = rows.iter().all(|r| r["status"] == "completed");
-    let errors:Vec<_>=rows.iter().filter_map(|r|r.get("error").map(|e|json!({"case_id":r["case_id"],"seed":r["seed"],"boundary":"renderer","error":e}))).collect();
-    let mut manifest = json!({"schema_version":1,"execution_status":if completed{"completed"}else{"failed"},"suite":suite_record,"target":target_record,"protocol":suite["protocol"],"selection":{"case_ids":selected,"full_suite":selected==all_ids},"dependencies":retained,"cases":rows,"artifacts":evidence.values(),"environment":renderer_environment(&target,&root).1});
-    finalize(&root, "run.json", &mut manifest)?;
-    let mut result = json!({"schema_version":1,"command":"run","execution_status":manifest["execution_status"],"artifact":root.join("run.json"),"run_id":manifest["id"]});
-    if !completed {
-        result["errors"] = json!(errors);
-    }
-    Ok((result, if completed { 0 } else { 1 }))
+        Ok((result, if completed { 0 } else { 1 }))
+    })();
+    result.map_err(|error| {
+        common::incomplete_destination(
+            error,
+            &root,
+            if dry_run {
+                "preflight.json"
+            } else {
+                "run.json"
+            },
+        )
+    })
 }
 
 #[cfg(all(test, unix))]
