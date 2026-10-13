@@ -11,8 +11,7 @@
 - Name a directory for the capability, variant, or concern it owns. Never encode one in a filename.
 - Write durable target state only. Do not record plans, research, gaps, progress, logs, or test output.
 - Use top-level capability directories by default; `simulation/` and `delivery/` are optional contexts, not required grouping layers.
-- List every top-level capability in `specs/README.md`. A top-level capability with three or more contract documents adds its own `README.md` index.
-- `README.md` is an index and `AGENTS.md` holds instructions. Neither is a contract document.
+- `specs/README.md` is the only index and lists every top-level capability; no capability adds its own `README.md`. `AGENTS.md` holds instructions. Neither file is a contract document.
 - Keep one fact in one authoritative document; link instead of duplicating rules.
 - Keep transient material outside the repository, normally under `/data/workspaces/spektrafilm-project-context/`.
 - Put durable non-contract conclusions in the relevant Issue/PR.

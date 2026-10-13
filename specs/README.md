@@ -17,7 +17,7 @@ Capabilities:
 - [Profile fitting](profile-fit/spec.md) — deriving profile and look values from reference patch data.
 - [CLI parameters](cli-parameters/spec.md) — source declarations, preset selection, sparse parameter overrides, seeds, parameter discovery, and dry run.
 - [CLI workflow](cli-workflow/spec.md) — help, version identity, data selection, command status, and human feedback.
-- [Film simulation benchmark](benchmark/README.md) — agent-facing version comparison, reference alignment, measurements, and visual review artifacts.
+- [Film simulation benchmark](benchmark/spec.md) — agent-facing version comparison, reference alignment, measurements, and visual review artifacts.
 - [Telemetry](telemetry/spec.md) — operation cost and execution observations, including the report contract.
 
 Each capability owns its contract. Cross-capability rules are stated once in the owning document and linked elsewhere.
