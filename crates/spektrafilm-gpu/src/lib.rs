@@ -357,6 +357,12 @@ pub struct FilmChainParams<'a> {
     /// the grained image, which is written back to the same device
     /// buffer.
     pub density_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    /// Optional CPU stage replacing the GPU DIR couplers pass when the
+    /// Langmuir chemistry uses non-default coefficients (pipe
+    /// architecture, capability class). Receives the developed density and
+    /// the log-raw exposure buffers; returns the corrected density, which
+    /// is written back in place.
+    pub dir_cpu_stage: Option<Box<dyn Fn(&ImageBuf, &ImageBuf) -> ImageBuf + 'a>>,
 }
 
 /// GPU FIR kernels support a maximum 256-pixel half-width.
