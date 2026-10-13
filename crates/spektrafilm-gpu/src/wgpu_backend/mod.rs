@@ -958,7 +958,10 @@ impl ComputeBackend for WgpuBackend {
         ImageBuf::from_data(log_raw.width, log_raw.height, f32_to_scalars(result))
     }
 
-    fn try_run_film_chain(&self, params: &crate::FilmChainParams<'_>) -> Option<ImageBuf> {
+    fn try_run_film_chain(
+        &self,
+        params: &crate::FilmChainParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
         if !params.gpu_blurs_supported() {
             tracing::info!(
                 execution = "per_stage_cpu_blur",
@@ -967,9 +970,9 @@ impl ComputeBackend for WgpuBackend {
             self.device
                 .context
                 .decline_resident(ResidentDeclineReason::BlurRadiusExceedsBackendSupport);
-            return None;
+            return Ok(None);
         }
-        Some(self.run_film_chain(params))
+        Ok(Some(self.run_film_chain(params)?))
     }
 
     fn is_gpu(&self) -> bool {

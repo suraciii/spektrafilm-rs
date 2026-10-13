@@ -268,8 +268,14 @@ pub trait ComputeBackend: Send + Sync {
     /// Returns native encoded destination RGB when Grain Procedural is active, and
     /// linear destination RGB otherwise, or `None` for the per-stage path.
     /// The caller decodes only the transfer when linear grain output is requested.
-    fn try_run_film_chain(&self, _params: &FilmChainParams<'_>) -> Option<ImageBuf> {
-        None
+    /// `Ok(None)` selects the per-stage path; `Err` reports a CPU fence that
+    /// could not calibrate its output (the per-stage route returns the same
+    /// error, so the caller surfaces it instead of falling back).
+    fn try_run_film_chain(
+        &self,
+        _params: &FilmChainParams<'_>,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
     }
 
     /// True for GPU compute backends.
@@ -365,7 +371,7 @@ pub struct FilmChainParams<'a> {
     /// closure receives the materialized density_cmy image and returns
     /// the grained image, which is written back to the same device
     /// buffer.
-    pub density_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    pub density_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>>,
     /// Optional CPU stage on the scanner readout buffer between glare and
     /// output gamut compression — the assembled fence for the scanner
     /// readout interpretation (slide points, the faithful luminance remap,
@@ -374,26 +380,27 @@ pub struct FilmChainParams<'a> {
     /// returns the interpreted image, which is written back in place. When
     /// present, `bw_xyz_remap` must be `None`: the fence owns the remap in
     /// the faithful order, after optical blur and glare.
-    pub scan_tail_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    pub scan_tail_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>>,
     /// Optional CPU stage replacing the GPU scan spectral pass when the CPU
     /// route would take the PCHIP scanner LUT acquisition (the slide
     /// luminance remap or `use_scanner_lut`; pipe architecture, capability
     /// class). Receives the film/print density and returns the captured
     /// RGB, which is written to the acquisition buffer.
-    pub scan_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    pub scan_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>>,
     /// Optional CPU stage replacing the fused GPU print spectral pass when
     /// the CPU route would take the PCHIP enlarger LUT or the enlarger
     /// diffusion filter (pipe architecture, capability class). Receives the
     /// film density and returns the print log-raw after the outer log —
     /// the same domain the fused shader emits — so the GPU print density
     /// curve pass continues unchanged.
-    pub print_acquisition_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    pub print_acquisition_cpu_stage:
+        Option<Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>>,
     /// Optional CPU stage on the raw film exposure buffer between
     /// highlight reconstruction and the camera lens blur — the assembled
     /// fence for the camera optical diffusion filter's discrete PSF
     /// convolution (pipe architecture, capability class). Receives the
     /// front-pass raw and returns the diffused raw, written back in place.
-    pub camera_diffusion_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> ImageBuf + 'a>>,
+    pub camera_diffusion_cpu_stage: Option<Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>>,
     /// Optional output transfer encoding/decoding pass on the final buffer
     /// after every scanner effect (pipe architecture, S4). Encode applies
     /// the stored same-space roundtrip matrix and the space's encoding
