@@ -28,6 +28,8 @@ The [CLI parameter language](../specs/cli/spec.md) defines editable paths and co
 
 Built-in looks enable their film profile's adaptation surface by default. See the [preset contract](../specs/presets/spec.md). To turn it off for a CLI render, add `--set settings.apply_hanatos2025_adaptation_surface=false`.
 
+A look owns the enlarger's Magenta and Yellow filter shifts and never a neutral filter value. The three neutral baselines are built in per print stock, illuminant, and film stock, so changing the paper of an applied look re-derives them for that paper instead of carrying one paper's filtration onto another: the same look printed on Kodak Portra Endura and on Fujifilm Crystal Archive Type II gets each paper's own values. A `--set` leaf on `enlarger.m_filter_neutral`, `enlarger.y_filter_neutral`, or `enlarger.c_filter_neutral` pins one axis deliberately and outranks the database. `--dry-run` reports each axis with its source in `print_filtration`.
+
 ## Portable identities and name resolution
 
 Preset names are their portable identities. Core reads schema v1 and v2 documents and exports schema v3. V1 drops its old `id`. Older complete looks acquire the full Overall effect amount, while section documents stay sparse.
