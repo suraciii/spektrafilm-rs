@@ -293,7 +293,7 @@ impl ComputeBackend for WgpuBackend {
             batch: None,
         };
         Some(Box::new(Self {
-            pipe: GpuPipe::new(device.clone(), queue.clone(), self.pipeline_cache.clone()),
+            pipe: self.pipe.with_observed(device.clone(), queue.clone()),
             device,
             queue,
             pipeline_cache: self.pipeline_cache.clone(),

@@ -35,7 +35,7 @@ pub(super) struct GpuPipe {
     device: ObservedDevice,
     queue: ObservedQueue,
     cache: std::sync::Arc<PipelineCache>,
-    pool: Mutex<ReadbackPool>,
+    pool: std::sync::Arc<Mutex<ReadbackPool>>,
 }
 
 impl GpuPipe {
@@ -48,7 +48,20 @@ impl GpuPipe {
             device,
             queue,
             cache,
-            pool: Mutex::new(ReadbackPool::default()),
+            pool: std::sync::Arc::new(Mutex::new(ReadbackPool::default())),
+        }
+    }
+
+    /// Derive an observed pipe sharing this pipe's pipeline cache and
+    /// buffer pool. Observed stage instances rebind the backend per stage;
+    /// sharing the pool keeps readback buffers reusable across those
+    /// rebinds and across frames (pipe architecture S5).
+    pub(super) fn with_observed(&self, device: ObservedDevice, queue: ObservedQueue) -> Self {
+        Self {
+            device,
+            queue,
+            cache: std::sync::Arc::clone(&self.cache),
+            pool: std::sync::Arc::clone(&self.pool),
         }
     }
 
