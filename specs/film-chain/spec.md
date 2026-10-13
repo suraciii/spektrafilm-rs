@@ -6,7 +6,7 @@
 - A photographic print route must provide a photographic print profile.
 - Optional magazine finishing must satisfy the [Magazine print color](../magazine-print-color/spec.md) contract. It must not determine base workflow topology.
 - Base workflows include input color management, direct film scanning, photographic printing, and the existing film-conversion routes.
-- [Film and print digital response](../material-response/spec.md) owns creative material response, scan-reference isolation, and the retirement of Output lightness compression. Film and Print response must alter their material outputs, not completed RGB. Magazine appearance remains after scanner-domain effects. Overall output mix follows Magazine appearance before output handoff.
+- [Material controls and output composition](../material-response/spec.md) owns reuse of existing preflash and chemistry, retirement of Output lightness compression, and overall output mix. It adds no digital material-response layer or scan-reference isolation pass. Magazine appearance remains after scanner-domain effects; overall output mix follows it before output handoff.
 - Film, photographic paper, spectral, and color profiles are data inputs. A missing or invalid selected data input is an error before output publication.
 - The selected route preserves the requested color, spatial, optical, and stochastic semantics. A backend must not silently disable or replace them to remain on a fast path.
 - CPU f64 is the reference and export path. WGPU f32 is an interactive or explicitly selected fast path; it may use CPU stages for unsupported effects and is not f64 reference output.
@@ -32,8 +32,8 @@
   and its controls belong to `positive_scan`. A photographic-paper scan and a
   slide film scan must not expose them. See
   [Direct negative-film scan output](#direct-negative-film-scan-output).
-- An appearance applied to a completed paper or film scan belongs to finishing. A creative adjustment to material formation belongs to [Film or Print response](../material-response/spec.md), even when it affects both delivery routes. The optional Fotufilm-derived scanner finish remains a film-scan treatment.
-- [Scan reference isolation](../material-response/spec.md#scan-reference-isolation) must apply to inverse calibration, scanner point ranges, scanner correction references, and automatic setup. Receiver capture must read effective material density; calibration must not invert away its creative adjustments.
+- An appearance applied to a completed paper or film scan belongs to finishing. Existing exposure and development controls belong to their material stage. The optional Fotufilm-derived scanner finish remains a film-scan treatment.
+- Scanner calibration, inverse curves, point ranges, correction references, and automatic setup retain their existing dependencies on profile and development settings. Material-control simplification must not add a second reference model or alter the real captured-negative recovery solve.
 - The product may model a scanner receiver response. A receiver profile must identify its spectral response, reference levels, source, and calibration status.
 
 ## Scan optics and print viewing glare
@@ -48,11 +48,11 @@ Unsharp mask is digital scan sharpening, not lens resolution. It remains downstr
 
 ## Optical-order cutover
 
-The historical direct-scan sequence that blurs after output gamut processing must not remain as a compatibility mode. All admitted scan routes must obey [Scan optics and print viewing glare](#scan-optics-and-print-viewing-glare). Parameter names, units, and zero-blur meaning remain unchanged. Nonzero blur on a previously late-blur path may intentionally change pixels, even with neutral material response.
+The historical direct-scan sequence that blurs after output gamut processing must not remain as a compatibility mode. All admitted scan routes must obey [Scan optics and print viewing glare](#scan-optics-and-print-viewing-glare). Parameter names, units, and zero-blur meaning remain unchanged. Nonzero blur on a previously late-blur path may intentionally change pixels even with unchanged material settings and full output amount.
 
-The implementation must identify the new ordering in its render/model version and user-facing change notes. Recipe replay must report the model version used and must not claim historical pixel identity. It must not silently rescale blur or scanner points to emulate the old order. Existing before/after budgets and photographic evidence must distinguish this cutover from material-response changes.
+The implementation must identify the new ordering in its render/model version and user-facing change notes. Recipe replay must report the model version used and must not claim historical pixel identity. It must not silently rescale blur or scanner points to emulate the old order. Existing before/after budgets and photographic evidence must isolate this cutover from preflash branch separation and output mixing.
 
-The [Print exposure composition](../material-response/design.md#print-exposure-composition) fixes the print optical boundary. With creative controls neutral, separating a uniform preflash must preserve the old result within its numerical budget where the old linear constant-preserving operator was equivalent. This separation is not a general exemption from numerical preservation.
+The [Print exposure composition](../material-response/design.md#print-exposure-composition) fixes the print optical boundary. Separating a uniform preflash must preserve the old result within its numerical budget where the old linear constant-preserving operator was equivalent, including existing exposure gains and finite-exposure floors. This separation is not a general exemption from numerical preservation.
 
 
 ## Scanner receiver and interpretation
@@ -115,7 +115,7 @@ The [Print exposure composition](../material-response/design.md#print-exposure-c
   `input > film > scan` route or the real negative-capture
   `input > convert-film > scan` route. Paper profiles, print-paper routes,
   and `scan-minus-base` are not eligible.
-- Positive interpretation uses the resolved receiver capture. `separable` derives a per-channel monotone inverse from the baseline profile density curves, excluding the new creative response. `coupled` uses the three-channel inverse defined in [Scanner receiver and interpretation](#scanner-receiver-and-interpretation), with the same baseline-reference boundary. Both modes estimate relative log exposure, subtract camera exposure compensation only on the simulated `input > film > scan` route, apply the configured density brightness, RGB balance, contrast, and maximum-density controls, then emit output-space linear RGB.
+- Positive interpretation uses the resolved receiver capture. `separable` derives a per-channel monotone inverse from the prepared profile density curves. `coupled` uses the three-channel inverse defined in [Scanner receiver and interpretation](#scanner-receiver-and-interpretation). Both retain existing profile/development reference dependencies, estimate relative log exposure, subtract camera exposure compensation only on the simulated `input > film > scan` route, apply the configured density brightness, RGB balance, contrast, and maximum-density controls, then emit output-space linear RGB.
 - Calibration captures outside the profile range use finite endpoint tangent
   extrapolation. Negative and above-clear scanner RGB remains representable
   until the normal writer; no log-of-clipped-RGB operation is permitted.
