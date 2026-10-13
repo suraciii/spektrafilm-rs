@@ -241,7 +241,7 @@ impl DigitalReference {
         &self,
         density: &ImageBuf,
         params: &RuntimeParams,
-        backend: &dyn spektrafilm_backend::ComputeBackend,
+        backend: &dyn spektrafilm_gpu::ComputeBackend,
     ) -> Result<ImageBuf, String> {
         if density.data.iter().any(|v| !v.is_finite()) {
             return Err("Digital Reference requires finite developed densities".into());
@@ -321,8 +321,10 @@ impl DigitalReference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::{NegativeConversionMethod, ReceiverProfile};
-    use crate::test_support::data_dir as data;
+    use crate::params::{PositiveInterpretation, ReceiverProfile};
+    fn data() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
+    }
     fn fixture() -> (Profile, RuntimeParams, DigitalReference) {
         let film = crate::profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap();
         let mut params = RuntimeParams::default();
@@ -330,7 +332,7 @@ mod tests {
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.receiver_profile = ReceiverProfile::DigitalReference;
-        params.scanner.negative_conversion_method = NegativeConversionMethod::DigitalReference;
+        params.scanner.positive_interpretation = PositiveInterpretation::DigitalReference;
         params.scanner.unsharp_mask = [0.0; 2];
         params.io.output_color_space = "sRGB".into();
         params.io.output_cctf_encoding = false;
@@ -353,11 +355,7 @@ mod tests {
     fn pixel(reference: &DigitalReference, params: &RuntimeParams, density: [f64; 3]) -> [f64; 3] {
         let image = ImageBuf::from_data(1, 1, density.into_iter().map(from_f64).collect());
         let result = reference
-            .convert(
-                &image,
-                params,
-                &spektrafilm_backend::cpu_backend::CpuBackend,
-            )
+            .convert(&image, params, &spektrafilm_gpu::cpu_backend::CpuBackend)
             .unwrap();
         std::array::from_fn(|c| to_f64(result.data[c]))
     }
@@ -397,11 +395,7 @@ mod tests {
         params.scanner.lens_blur = 1.0;
         let image = ImageBuf::from_data(2, 2, vec![from_f64(1000.0); 12]);
         let error = reference
-            .convert(
-                &image,
-                &params,
-                &spektrafilm_backend::cpu_backend::CpuBackend,
-            )
+            .convert(&image, &params, &spektrafilm_gpu::cpu_backend::CpuBackend)
             .unwrap_err();
         assert!(error.contains("positive and representable for lens blur"));
     }
@@ -458,7 +452,7 @@ mod tests {
                 .collect(),
             )
         };
-        let cpu = spektrafilm_backend::cpu_backend::CpuBackend;
+        let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
         let a = reference.convert(&image(0.01), &params, &cpu).unwrap();
         let b = reference.convert(&image(3.0), &params, &cpu).unwrap();
         assert_eq!(&a.data[3..6], &b.data[3..6]);
@@ -491,7 +485,7 @@ mod tests {
         let bad = ImageBuf::from_data(1, 1, vec![from_f64(f64::NAN); 3]);
         assert!(
             reference
-                .convert(&bad, &params, &spektrafilm_backend::cpu_backend::CpuBackend)
+                .convert(&bad, &params, &spektrafilm_gpu::cpu_backend::CpuBackend)
                 .is_err()
         );
     }
@@ -507,7 +501,7 @@ mod tests {
         p.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
         variants.push(p);
         let mut p = params.clone();
-        p.scanner.negative_conversion_method = NegativeConversionMethod::Density;
+        p.scanner.positive_interpretation = PositiveInterpretation::Density;
         variants.push(p);
         let mut p = params.clone();
         p.scanner.auto_setup = crate::params::ScannerAutoSetup::PerFrame;
@@ -516,7 +510,7 @@ mod tests {
         p.scanner.black_point = [0.1; 3];
         variants.push(p);
         let mut p = params.clone();
-        p.scanner.conversion_brightness_ev = 0.0;
+        p.scanner.positive_density_ev = 0.0;
         variants.push(p);
         for p in variants {
             assert!(p.validate().is_err());

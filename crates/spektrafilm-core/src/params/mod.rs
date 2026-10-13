@@ -124,12 +124,14 @@ pub enum ReceiverProfile {
     #[default]
     LegacyColorimetric,
     LabScanApprox,
+    DigitalReference,
 }
 impl ReceiverProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::LegacyColorimetric => "legacy_colorimetric",
             Self::LabScanApprox => "lab_scan_approx",
+            Self::DigitalReference => "digital_reference",
         }
     }
 }
@@ -137,15 +139,24 @@ impl ReceiverProfile {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PositiveInterpretation {
+    /// Read record densities directly: the film's own monotone characteristic
+    /// curves, with no synthetic capture in the loop.
     #[default]
+    Density,
+    /// Interpret a receiver capture through a per-channel monotone inverse.
     Separable,
+    /// Interpret a receiver capture through the three-channel coupled inverse.
     Coupled,
+    /// Common modeled receiver and fixed Reference Exposure response.
+    DigitalReference,
 }
 impl PositiveInterpretation {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Density => "density",
             Self::Separable => "separable",
             Self::Coupled => "coupled",
+            Self::DigitalReference => "digital_reference",
         }
     }
 }
@@ -224,6 +235,12 @@ pub struct ScannerParams {
     pub positive_contrast: f64,
     #[serde(default = "default_positive_dmax")]
     pub positive_dmax: f64,
+    /// Output-relative stops after the fixed reference response.
+    #[serde(default)]
+    pub reference_exposure_ev: f64,
+    /// Independent linear-sRGB output-relative stops, before output-space mapping.
+    #[serde(default)]
+    pub reference_balance_ev: [f64; 3],
 }
 
 impl Default for ScannerParams {
@@ -247,6 +264,8 @@ impl Default for ScannerParams {
             positive_balance_ev: [0.0; 3],
             positive_contrast: default_positive_contrast(),
             positive_dmax: default_positive_dmax(),
+            reference_exposure_ev: 0.0,
+            reference_balance_ev: [0.0; 3],
         }
     }
 }
@@ -981,7 +1000,7 @@ mod tests {
         );
         assert_eq!(
             legacy.positive_interpretation,
-            super::PositiveInterpretation::Separable
+            super::PositiveInterpretation::Density
         );
         assert_eq!(legacy.auto_setup, super::ScannerAutoSetup::Off);
         assert_eq!(legacy.finish, super::ScannerFinish::Neutral);
@@ -989,11 +1008,18 @@ mod tests {
         for (path, allowed) in [
             (
                 "scanner.receiver_profile",
-                ["legacy_colorimetric", "lab_scan_approx"],
+                &[
+                    "legacy_colorimetric",
+                    "lab_scan_approx",
+                    "digital_reference",
+                ][..],
             ),
-            ("scanner.positive_interpretation", ["separable", "coupled"]),
-            ("scanner.auto_setup", ["off", "per_frame"]),
-            ("scanner.finish", ["neutral", "lab_scan"]),
+            (
+                "scanner.positive_interpretation",
+                &["density", "separable", "coupled", "digital_reference"][..],
+            ),
+            ("scanner.auto_setup", &["off", "per_frame"][..]),
+            ("scanner.finish", &["neutral", "lab_scan"][..]),
         ] {
             for value in allowed {
                 assert!(super::sources::ParameterEdits::parse(&format!("{path}={value}")).is_ok());
@@ -1004,7 +1030,7 @@ mod tests {
         assert!(super::sources::ParameterEdits::parse("scanner.finish_strength=-0.1").is_err());
         let encoded = serde_json::to_value(&legacy).unwrap();
         assert_eq!(encoded["receiver_profile"], "legacy_colorimetric");
-        assert_eq!(encoded["positive_interpretation"], "separable");
+        assert_eq!(encoded["positive_interpretation"], "density");
     }
 
     #[test]
@@ -1177,7 +1203,7 @@ mod tests {
             assert_eq!(grain.v3_dye_support_um, 4.5);
             assert_eq!(grain.v3_event_area_um2, 0.6);
         }
-        assert!(serde_json::from_str::<GrainParams>(r#"{"engine":"unknown"}"#).is_err());
+        assert!(serde_json::from_str::<super::GrainParams>(r#"{"engine":"unknown"}"#).is_err());
     }
     #[test]
     fn v3_controls_must_be_finite_and_positive() {

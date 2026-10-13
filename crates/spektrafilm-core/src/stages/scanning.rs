@@ -1095,6 +1095,32 @@ pub fn scan_with_options(
 // Scan options preserve the existing stage interface.
 #[allow(clippy::too_many_arguments)]
 fn scan_with_capture(
+    density: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+    illuminant: Option<&str>,
+    include_base: bool,
+    capture: Option<ImageBuf>,
+) -> Result<ImageBuf, String> {
+    scan_with_reference(
+        density,
+        profile,
+        params,
+        backend,
+        color_ref,
+        gamut,
+        illuminant,
+        include_base,
+        capture,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_with_reference(
     density_cmy: &ImageBuf,
     profile: &Profile,
     params: &RuntimeParams,
@@ -1104,8 +1130,21 @@ fn scan_with_capture(
     scan_illuminant: Option<&str>,
     include_base: bool,
     captured_rgb: Option<ImageBuf>,
+    reference: Option<&crate::digital_reference::DigitalReference>,
 ) -> Result<ImageBuf, String> {
     let negative_to_positive = negative_to_positive_requested(params);
+    let reference_mode = params.scanner.positive_interpretation
+        == crate::params::PositiveInterpretation::DigitalReference;
+    if reference_mode {
+        params.validate()?;
+        crate::pipeline_calibration::validate_scan_output(params, profile)?;
+        if captured_rgb.is_some() || !include_base || scan_illuminant.is_some() {
+            return Err("Digital Reference requires developed densities with film base and its fixed illumination".into());
+        }
+        if reference.is_none() {
+            return Err("Digital Reference requires runtime-prepared spectral assets from the configured data directory".into());
+        }
+    }
     // The density reading acquires no capture, so the spectral scan and the
     // receiver correction it feeds are skipped entirely. Where a capture does
     // arrive, `density` behaves as `separable`.
@@ -1161,7 +1200,7 @@ fn scan_with_capture(
     let prepared = crate::chain_prep::PreparedChain::for_scan(profile, params, scan_illuminant);
     let scan_context = &prepared.scan;
     let base_density = base_density.as_ref();
-    let receiver_reference = if density_reading {
+    let receiver_reference = if density_reading || reference_mode {
         None
     } else {
         scan_context.receiver.as_ref().map(|receiver| {
@@ -1180,7 +1219,11 @@ fn scan_with_capture(
     // The path selection (including the faithful B&W/slide luminance
     // remap) lives in `scan_spectral_rgb` so the reference samples
     // below cannot diverge from this bulk scan.
-    let mut rgb = if density_reading {
+    let mut rgb = if reference_mode {
+        reference
+            .expect("validated prepared reference")
+            .convert(density_cmy, params, backend)?
+    } else if density_reading {
         let calibration = interpretation::DensityCalibration::prepare(profile)?;
         interpret_negative_density(density_cmy, &calibration, params, backend)?
     } else {
@@ -1275,7 +1318,7 @@ fn scan_with_capture(
     // optical capture and lens blur happen before the calibrated negative
     // endpoint inversion. The density reading ran above, where it blurred
     // transmitted light record by record instead.
-    if negative_to_positive && !density_reading {
+    if negative_to_positive && !density_reading && !reference_mode {
         if params.scanner.lens_blur > 0.0 {
             rgb = backend.gaussian_blur(&rgb, params.scanner.lens_blur);
         }
@@ -1456,6 +1499,21 @@ pub fn process(
         gamut,
         None,
         true,
+    )
+}
+
+/// Runtime scan with immutable reference assets resolved during preparation.
+pub(crate) fn process_prepared(
+    density: &ImageBuf,
+    profile: &Profile,
+    params: &RuntimeParams,
+    backend: &dyn ComputeBackend,
+    color_ref: &crate::color_reference::ColorReference,
+    gamut: &crate::gamut_compression::OutputGamutCompress,
+    reference: Option<&crate::digital_reference::DigitalReference>,
+) -> Result<ImageBuf, String> {
+    scan_with_reference(
+        density, profile, params, backend, color_ref, gamut, None, true, None, reference,
     )
 }
 

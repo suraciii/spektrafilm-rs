@@ -238,6 +238,7 @@ pub enum PositiveInterpretation {
     #[default]
     Separable,
     Coupled,
+    DigitalReference,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +286,12 @@ pub struct RenderConfiguration {
     pub finish: String,
     #[serde(default = "default_finish_strength")]
     pub finish_strength: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<crate::digital_reference::ReferenceProvenance>,
+    #[serde(default)]
+    pub reference_exposure_ev: f64,
+    #[serde(default)]
+    pub reference_balance_ev: [f64; 3],
     pub gamut_algorithm: GamutAlgorithm,
     pub grain: GrainConfiguration,
     pub spatial: SpatialConfiguration,
@@ -326,6 +333,9 @@ impl RenderConfiguration {
                     PositiveInterpretation::Separable
                 }
                 crate::params::PositiveInterpretation::Coupled => PositiveInterpretation::Coupled,
+                crate::params::PositiveInterpretation::DigitalReference => {
+                    PositiveInterpretation::DigitalReference
+                }
             },
             receiver: ReceiverConfiguration {
                 profile: receiver.profile.as_str().to_string(),
@@ -336,6 +346,9 @@ impl RenderConfiguration {
             setup_mode: params.scanner.auto_setup.as_str().to_string(),
             finish: params.scanner.finish.as_str().to_string(),
             finish_strength: params.scanner.finish_strength,
+            reference: None,
+            reference_exposure_ev: params.scanner.reference_exposure_ev,
+            reference_balance_ev: params.scanner.reference_balance_ev,
             gamut_algorithm: GamutAlgorithm::parse(&params.io.output_gamut_compress.algorithm),
             grain: GrainConfiguration {
                 active: grain_active,

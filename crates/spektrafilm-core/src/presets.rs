@@ -270,6 +270,16 @@ impl Preset {
         let default_route = workflow_default(&film);
         params.workflow.route = default_route.clone();
         params.io.scan_film = film.is_positive();
+        if params.scanner.positive_interpretation
+            == crate::params::PositiveInterpretation::DigitalReference
+            && (film.is_positive() || params.workflow.route != "input > film > scan")
+        {
+            params.scanner.positive_interpretation =
+                crate::params::PositiveInterpretation::default();
+            params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
+            params.scanner.reference_exposure_ev = 0.0;
+            params.scanner.reference_balance_ev = [0.0; 3];
+        }
         if film.is_positive()
             || !matches!(
                 params.workflow.route.as_str(),
@@ -281,6 +291,11 @@ impl Preset {
                 crate::params::PositiveInterpretation::default();
             params.scanner.auto_setup = crate::params::ScannerAutoSetup::default();
             params.scanner.finish = crate::params::ScannerFinish::default();
+            if params.scanner.receiver_profile == crate::params::ReceiverProfile::DigitalReference {
+                params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
+                params.scanner.reference_exposure_ev = 0.0;
+                params.scanner.reference_balance_ev = [0.0; 3];
+            }
         }
         if !matches!(
             params.workflow.route.as_str(),
