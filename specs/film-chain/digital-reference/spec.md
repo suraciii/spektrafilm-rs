@@ -4,7 +4,7 @@
 
 Digital Reference must be an opt-in output treatment within the existing Scan capability. This contract covers a digital photograph processed through simulated negative film on `input > film > scan`, with `scanner.scan_output=negative_to_positive`.
 
-Reference Exposure is the supported placement. Graded Print, Auto Levels, custom receiver-band editing, paper grade, and reference-axis black and white points are outside this implementation.
+Reference Exposure is the supported placement. Graded Print and Auto Levels are outside this implementation.
 
 Real negative import, `convert-film`, Telecine, photographic-paper scanning, and reversal-film normalization are outside this addition. Their existing behavior must remain available.
 
@@ -44,7 +44,7 @@ Output polarity must remain `negative_to_positive`. Digital Reference must not a
 
 A reference conversion must use its matching reference receiver and response. An incompatible receiver or exposure-reconstruction method must fail validation. The GUI must not offer independent selections that produce such a combination.
 
-`scanner.negative_conversion_method=digital_reference` selects reference conversion. It requires `scanner.receiver_profile=digital_reference`. The GUI labels the conversion `Digital Reference (modeled)` and displays its fixed `Reference Exposure` placement. Choosing it pairs the receiver and conversion, disables automatic setup, restores identity point windows, and resets reconstruction controls to their existing defaults. Explicit incompatible combinations must fail validation.
+`scanner.positive_interpretation=digital_reference` selects reference conversion. It requires `scanner.receiver_profile=digital_reference`. The GUI labels the conversion `Digital Reference (modeled)` and displays its fixed `Reference Exposure` placement. Choosing it pairs the receiver and conversion, disables automatic setup, restores identity point windows, and resets reconstruction controls to their existing defaults. Explicit incompatible combinations must fail validation.
 
 Reconstruction brightness, balance, contrast, and maximum-density controls do not parameterize this model. Nondefault reconstruction controls must fail validation with reference conversion. Reference manual controls must remain neutral with other conversion methods.
 
@@ -68,3 +68,7 @@ GUI, CLI dry run, parameter-file resolution, and rendering must apply the same c
 6. Preview and full-resolution rendering must agree on conversion values for identical density samples before resampling and output encoding, within the declared precision budget. Save must retain the accepted rendered image. Export must reproduce its configured conversion through the real entry point.
 7. State and recipe round trips must preserve the selected treatment and model declaration. Render reports must identify the actual prepared source assets. Incompatible setup, receiver, conversion, point windows, profiles, and routes must fail before replacing or publishing output.
 8. A photographic comparison must include a neutral wedge, mixed-color subjects, a low-contrast frame, and a high-dynamic-range frame. Claims must identify the source model, numerical comparison scope, and visual limits. A visual resemblance must not substitute for numerical checks.
+
+## Delivery status
+
+Digital Reference is available through the paired `digital_reference` receiver and conversion selectors. The implemented Reference Exposure model and its source conventions are defined in the [design](design.md#numerical-reference-model). Graded Print and Auto Levels remain outside this addition.

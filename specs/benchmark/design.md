@@ -8,6 +8,8 @@ The benchmark owns suite selection, target identity, dependency hashing, run iso
 
 The benchmark must keep rendering and evaluation separate. A run produces immutable render evidence. A comparison reads runs and produces immutable measurements. A report reads comparisons and produces review artifacts. This allows an agent to rerun only the failed stage and allows a person to inspect a report when the renderer is unavailable.
 
+Preflight shares renderer configuration resolution with execution and publishes a separate validation record. It never enters the render-evidence lifecycle. Target construction owns executable pinning for both local commands and fixtures. The inspection view reads validated comparison records, projects existing measurements, and leaves metric computation and policy evaluation with their current owners.
+
 ```mermaid
 flowchart LR
     S[Suite] --> R[Run orchestrator]
@@ -27,7 +29,24 @@ A renderer-integrated benchmark would remove subprocess setup but would bind eva
 
 The benchmark must not add a second parameter DSL. Suite and target documents may reference the renderer's existing `--preset`, `--params`, and `--set` carriers. The benchmark validates their shape and passes them to the renderer in the renderer's defined precedence order. Benchmark-only settings use typed JSON fields and have no shell or expression evaluation.
 
-The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters. The executable must not require the Python benchmark at runtime.
+The delivered benchmark must use the Rust workspace implementation defined in [Rust delivery](rust-delivery/spec.md). Its public document contracts remain language-neutral. Native C and C++ metric dependencies may remain behind narrow adapters. The executable must not require the Python benchmark at runtime.
+
+The single-image CLI adapter must build the existing suite and case representation and call the existing run orchestrator. It must resolve each authored dependency against its owning document before producing the retained suite. It must not add chart detection or a separate simulation-parameter vocabulary.
+
+Externally preparing all images would keep the benchmark smaller but would discard original metering and film-scale context for simulation crops. A benchmark image editor would duplicate those rules. The chosen boundary accepts prepared local files, delegates simulation geometry to the renderer, and owns only completed-result measurement and detail regions. Preparation provenance remains passive evidence.
+
+### Standard configuration ownership
+
+The [standard configurations](standard-configurations/spec.md) extend fixture generation instead of adding a benchmark preset kind. A special film profile would mix test conditions with material data. A look preset alone cannot own source interpretation, route, geometry, or seed populations. Existing configuration and suite documents own those settings.
+
+The fixture generator must use one construction rule for each standard rendering purpose. It must write standalone configurations and embed equivalent values into suite cases from that rule. It must not maintain separate handwritten defaults for local-image and suite execution.
+
+The renderer's preset export and parameter resolver remain authoritative for look fields, defaults, and profile compatibility. The benchmark must not reconstruct the preset schema or scrape a human listing. Effect-specific probes must apply explicit existing parameter overlays after the exported look.
+
+Generation must complete validation before publishing its final provenance record. Renderer export output must remain a file dependency rather than hidden generator state. Run orchestration, comparison, and report generation must consume the generated documents without a special standard-mode path.
+
+Preset export captures the selected renderer's look at generation time. Reusing that file separates an algorithm revision from a bundled-look revision. Existing run identity must still include the renderer and selected data; a fixed preset file does not freeze material data or promise historical parameter-language compatibility.
+
 
 ## Component responsibilities
 
@@ -47,11 +66,15 @@ The orchestrator must execute the real `spektrafilm` or `spektrafilm-f64` entry 
 
 The orchestrator must retain the command vector after path normalization, selected environment allowlist, process identity, renderer result, and execution diagnostics. It must identify the renderer revision when the executable exposes one and retain the executable hash regardless.
 
+The orchestrator must retain an observed floating decoded-input result for both raster and RAW cases through the renderer's input route. Source and simulation must use the same case geometry and decoding controls. Source output conversion and disabled magazine finishing must be explicit overrides; image-input and simulation behavior retain their existing owners. Source dimensions and actual result geometry must be retained independently.
+
 ### Comparison engine
 
 The comparison engine matches results by stable case and seed identities. It verifies protocol, dimensions, source declarations, effective parameter compatibility, and applicable reference scope before computing measurements. It must produce an explicit incompatibility result instead of silently aligning incompatible runs.
 
 It must compute maps before summaries. Summary scalars must be derived from the retained map or curve and the declared valid mask. Automatic hotspot selection must use those same retained measurements.
+
+Single-run comparison must consume source and simulation masters from one run. It must reuse existing measurement adapters for input/simulation and existing reference evaluation for reference/simulation, without synthesizing a second simulation run or measuring a self-comparison as a substitute. Each pair owns its roles, measurement availability, maps, hotspots, and review artifacts. Reference processing and correspondence limits must apply before metric selection. The report builder must consume these pair records without assigning reference images baseline status.
 
 ### Metric adapters
 
@@ -67,7 +90,11 @@ It must not infer budgets, tune parameters, choose a more favorable reference, o
 
 ### Review builder
 
-The review builder creates an offline report from comparison artifacts. It must not render or recalculate metrics. It must preserve artifact hashes in its manifest and use relative links. It must emit accessible full-image, A/B, locator, detail, and difference views.
+The review builder creates an offline report from comparison artifacts. It must not render or recalculate metrics. It must preserve artifact hashes and relative paths referenced by the immutable comparison snapshot. Permitted indexed dependencies must remain locally resolvable after the original comparison is removed; redistribution restrictions and unavailable artifacts must remain explicit. It must emit accessible full-image, A/B, locator, detail, and difference views.
+
+Case navigation must preserve request order. Pair selection must change the complete evidence panel, including labels, scalar summary, difference artifacts, regions, and native detail. Pixel-aligned pairs use synchronized viewers; regional and visual pairs use separately identified native images and corresponding regions where supplied.
+
+Report fragment navigation identifies case, seed, pair, and region by retained semantic identities. Internal DOM ordering must not define public location identity. Accessible disclosure controls and direct links belong to the review builder; neither navigation nor inspection may recalculate a measurement.
 
 ## Identity and cache invariant
 
@@ -93,4 +120,4 @@ A comparison can complete with `insufficient_evidence`, but a qualified pass req
 
 ## Migration and delivery
 
-[Rust delivery](rust-delivery.md) defines migration scope, numerical acceptance, resource measurements, supported-platform packaging, and cutover. The delivered implementation is the Rust workspace crate. The pinned Python reference and acceptance evidence remain outside the repository after cutover.
+[Rust delivery](rust-delivery/spec.md) defines migration scope, numerical acceptance, resource measurements, supported-platform packaging, and cutover. The delivered implementation is the Rust workspace crate. The pinned Python reference and acceptance evidence remain outside the repository after cutover.

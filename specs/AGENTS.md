@@ -1,35 +1,19 @@
 # Specification Instructions
 
-## Structure
-
-```text
-specs/
-├── VISION.md              # Product vision (optional)
-├── AGENTS.md              # This file
-└── {topic}/
-    ├── VISION.md          # Feature vision (optional)
-    ├── spec.md            # Required — product behavior
-    ├── design.md          # Optional — boundaries, invariants
-    └── {sub-topic}/       # Same shape, nested on demand
-```
-
-## Rules
-
-- Follow [documentation language rules](../eng/documentation-language.md).
-- Write durable target state only.
+- Follow the repository's [documentation language rules](../eng/documentation-language.md).
+- `spec.md` defines target product behavior and is the source of truth.
+- `design.md` defines target system design, boundaries, and invariants.
+- `interface.md` defines a caller-visible machine surface: commands, serialized documents, and statuses.
+- `metrics.md` defines measured quantities: what is measured, how it is computed or reported, and its interpretation limits.
+- These four names are the only contract filenames in `specs/`. A concern that needs its own contract becomes a capability directory with the same shape, as `film-grain/v3/` and `benchmark/standard-configurations/`. Nesting follows the same rule at each level.
+- A capability directory owns `spec.md`. It adds `design.md` only when its internals need a contract.
+- A parent directory keeps `spec.md` or `design.md` only when it owns a real shared contract; otherwise keep capabilities as siblings.
+- Name a directory for the capability, variant, or concern it owns. Never encode one in a filename.
+- Write durable target state only. Do not record plans, research, gaps, progress, logs, or test output.
+- Use top-level capability directories by default; `simulation/` and `delivery/` are optional contexts, not required grouping layers.
+- List every top-level capability in `specs/README.md`. A top-level capability with three or more contract documents adds its own `README.md` index.
+- `README.md` is an index and `AGENTS.md` holds instructions. Neither is a contract document.
 - Keep one fact in one authoritative document; link instead of duplicating rules.
-- `spec.md` states product behavior at the appropriate level of abstraction. Use cases, GWT, and implementation checks belong in tests.
-- Domain terms are defined in [CONTEXT.md](../CONTEXT.md). Product concepts are defined in the owning spec.
-- Higher layers constrain lower layers. Never the reverse.
-- Keep transient material outside the repository, under `/data/workspaces/spektrafilm-project-context/`.
+- Keep transient material outside the repository, normally under `/data/workspaces/spektrafilm-project-context/`.
 - Put durable non-contract conclusions in the relevant Issue/PR.
-- Do not use `docs/` as a competing product or design authority.
-- **Authority** (optional) — declare the owning module and cross-capability dependencies at the top of a spec. Prevents spec/code drift.
-- **Laws** (optional) — end a spec with numbered invariants that are directly testable. Complements Acceptance by stating what must always hold.
-
-## Context Layers
-
-- **Product Vision** ([VISION.md](VISION.md)) → why the product exists.
-- **Domain Language** ([CONTEXT.md](../CONTEXT.md)) → what each term is.
-- **Spec Documents** (`spec.md` / `design.md`) → what the product does.
-- **Code** → the implementation.
+- Do not use `docs/` or implementation notes as a competing product or design authority.

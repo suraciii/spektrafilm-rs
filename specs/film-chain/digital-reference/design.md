@@ -12,8 +12,6 @@ The selected film's base and single reference reading may supply fixed normaliza
 
 Manual corrections must apply in a declared reference-output coordinate system. Existing reconstruction controls must not be silently reused where their exposure-axis meaning differs. Reference conversion must own its endpoint policy; shared output processing must retain its clipping and encoding boundaries.
 
-The existing `density`, `separable`, and `coupled` methods retain exposure reconstruction, optional automatic setup, and independent neutral or Lab Scan finishing. Digital Reference supplies the common reference alternative; `legacy_colorimetric` and `density` with neutral finish retain their prior meanings.
-
 ## Alternatives
 
 A preset over `density`, disabled setup, and neutral finish would reuse all existing controls. It would still reconstruct exposure through the selected film and would not implement reference conversion. Such a preset must not be labeled Digital Reference.
@@ -26,7 +24,7 @@ A matched reference receiver and conversion inside Scan preserves the existing s
 
 ### Public selection
 
-The `scanner.negative_conversion_method` enum carries `digital_reference`. The existing `scanner.receiver_profile` enum adds the matching `digital_reference`. Both values are required together. This reuses the existing parameter source, preset, state, recipe, and discovery boundaries without adding a Scan treatment field. Defaults remain unchanged.
+The existing `scanner.positive_interpretation` enum adds `digital_reference`. The existing `scanner.receiver_profile` enum adds the matching `digital_reference`. Both values are required together. This reuses the existing parameter source, preset, state, recipe, and discovery boundaries without adding a Scan treatment field. Defaults remain unchanged.
 
 Manual controls are `scanner.reference_exposure_ev` and `scanner.reference_balance_ev`. They default to zero. Their output-gain semantics belong to the [product contract](spec.md#reference-exposure). Existing reconstruction controls must remain at their defaults in this mode.
 
@@ -46,8 +44,22 @@ Unblurred capture uses base-10 logarithmic spectral integration to retain finite
 
 Each prepared reference configuration must retain SHA-256 identities of both runtime-resolved source files and the model version. Missing or invalid source data, a singular matrix, a nonpositive anchor, or nonfinite input must fail explicitly. The diagnostic exact-cell capture path must reject reference conversion before rendering because it uses a different capture representation.
 
-Native-f32 and GPU comparisons must use measured budgets recorded with acceptance evidence under [GPU numerical alignment](../../gpu-execution/design.md#numerical-alignment). Reference conversion must execute on the requested backend without a conversion-specific CPU override.
+CPU f64 is the numerical reference. Native-f32 comparisons must use measured budgets recorded with acceptance evidence. The existing negative-conversion CPU fallback supplies faithful reference execution when a GPU backend is selected.
+
+### Additional placements and controls
+
+Reference Exposure is the supported placement. Graded Print, Auto Levels, custom receiver-band editing, paper grade, and reference-axis black/white points are outside this addition. Existing nonidentity point windows fail validation. Their exposure-reconstruction coordinates must not be silently reused for reference conversion.
 
 ### Source reuse
 
-If Fotufilm source or spectral assets are reused, record the license and provenance of each selected asset. Code licensing and data licensing are separate inputs to that decision. Record source revisions and content identities with the implemented model. The model's researched basis is Fotufilm revision `59d43471dbef45c85ae442e507a291fdebfb2ec5`.
+If Fotufilm source or spectral assets are reused, record the license and provenance of each selected asset. Code licensing and data licensing are separate inputs to that decision. Record source revisions and content identities with the implemented model.
+
+## Research basis
+
+The researched source is Fotufilm revision `59d43471dbef45c85ae442e507a291fdebfb2ec5`:
+
+- [Receiver definition](https://github.com/DhaliwalX/fotufilm-engine/blob/59d43471dbef45c85ae442e507a291fdebfb2ec5/Sources/FotufilmCore/DigitalReferenceReceiver.swift#L168) distinguishes the common reference model from a selected-film inverse.
+- [Common curve and base placement](https://github.com/DhaliwalX/fotufilm-engine/blob/59d43471dbef45c85ae442e507a291fdebfb2ec5/Sources/FotufilmCore/DigitalReferenceReceiver.swift#L197) show that fixed placement still includes a tone convention and stock-specific base normalization.
+- [Dye separation](https://github.com/DhaliwalX/fotufilm-engine/blob/59d43471dbef45c85ae442e507a291fdebfb2ec5/Sources/FotufilmCore/DigitalReferenceReceiver.swift#L502) derives a common small-signal response from a shared dye basis.
+
+The existing `density`, `separable`, and `coupled` methods retain exposure reconstruction, optional automatic setup, and independent neutral or Lab Scan finishing. Digital Reference supplies the common reference alternative. The `legacy_colorimetric` receiver and `density` with neutral finish retain their prior meanings.
