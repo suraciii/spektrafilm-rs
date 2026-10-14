@@ -601,8 +601,7 @@ mod parity_tests {
         use spektrafilm_math::image::ImageBuf;
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
-            eprintln!("no GPU adapter available; skipping");
+        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
             return;
         };
 

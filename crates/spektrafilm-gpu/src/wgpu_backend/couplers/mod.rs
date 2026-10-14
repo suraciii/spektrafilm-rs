@@ -546,8 +546,7 @@ mod tests {
         let _guard = TEST_DEVICE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(b) = WgpuBackend::new() else {
-            eprintln!("no GPU adapter; skipping");
+        let Some(b) = crate::test_support::adapter_or_skip() else {
             return;
         };
         let density: Vec<f32> = vec![2.511903, 2.7011967, 0.26266688, 0.34336, 0.07575, 0.05212];
@@ -615,8 +614,7 @@ mod tests {
         let _guard = TEST_DEVICE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(b) = WgpuBackend::new() else {
-            eprintln!("no GPU adapter; skipping");
+        let Some(b) = crate::test_support::adapter_or_skip() else {
             return;
         };
         // Negative film at the acceptor, where the donor langmuir runs.

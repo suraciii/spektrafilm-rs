@@ -1354,9 +1354,10 @@ mod tests {
             data: vec![],
         };
         let params = params(&image);
-        let (Some(automatic), Some(explicit)) = (WgpuBackend::new(), WgpuBackend::new_explicit())
-        else {
-            eprintln!("no GPU adapter available; skipping");
+        let (Some(automatic), Some(explicit)) = (
+            crate::test_support::adapter_or_skip(),
+            crate::test_support::explicit_adapter_or_skip(),
+        ) else {
             return;
         };
         assert!(
