@@ -1,5 +1,4 @@
 //! Pipeline render entry points.
-use crate::WorkflowRoute;
 
 use super::*;
 
@@ -22,7 +21,17 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
     ) -> Result<ImageBuf, String> {
-        self.process_with_taps_timed(image, backend, inject, collect, None, None)
+        self.process_with_taps_timed(image, backend, inject, collect, None)
+    }
+
+    /// Process while collecting per-node wall-clock timings.
+    pub fn process_with_timings(
+        &self,
+        image: ImageBuf,
+        backend: &dyn ComputeBackend,
+        timings: &mut BTreeMap<String, f64>,
+    ) -> Result<ImageBuf, String> {
+        self.process_with_taps_timed(image, backend, None, None, Some(timings))
     }
 
     pub fn process_with_taps_timed(
@@ -32,12 +41,7 @@ impl Pipeline {
         inject: Option<Tap>,
         collect: Option<Tap>,
         mut timings: Option<&mut BTreeMap<String, f64>>,
-        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
-        if capture.is_some() {
-            crate::stage_evidence::ensure_supported_backend(backend)?;
-            crate::stage_evidence::ensure_supported_params(&self.params)?;
-        }
         let inject = match inject {
             Some(tap) => tap,
             None => self
@@ -64,7 +68,6 @@ impl Pipeline {
                 Some(inject),
                 collect,
                 timings,
-                capture,
             );
         }
         // Negative-to-positive interpretation is part of the resident
@@ -108,22 +111,13 @@ impl Pipeline {
             && (inject != Tap::RgbIn || collect != Tap::RgbOut)
         {
             context.decline_resident(
-                spektrafilm_backend::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
+                spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
             );
             context.set_path(if backend.is_gpu() {
-                spektrafilm_backend::telemetry::ExecutionPath::PerStage
+                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
             } else {
-                spektrafilm_backend::telemetry::ExecutionPath::Cpu
+                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
             });
-        }
-        if let Some(capture) = capture.as_deref_mut() {
-            capture.begin(
-                &self.params,
-                self.print_exposure_factor,
-                inject,
-                collect,
-                &image,
-            );
         }
         if inject == Tap::RgbIn && collect == Tap::RgbOut {
             let source = if self.params.output_mix.amount < 1.0 {
@@ -131,21 +125,8 @@ impl Pipeline {
             } else {
                 None
             };
-            let result = self.process_full(
-                image,
-                backend,
-                timings.as_deref_mut(),
-                capture.as_deref_mut(),
-            )?;
-            let result = self.compose_output_mix(result, source, backend, timings)?;
-            if let Some(capture) = capture.as_deref_mut() {
-                capture.record_boundary(
-                    crate::stage_evidence::StageId::RgbOut,
-                    &result,
-                    crate::stage_evidence::CoordinateSpace::Output,
-                );
-            }
-            return Ok(result);
+            let result = self.process_full(image, backend, timings.as_deref_mut())?;
+            return self.compose_output_mix(result, source, backend, timings);
         }
         tracing::info!(
             inject = inject.name(),
@@ -155,26 +136,7 @@ impl Pipeline {
         let t = Instant::now();
         let color_ref = self.color_reference(backend);
         record_stage_timing(&mut timings, "color_reference", t);
-        let result = self.run_from(
-            image,
-            inject,
-            collect,
-            backend,
-            &color_ref,
-            None,
-            timings,
-            capture.as_deref_mut(),
-        )?;
-        if collect == Tap::RgbOut
-            && let Some(capture) = capture
-        {
-            capture.record_boundary(
-                crate::stage_evidence::StageId::RgbOut,
-                &result,
-                crate::stage_evidence::CoordinateSpace::Output,
-            );
-        }
-        Ok(result)
+        self.run_from(image, inject, collect, backend, &color_ref, None, timings)
     }
 
     pub fn process(
@@ -190,7 +152,6 @@ impl Pipeline {
         image: ImageBuf,
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
-        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
         // Active Dye outside its supported condition fails here, before any
         // route work — including the passthrough and convert routes, which
@@ -198,14 +159,7 @@ impl Pipeline {
         crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
-        if self.params.workflow.route_enum() == WorkflowRoute::Input {
-            if let Some(capture) = capture.as_deref_mut() {
-                use crate::stage_evidence::StageId;
-                capture.record_skip(StageId::LogEFilm, "no_film_stage_on_route");
-                capture.record_skip(StageId::CmyFilm, "no_film_stage_on_route");
-                capture.record_skip(StageId::LogEPrint, "no_print_stage_on_route");
-                capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
-            }
+        if self.params.workflow.route == "input" {
             let (working, _) = crate::resizing::crop_and_rescale(
                 &image,
                 &self.params.io,
@@ -218,13 +172,13 @@ impl Pipeline {
             let _observation = crate::stages::StageObservation::cpu(
                 backend,
                 "post_scan",
-                spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
             );
             if let Some(context) = backend.observation_context() {
-                context.set_path(spektrafilm_backend::telemetry::ExecutionPath::Cpu);
+                context.set_path(spektrafilm_gpu::telemetry::ExecutionPath::Cpu);
                 context.set_working_dimensions(image.width, image.height);
                 context.decline_resident(
-                    spektrafilm_backend::telemetry::ResidentDeclineReason::WorkflowRoute,
+                    spektrafilm_gpu::telemetry::ResidentDeclineReason::WorkflowRoute,
                 );
             }
             use spektrafilm_math::colorspace::{conversion_matrix, convert_rgb, resolve};
@@ -257,7 +211,7 @@ impl Pipeline {
             );
             return Ok(output);
         }
-        let image = self.expose_full_input(image, backend, capture.as_deref_mut());
+        let image = self.expose_full_input(image, backend);
         let t = Instant::now();
         let (working, pixel_size_um) = self.rescale_working(&image, backend)?;
         print_stage_timing(stage_timings_enabled(), "resize", t);
@@ -275,9 +229,9 @@ impl Pipeline {
             .route
             .starts_with("input > convert-film")
         {
-            return self.process_convert(working, pixel_size_um, backend, capture);
+            return self.process_convert(working, pixel_size_um, backend);
         }
-        self.run(working, pixel_size_um, 0.0, backend, timings, capture)
+        self.run(working, pixel_size_um, 0.0, backend, timings)
     }
 
     fn process_convert(
@@ -285,39 +239,28 @@ impl Pipeline {
         image: ImageBuf,
         pixel_size_um: f64,
         backend: &dyn ComputeBackend,
-        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
-        use crate::stage_evidence::{CoordinateSpace, StageId};
-        if let Some(capture) = capture.as_deref_mut() {
-            // Conversion maps the receiver capture back to film density: the
-            // chain has no film exposure boundary.
-            capture.record_skip(StageId::LogEFilm, "no_film_exposure_on_route");
-        }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
-                spektrafilm_backend::telemetry::ExecutionPath::PerStage
+                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
             } else {
-                spektrafilm_backend::telemetry::ExecutionPath::Cpu
+                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
             });
-            context.decline_resident(
-                spektrafilm_backend::telemetry::ResidentDeclineReason::WorkflowRoute,
-            );
+            context
+                .decline_resident(spektrafilm_gpu::telemetry::ResidentDeclineReason::WorkflowRoute);
         }
-        let route = self.params.workflow.route_enum();
-        let print_after_convert = route == WorkflowRoute::ConvertFilmPrintScan;
-        let scan_minus_base = route == WorkflowRoute::ConvertFilmScanMinusBase;
+        let route = self.params.workflow.route.as_str();
+        let print_after_convert = route == "input > convert-film > print > scan";
+        let scan_minus_base = route == "input > convert-film > scan-minus-base";
         let mut converting = crate::stages::StageObservation::cpu(
             backend,
             "converting",
-            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
         let converted = crate::stages::converting::process(&image, &self.film, &self.params);
         converting.set_complete(converted.is_ok());
         let film_density = converted?;
         drop(converting);
-        if let Some(capture) = capture.as_deref_mut() {
-            capture.record_boundary(StageId::CmyFilm, &film_density, CoordinateSpace::Working);
-        }
         let color_ref = self.color_reference(backend);
         if print_after_convert {
             let mut printing = crate::stages::StageObservation::new(backend, "printing");
@@ -334,13 +277,6 @@ impl Pipeline {
                 color_ref.printing_exposure_correction,
                 pixel_size_um,
             );
-            if let Some(capture) = capture.as_deref_mut() {
-                capture.record_boundary(
-                    StageId::LogEPrint,
-                    &print_density,
-                    CoordinateSpace::Working,
-                );
-            }
             let developed = crate::stages::printing::develop(
                 &print_density,
                 &self.print,
@@ -350,13 +286,6 @@ impl Pipeline {
             printing.set_complete(developed.is_ok());
             let print_density = developed?;
             drop(printing);
-            if let Some(capture) = capture.as_deref_mut() {
-                capture.record_boundary(
-                    StageId::CmyPrint,
-                    &print_density,
-                    CoordinateSpace::Working,
-                );
-            }
             let scanning = crate::stages::StageObservation::new(backend, "scanning");
             let backend = scanning.backend(backend);
             Ok(crate::stages::scanning::process(
@@ -368,10 +297,6 @@ impl Pipeline {
                 &self.output_gamut,
             )?)
         } else {
-            if let Some(capture) = capture {
-                capture.record_skip(StageId::LogEPrint, "no_print_stage_on_route");
-                capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
-            }
             let mut scan_params = self.scan_params().into_owned();
             scan_params.io.scan_film = true;
             let scanning = crate::stages::StageObservation::new(backend, "scanning");
@@ -399,7 +324,6 @@ impl Pipeline {
         ae_ev: f64,
         backend: &dyn ComputeBackend,
         mut timings: Option<&mut BTreeMap<String, f64>>,
-        capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<ImageBuf, String> {
         let stage_timings = stage_timings_enabled();
         if let Some(context) = backend.observation_context() {
@@ -432,9 +356,9 @@ impl Pipeline {
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
-                spektrafilm_backend::telemetry::ExecutionPath::PerStage
+                spektrafilm_gpu::telemetry::ExecutionPath::PerStage
             } else {
-                spektrafilm_backend::telemetry::ExecutionPath::Cpu
+                spektrafilm_gpu::telemetry::ExecutionPath::Cpu
             });
         }
 
@@ -448,7 +372,6 @@ impl Pipeline {
             &color_ref,
             Some((pixel_size_um, ae_ev)),
             timings,
-            capture,
         )
     }
 
@@ -494,7 +417,7 @@ impl Pipeline {
         if inject != Tap::RgbIn || collect != Tap::RgbOut {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
-                    spektrafilm_backend::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
+                    spektrafilm_gpu::telemetry::ResidentDeclineReason::DiagnosticTapRoute,
                 );
             }
             return Ok(None);
@@ -502,7 +425,7 @@ impl Pipeline {
         if self.tc_lut.is_none() && self.mallett_core.is_none() {
             if let Some(context) = backend.observation_context() {
                 context.decline_resident(
-                    spektrafilm_backend::telemetry::ResidentDeclineReason::MissingResidentFrontPass,
+                    spektrafilm_gpu::telemetry::ResidentDeclineReason::MissingResidentFrontPass,
                 );
             }
             return Ok(None);
@@ -519,7 +442,7 @@ impl Pipeline {
         let metering = crate::stages::StageObservation::cpu(
             backend,
             "metering",
-            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
         let ae_ev = self.meter_autoexposure(image);
         // Clone only when the exposure multiply actually needs owned pixels;

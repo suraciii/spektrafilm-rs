@@ -1,4 +1,5 @@
 //! Conditions shared by field discovery and winning-edit feedback.
+use crate::WorkflowRoute;
 use crate::params::{GrainEngine, RuntimeParams};
 use crate::profile::Profile;
 
@@ -134,12 +135,14 @@ impl Condition {
             Self::AutoExposure => p.camera.auto_exposure,
             Self::Crop => p.io.crop,
             Self::ScannerPoints => {
-                (p.io.scan_film || p.workflow.route == "input > convert-film > scan")
+                (p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan)
                     && (film.is_positive() || p.scanner.scan_output == "negative_to_positive")
             }
             Self::NegativeToPositive => p.scanner.scan_output == "negative_to_positive",
             Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
-            Self::FilmScan => p.io.scan_film || p.workflow.route == "input > convert-film > scan",
+            Self::FilmScan => {
+                p.io.scan_film || p.workflow.route_enum() == WorkflowRoute::ConvertFilmScan
+            }
             Self::DigitalReference => {
                 p.scanner.negative_conversion_method
                     == crate::params::NegativeConversionMethod::DigitalReference

@@ -119,7 +119,7 @@ fn input_route_preserves_requested_crop_pixels_without_exposure() {
             .collect(),
     );
     let output = pipeline
-        .process(image.clone(), &spektrafilm_backend::cpu_backend::CpuBackend)
+        .process(image.clone(), &spektrafilm_gpu::cpu_backend::CpuBackend)
         .unwrap();
     assert_eq!((output.width, output.height), (4, 2));
     for y in 0..2_usize {
@@ -137,7 +137,7 @@ fn input_route_preserves_requested_crop_pixels_without_exposure() {
     }
     pipeline.params.io.upscale_factor = 2.0;
     let output = pipeline
-        .process(image, &spektrafilm_backend::cpu_backend::CpuBackend)
+        .process(image, &spektrafilm_gpu::cpu_backend::CpuBackend)
         .unwrap();
     assert_eq!((output.width, output.height), (8, 4));
 }
@@ -153,11 +153,11 @@ fn digital_reference_preserves_formed_negative_and_prepared_identity() {
     let mut params = baseline.params.clone();
     params.scanner.scan_output = "negative_to_positive".into();
     params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
-    params.scanner.negative_conversion_method =
-        crate::params::NegativeConversionMethod::DigitalReference;
+    params.scanner.positive_interpretation =
+        crate::params::PositiveInterpretation::DigitalReference;
     let reference = baseline.clone().with_params(params).unwrap();
     let image = ImageBuf::from_data(3, 1, vec![from_f64(0.18); 9]);
-    let cpu = spektrafilm_backend::cpu_backend::CpuBackend;
+    let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
     let before = baseline
         .process_with_taps(image.clone(), &cpu, None, Some(Tap::CmyFilm))
         .unwrap();
@@ -189,7 +189,7 @@ fn fotufilm_zero_amount_bypasses_geometry_and_cancelled_render_fails() {
     pipeline.params.film_render.grain.fotufilm.amount = 0.0;
     pipeline.params.io.upscale_factor = 0.5;
     let image = ImageBuf::new(8, 6);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let (working, _) = pipeline.rescale_working(&image, &backend).unwrap();
     assert_eq!((working.width, working.height), (4, 3));
     pipeline.params.film_render.grain.fotufilm.amount = 1.0;
@@ -229,7 +229,7 @@ fn fotufilm_reference_survives_amount_and_calibration_edits() {
 #[test]
 fn fotufilm_grain_reaches_a_monochrome_film() {
     let dir = data_dir();
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let mut image = ImageBuf::new(32, 24);
     for y in 0..24 {
         for x in 0..32 {
@@ -308,7 +308,7 @@ fn injected_film_density_does_not_generate_fotufilm_grain() {
     pipeline.params.io.scan_film = true;
     pipeline.params.workflow.route = "input > film > scan".to_owned();
     let image = ImageBuf::new(4, 3);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let active = pipeline
         .process_with_taps(
             image.clone(),
@@ -490,7 +490,7 @@ fn stock_edits_survive_construction_updates_and_spectral_rebuild() {
 fn with_params_recalibrates_print_exposure_for_camera_ev() {
     let dir = data_dir();
     let base = build();
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let image = ImageBuf::from_data(8, 8, vec![from_f64(0.184); 8 * 8 * 3]);
 
     for ev in [-2.0f32, -1.0, 0.0, 1.0, 2.0] {
@@ -553,7 +553,7 @@ fn persistent_taps_and_explicit_precedence_follow_topology() {
     params.taps.collect = Some("cmy_film".into());
     let params = crate::params_builder::digest_params(params, &film, &print, None, true);
     let pipeline = Pipeline::new(film, print, params);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let image = ImageBuf::from_data(8, 8, vec![from_f64(-1.0); 8 * 8 * 3]);
     let expected = pipeline
         .process_with_taps(
@@ -610,7 +610,7 @@ fn v3_final_crop_preserves_scanner_and_print_boundaries() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_800").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let mut image = ImageBuf::new(96, 64);
     for y in 0..64 {
         for x in 0..96 {
@@ -653,7 +653,6 @@ fn v3_final_crop_preserves_scanner_and_print_boundaries() {
                         &backend,
                         &color_ref,
                         Some((3.1, 0.0)),
-                        None,
                         None,
                     )
                     .unwrap()
@@ -815,7 +814,7 @@ fn fotufilm_dispatch_matrix_follows_development_boundary() {
     let dir = data_dir();
     let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
     let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let image = ImageBuf::from_data(
         8,
         6,
@@ -837,10 +836,10 @@ fn fotufilm_dispatch_matrix_follows_development_boundary() {
         params.film_render.grain.active = false;
         let disabled = base.clone().with_params(params).unwrap();
 
-        let active_context = spektrafilm_backend::telemetry::ObservationContext::new(
-            spektrafilm_backend::telemetry::CollectionMode::Summary,
+        let active_context = spektrafilm_gpu::telemetry::ObservationContext::new(
+            spektrafilm_gpu::telemetry::CollectionMode::Summary,
         );
-        let active_backend = spektrafilm_backend::bind_backend(&backend, active_context.clone());
+        let active_backend = spektrafilm_gpu::bind_backend(&backend, active_context.clone());
         let active_image = active
             .process_with_taps(
                 image.clone(),
@@ -895,7 +894,7 @@ fn fotufilm_dispatch_with_crop_and_optics_runs_once() {
     params.film_render.grain.active = false;
     let disabled = Pipeline::new(film, print, params);
     let image = ImageBuf::from_data(12, 8, vec![from_f64(-0.8); 12 * 8 * 3]);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let mut timings = std::collections::BTreeMap::new();
     let active = pipeline
         .process_with_taps_timed(
@@ -904,7 +903,6 @@ fn fotufilm_dispatch_with_crop_and_optics_runs_once() {
             Some(Tap::RgbIn),
             Some(Tap::RgbOut),
             Some(&mut timings),
-            None,
         )
         .unwrap();
     assert!(timings.contains_key("grain_fotufilm_readout"));
@@ -932,7 +930,7 @@ fn fotufilm_lut_mode_matches_grain_disabled_and_prepares_no_bank() {
     let disabled_params = crate::params_builder::digest_params(params, &film, &print, None, true);
     let disabled = Pipeline::new(film, print, disabled_params);
     let image = ImageBuf::from_data(4, 4, vec![from_f64(0.18); 4 * 4 * 3]);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     assert_eq!(
         active.process(image.clone(), &backend).unwrap().data,
         disabled.process(image, &backend).unwrap().data
@@ -960,7 +958,7 @@ fn fotufilm_seed_and_amount_determinism() {
             .map(|i| from_f64(-1.1 + (i % 13) as f64 * 0.15))
             .collect(),
     );
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let base = Pipeline::new(film, print, params.clone());
     let render = |p: Pipeline| p.process(image.clone(), &backend).unwrap().data;
     let first = render(base.clone());
@@ -978,7 +976,7 @@ fn fotufilm_seed_and_amount_determinism() {
 #[test]
 fn output_mix_interpolates_complete_output_in_actual_linear_transport() {
     use spektrafilm_math::colorspace::{cctf_decode, cctf_encode, resolve};
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let image = ImageBuf::from_data(
         3,
         1,
@@ -1077,7 +1075,7 @@ fn output_mix_zero_decodes_before_resampling_and_ignores_virtual_exposure() {
             pixel[c] = from_f64(converted[c]);
         }
     }
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let actual = pipeline.process(image, &backend).unwrap();
     assert_eq!((actual.width, actual.height), (9, 6));
     assert_eq!(actual.data, expected.data);
@@ -1089,7 +1087,7 @@ fn output_mix_does_not_touch_density_taps_and_rejects_missing_final_source() {
     pipeline.params.film_render.grain.active = false;
     pipeline.params.camera.auto_exposure = false;
     let image = ImageBuf::from_data(2, 2, vec![from_f64(0.2); 12]);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let baseline = pipeline
         .process_with_taps(
             image.clone(),
@@ -1129,7 +1127,7 @@ fn output_mix_source_endpoint_never_reads_processed_samples() {
         .compose_output_mix(
             poisoned,
             Some(source),
-            &spektrafilm_backend::cpu_backend::CpuBackend,
+            &spektrafilm_gpu::cpu_backend::CpuBackend,
             None,
         )
         .unwrap();
@@ -1185,7 +1183,7 @@ fn output_mix_finished_rgb_keeps_magazine_only_in_result_branch() {
     pipeline.params.io.input_cctf_decoding = false;
     pipeline.params.io.output_cctf_encoding = false;
     let image = ImageBuf::from_data(1, 1, [-0.1, 0.4, 1.4].map(from_f64).to_vec());
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
+    let backend = spektrafilm_gpu::cpu_backend::CpuBackend;
     let complete = pipeline.process(image.clone(), &backend).unwrap();
     pipeline.params.output_mix.amount = 0.0;
     let source = pipeline.process(image.clone(), &backend).unwrap();
@@ -1197,226 +1195,4 @@ fn output_mix_finished_rgb_keeps_magazine_only_in_result_branch() {
     for ((s, r), actual) in source.data.iter().zip(&complete.data).zip(&mixed.data) {
         assert_eq!(*actual, from_f64(0.5 * to_f64(*s) + 0.5 * to_f64(*r)));
     }
-}
-
-// --- Native stage evidence capture -----------------------------------------
-
-fn capture_manifest(dir: &std::path::Path) -> serde_json::Value {
-    let text = std::fs::read_to_string(dir.join("stage-evidence.json")).unwrap();
-    serde_json::from_str(&text).unwrap()
-}
-
-fn stage<'a>(manifest: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
-    manifest["stages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|record| record["id"] == id)
-        .unwrap()
-}
-
-#[test]
-fn stage_capture_preserves_output_and_publishes_the_executed_boundaries() {
-    let dir = data_dir();
-    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let mut params = RuntimeParams::default();
-    params.camera.auto_exposure = true;
-    params.io.crop = true;
-    params.io.crop_size = [0.5, 0.25];
-    let pipeline = Pipeline::new(film, print, params);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-    let image = ImageBuf::from_data(
-        8,
-        6,
-        (0..8 * 6 * 3)
-            .map(|i| from_f64((i % 7) as f64 * 0.1))
-            .collect(),
-    );
-    let expected = pipeline.process(image.clone(), &backend).unwrap();
-
-    let bundle = tempfile::tempdir().unwrap();
-    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
-    let captured = pipeline
-        .process_with_taps_timed(
-            image.clone(),
-            &backend,
-            None,
-            None,
-            None,
-            Some(&mut capture),
-        )
-        .unwrap();
-    assert_eq!(captured.data, expected.data, "capture changed the render");
-    capture.publish().unwrap();
-
-    let manifest = capture_manifest(bundle.path());
-    assert_eq!(manifest["execution_status"], "completed");
-    for id in [
-        "rgb_in",
-        "log_e_film",
-        "cmy_film",
-        "log_e_print",
-        "cmy_print",
-        "rgb_out",
-    ] {
-        assert_eq!(stage(&manifest, id)["availability"], "available", "{id}");
-    }
-    // Metering runs on the full source, before crop/resize; the intermediate
-    // grid is the cropped working geometry.
-    assert_eq!(
-        manifest["exposure"]["source_dimensions"],
-        serde_json::json!([8, 6])
-    );
-    assert_eq!(stage(&manifest, "rgb_in")["layout"]["width"], 8);
-    assert_ne!(stage(&manifest, "log_e_film")["layout"]["width"], 8);
-    assert_eq!(
-        manifest["print_normalization"]["value"],
-        pipeline.print_exposure_factor()
-    );
-    // The rgb_out buffer is byte-identical to the raw-out dump of the same
-    // output (pre-saving pipeline output).
-    let mut expected_bytes = Vec::new();
-    for &value in &expected.data {
-        expected_bytes.extend_from_slice(&to_f64(value).to_le_bytes());
-    }
-    assert_eq!(
-        std::fs::read(bundle.path().join("rgb_out.f64")).unwrap(),
-        expected_bytes
-    );
-}
-
-#[test]
-fn stage_capture_input_route_marks_film_and_print_stages_not_applicable() {
-    let mut pipeline = build();
-    pipeline.params.workflow.route = "input".into();
-    pipeline.params.film_render.grain.active = false;
-    pipeline.params.magazine_print_color.active = false;
-    pipeline.params.io.input_color_space = "ACES2065-1".into();
-    pipeline.params.io.output_color_space = "ACES2065-1".into();
-    pipeline.params.io.input_cctf_decoding = false;
-    pipeline.params.io.output_cctf_encoding = false;
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-    let image = ImageBuf::from_data(8, 6, vec![from_f64(0.2); 8 * 6 * 3]);
-    let bundle = tempfile::tempdir().unwrap();
-    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
-    pipeline
-        .process_with_taps_timed(image, &backend, None, None, None, Some(&mut capture))
-        .unwrap();
-    capture.publish().unwrap();
-
-    let manifest = capture_manifest(bundle.path());
-    assert_eq!(manifest["execution_status"], "completed");
-    for id in ["log_e_film", "cmy_film"] {
-        assert_eq!(
-            stage(&manifest, id)["reason"],
-            "no_film_stage_on_route",
-            "{id}"
-        );
-    }
-    for id in ["log_e_print", "cmy_print"] {
-        assert_eq!(
-            stage(&manifest, id)["reason"],
-            "no_print_stage_on_route",
-            "{id}"
-        );
-    }
-    assert_eq!(manifest["exposure"]["availability"], "not_applicable");
-    assert_eq!(
-        manifest["exposure"]["reason"],
-        "no_exposure_application_on_route"
-    );
-    assert_eq!(
-        manifest["print_normalization"]["availability"],
-        "not_applicable"
-    );
-}
-
-#[test]
-fn stage_capture_scan_route_skips_print_stages_without_failing() {
-    let mut pipeline = build();
-    pipeline.params.workflow.route = "input > film > scan".into();
-    pipeline.params.io.scan_film = true;
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-    let image = ImageBuf::from_data(8, 6, vec![from_f64(0.2); 8 * 6 * 3]);
-    let bundle = tempfile::tempdir().unwrap();
-    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
-    pipeline
-        .process_with_taps_timed(image, &backend, None, None, None, Some(&mut capture))
-        .unwrap();
-    capture.publish().unwrap();
-
-    let manifest = capture_manifest(bundle.path());
-    assert_eq!(manifest["execution_status"], "completed");
-    for id in ["log_e_print", "cmy_print"] {
-        assert_eq!(
-            stage(&manifest, id)["availability"],
-            "not_applicable",
-            "{id}"
-        );
-        assert_eq!(
-            stage(&manifest, id)["reason"],
-            "no_print_stage_on_route",
-            "{id}"
-        );
-    }
-    for id in ["rgb_in", "log_e_film", "cmy_film", "rgb_out"] {
-        assert_eq!(stage(&manifest, id)["availability"], "available", "{id}");
-    }
-}
-
-#[test]
-fn stage_capture_declares_film_frame_geometry_for_the_expanded_grain_grid() {
-    let dir = data_dir();
-    let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
-    let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
-    let mut params = RuntimeParams::default();
-    params.workflow.route = "input > film > print > scan".into();
-    params.film_render.grain.engine = crate::params::GrainEngine::Fotufilm;
-    params.film_render.grain.active = true;
-    params.io.crop = true;
-    params.io.crop_size = [0.5, 0.5];
-    params.enlarger.lens_blur = 1.25;
-    params.scanner.lens_blur = 1.0;
-    params.random_seed = 41;
-    let pipeline = Pipeline::new(film, print, params);
-    let backend = spektrafilm_backend::cpu_backend::CpuBackend;
-    let image = ImageBuf::from_data(12, 8, vec![from_f64(0.2); 12 * 8 * 3]);
-    let bundle = tempfile::tempdir().unwrap();
-    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
-    let output = pipeline
-        .process_with_taps_timed(image, &backend, None, None, None, Some(&mut capture))
-        .unwrap();
-    capture.publish().unwrap();
-
-    let manifest = capture_manifest(bundle.path());
-    assert_eq!(manifest["execution_status"], "completed");
-    // The delivered crop is extracted after the spatial effects run on the
-    // full-film frame: intermediates must say so instead of inheriting the
-    // output grid silently.
-    assert_eq!(
-        stage(&manifest, "log_e_film")["geometry"]["coordinate_space"],
-        "working_pixels"
-    );
-    for id in ["cmy_film", "log_e_print", "cmy_print"] {
-        assert_eq!(
-            stage(&manifest, id)["geometry"]["coordinate_space"],
-            "film_frame_pixels",
-            "{id}"
-        );
-    }
-    assert_eq!(
-        stage(&manifest, "rgb_out")["geometry"]["coordinate_space"],
-        "output_pixels"
-    );
-    assert_eq!(stage(&manifest, "rgb_out")["layout"]["width"], output.width);
-    assert!(
-        stage(&manifest, "cmy_film")["layout"]["width"]
-            .as_u64()
-            .unwrap()
-            > stage(&manifest, "rgb_out")["layout"]["width"]
-                .as_u64()
-                .unwrap(),
-        "the film-frame grid must not be the delivered grid"
-    );
 }

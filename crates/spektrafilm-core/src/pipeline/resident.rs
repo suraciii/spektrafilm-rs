@@ -1,4 +1,5 @@
 use super::{Pipeline, select_illuminant};
+use crate::stages::StageObservation;
 use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 
@@ -171,6 +172,35 @@ impl Pipeline {
         if !backend.is_gpu() {
             return Ok(None);
         }
+        // Input transfer decoding is shared preprocessing for the resident
+        // route (pipe architecture, capability class): the front pass
+        // assumes linear RGB exactly like `expose` produces for the
+        // per-stage route. Same expression as `expose`, decoded once here
+        // so the per-stage `expose` never double-decodes.
+        let decoded;
+        let image = if self.params.io.input_cctf_decoding {
+            let _decode = crate::stages::StageObservation::cpu(
+                backend,
+                "input_transfer",
+                spektrafilm_gpu::telemetry::CpuReason::InputTransferDecoding,
+            );
+            let input_space =
+                spektrafilm_math::colorspace::resolve(&self.params.io.input_color_space)
+                    .expect("input color space must be validated before filming");
+            let mut rgb = image.clone();
+            use rayon::prelude::*;
+            use spektrafilm_math::precision::{from_f64, to_f64};
+            rgb.data.par_iter_mut().for_each(|v| {
+                *v = from_f64(spektrafilm_math::colorspace::cctf_decode(
+                    to_f64(*v),
+                    input_space.cctf,
+                ));
+            });
+            decoded = rgb;
+            &decoded
+        } else {
+            image
+        };
         match self.resident_decision() {
             ResidentDecision::UseResident => {}
             ResidentDecision::PerStage { reasons } => {
@@ -239,7 +269,7 @@ impl Pipeline {
         // per-stage `expose` performs its own decode).
         let decoded;
         let image = if self.params.io.input_cctf_decoding {
-            let _decode = super::stages::StageObservation::cpu(
+            let _decode = StageObservation::cpu(
                 backend,
                 "input_transfer",
                 spektrafilm_gpu::telemetry::CpuReason::InputTransferDecoding,
@@ -984,42 +1014,7 @@ impl Pipeline {
             }
             return Ok(None);
         }
-        // Pipe architecture fence policy: a fence is a transfer optimization
-        // for automatic selection, so an explicit GPU request must fail at
-        // assembly when any capability-missing stage would execute on the
-        // host (spec gpu-execution §Backend selection, pipe architecture
-        // "Policy"). The pre-fence decision rejected exactly these stages;
-        // the fences must not let an explicit request run them silently.
-        if backend.explicit_gpu_request() {
-            let mut host_stages: Vec<&str> = Vec::new();
-            if self.params.io.input_cctf_decoding {
-                host_stages.push("input transfer decoding");
-            }
-            if params.camera_diffusion_cpu_stage.is_some() {
-                host_stages.push("camera optical diffusion");
-            }
-            if params.density_cpu_stage.is_some() {
-                host_stages.push("film grain distribution");
-            }
-            if params.scan_acquisition_cpu_stage.is_some() {
-                host_stages.push("scanner acquisition");
-            }
-            if params.scan_tail_cpu_stage.is_some() {
-                host_stages.push("scanner readout interpretation");
-            }
-            if params.print_acquisition_cpu_stage.is_some() {
-                host_stages.push("print acquisition");
-            }
-            if !host_stages.is_empty() {
-                return Err(format!(
-                    "explicit GPU request cannot run the complete computation scope on WGPU \
-                     (host-executed stages: {}); retry with an explicit CPU request to use the \
-                     per-stage route",
-                    host_stages.join(", ")
-                ));
-            }
-        }
-        let resident = super::stages::StageObservation::new(backend, "film_chain");
+        let resident = crate::stages::StageObservation::new(backend, "film_chain");
         let result = match resident.backend(backend).try_run_film_chain(&params) {
             Ok(result) => result,
             Err(error) => {

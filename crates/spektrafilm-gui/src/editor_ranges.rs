@@ -427,16 +427,20 @@ mod tests {
     fn every_gui_editor_path_resolves() {
         // Attribute arguments such as `#[path = "controls_acceptance.rs"]`
         // name source files, not parameter paths.
-        let code: Vec<String> = [include_str!("controls.rs"), include_str!("display.rs")]
-            .into_iter()
-            .map(|source| {
-                source
-                    .lines()
-                    .filter(|line| !line.trim_start().starts_with("#["))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .collect();
+        let code: Vec<String> = [
+            include_str!("controls.rs"),
+            include_str!("display.rs"),
+            include_str!("display/viewer.rs"),
+        ]
+        .into_iter()
+        .map(|source| {
+            source
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("#["))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
         let mut used = Vec::new();
         for source in &code {
             for literal in string_literals(source) {

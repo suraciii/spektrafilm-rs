@@ -37,6 +37,11 @@ pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> 
         Ok(Some(std::ffi::OsString::from_wide(&path[..end]).into()))
     }
 }
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub fn discover_display_profile() -> Result<Option<std::path::PathBuf>, String> {
+    Ok(None)
+}
 
 /// Takes already encoded sRGB viewing pixels, never an export ImageBuf.
 /// ICC conversion is quantized to RGB8 as in the pinned Pillow workflow.
@@ -202,10 +207,22 @@ mod tests {
         assert_eq!(image.data, source);
     }
 
-    // Windows discovers and applies the runner's display ICC profile whenever no
-    // profile is selected, so the preview is the profile-converted raster rather
-    // than the sRGB expectation below. The discovery path is Windows-only by
-    // design (`discover_display_profile`); keep this assertion off that platform.
+    #[cfg(not(windows))]
+    #[test]
+    fn enabled_preview_applies_source_cctf_decoding() {
+        use spektrafilm_math::colorspace::{display_rgb, resolve};
+
+        let image = ImageBuf::from_data(1, 1, vec![0.18 as _, 0.18 as _, 0.18 as _]);
+        let (actual, _) =
+            output_display_raster(&image, "ITU-R BT.2020", true, true, None, 1).unwrap();
+        let space = resolve("ITU-R BT.2020").unwrap();
+        let expected = display_rgb([0.18, 0.18, 0.18], space, true);
+
+        for (actual, expected) in actual.rgb[0].into_iter().zip(expected) {
+            assert!((actual as f64 - expected.clamp(0.0, 1.0)).abs() < 2e-6);
+        }
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn enabled_preview_clips_out_of_gamut_display_values_only() {

@@ -21,37 +21,27 @@ impl Pipeline {
     }
 
     /// Metering plus the exposure multiply, under the `metering` observation
-    /// scope. Both owned-image entry points apply the metered EV immediately;
-    /// with capture the metering actually applied is reported to the stage
-    /// evidence instead of staying internal.
+    /// scope. Both owned-image entry points apply the metered EV immediately,
+    /// so the EV itself stays internal.
     pub(super) fn expose_full_input(
         &self,
         image: ImageBuf,
         backend: &dyn ComputeBackend,
-        capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> ImageBuf {
-        if self.params.workflow.route_enum().is_convert_film() {
+        if self
+            .params
+            .workflow
+            .route
+            .starts_with("input > convert-film")
+        {
             return image;
         }
         let metering = crate::stages::StageObservation::cpu(
             backend,
             "metering",
-            spektrafilm_backend::telemetry::CpuReason::BackendDefault,
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
         );
         let ae_ev = self.meter_autoexposure(&image);
-        if let Some(capture) = capture {
-            capture.record_exposure_source(crate::stage_evidence::ExposureSource {
-                auto_enabled: self.params.camera.auto_exposure,
-                method: self.params.camera.auto_exposure_method.clone(),
-                source_dimensions: [image.width, image.height],
-                metered_ev: ae_ev,
-                metered_ev_source: if self.params.camera.auto_exposure {
-                    "measured"
-                } else {
-                    "disabled_zero"
-                },
-            });
-        }
         let image = self.apply_autoexposure(image, ae_ev);
         drop(metering);
         image

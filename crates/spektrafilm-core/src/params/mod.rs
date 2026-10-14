@@ -438,6 +438,11 @@ impl Default for WorkflowParams {
         }
     }
 }
+impl WorkflowParams {
+    pub fn route_enum(&self) -> crate::WorkflowRoute {
+        crate::WorkflowRoute::parse(&self.route)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -323,12 +323,8 @@ impl Viewer {
             .on_hover_text("Apply the display transform to the viewer output only; saved and exported pixels are unchanged.");
         ui.checkbox(&mut self.settings.gray_18_canvas, "gray 18% canvas")
             .on_hover_text(
-                "Use neutral 18% gray as background to judge the exposure and neutral colors",
+                "Use neutral 18% gray as backgroung to judge the exposure and neutral colors",
             );
-        ui.checkbox(&mut self.settings.reveal, "reveal transition")
-            .on_hover_text("Animate a wipe reveal when switching from input to output view.");
-        ui.checkbox(&mut self.settings.crossfade, "crossfade transition")
-            .on_hover_text("Animate a crossfade between the previous and current output frame.");
         let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge.";
         crate::controls::param_numeric(
             ui,
@@ -358,7 +354,9 @@ impl Viewer {
                 }
             })
             .response
-            .on_hover_text("Interpolation used to display the output layer in the viewer.");
+            .on_hover_text(
+                "Napari interpolation mode used to display the output layer in the viewer.",
+            );
     }
     fn display_source(&self, layer: ViewLayer) -> DisplaySource {
         if layer == ViewLayer::Input {
@@ -649,18 +647,6 @@ impl Viewer {
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
-        }
-        if input_float.is_none() {
-            let painter = ui.painter_at(rect);
-            let message = "No image loaded\nDrop an image here, or use MAIN → Import";
-            let galley = painter.layout(
-                message.to_string(),
-                egui::FontId::proportional(16.0),
-                crate::theme::FG_SECONDARY,
-                rect.width(),
-            );
-            let pos = rect.center() - galley.size() * 0.5;
-            painter.galley(pos, galley, crate::theme::FG_SECONDARY);
         }
         let source = match layer {
             ViewLayer::Input => input_float,

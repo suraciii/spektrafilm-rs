@@ -1,9 +1,6 @@
 //! ComputeBackend trait implementation for WgpuBackend.
 //! Extracted from mod.rs to separate the trait contract from dispatch infrastructure.
 
-use super::film_chain::{
-    explicit_resource_error, required_buffer_exceeds_limits, required_chain_buffers,
-};
 use super::*;
 
 impl ComputeBackend for WgpuBackend {
@@ -186,22 +183,8 @@ impl ComputeBackend for WgpuBackend {
         );
         ImageBuf::from_data(img.width, img.height, f32_to_scalars(result))
     }
-    fn grain_v2(
-        &self,
-        img: &ImageBuf,
-        params: &spektrafilm_backend::GrainV2GpuParams,
-    ) -> Option<ImageBuf> {
+    fn grain_v2(&self, img: &ImageBuf, params: &crate::GrainV2GpuParams) -> Option<ImageBuf> {
         Some(self.grain_v2_gpu(img, params))
-    }
-    fn dye_field(
-        &self,
-        img: &ImageBuf,
-        params: &spektrafilm_backend::dye_params::DyeGpuParams,
-    ) -> Option<Result<ImageBuf, String>> {
-        // The device entry point is the inherent `WgpuBackend::dye_field`;
-        // this hook only marks the attempt so a backend without a device
-        // field path keeps the caller's host fallback.
-        Some(WgpuBackend::dye_field(self, img, params))
     }
     fn gaussian_blur(&self, img: &ImageBuf, sigma: f32) -> ImageBuf {
         if sigma <= 0.0 {
@@ -697,26 +680,8 @@ impl ComputeBackend for WgpuBackend {
 
     fn try_run_film_chain(
         &self,
-        params: &spektrafilm_backend::FilmChainParams<'_>,
+        params: &crate::FilmChainParams<'_>,
     ) -> Result<Option<ImageBuf>, String> {
-        // Bounded-execution preflight: compare the arithmetically required
-        // buffer sizes with the device limits before any allocation, so an
-        // oversized request is an identified failure instead of an
-        // uncaptured wgpu-core validation error.
-        let required = required_chain_buffers(params);
-        if let Some(reason) =
-            required_buffer_exceeds_limits(required.largest(), &self.device.limits())
-        {
-            if self.explicit_gpu_request() {
-                return Err(explicit_resource_error(&reason));
-            }
-            tracing::info!(
-                execution = "per_stage_cpu",
-                reason = %reason,
-                "using per-stage path because a resident buffer exceeds the device resource limits"
-            );
-            return Ok(None);
-        }
         if !params.gpu_blurs_supported() {
             tracing::info!(
                 execution = "per_stage_cpu_blur",
@@ -738,58 +703,7 @@ impl ComputeBackend for WgpuBackend {
         self.explicit
     }
 
-    fn with_explicit_request(&self) -> Option<Box<dyn ComputeBackend>> {
-        Some(Box::new(self.derived_explicit()))
-    }
-
     fn name(&self) -> &str {
         &self.name
-    }
-}
-
-/// The derivation a frontend uses to turn an already selected GPU backend into
-/// an explicit request: same device, same pipeline cache, `explicit` flipped so
-/// the assembly-time guards apply.
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use spektrafilm_math::image::ImageBuf;
-
-    #[test]
-    fn derived_explicit_request_reuses_the_device_and_pipeline_cache() {
-        // The software Vulkan driver is not safe under concurrent device use
-        // in one process; hold the shared lock for the whole test.
-        let base = crate::test_support::adapter();
-        assert!(!base.explicit_gpu_request());
-        let derived = base
-            .with_explicit_request()
-            .expect("a WGPU backend derives an explicit request");
-        assert!(derived.explicit_gpu_request());
-        assert!(derived.is_gpu());
-        assert_eq!(derived.name(), base.name());
-        assert_eq!(
-            derived.adapter_description().map(|adapter| adapter.name),
-            base.adapter_description().map(|adapter| adapter.name)
-        );
-
-        // A kernel compiled through the base backend must be a pipeline-cache
-        // hit for the derived backend; otherwise the frontend opened a second
-        // device and recompiled everything.
-        let matrix = [[1.0f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let image = ImageBuf::new(4, 4);
-        let base_context = ObservationContext::new(CollectionMode::Summary);
-        let observed = base.with_observation_context(base_context).unwrap();
-        let _ = observed.colorspace_convert(&image, &matrix);
-
-        let derived_context = ObservationContext::new(CollectionMode::Summary);
-        let observed = derived
-            .with_observation_context(derived_context.clone())
-            .unwrap();
-        let _ = observed.colorspace_convert(&image, &matrix);
-        assert_eq!(
-            derived_context.snapshot().totals.pipeline_cache_hit_count,
-            Some(1),
-            "the derived backend did not reuse the base pipeline cache"
-        );
     }
 }
