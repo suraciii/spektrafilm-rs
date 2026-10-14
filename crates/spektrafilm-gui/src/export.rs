@@ -335,7 +335,7 @@ impl ExportDialog {
                 };
                 let summary = match draft.format {
                     ExportFormat::Exr => format!("{format_label} · {depth_label} · {} · linear · ZIP", draft.saving_color_space),
-                    ExportFormat::Jpeg => format!("{format_label} · 8 bit · {} · quality {} · {}", draft.saving_color_space, draft.jpeg_quality, if draft.jpeg_subsampling == JpegSubsampling::Yuv444 { "4:4:4" } else { "4:2:0" }),
+                    ExportFormat::Jpeg => format!("{format_label} · 8 bit · {} · quality {} · {}", draft.saving_color_space, draft.jpeg_quality, draft.jpeg_subsampling.as_str()),
                     ExportFormat::Png => format!("{format_label} · 8 bit · {} · encoded", draft.saving_color_space),
                     ExportFormat::Tiff => format!("{format_label} · {depth_label} · {} · {} · {}", draft.saving_color_space, if draft.saving_cctf_encoding { "CCTF" } else { "linear" }, match draft.compression { ExportCompression::Zip => "ZIP", ExportCompression::None => "None" }),
                 };
