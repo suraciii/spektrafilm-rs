@@ -166,6 +166,12 @@ impl HistogramStrip {
         }
     }
 
+    /// Whether the strip's paint path has retained histogram data.
+    #[cfg(test)]
+    pub(crate) fn cached_data(&self) -> Option<&HistogramData> {
+        self.data.as_ref()
+    }
+
     /// Render the histogram strip. Returns the height consumed.
     pub fn render(&mut self, ui: &mut Ui) -> f32 {
         if !self.visible {
