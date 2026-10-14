@@ -164,7 +164,7 @@ fn layers_and_interpolation_change_output_but_preserve_input_pixels() {
     assert_eq!(h.state().viewer.settings.layer, ViewLayer::PaperBack);
     assert_eq!(composed(h, 10.0).interpolation, Interpolation::Spline36);
     develop(h, "PREVIEW", 10.0);
-    finish_animation(h, 10.0);
+    settle_animation(h);
     display_controls(h);
     click(h, "400%");
     choose(h, "output interpolation", "nearest");
@@ -315,6 +315,9 @@ fn gray_canvas_and_white_padding_change_composed_pixels_and_restore_baseline() {
 fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
     let mut s = session();
     let h = &mut s.harness;
+    // This test owns the reveal animation's coverage, so it enables the
+    // animation that `session_fixture` disables before asserting its frames.
+    h.state_mut().viewer.settings.reveal = true;
     develop(h, "PREVIEW", 40.0);
     let reveal = composed(h, 40.0).transition.unwrap();
     assert_eq!(reveal, (0, true));
@@ -350,7 +353,7 @@ fn viewer_settings_do_not_change_saved_or_exported_pixels() {
     let mut s = session();
     let h = &mut s.harness;
     develop(h, "PREVIEW", 50.0);
-    finish_animation(h, 50.0);
+    settle_animation(h);
     let mut options = h.state().export_options.clone();
     options.format = export::ExportFormat::Exr;
     options.depth = BitDepth::ThirtyTwo;

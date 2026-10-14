@@ -102,6 +102,12 @@ fn session_fixture() -> Session {
         state::GuiState::from_runtime(&params, factory.film(), factory.paper(), &factory.sections)
             .unwrap();
     initial.sections["simulation"]["auto_preview"] = serde_json::json!(false);
+    // The viewer's 50-frame Polaroid reveal paints one full-canvas raster per
+    // frame. That costs about 0.7 s per frame at this harness size, so sessions
+    // start with the animation off. The animation keeps its coverage in
+    // `headless::viewer::explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not`,
+    // which turns it back on through `viewer.settings.reveal`.
+    initial.sections["rust"]["viewer"]["settings"]["reveal"] = serde_json::json!(false);
     let state_path = directory.path().join("initial.json");
     initial.save(&state_path).unwrap();
     let browser_path = directory.path().join("browser.json");
@@ -248,6 +254,18 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
         );
         wait_tick();
     }
+}
+
+/// Advance the viewer until it has painted the last frame of its
+/// reveal/crossfade transition and accepted the new output. Sessions start with
+/// the reveal animation disabled, so this returns once the display worker
+/// accepts the render.
+fn settle_animation(h: &mut Harness<'_, App>) {
+    wait_until(h, |a| {
+        let observation = a.viewer.observation();
+        observation.generation == observation.accepted_generation
+            && observation.transition.is_none()
+    });
 }
 
 fn render(h: &mut Harness<'_, App>, button: &str) -> Arc<ImageBuf> {

@@ -249,11 +249,7 @@ fn histogram_draws_retained_output_without_advancing_viewer_or_render_generation
     let mut s = session();
     let h = &mut s.harness;
     let _ = render(h, "PREVIEW");
-    wait_until(h, |app| {
-        let observation = app.viewer.observation();
-        observation.generation == observation.accepted_generation
-            && observation.transition.is_none()
-    });
+    settle_animation(h);
     let observation = h.state().viewer.observation();
     let output = h.state().output_image.as_ref().unwrap().clone();
     let expected = histogram::HistogramData::compute(&output);
