@@ -17,7 +17,7 @@ fn composed(h: &mut Harness<'_, App>, time: f64) -> ViewerObservation {
     h.ctx.set_request_repaint_callback(move |_| {
         let _ = tx.send(());
     });
-    let deadline = Instant::now() + Duration::from_secs(90);
+    let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
         frame(h, time);
         let observation = h.state().viewer.observation();

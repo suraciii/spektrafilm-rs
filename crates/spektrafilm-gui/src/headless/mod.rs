@@ -222,8 +222,20 @@ fn edit(h: &mut Harness<'_, App>, label: &str, text: &str) {
     h.run_steps(3);
 }
 
+/// Wall-clock budget for a headless wait. The waits assert that the app
+/// finishes, never how fast, and CI runners are several times slower than
+/// developer machines while running the bin's tests in parallel.
+pub(crate) const WAIT_DEADLINE: Duration = Duration::from_secs(180);
+
+/// Yield the runner's cores to the worker thread a wait is waiting for. The
+/// workers are separate threads, so a spinning waiter competes with the very
+/// work it waits on and can starve it past the deadline on few-core runners.
+pub(crate) fn wait_tick() {
+    std::thread::sleep(Duration::from_millis(1));
+}
+
 fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(90);
+    let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
         h.step();
         if condition(h.state()) {
@@ -234,7 +246,7 @@ fn wait_until(h: &mut Harness<'_, App>, condition: impl Fn(&App) -> bool) {
             "App completion timed out: {}",
             h.state().status
         );
-        std::thread::yield_now();
+        wait_tick();
     }
 }
 

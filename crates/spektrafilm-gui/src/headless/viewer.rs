@@ -48,7 +48,7 @@ fn composed(h: &mut Harness<'_, App>, time: f64) -> ViewerObservation {
     h.ctx.set_request_repaint_callback(move |_| {
         let _ = tx.send(());
     });
-    let deadline = Instant::now() + Duration::from_secs(90);
+    let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
         frame(h, time);
         let observation = h.state().viewer.observation();
@@ -65,7 +65,7 @@ fn composed(h: &mut Harness<'_, App>, time: f64) -> ViewerObservation {
 fn develop(h: &mut Harness<'_, App>, button: &str, time: f64) {
     let before = h.state().output_image.clone();
     h.get_by_label(button).simulate_click();
-    let deadline = Instant::now() + Duration::from_secs(90);
+    let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
         frame(h, time);
         if !h.state().dirty
@@ -82,7 +82,7 @@ fn develop(h: &mut Harness<'_, App>, button: &str, time: f64) {
             "render timed out: {}",
             h.state().status
         );
-        std::thread::yield_now();
+        wait_tick();
     }
 }
 
@@ -330,7 +330,7 @@ fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
     click(h, "auto preview");
     let before = h.state().output_image.clone().unwrap();
     edit(h, "exposure compensation ev", "0.5");
-    let deadline = Instant::now() + Duration::from_secs(90);
+    let deadline = Instant::now() + WAIT_DEADLINE;
     loop {
         frame(h, time + 10.0);
         if h.state().render_job.is_none()
@@ -340,7 +340,7 @@ fn explicit_preview_and_scan_animate_but_automatic_parameter_update_does_not() {
             break;
         }
         assert!(Instant::now() < deadline, "automatic preview timed out");
-        std::thread::yield_now();
+        wait_tick();
     }
     assert_eq!(composed(h, time + 10.0).transition, None);
 }
