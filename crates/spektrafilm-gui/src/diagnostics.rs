@@ -17,6 +17,7 @@ pub(crate) struct Diagnostics {
     pub mode: CollectionMode,
     history: VecDeque<Report>,
     selected: Option<u64>,
+    user_selected: bool,
     publication: Option<PathBuf>,
     publication_error: Option<String>,
 }
@@ -72,14 +73,21 @@ impl Diagnostics {
     }
 
     fn retain(&mut self, report: Report) {
-        self.selected = Some(report.operation.id);
+        if !self.user_selected {
+            self.selected = Some(report.operation.id);
+        }
         self.history.push_front(report);
         self.history.truncate(20);
+    }
+
+    pub(crate) fn reset_selection(&mut self) {
+        self.user_selected = false;
     }
 
     pub fn clear(&mut self) {
         self.history.clear();
         self.selected = None;
+        self.user_selected = false;
     }
 
     pub fn save_selected(&self, path: &Path) -> Result<(), String> {
@@ -111,7 +119,9 @@ impl Diagnostics {
             if self.history.is_empty() { ui.label("No completed reports. Collection applies to the next operation."); }
             for report in &self.history {
                 let label = format!("#{} {} · {}", report.operation.id, words(&report.operation.kind), words(&report.operation.outcome));
-                ui.selectable_value(&mut self.selected, Some(report.operation.id), label);
+                if ui.selectable_value(&mut self.selected, Some(report.operation.id), label).clicked() {
+                    self.user_selected = true;
+                }
             }
             if let Some(report) = self.history.iter().find(|report| Some(report.operation.id) == self.selected) {
                 let summary = report.summary();

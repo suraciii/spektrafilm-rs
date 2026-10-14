@@ -294,8 +294,8 @@ impl ExportDialog {
                     ui.label("JPEG uses lossy compression, including at quality 100. Use PNG, TIFF or EXR to preserve image detail.");
                     ui.add(egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text("JPEG quality"));
                     enum_choice(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &[
-                        (JpegSubsampling::Yuv444, "Yuv444"),
-                        (JpegSubsampling::Yuv420, "Yuv420"),
+                        (JpegSubsampling::Yuv444, "4:4:4"),
+                        (JpegSubsampling::Yuv420, "4:2:0"),
                     ], "Select the JPEG chroma subsampling.");
                 }
                 if draft.format == ExportFormat::Tiff {
@@ -315,6 +315,24 @@ impl ExportDialog {
                     ExportFormat::Jpeg | ExportFormat::Png => { ui.label("JPEG and PNG use encoded color."); }
                     ExportFormat::Tiff => { ui.checkbox(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding"); }
                 }
+                let depth_label = match draft.depth {
+                    BitDepth::Eight => "8 bit",
+                    BitDepth::Sixteen => "16 bit",
+                    BitDepth::ThirtyTwo => "32 bit",
+                };
+                let format_label = match draft.format {
+                    ExportFormat::Jpeg => "JPEG",
+                    ExportFormat::Png => "PNG",
+                    ExportFormat::Tiff => "TIFF",
+                    ExportFormat::Exr => "EXR",
+                };
+                let summary = match draft.format {
+                    ExportFormat::Exr => format!("{format_label} · {depth_label} · {} · linear · ZIP", draft.saving_color_space),
+                    ExportFormat::Jpeg => format!("{format_label} · 8 bit · {} · quality {} · {}", draft.saving_color_space, draft.jpeg_quality, if draft.jpeg_subsampling == JpegSubsampling::Yuv444 { "4:4:4" } else { "4:2:0" }),
+                    ExportFormat::Png => format!("{format_label} · 8 bit · {} · encoded", draft.saving_color_space),
+                    ExportFormat::Tiff => format!("{format_label} · {depth_label} · {} · {}", draft.saving_color_space, if draft.saving_cctf_encoding { "CCTF" } else { "linear" }),
+                };
+                ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(egui::Color32::GRAY));
                 ui.separator();
                 ui.horizontal(|ui| {
                     submit = ui.button("Export…").clicked();

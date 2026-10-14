@@ -31,6 +31,7 @@ impl App {
 
     /// Submit the latest snapshot without waiting for active computation.
     pub(crate) fn dispatch_render(&mut self, ctx: &egui::Context) {
+        self.diagnostics.reset_selection();
         let t_clone = Instant::now();
         let Some(image) = self.image.as_ref().cloned() else {
             return;
