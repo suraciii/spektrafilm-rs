@@ -247,7 +247,6 @@ impl ParameterEdits {
         validate_finite(params)?;
         let seed = params.random_seed;
         let particle_layers = params.film_render.grain.particle_scale_layers;
-        let neutral_protected = params.neutral_print_filters_protected;
         let explicit_section_paths = params.explicit_section_paths.clone();
         let mut root =
             serde_json::to_value(&*params).map_err(|e| format!("serialize parameters: {e}"))?;
@@ -258,7 +257,6 @@ impl ParameterEdits {
             serde_json::from_value(root).map_err(|e| format!("apply parameter edits: {e}"))?;
         params.random_seed = seed;
         params.film_render.grain.particle_scale_layers = particle_layers;
-        params.neutral_print_filters_protected = neutral_protected;
         params.explicit_section_paths = explicit_section_paths;
         validate_finite(params)
     }
@@ -496,13 +494,18 @@ fn validate_leaf(path: &str, value: &Value, expected: &Value) -> Result<(), Stri
         .and_then(|s| s.strip_suffix('>'))
         .unwrap_or(&ty);
     let ok = if let Some(arr) = base_ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        let len = arr
+        let (inner, len) = arr
             .split_once(';')
-            .and_then(|(_, n)| n.trim().parse::<usize>().ok())
-            .unwrap_or(0);
+            .map(|(inner, n)| (inner.trim(), n.trim()))
+            .unwrap_or((arr, "0"));
+        let len = len.parse::<usize>().unwrap_or(0);
+        let element_ok = |v: &Value| match inner {
+            "bool" => v.is_boolean(),
+            _ => v.is_number(),
+        };
         value
             .as_array()
-            .is_some_and(|a| a.len() == len && a.iter().all(Value::is_number))
+            .is_some_and(|a| a.len() == len && a.iter().all(element_ok))
     } else if base_ty == "bool" {
         value.is_boolean()
     } else if matches!(base_ty, "f32" | "f64" | "u32" | "u64" | "i32" | "i64") {
@@ -1183,7 +1186,7 @@ mod tests {
         assert_eq!(edits.paths().count(), 3);
         let mut params = RuntimeParams {
             random_seed: 7,
-            neutral_print_filters_protected: [true, false, true],
+            neutral_print_filters_protected: Some([true, false, true]),
             ..Default::default()
         };
         params.film_render.grain.particle_scale_layers = [9., 8., 7.];
@@ -1192,7 +1195,19 @@ mod tests {
         assert_eq!(params.camera.filter_uv, [1.0, 2.0, 3.0]);
         assert_eq!(params.random_seed, 7);
         assert_eq!(params.film_render.grain.particle_scale_layers, [9., 8., 7.]);
-        assert_eq!(params.neutral_print_filters_protected, [true, false, true]);
+        assert_eq!(
+            params.neutral_print_filters_protected,
+            Some([true, false, true])
+        );
+        // The persisted flags are themselves settable and round-trip through
+        // the serialize-apply-deserialize path like any other leaf.
+        let flags =
+            ParameterEdits::parse("neutral_print_filters_protected=[false,true,false]").unwrap();
+        flags.apply(&mut params).unwrap();
+        assert_eq!(
+            params.neutral_print_filters_protected,
+            Some([false, true, false])
+        );
     }
 
     #[test]

@@ -510,8 +510,65 @@ fn report_and_render_use_identical_resolved_controls() {
         .iter()
         .map(|bytes| f64::from_ne_bytes(*bytes))
         .collect();
+    // Replaying the published parameters through the real entry point must
+    // reproduce the original render bit-identically: authored axes keep the
+    // carried values and baseline axes re-derive the same built-in table.
+    let params_file = f.root.join("params.json");
+    std::fs::write(
+        &params_file,
+        serde_json::to_vec(&report["parameters"]).unwrap(),
+    )
+    .unwrap();
+    let replay_raw = f.root.join("replay.raw");
+    let replay = f.process(&[
+        "--film",
+        "kodak_portra_400",
+        "--params",
+        params_file.to_str().unwrap(),
+        "--backend",
+        "cpu",
+        "--raw-out",
+        replay_raw.to_str().unwrap(),
+        "--saving-color-space",
+        "ProPhoto RGB",
+        "--saving-cctf-encoding",
+        "true",
+    ]);
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let replayed: Vec<f64> = std::fs::read(replay_raw)
+        .unwrap()
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| f64::from_ne_bytes(*bytes))
+        .collect();
+    assert_eq!(
+        replayed, rendered,
+        "published parameters must replay the render bit-identically"
+    );
+    // The independent expected render consumes the published f32 views with
+    // the second lookup disabled; the exposure normalization then misses the
+    // f64 refinement of the built-in table values. That refinement is the
+    // documented precision rule (authored axes exact, baseline axes refined
+    // at f64 for Python parity), so the published-view render must agree
+    // within the measured budget. Measured: 6.4e-10 absolute for this
+    // fixture; 1e-8 keeps more than 10x headroom while still rejecting any
+    // real control or resolution regression.
     let expected: Vec<f64> = expected.data.iter().map(|&v| v as f64).collect();
-    assert_eq!(rendered, expected);
+    assert_eq!(rendered.len(), expected.len());
+    let max_diff = rendered
+        .iter()
+        .zip(expected.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f64, f64::max);
+    assert!(
+        max_diff <= 1e-8,
+        "published-view render diverges from the render by {max_diff:e}"
+    );
     assert!(f.root.join("output.tif").is_file());
 }
 

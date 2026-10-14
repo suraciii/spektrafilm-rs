@@ -40,6 +40,7 @@ struct CalibrationControlsKey {
     preflash_y_filter_shift: f32,
     preflash_m_filter_shift: f32,
     neutral_print_filters_from_database: bool,
+    neutral_print_filters_protected: [bool; 3],
 }
 
 pub(crate) fn spectral_changed(old: &RuntimeParams, new: &RuntimeParams) -> bool {
@@ -65,6 +66,9 @@ fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
         preflash_y_filter_shift: params.enlarger.preflash_y_filter_shift,
         preflash_m_filter_shift: params.enlarger.preflash_m_filter_shift,
         neutral_print_filters_from_database: params.settings.neutral_print_filters_from_database,
+        neutral_print_filters_protected: params
+            .neutral_print_filters_protected
+            .unwrap_or([false; 3]),
     }
 }
 
@@ -322,14 +326,9 @@ pub(crate) fn build(
     // before any artifact; failing at construction keeps the error
     // actionable and artifact-free on every entry point.
     params.validate()?;
-    if params.workflow.route == "input > film > scan" {
-        params.io.scan_film = true;
-    }
-    if params.workflow.route == "input > film > scan > magazine" {
-        params.io.scan_film = true;
-    }
-    // time and broadcast the single channel onto the 3-channel engine
-    // layout. Must happen before anything reads the profile data.
+    crate::params_builder::normalize_runtime_topology(&film, &mut params);
+    // Resolve development time and broadcast the profile's single channel
+    // onto the 3-channel engine layout before reading the profile data.
     let mut film = crate::profile::resolve_for_render(film, params.film_render.development_time);
     validate_scan_output(&params, &film)?;
     let mut print = crate::profile::resolve_for_render(print, params.print_render.development_time);
@@ -342,9 +341,6 @@ pub(crate) fn build(
         Some(&params.print_render.base),
     );
 
-    // Stock defaults belong to profile selection / digest_params, so
-    // construction preserves later user edits and debug deactivation.
-    crate::params_builder::broadcast_monochrome_layout(&film, &mut params);
     if let Some(model) = print.data.density_curves_model.as_ref() {
         crate::print_morph::morph_density_curves(
             &print.log_exposure_f64(),
@@ -360,16 +356,31 @@ pub(crate) fn build(
     // params.enlarger.{c,m,y}_filter_neutral when the combo isn't in the database.
     // Keep the f64 lookup values around (params is f32) — narrowing to
     // f32 here costs ~4e-8 precision through the `10^(-cc/100)` step.
+    // Authored-versus-baseline resolution is shared with preparation
+    // (`authored_filter_axes`): authored axes keep the carried value so
+    // replaying a resolved document reproduces its render; baseline axes
+    // follow the per-paper database.
     let mut neutral_cmy_f64: Option<[f64; 3]> = None;
     if params.settings.neutral_print_filters_from_database {
         let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
         let print_stock = print.info.stock.as_deref().unwrap_or("");
         let film_stock = film.info.stock.as_deref().unwrap_or("");
-        if let Some([c, m, y]) = db.lookup(print_stock, &params.enlarger.illuminant, film_stock) {
-            params.enlarger.c_filter_neutral = c as f32;
-            params.enlarger.m_filter_neutral = m as f32;
-            params.enlarger.y_filter_neutral = y as f32;
-            neutral_cmy_f64 = Some([c, m, y]);
+        if let Some(mut cmy) = db.lookup(print_stock, &params.enlarger.illuminant, film_stock) {
+            let protected =
+                crate::params_builder::authored_filter_axes(params.neutral_print_filters_protected);
+            let controls = [
+                &mut params.enlarger.c_filter_neutral,
+                &mut params.enlarger.m_filter_neutral,
+                &mut params.enlarger.y_filter_neutral,
+            ];
+            for (axis, control) in controls.into_iter().enumerate() {
+                if protected[axis] {
+                    cmy[axis] = *control as f64;
+                } else {
+                    *control = cmy[axis] as f32;
+                }
+            }
+            neutral_cmy_f64 = Some(cmy);
         }
     }
     let cmy_f64 = neutral_cmy_f64.unwrap_or([
@@ -501,7 +512,7 @@ pub(crate) fn build(
     // See `spektrafilm/utils/spectral_upsampling.py:rgb_to_raw_hanatos2025` (comment line 373).
 
     // Compute enlarger illuminant with dichroic filters — f64 for Python parity.
-    // c/m/y come from the f64 lookup, shift values are f32 in params.
+    // Unprotected neutral axes retain f64 database values; explicit controls and shifts are f32.
     let print_illuminant = enlarger::enlarger_filtered_illuminant_f64(
         &params.enlarger.illuminant,
         c_neutral_f64,

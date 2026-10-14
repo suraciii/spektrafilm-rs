@@ -882,11 +882,15 @@ impl RuntimeParams {
         validation::validate(self)
     }
 
-    /// Snapshot transient preparation ownership separately from the runtime schema.
+    /// Snapshot preparation ownership for state carriers that keep it beside
+    /// the parameters. The filter flags also persist in the parameter
+    /// document itself so replays reproduce their render.
     pub fn render_preparation_state(&self) -> RenderPreparationState {
         RenderPreparationState {
             explicit_section_paths: self.explicit_section_paths.iter().cloned().collect(),
-            neutral_print_filters_protected: self.neutral_print_filters_protected,
+            neutral_print_filters_protected: self
+                .neutral_print_filters_protected
+                .unwrap_or([false; 3]),
         }
     }
 
@@ -901,11 +905,12 @@ impl RuntimeParams {
                 .filter(|path| sources::describe_field(path).is_ok())
                 .cloned(),
         );
-        self.neutral_print_filters_protected = state.neutral_print_filters_protected;
+        self.neutral_print_filters_protected = Some(state.neutral_print_filters_protected);
     }
 }
 /// Serde-visible GUI state carrier for runtime preparation ownership.
-/// Kept separate so runtime parameters, recipes and digests retain their shape.
+/// Kept beside the parameter document so state restoration can override the
+/// persisted flags explicitly.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderPreparationState {
@@ -924,10 +929,13 @@ pub struct RuntimeParams {
     /// it does not become part of the user parameter schema or digest.
     #[serde(skip)]
     pub random_seed: u64,
-    /// CMY axes owned by a resolved look or explicit parameter edits.
-    /// Calibration uses database precision only for unprotected axes.
-    #[serde(skip)]
-    pub(crate) neutral_print_filters_protected: [bool; 3],
+    /// CMY axes owned by a resolved look, explicit parameter edits, or
+    /// restored state. Calibration uses database precision only for
+    /// baseline (unprotected) axes. `None` marks documents without the
+    /// flags; resolution then treats every axis as baseline unless a look,
+    /// explicit edit, or restored state marked it authored.
+    #[serde(default)]
+    pub neutral_print_filters_protected: Option<[bool; 3]>,
     /// Editable leaves explicitly supplied by section documents. Stock initialization
     /// retains these values; legacy parameter decoding does not populate this set.
     #[serde(skip)]

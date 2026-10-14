@@ -180,13 +180,24 @@ pub fn apply_database_neutral_print_filters(
     apply_database_neutral_print_filters_protected(params, film, print, database, protected)
 }
 
+/// Resolve the authored/baseline state of the CMY filter axes.
+///
+/// Explicit preparation flags (a look carrying a value, an explicit edit, a
+/// restored state, or a document that persisted the flags) are authoritative.
+/// Documents written before the flags persisted treat every axis as baseline:
+/// the per-paper database supplies the values unless an edit or look marked
+/// the axis authored.
+pub(crate) fn authored_filter_axes(protection: Option<[bool; 3]>) -> [bool; 3] {
+    protection.unwrap_or([false; 3])
+}
+
 /// Protected axes are ordered cyan, magenta, yellow; calibration policy is retained.
 pub(crate) fn apply_database_neutral_print_filters_protected(
     mut params: RuntimeParams,
     film: &Profile,
     print: &Profile,
     database: Option<&NeutralFilters>,
-    protected: [bool; 3],
+    protection: Option<[bool; 3]>,
 ) -> RuntimeParams {
     if !params.settings.neutral_print_filters_from_database {
         return params;
@@ -196,6 +207,7 @@ pub(crate) fn apply_database_neutral_print_filters_protected(
     if let Some([c, m, y]) =
         database.and_then(|db| db.lookup(print_stock, &params.enlarger.illuminant, film_stock))
     {
+        let protected = authored_filter_axes(protection);
         if !protected[0] {
             params.enlarger.c_filter_neutral = c as f32;
         }
