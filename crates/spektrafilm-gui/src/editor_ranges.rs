@@ -27,7 +27,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "enlarger.preflash_y_filter_shift" => Some((-100.0, 100.0, 1.0, 2)),
         "enlarger.preflash_m_filter_shift" => Some((-100.0, 100.0, 1.0, 2)),
 
-        // Magazine print color
+        // Magazine finish
         "magazine_print_color.strength" => Some((0.0, 1.0, 0.01, 2)),
 
         // Camera and enlarger diffusion filters

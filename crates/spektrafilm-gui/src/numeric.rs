@@ -126,13 +126,28 @@ where
         state.text = format_value(current, T::INTEGRAL, decimals);
     }
 
-    let response = ui
-        .add(
-            TextEdit::singleline(&mut state.text)
-                .id(id)
-                .desired_width(72.0),
-        )
-        .on_hover_text(tooltip);
+    // Determine if the current text is invalid for visual feedback.
+    let parsed_for_validation = parse_value::<T>(&state.text, min, max);
+    let is_invalid = match parsed_for_validation {
+        None => true,
+        Some(v) => !valid(T::from_f64(v)),
+    };
+
+    let mut text_edit = TextEdit::singleline(&mut state.text)
+        .id(id)
+        .desired_width(72.0);
+    if is_invalid {
+        text_edit = text_edit.text_color(egui::Color32::from_rgb(0xe0, 0x55, 0x55));
+    }
+    let response = ui.add(text_edit).on_hover_text(tooltip);
+    if is_invalid {
+        ui.painter().rect_stroke(
+            response.rect.expand(1.5),
+            0.0_f32,
+            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0xe0, 0x55, 0x55)),
+            egui::StrokeKind::Inside,
+        );
+    }
     if response.gained_focus() {
         state.edit_start = current;
     }

@@ -276,13 +276,13 @@ impl ExportDialog {
                 enum_choice(ui, "Backend", &mut draft.backend, &[
                     (ExportBackend::Cpu, cpu_label),
                     (ExportBackend::Gpu, "GPU (WGPU f32)"),
-                ], "Select the rendering backend.");
+                ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, "JPEG"),
                     (ExportFormat::Png, "PNG"),
                     (ExportFormat::Tiff, "TIFF"),
                     (ExportFormat::Exr, "EXR"),
-                ], "Select the image format.");
+                ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit ZIP. EXR: 16/32-bit linear for compositing.");
                 draft.normalize();
                 let depth_choices: &[(BitDepth, &str)] = match draft.format {
                     ExportFormat::Jpeg | ExportFormat::Png => &[(BitDepth::Eight, "8 bit")],
@@ -294,8 +294,8 @@ impl ExportDialog {
                     ui.label("JPEG uses lossy compression, including at quality 100. Use PNG, TIFF or EXR to preserve image detail.");
                     ui.add(egui::Slider::new(&mut draft.jpeg_quality, 1..=100).text("JPEG quality"));
                     enum_choice(ui, "JPEG subsampling", &mut draft.jpeg_subsampling, &[
-                        (JpegSubsampling::Yuv444, "Yuv444"),
-                        (JpegSubsampling::Yuv420, "Yuv420"),
+                        (JpegSubsampling::Yuv444, "4:4:4"),
+                        (JpegSubsampling::Yuv420, "4:2:0"),
                     ], "Select the JPEG chroma subsampling.");
                 }
                 if draft.format == ExportFormat::Tiff {
@@ -305,7 +305,14 @@ impl ExportDialog {
                     ], "Select the TIFF compression method.");
                 }
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
-                egui::ComboBox::from_label("Saving color space").selected_text(&draft.saving_color_space).show_ui(ui, |ui| {
+                egui::ComboBox::from_label("Saving color space")
+                    .selected_text(&draft.saving_color_space)
+                    .show_ui(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("sRGB for web · Adobe RGB for print · ACES2065-1 for archival")
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
                     for &space in spaces {
                         ui.selectable_value(&mut draft.saving_color_space, space.to_owned(), space);
                     }
@@ -315,6 +322,24 @@ impl ExportDialog {
                     ExportFormat::Jpeg | ExportFormat::Png => { ui.label("JPEG and PNG use encoded color."); }
                     ExportFormat::Tiff => { ui.checkbox(&mut draft.saving_cctf_encoding, "Apply saving CCTF encoding"); }
                 }
+                let depth_label = match draft.depth {
+                    BitDepth::Eight => "8 bit",
+                    BitDepth::Sixteen => "16 bit",
+                    BitDepth::ThirtyTwo => "32 bit",
+                };
+                let format_label = match draft.format {
+                    ExportFormat::Jpeg => "JPEG",
+                    ExportFormat::Png => "PNG",
+                    ExportFormat::Tiff => "TIFF",
+                    ExportFormat::Exr => "EXR",
+                };
+                let summary = match draft.format {
+                    ExportFormat::Exr => format!("{format_label} · {depth_label} · {} · linear · ZIP", draft.saving_color_space),
+                    ExportFormat::Jpeg => format!("{format_label} · 8 bit · {} · quality {} · {}", draft.saving_color_space, draft.jpeg_quality, draft.jpeg_subsampling.as_str()),
+                    ExportFormat::Png => format!("{format_label} · 8 bit · {} · encoded", draft.saving_color_space),
+                    ExportFormat::Tiff => format!("{format_label} · {depth_label} · {} · {} · {}", draft.saving_color_space, if draft.saving_cctf_encoding { "CCTF" } else { "linear" }, match draft.compression { ExportCompression::Zip => "ZIP", ExportCompression::None => "None" }),
+                };
+                ui.label(egui::RichText::new(format!("Summary: {summary}")).small().color(egui::Color32::GRAY));
                 ui.separator();
                 ui.horizontal(|ui| {
                     submit = ui.button("Export…").clicked();

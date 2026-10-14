@@ -74,33 +74,11 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked()
-                && let Some(path) = self.chooser.save_file(
-                    self.file_dialog("state")
-                        .set_file_name("gui_state.json")
-                        .add_filter("JSON", &["json"]),
-                )
-            {
-                self.remember_dialog("state", &path);
-                let result = self.current_state().and_then(|s| s.save(&path));
-                self.status = match result {
-                    Ok(()) => format!("Saved GUI state to {}", path.display()),
-                    Err(e) => format!("State save error: {e:#}"),
-                };
+            if ui.button("Save current to file").clicked() {
+                self.save_state_with_dialog();
             }
-            if ui.button("Load from file").clicked()
-                && let Some(path) = self
-                    .chooser
-                    .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
-            {
-                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-                self.status = match result {
-                    Ok(()) => {
-                        self.remember_dialog("state", &path);
-                        format!("Loaded GUI state from {}", path.display())
-                    }
-                    Err(e) => format!("State load error: {e:#}"),
-                };
+            if ui.button("Load from file").clicked() {
+                self.load_state_with_dialog();
             }
             if ui.button("Save current as default").clicked() {
                 let result = self
@@ -120,6 +98,37 @@ impl App {
                 };
             }
         });
+    }
+
+    fn save_state_with_dialog(&mut self) {
+        if let Some(path) = self.chooser.save_file(
+            self.file_dialog("state")
+                .set_file_name("gui_state.json")
+                .add_filter("JSON", &["json"]),
+        ) {
+            self.remember_dialog("state", &path);
+            let result = self.current_state().and_then(|s| s.save(&path));
+            self.status = match result {
+                Ok(()) => format!("Saved GUI state to {}", path.display()),
+                Err(e) => format!("State save error: {e:#}"),
+            };
+        }
+    }
+
+    fn load_state_with_dialog(&mut self) {
+        if let Some(path) = self
+            .chooser
+            .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
+        {
+            let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
+            self.status = match result {
+                Ok(()) => {
+                    self.remember_dialog("state", &path);
+                    format!("Loaded GUI state from {}", path.display())
+                }
+                Err(e) => format!("State load error: {e:#}"),
+            };
+        }
     }
 
     pub(super) fn toggle_scan_for_print(&mut self) {
@@ -171,9 +180,9 @@ impl App {
             if ui
                 .checkbox(
                     &mut self.params.magazine_print_color.active,
-                    "Magazine print",
+                    "Magazine finish",
                 )
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                .on_hover_text("Apply a magazine finish appearance after the selected workflow.")
                 .changed()
             {
                 self.mark_parameters_changed();
@@ -209,6 +218,34 @@ impl App {
                 self.save_dialog();
             }
         });
+        ui.horizontal(|ui| {
+            if ui
+                .button("Save state")
+                .on_hover_text("Save current GUI state to a JSON file")
+                .clicked()
+            {
+                self.save_state_with_dialog();
+            }
+            if ui
+                .button("Load state")
+                .on_hover_text("Load GUI state from a JSON file")
+                .clicked()
+            {
+                self.load_state_with_dialog();
+            }
+        });
+        if let Some(error) = self.last_export_error.clone() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("{error}"))
+                        .color(theme::ERROR)
+                        .small(),
+                );
+                if ui.button("Dismiss").clicked() {
+                    self.last_export_error = None;
+                }
+            });
+        }
     }
 
     pub(super) fn file_dialog(&self, key: &str) -> rfd::FileDialog {
@@ -677,11 +714,11 @@ impl App {
                 for section in ["Print base", "Glare", "Enlarger diffusion"] {
                     self.parameter_section(ui, section);
                 }
+                self.parameter_section(ui, "Magazine finish color");
             }
             GuiTab::Advanced => {
                 for section in [
                     "Spectral upsampling",
-                    "Magazine print color",
                     "Input gamut compress",
                     "Output gamut compress",
                     "Experimental",

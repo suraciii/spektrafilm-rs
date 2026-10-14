@@ -274,7 +274,7 @@ pub(crate) fn show(
         convert::sections(ui, params, section, &mut flags);
         upsampling::sections(ui, params, section, &mut flags);
         grain::sections(ui, params, section, &mut flags);
-        if section == "Magazine print color" {
+        if section == "Magazine finish color" {
             ui.collapsing(section, |ui| {
                 let magazine = &mut params.magazine_print_color;
                 flags.runtime_changed |= param_numeric(
@@ -282,12 +282,17 @@ pub(crate) fn show(
                     "strength",
                     &mut magazine.strength,
                     "magazine_print_color.strength",
-                    "Magazine print color appearance strength.",
+                    "Magazine finish appearance strength.",
                 );
             });
         }
         if section == "Halation" {
             ui.scope(|ui| {
+                ui.label(
+                    egui::RichText::new("Key controls: halation amount (strength) · halation spatial scale (size) · scatter amount (highlight glow)")
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.halation.active, "Enable halation and in-emulsion scatter.");
                 flags.runtime_changed |= param_numeric(ui, "scatter amount", &mut params.film_render.halation.scatter_amount, "film_render.halation.scatter_amount", "High-level scatter strength. 1.0 = full physical scatter, 0.0 = no scatter. Scales the fraction of light that undergoes in-emulsion scattering.");
                 flags.runtime_changed |= param_numeric(ui, "scatter spatial scale", &mut params.film_render.halation.scatter_spatial_scale, "film_render.halation.scatter_spatial_scale", "High-level scatter size multiplier (1.0 = physical defaults). Scales both core and tail sigmas.");
@@ -308,6 +313,11 @@ pub(crate) fn show(
         }
         if section == "Couplers" {
             ui.scope(|ui| {
+                ui.label(
+                    egui::RichText::new("Key controls: inhibition samelayer (contrast) · inhibition interlayer (saturation) · amount (global)")
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
                 flags.runtime_changed |= toggle(ui, "active", &mut params.film_render.dir_couplers.active, "Enable DIR coupler inhibition.");
                 flags.runtime_changed |= param_numeric(ui, "amount", &mut params.film_render.dir_couplers.amount, "film_render.dir_couplers.amount", "Global multiplier on the DIR coupler inhibition matrix. 1.0 leaves the per-channel gammas as-is.");
                 flags.runtime_changed |= param_numeric(ui, "inhibition samelayer", &mut params.film_render.dir_couplers.inhibition_samelayer, "film_render.dir_couplers.inhibition_samelayer", "Multiplier on the same-layer (diagonal) inhibition. Controls overall contrast / gamma reduction within each RGB layer.");
@@ -340,7 +350,8 @@ pub(crate) fn show(
             });
         }
         if section == "Output" {
-            flags.runtime_changed |= param_numeric(ui, "Overall effect amount", &mut params.output_mix.amount, "output_mix.amount", "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
+            flags.runtime_changed |= param_numeric(ui, "Simulation blend", &mut params.output_mix.amount, "output_mix.amount", "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
+            ui.label(egui::RichText::new("1.0 = full simulation · 0.0 = original").small().color(egui::Color32::GRAY));
             flags.runtime_changed |= choice_tip(ui, "output color space", &mut params.io.output_color_space, COLOR_SPACES, "Output color space of the simulation");
             extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
             extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");

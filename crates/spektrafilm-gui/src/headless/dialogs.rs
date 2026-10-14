@@ -219,7 +219,7 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
     );
     assert_eq!(preset_row(h, "Dialog Look"), "Dialog Look • applied");
 
-    edit(h, "Overall effect amount", "0.25");
+    edit(h, "Simulation blend", "0.25");
     assert!((h.state().params.output_mix.amount - 0.25).abs() < 1e-6);
     let row = preset_row(h, "Dialog Look");
     assert_eq!(row, "Dialog Look • modified");
@@ -299,13 +299,13 @@ fn preset_save_revert_rename_duplicate_delete_and_import_conflict_use_real_dialo
 fn section_preset_save_as_apply_and_reset_to_full_effect_are_visible() {
     let mut s = session();
     let h = &mut s.harness;
-    edit(h, "Overall effect amount", "0.25");
+    edit(h, "Simulation blend", "0.25");
     click_section_preset_menu(h);
     assert!(h.query_by_label("Reset to full effect").is_some());
     click(h, "Reset to full effect");
     assert_eq!(h.state().params.output_mix.amount, 1.0);
 
-    edit(h, "Overall effect amount", "0.35");
+    edit(h, "Simulation blend", "0.35");
     click_section_preset_menu(h);
     click(h, "Save as…");
     edit_preset_name(h, "Output controls");
@@ -325,7 +325,7 @@ fn section_preset_save_as_apply_and_reset_to_full_effect_are_visible() {
     );
     assert!(h.query_by_label("Preset: Output controls").is_some());
 
-    edit(h, "Overall effect amount", "0.8");
+    edit(h, "Simulation blend", "0.8");
     click_section_preset_menu(h);
     let output_menu = h
         .query_all_by_label("Output controls")
@@ -363,7 +363,7 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
             .is_some()
     );
     assert!(h.query_by_label("Apply saving CCTF encoding").is_none());
-    choose(h, "JPEG subsampling", "Yuv420");
+    choose(h, "JPEG subsampling", "4:2:0");
 
     change_export_format(h, "TIFF");
     assert!(

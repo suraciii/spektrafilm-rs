@@ -18,6 +18,11 @@ pub(crate) fn sections(
                 (GrainEngine::Dye, "Dye"),
                 (GrainEngine::Fotufilm, "Fotufilm Film"),
             ], "Select the grain engine: Spektra for material grain in developed film density, Procedural for post-scan grain appearance in encoded RGB, Dye for material grain formed in a film-coordinate dye field, Fotufilm Film for effective-appearance film population grain model.");
+            ui.label(
+                egui::RichText::new("Recommended: Spektra (material grain) · Procedural (post-scan, lightweight)")
+                    .small()
+                    .color(egui::Color32::GRAY),
+            );
             if grain.engine == GrainEngine::Procedural {
                 let mut profile = grain.v2_profile.clone();
                 egui::ComboBox::from_label("Grain Profiles").selected_text(&profile).show_ui(ui, |ui| {

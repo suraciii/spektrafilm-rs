@@ -28,7 +28,7 @@ pub(crate) const CHOICES: [RouteChoice; 6] = [
     RouteChoice {
         value: "input > film > print > scan",
         label: "input > film > print > scan",
-        description: "full chain",
+        description: "expose film and print through the full capture chain",
     },
     RouteChoice {
         value: "input > convert-film > print > scan",
@@ -61,7 +61,7 @@ pub(crate) fn tooltip() -> &'static str {
             .join(", ");
         format!(
             "Which path the image takes through the pipeline: {routes}. \
-             Magazine print can be enabled independently for every workflow."
+             Magazine finish can be enabled independently for every workflow."
         )
     });
     &TOOLTIP
