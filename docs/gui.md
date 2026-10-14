@@ -39,6 +39,8 @@ Selecting the negative conversion method clears incompatible capture-correction 
 
 **MAIN → Enlarger → Print exposure mode** selects `auto` or `manual`. `auto` normalizes the print exposure and follows camera exposure compensation, like a color analyzer or minilab. `manual` applies the print exposure time alone, like a test strip. **MAIN → Enlarger → Preflash** retains independent Yellow/Magenta flash filtration. Exposure is a linear multiplier, not EV. On photographic paper, it can change weak highlight differences, but it may lower white, add fog, and shift color. It cannot recover absent detail. Routes without printing retain these values without applying them. See [the output mix specification](../specs/output-mix/spec.md#preflash) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 
+The GUI has no standalone Output lightness-compression control. See [presets](presets.md) for the versioned state document rule.
+
 ### Magazine finish
 The **Magazine finish** checkbox next to the workflow selector applies the bundled appearance to the selected workflow. **ADVANCED → Magazine finish color** sets Strength from 0 to 1. Strength 0 is a no-op. Photographic print controls remain separate.
 

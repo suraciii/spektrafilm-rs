@@ -173,7 +173,7 @@ impl App {
                     &mut self.params.magazine_print_color.active,
                     "Magazine finish",
                 )
-                .on_hover_text("Apply a magazine print appearance after the selected workflow.")
+                .on_hover_text("Apply a magazine finish appearance after the selected workflow.")
                 .changed()
             {
                 self.mark_parameters_changed();

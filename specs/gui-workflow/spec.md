@@ -72,7 +72,7 @@ FILM owns the film material. It holds Chemistry for film, Film base, Halation, C
 
 PRINT owns the print material. It holds Chemistry for print, Print base, Glare, and Enlarger diffusion.
 
-ADVANCED owns processing controls that most sessions never change. It holds Spectral upsampling, Magazine finish, Input gamut compress, and Output gamut compress.
+ADVANCED owns processing controls that most sessions never change. It holds Spectral upsampling, Magazine finish color, Input gamut compress, and Output gamut compress.
 
 CONFIG owns session configuration. It holds Diagnostics, GUI parameters, and Display.
 
