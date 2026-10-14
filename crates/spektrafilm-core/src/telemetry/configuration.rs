@@ -60,6 +60,38 @@ impl WorkflowRoute {
             _ => Self::Custom,
         }
     }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::FilmScan => "input > film > scan",
+            Self::FilmPrintScan => "input > film > print > scan",
+            Self::ConvertFilmPrintScan => "input > convert-film > print > scan",
+            Self::ConvertFilmScanMinusBase => "input > convert-film > scan-minus-base",
+            Self::ConvertFilmScan => "input > convert-film > scan",
+            Self::Custom => "custom",
+        }
+    }
+    pub fn scans_film(&self) -> bool {
+        matches!(
+            self,
+            Self::FilmScan
+                | Self::FilmPrintScan
+                | Self::ConvertFilmPrintScan
+                | Self::ConvertFilmScanMinusBase
+                | Self::ConvertFilmScan
+        )
+    }
+
+    pub fn prints(&self) -> bool {
+        matches!(self, Self::FilmPrintScan | Self::ConvertFilmPrintScan)
+    }
+
+    pub fn is_convert_film(&self) -> bool {
+        matches!(
+            self,
+            Self::ConvertFilmPrintScan | Self::ConvertFilmScanMinusBase | Self::ConvertFilmScan
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

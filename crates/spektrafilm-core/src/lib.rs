@@ -34,6 +34,7 @@ pub mod spectral_service;
 pub mod stages;
 mod suggest;
 pub mod telemetry;
+pub use telemetry::WorkflowRoute;
 
 pub mod math;
 #[cfg(test)]

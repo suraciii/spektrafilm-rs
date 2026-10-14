@@ -1,4 +1,5 @@
 //! Process-only composition of legacy baselines, complete looks and sparse edits.
+use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
 use crate::params::RuntimeParams;
 use crate::params::sources::lookup;
@@ -192,7 +193,7 @@ fn resolve_with_preview_mode(
         if params.workflow.route == REMOVED_MAGAZINE_ROUTE {
             params.validate()?;
         }
-        let direct_scan = params.workflow.route == "input > film > scan"
+        let direct_scan = params.workflow.route_enum() == WorkflowRoute::FilmScan
             || (!request.require_input_declaration && !added_sources && request.scan_film);
         let name = request
             .film
@@ -302,7 +303,7 @@ fn resolve_with_preview_mode(
     if !added_sources {
         // Keep the legacy decoder, route/scan relationship and digest ordering.
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = params.workflow.route == "input > film > scan"
+        params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan
             || (!request.require_input_declaration && request.scan_film);
         if let Some(mode) = request.scan_output {
             params.scanner.scan_output = mode.to_owned();
@@ -345,7 +346,7 @@ fn resolve_with_preview_mode(
             params.io.input_cctf_decoding = value;
         }
         choose_workflow(&mut params, request.route, request.scan_film);
-        params.io.scan_film = params.workflow.route == "input > film > scan";
+        params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan;
         if request.input_is_raw {
             force_raw_input(&mut params);
         }
@@ -574,7 +575,7 @@ mod tests {
             assert_eq!(resolved.params.workflow.route, route);
             assert_eq!(
                 resolved.print_name,
-                if scan_film || route == "input > film > scan" {
+                if scan_film || WorkflowRoute::parse(route) == WorkflowRoute::FilmScan {
                     "kodak_portra_400"
                 } else {
                     "kodak_portra_endura"
@@ -1105,7 +1106,10 @@ mod tests {
                 let mut req = public_request(&sources);
                 req.route = Some(route);
                 let result = resolve(req, &data_dir()).unwrap();
-                assert_eq!(result.params.io.scan_film, *route == "input > film > scan");
+                assert_eq!(
+                    result.params.io.scan_film,
+                    WorkflowRoute::parse(route) == WorkflowRoute::FilmScan
+                );
                 results.push((
                     result.params.workflow.route,
                     result.params.io.scan_film,
@@ -1176,7 +1180,9 @@ mod tests {
                 0.4
             );
             for edit in &result.edits {
-                if edit.path.starts_with("film_render.") && route == "input > film > scan" {
+                if edit.path.starts_with("film_render.")
+                    && WorkflowRoute::parse(route) == WorkflowRoute::FilmScan
+                {
                     continue;
                 }
                 assert_eq!(

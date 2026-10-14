@@ -2,6 +2,7 @@ use std::path::Path;
 
 use spektrafilm_math::spectral::TcLut;
 
+use crate::WorkflowRoute;
 use crate::enlarger;
 use crate::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 use crate::profile::Profile;
@@ -263,8 +264,8 @@ pub(crate) fn validate_scan_output_route(params: &RuntimeParams) -> Result<(), S
     if params.scanner.scan_output != "negative_to_positive" {
         return Ok(());
     }
-    let direct_film_scan = params.workflow.route == "input > film > scan";
-    let convert_scan = params.workflow.route == "input > convert-film > scan";
+    let direct_film_scan = params.workflow.route_enum() == WorkflowRoute::FilmScan;
+    let convert_scan = params.workflow.route_enum() == WorkflowRoute::ConvertFilmScan;
     if !direct_film_scan && !convert_scan {
         return Err(
             "scanner.scan_output=negative_to_positive requires a direct film scan route (input > film > scan or input > convert-film > scan)".into(),

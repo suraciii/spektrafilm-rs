@@ -10,6 +10,7 @@ use spektrafilm_gpu::ComputeBackend;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 
+use crate::WorkflowRoute;
 use crate::lut_transport::{self, ColorSpaceEntry};
 use crate::neutral_filters::NeutralFilters;
 use crate::params::{RuntimeParams, Tap};
@@ -209,13 +210,13 @@ impl BundleBuilder {
     }
 }
 fn validate_route_topology(topology: Topology, route: &str) -> Result<(), String> {
-    if topology == Topology::Four && route == "input > film > scan" {
+    if topology == Topology::Four && WorkflowRoute::parse(route) == WorkflowRoute::FilmScan {
         return Err(
             "4lut is not supported with direct film-scan routes: the topology has no print taps"
                 .into(),
         );
     }
-    if topology != Topology::One && route.starts_with("input > convert-film >") {
+    if topology != Topology::One && WorkflowRoute::parse(route).is_convert_film() {
         return Err(
             "convert-film routes require 1lut because split LUT topologies do not expose conversion taps"
                 .into(),
@@ -281,10 +282,10 @@ pub(crate) fn bake_params(
     params.io.output_color_space = output.primaries.into();
     params.io.input_cctf_decoding = false;
     params.io.output_cctf_encoding = false;
-    if params.workflow.route == "input" {
+    if params.workflow.route_enum() == WorkflowRoute::Input {
         params.workflow.route = "input > film > print > scan".into();
     }
-    params.io.scan_film = params.workflow.route == "input > film > scan";
+    params.io.scan_film = params.workflow.route_enum() == WorkflowRoute::FilmScan;
     params.taps.inject = None;
     params.taps.collect = None;
     params.settings.preview_mode = false;

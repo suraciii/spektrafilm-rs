@@ -17,6 +17,7 @@
 //! In the pipeline params should be static and not be changed;
 //! `settings` and `debug` contain all the switching logic for the digesting.
 
+use crate::WorkflowRoute;
 use crate::neutral_filters::NeutralFilters;
 use crate::params::{PrintExposureEvTracking, RuntimeParams};
 use crate::profile::Profile;
@@ -361,7 +362,7 @@ fn apply_halation_preset(params: &mut RuntimeParams, film: &Profile) {
 /// Normalize route and film topology for effective reports and pipeline construction.
 /// Scan-only routes enable film scanning; other routes preserve an explicit scan flag.
 pub(crate) fn normalize_runtime_topology(film: &Profile, params: &mut RuntimeParams) {
-    if params.workflow.route == "input > film > scan" {
+    if params.workflow.route_enum() == WorkflowRoute::FilmScan {
         params.io.scan_film = true;
     }
     broadcast_monochrome_layout(film, params);
