@@ -1,55 +1,23 @@
 use super::*;
 use buffers::ChainBuffers;
 
-use super::super::blur::SimpleBlurState;
-use super::super::cache::CachedPipelineRef;
-use super::super::couplers::DirState;
-use super::super::gamut::GamutState;
-use super::super::glare::GlareState;
-use super::super::grain::GrainV2State;
-use super::super::halation::HalationState;
-use super::super::highlight::HighlightBoostState;
-use super::super::unsharp::UnsharpState;
-
-/// Owns all intermediate state produced by the film-chain setup phase.
-struct ChainSetup<'a> {
-    image: &'a ImageBuf,
-    n_pixels: u32,
-    img_bytes: usize,
-    buf_a: wgpu::Buffer,
-    buf_b: wgpu::Buffer,
-    #[allow(dead_code)]
-    mappable: bool,
-    #[allow(dead_code)]
-    chain_buffers: ChainBuffers,
-    front_pipe: (CachedPipelineRef, wgpu::BindGroup, Option<wgpu::Buffer>),
-    bg_log10: (CachedPipelineRef, wgpu::BindGroup, wgpu::Buffer),
-    bg_density_film: wgpu::BindGroup,
-    bg_print: wgpu::BindGroup,
-    bg_density_print: wgpu::BindGroup,
-    bg_scan: wgpu::BindGroup,
-    readback: Option<wgpu::Buffer>,
-    halation_state: Option<HalationState>,
-    highlight_state: Option<HighlightBoostState>,
-    camera_lens_blur_state: Option<SimpleBlurState>,
-    unsharp_state: Option<UnsharpState>,
-    grain_v2_state: Option<GrainV2State>,
-    gamut_state: Option<GamutState>,
-    glare_state: Option<GlareState>,
-    scanner_lens_blur_state: Option<SimpleBlurState>,
-    dir_state: Option<DirState>,
-    density_pipe: CachedPipelineRef,
-    print_pipe: CachedPipelineRef,
-    scan_pipe: CachedPipelineRef,
-}
-
 impl WgpuBackend {
-    /// Phase 1: validate dye resources, allocate buffers, pre-compile
-    /// pipelines, build bind groups, and construct per-stage state.
-    fn setup_chain<'a>(
+    /// GPU-resident pipeline: runs the front pass (hanatos LUT lookup or
+    /// mallett matmul), highlight boost, camera lens blur, halation,
+    /// density curves, DIR, print spectral, scan spectral, glare,
+    /// gamut compression, scanner lens blur,
+    /// and unsharp as one assembled stage list over ping-pong image
+    /// storage. Consecutive device passes share a command buffer; an
+    /// assembled CPU fence (grain distribution, acquisition replacement,
+    /// readout interpretation, optical diffusion, output transfer,
+    /// magazine) flushes the submission, runs the host stage, and the
+    /// remaining passes continue on the device.
+    pub(super) fn run_film_chain_inner(
         &self,
-        p: &'a spektrafilm_backend::FilmChainParams<'a>,
-    ) -> Result<ChainSetup<'a>, String> {
+        p: &crate::FilmChainParams<'_>,
+    ) -> Result<ImageBuf, String> {
+        let t_start = std::time::Instant::now();
+        // Pull all references into locals so the existing body below
         // doesn't need a rewrite — only the param sources change.
         let image = p.image;
         let film_log_exposure = p.film_log_exposure;
@@ -68,14 +36,6 @@ impl WgpuBackend {
         let viewing_illuminant = p.viewing_illuminant;
         let scan_normalization = p.scan_normalization;
         let scan_xyz_to_rgb = p.scan_xyz_to_rgb;
-
-        // Bounded Dye resources are validated before the chain allocates
-        // anything (pipe architecture: resource validation precedes chain
-        // allocations), so a request the device cannot hold is a named
-        // failure instead of an allocation trap.
-        if let Some(dye) = p.grain_dye.as_ref() {
-            self.validate_dye_resources(image.width, image.height, dye)?;
-        }
 
         let n_pixels = image.pixel_count() as u32;
         let img_bytes = n_pixels as usize * 3 * 4;
@@ -116,10 +76,8 @@ impl WgpuBackend {
                 .get_mapped_range_mut()
                 .copy_from_slice(bytemuck::cast_slice(&input_f32));
             buf.unmap();
-            self.device.upload(
-                img_bytes as u64,
-                spektrafilm_backend::telemetry::UploadCategory::Image,
-            );
+            self.device
+                .upload(img_bytes as u64, crate::telemetry::UploadCategory::Image);
             buf
         } else {
             let buf = make_img_buf("img_a");
@@ -248,7 +206,7 @@ impl WgpuBackend {
         // (params + rgb_in + raw_out). The tc_lut buffer rides along in the
         // tuple to outlive the encoder on the hanatos arm.
         let (front_pipe, bg_front, _front_tc_lut) = match &p.front {
-            spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => {
+            crate::FrontPass::Hanatos2025 { tc_lut, .. } => {
                 let tc_lut_f32: Vec<f32> = tc_lut.data.iter().map(|&v| v as f32).collect();
                 let tc_lut_buf = mk_storage("tc_lut", bytemuck::cast_slice(&tc_lut_f32));
                 let pipe = self.cached_pipeline(
@@ -286,7 +244,7 @@ impl WgpuBackend {
                 });
                 (pipe, bg, Some(tc_lut_buf))
             }
-            spektrafilm_backend::FrontPass::Mallett2019 { .. } => {
+            crate::FrontPass::Mallett2019 { .. } => {
                 let pipe = self.cached_pipeline(
                     include_str!(
                         "../../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
@@ -510,7 +468,7 @@ impl WgpuBackend {
         // buffers `buf_a` / `buf_b` are reused as blur input/mid; the new
         // `buf_c` and `buf_d` hold the scatter outputs and the halation
         // accumulator. None of this is touched when `p.halation` is `None`.
-        let halation_state = p.halation.as_ref().map(|hp| {
+        let mut halation_state = p.halation.as_ref().map(|hp| {
             build_halation_state(
                 &self.device,
                 hp,
@@ -524,12 +482,12 @@ impl WgpuBackend {
 
         // ── Highlight boost state ────────────────────────────────────────
         // Runs on raw film exposure immediately after the front pass.
-        let highlight_state = p
+        let mut highlight_state = p
             .highlight_boost
             .as_ref()
             .map(|hp| build_highlight_boost_state(&self.device, hp, n_pixels, &buf_b, self));
 
-        let camera_lens_blur_state = p.camera_lens_blur_px.and_then(|sigma| {
+        let mut camera_lens_blur_state = p.camera_lens_blur_px.and_then(|sigma| {
             (sigma > 0.0).then(|| {
                 build_simple_blur_state(
                     &self.device,
@@ -549,7 +507,7 @@ impl WgpuBackend {
         // then combines: buf_b_out = (1+amount)*buf_b - amount*buf_c.
         // Since the combine writes back to buf_b in-place we need to
         // route via a temporary buffer to satisfy wgpu aliasing rules.
-        let unsharp_state = p.unsharp.as_ref().map(|up| {
+        let mut unsharp_state = p.unsharp.as_ref().map(|up| {
             build_unsharp_state(
                 &self.device,
                 up,
@@ -562,7 +520,7 @@ impl WgpuBackend {
         });
         // Encode the destination space before Grain Procedural preparation; all
         // resolution and grain passes stay in this resident command buffer.
-        let grain_v2_state = p.grain_v2.as_ref().map(|gp| {
+        let mut grain_v2_state = p.grain_v2.as_ref().map(|gp| {
             build_grain_v2_state(
                 &self.device,
                 gp,
@@ -578,7 +536,7 @@ impl WgpuBackend {
         // Single per-pixel dispatch in place on buf_b, after glare and
         // before unsharp (the CPU scanning order). The C_max table is
         // baked once at pipeline construction; only the upload happens here.
-        let gamut_state = p
+        let mut gamut_state = p
             .gamut
             .as_ref()
             .map(|gp| build_gamut_state(&self.device, gp, &buf_b, n_pixels, self));
@@ -589,7 +547,7 @@ impl WgpuBackend {
         // buffer, optionally blurs it, then adds `g * rgb_offset[c]` to
         // the image. Uses buf_a (free after scan_spectral consumed
         // density_cmy) and one fresh scratch buffer.
-        let glare_state = p.glare.as_ref().map(|gp| {
+        let mut glare_state = p.glare.as_ref().map(|gp| {
             build_glare_state(
                 &self.device,
                 gp,
@@ -601,7 +559,7 @@ impl WgpuBackend {
             )
         });
 
-        let scanner_lens_blur_state = p.scanner_lens_blur_px.and_then(|sigma| {
+        let mut scanner_lens_blur_state = p.scanner_lens_blur_px.and_then(|sigma| {
             (sigma > 0.0).then(|| {
                 build_simple_blur_state(
                     &self.device,
@@ -625,7 +583,7 @@ impl WgpuBackend {
         // reused as blur mid since density_cmy is no longer needed once
         // the matmul has consumed it (the final density_curve_interp
         // overwrites buf_a anyway).
-        let dir_state = p.dir_couplers.as_ref().map(|dp| {
+        let mut dir_state = p.dir_couplers.as_ref().map(|dp| {
             build_dir_state(
                 &self.device,
                 dp,
@@ -637,104 +595,11 @@ impl WgpuBackend {
             )
         });
 
-        Ok(ChainSetup {
-            image,
-            n_pixels,
-            img_bytes,
-            buf_a,
-            buf_b,
-            mappable,
-            chain_buffers: ChainBuffers {
-                film_log_exp_buf,
-                film_curves_buf,
-                film_cd_buf,
-                film_bd_buf,
-                print_illu_buf,
-                print_sens_buf,
-                print_log_exp_buf,
-                print_curves_buf,
-                scan_cd_buf,
-                scan_bd_buf,
-                view_illu_buf,
-                cmf_x_buf,
-                cmf_y_buf,
-                cmf_z_buf,
-                front_params_buf,
-                film_density_params_buf,
-                print_params_buf,
-                print_density_params_buf,
-                scan_params_buf,
-            },
-            front_pipe: (front_pipe, bg_front, _front_tc_lut),
-            bg_log10,
-            bg_density_film,
-            bg_print,
-            bg_density_print,
-            bg_scan,
-            readback,
-            halation_state,
-            highlight_state,
-            camera_lens_blur_state,
-            unsharp_state,
-            grain_v2_state,
-            gamut_state,
-            glare_state,
-            scanner_lens_blur_state,
-            dir_state,
-            density_pipe,
-            print_pipe,
-            scan_pipe,
-        })
-    }
-
-    /// GPU-resident pipeline: runs the front pass (hanatos LUT lookup or
-    /// mallett matmul), highlight boost, camera lens blur, halation,
-    /// density curves, DIR, print spectral, scan spectral, glare,
-    /// gamut compression, scanner lens blur,
-    /// and unsharp as one assembled stage list over ping-pong image
-    /// storage. Consecutive device passes share a command buffer; an
-    /// assembled CPU fence (grain distribution, acquisition replacement,
-    /// readout interpretation, optical diffusion, output transfer,
-    /// magazine) flushes the submission, runs the host stage, and the
-    /// remaining passes continue on the device.
-    pub(super) fn run_film_chain_inner(
-        &self,
-        p: &spektrafilm_backend::FilmChainParams<'_>,
-    ) -> Result<ImageBuf, String> {
-        let t_start = std::time::Instant::now();
-        let setup = self.setup_chain(p)?;
-        let ChainSetup {
-            image,
-            n_pixels,
-            img_bytes,
-            ref buf_a,
-            ref buf_b,
-            ref front_pipe,
-            ref bg_log10,
-            ref bg_density_film,
-            ref bg_print,
-            ref bg_density_print,
-            ref bg_scan,
-            ref readback,
-            ref halation_state,
-            ref highlight_state,
-            ref camera_lens_blur_state,
-            ref unsharp_state,
-            ref grain_v2_state,
-            ref gamut_state,
-            ref glare_state,
-            ref scanner_lens_blur_state,
-            ref dir_state,
-            ref density_pipe,
-            ref print_pipe,
-            ref scan_pipe,
-            ..
-        } = setup;
-        let (front_pipe, bg_front, _front_tc_lut) = front_pipe.clone();
         // ── Assemble the stage list, then run it on the pipe ────────────
-        // GPU nodes use ordered submissions while sharing resident buffers.
-        // Keeping node workloads separate avoids a whole-frame watchdog job.
-        // Each closure owns its bind groups and state; buffers use cheap handles.
+        // Consecutive GPU nodes share one command buffer and one submission,
+        // exactly like the former fused inline sequence. Each closure owns
+        // the bind groups and state it encodes; buffers ride along as
+        // Arc-cloned handles (wgpu resources are cheap clones).
         let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
         let mut stages: Vec<super::super::pipe::ChainStage<'_>> = Vec::new();
         let pass = |name: &'static str,
@@ -764,7 +629,7 @@ impl WgpuBackend {
             n_pixels,
         ));
         // 1a. Highlight boost on raw, before optical scatter.
-        if let Some(hs) = highlight_state.as_ref() {
+        if let Some(hs) = highlight_state.take() {
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "highlight_boost",
                 encode: Box::new(move |encoder| hs.encode_passes(encoder)),
@@ -794,7 +659,7 @@ impl WgpuBackend {
             });
         }
         // 1b. Camera lens blur on raw before halation.
-        if let Some(bs) = camera_lens_blur_state.as_ref() {
+        if let Some(bs) = camera_lens_blur_state.take() {
             let buf_b = buf_b.clone();
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "camera_lens_blur",
@@ -803,7 +668,7 @@ impl WgpuBackend {
         }
         // 1c. Halation in-place on buf_b (blur scratch in buf_a, scatter
         //     outputs and accumulator in buf_c / buf_d).
-        if let Some(hs) = halation_state.as_ref() {
+        if let Some(hs) = halation_state.take() {
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "halation",
                 encode: Box::new(move |encoder| hs.encode_passes(encoder, n_pixels, wg_xy)),
@@ -811,7 +676,7 @@ impl WgpuBackend {
         }
         // 2. log10 in-place on buf_b: raw → log_raw (3 channels per thread).
         {
-            let (log10_pipe, log10_bg, _keepalive) = bg_log10.clone();
+            let (log10_pipe, log10_bg, _keepalive) = bg_log10;
             stages.push(pass(
                 "log_exposure",
                 log10_pipe.pipeline,
@@ -823,12 +688,12 @@ impl WgpuBackend {
         stages.push(pass(
             "film_density",
             density_pipe.pipeline.clone(),
-            bg_density_film.clone(),
+            bg_density_film,
             n_pixels,
         ));
         // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
         //     the density curve back into buf_a.
-        if let Some(ds) = dir_state.as_ref() {
+        if let Some(ds) = dir_state.take() {
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "dir_couplers",
                 encode: Box::new(move |encoder| ds.encode_passes(encoder, n_pixels, wg_xy)),
@@ -857,19 +722,6 @@ impl WgpuBackend {
                     Ok(())
                 }),
             });
-        }
-        // 3c. Film-grain Dye: the device field on the developed density in
-        //     buf_a, in the density-fence position (after the film density
-        //     curve and DIR, before printing). The pass resolves the
-        //     conditional field and writes its readout back into the same
-        //     buffer, so the pre-bound print bind groups keep addressing it.
-        //     Its bounded status is checked after the run and before the
-        //     output is published below.
-        let mut dye_status = None;
-        if let Some(dye) = p.grain_dye.as_ref() {
-            let dye_state = self.prepare_dye(image.width, image.height, buf_a, dye)?;
-            dye_status = Some(dye_state.status_buffer());
-            dye_state.append_stages(&mut stages, buf_a);
         }
         // 4 + 5. Printing: print_spectral (buf_a → buf_b) then the print
         //     density curve (buf_b → buf_a). Skipped for scan_film — the
@@ -902,14 +754,14 @@ impl WgpuBackend {
                 stages.push(pass(
                     "print_spectral",
                     print_pipe.pipeline.clone(),
-                    bg_print.clone(),
+                    bg_print,
                     n_pixels,
                 ));
             }
             stages.push(pass(
                 "print_density",
-                density_pipe.pipeline.clone(),
-                bg_density_print.clone(),
+                density_pipe.pipeline,
+                bg_density_print,
                 n_pixels,
             ));
         }
@@ -938,16 +790,11 @@ impl WgpuBackend {
                 }),
             });
         } else {
-            stages.push(pass(
-                "scan_spectral",
-                scan_pipe.pipeline.clone(),
-                bg_scan.clone(),
-                n_pixels,
-            ));
+            stages.push(pass("scan_spectral", scan_pipe.pipeline, bg_scan, n_pixels));
         }
         // 6a. Scanner readout optics on the linear acquisition, before
         //     glare, gamut correction, and unsharp mask.
-        if let Some(bs) = scanner_lens_blur_state.as_ref() {
+        if let Some(bs) = scanner_lens_blur_state.take() {
             let buf_b = buf_b.clone();
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "scanner_lens_blur",
@@ -955,7 +802,7 @@ impl WgpuBackend {
             });
         }
         // 6b. Glare (in place on buf_b).
-        if let Some(gs) = glare_state.as_ref() {
+        if let Some(gs) = glare_state.take() {
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "glare",
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels, wg_xy)),
@@ -988,7 +835,7 @@ impl WgpuBackend {
         }
         // 6c. Output gamut compression (in place on buf_b) — after glare,
         //     before unsharp, mirroring the CPU scanning order.
-        if let Some(gs) = gamut_state.as_ref() {
+        if let Some(gs) = gamut_state.take() {
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "output_gamut",
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels)),
@@ -996,7 +843,7 @@ impl WgpuBackend {
         }
         // 6d. Unsharp mask — writes the final image back to buf_b so the
         //     readback path below is unchanged.
-        if let Some(us) = unsharp_state.as_ref() {
+        if let Some(us) = unsharp_state.take() {
             let buf_b = buf_b.clone();
             let img_bytes_u64 = img_bytes as u64;
             stages.push(super::super::pipe::ChainStage::Gpu {
@@ -1007,7 +854,7 @@ impl WgpuBackend {
             });
         }
         // 6e. Encode native destination RGB, then apply Grain Procedural.
-        if let Some(gs) = grain_v2_state.as_ref() {
+        if let Some(gs) = grain_v2_state.take() {
             let buf_b = buf_b.clone();
             stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "grain_v2",
@@ -1197,7 +1044,7 @@ impl WgpuBackend {
         }
         // Zero-copy path: when buf_b is mappable, skip the blit and map it
         // directly below. Otherwise stage it into the MAP_READ readback
-        // buffer in the last ordered device submission.
+        // buffer, still inside the single submission.
         if let Some(rb) = readback.as_ref() {
             let rb = rb.clone();
             let buf_b = buf_b.clone();
@@ -1213,16 +1060,10 @@ impl WgpuBackend {
         // creation/uploads, and stage assembly.
         let cpu_setup_ms = t_start.elapsed().as_secs_f32() * 1000.0;
         self.pipe.run_chain(stages)?;
-        // The Dye pass publishes only a bounded flag; it is checked after the
-        // run and before the output is read back and published (pipe
-        // architecture), so an out-of-bounds field fails instead of escaping.
-        if let Some(status) = dye_status.as_ref() {
-            self.check_dye_status(status)?;
-        }
 
         // Single sync point at the end. Map buf_b directly on the zero-copy
         // path, or the staging buffer otherwise.
-        let map_target = readback.as_ref().unwrap_or(buf_b);
+        let map_target = readback.as_ref().unwrap_or(&buf_b);
         let out_f32 = self.read_mapped_f32(map_target, img_bytes as u64);
         let gpu_wait_ms = t_start.elapsed().as_secs_f32() * 1000.0 - cpu_setup_ms;
 
@@ -1268,10 +1109,7 @@ const MAX_FIXED_AUX_BYTES: u64 = 4 * 1024;
 pub(in crate::wgpu_backend) struct RequiredChainBuffers {
     /// One image-sized buffer: the `img_a`/`img_b` ping-pong pair, the
     /// readback buffer, and every stage scratch buffer (blur, halation,
-    /// DIR, glare, unsharp, grain) is created at this size or smaller. The
-    /// Dye field's bounded band scratch is not derived here: it is planned
-    /// against the device limits by `validate_dye_resources`, which runs
-    /// before the chain allocates anything.
+    /// DIR, glare, unsharp, grain) is created at this size or smaller.
     pub(super) image_bytes: u64,
     /// Largest static buffer: the f32-narrowed lookup tables (spectral
     /// densities, density curves, front-pass LUT, gamut `C_max`) plus the
@@ -1291,7 +1129,7 @@ impl RequiredChainBuffers {
 /// one f32 on upload, so `n` f64 samples become `4n` bytes and an
 /// `[[f64; 3]]` table of `n` rows becomes `12n`.
 pub(in crate::wgpu_backend) fn required_chain_buffers(
-    p: &spektrafilm_backend::FilmChainParams<'_>,
+    p: &crate::FilmChainParams<'_>,
 ) -> RequiredChainBuffers {
     let f32s = |count: usize| (count as u64).saturating_mul(4);
     let table = |rows: usize| f32s(rows).saturating_mul(3);
@@ -1304,8 +1142,8 @@ pub(in crate::wgpu_backend) fn required_chain_buffers(
         p.print_channel_density.len()
     };
     let tc_lut_bytes = match &p.front {
-        spektrafilm_backend::FrontPass::Hanatos2025 { tc_lut, .. } => f32s(tc_lut.data.len()),
-        spektrafilm_backend::FrontPass::Mallett2019 { .. } => 0,
+        crate::FrontPass::Hanatos2025 { tc_lut, .. } => f32s(tc_lut.data.len()),
+        crate::FrontPass::Mallett2019 { .. } => 0,
     };
     let dir_log_bytes = p.dir_couplers.map_or(0, |dp| f32s(dp.log_exposure.len()));
     let dir_curves_bytes = p
@@ -1376,7 +1214,7 @@ pub(in crate::wgpu_backend) fn explicit_resource_error(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spektrafilm_backend::{FilmChainParams, FrontPass};
+    use crate::{FilmChainParams, FrontPass};
     use spektrafilm_math::image::ImageBuf;
 
     const MAT3: [[f64; 3]; 3] = [[0.0; 3]; 3];
@@ -1417,7 +1255,6 @@ mod tests {
             camera_lens_blur_px: None,
             scanner_lens_blur_px: None,
             highlight_boost: None,
-            grain_dye: None,
             density_cpu_stage: None,
             scan_tail_cpu_stage: None,
             scan_acquisition_cpu_stage: None,
@@ -1505,7 +1342,10 @@ mod tests {
     /// instead of an uncaptured wgpu-core validation error.
     #[test]
     fn oversized_geometry_declines_the_automatic_route_and_fails_an_explicit_request() {
-        use spektrafilm_backend::ComputeBackend;
+        use crate::ComputeBackend;
+        let _lock = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // 20k x 20k x 12 B = 4.8 GB declared: beyond any device limit and never
         // allocated, because the preflight runs before the first allocation.
         let image = ImageBuf {
@@ -1514,19 +1354,18 @@ mod tests {
             data: vec![],
         };
         let params = params(&image);
-        // Each adapter owns the device lock for its lifetime, so the two
-        // requests run in sequence rather than holding two devices at once.
-        {
-            let automatic = crate::test_support::adapter();
-            assert!(
-                automatic
-                    .try_run_film_chain(&params)
-                    .expect("the automatic route declines, it does not error")
-                    .is_none(),
-                "the automatic route must decline instead of allocating 4.8 GB"
-            );
-        }
-        let explicit = crate::test_support::explicit_adapter();
+        let (Some(automatic), Some(explicit)) = (WgpuBackend::new(), WgpuBackend::new_explicit())
+        else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        assert!(
+            automatic
+                .try_run_film_chain(&params)
+                .expect("the automatic route declines, it does not error")
+                .is_none(),
+            "the automatic route must decline instead of allocating 4.8 GB"
+        );
         let error = explicit
             .try_run_film_chain(&params)
             .expect_err("an explicit request must fail");

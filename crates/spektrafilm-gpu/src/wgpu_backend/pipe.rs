@@ -1,23 +1,19 @@
 //! GPU pipe execution core — the internal carrier defined by
-//! `specs/gpu-execution/design.md` (pipe assembly).
+//! `specs/gpu-execution/pipe-architecture.md` (slice S1).
 //!
 //! The pipe owns buffer reuse and the host transfer points: input upload,
 //! fences, and the final readback. Per-stage trait methods dispatch through
 //! `dispatch_host` with unchanged stage placement and telemetry semantics.
 //! The assembled chain runs through `ChainStage` with `readback_buffer` and
-//! `write_image_buffer` at each fence.
-//!
-//! The device-resident primitives (`DeviceImage`, `dispatch_device`,
-//! `upload_image`, `fence`, `readback_image`) are a complete zero-copy
-//! execution path that the production chain does not take: production
-//! materializes at every fence. They are kept because they pin the pipe's
-//! transfer contract and are exercised by this module's own tests.
+//! `write_image_buffer` at each fence. The device-resident primitives
+//! (`DeviceImage`, `dispatch_device`, `upload_image`, `fence`) are the
+//! general execution core, exercised by this module's own tests.
 
 use super::cache::PipelineCache;
 use super::observation::{ObservedDevice, ObservedEncoder, ObservedQueue};
 use super::{GpuBuffer, dispatch_linear};
+use crate::telemetry::*;
 use parking_lot::Mutex;
-use spektrafilm_backend::telemetry::*;
 /// A device-resident RGB f32 image: storage buffer, pixel count, byte size.
 #[allow(dead_code)]
 pub(super) struct DeviceImage {
@@ -126,7 +122,6 @@ pub(super) struct GpuPipe {
     cache: std::sync::Arc<PipelineCache>,
     pool: std::sync::Arc<Mutex<ReadbackPool>>,
     static_cache: std::sync::Arc<StaticBufferCache>,
-    pub(super) dye_certification: std::sync::Arc<std::sync::OnceLock<Result<(), String>>>,
 }
 
 impl GpuPipe {
@@ -141,7 +136,6 @@ impl GpuPipe {
             cache,
             pool: std::sync::Arc::new(Mutex::new(ReadbackPool::default())),
             static_cache: std::sync::Arc::new(StaticBufferCache::default()),
-            dye_certification: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -157,7 +151,6 @@ impl GpuPipe {
             cache: std::sync::Arc::clone(&self.cache),
             pool: std::sync::Arc::clone(&self.pool),
             static_cache: std::sync::Arc::clone(&self.static_cache),
-            dye_certification: std::sync::Arc::clone(&self.dye_certification),
         }
     }
 
@@ -382,18 +375,9 @@ impl GpuPipe {
         self.return_readback(readback, image.bytes);
         out
     }
-    /// Readback of f32 stages, the crate's dominant element type.
-    pub(super) fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
-        self.read_mapped(buffer, bytes)
-    }
-
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
-    /// materialized bytes, then copy the mapped range out.
-    pub(super) fn read_mapped<T: bytemuck::Pod>(
-        &self,
-        buffer: &wgpu::Buffer,
-        bytes: u64,
-    ) -> Vec<T> {
+    /// materialized bytes, then copy the mapped range out as f32.
+    pub(super) fn read_mapped_f32(&self, buffer: &wgpu::Buffer, bytes: u64) -> Vec<f32> {
         let slice = buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
@@ -403,7 +387,7 @@ impl GpuPipe {
         rx.recv().unwrap().unwrap();
         self.device.materialized(bytes);
         let data = slice.get_mapped_range();
-        let out: Vec<T> = bytemuck::cast_slice(&data).to_vec();
+        let out: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         buffer.unmap();
         out
@@ -433,11 +417,12 @@ impl GpuPipe {
 }
 
 type CpuFenceFn<'a> = Box<dyn FnOnce(&GpuPipe) -> Result<(), String> + 'a>;
-/// One node of an assembled compute chain (`specs/gpu-execution/design.md`, pipe assembly and fence semantics).
-/// A `Gpu` node submits its passes without host transfer. Separate submissions
-/// prevent neighboring nodes from accumulating into one watchdog-sized job.
-/// A `Cpu` node materializes a device image, runs its host stage, and writes
-/// the result back before subsequent nodes are submitted.
+/// One node of an assembled compute chain (pipe-architecture slices S2/S3).
+/// A `Gpu` node encodes passes into the current command buffer without
+/// host transfer. A `Cpu` node is an assembled fence: the executor submits
+/// pending passes, the closure materializes a device image, runs the CPU
+/// stage, and writes the result back to the device before the next nodes
+/// encode against it.
 pub(super) enum ChainStage<'a> {
     Gpu {
         /// Diagnostic stage identity for the assembled stage list. The
@@ -458,20 +443,25 @@ pub(super) enum ChainStage<'a> {
 }
 
 impl GpuPipe {
-    /// Execute ordered device submissions and host fences. Buffers stay resident;
-    /// queue ordering provides dependencies without host waits or image readbacks.
-    /// Banded workloads expose each band as a separate node.
+    /// Execute an assembled stage list. Consecutive `Gpu` nodes share one
+    /// command buffer and one submission, exactly like the former fused
+    /// chain; a `Cpu` fence node flushes the submission, runs the closure,
+    /// and continues with a fresh command buffer. A fence that cannot
+    /// calibrate its output returns the error) before anything else is
+    /// submitted or published.
     pub(super) fn run_chain(&self, stages: Vec<ChainStage<'_>>) -> Result<(), String> {
+        let mut encoder = self.device.create_command_encoder(&Default::default());
         for stage in stages {
             match stage {
-                ChainStage::Gpu { encode, .. } => {
-                    let mut encoder = self.device.create_command_encoder(&Default::default());
-                    encode(&mut encoder);
+                ChainStage::Gpu { encode, .. } => encode(&mut encoder),
+                ChainStage::Cpu { fence, .. } => {
                     self.queue.submit(Some(encoder.finish()));
+                    fence(self)?;
+                    encoder = self.device.create_command_encoder(&Default::default());
                 }
-                ChainStage::Cpu { fence, .. } => fence(self)?,
             }
         }
+        self.queue.submit(Some(encoder.finish()));
         Ok(())
     }
 
@@ -496,13 +486,20 @@ impl GpuPipe {
 
 #[cfg(all(test, feature = "wgpu-backend"))]
 mod tests {
+    use super::super::observation::TEST_DEVICE_LOCK as DEVICE_IN_USE;
     use super::*;
 
-    // The adapter owns the device-serialization guard for its whole lifetime:
-    // the software Vulkan driver (llvmpipe) is not safe under concurrent device
-    // use in one process.
-    fn backend() -> Option<crate::test_support::DeviceBackend> {
-        Some(crate::test_support::adapter())
+    // The software Vulkan driver (llvmpipe) is not safe under concurrent
+    // device use in one process; every test holds the shared serial lock
+    // for its whole body.
+    fn backend() -> Option<(
+        std::sync::MutexGuard<'static, ()>,
+        crate::wgpu_backend::WgpuBackend,
+    )> {
+        let guard = DEVICE_IN_USE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        crate::wgpu_backend::WgpuBackend::new().map(|b| (guard, b))
     }
 
     const COLORSPACE_SHADER: &str =
@@ -546,7 +543,7 @@ mod tests {
 
     #[test]
     fn dispatch_device_matches_dispatch_host() {
-        let Some(b) = backend() else {
+        let Some((_guard, b)) = backend() else {
             return;
         };
         let img = sample_image();
@@ -580,7 +577,7 @@ mod tests {
 
     #[test]
     fn fence_roundtrip_preserves_samples() {
-        let Some(b) = backend() else {
+        let Some((_guard, b)) = backend() else {
             return;
         };
         let img = sample_image();
@@ -596,7 +593,7 @@ mod tests {
 
     #[test]
     fn readback_pool_reuses_buffers() {
-        let Some(b) = backend() else {
+        let Some((_guard, b)) = backend() else {
             return;
         };
         let img = sample_image();

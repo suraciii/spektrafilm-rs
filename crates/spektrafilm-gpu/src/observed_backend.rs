@@ -46,6 +46,12 @@ impl ComputeBackend for ObservedBackend<'_> {
     fn is_gpu(&self) -> bool {
         self.backend.is_gpu()
     }
+    /// An explicit request must keep its meaning through this wrapper: the
+    /// assembly guards read this flag, so a wrapped explicit backend must not
+    /// look automatic.
+    fn explicit_gpu_request(&self) -> bool {
+        self.backend.explicit_gpu_request()
+    }
     fn colorspace_convert(&self, i: &ImageBuf, m: &[[f32; 3]; 3]) -> ImageBuf {
         self.cpu();
         self.backend.colorspace_convert(i, m)

@@ -339,6 +339,39 @@ fn assert_float_tiff(path: &Path) {
     );
 }
 
+/// The export dialog "GPU" selection is an explicit request: a configuration
+/// that still needs a host-executed stage must fail before publication instead
+/// of being silently demoted to CPU. The harness preview backend is the CPU
+/// backend, so this also covers opening an explicit WGPU backend for the job.
+#[test]
+fn explicit_gpu_export_fails_before_publication() {
+    let mut s = session();
+    let h = &mut s.harness;
+    render(h, "PREVIEW");
+    let mut state = h.state().current_state().unwrap();
+    state.sections["input_image"]["input_cctf_decoding"] = serde_json::json!(true);
+    state.sections["input_image"]["input_color_space"] = serde_json::json!("sRGB");
+    h.state_mut().apply_state(state).unwrap();
+    assert!(h.state().params.io.input_cctf_decoding);
+
+    let destination = s.directory.path().join("explicit-gpu.png");
+    let mut options = h.state().export_options.clone();
+    options.backend = ExportBackend::Gpu;
+    let ctx = h.ctx.clone();
+    h.state_mut()
+        .start_export_to_path(&ctx, options, &destination);
+    wait_until(h, |a| a.export_job.is_none());
+    let status = h.state().status.clone();
+    assert!(
+        status.contains("explicit GPU request") || status.contains("no WGPU adapter is available"),
+        "{status}"
+    );
+    assert!(
+        !destination.exists(),
+        "a failed explicit GPU export published an output"
+    );
+}
+
 #[test]
 fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     let mut s = session();

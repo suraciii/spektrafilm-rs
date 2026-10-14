@@ -227,9 +227,19 @@ impl App {
                             ExportBackend::Cpu => {
                                 Ok(Arc::new(spektrafilm_gpu::cpu_backend::CpuBackend))
                             }
-                            ExportBackend::Gpu if selected_backend.is_gpu() => Ok(selected_backend),
-                            ExportBackend::Gpu => spektrafilm_gpu::wgpu_backend::WgpuBackend::new()
-                                .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
+                            // The export "GPU" selection is an explicit request
+                            // (spec gpu-execution §Backend selection): a
+                            // configuration that needs a host-executed stage
+                            // fails at assembly instead of being demoted. The
+                            // preview backend is derived so device, pipeline
+                            // cache, and readback pool stay shared.
+                            ExportBackend::Gpu => selected_backend
+                                .with_explicit_request()
+                                .map(Arc::from)
+                                .or_else(|| {
+                                    spektrafilm_gpu::wgpu_backend::WgpuBackend::new_explicit()
+                                        .map(|backend| Arc::new(backend) as Arc<dyn ComputeBackend>)
+                                })
                                 .context("GPU export requested but no WGPU adapter is available"),
                         };
                         let backend = observed_result(
