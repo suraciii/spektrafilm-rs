@@ -1,4 +1,4 @@
-use super::blur::{BlurJob, BlurParams, DispatchJob, gaussian_kernel};
+use super::blur::{self, BlurJob, DispatchJob};
 use super::*;
 
 /// Pre-built glare pass — owns the noise-gen dispatch, optional blur,
@@ -87,89 +87,28 @@ pub(super) fn build_glare_state(
     };
 
     // ── Optional blur (separable, in place on scratch via buf_a mid) ──
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
-    let blur_pipe_v =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
-    let blur = if gp.blur_px > 0.0 {
-        let sigma = gp.blur_px.max(0.01);
-        let (radius, kernel_f32) = gaussian_kernel(sigma);
-
-        let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("glare_blur_kernel"),
-            contents: bytemuck::cast_slice(&kernel_f32),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let params = BlurParams {
+    let blur_pipe_h = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_h.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
+    let blur_pipe_v = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_v.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
+    let blur = (gp.blur_px > 0.0).then(|| {
+        blur::make_blur_job(
+            device,
+            gp.blur_px.max(0.01),
             width,
             height,
-            radius,
-            _pad: 0,
-        };
-        let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("glare_blur_params"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("glare_blur_h_bg"),
-            layout: &blur_pipe_h.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: scratch.as_entire_binding(),
-                }, // src (read)
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: kernel_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: buf_a.as_entire_binding(),
-                }, // mid
-            ],
-        });
-        let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("glare_blur_v_bg"),
-            layout: &blur_pipe_v.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_a.as_entire_binding(),
-                }, // mid (read)
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: kernel_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: scratch.as_entire_binding(),
-                }, // back into scratch (separate pass — no aliasing)
-            ],
-        });
-        Some(BlurJob {
-            _kernel_buf: kernel_buf,
-            _params_buf: params_buf,
-            bg_h,
-            bg_v,
-        })
-    } else {
-        None
-    };
+            &scratch,
+            buf_a,
+            &scratch,
+            "glare",
+            &blur_pipe_h,
+            &blur_pipe_v,
+        )
+    });
 
     // ── Apply: image[c] += glare_amount * rgb_offset[c] ───────────────
     let apply_pipe = backend.cached_pipeline(

@@ -1,4 +1,5 @@
-use super::blur::{BlurJob, DispatchJob};
+use super::blur::{self, BlurJob, DispatchJob};
+use super::params::AddScaledParams;
 use super::*;
 
 /// Pre-built DIR coupler passes — owns scratch buffers, kernel buffers,
@@ -158,16 +159,14 @@ pub(super) fn build_dir_state(
     };
 
     // ── 2. Two Gaussian blurs of the correction ───────────────────────
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
-    let blur_pipe_v =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
+    let blur_pipe_h = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_h.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
+    let blur_pipe_v = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_v.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
 
     // Each blur reads `buf_correction` (the matmul output, which stays
     // pristine — never the blur destination) and uses `buf_a` as the
@@ -209,14 +208,6 @@ pub(super) fn build_dir_state(
             wgpu::BufferBindingType::Storage { read_only: false },
         ],
     );
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct AddScaledParams {
-        n_pixels: u32,
-        scale: f32,
-        clear_first: u32,
-        _pad: u32,
-    }
     let w = dp.diffusion_tail_weight;
     let lerp_clear = diffuse.then(|| {
         let lerp_clear_params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

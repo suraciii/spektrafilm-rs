@@ -1,4 +1,4 @@
-use super::blur::{BlurJob, BlurParams, DispatchJob, gaussian_kernel};
+use super::blur::{self, BlurJob, DispatchJob};
 use super::*;
 
 /// Pre-built unsharp mask pass — owns the blur and the combine dispatch.
@@ -43,36 +43,15 @@ pub(super) fn build_unsharp_state(
     // tmp). We re-use out_buf for two purposes: it first holds the
     // blurred image, then the combine overwrites it with the final
     // sharpened image.
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
-    let blur_pipe_v =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
+    let blur_pipe_h = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_h.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
+    let blur_pipe_v = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_v.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
 
-    let sigma = up.sigma_px.max(0.01);
-    let (radius, kernel_f32) = gaussian_kernel(sigma);
-
-    let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("unsharp_blur_kernel"),
-        contents: bytemuck::cast_slice(&kernel_f32),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let params = BlurParams {
-        width,
-        height,
-        radius,
-        _pad: 0,
-    };
-    let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("unsharp_blur_params"),
-        contents: bytemuck::bytes_of(&params),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
     // Need a separate buffer for blur output since out_buf is the
     // combine destination. Use a small fresh allocation.
     let blur_dst = device.create_buffer(&wgpu::BufferDescriptor {
@@ -81,56 +60,18 @@ pub(super) fn build_unsharp_state(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("unsharp_blur_h_bg"),
-        layout: &blur_pipe_h.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf_b.as_entire_binding(),
-            }, // src
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: kernel_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: buf_a.as_entire_binding(),
-            }, // mid
-        ],
-    });
-    let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("unsharp_blur_v_bg"),
-        layout: &blur_pipe_v.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: params_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf_a.as_entire_binding(),
-            }, // mid
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: kernel_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: blur_dst.as_entire_binding(),
-            }, // blurred output
-        ],
-    });
-    let blur = BlurJob {
-        _kernel_buf: kernel_buf,
-        _params_buf: params_buf,
-        bg_h,
-        bg_v,
-    };
+    let blur = blur::make_blur_job(
+        device,
+        up.sigma_px.max(0.01),
+        width,
+        height,
+        buf_b,
+        buf_a,
+        &blur_dst,
+        "unsharp",
+        &blur_pipe_h,
+        &blur_pipe_v,
+    );
 
     // ── Combine: out = (1+amount)*orig - amount*blurred
     let combine_pipe = backend.cached_pipeline(
