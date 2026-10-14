@@ -372,7 +372,8 @@ fn explicit_gpu_export_fails_before_publication() {
     let mut options = h.state().export_options.clone();
     options.backend = ExportBackend::Gpu;
     let ctx = h.ctx.clone();
-    h.state_mut().start_export_to_path(&ctx, options, &destination);
+    h.state_mut()
+        .start_export_to_path(&ctx, options, &destination);
     wait_until(h, |a| a.export_job.is_none());
     let status = h.state().status.clone();
     assert!(
