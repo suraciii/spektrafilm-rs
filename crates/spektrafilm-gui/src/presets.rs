@@ -328,15 +328,15 @@ impl App {
                         };
                         // Card-style preset entry with route metadata
                         let card_frame = if active {
-                            egui::Frame::none()
+                            egui::Frame::NONE
                                 .fill(theme::ACCENT)
-                                .stroke(egui::Stroke::new(1.0, theme::ACCENT))
+                                .stroke(egui::Stroke::new(1.0_f32, theme::ACCENT))
                                 .corner_radius(6.0)
                                 .inner_margin(8.0)
                         } else {
-                            egui::Frame::none()
+                            egui::Frame::NONE
                                 .fill(theme::SURFACE2)
-                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
                                 .corner_radius(6.0)
                                 .inner_margin(8.0)
                         };
