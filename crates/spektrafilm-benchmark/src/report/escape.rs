@@ -1,18 +1,8 @@
 //! Portable offline presentation of retained evidence; no rendering or measurement.
-use crate::{
-    common::{self, Error, Result, create_destination, destination_exists, dump, sha256_file},
-    documents::{load_json_document, safe_artifact_path, validate_generated_document},
-    image_data::read_npy,
-};
+use crate::common::{Error, Result};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::{Path, PathBuf},
-};
-pub const CSS: &str = include_str!("../../assets/report.css");
-pub const JS: &str = include_str!("../../assets/report.js");
+pub(crate) const CSS: &str = include_str!("../../assets/report.css");
+pub(crate) const JS: &str = include_str!("../../assets/report.js");
 pub(crate) fn text(value: &Value) -> String {
     let value = match value {
         Value::String(s) => s.clone(),

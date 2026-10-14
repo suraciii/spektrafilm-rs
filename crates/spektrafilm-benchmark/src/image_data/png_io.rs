@@ -1,18 +1,8 @@
 use super::err;
-use crate::common::{Error, Result};
-use serde_json::{Value, json};
-use std::{
-    fs,
-    io::{BufWriter, Read, Write},
-    path::{Path, PathBuf},
-};
+use crate::common::Result;
+use std::{fs, path::Path};
 
-pub(crate) fn write_png16(
-    path: &Path,
-    rgb: &[[f64; 3]],
-    width: usize,
-    height: usize,
-) -> Result<()> {
+pub fn write_png16(path: &Path, rgb: &[[f64; 3]], width: usize, height: usize) -> Result<()> {
     if rgb.len() != width * height {
         return Err(err("invalid_image_layout", "PNG dimensions mismatch"));
     }
@@ -46,7 +36,7 @@ unsafe extern "C" {
         out: *mut f32,
     ) -> i32;
 }
-pub(crate) fn official_flip(
+pub fn official_flip(
     a: &[[f64; 3]],
     b: &[[f64; 3]],
     width: usize,
@@ -97,12 +87,7 @@ pub(crate) fn official_flip(
     Ok(o.into_iter().map(|x| x as f64).collect())
 }
 
-pub(crate) fn write_png16_codes(
-    path: &Path,
-    rgb: &[[u16; 3]],
-    width: usize,
-    height: usize,
-) -> Result<()> {
+pub fn write_png16_codes(path: &Path, rgb: &[[u16; 3]], width: usize, height: usize) -> Result<()> {
     if rgb.len() != width * height || width == 0 || height == 0 {
         return Err(err("invalid_image_layout", "PNG dimensions mismatch"));
     }

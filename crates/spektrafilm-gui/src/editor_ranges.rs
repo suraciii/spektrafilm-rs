@@ -428,7 +428,8 @@ mod tests {
         // Attribute arguments such as `#[path = "controls_acceptance.rs"]`
         // name source files, not parameter paths.
         let code: Vec<String> = [
-            include_str!("controls.rs"),
+            include_str!("controls/mod.rs"),
+            include_str!("controls/widgets.rs"),
             include_str!("display.rs"),
             include_str!("display/viewer.rs"),
         ]

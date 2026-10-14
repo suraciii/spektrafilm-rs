@@ -1,11 +1,4 @@
-use super::err;
-use crate::common::{Error, Result};
-use serde_json::{Value, json};
-use std::{
-    fs,
-    io::{BufWriter, Read, Write},
-    path::{Path, PathBuf},
-};
+use serde_json::Value;
 
 pub(crate) fn norm_space(s: &str) -> String {
     let k = s
@@ -41,14 +34,14 @@ pub(crate) fn norm_transfer(v: &Value) -> String {
     }
     .to_owned()
 }
-pub(crate) fn srgb_decode(x: f64) -> f64 {
+pub fn srgb_decode(x: f64) -> f64 {
     if x <= 0.04045 {
         x / 12.92
     } else {
         ((x.max(0.04045) + 0.055) / 1.055).powf(2.4)
     }
 }
-pub(crate) fn srgb_encode(x: f64) -> f64 {
+pub fn srgb_encode(x: f64) -> f64 {
     if x <= 0.0031308 {
         x * 12.92
     } else {

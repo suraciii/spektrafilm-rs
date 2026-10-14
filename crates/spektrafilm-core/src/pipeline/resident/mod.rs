@@ -1,13 +1,14 @@
-use super::Pipeline;
-
 mod chain;
 mod decision;
 mod front_pass;
-
-pub(crate) use decision::{ResidentDecision, ResidentFallbackReason};
+#[cfg(test)]
+use super::Pipeline;
+#[cfg(test)]
+use decision::{ResidentDecision, ResidentFallbackReason};
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::params::RuntimeParams;
     use crate::test_support::data_dir;

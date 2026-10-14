@@ -7,7 +7,7 @@ use spektrafilm_math::image::ImageBuf;
 type CpuStageFn<'a> = Box<dyn Fn(&ImageBuf) -> Result<ImageBuf, String> + 'a>;
 
 impl Pipeline {
-    pub(crate) fn try_gpu_resident(
+    pub(in crate::pipeline) fn try_gpu_resident(
         &self,
         image: &ImageBuf,
         backend: &dyn ComputeBackend,
@@ -891,7 +891,7 @@ impl Pipeline {
     /// Whether the Procedural-grain pass emits encoded samples on the
     /// resident chain (it encodes before grain; the pipe-tail transfer
     /// decodes afterwards when the caller requested linear output).
-    pub(crate) fn grain_emits_encoded(&self) -> bool {
+    fn grain_emits_encoded(&self) -> bool {
         self.params.film_render.grain.active
             && self.params.settings.rgb_to_raw_method != "mallett2019"
             && matches!(

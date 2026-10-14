@@ -3,14 +3,7 @@ use crate::editor_ranges;
 use crate::numeric::{numeric, numeric_field, numeric_field_validated};
 use egui::Ui;
 use serde_json::{Map, Value};
-use spektrafilm_core::params::{
-    NegativeConversionMethod, PrintCurvesMorphParams, PrintExposureMode, ReceiverProfile,
-    RuntimeParams, ScannerAutoSetup, ScannerFinish,
-    diffusion::DiffusionFilterParams,
-    grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
-};
-use spektrafilm_core::profile::Profile;
-use spektrafilm_model::grain::v2::PROFILE_NAMES;
+use spektrafilm_core::params::diffusion::DiffusionFilterParams;
 
 pub(crate) fn editor_range_for(path: &str) -> editor_ranges::EditorRange {
     editor_ranges::editor_range(path).unwrap_or_else(|| panic!("missing editor range for {path}"))
@@ -345,7 +338,7 @@ pub(crate) fn toggle(ui: &mut Ui, label: &str, value: &mut bool, tooltip: &str) 
     ui.checkbox(value, label).on_hover_text(tooltip).changed()
 }
 
-pub(crate) fn choice_tip(
+pub fn choice_tip(
     ui: &mut Ui,
     label: &str,
     value: &mut String,
@@ -445,7 +438,7 @@ pub(crate) fn extra_choice(
     }
 }
 
-pub(crate) fn extra_bool_tip(
+pub fn extra_bool_tip(
     ui: &mut Ui,
     extras: &mut Value,
     section: &str,

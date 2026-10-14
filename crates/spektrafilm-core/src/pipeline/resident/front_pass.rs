@@ -1,9 +1,8 @@
 use super::super::{Pipeline, select_illuminant};
-use spektrafilm_gpu::FrontPass;
 
 impl Pipeline {
     /// Prepare the resident front pass with exposure folded into its f64 matrix.
-    pub(crate) fn resident_front_pass(
+    pub(super) fn resident_front_pass(
         &self,
         color_ref: &crate::color_reference::ColorReference,
         ae_ev: f64,

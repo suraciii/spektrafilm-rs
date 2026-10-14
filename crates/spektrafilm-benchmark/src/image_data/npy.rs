@@ -1,10 +1,9 @@
 use super::err;
-use crate::common::{Error, Result};
-use serde_json::{Value, json};
+use crate::common::Result;
 use std::{
     fs,
     io::{BufWriter, Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 pub(crate) fn parse_shape(h: &str) -> Result<Vec<usize>> {
@@ -32,7 +31,7 @@ pub(crate) fn parse_shape(h: &str) -> Result<Vec<usize>> {
         .collect::<Result<Vec<_>>>()?;
     Ok(v)
 }
-pub(crate) fn read_npy(path: &Path) -> Result<(Vec<f64>, Vec<usize>)> {
+pub fn read_npy(path: &Path) -> Result<(Vec<f64>, Vec<usize>)> {
     let mut b = Vec::new();
     fs::File::open(path)?.read_to_end(&mut b)?;
     if b.len() < 10 || &b[..6] != b"\x93NUMPY" {
@@ -201,7 +200,7 @@ pub(crate) fn read_npy(path: &Path) -> Result<(Vec<f64>, Vec<usize>)> {
     Ok((out, shape))
 }
 
-pub(crate) fn write_npy(path: &Path, values: &[f64], shape: &[usize]) -> Result<()> {
+pub fn write_npy(path: &Path, values: &[f64], shape: &[usize]) -> Result<()> {
     let tuple = shape
         .iter()
         .map(|x| x.to_string())

@@ -1,11 +1,5 @@
 use super::err;
-use crate::common::{Error, Result};
-use serde_json::{Value, json};
-use std::{
-    fs,
-    io::{BufWriter, Read, Write},
-    path::{Path, PathBuf},
-};
+use crate::common::Result;
 
 pub(crate) fn lanczos(x: f64) -> f64 {
     if x == 0. {
@@ -42,7 +36,7 @@ pub(crate) fn resize_weights(input: usize, output: usize) -> Vec<(usize, Vec<f64
         })
         .collect()
 }
-pub(crate) fn resize_display(
+pub fn resize_display(
     samples: &[[f64; 3]],
     width: usize,
     height: usize,

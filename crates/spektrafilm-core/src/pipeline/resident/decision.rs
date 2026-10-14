@@ -1,7 +1,7 @@
 use super::super::Pipeline;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ResidentFallbackReason {
+pub(super) enum ResidentFallbackReason {
     WorkflowRoute,
     /// Active Dye resolves its film-coordinate field on the CPU; the
     /// resident chain has no equivalent readout.
@@ -14,7 +14,7 @@ pub(crate) enum ResidentFallbackReason {
 }
 
 #[derive(Debug)]
-pub(crate) enum ResidentDecision {
+pub(super) enum ResidentDecision {
     UseResident,
     PerStage {
         reasons: Vec<ResidentFallbackReason>,
@@ -22,7 +22,7 @@ pub(crate) enum ResidentDecision {
 }
 
 impl ResidentDecision {
-    pub(crate) fn reasons(reasons: Vec<ResidentFallbackReason>) -> Self {
+    fn reasons(reasons: Vec<ResidentFallbackReason>) -> Self {
         if reasons.is_empty() {
             Self::UseResident
         } else {
@@ -32,7 +32,7 @@ impl ResidentDecision {
 }
 
 impl Pipeline {
-    pub(crate) fn resident_decision(&self) -> ResidentDecision {
+    pub(super) fn resident_decision(&self) -> ResidentDecision {
         let mut reasons = Vec::new();
         // The Mallett shader has no numerically equivalent route through
         // CPU display-domain grain and optics; retain the per-stage path.

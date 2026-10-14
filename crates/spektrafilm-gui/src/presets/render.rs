@@ -23,9 +23,9 @@ struct NameDialog {
 }
 pub struct Browser {
     pub state: BrowserState,
-    library: PresetLibrary,
-    entries: Vec<LibraryEntry>,
-    scan_error: Option<String>,
+    pub(crate) library: PresetLibrary,
+    pub(crate) entries: Vec<LibraryEntry>,
+    pub(crate) scan_error: Option<String>,
     name_dialog: Option<NameDialog>,
     delete: Option<String>,
 }
@@ -42,7 +42,7 @@ impl Browser {
         browser.refresh();
         browser
     }
-    fn refresh(&mut self) {
+    pub(crate) fn refresh(&mut self) {
         match self.library.scan() {
             Ok(entries) => {
                 self.entries = entries;
@@ -243,7 +243,7 @@ impl App {
         }
         self.preset_dialogs(ctx);
     }
-    fn load_preset(&mut self, group: PresetGroup, name: &str) {
+    pub(crate) fn load_preset(&mut self, group: PresetGroup, name: &str) {
         let result = self.presets.library.load(group, name).and_then(|selected| {
             let mut current = self.params.clone();
             if let Some((white, black, glare)) = self.scan_for_print_snapshot {

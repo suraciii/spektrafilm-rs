@@ -2,23 +2,22 @@
 use crate::{
     common::{self, Error, Result, create_destination, destination_exists, dump, sha256_file},
     documents::{load_json_document, safe_artifact_path, validate_generated_document},
-    image_data::read_npy,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 mod assets;
 mod escape;
 mod html;
 
-pub use assets::*;
-pub use escape::*;
-pub use html::*;
+pub(crate) use assets::*;
+pub(crate) use escape::*;
+pub(crate) use html::*;
 
 /// Publish a self-contained offline report from a validated comparison directory.
 ///

@@ -1,12 +1,9 @@
 //! Editors for the pinned experimental GUI sections.
-use crate::editor_ranges;
-use crate::numeric::{numeric, numeric_field, numeric_field_validated};
 use egui::Ui;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use spektrafilm_core::params::{
     NegativeConversionMethod, PrintCurvesMorphParams, PrintExposureMode, ReceiverProfile,
     RuntimeParams, ScannerAutoSetup, ScannerFinish,
-    diffusion::DiffusionFilterParams,
     grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
 use spektrafilm_core::profile::Profile;

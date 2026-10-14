@@ -1,16 +1,10 @@
 //! Portable offline presentation of retained evidence; no rendering or measurement.
 use crate::{
-    common::{self, Error, Result, create_destination, destination_exists, dump, sha256_file},
-    documents::{load_json_document, safe_artifact_path, validate_generated_document},
+    common::{Error, Result},
     image_data::read_npy,
 };
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, path::Path};
 
 use super::assets::*;
 use super::escape::*;
