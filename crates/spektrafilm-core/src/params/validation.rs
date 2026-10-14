@@ -1,4 +1,5 @@
 use super::{RuntimeParams, Tap};
+use crate::WorkflowRoute;
 use crate::suggest::{MAX_SUGGESTIONS, closest, error_suffix};
 
 pub(crate) const SUPPORTED_ROUTES: [&str; 6] = [
@@ -644,9 +645,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
         }
     }
     if reference {
-        if params.workflow.route != "input > film > scan"
-            || scanner.scan_output != "negative_to_positive"
-        {
+        if params.workflow.route_enum() != WorkflowRoute::FilmScan {
+            return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
+        }
+        if scanner.scan_output != "negative_to_positive" {
             return Err("Digital Reference requires input > film > scan and scanner.scan_output=negative_to_positive".into());
         }
         if scanner.auto_setup != super::ScannerAutoSetup::Off {

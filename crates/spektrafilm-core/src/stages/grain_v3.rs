@@ -9,6 +9,7 @@
 //! Film coordinates come from the profile and the geometry: a crop selects
 //! the readout region only, so field cells keep their global film positions
 //! and overlapping reads agree.
+use crate::WorkflowRoute;
 
 use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
@@ -66,7 +67,9 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
             "{CELL_SPECTRAL_ENV} does not support Digital Reference; disable the exact-cell diagnostic"
         ));
     }
-    if params.workflow.route != PRINT_ROUTE && params.workflow.route != FILM_SCAN_ROUTE {
+    if params.workflow.route_enum() != WorkflowRoute::FilmPrintScan
+        && params.workflow.route_enum() != WorkflowRoute::FilmScan
+    {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} supports only {PRINT_ROUTE:?} and {FILM_SCAN_ROUTE:?} routes"
         ));
@@ -131,7 +134,7 @@ pub fn validate_aperture(params: &RuntimeParams) -> Result<Option<u32>, String> 
     let Some(factor) = aperture_factor()? else {
         return Ok(None);
     };
-    if params.io.scan_film || params.workflow.route != PRINT_ROUTE {
+    if params.io.scan_film || params.workflow.route_enum() != WorkflowRoute::FilmPrintScan {
         return Err(format!(
             "{APERTURE_FACTOR_ENV} supports only the {PRINT_ROUTE:?} route"
         ));

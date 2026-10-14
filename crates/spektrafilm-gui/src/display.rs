@@ -9,6 +9,10 @@ mod viewer;
 mod worker;
 
 pub use colortransform::{input_display_raster, output_display_raster};
+#[cfg(test)]
+pub use decorations::virtual_paper_back;
+#[cfg(test)]
+pub(crate) use decorations::virtual_paper_back_without_watermark;
 pub use raster::{DisplayRaster, Interpolation};
 pub use viewer::Viewer;
 #[cfg(test)]

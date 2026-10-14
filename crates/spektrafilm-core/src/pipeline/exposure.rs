@@ -28,12 +28,7 @@ impl Pipeline {
         image: ImageBuf,
         backend: &dyn ComputeBackend,
     ) -> ImageBuf {
-        if self
-            .params
-            .workflow
-            .route
-            .starts_with("input > convert-film")
-        {
+        if self.params.workflow.route_enum().is_convert_film() {
             return image;
         }
         let metering = crate::stages::StageObservation::cpu(

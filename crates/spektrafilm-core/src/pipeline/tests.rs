@@ -153,8 +153,8 @@ fn digital_reference_preserves_formed_negative_and_prepared_identity() {
     let mut params = baseline.params.clone();
     params.scanner.scan_output = "negative_to_positive".into();
     params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
-    params.scanner.positive_interpretation =
-        crate::params::PositiveInterpretation::DigitalReference;
+    params.scanner.negative_conversion_method =
+        crate::params::NegativeConversionMethod::DigitalReference;
     let reference = baseline.clone().with_params(params).unwrap();
     let image = ImageBuf::from_data(3, 1, vec![from_f64(0.18); 9]);
     let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
