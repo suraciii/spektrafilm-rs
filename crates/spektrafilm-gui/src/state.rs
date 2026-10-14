@@ -26,6 +26,28 @@ const ENLARGER_SIMULATION_ALIASES: &[(&str, &str)] = &[
     ("print_m_filter_shift", "m_filter_shift"),
 ];
 
+/// Translate the legacy print-exposure pair that the upstream-mirror state
+/// sections (`preflashing`, `simulation.enlarger`) still carry. The
+/// state-side keys stay boolean to mirror the upstream GUI; the runtime sees
+/// `enlarger.print_exposure_mode` and, for the mixed states, the tracking
+/// setting. A non-boolean pair passes through so unknown-field validation
+/// rejects it.
+fn translate_legacy_print_exposure(section: &Value) -> (Value, Option<Value>) {
+    let legacy = section.get("normalize_print_exposure").is_some()
+        || section.get("print_exposure_compensation").is_some();
+    if !legacy {
+        return (section.clone(), None);
+    }
+    let mut carrier = json!({"enlarger": section.clone()});
+    match spektrafilm_core::params::sources::normalize_legacy_conversion_paths(&mut carrier, true) {
+        Ok(()) => {
+            let tracking = carrier.get("settings").cloned();
+            (carrier["enlarger"].clone(), tracking)
+        }
+        Err(_) => (section.clone(), None),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GuiState {
     pub sections: Value,
@@ -134,7 +156,7 @@ impl GuiState {
         if value.get("rust").is_some() && !matches!(version, Some(1..=3)) {
             bail!("Unsupported Rust GUI state extension version");
         }
-        validate_state_parameters(&mut value, version == Some(1))?;
+        validate_state_parameters(&mut value, version)?;
         for scanner in [&value["scanner"], &value["rust"]["runtime"]["scanner"]] {
             if let Some(selection) = scanner.get("scan_output") {
                 spektrafilm_core::params::sources::ParameterEdits::parse(&format!(
@@ -259,7 +281,7 @@ impl GuiState {
     /// call this once; [`Self::runtime_params`] is a pure projection that no
     /// longer re-validates.
     pub fn validate(&self) -> Result<()> {
-        validate_state_parameters(&mut self.sections.clone(), false)
+        validate_state_parameters(&mut self.sections.clone(), None)
     }
     pub fn film(&self) -> &str {
         self.sections["simulation"]["film_stock"]

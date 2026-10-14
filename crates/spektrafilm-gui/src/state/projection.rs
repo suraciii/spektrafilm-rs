@@ -1,11 +1,11 @@
 //! State ⇄ runtime projection.
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
-use spektrafilm_core::params::RuntimeParams;
+use spektrafilm_core::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 
 use super::{
     ENLARGER_SIMULATION_ALIASES, GuiState, canonicalize_grain_state, copy_fields, merge,
-    overlay_runtime,
+    overlay_runtime, translate_legacy_print_exposure,
 };
 
 const INPUT_IO: &[&str] = &[
@@ -71,8 +71,30 @@ impl GuiState {
             &mut runtime["enlarger"]["diffusion_filter"],
             &s["enlarger_diffusion"],
         );
-        merge(&mut runtime["enlarger"], &s["preflashing"]);
+        let (preflashing, tracking) = translate_legacy_print_exposure(&s["preflashing"]);
+        merge(&mut runtime["enlarger"], &preflashing);
+        if let Some(tracking) = tracking {
+            overlay_runtime(&mut runtime["settings"], &tracking);
+        }
         for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
+            if enlarger_key == "print_exposure_compensation" {
+                // The upstream boolean is a derived mirror: it may only
+                // refine the default (auto without tracking), never
+                // overwrite the mapping an authoritative carrier
+                // (`preflashing`, `rust.runtime`) already produced.
+                if let Some(comp) = s["simulation"][simulation_key].as_bool() {
+                    let tracking_default = runtime["settings"]["print_exposure_ev_tracking"]
+                        .as_str()
+                        .is_none_or(|v| v == "follow_mode");
+                    let auto = runtime["enlarger"]["print_exposure_mode"]
+                        .as_str()
+                        .is_none_or(|v| v == "auto");
+                    if tracking_default && auto && !comp {
+                        runtime["settings"]["print_exposure_ev_tracking"] = json!("never");
+                    }
+                }
+                continue;
+            }
             runtime["enlarger"][enlarger_key] = s["simulation"][simulation_key].clone();
         }
         runtime["workflow"]["route"] = s["simulation"]["route"].clone();
@@ -309,6 +331,21 @@ impl GuiState {
             runtime["film_render"]["development_time"].clone();
         s["chemistry"]["development_time"] = runtime["print_render"]["development_time"].clone();
         merge(&mut s["preflashing"], &runtime["enlarger"]);
+        // Keep the upstream boolean mirror in step with the mode and
+        // tracking settings; the import mapping inverts this exactly, and
+        // the degenerate tracking choices fold onto the mode default.
+        let (normalize, compensation) = match (
+            params.enlarger.print_exposure_mode,
+            params.settings.print_exposure_ev_tracking,
+        ) {
+            (PrintExposureMode::Auto, PrintExposureEvTracking::Never) => (true, false),
+            (PrintExposureMode::Auto, _) => (true, true),
+            (PrintExposureMode::Manual, PrintExposureEvTracking::Always) => (false, true),
+            (PrintExposureMode::Manual, _) => (false, false),
+        };
+        s["preflashing"]["normalize_print_exposure"] = json!(normalize);
+        s["preflashing"]["print_exposure_compensation"] = json!(compensation);
+        s["simulation"]["print_exposure_compensation"] = json!(compensation);
         s["camera_diffusion"] = runtime["camera"]["diffusion_filter"].clone();
         s["enlarger_diffusion"] = runtime["enlarger"]["diffusion_filter"].clone();
         copy_fields(&mut s["input_image"], &runtime["io"], INPUT_IO);
@@ -319,6 +356,11 @@ impl GuiState {
         s["simulation"]["film_stock"] = json!(film);
         s["simulation"]["print_paper"] = json!(paper);
         for &(simulation_key, enlarger_key) in ENLARGER_SIMULATION_ALIASES {
+            if enlarger_key == "print_exposure_compensation" {
+                // The upstream mirror stays boolean and is derived from the
+                // mode and tracking settings above, like the import mapping.
+                continue;
+            }
             s["simulation"][simulation_key] = runtime["enlarger"][enlarger_key].clone();
         }
         s["simulation"]["route"] = runtime["workflow"]["route"].clone();
@@ -335,7 +377,7 @@ impl GuiState {
                 }
             }
         }
-        s["rust"]["version"] = json!(2);
+        s["rust"]["version"] = json!(3);
         s["rust"]["model_version"] = json!(spektrafilm_core::runtime::MODEL_VERSION);
         s["rust"]["render_preparation"] = serde_json::to_value(params.render_preparation_state())?;
         s["rust"]["scanner_provenance"] = serde_json::to_value(
