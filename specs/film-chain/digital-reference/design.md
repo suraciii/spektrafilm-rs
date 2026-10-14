@@ -24,7 +24,7 @@ A matched reference receiver and conversion inside Scan preserves the existing s
 
 ### Public selection
 
-The existing `scanner.positive_interpretation` enum adds `digital_reference`. The existing `scanner.receiver_profile` enum adds the matching `digital_reference`. Both values are required together. This reuses the existing parameter source, preset, state, recipe, and discovery boundaries without adding a Scan treatment field. Defaults remain unchanged.
+The `scanner.negative_conversion_method` enum carries `digital_reference`. The existing `scanner.receiver_profile` enum adds the matching `digital_reference`. Both values are required together. This reuses the existing parameter source, preset, state, recipe, and discovery boundaries without adding a Scan treatment field. Defaults remain unchanged.
 
 Manual controls are `scanner.reference_exposure_ev` and `scanner.reference_balance_ev`. They default to zero. Their output-gain semantics belong to the [product contract](spec.md#reference-exposure). Existing reconstruction controls must remain at their defaults in this mode.
 
