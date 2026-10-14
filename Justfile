@@ -94,8 +94,8 @@ check-python:
 test-pr:
     cargo test --locked -p spektrafilm-math --lib
     cargo test --locked -p spektrafilm-math --lib --features precision-f64
-# Required PR gate; workspace compilation and native suites run after merge.
-ci-pr: check-python-cache check-python fmt test-pr
+# Required PR gate; the workspace must compile in both precisions before merge.
+ci-pr: check-python-cache check-python fmt check check-f64 test-pr
 
 # Full local and main-branch gate, including slow rendering and GPU tests.
 ci: check-python-cache check-python fmt check check-f64 clippy test test-f64 benchmark-test
