@@ -1383,6 +1383,16 @@ fn alpha_sample(alpha: &[f32], width: usize, height: usize, x: f32, y: f32) -> f
 }
 /// Pinned 72° rhombic watermark lattice, 16° rotation, seed-zero paper glare.
 pub fn virtual_paper_back(size: [usize; 2]) -> DisplayRaster {
+    virtual_paper_back_with_watermark::<true>(size)
+}
+
+/// Generate the same pinned paper and glare with only the watermark lattice removed.
+#[cfg(test)]
+pub(crate) fn virtual_paper_back_without_watermark(size: [usize; 2]) -> DisplayRaster {
+    virtual_paper_back_with_watermark::<false>(size)
+}
+
+fn virtual_paper_back_with_watermark<const WATERMARK: bool>(size: [usize; 2]) -> DisplayRaster {
     let (sw, sh, mut alpha) = logo_alpha();
     let long = size[0].max(size[1]) as f32;
     let scale = 0.22 * long / sw.max(sh) as f32;
@@ -1494,19 +1504,21 @@ pub fn virtual_paper_back(size: [usize; 2]) -> DisplayRaster {
     }
     centers.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
     let mut trans = vec![1.0; size[0] * size[1]];
-    for (cx, cy) in centers {
-        let x0 = (cx - 0.5 * stamp_w as f32).round_ties_even() as i32;
-        let y0 = (cy - 0.5 * stamp_h as f32).round_ties_even() as i32;
-        for y in 0..stamp_h {
-            let dy = y0 + y as i32;
-            if dy < 0 || dy >= size[1] as i32 {
-                continue;
-            }
-            for x in 0..stamp_w {
-                let dx = x0 + x as i32;
-                if dx >= 0 && dx < size[0] as i32 {
-                    trans[dy as usize * size[0] + dx as usize] *=
-                        1.0 - rotated[(y + ymin) * rw + x + xmin];
+    if WATERMARK {
+        for (cx, cy) in centers {
+            let x0 = (cx - 0.5 * stamp_w as f32).round_ties_even() as i32;
+            let y0 = (cy - 0.5 * stamp_h as f32).round_ties_even() as i32;
+            for y in 0..stamp_h {
+                let dy = y0 + y as i32;
+                if dy < 0 || dy >= size[1] as i32 {
+                    continue;
+                }
+                for x in 0..stamp_w {
+                    let dx = x0 + x as i32;
+                    if dx >= 0 && dx < size[0] as i32 {
+                        trans[dy as usize * size[0] + dx as usize] *=
+                            1.0 - rotated[(y + ymin) * rw + x + xmin];
+                    }
                 }
             }
         }
