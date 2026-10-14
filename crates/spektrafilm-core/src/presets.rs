@@ -451,11 +451,11 @@ impl Preset {
         // per-(paper, illuminant, film) database still supplies the baseline for every
         // other look instead of one paper's pack being reused everywhere.
         let defaults = crate::params::EnlargerParams::default();
-        params.neutral_print_filters_protected = [
+        params.neutral_print_filters_protected = Some([
             look.enlarger.c_filter_neutral != defaults.c_filter_neutral,
             look.enlarger.m_filter_neutral != defaults.m_filter_neutral,
             look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
-        ];
+        ]);
         let default_route = workflow_default(&film);
         // A caller that already declared a film-scan route keeps it. The route and
         // the scan mode it selects are a workflow choice; overriding the route here
@@ -610,7 +610,9 @@ impl Preset {
                 .enumerate()
             {
                 if path == format!("enlarger.{name}") {
-                    params.neutral_print_filters_protected[axis] = true;
+                    params
+                        .neutral_print_filters_protected
+                        .get_or_insert([false; 3])[axis] = true;
                 }
             }
         }

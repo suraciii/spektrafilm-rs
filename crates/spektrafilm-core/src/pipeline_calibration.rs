@@ -66,7 +66,9 @@ fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
         preflash_y_filter_shift: params.enlarger.preflash_y_filter_shift,
         preflash_m_filter_shift: params.enlarger.preflash_m_filter_shift,
         neutral_print_filters_from_database: params.settings.neutral_print_filters_from_database,
-        neutral_print_filters_protected: params.neutral_print_filters_protected,
+        neutral_print_filters_protected: params
+            .neutral_print_filters_protected
+            .unwrap_or([false; 3]),
     }
 }
 
@@ -354,19 +356,25 @@ pub(crate) fn build(
     // params.enlarger.{c,m,y}_filter_neutral when the combo isn't in the database.
     // Keep the f64 lookup values around (params is f32) — narrowing to
     // f32 here costs ~4e-8 precision through the `10^(-cc/100)` step.
+    // Authored-versus-baseline resolution is shared with preparation
+    // (`authored_filter_axes`): authored axes keep the carried value so
+    // replaying a resolved document reproduces its render; baseline axes
+    // follow the per-paper database.
     let mut neutral_cmy_f64: Option<[f64; 3]> = None;
     if params.settings.neutral_print_filters_from_database {
         let db = crate::neutral_filters::NeutralFilters::load(data_dir)?;
         let print_stock = print.info.stock.as_deref().unwrap_or("");
         let film_stock = film.info.stock.as_deref().unwrap_or("");
         if let Some(mut cmy) = db.lookup(print_stock, &params.enlarger.illuminant, film_stock) {
+            let protected =
+                crate::params_builder::authored_filter_axes(params.neutral_print_filters_protected);
             let controls = [
                 &mut params.enlarger.c_filter_neutral,
                 &mut params.enlarger.m_filter_neutral,
                 &mut params.enlarger.y_filter_neutral,
             ];
             for (axis, control) in controls.into_iter().enumerate() {
-                if params.neutral_print_filters_protected[axis] {
+                if protected[axis] {
                     cmy[axis] = *control as f64;
                 } else {
                     *control = cmy[axis] as f32;

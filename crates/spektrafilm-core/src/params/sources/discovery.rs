@@ -48,6 +48,10 @@ pub fn describe_root_groups() -> Vec<String> {
     let mut roots = Vec::new();
     if let Some(map) = schema_value().as_object() {
         for (key, child) in map {
+            if !child.is_object() {
+                // Root leaves carry no sub-groups.
+                continue;
+            }
             let mut nested = Vec::new();
             if collect_groups(key, child, &mut nested) {
                 roots.push(key.clone());

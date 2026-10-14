@@ -480,10 +480,13 @@ fn sparse_section_roundtrip_and_database_protection() {
     );
     let mut current = RuntimeParams::default();
     current.enlarger.m_filter_neutral = 34.0;
-    current.neutral_print_filters_protected = [false, true, false];
+    current.neutral_print_filters_protected = Some([false, true, false]);
     let applied = preset.apply_section(&current, &test_film()).unwrap();
     assert_eq!(applied.enlarger.m_filter_neutral, 34.0);
-    assert_eq!(applied.neutral_print_filters_protected, [true, true, false]);
+    assert_eq!(
+        applied.neutral_print_filters_protected,
+        Some([true, true, false])
+    );
     let film = profile::load_profile_by_name(&data(), "kodak_portra_400").unwrap();
     let print = profile::load_profile_by_name(&data(), "kodak_portra_endura").unwrap();
     let database = crate::neutral_filters::NeutralFilters::load(&data()).unwrap();
@@ -542,7 +545,7 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     let mut current = RuntimeParams::default();
     current.film_render.grain.rms_granularity = [1.234; 3];
     current.enlarger.c_filter_neutral = 12.0;
-    current.neutral_print_filters_protected = [true, false, true];
+    current.neutral_print_filters_protected = Some([true, false, true]);
     current
         .explicit_section_paths
         .insert("film_render.grain.rms_granularity".into());
@@ -562,7 +565,9 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
         .push("film_render.grain".into());
     let serialized = serde_json::to_value(&current).unwrap();
     assert!(serialized.get("explicit_section_paths").is_none());
-    assert!(serialized.get("neutral_print_filters_protected").is_none());
+    // The protection flags persist in the parameter document so replaying a
+    // resolved document reproduces its render.
+    assert!(serialized.get("neutral_print_filters_protected").is_some());
     let mut restored: RuntimeParams = serde_json::from_value(serialized.clone()).unwrap();
     restored.restore_render_preparation_state(&state);
     assert_eq!(
@@ -584,7 +589,7 @@ fn preparation_state_roundtrip_restores_explicit_values_and_drops_stale_paths() 
     assert_eq!(restored.enlarger.c_filter_neutral, 12.0);
     assert_eq!(
         restored.neutral_print_filters_protected,
-        [true, false, true]
+        Some([true, false, true])
     );
     assert_eq!(
         restored.settings.neutral_print_filters_from_database,

@@ -331,9 +331,9 @@ fn resolve_with_preview_mode(
             edits.apply(&mut params)?;
             for path in edits.paths() {
                 match path {
-                    "enlarger.c_filter_neutral" => protected[0] = true,
-                    "enlarger.m_filter_neutral" => protected[1] = true,
-                    "enlarger.y_filter_neutral" => protected[2] = true,
+                    "enlarger.c_filter_neutral" => protected.get_or_insert([false; 3])[0] = true,
+                    "enlarger.m_filter_neutral" => protected.get_or_insert([false; 3])[1] = true,
+                    "enlarger.y_filter_neutral" => protected.get_or_insert([false; 3])[2] = true,
                     _ => {}
                 }
             }
@@ -882,9 +882,10 @@ mod tests {
         runtime.update(updated).unwrap();
         assert_axes(runtime.params());
         let saved = serde_json::to_value(runtime.params()).unwrap();
-        assert!(saved.get("neutral_print_filters_protected").is_none());
+        // The protection flags persist so a resolved document replays its render.
+        assert!(saved.get("neutral_print_filters_protected").is_some());
         let restored: RuntimeParams = serde_json::from_value(saved).unwrap();
-        assert_eq!(restored.neutral_print_filters_protected, [false; 3]);
+        assert_eq!(restored.neutral_print_filters_protected, Some([true; 3]));
     }
 
     #[test]
@@ -978,11 +979,11 @@ mod tests {
 
         // Ownership alone changes calibration, even when the public values match.
         let mut updated = pipeline.params.clone();
-        updated.neutral_print_filters_protected = [false; 3];
+        updated.neutral_print_filters_protected = Some([false; 3]);
         let unprotected = pipeline.clone().with_params(updated).unwrap();
         assert_eq!(unprotected.print_illuminant_slice(), database_only);
         let mut updated = unprotected.params.clone();
-        updated.neutral_print_filters_protected = [true; 3];
+        updated.neutral_print_filters_protected = Some([true; 3]);
         let protected = unprotected.with_params(updated).unwrap();
         let promoted = crate::enlarger::enlarger_filtered_illuminant_f64(
             &illuminant,
