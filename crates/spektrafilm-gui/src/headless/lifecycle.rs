@@ -22,7 +22,7 @@ fn staged_export(h: &mut Harness<'_, App>, destination: &Path) -> Arc<ExportPaus
     // repo's real-worker budget rather than a tight barrier: measured 4-9s
     // unloaded, with a 20s barrier failing intermittently on loaded machines.
     ready
-        .recv_timeout(Duration::from_secs(90))
+        .recv_timeout(WAIT_DEADLINE)
         .expect("real export writer did not produce staged output");
     h.run_steps(3);
     pause
@@ -93,7 +93,7 @@ fn cancel_discards_real_staged_export_and_preserves_existing_destination() {
                 Instant::now() < deadline,
                 "cancelled export worker did not stop"
             );
-            std::thread::yield_now();
+            wait_tick();
         }
         h.run_steps(3);
         assert!(
@@ -171,7 +171,7 @@ fn on_exit_joins_active_render_and_discards_queued_results() {
                     Instant::now() < deadline,
                     "on_exit did not request shutdown"
                 );
-                std::thread::yield_now();
+                wait_tick();
             }
             drop(guard);
         });
@@ -183,7 +183,7 @@ fn on_exit_joins_active_render_and_discards_queued_results() {
                 Instant::now() < deadline,
                 "render worker did not take request"
             );
-            std::thread::yield_now();
+            wait_tick();
         }
         h.state_mut().full_scan_requested = true;
         h.state_mut().dispatch_render(&ctx);

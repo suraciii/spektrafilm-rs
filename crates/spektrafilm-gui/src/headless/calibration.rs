@@ -52,7 +52,7 @@ fn wait_calibration(h: &mut Harness<'_, App>, label: &str) {
             "{label} timed out: {}",
             h.state().status
         );
-        std::thread::yield_now();
+        wait_tick();
     }
 }
 

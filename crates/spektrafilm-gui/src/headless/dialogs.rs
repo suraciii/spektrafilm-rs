@@ -647,7 +647,7 @@ fn stage_export(h: &mut Harness<'_, App>, destination: &Path) -> Arc<ExportPause
     h.state_mut()
         .start_export_to_path_inner(&ctx, options, destination, Some(pause.clone()));
     ready
-        .recv_timeout(Duration::from_secs(90))
+        .recv_timeout(WAIT_DEADLINE)
         .expect("real export writer did not produce staged output");
     h.run_steps(3);
     pause
