@@ -26,18 +26,21 @@ pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
 /// Rejection leaves the supplied document unchanged. Current complete documents
 /// and sparse sources must use their strict boundary without normalization.
 pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String> {
-    normalize_legacy_conversion_paths(value, true)?;
-    let Some(retired) = value.pointer("/io/output_gamut_compress/lightness_compression") else {
-        return Ok(());
+    // Reject the retired leaf before renaming anything so a rejected
+    // document stays byte-identical.
+    let has_retired = match value.pointer("/io/output_gamut_compress/lightness_compression") {
+        Some(retired) if !retired.is_null() => return Err(retired_lightness_error()),
+        Some(_) => true,
+        None => false,
     };
-    if !retired.is_null() {
-        return Err(retired_lightness_error());
+    normalize_legacy_conversion_paths(value, true)?;
+    if has_retired {
+        value
+            .pointer_mut("/io/output_gamut_compress")
+            .and_then(Value::as_object_mut)
+            .expect("retired field belongs to an object")
+            .remove("lightness_compression");
     }
-    value
-        .pointer_mut("/io/output_gamut_compress")
-        .and_then(Value::as_object_mut)
-        .expect("retired field belongs to an object")
-        .remove("lightness_compression");
     Ok(())
 }
 
@@ -114,6 +117,17 @@ pub fn normalize_legacy_conversion_paths(
              enlarger.print_exposure_mode explicitly"
                 .into(),
         );
+    }
+    // A mixed pair writes into `settings`; an existing non-object there
+    // cannot carry the leaf, and this must fail before any mutation.
+    if let Some((_, tracking)) = mixed_state
+        && tracking.is_some()
+        && matches!(object.get("settings"), Some(value) if !value.is_object())
+    {
+        return Err("the legacy enlarger print exposure pair needs the \
+             settings.print_exposure_ev_tracking leaf, but settings is not an \
+             object"
+            .into());
     }
     if let Some(scanner) = object.get_mut("scanner").and_then(Value::as_object_mut) {
         for (old, new) in SCANNER_RENAMES {
@@ -1466,6 +1480,32 @@ mod tests {
         assert!(
             ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").is_err()
         );
+    }
+
+    #[test]
+    fn legacy_conversion_rejections_leave_documents_unchanged() {
+        // A mixed print-exposure pair needs the settings group; a non-object
+        // there must fail before any mutation instead of panicking.
+        let mut value = serde_json::json!({
+            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": false},
+            "settings": 42
+        });
+        let original = value.clone();
+        let error = normalize_legacy_conversion_paths(&mut value, true).unwrap_err();
+        assert!(error.contains("settings"), "{error}");
+        assert_eq!(value, original);
+
+        // Combining legacy conversion paths with a rejected retired lightness
+        // leaf must fail atomically, before any rename.
+        let mut both = serde_json::json!({
+            "scanner": {"positive_density_ev": 0.4},
+            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": true},
+            "io": {"output_gamut_compress": {"lightness_compression": [0.95, 1.0, 1.6]}}
+        });
+        let original = both.clone();
+        let error = normalize_legacy_complete_params(&mut both).unwrap_err();
+        assert!(error.contains("lightness_compression"), "{error}");
+        assert_eq!(both, original);
     }
 
     #[test]

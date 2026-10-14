@@ -43,7 +43,7 @@ For a real negative scanner capture on `input > convert-film > scan`, disable vi
 
 Digital Reference is an optional modeled conversion for simulated negative film on `input > film > scan`. It uses a common spectral receiver and fixed positive response. It preserves film-record and dye differences through a shared output convention.
 
-Select both `scanner.positive_interpretation=digital_reference` and `scanner.receiver_profile=digital_reference`. Keep `scanner.auto_setup=off`. Keep identity black/white points. Keep the reconstruction controls at their defaults. The GUI pairs these selections under **Digital Reference (modeled)**. It shows the fixed **Reference Exposure** placement.
+Select both `scanner.negative_conversion_method=digital_reference` and `scanner.receiver_profile=digital_reference`. Keep `scanner.auto_setup=off`. Keep identity black/white points. Keep the reconstruction controls at their defaults. The GUI pairs these selections under **Digital Reference (modeled)**. It shows the fixed **Reference Exposure** placement.
 
 `scanner.reference_exposure_ev` adjusts output exposure in stops. `scanner.reference_balance_ev` supplies independent linear-sRGB RGB gains before output-space conversion. Both default to zero. Optional `scanner.finish=lab_scan` applies after conversion.
 
@@ -53,7 +53,7 @@ See the [Digital Reference contract](../specs/film-chain/digital-reference/spec.
 ./target/release/spektrafilm-f64 process input.tif -o reference.tif \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
     --film kodak_portra_400 --scan-film --scan-output negative_to_positive \
-    --set scanner.positive_interpretation=digital_reference,scanner.receiver_profile=digital_reference \
+    --set scanner.negative_conversion_method=digital_reference,scanner.receiver_profile=digital_reference \
     --backend cpu --data-dir data
 ```
 

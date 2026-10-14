@@ -14,7 +14,7 @@ Each patch table names the `source` of its values. The fitted surface learns the
 
 Halation and grain are off in every evaluation. The scanner writes linear sRGB. Fitting the surface enables the surface toggle. `--lambda` must be finite and non-negative. See the [profile authoring contract](../specs/profile-authoring/spec.md) for the fitting requirements.
 
-A run succeeds only when the fit reduces both the color and the gray ΔE00 medians. A surface-only fit can trade gray for color. For this reason, `--fit surface,tone` is the usual choice. The `tone` group fits `scanner.positive_density_ev` and `scanner.positive_balance_ev`; `scanner.positive_contrast` and `scanner.positive_dmax` keep the chain configuration values.
+A run succeeds only when the fit reduces both the color and the gray ΔE00 medians. A surface-only fit can trade gray for color. For this reason, `--fit surface,tone` is the usual choice. The `tone` group fits `scanner.conversion_brightness_ev` and `scanner.conversion_balance_ev`; `scanner.conversion_contrast` and `scanner.conversion_dmax` keep the chain configuration values.
 
 ## Outputs
 

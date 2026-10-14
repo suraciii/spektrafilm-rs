@@ -252,14 +252,25 @@ fn validate_state_parameters(value: &mut Value, version: Option<u64>) -> Result<
             explicit["enlarger"] = json!({});
         }
         // The upstream GUI exposes only the compensation boolean; it always
-        // normalizes (auto) and only toggles camera-EV tracking.
+        // normalizes (auto) and only toggles camera-EV tracking. It is a
+        // derived mirror: it may only refine the default (auto without
+        // tracking), never overwrite the mapping an authoritative carrier
+        // (`rust.runtime`, the translated `preflashing` pair) already
+        // produced — the same guard the projection applies.
         let mut enlarger = enlarger.clone();
         if let Some(Value::Bool(comp)) = enlarger
             .as_object_mut()
             .and_then(|fields| fields.remove("print_exposure_compensation"))
         {
-            explicit["settings"]["print_exposure_ev_tracking"] =
-                json!(if comp { "follow_mode" } else { "never" });
+            let tracking_default = explicit["settings"]["print_exposure_ev_tracking"]
+                .as_str()
+                .is_none_or(|v| v == "follow_mode");
+            let auto = explicit["enlarger"]["print_exposure_mode"]
+                .as_str()
+                .is_none_or(|v| v == "auto");
+            if tracking_default && auto && !comp {
+                explicit["settings"]["print_exposure_ev_tracking"] = json!("never");
+            }
         }
         overlay_runtime(&mut explicit["enlarger"], &enlarger);
     }
