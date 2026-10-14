@@ -59,6 +59,7 @@ pub(crate) struct App {
     pub(crate) last_preview_ms: f32,
     pub(crate) last_worker_total_ms: f32,
     pub(crate) status: String,
+    pub(crate) last_export_error: Option<String>,
     /// Controls changed since the latest submitted render snapshot.
     pub(crate) dirty: bool,
     pub(crate) dirty_since: Option<Instant>,
@@ -224,6 +225,7 @@ impl App {
             render_worker: RenderWorker::new(),
             export_job: None,
             status: startup_error.unwrap_or_else(|| String::from("Load an image to start.")),
+            last_export_error: None,
             dirty: false,
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,

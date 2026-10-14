@@ -122,6 +122,37 @@ impl App {
         });
     }
 
+    fn save_state_with_dialog(&mut self) {
+        if let Some(path) = self.chooser.save_file(
+            self.file_dialog("state")
+                .set_file_name("gui_state.json")
+                .add_filter("JSON", &["json"]),
+        ) {
+            self.remember_dialog("state", &path);
+            let result = self.current_state().and_then(|s| s.save(&path));
+            self.status = match result {
+                Ok(()) => format!("Saved GUI state to {}", path.display()),
+                Err(e) => format!("State save error: {e:#}"),
+            };
+        }
+    }
+
+    fn load_state_with_dialog(&mut self) {
+        if let Some(path) = self
+            .chooser
+            .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
+        {
+            let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
+            self.status = match result {
+                Ok(()) => {
+                    self.remember_dialog("state", &path);
+                    format!("Loaded GUI state from {}", path.display())
+                }
+                Err(e) => format!("State load error: {e:#}"),
+            };
+        }
+    }
+
     pub(super) fn toggle_scan_for_print(&mut self) {
         if let Some((white, black, glare)) = self.scan_for_print_snapshot.take() {
             self.params.scanner.white_correction = white;
@@ -209,6 +240,34 @@ impl App {
                 self.save_dialog();
             }
         });
+        ui.horizontal(|ui| {
+            if ui
+                .button("Save state")
+                .on_hover_text("Save current GUI state to a JSON file")
+                .clicked()
+            {
+                self.save_state_with_dialog();
+            }
+            if ui
+                .button("Load state")
+                .on_hover_text("Load GUI state from a JSON file")
+                .clicked()
+            {
+                self.load_state_with_dialog();
+            }
+        });
+        if let Some(error) = self.last_export_error.clone() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("Export failed: {error}"))
+                        .color(theme::ERROR)
+                        .small(),
+                );
+                if ui.button("Dismiss").clicked() {
+                    self.last_export_error = None;
+                }
+            });
+        }
     }
 
     pub(super) fn file_dialog(&self, key: &str) -> rfd::FileDialog {

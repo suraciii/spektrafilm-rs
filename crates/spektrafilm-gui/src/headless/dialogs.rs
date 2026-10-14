@@ -363,7 +363,7 @@ fn export_dialog_format_controls_are_conditional_and_both_cancel_paths_write_not
             .is_some()
     );
     assert!(h.query_by_label("Apply saving CCTF encoding").is_none());
-    choose(h, "JPEG subsampling", "Yuv420");
+    choose(h, "JPEG subsampling", "4:2:0");
 
     change_export_format(h, "TIFF");
     assert!(

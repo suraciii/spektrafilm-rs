@@ -393,6 +393,7 @@ impl App {
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.status = "Export error: worker thread vanished".into();
+                self.last_export_error = Some("Export error: worker thread vanished".into());
                 let mut job = self.export_job.take().expect("export job exists");
                 if let Some(handle) = job.handle.take() {
                     let _ = handle.join();
@@ -443,6 +444,7 @@ impl App {
                 match published {
                     Ok(report) => {
                         outcome = Outcome::Succeeded;
+                        self.last_export_error = None;
                         operation.set_published_dimensions(result.size[0], result.size[1]);
                         let mut status = format!(
                             "Exported ({}) {} · {} × {} in {:.1} s",
@@ -457,11 +459,19 @@ impl App {
                         }
                         status
                     }
-                    Err(e) => format!("Export error: {e:#}"),
+                    Err(e) => {
+                        let msg = format!("Export error: {e:#}");
+                        self.last_export_error = Some(msg.clone());
+                        msg
+                    }
                 }
             }
             Err(_) if cancelled => "Export cancelled.".into(),
-            Err(e) => format!("Export error: {e}"),
+            Err(e) => {
+                let msg = format!("Export error: {e}");
+                self.last_export_error = Some(msg.clone());
+                msg
+            }
         };
         if cancelled {
             operation.issue(IssueCategory::Cancelled, IssueBoundary::Operation);
