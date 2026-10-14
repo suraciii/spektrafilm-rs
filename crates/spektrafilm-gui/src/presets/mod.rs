@@ -176,6 +176,29 @@ fn provenance() -> Provenance {
     }
 }
 
+pub(crate) enum PresetAction {
+    Load,
+    Update,
+    Rename,
+    Duplicate,
+    Export,
+    Reveal,
+    Delete,
+}
+
+pub(crate) enum NameAction {
+    Save(Preset),
+    Rename(String),
+    Duplicate(Preset),
+    Import(PathBuf),
+}
+pub(crate) struct NameDialog {
+    pub(crate) action: NameAction,
+    pub(crate) name: String,
+    pub(crate) error: Option<String>,
+}
+
+mod actions;
 mod render;
 pub use render::*;
 

@@ -6,13 +6,15 @@ use std::{
 };
 
 mod color;
+mod flip;
 mod npy;
-mod png_io;
+mod png;
 mod resize;
 
 pub use color::*;
+pub use flip::*;
 pub use npy::*;
-pub use png_io::*;
+pub use png::*;
 pub use resize::*;
 
 pub fn native_identity() -> Value {
@@ -271,11 +273,11 @@ pub fn load_image(source: &Value) -> Result<ImageData> {
         meta["container_dtype"] = json!(dtype);
         (w as usize, h as usize, v)
     } else if ext == "png" {
-        let decoder = png::Decoder::new(std::io::BufReader::new(fs::File::open(&path)?));
+        let decoder = ::png::Decoder::new(std::io::BufReader::new(fs::File::open(&path)?));
         let mut reader = decoder
             .read_info()
             .map_err(|e| err("image_load_failed", e.to_string()))?;
-        if reader.info().color_type != png::ColorType::Rgb {
+        if reader.info().color_type != ::png::ColorType::Rgb {
             return Err(err(
                 "unsupported_image_layout",
                 "Raster must have three native RGB channels",
@@ -293,7 +295,7 @@ pub fn load_image(source: &Value) -> Result<ImageData> {
             .map_err(|e| err("image_load_failed", e.to_string()))?;
         let data = &bytes[..info.buffer_size()];
         let (dtype, values) = match info.bit_depth {
-            png::BitDepth::Sixteen => (
+            ::png::BitDepth::Sixteen => (
                 "uint16",
                 data.as_chunks::<2>()
                     .0
@@ -301,7 +303,7 @@ pub fn load_image(source: &Value) -> Result<ImageData> {
                     .map(|b| u16::from_be_bytes(*b) as f64 / 65535.)
                     .collect(),
             ),
-            png::BitDepth::Eight => ("uint8", data.iter().map(|&b| b as f64 / 255.).collect()),
+            ::png::BitDepth::Eight => ("uint8", data.iter().map(|&b| b as f64 / 255.).collect()),
             _ => {
                 return Err(err(
                     "unsupported_image_layout",
@@ -576,9 +578,9 @@ mod carrier_tests {
     fn rgba_native_samples_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rgba.png");
-        let mut encoder = png::Encoder::new(fs::File::create(&path).unwrap(), 1, 1);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
+        let mut encoder = ::png::Encoder::new(fs::File::create(&path).unwrap(), 1, 1);
+        encoder.set_color(::png::ColorType::Rgba);
+        encoder.set_depth(::png::BitDepth::Eight);
         encoder
             .write_header()
             .unwrap()
