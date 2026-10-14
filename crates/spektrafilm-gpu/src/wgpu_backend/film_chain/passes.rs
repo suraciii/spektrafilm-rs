@@ -1,18 +1,7 @@
-use super::{
-    DensityParams, FrontParams, ImageBuf, ScanParams, WgpuBackend, build_dir_state,
-    build_gamut_state, build_glare_state, build_grain_v2_state, build_halation_state,
-    build_highlight_boost_state, build_simple_blur_state, build_unsharp_state, dispatch_linear,
-    f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
-};
+use super::*;
+use buffers::ChainBuffers;
 
 impl WgpuBackend {
-    pub fn run_film_chain(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
-        if !self.device.context.enabled() {
-            return self.run_film_chain_inner(p);
-        }
-        let (backend, _batch) = self.observed_batch("film_chain");
-        backend.run_film_chain_inner(p)
-    }
     /// GPU-resident pipeline: runs the front pass (hanatos LUT lookup or
     /// mallett matmul), highlight boost, camera lens blur, halation,
     /// density curves, DIR, print spectral, scan spectral, glare,
@@ -23,7 +12,10 @@ impl WgpuBackend {
     /// readout interpretation, optical diffusion, output transfer,
     /// magazine) flushes the submission, runs the host stage, and the
     /// remaining passes continue on the device.
-    fn run_film_chain_inner(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
+    pub(super) fn run_film_chain_inner(
+        &self,
+        p: &crate::FilmChainParams<'_>,
+    ) -> Result<ImageBuf, String> {
         let t_start = std::time::Instant::now();
         // Pull all references into locals so the existing body below
         // doesn't need a rewrite — only the param sources change.
@@ -124,176 +116,54 @@ impl WgpuBackend {
                 .static_buffer(label, bytes, wgpu::BufferUsages::UNIFORM)
         };
 
-        // ── Pre-compute every static GPU-side buffer ─────────────────────
-        // Filming density curves — already normalized by caller.
-        let film_log_exp_f32: Vec<f32> = film_log_exposure.iter().map(|&v| v as f32).collect();
-        let film_curves_f32: Vec<f32> = film_density_curves_normalized
-            .iter()
-            .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-            .collect();
-        let film_log_exp_buf = mk_storage("film_log_exp", bytemuck::cast_slice(&film_log_exp_f32));
-        let film_curves_buf = mk_storage("film_curves", bytemuck::cast_slice(&film_curves_f32));
+        let ChainBuffers {
+            film_log_exp_buf,
+            film_curves_buf,
+            film_cd_buf,
+            film_bd_buf,
+            print_illu_buf,
+            print_sens_buf,
+            print_log_exp_buf,
+            print_curves_buf,
+            scan_cd_buf,
+            scan_bd_buf,
+            view_illu_buf,
+            cmf_x_buf,
+            cmf_y_buf,
+            cmf_z_buf,
+            front_params_buf,
+            film_density_params_buf,
+            print_params_buf,
+            print_density_params_buf,
 
-        // Film spectral data (for printing pass).
-        let (film_cd_f32, mut film_bd_f32) = sanitize_spectral_inputs(
+            scan_params_buf,
+        } = buffers::upload(
+            image,
+            film_log_exposure,
+            film_density_curves_normalized,
+            film_gamma,
             film_channel_density,
             film_base_density,
-            film_channel_density.len(),
+            print_illuminant,
+            print_sensitivity,
+            print_log_exposure,
+            print_density_curves,
+            print_gamma,
+            preflash,
+            print_channel_density,
+            print_base_density,
+            viewing_illuminant,
+            scan_normalization,
+            scan_xyz_to_rgb,
+            p,
+            &mk_storage,
+            &mk_uniform,
         );
-        film_bd_f32.resize(film_channel_density.len(), 0.0);
-        let film_cd_buf = mk_storage("film_cd", bytemuck::cast_slice(&film_cd_f32));
-        let film_bd_buf = mk_storage("film_bd", bytemuck::cast_slice(&film_bd_f32));
-
-        let print_illu_f32: Vec<f32> = print_illuminant.iter().map(|&v| v as f32).collect();
-        let print_sens_f32: Vec<f32> = print_sensitivity
-            .iter()
-            .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-            .collect();
-        let print_illu_buf = mk_storage("print_illu", bytemuck::cast_slice(&print_illu_f32));
-        let print_sens_buf = mk_storage("print_sens", bytemuck::cast_slice(&print_sens_f32));
-
-        // Print density curves (RAW, no normalization for print path).
-        let print_log_exp_f32: Vec<f32> = print_log_exposure.iter().map(|&v| v as f32).collect();
-        let print_curves_f32: Vec<f32> = print_density_curves
-            .iter()
-            .flat_map(|r| r.iter().map(|&v| if v.is_nan() { 0.0 } else { v as f32 }))
-            .collect();
-        let print_log_exp_buf =
-            mk_storage("print_log_exp", bytemuck::cast_slice(&print_log_exp_f32));
-        let print_curves_buf = mk_storage("print_curves", bytemuck::cast_slice(&print_curves_f32));
-
-        // Spectral dye-density data for the scanning pass. For scan_film we
-        // scan the developed film directly, so feed the film's spectral
-        // densities; otherwise the print's. (print_spectral uses
-        // sensitivity, not these — this buffer feeds only scan_spectral.)
-        let (scan_cd_src, scan_bd_src): (&[[f64; 3]], &[f64]) = if p.scan_film {
-            (film_channel_density, film_base_density)
-        } else {
-            (print_channel_density, print_base_density)
-        };
-        let (scan_cd_f32, mut scan_bd_f32) =
-            sanitize_spectral_inputs(scan_cd_src, scan_bd_src, scan_cd_src.len());
-        scan_bd_f32.resize(scan_cd_src.len(), 0.0);
-        let scan_cd_buf = mk_storage("scan_cd", bytemuck::cast_slice(&scan_cd_f32));
-        let scan_bd_buf = mk_storage("scan_bd", bytemuck::cast_slice(&scan_bd_f32));
-
-        let view_illu_f32: Vec<f32> = viewing_illuminant.iter().map(|&v| v as f32).collect();
-        let view_illu_buf = mk_storage("view_illu", bytemuck::cast_slice(&view_illu_f32));
-        let cmf_x_buf = mk_storage(
-            "cmf_x",
-            bytemuck::cast_slice(&spektrafilm_math::spectral::CMF_X),
-        );
-        let cmf_y_buf = mk_storage(
-            "cmf_y",
-            bytemuck::cast_slice(&spektrafilm_math::spectral::CMF_Y),
-        );
-        let cmf_z_buf = mk_storage(
-            "cmf_z",
-            bytemuck::cast_slice(&spektrafilm_math::spectral::CMF_Z),
-        );
-
-        // ── Param structs ────────────────────────────────────────────────
-        // Front pass (hanatos LUT lookup or mallett matmul). Both shaders
-        // share this uniform layout; `lut_size` is hanatos-only (0 for
-        // mallett, where the field is a pad).
-        let (m, front_lut_size) = match &p.front {
-            crate::FrontPass::Hanatos2025 {
-                tc_lut,
-                rgb_to_adapted_xyz,
-            } => (rgb_to_adapted_xyz, tc_lut.size as u32),
-            crate::FrontPass::Mallett2019 { matrix } => (matrix, 0u32),
-        };
-        let front_params = FrontParams {
-            width: image.width,
-            height: image.height,
-            lut_size: front_lut_size,
-            _pad: 0,
-            col0: [m[0][0] as f32, m[1][0] as f32, m[2][0] as f32, 0.0],
-            col1: [m[0][1] as f32, m[1][1] as f32, m[2][1] as f32, 0.0],
-            col2: [m[0][2] as f32, m[1][2] as f32, m[2][2] as f32, 0.0],
-        };
-        let front_params_buf = mk_uniform("front_params", bytemuck::bytes_of(&front_params));
-
-        let film_density_params = DensityParams {
-            width: image.width,
-            height: image.height,
-            k: film_log_exposure.len() as u32,
-            uniform_grid: if is_uniform_grid_endpoint(film_log_exposure) {
-                1
-            } else {
-                0
-            },
-            gamma_inv: [(1.0 / film_gamma) as f32; 3],
-            _pad: 0.0,
-        };
-        let film_density_params_buf =
-            mk_uniform("film_dens_params", bytemuck::bytes_of(&film_density_params));
-
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct PrintParams {
-            width: u32,
-            height: u32,
-            n_wavelengths: u32,
-            normalization_factor: f32,
-            exposure_scale: f32,
-            _pad: [f32; 3],
-            preflash: [f32; 3],
-            _tail_pad: f32,
-        }
-        let print_params = PrintParams {
-            width: image.width,
-            height: image.height,
-            n_wavelengths: film_channel_density.len() as u32,
-            normalization_factor: p.print_normalization_factor as f32,
-            exposure_scale: p.print_exposure_scale as f32,
-            _pad: [0.0; 3],
-            preflash: [preflash[0] as f32, preflash[1] as f32, preflash[2] as f32],
-            _tail_pad: 0.0,
-        };
-        let print_params_buf = mk_uniform("print_params", bytemuck::bytes_of(&print_params));
-
-        let print_density_params = DensityParams {
-            width: image.width,
-            height: image.height,
-            k: print_log_exposure.len() as u32,
-            uniform_grid: if is_uniform_grid_endpoint(print_log_exposure) {
-                1
-            } else {
-                0
-            },
-            gamma_inv: [(1.0 / print_gamma) as f32; 3],
-            _pad: 0.0,
-        };
-        let print_density_params_buf = mk_uniform(
-            "print_dens_params",
-            bytemuck::bytes_of(&print_density_params),
-        );
-
-        let s = scan_xyz_to_rgb;
-        // Scanner white and black correction luminance remap (m, q); z=1
-        // enables it in the shader. Preserve floating range before gamut
-        // compression and destination encoding.
-        let white_black = match p.white_black_xyz_remap {
-            Some((m, q)) => [m as f32, q as f32, 1.0, 0.0],
-            None => [1.0, 0.0, 0.0, 0.0],
-        };
-        let scan_params = ScanParams {
-            width: image.width,
-            height: image.height,
-            n_wavelengths: scan_cd_src.len() as u32,
-            normalization: scan_normalization as f32,
-            col0: [s[0][0] as f32, s[1][0] as f32, s[2][0] as f32, 0.0],
-            col1: [s[0][1] as f32, s[1][1] as f32, s[2][1] as f32, 0.0],
-            col2: [s[0][2] as f32, s[1][2] as f32, s[2][2] as f32, 0.0],
-            bw: white_black,
-        };
-        let scan_params_buf = mk_uniform("scan_params", bytemuck::bytes_of(&scan_params));
 
         // ── Pre-compile pipelines (cached after first call) ──────────────
         // Each shader's bindings layout is fixed and known here.
         let density_pipe = self.cached_pipeline(
-            include_str!("../../../spektrafilm-shaders/wgsl/spectral/density_curve_interp.wgsl"),
+            include_str!("../../../../spektrafilm-shaders/wgsl/spectral/density_curve_interp.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -304,7 +174,7 @@ impl WgpuBackend {
         );
         let print_pipe = self.cached_pipeline(
             include_str!(
-                "../../../spektrafilm-shaders/wgsl/spectral/print_spectral_calibrated.wgsl"
+                "../../../../spektrafilm-shaders/wgsl/spectral/print_spectral_calibrated.wgsl"
             ),
             &[
                 wgpu::BufferBindingType::Uniform,
@@ -317,7 +187,7 @@ impl WgpuBackend {
             ],
         );
         let scan_pipe = self.cached_pipeline(
-            include_str!("../../../spektrafilm-shaders/wgsl/spectral/scan_spectral.wgsl"),
+            include_str!("../../../../spektrafilm-shaders/wgsl/spectral/scan_spectral.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -341,7 +211,7 @@ impl WgpuBackend {
                 let tc_lut_buf = mk_storage("tc_lut", bytemuck::cast_slice(&tc_lut_f32));
                 let pipe = self.cached_pipeline(
                     include_str!(
-                        "../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"
+                        "../../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"
                     ),
                     &[
                         wgpu::BufferBindingType::Uniform,
@@ -377,7 +247,7 @@ impl WgpuBackend {
             crate::FrontPass::Mallett2019 { .. } => {
                 let pipe = self.cached_pipeline(
                     include_str!(
-                        "../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
+                        "../../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
                     ),
                     &[
                         wgpu::BufferBindingType::Uniform,
@@ -413,7 +283,7 @@ impl WgpuBackend {
 
         let bg_log10 = {
             let pipe = self.cached_pipeline(
-                include_str!("../../../spektrafilm-shaders/wgsl/spectral/log10_inplace.wgsl"),
+                include_str!("../../../../spektrafilm-shaders/wgsl/spectral/log10_inplace.wgsl"),
                 &[
                     wgpu::BufferBindingType::Uniform,
                     wgpu::BufferBindingType::Storage { read_only: false },
@@ -731,13 +601,13 @@ impl WgpuBackend {
         // the bind groups and state it encodes; buffers ride along as
         // Arc-cloned handles (wgpu resources are cheap clones).
         let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
-        let mut stages: Vec<super::pipe::ChainStage<'_>> = Vec::new();
+        let mut stages: Vec<super::super::pipe::ChainStage<'_>> = Vec::new();
         let pass = |name: &'static str,
                     pipeline: wgpu::ComputePipeline,
                     bg: wgpu::BindGroup,
                     n: u32|
-         -> super::pipe::ChainStage<'static> {
-            super::pipe::ChainStage::Gpu {
+         -> super::super::pipe::ChainStage<'static> {
+            super::super::pipe::ChainStage::Gpu {
                 name,
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -760,7 +630,7 @@ impl WgpuBackend {
         ));
         // 1a. Highlight boost on raw, before optical scatter.
         if let Some(hs) = highlight_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "highlight_boost",
                 encode: Box::new(move |encoder| hs.encode_passes(encoder)),
             });
@@ -773,7 +643,7 @@ impl WgpuBackend {
             let buf_b = buf_b.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "camera_diffusion_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
@@ -791,7 +661,7 @@ impl WgpuBackend {
         // 1b. Camera lens blur on raw before halation.
         if let Some(bs) = camera_lens_blur_state.take() {
             let buf_b = buf_b.clone();
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "camera_lens_blur",
                 encode: Box::new(move |encoder| bs.encode_passes(encoder, wg_xy, &buf_b)),
             });
@@ -799,7 +669,7 @@ impl WgpuBackend {
         // 1c. Halation in-place on buf_b (blur scratch in buf_a, scatter
         //     outputs and accumulator in buf_c / buf_d).
         if let Some(hs) = halation_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "halation",
                 encode: Box::new(move |encoder| hs.encode_passes(encoder, n_pixels, wg_xy)),
             });
@@ -824,7 +694,7 @@ impl WgpuBackend {
         // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
         //     the density curve back into buf_a.
         if let Some(ds) = dir_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "dir_couplers",
                 encode: Box::new(move |encoder| ds.encode_passes(encoder, n_pixels, wg_xy)),
             });
@@ -838,7 +708,7 @@ impl WgpuBackend {
             let buf_a = buf_a.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "density_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let host = pipe.readback_buffer(&buf_a, img_bytes_u64);
@@ -866,7 +736,7 @@ impl WgpuBackend {
                 let buf_b = buf_b.clone();
                 let (w, h) = (image.width, image.height);
                 let img_bytes_u64 = img_bytes as u64;
-                stages.push(super::pipe::ChainStage::Cpu {
+                stages.push(super::super::pipe::ChainStage::Cpu {
                     name: "print_acquisition_cpu_stage",
                     fence: Box::new(move |pipe| {
                         let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
@@ -905,7 +775,7 @@ impl WgpuBackend {
             let buf_b = buf_b.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "scan_acquisition_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
@@ -926,14 +796,14 @@ impl WgpuBackend {
         //     glare, gamut correction, and unsharp mask.
         if let Some(bs) = scanner_lens_blur_state.take() {
             let buf_b = buf_b.clone();
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "scanner_lens_blur",
                 encode: Box::new(move |encoder| bs.encode_passes(encoder, wg_xy, &buf_b)),
             });
         }
         // 6b. Glare (in place on buf_b).
         if let Some(gs) = glare_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "glare",
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels, wg_xy)),
             });
@@ -948,7 +818,7 @@ impl WgpuBackend {
             let buf_b = buf_b.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "scan_tail_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
@@ -966,7 +836,7 @@ impl WgpuBackend {
         // 6c. Output gamut compression (in place on buf_b) — after glare,
         //     before unsharp, mirroring the CPU scanning order.
         if let Some(gs) = gamut_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "output_gamut",
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels)),
             });
@@ -976,7 +846,7 @@ impl WgpuBackend {
         if let Some(us) = unsharp_state.take() {
             let buf_b = buf_b.clone();
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "unsharp_mask",
                 encode: Box::new(move |encoder| {
                     us.encode_passes(encoder, n_pixels, wg_xy, &buf_b, img_bytes_u64)
@@ -986,7 +856,7 @@ impl WgpuBackend {
         // 6e. Encode native destination RGB, then apply Grain Procedural.
         if let Some(gs) = grain_v2_state.take() {
             let buf_b = buf_b.clone();
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "grain_v2",
                 encode: Box::new(move |encoder| gs.encode_pass(encoder, n_pixels, &buf_b)),
             });
@@ -1029,8 +899,8 @@ impl WgpuBackend {
                 });
             let pipe = self.cached_pipeline(
                 concat!(
-                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl")
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl")
                 ),
                 &[
                     wgpu::BufferBindingType::Uniform,
@@ -1051,7 +921,7 @@ impl WgpuBackend {
                     },
                 ],
             });
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "output_transfer",
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1137,8 +1007,8 @@ impl WgpuBackend {
                 });
             let pipe = self.cached_pipeline(
                 concat!(
-                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../spektrafilm-shaders/wgsl/magazine.wgsl")
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/magazine.wgsl")
                 ),
                 &[
                     wgpu::BufferBindingType::Uniform,
@@ -1159,7 +1029,7 @@ impl WgpuBackend {
                     },
                 ],
             });
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "magazine",
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1179,7 +1049,7 @@ impl WgpuBackend {
             let rb = rb.clone();
             let buf_b = buf_b.clone();
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "readback_copy",
                 encode: Box::new(move |encoder| {
                     encoder.copy_buffer_to_buffer(&buf_b, 0, &rb, 0, img_bytes_u64)
@@ -1236,7 +1106,7 @@ const MAX_FIXED_AUX_BYTES: u64 = 4 * 1024;
 
 /// Device buffer sizes the resident chain will allocate, derived from the
 /// parameters without touching a device.
-pub(super) struct RequiredChainBuffers {
+pub(in crate::wgpu_backend) struct RequiredChainBuffers {
     /// One image-sized buffer: the `img_a`/`img_b` ping-pong pair, the
     /// readback buffer, and every stage scratch buffer (blur, halation,
     /// DIR, glare, unsharp, grain) is created at this size or smaller.
@@ -1249,7 +1119,7 @@ pub(super) struct RequiredChainBuffers {
 
 impl RequiredChainBuffers {
     /// The largest single buffer the chain will create.
-    pub(super) fn largest(&self) -> u64 {
+    pub(in crate::wgpu_backend) fn largest(&self) -> u64 {
         self.image_bytes.max(self.static_bytes)
     }
 }
@@ -1258,7 +1128,9 @@ impl RequiredChainBuffers {
 /// Sizes mirror `run_film_chain_inner`: every lookup value is narrowed to
 /// one f32 on upload, so `n` f64 samples become `4n` bytes and an
 /// `[[f64; 3]]` table of `n` rows becomes `12n`.
-pub(super) fn required_chain_buffers(p: &crate::FilmChainParams<'_>) -> RequiredChainBuffers {
+pub(in crate::wgpu_backend) fn required_chain_buffers(
+    p: &crate::FilmChainParams<'_>,
+) -> RequiredChainBuffers {
     let f32s = |count: usize| (count as u64).saturating_mul(4);
     let table = |rows: usize| f32s(rows).saturating_mul(3);
     let image_bytes = (u64::from(p.image.width) * u64::from(p.image.height)).saturating_mul(3 * 4);
@@ -1310,7 +1182,7 @@ pub(super) fn required_chain_buffers(p: &crate::FilmChainParams<'_>) -> Required
 /// binding is `as_entire_binding()`, so the size is checked against both
 /// the absolute buffer limit and the storage binding limit; returns a
 /// human-readable reason on violation.
-pub(super) fn required_buffer_exceeds_limits(
+pub(in crate::wgpu_backend) fn required_buffer_exceeds_limits(
     required_bytes: u64,
     limits: &wgpu::Limits,
 ) -> Option<String> {
@@ -1332,7 +1204,7 @@ pub(super) fn required_buffer_exceeds_limits(
 
 /// The failure an explicit GPU request gets when the chain exceeds the
 /// device resource limits: identified, with the CPU route named.
-pub(super) fn explicit_resource_error(reason: &str) -> String {
+pub(in crate::wgpu_backend) fn explicit_resource_error(reason: &str) -> String {
     format!(
         "explicit GPU request exceeds the device resource limits ({reason}); retry with an \
          explicit CPU request"
@@ -1471,7 +1343,7 @@ mod tests {
     #[test]
     fn oversized_geometry_declines_the_automatic_route_and_fails_an_explicit_request() {
         use crate::ComputeBackend;
-        let _lock = super::super::observation::TEST_DEVICE_LOCK
+        let _lock = crate::wgpu_backend::observation::TEST_DEVICE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         // 20k x 20k x 12 B = 4.8 GB declared: beyond any device limit and never
