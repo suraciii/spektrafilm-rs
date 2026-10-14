@@ -2,9 +2,21 @@ use crate::common::{Error, Result};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
 };
+
+mod color;
+mod flip;
+mod npy;
+mod png;
+mod resize;
+
+pub use color::*;
+pub use flip::*;
+pub use npy::*;
+pub use png::*;
+pub use resize::*;
+
 pub fn native_identity() -> Value {
     json!({"flip": {"implementation": "NVlabs FLIP", "version": "1.7", "source_url": "https://files.pythonhosted.org/packages/00/dc/39cc51468562899883b43d04b9754c634798e6f7f8ffcd3b984743da041c/flip_evaluator-1.7.tar.gz", "source_distribution_sha256": "88204ec5000fa90b26e00f6f21e8d73f18e5afac7e8a23cb0803b117b3da081b", "header_sha256": "412b118db343a3a0d030104f17f46c1e3edc7455d2b83a7398a42e25befed104", "build": "CPU C++17 no CUDA no fast-math", "bridge": "spektrafilm_flip", "input": "LDR encoded sRGB clipped cast float32 then official float32 sRGB decode", "apply_magma": false, "ppd": "pixels_per_degree"}, "icc": {"implementation": "LittleCMS", "intent": "relative_colorimetric", "black_point_compensation": false, "format": "RGB_DBL"}})
 }
@@ -24,449 +36,9 @@ impl ImageData {
         [self.width, self.height]
     }
 }
-fn err(c: &str, m: impl Into<String>) -> Error {
+
+pub(crate) fn err(c: &str, m: impl Into<String>) -> Error {
     Error::new(c, m.into())
-}
-fn norm_space(s: &str) -> String {
-    let k = s
-        .to_ascii_lowercase()
-        .replace(['-', '_', ' ', '(', ')'], "");
-    match k.as_str() {
-        "srgb" => "sRGB",
-        "adobergb1998" | "adobergb" => "Adobe RGB (1998)",
-        "prophotorgb" | "prophoto" => "ProPhoto RGB",
-        "displayp3" | "p3" => "Display P3",
-        "dcip3" => "DCI-P3",
-        "iturbt2020" | "rec2020" | "bt2020" => "ITU-R BT.2020",
-        "acescg" => "ACEScg",
-        "aces2065" | "aces20651" => "ACES2065-1",
-        _ => s,
-    }
-    .to_owned()
-}
-fn norm_transfer(v: &Value) -> String {
-    if let Some(b) = v.as_bool() {
-        return if b { "encoded" } else { "linear" }.to_owned();
-    }
-    let s = match v.as_str() {
-        Some(x) => x,
-        None => return String::new(),
-    };
-    let k = s.to_ascii_lowercase().replace(['-', '_', ' ', '"'], "");
-    match k.as_str() {
-        "srgb" => "srgb",
-        "encoded" | "true" | "cctfencoded" => "encoded",
-        "linear" | "identity" | "false" => "linear",
-        _ => s,
-    }
-    .to_owned()
-}
-pub fn srgb_decode(x: f64) -> f64 {
-    if x <= 0.04045 {
-        x / 12.92
-    } else {
-        ((x.max(0.04045) + 0.055) / 1.055).powf(2.4)
-    }
-}
-pub fn srgb_encode(x: f64) -> f64 {
-    if x <= 0.0031308 {
-        x * 12.92
-    } else {
-        1.055 * x.max(0.0031308).powf(1.0 / 2.4) - 0.055
-    }
-}
-fn decode(space: &str, x: f64) -> f64 {
-    match space {
-        "sRGB" | "Display P3" => srgb_decode(x),
-        "DCI-P3" => x.powf(2.6),
-        "Adobe RGB (1998)" => x.powf(2.19921875),
-        "ProPhoto RGB" => {
-            if x < 16.0 / 512.0 {
-                x / 16.0
-            } else {
-                x.powf(1.8)
-            }
-        }
-        "ITU-R BT.2020" => {
-            let a = 1.099;
-            let b = 0.018_f64;
-            let threshold = a * b.powf(0.45) - (a - 1.);
-            if x < threshold {
-                x / 4.5
-            } else {
-                ((x + a - 1.0) / a).powf(1.0 / 0.45)
-            }
-        }
-        _ => x,
-    }
-}
-fn mul(m: [[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
-    [
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
-    ]
-}
-fn inv(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    let d = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    [
-        [
-            (m[1][1] * m[2][2] - m[1][2] * m[2][1]) / d,
-            (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / d,
-            (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / d,
-        ],
-        [
-            (m[1][2] * m[2][0] - m[1][0] * m[2][2]) / d,
-            (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / d,
-            (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / d,
-        ],
-        [
-            (m[1][0] * m[2][1] - m[1][1] * m[2][0]) / d,
-            (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / d,
-            (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / d,
-        ],
-    ]
-}
-fn space_matrix(s: &str) -> ([[f64; 3]; 3], [f64; 2]) {
-    match s {
-        "sRGB" => (
-            [
-                [0.4124, 0.3576, 0.1805],
-                [0.2126, 0.7152, 0.0722],
-                [0.0193, 0.1192, 0.9505],
-            ],
-            [0.3127, 0.329],
-        ),
-        "ProPhoto RGB" => (
-            [
-                [0.7977, 0.1352, 0.0313],
-                [0.288, 0.7119, 0.0001],
-                [0.0, 0.0, 0.8249],
-            ],
-            [0.3457, 0.3585],
-        ),
-        "DCI-P3" => (
-            [
-                [0.4451698155645524, 0.27713440920677773, 0.17228266981556453],
-                [0.20949167791273052, 0.7215952541610438, 0.06891306792622581],
-                [
-                    -3.634101316969856e-17,
-                    0.04706056005398116,
-                    0.9073553943619733,
-                ],
-            ],
-            [0.314, 0.351],
-        ),
-        "Adobe RGB (1998)" => (
-            [
-                [0.57667, 0.18556, 0.18823],
-                [0.29734, 0.62736, 0.07529],
-                [0.02703, 0.07069, 0.99134],
-            ],
-            [0.3127, 0.329],
-        ),
-        "Display P3" => (
-            [
-                [0.486570948648216, 0.2656676931690931, 0.1982172852343625],
-                [0.2289745640697487, 0.6917385218365064, 0.079286914093745],
-                [
-                    -3.9720755169334855e-17,
-                    0.04511338185890264,
-                    1.0439443689009757,
-                ],
-            ],
-            [0.3127, 0.329],
-        ),
-        "ITU-R BT.2020" => (
-            [
-                [0.6369580483012912, 0.1446169035862084, 0.16888097516417208],
-                [0.262700212011267, 0.6779980715188711, 0.05930171646986195],
-                [
-                    4.994106574466074e-17,
-                    0.028072693049087445,
-                    1.0609850577107909,
-                ],
-            ],
-            [0.3127, 0.329],
-        ),
-        "ACEScg" => (
-            [
-                [0.6624541811085055, 0.13400420645643313, 0.15618768700490773],
-                [0.2722287167809146, 0.6740817658111483, 0.05368951740793703],
-                [
-                    -0.005574649490394109,
-                    0.004060733528982825,
-                    1.010339100312997,
-                ],
-            ],
-            [0.32168, 0.33767],
-        ),
-        "ACES2065-1" => (
-            [
-                [0.9525523959, 0.0, 9.36786e-05],
-                [0.3439664498, 0.7281660966, -0.0721325464],
-                [0.0, 0.0, 1.0088251844],
-            ],
-            [0.32168, 0.33767],
-        ),
-        _ => ([[0.; 3]; 3], [0.; 2]),
-    }
-}
-fn cat02(a: [f64; 2], b: [f64; 2]) -> [[f64; 3]; 3] {
-    let xyz = |p: [f64; 2]| [p[0] / p[1], 1., (1. - p[0] - p[1]) / p[1]];
-    let l = [
-        [0.7328, 0.4296, -0.1624],
-        [-0.7036, 1.6975, 0.0061],
-        [0.003, 0.0136, 0.9834],
-    ];
-    let li = inv(l);
-    let x = mul(l, xyz(a));
-    let y = mul(l, xyz(b));
-    let mut o = [[0.; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            for k in 0..3 {
-                o[i][j] += li[i][k] * (y[k] / x[k]) * l[k][j];
-            }
-        }
-    }
-    o
-}
-fn to_srgb_linear(v: [f64; 3], s: &str) -> Option<[f64; 3]> {
-    let (m, w) = space_matrix(s);
-    if m[0][0] == 0. {
-        return None;
-    }
-    let xyz = mul(m, v);
-    Some(mul(
-        [
-            [3.2406, -1.5372, -0.4986],
-            [-0.9689, 1.8758, 0.0415],
-            [0.0557, -0.204, 1.057],
-        ],
-        mul(cat02(w, [0.3127, 0.329]), xyz),
-    ))
-}
-
-fn parse_shape(h: &str) -> Result<Vec<usize>> {
-    let a = h
-        .find("'shape'")
-        .or_else(|| h.find("\"shape\""))
-        .ok_or_else(|| err("invalid_npy", "Missing shape"))?;
-    let q = h[a..]
-        .find('(')
-        .ok_or_else(|| err("invalid_npy", "Missing shape"))?
-        + a;
-    let z = h[q + 1..]
-        .find(')')
-        .ok_or_else(|| err("invalid_npy", "Missing shape"))?
-        + q
-        + 1;
-    let v = h[q + 1..z]
-        .split(',')
-        .filter(|x| !x.trim().is_empty())
-        .map(|x| {
-            x.trim()
-                .parse::<usize>()
-                .map_err(|_| err("invalid_npy", "Invalid shape"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(v)
-}
-pub fn read_npy(path: &Path) -> Result<(Vec<f64>, Vec<usize>)> {
-    let mut b = Vec::new();
-    fs::File::open(path)?.read_to_end(&mut b)?;
-    if b.len() < 10 || &b[..6] != b"\x93NUMPY" {
-        return Err(err("invalid_npy", "Invalid NPY header"));
-    }
-    let (pos, len) = match b[6] {
-        1 => (10, u16::from_le_bytes([b[8], b[9]]) as usize),
-        2 | 3 => {
-            if b.len() < 12 {
-                return Err(err("invalid_npy", "Truncated NPY header"));
-            }
-            (12, u32::from_le_bytes([b[8], b[9], b[10], b[11]]) as usize)
-        }
-        _ => return Err(err("unsupported_npy", "Unsupported NPY version")),
-    };
-    if pos + len > b.len() {
-        return Err(err("invalid_npy", "Truncated NPY header"));
-    }
-    let h = std::str::from_utf8(&b[pos..pos + len])
-        .map_err(|_| err("invalid_npy", "Invalid NPY header"))?;
-    let fortran = h
-        .split("fortran_order")
-        .nth(1)
-        .map(|x| x.split(',').next().unwrap_or("").contains("True"))
-        .unwrap_or(false);
-    let shape = parse_shape(h)?;
-    let a = h
-        .find("'descr'")
-        .or_else(|| h.find("\"descr\""))
-        .ok_or_else(|| err("invalid_npy", "Missing dtype"))?;
-    let q = h[a..].find(':').unwrap() + a;
-    let tail = h[q + 1..].trim();
-    let quote = tail
-        .chars()
-        .next()
-        .ok_or_else(|| err("invalid_npy", "Missing dtype"))?;
-    let end = tail[1..]
-        .find(quote)
-        .ok_or_else(|| err("invalid_npy", "Unterminated dtype"))?
-        + 1;
-    let dtype = tail[1..end].to_owned();
-    let (endian, kind, size) = match dtype.as_str() {
-        "|b1" | "b1" => ('=', 'b', 1),
-        "<f4" | "=f4" => ('<', 'f', 4),
-        ">f4" => ('>', 'f', 4),
-        "<f8" | "=f8" => ('<', 'f', 8),
-        ">f8" => ('>', 'f', 8),
-        "|i1" | "<i1" | "=i1" | ">i1" => ('=', 'i', 1),
-        "|u1" | "<u1" | "=u1" | ">u1" => ('=', 'u', 1),
-        "<i2" | "=i2" => ('<', 'i', 2),
-        ">i2" => ('>', 'i', 2),
-        "<u2" | "=u2" => ('<', 'u', 2),
-        ">u2" => ('>', 'u', 2),
-        "<i4" | "=i4" => ('<', 'i', 4),
-        ">i4" => ('>', 'i', 4),
-        "<u4" | "=u4" => ('<', 'u', 4),
-        ">u4" => ('>', 'u', 4),
-        "<i8" | "=i8" => ('<', 'i', 8),
-        ">i8" => ('>', 'i', 8),
-        "<u8" | "=u8" => ('<', 'u', 8),
-        ">u8" => ('>', 'u', 8),
-        _ => {
-            return Err(err(
-                "unsupported_npy",
-                format!("Unsupported NPY dtype {dtype}"),
-            ));
-        }
-    };
-    let data = &b[pos + len..];
-    if data.len() % size != 0 {
-        return Err(err("invalid_npy", "Invalid NPY payload length"));
-    }
-    let mut out = Vec::with_capacity(data.len() / size);
-    for c in data.chunks_exact(size) {
-        let x = match (kind, size) {
-            ('b', _) => {
-                if c[0] == 0 {
-                    0.
-                } else {
-                    1.
-                }
-            }
-            ('f', 4) => f32::from_bits(if endian == '<' {
-                u32::from_le_bytes(c.try_into().unwrap())
-            } else {
-                u32::from_be_bytes(c.try_into().unwrap())
-            }) as f64,
-            ('f', 8) => f64::from_bits(if endian == '<' {
-                u64::from_le_bytes(c.try_into().unwrap())
-            } else {
-                u64::from_be_bytes(c.try_into().unwrap())
-            }),
-            ('i', 1) => i8::from_ne_bytes([c[0]]) as f64,
-            ('u', 1) => c[0] as f64,
-            ('i', 2) => {
-                (if endian == '<' {
-                    i16::from_le_bytes(c.try_into().unwrap())
-                } else {
-                    i16::from_be_bytes(c.try_into().unwrap())
-                }) as f64
-            }
-            ('u', 2) => {
-                (if endian == '<' {
-                    u16::from_le_bytes(c.try_into().unwrap())
-                } else {
-                    u16::from_be_bytes(c.try_into().unwrap())
-                }) as f64
-            }
-            ('i', 4) => {
-                (if endian == '<' {
-                    i32::from_le_bytes(c.try_into().unwrap())
-                } else {
-                    i32::from_be_bytes(c.try_into().unwrap())
-                }) as f64
-            }
-            ('u', 4) => {
-                (if endian == '<' {
-                    u32::from_le_bytes(c.try_into().unwrap())
-                } else {
-                    u32::from_be_bytes(c.try_into().unwrap())
-                }) as f64
-            }
-            ('i', 8) => {
-                (if endian == '<' {
-                    i64::from_le_bytes(c.try_into().unwrap())
-                } else {
-                    i64::from_be_bytes(c.try_into().unwrap())
-                }) as f64
-            }
-            ('u', 8) => {
-                (if endian == '<' {
-                    u64::from_le_bytes(c.try_into().unwrap())
-                } else {
-                    u64::from_be_bytes(c.try_into().unwrap())
-                }) as f64
-            }
-            _ => return Err(err("unsupported_npy", "Unsupported NPY dtype")),
-        };
-        out.push(x)
-    }
-    let count = shape
-        .iter()
-        .try_fold(1usize, |a, &b| a.checked_mul(b))
-        .ok_or_else(|| err("invalid_npy", "Shape overflow"))?;
-    if out.len() != count {
-        return Err(err("invalid_npy", "Shape differs from payload"));
-    }
-    if fortran {
-        let original = out.clone();
-        for (i, v) in out.iter_mut().enumerate() {
-            let mut index = i;
-            let mut offset = 0;
-            let mut stride = 1;
-            let mut coordinates = vec![0; shape.len()];
-            for k in (0..shape.len()).rev() {
-                coordinates[k] = index % shape[k];
-                index /= shape[k]
-            }
-            for k in 0..shape.len() {
-                offset += coordinates[k] * stride;
-                stride *= shape[k]
-            }
-            *v = original[offset]
-        }
-    }
-    Ok((out, shape))
-}
-
-pub fn write_npy(path: &Path, values: &[f64], shape: &[usize]) -> Result<()> {
-    let tuple = shape
-        .iter()
-        .map(|x| x.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let tuple = if shape.len() == 1 {
-        format!("{tuple},")
-    } else {
-        tuple
-    };
-    let raw = format!("{{'descr': '<f8', 'fortran_order': False, 'shape': ({tuple}), }}");
-    let pad = (16 - (10 + raw.len() + 1) % 16) % 16;
-    let header = format!("{}{}\n", raw, " ".repeat(pad));
-    let mut f = BufWriter::with_capacity(65536, fs::File::create(path)?);
-    f.write_all(b"\x93NUMPY\x01\x00")?;
-    f.write_all(&(header.len() as u16).to_le_bytes())?;
-    f.write_all(header.as_bytes())?;
-    for v in values {
-        f.write_all(&v.to_le_bytes())?
-    }
-    f.flush()?;
-    Ok(())
 }
 
 pub fn load_image(source: &Value) -> Result<ImageData> {
@@ -701,11 +273,11 @@ pub fn load_image(source: &Value) -> Result<ImageData> {
         meta["container_dtype"] = json!(dtype);
         (w as usize, h as usize, v)
     } else if ext == "png" {
-        let decoder = png::Decoder::new(std::io::BufReader::new(fs::File::open(&path)?));
+        let decoder = ::png::Decoder::new(std::io::BufReader::new(fs::File::open(&path)?));
         let mut reader = decoder
             .read_info()
             .map_err(|e| err("image_load_failed", e.to_string()))?;
-        if reader.info().color_type != png::ColorType::Rgb {
+        if reader.info().color_type != ::png::ColorType::Rgb {
             return Err(err(
                 "unsupported_image_layout",
                 "Raster must have three native RGB channels",
@@ -723,7 +295,7 @@ pub fn load_image(source: &Value) -> Result<ImageData> {
             .map_err(|e| err("image_load_failed", e.to_string()))?;
         let data = &bytes[..info.buffer_size()];
         let (dtype, values) = match info.bit_depth {
-            png::BitDepth::Sixteen => (
+            ::png::BitDepth::Sixteen => (
                 "uint16",
                 data.as_chunks::<2>()
                     .0
@@ -731,7 +303,7 @@ pub fn load_image(source: &Value) -> Result<ImageData> {
                     .map(|b| u16::from_be_bytes(*b) as f64 / 65535.)
                     .collect(),
             ),
-            png::BitDepth::Eight => ("uint8", data.iter().map(|&b| b as f64 / 255.).collect()),
+            ::png::BitDepth::Eight => ("uint8", data.iter().map(|&b| b as f64 / 255.).collect()),
             _ => {
                 return Err(err(
                     "unsupported_image_layout",
@@ -903,189 +475,7 @@ pub fn rgb_to_lab(rgb: &[[f64; 3]]) -> Vec<[f64; 3]> {
         .collect()
 }
 pub use spektrafilm_math::lab::delta_e_2000;
-pub fn write_png16(path: &Path, rgb: &[[f64; 3]], width: usize, height: usize) -> Result<()> {
-    if rgb.len() != width * height {
-        return Err(err("invalid_image_layout", "PNG dimensions mismatch"));
-    }
-    let mut e = png::Encoder::new(fs::File::create(path)?, width as u32, height as u32);
-    e.set_color(png::ColorType::Rgb);
-    e.set_depth(png::BitDepth::Sixteen);
-    let mut w = e
-        .write_header()
-        .map_err(|x| err("image_write_failed", x.to_string()))?;
-    let mut b = Vec::with_capacity(rgb.len() * 6);
-    for p in rgb {
-        for &x in p {
-            b.extend_from_slice(
-                &((x.clamp(0., 1.) * 65535.).round_ties_even() as u16).to_be_bytes(),
-            )
-        }
-    }
-    w.write_image_data(&b)
-        .map_err(|x| err("image_write_failed", x.to_string()))?;
-    Ok(())
-}
 
-unsafe extern "C" {
-    fn spektrafilm_flip(
-        a: *const f32,
-        b: *const f32,
-        n: usize,
-        w: usize,
-        h: usize,
-        ppd: f32,
-        out: *mut f32,
-    ) -> i32;
-}
-pub fn official_flip(
-    a: &[[f64; 3]],
-    b: &[[f64; 3]],
-    width: usize,
-    height: usize,
-    ppd: f64,
-) -> Result<Vec<f64>> {
-    if a.len() != width * height || b.len() != a.len() {
-        return Err(err("invalid_image_layout", "FLIP dimensions mismatch"));
-    }
-    if !ppd.is_finite() || ppd <= 0. {
-        return Err(err(
-            "invalid_protocol",
-            "FLIP pixels_per_degree must be positive",
-        ));
-    }
-    let aa: Vec<f32> = a
-        .iter()
-        .flat_map(|p| p.map(|x| x.clamp(0., 1.) as f32))
-        .collect();
-    let bb: Vec<f32> = b
-        .iter()
-        .flat_map(|p| p.map(|x| x.clamp(0., 1.) as f32))
-        .collect();
-    let mut o = vec![0f32; a.len()];
-    let rc = unsafe {
-        spektrafilm_flip(
-            aa.as_ptr(),
-            bb.as_ptr(),
-            a.len(),
-            width,
-            height,
-            ppd as f32,
-            o.as_mut_ptr(),
-        )
-    };
-    if rc != 0 {
-        return Err(err(
-            "computation_failure",
-            format!("Official FLIP bridge failed ({rc})"),
-        ));
-    }
-    if o.iter().any(|x| !x.is_finite()) {
-        return Err(err(
-            "computation_failure",
-            "Official FLIP returned invalid map",
-        ));
-    }
-    Ok(o.into_iter().map(|x| x as f64).collect())
-}
-
-pub fn write_png16_codes(path: &Path, rgb: &[[u16; 3]], width: usize, height: usize) -> Result<()> {
-    if rgb.len() != width * height || width == 0 || height == 0 {
-        return Err(err("invalid_image_layout", "PNG dimensions mismatch"));
-    }
-    let mut encoder = png::Encoder::new(fs::File::create(path)?, width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgb);
-    encoder.set_depth(png::BitDepth::Sixteen);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|e| err("image_write_failed", e.to_string()))?;
-    let bytes: Vec<u8> = rgb
-        .iter()
-        .flat_map(|p| p.iter().flat_map(|v| v.to_be_bytes()))
-        .collect();
-    writer
-        .write_image_data(&bytes)
-        .map_err(|e| err("image_write_failed", e.to_string()))?;
-    Ok(())
-}
-fn lanczos(x: f64) -> f64 {
-    if x == 0. {
-        1.
-    } else if x.abs() < 3. {
-        let p = std::f64::consts::PI * x;
-        (p.sin() / p) * ((p / 3.).sin() / (p / 3.))
-    } else {
-        0.
-    }
-}
-fn resize_weights(input: usize, output: usize) -> Vec<(usize, Vec<f64>)> {
-    if input == output {
-        return (0..input).map(|i| (i, vec![1.])).collect();
-    }
-    let scale = input as f64 / output as f64;
-    let filter_scale = scale.max(1.);
-    let support = 3. * filter_scale;
-    (0..output)
-        .map(|i| {
-            let center = (i as f64 + 0.5) * scale;
-            let first = ((center - support + 0.5) as isize).max(0) as usize;
-            let last = ((center + support + 0.5) as usize).min(input);
-            let mut weights: Vec<f64> = (first..last)
-                .map(|j| lanczos((j as f64 - center + 0.5) / filter_scale))
-                .collect();
-            let sum: f64 = weights.iter().sum();
-            if sum != 0. {
-                for w in &mut weights {
-                    *w /= sum
-                }
-            }
-            (first, weights)
-        })
-        .collect()
-}
-pub fn resize_display(
-    samples: &[[f64; 3]],
-    width: usize,
-    height: usize,
-    max_edge: usize,
-) -> Result<(Vec<[f64; 3]>, usize, usize)> {
-    if width == 0 || height == 0 || max_edge == 0 || samples.len() != width * height {
-        return Err(err("invalid_image_layout", "Resize dimensions mismatch"));
-    }
-    let scale = (max_edge as f64 / width.max(height) as f64).min(1.);
-    let w = (width as f64 * scale).round_ties_even().max(1.) as usize;
-    let h = (height as f64 * scale).round_ties_even().max(1.) as usize;
-    let wx = resize_weights(width, w);
-    let wy = resize_weights(height, h);
-    let mut temp = vec![[0f64; 3]; height * w];
-    for y in 0..height {
-        for (x, (first, weights)) in wx.iter().enumerate() {
-            for c in 0..3 {
-                let v: f64 = weights
-                    .iter()
-                    .enumerate()
-                    .map(|(k, weight)| {
-                        samples[y * width + first + k][c].clamp(0.0, 1.0) as f32 as f64 * weight
-                    })
-                    .sum();
-                temp[y * w + x][c] = v as f32 as f64
-            }
-        }
-    }
-    let mut out = vec![[0f64; 3]; w * h];
-    for (y, (first, weights)) in wy.iter().enumerate() {
-        for x in 0..w {
-            for c in 0..3 {
-                let v: f64 = weights
-                    .iter()
-                    .enumerate()
-                    .map(|(k, weight)| temp[(first + k) * w + x][c] * weight)
-                    .sum();
-                out[y * w + x][c] = (v as f32 as f64).clamp(0., 1.)
-            }
-        }
-    }
-    Ok((out, w, h))
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,9 +578,9 @@ mod carrier_tests {
     fn rgba_native_samples_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rgba.png");
-        let mut encoder = png::Encoder::new(fs::File::create(&path).unwrap(), 1, 1);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
+        let mut encoder = ::png::Encoder::new(fs::File::create(&path).unwrap(), 1, 1);
+        encoder.set_color(::png::ColorType::Rgba);
+        encoder.set_depth(::png::BitDepth::Eight);
         encoder
             .write_header()
             .unwrap()
