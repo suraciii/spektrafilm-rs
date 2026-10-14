@@ -327,12 +327,7 @@ impl ExportDialog {
                     BitDepth::Sixteen => "16 bit",
                     BitDepth::ThirtyTwo => "32 bit",
                 };
-                let format_label = match draft.format {
-                    ExportFormat::Jpeg => "JPEG",
-                    ExportFormat::Png => "PNG",
-                    ExportFormat::Tiff => "TIFF",
-                    ExportFormat::Exr => "EXR",
-                };
+                let format_label = draft.format.label();
                 let summary = match draft.format {
                     ExportFormat::Exr => format!("{format_label} · {depth_label} · {} · linear · ZIP", draft.saving_color_space),
                     ExportFormat::Jpeg => format!("{format_label} · 8 bit · {} · quality {} · {}", draft.saving_color_space, draft.jpeg_quality, draft.jpeg_subsampling.as_str()),

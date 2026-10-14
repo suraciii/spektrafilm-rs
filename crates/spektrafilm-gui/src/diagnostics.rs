@@ -80,8 +80,9 @@ impl Diagnostics {
         self.history.truncate(20);
     }
 
-    pub(crate) fn reset_selection(&mut self) {
-        self.user_selected = false;
+    #[cfg(test)]
+    pub(crate) fn selected_report_id(&self) -> Option<u64> {
+        self.selected
     }
 
     pub fn clear(&mut self) {
