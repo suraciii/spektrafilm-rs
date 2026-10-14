@@ -1,4 +1,5 @@
-use super::blur::{BlurJob, DispatchJob};
+use super::blur::{self, BlurJob, DispatchJob};
+use super::params::AddScaledParams;
 use super::*;
 
 /// Pre-built halation passes — owns the per-sigma kernel buffers, params
@@ -48,21 +49,19 @@ pub(super) fn build_halation_state(
     let buf_c = mk_buf("halation_c"); // scatter core / blur output
     let buf_d = mk_buf("halation_d"); // scatter tail / accumulator
 
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
-    let blur_pipe_v =
-        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
+    let blur_pipe_h = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_h.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
+    let blur_pipe_v = backend.cached_pipeline(
+        include_str!("../blur/gaussian_blur_v.wgsl"),
+        &blur::BLUR_LAYOUT,
+    );
 
     // ── Scatter blurs (core → buf_c, tail → buf_d) ─────────────────────
     let scatter_blurs = vec![
         blur::make_blur_job(
-            device,
+            backend,
             hp.scatter_core_px,
             width,
             height,
@@ -74,7 +73,7 @@ pub(super) fn build_halation_state(
             &blur_pipe_v,
         ),
         blur::make_blur_job(
-            device,
+            backend,
             hp.scatter_tail_px,
             width,
             height,
@@ -178,21 +177,12 @@ pub(super) fn build_halation_state(
             wgpu::BufferBindingType::Storage { read_only: false },
         ],
     );
-    #[repr(C)]
-    #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-    struct AddScaledParams {
-        n_pixels: u32,
-        scale: f32,
-        clear_first: u32,
-        _pad: u32,
-    }
-
     let mut halation_blurs = Vec::with_capacity(n);
     let mut halation_accumulate = Vec::with_capacity(n);
     for (k, &wk) in decay.iter().enumerate() {
         let sigma_k = hp.halation_first_sigma_px * ((k as f32) + 1.0).sqrt();
         halation_blurs.push(blur::make_blur_job(
-            device,
+            backend,
             sigma_k,
             width,
             height,

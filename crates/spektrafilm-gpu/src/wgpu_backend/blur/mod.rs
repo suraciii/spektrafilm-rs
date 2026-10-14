@@ -10,6 +10,17 @@ pub(super) struct BlurParams {
     pub(super) _pad: u32,
 }
 
+/// Binding layout of `gaussian_blur_h.wgsl` / `gaussian_blur_v.wgsl`: params,
+/// read-only source, read-only kernel, read-write destination. Every blur
+/// caller must compile its pipeline with this layout; a second copy would let
+/// a shader receive mismatched bind groups.
+pub(super) const BLUR_LAYOUT: [wgpu::BufferBindingType; 4] = [
+    wgpu::BufferBindingType::Uniform,
+    wgpu::BufferBindingType::Storage { read_only: true },
+    wgpu::BufferBindingType::Storage { read_only: true },
+    wgpu::BufferBindingType::Storage { read_only: false },
+];
+
 /// Normalize in f64 before casting weights to the shader's f32 storage.
 /// Callers retain their own sigma clamping and CPU fallback policy.
 pub(super) fn gaussian_kernel(sigma: f32) -> (u32, Vec<f32>) {
@@ -42,7 +53,7 @@ pub(super) struct BlurJob {
 /// params buffer, and bind groups.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_blur_job(
-    device: &ObservedDevice,
+    backend: &WgpuBackend,
     sigma: f32,
     width: u32,
     height: u32,
@@ -53,14 +64,19 @@ pub(super) fn make_blur_job(
     blur_pipe_h: &CachedPipelineRef,
     blur_pipe_v: &CachedPipelineRef,
 ) -> BlurJob {
+    let device = &backend.device;
     let sigma = sigma.max(0.01);
     let (radius, kernel_f32) = gaussian_kernel(sigma);
 
-    let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{label}_blur_kernel")),
-        contents: bytemuck::cast_slice(&kernel_f32),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    // The weights depend only on sigma, so the kernel comes from the pipe's
+    // cross-frame cache and every frame after the first reuses it (pipe
+    // architecture F3a). The params carry the image size, so they stay
+    // per-frame.
+    let kernel_buf = backend.pipe.static_buffer(
+        &format!("{label}_blur_kernel"),
+        bytemuck::cast_slice(&kernel_f32),
+        wgpu::BufferUsages::STORAGE,
+    );
     let params = BlurParams {
         width,
         height,
@@ -157,17 +173,11 @@ pub(super) fn build_simple_blur_state(
         mapped_at_creation: false,
     });
 
-    let blur_layout = &[
-        wgpu::BufferBindingType::Uniform,
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: true },
-        wgpu::BufferBindingType::Storage { read_only: false },
-    ];
-    let blur_pipe_h = backend.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), blur_layout);
-    let blur_pipe_v = backend.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), blur_layout);
+    let blur_pipe_h = backend.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), &BLUR_LAYOUT);
+    let blur_pipe_v = backend.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), &BLUR_LAYOUT);
 
     let blur = make_blur_job(
-        device,
+        backend,
         sigma,
         width,
         height,
@@ -232,9 +242,6 @@ impl WgpuBackend {
             tracing::info!(target: "spektrafilm_gpu::wgpu_backend", sigma, execution = "cpu", "using faithful CPU Gaussian blur");
             return cpu_backend::CpuBackend.gaussian_blur(img, sigma);
         }
-        // Pre-compute normalized Gaussian kernel on CPU.
-        let (radius, kernel_f32) = gaussian_kernel(sigma);
-
         let w = img.width;
         let h = img.height;
         let n_pixels = (w as usize) * (h as usize);
@@ -258,81 +265,11 @@ impl WgpuBackend {
         self.queue
             .write_buffer(&buf_in, 0, bytemuck::cast_slice(&input_f32));
 
-        let kernel_buf = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("gaussian_kernel"),
-                contents: bytemuck::cast_slice(&kernel_f32),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-
-        let params = BlurParams {
-            width: w,
-            height: h,
-            radius,
-            _pad: 0,
-        };
-        let params_buf = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("gaussian_params"),
-                contents: bytemuck::bytes_of(&params),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-
-        let layout = &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ];
-        let h_pipe = self.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), layout);
-        let v_pipe = self.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), layout);
-
-        let bg_h = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg_blur_h"),
-            layout: &h_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_in.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: kernel_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: buf_mid.as_entire_binding(),
-                },
-            ],
-        });
-        let bg_v = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg_blur_v"),
-            layout: &v_pipe.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buf_mid.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: kernel_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: buf_out.as_entire_binding(),
-                },
-            ],
-        });
+        let h_pipe = self.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), &BLUR_LAYOUT);
+        let v_pipe = self.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), &BLUR_LAYOUT);
+        let blur = make_blur_job(
+            self, sigma, w, h, &buf_in, &buf_mid, &buf_out, "blur", &h_pipe, &v_pipe,
+        );
 
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("blur_readback"),
@@ -350,7 +287,7 @@ impl WgpuBackend {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&h_pipe.pipeline);
-            pass.set_bind_group(0, &bg_h, &[]);
+            pass.set_bind_group(0, &blur.bg_h, &[]);
             pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
         {
@@ -359,7 +296,7 @@ impl WgpuBackend {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&v_pipe.pipeline);
-            pass.set_bind_group(0, &bg_v, &[]);
+            pass.set_bind_group(0, &blur.bg_v, &[]);
             pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
         encoder.copy_buffer_to_buffer(&buf_out, 0, &readback, 0, img_bytes as u64);
@@ -428,14 +365,8 @@ impl WgpuBackend {
             .collect();
 
         // Pipelines (cached across calls).
-        let layout = &[
-            wgpu::BufferBindingType::Uniform,
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: true },
-            wgpu::BufferBindingType::Storage { read_only: false },
-        ];
-        let h_pipe = self.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), layout);
-        let v_pipe = self.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), layout);
+        let h_pipe = self.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), &BLUR_LAYOUT);
+        let v_pipe = self.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), &BLUR_LAYOUT);
 
         // Pre-build per-sigma kernel/params/bind groups. Each job owns
         // the kernel/params buffers so they outlive the encoder.
@@ -443,81 +374,18 @@ impl WgpuBackend {
             .iter()
             .enumerate()
             .map(|(i, &sigma)| {
-                let (radius, kernel_f32) = gaussian_kernel(sigma);
-
-                let kernel_buf =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some(&format!("blur_multi_kernel_{i}")),
-                            contents: bytemuck::cast_slice(&kernel_f32),
-                            usage: wgpu::BufferUsages::STORAGE,
-                        });
-
-                let params = BlurParams {
-                    width: w,
-                    height: h,
-                    radius,
-                    _pad: 0,
-                };
-                let params_buf =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some(&format!("blur_multi_params_{i}")),
-                            contents: bytemuck::bytes_of(&params),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-
-                let bg_h = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("bg_blur_multi_h_{i}")),
-                    layout: &h_pipe.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: params_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: buf_in.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: kernel_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: buf_mid.as_entire_binding(),
-                        },
-                    ],
-                });
-                let bg_v = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("bg_blur_multi_v_{i}")),
-                    layout: &v_pipe.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: params_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: buf_mid.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: kernel_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: bufs_out[i].as_entire_binding(),
-                        },
-                    ],
-                });
-
-                BlurJob {
-                    _kernel_buf: kernel_buf,
-                    _params_buf: params_buf,
-                    bg_h,
-                    bg_v,
-                }
+                make_blur_job(
+                    self,
+                    sigma,
+                    w,
+                    h,
+                    &buf_in,
+                    &buf_mid,
+                    &bufs_out[i],
+                    &format!("blur_multi_{i}"),
+                    &h_pipe,
+                    &v_pipe,
+                )
             })
             .collect();
 

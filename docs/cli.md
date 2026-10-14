@@ -5,7 +5,10 @@ This page covers CLI image processing, runtime controls, source interpretation, 
 ## Process images
 
 ```bash
-# GPU export: WGPU f32 shaders, CPU stages where required
+# Explicit GPU export: WGPU f32 shaders. It fails before publication when the
+# configuration still needs a host-executed stage, so with the default grain
+# distribution this command exits 1 and writes no output. Omit --backend for
+# automatic selection, which absorbs those stages as CPU fences.
 ./target/release/spektrafilm-f64 process input.ORF -o out.png \
     --backend gpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
@@ -173,8 +176,12 @@ Report paths must not alias input, output, or configuration files.
 ./target/release/spektrafilm process input.tif -o out.png \
     --film kodak_portra_400 --paper kodak_portra_endura \
     --input-color-space 'ProPhoto RGB' --input-cctf-decoding false \
-    --backend gpu --diagnostics report.json --gpu-timings --data-dir data
+    --diagnostics report.json --gpu-timings --data-dir data
 ```
+
+`--gpu-timings` follows the selected backend. The example omits `--backend` so automatic
+selection can absorb the default grain distribution as a CPU fence; `--backend gpu` would
+fail this configuration before publication.
 
 See [the telemetry contract](../specs/telemetry/spec.md) and [report metrics](../specs/telemetry/metrics.md) for report semantics, bounded detail, and measurement limits.
 

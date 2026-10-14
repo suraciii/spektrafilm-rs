@@ -16,3 +16,6 @@ impl WgpuBackend {
 
 mod buffers;
 mod passes;
+pub(super) use passes::{
+    explicit_resource_error, required_buffer_exceeds_limits, required_chain_buffers,
+};

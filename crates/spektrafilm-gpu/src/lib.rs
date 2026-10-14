@@ -285,12 +285,22 @@ pub trait ComputeBackend: Send + Sync {
         false
     }
 
-    /// True when the user explicitly requested this GPU backend
-    /// (`SPEKTRAFILM_BACKEND=wgpu`). An explicit request must not run a
+    /// True when the user explicitly requested this GPU backend (the CLI
+    /// `--backend gpu` flag, `SPEKTRAFILM_BACKEND=wgpu`, or the GUI export
+    /// "GPU" selection). An explicit request must not run a
     /// capability-missing stage on the CPU silently: the operation fails
     /// at assembly instead of demoting the route.
     fn explicit_gpu_request(&self) -> bool {
         false
+    }
+
+    /// Derive this backend as an explicit GPU request, sharing the device,
+    /// queue, pipeline cache, and resident pipe, or `None` when this backend
+    /// cannot serve a GPU request. A frontend that maps an explicit user
+    /// selection onto an already selected backend uses this instead of
+    /// opening a second device.
+    fn with_explicit_request(&self) -> Option<Box<dyn ComputeBackend>> {
+        None
     }
 
     fn name(&self) -> &str;

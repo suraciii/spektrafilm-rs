@@ -6,7 +6,6 @@ mod front_pass;
 use super::Pipeline;
 #[cfg(test)]
 use decision::{ResidentDecision, ResidentFallbackReason};
-
 #[cfg(test)]
 mod tests {
 
@@ -1074,6 +1073,135 @@ mod tests {
         assert!(
             branch > 1e-3,
             "digital reference matches the density reading: mean={branch:.6}"
+        );
+    }
+
+    /// F3a acceptance: a second resident render of the same configuration must
+    /// reuse the static device resources it uploaded for the first one
+    /// (spectral LUTs, density curves, uniform blocks). The counters are the
+    /// same `buffer_create_count/bytes` the telemetry report exposes, so the
+    /// assertion also pins the measurement the plan promised.
+    #[test]
+    fn second_resident_render_reuses_static_buffers() {
+        use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext};
+        let dir = data_dir();
+        let pipeline = Pipeline::new_with_spectral(
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap(),
+            crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+            resident_parity_params(32),
+            &dir,
+        )
+        .unwrap();
+        assert!(matches!(
+            pipeline.resident_decision(),
+            ResidentDecision::UseResident
+        ));
+        let image = comparison_image(32);
+        let render = |backend: &spektrafilm_gpu::wgpu_backend::WgpuBackend, image: ImageBuf| {
+            let context = ObservationContext::new(CollectionMode::Summary);
+            let observed = spektrafilm_gpu::bind_backend(backend, context.clone());
+            let start = std::time::Instant::now();
+            let out = pipeline
+                .process(image, observed.as_ref())
+                .expect("resident render");
+            let elapsed = start.elapsed();
+            let totals = context.snapshot().totals;
+            (
+                out,
+                totals.buffer_create_count.unwrap_or_default(),
+                totals.buffer_create_bytes.unwrap_or_default(),
+                totals.upload_count.unwrap_or_default(),
+                totals.readback_count.unwrap_or_default(),
+                elapsed,
+            )
+        };
+        // A fresh backend starts with empty caches: this render is the
+        // per-frame baseline every render paid before the static cache existed.
+        let Some(fresh) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let (first_out, cold_count, cold_bytes, cold_uploads, cold_readbacks, cold_ms) =
+            render(&fresh, image.clone());
+        let (second_out, warm_count, warm_bytes, warm_uploads, warm_readbacks, warm_ms) =
+            render(&fresh, image.clone());
+        println!(
+            "F3A cold={cold_count}/{cold_bytes}B {cold_ms:?} warm={warm_count}/{warm_bytes}B {warm_ms:?} \
+             uploads={cold_uploads}->{warm_uploads} readbacks={cold_readbacks}->{warm_readbacks}"
+        );
+        assert_eq!(
+            first_out.data, second_out.data,
+            "caching static resources changed the rendered image"
+        );
+        assert_eq!(
+            warm_readbacks, cold_readbacks,
+            "the static cache must not add or remove device readbacks"
+        );
+        assert!(
+            warm_uploads <= cold_uploads,
+            "caching static resources must not add uploads: cold={cold_uploads} warm={warm_uploads}"
+        );
+        assert!(
+            warm_count < cold_count,
+            "the second render recreated every buffer: cold={cold_count} warm={warm_count}"
+        );
+        assert!(
+            warm_bytes < cold_bytes,
+            "the second render re-uploaded the static resources: cold={cold_bytes}B warm={warm_bytes}B"
+        );
+        // The wall-clock pair is reported, not asserted: on a software adapter
+        // a 32x32 render is small enough for scheduling noise to order two runs
+        // either way, while the counters above are deterministic.
+    }
+
+    /// A configuration change must not be served the previous configuration's
+    /// static buffers. The cache identity is the buffer content, so swapping
+    /// the film stock re-uploads its lookups: the first film's repeat render
+    /// must still match its own first render bit for bit while the second film
+    /// renders measurably differently.
+    #[test]
+    fn static_cache_does_not_serve_stale_data_after_a_configuration_change() {
+        use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext};
+        let Some(gpu) = spektrafilm_gpu::wgpu_backend::WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        let dir = data_dir();
+        let build = |film: &str| {
+            let pipeline = Pipeline::new_with_spectral(
+                crate::profile::load_profile_by_name(&dir, film).unwrap(),
+                crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap(),
+                resident_parity_params(32),
+                &dir,
+            )
+            .unwrap();
+            assert!(matches!(
+                pipeline.resident_decision(),
+                ResidentDecision::UseResident
+            ));
+            pipeline
+        };
+        let portra = build("kodak_portra_400");
+        let ektachrome = build("kodak_ektachrome_100");
+        let image = comparison_image(32);
+        let render = |pipeline: &Pipeline| {
+            let context = ObservationContext::new(CollectionMode::Summary);
+            let observed = spektrafilm_gpu::bind_backend(&gpu, context.clone());
+            pipeline
+                .process(image.clone(), observed.as_ref())
+                .expect("resident render")
+        };
+        let portra_first = render(&portra);
+        let ektachrome_first = render(&ektachrome);
+        let portra_second = render(&portra);
+        assert_eq!(
+            portra_first.data, portra_second.data,
+            "the cache served the other film's lookups"
+        );
+        let (film_difference, _) = parity_metrics(&portra_first, &ektachrome_first);
+        assert!(
+            film_difference > 1e-3,
+            "the two films must render differently for this check to mean anything: {film_difference}"
         );
     }
 
