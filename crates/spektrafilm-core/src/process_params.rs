@@ -168,6 +168,10 @@ fn resolve_with_preview_mode(
         for preset in request.presets {
             preset.validate()?;
             if preset.kind()? == presets::PresetKind::Look {
+                // The requested route is part of the workflow context a look resolves
+                // against: declaring a film-scan route here lets a document's scan
+                // mode survive resolution instead of being normalized away.
+                choose_workflow(&mut params, request.route, request.scan_film);
                 let resolved = preset.resolve(data_dir, &params)?;
                 params = resolved.params;
                 resolved_profiles = Some((

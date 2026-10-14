@@ -446,9 +446,29 @@ impl Preset {
         let mut params = current.clone();
         apply_film_specifics(&mut params, &film);
         look.apply_to(&mut params);
-        params.neutral_print_filters_protected = [true; 3];
+        // Neutral print filtration is material calibration, not a look value: an axis
+        // is protected only when the document carries an authored value for it, so the
+        // per-(paper, illuminant, film) database still supplies the baseline for every
+        // other look instead of one paper's pack being reused everywhere.
+        let defaults = crate::params::EnlargerParams::default();
+        params.neutral_print_filters_protected = [
+            look.enlarger.c_filter_neutral != defaults.c_filter_neutral,
+            look.enlarger.m_filter_neutral != defaults.m_filter_neutral,
+            look.enlarger.y_filter_neutral != defaults.y_filter_neutral,
+        ];
         let default_route = workflow_default(&film);
-        params.workflow.route = default_route.clone();
+        // A caller that already declared a film-scan route keeps it. The route and
+        // the scan mode it selects are a workflow choice; overriding the route here
+        // would silently discard the scan mode an authored document carries.
+        let caller_declared_film_scan = matches!(
+            current.workflow.route.as_str(),
+            "input > film > scan" | "input > convert-film > scan"
+        );
+        params.workflow.route = if caller_declared_film_scan {
+            current.workflow.route.clone()
+        } else {
+            default_route.clone()
+        };
         params.io.scan_film = film.is_positive();
         if params.scanner.negative_conversion_method
             == crate::params::NegativeConversionMethod::DigitalReference

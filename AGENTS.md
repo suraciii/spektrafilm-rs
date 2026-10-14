@@ -4,9 +4,10 @@
 
 SpektraFilm is a Rust spectral film simulation application with a native GUI, CLI, and LUT export.
 
-- Read [README.md](README.md) for build, usage, and crate layout.
-- `specs/` is the source of truth for target product behavior and design.
-- `docs/` contains user-facing guidance; it does not define product contracts.
+- `specs/` — target product behavior and design.
+- `docs/` — user-facing guidance.
+- [CODING_STANDARDS.md](CODING_STANDARDS.md) — reviewer judgment rules.
+- [eng/documentation-language.md](eng/documentation-language.md) — documentation language rules.
 
 ## Engineering
 
@@ -14,16 +15,9 @@ SpektraFilm is a Rust spectral film simulation application with a native GUI, CL
 - Keep each rule in one authoritative implementation.
 - Preserve observable behavior and public contracts.
 - Require measured evidence for numerical changes.
-
-## Context
-
-- Keep this file global and concise. Put subtree rules in scoped `AGENTS.md` files.
-- Keep durable contracts in `specs/`, with one fact in one authoritative document.
 - Keep plans, research, probes, logs, build artifacts, and session state outside the repository, normally under `/data/workspaces/spektrafilm-project-context/`.
 - Put durable non-contract conclusions in the relevant Issue/PR. Never commit transient artifacts, even if ignored.
-
-- Documentation language rules live in [eng/documentation-language.md](eng/documentation-language.md).
-- Reviewer judgment rules for data structures, serialization, defaults, and module boundaries live in [CODING_STANDARDS.md](CODING_STANDARDS.md).
+- Write tests that catch meaningful failures. See [eng/testing.md](eng/testing.md) for test architecture and requirements.
 
 ## Verification
 
