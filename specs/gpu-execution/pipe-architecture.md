@@ -63,11 +63,11 @@ parameter snapshot per operation, so commit-style layering adds no safety.
 ### Pipe object
 
 `GpuPipe` lives in `spektrafilm-gpu` and is the internal execution carrier. It
-owns a bounded readback buffer pool and a bounded cross-frame cache of
-configuration-invariant device buffers: spectral lookups, density curves,
-uniform blocks, and blur kernels. Cache identity is the buffer content together
-with its usage, so a changed configuration misses and re-uploads instead of
-reusing a stale buffer. The pipe owns the cache, so the device frees it. It
+owns a bounded readback buffer pool and a bounded cross-frame cache of device
+buffers addressed by their contents: spectral lookups, density curves, uniform
+blocks, and blur kernels. Cache identity is the buffer content together with its
+usage, so a changed configuration or image geometry misses and re-uploads
+instead of reusing a stale buffer. The pipe owns the cache, so the device frees it. It
 owns the ordered stage list for one operation, assembled per run from the
 resolved parameters. It owns the only host transfer points: input upload,
 fences, and the final readback.

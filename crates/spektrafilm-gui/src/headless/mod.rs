@@ -377,7 +377,7 @@ fn explicit_gpu_export_fails_before_publication() {
     wait_until(h, |a| a.export_job.is_none());
     let status = h.state().status.clone();
     assert!(
-        status.contains("explicit GPU request") || status.contains("GPU backend unavailable"),
+        status.contains("explicit GPU request") || status.contains("no WGPU adapter is available"),
         "{status}"
     );
     assert!(

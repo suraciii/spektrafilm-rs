@@ -44,16 +44,18 @@ const STATIC_CACHE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 struct StaticEntry {
     key: u64,
+    usage: wgpu::BufferUsages,
     contents: Vec<u8>,
     buffer: wgpu::Buffer,
 }
 
-/// Cross-frame cache for device buffers whose contents depend only on the
-/// configuration, never on the frame or the image: spectral lookups, density
-/// curves, uniform blocks. The key hashes the usage flags and the contents, and
-/// a hit additionally compares the bytes, so a hash collision cannot serve a
-/// wrong buffer. Owned by the pipe, so derived backends that share the pipe
-/// share these buffers too (pipe architecture F3a).
+/// Cross-frame cache of device buffers addressed by their contents: spectral
+/// lookups, density curves, uniform blocks, and blur kernels. Some cached
+/// uniforms carry the image geometry, so identity is the buffer content, not a
+/// configuration hash. The key hashes the usage flags and the contents, and a
+/// hit additionally compares both, so a hash collision cannot serve a wrong
+/// buffer. Owned by the pipe, so derived backends that share the pipe share
+/// these buffers too (pipe architecture F3a).
 #[derive(Default)]
 pub(super) struct StaticBufferCache {
     entries: Mutex<Vec<StaticEntry>>,
@@ -79,10 +81,9 @@ impl StaticBufferCache {
     ) -> wgpu::Buffer {
         let key = Self::key(usage, contents);
         let mut entries = self.entries.lock();
-        if let Some(position) = entries
-            .iter()
-            .position(|entry| entry.key == key && entry.contents == contents)
-        {
+        if let Some(position) = entries.iter().position(|entry| {
+            entry.key == key && entry.usage == usage && entry.contents == contents
+        }) {
             let entry = entries.remove(position);
             let buffer = entry.buffer.clone();
             entries.insert(0, entry);
@@ -97,6 +98,7 @@ impl StaticBufferCache {
             0,
             StaticEntry {
                 key,
+                usage,
                 contents: contents.to_vec(),
                 buffer: buffer.clone(),
             },

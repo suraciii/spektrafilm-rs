@@ -1224,6 +1224,14 @@ impl WgpuBackend {
 /// besides the image and lookup buffers: the std140 param uniforms
 /// (largest is the 272-byte `MagazineParams`), the FIR kernels (≤ 513
 /// taps under `MAX_BLUR_RADIUS`), and the grain resolution-weight sets.
+///
+/// The grain weights are the only config-sized entry in this bound. Validated
+/// configuration keeps them far below it: `film_render.grain.v2_size` is
+/// limited to `[1, 48]` (`spektrafilm-core`'s parameter validation), which
+/// bounds the radius and leaves the weight set under a kilobyte. A caller
+/// that builds `FilmChainParams` programmatically can exceed the bound; the
+/// preflight then under-reports, which is no worse than the validation error
+/// it replaces.
 const MAX_FIXED_AUX_BYTES: u64 = 4 * 1024;
 
 /// Device buffer sizes the resident chain will allocate, derived from the
@@ -1474,7 +1482,11 @@ mod tests {
             data: vec![],
         };
         let params = params(&image);
-        let automatic = WgpuBackend::new().expect("gpu adapter");
+        let (Some(automatic), Some(explicit)) = (WgpuBackend::new(), WgpuBackend::new_explicit())
+        else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
         assert!(
             automatic
                 .try_run_film_chain(&params)
@@ -1482,7 +1494,6 @@ mod tests {
                 .is_none(),
             "the automatic route must decline instead of allocating 4.8 GB"
         );
-        let explicit = WgpuBackend::new_explicit().expect("gpu adapter");
         let error = explicit
             .try_run_film_chain(&params)
             .expect_err("an explicit request must fail");
@@ -1517,6 +1528,17 @@ mod tests {
         };
         let required = required_chain_buffers(&p);
         assert_eq!(required.image_bytes, 8u64 * 4 * 12);
+        // A non-empty `[[f64; 3]]` table narrows to 12 bytes per row and
+        // outgrows the fixed-aux bound, so the table path itself is pinned.
+        let density_rows = [[0.0f64; 3]; 400];
+        let table_params = FilmChainParams {
+            film_channel_density: &density_rows,
+            ..params(&image)
+        };
+        assert_eq!(
+            required_chain_buffers(&table_params).static_bytes,
+            400u64 * 12
+        );
         // The 2048-entry f64 LUT narrows to 2048 f32 = 8 KiB, beating both
         // the 5-point log exposure (20 bytes) and the fixed aux bound.
         assert_eq!(required.static_bytes, 2048u64 * 4);

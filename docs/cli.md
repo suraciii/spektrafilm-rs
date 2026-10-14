@@ -5,9 +5,10 @@ This page covers CLI image processing, runtime controls, source interpretation, 
 ## Process images
 
 ```bash
-# Explicit GPU export: WGPU f32 shaders, or fail before publication when the
-# configuration still needs a host-executed stage (omit --backend for
-# automatic selection, which absorbs those stages as CPU fences)
+# Explicit GPU export: WGPU f32 shaders. It fails before publication when the
+# configuration still needs a host-executed stage, so with the default grain
+# distribution this command exits 1 and writes no output. Omit --backend for
+# automatic selection, which absorbs those stages as CPU fences.
 ./target/release/spektrafilm-f64 process input.ORF -o out.png \
     --backend gpu --film kodak_gold_200 --paper kodak_portra_endura --data-dir data
 
