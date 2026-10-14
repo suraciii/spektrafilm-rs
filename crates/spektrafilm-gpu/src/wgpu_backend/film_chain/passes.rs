@@ -1,18 +1,6 @@
-use super::{
-    DensityParams, FrontParams, ImageBuf, ScanParams, WgpuBackend, build_dir_state,
-    build_gamut_state, build_glare_state, build_grain_v2_state, build_halation_state,
-    build_highlight_boost_state, build_simple_blur_state, build_unsharp_state, dispatch_linear,
-    f32_to_scalars, is_uniform_grid_endpoint, sanitize_spectral_inputs, scalars_to_f32,
-};
+use super::*;
 
 impl WgpuBackend {
-    pub fn run_film_chain(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
-        if !self.device.context.enabled() {
-            return self.run_film_chain_inner(p);
-        }
-        let (backend, _batch) = self.observed_batch("film_chain");
-        backend.run_film_chain_inner(p)
-    }
     /// GPU-resident pipeline: runs the front pass (hanatos LUT lookup or
     /// mallett matmul), highlight boost, camera lens blur, halation,
     /// density curves, DIR, print spectral, scan spectral, glare,
@@ -23,7 +11,10 @@ impl WgpuBackend {
     /// readout interpretation, optical diffusion, output transfer,
     /// magazine) flushes the submission, runs the host stage, and the
     /// remaining passes continue on the device.
-    fn run_film_chain_inner(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
+    pub(super) fn run_film_chain_inner(
+        &self,
+        p: &crate::FilmChainParams<'_>,
+    ) -> Result<ImageBuf, String> {
         let t_start = std::time::Instant::now();
         // Pull all references into locals so the existing body below
         // doesn't need a rewrite — only the param sources change.
@@ -299,7 +290,7 @@ impl WgpuBackend {
         // ── Pre-compile pipelines (cached after first call) ──────────────
         // Each shader's bindings layout is fixed and known here.
         let density_pipe = self.cached_pipeline(
-            include_str!("../../../spektrafilm-shaders/wgsl/spectral/density_curve_interp.wgsl"),
+            include_str!("../../../../spektrafilm-shaders/wgsl/spectral/density_curve_interp.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -310,7 +301,7 @@ impl WgpuBackend {
         );
         let print_pipe = self.cached_pipeline(
             include_str!(
-                "../../../spektrafilm-shaders/wgsl/spectral/print_spectral_calibrated.wgsl"
+                "../../../../spektrafilm-shaders/wgsl/spectral/print_spectral_calibrated.wgsl"
             ),
             &[
                 wgpu::BufferBindingType::Uniform,
@@ -323,7 +314,7 @@ impl WgpuBackend {
             ],
         );
         let scan_pipe = self.cached_pipeline(
-            include_str!("../../../spektrafilm-shaders/wgsl/spectral/scan_spectral.wgsl"),
+            include_str!("../../../../spektrafilm-shaders/wgsl/spectral/scan_spectral.wgsl"),
             &[
                 wgpu::BufferBindingType::Uniform,
                 wgpu::BufferBindingType::Storage { read_only: true },
@@ -347,7 +338,7 @@ impl WgpuBackend {
                 let tc_lut_buf = mk_storage("tc_lut", bytemuck::cast_slice(&tc_lut_f32));
                 let pipe = self.cached_pipeline(
                     include_str!(
-                        "../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"
+                        "../../../../spektrafilm-shaders/wgsl/spectral/hanatos2025_rgb_to_raw.wgsl"
                     ),
                     &[
                         wgpu::BufferBindingType::Uniform,
@@ -383,7 +374,7 @@ impl WgpuBackend {
             crate::FrontPass::Mallett2019 { .. } => {
                 let pipe = self.cached_pipeline(
                     include_str!(
-                        "../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
+                        "../../../../spektrafilm-shaders/wgsl/spectral/mallett_rgb_to_raw.wgsl"
                     ),
                     &[
                         wgpu::BufferBindingType::Uniform,
@@ -419,7 +410,7 @@ impl WgpuBackend {
 
         let bg_log10 = {
             let pipe = self.cached_pipeline(
-                include_str!("../../../spektrafilm-shaders/wgsl/spectral/log10_inplace.wgsl"),
+                include_str!("../../../../spektrafilm-shaders/wgsl/spectral/log10_inplace.wgsl"),
                 &[
                     wgpu::BufferBindingType::Uniform,
                     wgpu::BufferBindingType::Storage { read_only: false },
@@ -737,13 +728,13 @@ impl WgpuBackend {
         // the bind groups and state it encodes; buffers ride along as
         // Arc-cloned handles (wgpu resources are cheap clones).
         let wg_xy = (image.width.div_ceil(16), image.height.div_ceil(16));
-        let mut stages: Vec<super::pipe::ChainStage<'_>> = Vec::new();
+        let mut stages: Vec<super::super::pipe::ChainStage<'_>> = Vec::new();
         let pass = |name: &'static str,
                     pipeline: wgpu::ComputePipeline,
                     bg: wgpu::BindGroup,
                     n: u32|
-         -> super::pipe::ChainStage<'static> {
-            super::pipe::ChainStage::Gpu {
+         -> super::super::pipe::ChainStage<'static> {
+            super::super::pipe::ChainStage::Gpu {
                 name,
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -766,7 +757,7 @@ impl WgpuBackend {
         ));
         // 1a. Highlight boost on raw, before optical scatter.
         if let Some(hs) = highlight_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "highlight_boost",
                 encode: Box::new(move |encoder| hs.encode_passes(encoder)),
             });
@@ -779,7 +770,7 @@ impl WgpuBackend {
             let buf_b = buf_b.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "camera_diffusion_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
@@ -797,7 +788,7 @@ impl WgpuBackend {
         // 1b. Camera lens blur on raw before halation.
         if let Some(bs) = camera_lens_blur_state.take() {
             let buf_b = buf_b.clone();
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "camera_lens_blur",
                 encode: Box::new(move |encoder| bs.encode_passes(encoder, wg_xy, &buf_b)),
             });
@@ -805,7 +796,7 @@ impl WgpuBackend {
         // 1c. Halation in-place on buf_b (blur scratch in buf_a, scatter
         //     outputs and accumulator in buf_c / buf_d).
         if let Some(hs) = halation_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "halation",
                 encode: Box::new(move |encoder| hs.encode_passes(encoder, n_pixels, wg_xy)),
             });
@@ -830,7 +821,7 @@ impl WgpuBackend {
         // 3b. DIR couplers: corrects log_raw in buf_b and re-interpolates
         //     the density curve back into buf_a.
         if let Some(ds) = dir_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "dir_couplers",
                 encode: Box::new(move |encoder| ds.encode_passes(encoder, n_pixels, wg_xy)),
             });
@@ -844,7 +835,7 @@ impl WgpuBackend {
             let buf_a = buf_a.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "density_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let host = pipe.readback_buffer(&buf_a, img_bytes_u64);
@@ -872,7 +863,7 @@ impl WgpuBackend {
                 let buf_b = buf_b.clone();
                 let (w, h) = (image.width, image.height);
                 let img_bytes_u64 = img_bytes as u64;
-                stages.push(super::pipe::ChainStage::Cpu {
+                stages.push(super::super::pipe::ChainStage::Cpu {
                     name: "print_acquisition_cpu_stage",
                     fence: Box::new(move |pipe| {
                         let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
@@ -911,7 +902,7 @@ impl WgpuBackend {
             let buf_b = buf_b.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "scan_acquisition_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let density = pipe.readback_buffer(&buf_a, img_bytes_u64);
@@ -932,14 +923,14 @@ impl WgpuBackend {
         //     glare, gamut correction, and unsharp mask.
         if let Some(bs) = scanner_lens_blur_state.take() {
             let buf_b = buf_b.clone();
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "scanner_lens_blur",
                 encode: Box::new(move |encoder| bs.encode_passes(encoder, wg_xy, &buf_b)),
             });
         }
         // 6b. Glare (in place on buf_b).
         if let Some(gs) = glare_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "glare",
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels, wg_xy)),
             });
@@ -954,7 +945,7 @@ impl WgpuBackend {
             let buf_b = buf_b.clone();
             let (w, h) = (image.width, image.height);
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Cpu {
+            stages.push(super::super::pipe::ChainStage::Cpu {
                 name: "scan_tail_cpu_stage",
                 fence: Box::new(move |pipe| {
                     let host = pipe.readback_buffer(&buf_b, img_bytes_u64);
@@ -972,7 +963,7 @@ impl WgpuBackend {
         // 6c. Output gamut compression (in place on buf_b) — after glare,
         //     before unsharp, mirroring the CPU scanning order.
         if let Some(gs) = gamut_state.take() {
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "output_gamut",
                 encode: Box::new(move |encoder| gs.encode_passes(encoder, n_pixels)),
             });
@@ -982,7 +973,7 @@ impl WgpuBackend {
         if let Some(us) = unsharp_state.take() {
             let buf_b = buf_b.clone();
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "unsharp_mask",
                 encode: Box::new(move |encoder| {
                     us.encode_passes(encoder, n_pixels, wg_xy, &buf_b, img_bytes_u64)
@@ -992,7 +983,7 @@ impl WgpuBackend {
         // 6e. Encode native destination RGB, then apply Grain Procedural.
         if let Some(gs) = grain_v2_state.take() {
             let buf_b = buf_b.clone();
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "grain_v2",
                 encode: Box::new(move |encoder| gs.encode_pass(encoder, n_pixels, &buf_b)),
             });
@@ -1035,8 +1026,8 @@ impl WgpuBackend {
                 });
             let pipe = self.cached_pipeline(
                 concat!(
-                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl")
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_transfer.wgsl")
                 ),
                 &[
                     wgpu::BufferBindingType::Uniform,
@@ -1057,7 +1048,7 @@ impl WgpuBackend {
                     },
                 ],
             });
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "output_transfer",
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1143,8 +1134,8 @@ impl WgpuBackend {
                 });
             let pipe = self.cached_pipeline(
                 concat!(
-                    include_str!("../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
-                    include_str!("../../../spektrafilm-shaders/wgsl/magazine.wgsl")
+                    include_str!("../../../../spektrafilm-shaders/wgsl/cctf_lib.wgsl"),
+                    include_str!("../../../../spektrafilm-shaders/wgsl/magazine.wgsl")
                 ),
                 &[
                     wgpu::BufferBindingType::Uniform,
@@ -1165,7 +1156,7 @@ impl WgpuBackend {
                     },
                 ],
             });
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "magazine",
                 encode: Box::new(move |encoder| {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1185,7 +1176,7 @@ impl WgpuBackend {
             let rb = rb.clone();
             let buf_b = buf_b.clone();
             let img_bytes_u64 = img_bytes as u64;
-            stages.push(super::pipe::ChainStage::Gpu {
+            stages.push(super::super::pipe::ChainStage::Gpu {
                 name: "readback_copy",
                 encode: Box::new(move |encoder| {
                     encoder.copy_buffer_to_buffer(&buf_b, 0, &rb, 0, img_bytes_u64)
