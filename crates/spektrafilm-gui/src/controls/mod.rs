@@ -274,7 +274,7 @@ pub(crate) fn show(
         convert::sections(ui, params, section, &mut flags);
         upsampling::sections(ui, params, section, &mut flags);
         grain::sections(ui, params, section, &mut flags);
-        if section == "Magazine print color" {
+        if section == "Magazine finish color" {
             ui.collapsing(section, |ui| {
                 let magazine = &mut params.magazine_print_color;
                 flags.runtime_changed |= param_numeric(
@@ -282,7 +282,7 @@ pub(crate) fn show(
                     "strength",
                     &mut magazine.strength,
                     "magazine_print_color.strength",
-                    "Magazine print color appearance strength.",
+                    "Magazine finish appearance strength.",
                 );
             });
         }
@@ -340,7 +340,8 @@ pub(crate) fn show(
             });
         }
         if section == "Output" {
-            flags.runtime_changed |= param_numeric(ui, "Overall effect amount", &mut params.output_mix.amount, "output_mix.amount", "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
+            flags.runtime_changed |= param_numeric(ui, "Simulation blend", &mut params.output_mix.amount, "output_mix.amount", "Blend the complete result with the decoded, geometrically aligned prepared source in linear output RGB. 1 returns the complete result; 0 returns the prepared source before virtual camera exposure. For a captured negative, zero returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent.");
+            ui.label(egui::RichText::new("1.0 = full simulation · 0.0 = original").small().color(egui::Color32::GRAY));
             flags.runtime_changed |= choice_tip(ui, "output color space", &mut params.io.output_color_space, COLOR_SPACES, "Output color space of the simulation");
             extra_choice(ui, extras, "simulation", "saving_color_space", "saving color space", "sRGB", COLOR_SPACES, "Color space of the saved image file");
             extra_bool_tip(ui, extras, "simulation", "saving_cctf_encoding", "saving cctf encoding", true, "Add or not the CCTF to the saved image file");

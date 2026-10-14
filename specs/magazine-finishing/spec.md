@@ -2,20 +2,20 @@
 
 ## Product model
 
-Magazine print is an optional finishing treatment for a completed RGB image. It is not a film stock, a photographic paper, or a base workflow. Finished RGB means an output-referred image whose exposure and source rendering are already established.
+Magazine finish is an optional finishing treatment for a completed RGB image. It is not a film stock, a photographic paper, or a base workflow. Finished RGB means an output-referred image whose exposure and source rendering are already established.
 
 The initial color appearance must follow the selected vintage-magazine numerical study: a monotonic tone curve, selective red and blue color weight, restrained green chroma, and a small warm near-neutral highlight response. It must not claim historical press calibration or reproduce every magazine.
 
 ## Enablement
 
-- The GUI must expose a `Magazine print` checkbox next to the base workflow controls. It must be off in the factory state.
-- Enabling or disabling Magazine print must not change the base workflow, film stock, photographic paper, scan polarity, or source exposure.
+- The GUI must expose a `Magazine finish` checkbox next to the base workflow controls. It must be off in the factory state.
+- Enabling or disabling Magazine finish must not change the base workflow, film stock, photographic paper, scan polarity, or source exposure.
 - The existing `input` workflow must be labeled `Finished RGB` for this use. It must perform source-to-output color management without film simulation, photographic printing, metering, or new film grain.
-- Magazine print must accept the completed RGB output of every supported base workflow. It must not require a photographic print stage.
+- Magazine finish must accept the completed RGB output of every supported base workflow. It must not require a photographic print stage.
 - The GUI must show the resulting base workflow and enabled finishing treatment together before rendering.
 - A single color Strength control must use the range 0 to 1. Its enabled default must be 1. Disabling the treatment must retain the selected Strength.
 - Presets and saved GUI state must retain the base workflow, enablement, and Strength independently. Preview, Scan, and Export must use the same effective finishing settings.
-- `input > film > scan > magazine` must not remain a selectable base workflow. Existing saved configurations that use it must receive an explicit migration error that identifies `input > film > scan` plus Magazine print enablement as the replacement.
+- `input > film > scan > magazine` must not remain a selectable base workflow. Existing saved configurations that use it must receive an explicit migration error that identifies `input > film > scan` plus Magazine finish enablement as the replacement.
 
 ## Color contract
 
