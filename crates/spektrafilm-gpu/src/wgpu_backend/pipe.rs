@@ -4,8 +4,10 @@
 //! The pipe owns buffer reuse and the host transfer points: input upload,
 //! fences, and the final readback. Per-stage trait methods dispatch through
 //! `dispatch_host` with unchanged stage placement and telemetry semantics.
-//! The device-resident primitives (`DeviceImage`, `dispatch_device`,
-//! `fence`) are the execution core for slices S2 and S3.
+//! The assembled chain runs through `ChainStage` with `readback_buffer` and
+//! `write_image_buffer` at each fence. The device-resident primitives
+//! (`DeviceImage`, `dispatch_device`, `upload_image`, `fence`) are the
+//! general execution core, exercised by this module's own tests.
 
 use super::cache::PipelineCache;
 use super::observation::{ObservedDevice, ObservedEncoder, ObservedQueue};
@@ -209,8 +211,9 @@ impl GpuPipe {
 
         let mut entries: Vec<wgpu::BindGroupEntry> = resource_buffers
             .iter()
-            .map(|buf| wgpu::BindGroupEntry {
-                binding: 0,
+            .enumerate()
+            .map(|(index, buf)| wgpu::BindGroupEntry {
+                binding: index as u32,
                 resource: buf.as_entire_binding(),
             })
             .collect();
@@ -321,13 +324,20 @@ type CpuFenceFn<'a> = Box<dyn FnOnce(&GpuPipe) -> Result<(), String> + 'a>;
 /// pending passes, the closure materializes a device image, runs the CPU
 /// stage, and writes the result back to the device before the next nodes
 /// encode against it.
-#[allow(dead_code)]
 pub(super) enum ChainStage<'a> {
     Gpu {
+        /// Diagnostic stage identity for the assembled stage list. The
+        /// chain reports one batch instead of per-stage host durations, so
+        /// nothing reads the name yet (telemetry metrics: a fused chain
+        /// reports its batch).
+        #[allow(dead_code)]
         name: &'static str,
         encode: Box<dyn FnOnce(&mut ObservedEncoder) + 'a>,
     },
     Cpu {
+        /// Diagnostic stage identity, unread for the same reason as the
+        /// `Gpu` arm.
+        #[allow(dead_code)]
         name: &'static str,
         fence: CpuFenceFn<'a>,
     },

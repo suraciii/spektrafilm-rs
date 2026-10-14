@@ -685,6 +685,13 @@ fn pass_name(label: Option<&str>) -> &'static str {
         "unsharp_blur_h" => "unsharp_blur_h",
         "unsharp_blur_v" => "unsharp_blur_v",
         "unsharp_combine" => "unsharp_combine",
+        // Pipe tail (S4): output transfer encoding and magazine appearance
+        // must identify their executed work rather than the generic name
+        // (telemetry metrics: pass names identify the executed work).
+        "cctf_transfer_params" => "cctf_transfer_params",
+        "output_transfer" => "output_transfer",
+        "magazine_params" => "magazine_params",
+        "magazine" => "magazine",
         x if x.starts_with("blur_multi_h") => "blur_h",
         x if x.starts_with("blur_multi_v") => "blur_v",
         _ => "compute",

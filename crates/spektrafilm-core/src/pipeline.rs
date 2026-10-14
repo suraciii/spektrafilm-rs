@@ -1281,8 +1281,11 @@ impl Pipeline {
             Some(out) => out,
             None => return Ok(None),
         };
-        // Post-scan finishing already ran as pipe-tail passes on the
-        // resident chain (pipe architecture, S4); the readback is final.
+        // Post-scan finishing — output transfer, magazine appearance — ran as
+        // pipe-tail passes on the resident chain (pipe architecture, S4); the
+        // readback is final for them. Output mix is not a pipe-tail pass yet:
+        // a requested mix below 1.0 still composes the result with the source
+        // on the host after the readback.
         Ok(Some(self.compose_output_mix(out, source, backend, None)?))
     }
 
