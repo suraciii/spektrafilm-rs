@@ -46,6 +46,17 @@ pub(crate) fn sections(
         ui.scope(|ui| {
             let medium = film_medium.for_route(&params.workflow.route);
             let positive_route = medium.positive_output_eligible(&params.workflow.route);
+            let medium_label = match medium {
+                ScanMedium::None => "Inactive",
+                ScanMedium::Paper => "Paper",
+                ScanMedium::Slide => "Slide",
+                ScanMedium::Negative => "Negative",
+            };
+            ui.label(
+                egui::RichText::new(format!("Scanning: {medium_label}"))
+                    .small()
+                    .color(egui::Color32::GRAY),
+            );
             if medium == ScanMedium::None {
                 return;
             }

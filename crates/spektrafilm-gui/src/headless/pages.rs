@@ -303,7 +303,7 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
     });
 }
 
-// ADVANCED page: spectral upsampling, Magazine print color strength and the
+// ADVANCED page: spectral upsampling, Magazine finish strength and the
 // input/output gamut compression strengths (never their algorithm selectors).
 #[test]
 fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_through_save_load() {
@@ -331,10 +331,10 @@ fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_t
     assert_eq!(h.state().params.settings.spectral_gaussian_blur, 2.5);
     click(h, "Spectral upsampling");
 
-    click(h, "Magazine print color");
+    click(h, "Magazine finish color");
     edit(h, "strength", "0.75");
     assert_eq!(h.state().params.magazine_print_color.strength, 0.75);
-    click(h, "Magazine print color");
+    click(h, "Magazine finish color");
 
     click(h, "Input gamut compress");
     let compress_active = h.state().params.io.input_gamut_compress.active;
@@ -358,22 +358,22 @@ fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_t
     assert_eq!(h.state().params.io.output_gamut_compress.knee[2], 4.5);
     click(h, "Output gamut compress");
 
-    click(h, "Magazine print color");
+    click(h, "Magazine finish color");
     let before_reject = h.state().params.clone();
     edit(h, "strength", "not-a-number");
     assert_eq!(h.state().params, before_reject);
     assert_eq!(h.get_by_label("strength").value().as_deref(), Some("0.75"));
-    click(h, "Magazine print color");
+    click(h, "Magazine finish color");
 
     save_mutate_and_reload(&mut s, "advanced-page.json", |h| {
         click(h, "ADVANCED");
-        click(h, "Magazine print color");
+        click(h, "Magazine finish color");
         edit(h, "strength", "0.25");
         assert_eq!(h.state().params.magazine_print_color.strength, 0.25);
     });
 }
 
-// MAIN page singles: Magazine print, Camera film format and selectors, the
+// MAIN page singles: Magazine finish, Camera film format and selectors, the
 // print-active Enlarger block including preflash, and Crop and upscale whose
 // normalized crop moves the source window before the upscale resamples it.
 #[test]
@@ -388,12 +388,12 @@ fn camera_enlarger_crop_upscale_and_magazine_print_controls_edit_accepted_params
     );
 
     let magazine_active = h.state().params.magazine_print_color.active;
-    click(h, "Magazine print");
+    click(h, "Magazine finish");
     assert_eq!(
         h.state().params.magazine_print_color.active,
         !magazine_active
     );
-    click(h, "Magazine print");
+    click(h, "Magazine finish");
     assert_eq!(
         h.state().params.magazine_print_color.active,
         magazine_active
@@ -474,7 +474,7 @@ fn camera_enlarger_crop_upscale_and_magazine_print_controls_edit_accepted_params
     });
 }
 
-// specs/output-mix/spec.md: Overall effect amount blends the prepared source
+// specs/output-mix/spec.md: Simulation blend blends the prepared source
 // with the complete result in linear output RGB — exact endpoints and a known
 // intermediate mixture, driven through the real MAIN Output scenario.
 #[test]
@@ -488,14 +488,14 @@ fn overall_effect_amount_scales_render_between_prepared_source_and_complete_resu
 
     assert_eq!(h.state().params.output_mix.amount, 1.0);
     let complete = render(h, "PREVIEW");
-    edit(h, "Overall effect amount", "0.0");
+    edit(h, "Simulation blend", "0.0");
     assert_eq!(h.state().params.output_mix.amount, 0.0);
     let prepared = render(h, "PREVIEW");
     assert!(
         prepared.data != complete.data,
         "amount 0 and 1 must reach distinct mix branches"
     );
-    edit(h, "Overall effect amount", "0.25");
+    edit(h, "Simulation blend", "0.25");
     assert_eq!(h.state().params.output_mix.amount, 0.25);
     let mixed = render(h, "PREVIEW");
 
@@ -522,10 +522,10 @@ fn overall_effect_amount_scales_render_between_prepared_source_and_complete_resu
     assert!(mixed.data != prepared.data);
 
     let before_reject = h.state().params.clone();
-    edit(h, "Overall effect amount", "not-a-number");
+    edit(h, "Simulation blend", "not-a-number");
     assert_eq!(h.state().params, before_reject);
     assert_eq!(
-        h.get_by_label("Overall effect amount").value().as_deref(),
+        h.get_by_label("Simulation blend").value().as_deref(),
         Some("0.250")
     );
 
@@ -573,7 +573,7 @@ fn overall_effect_amount_scales_render_between_prepared_source_and_complete_resu
 
     save_mutate_and_reload(&mut s, "output-mix.json", |h| {
         click(h, "MAIN");
-        edit(h, "Overall effect amount", "0.75");
+        edit(h, "Simulation blend", "0.75");
         assert_eq!(h.state().params.output_mix.amount, 0.75);
     });
 }

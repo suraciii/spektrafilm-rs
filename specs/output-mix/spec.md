@@ -4,7 +4,7 @@
 
 This is the final target scope for material-control simplification, Output lightness retirement, and overall effect mixing. It specifies implementation requirements, not completed runtime behavior. Existing material controls remain authoritative; this capability does not add a digital material-response layer, another workflow, or a second RGB film pipeline.
 
-**Preflash** is an independent, spatially uniform exposure added at the print material plane before development. **Overall effect amount** blends the complete result with the prepared source; it does not scale material parameters. **Prepared source** means decoded, geometrically aligned input before simulated camera exposure and processing, not the Input viewer raster or an automatically inverted negative.
+**Preflash** is an independent, spatially uniform exposure added at the print material plane before development. **Simulation blend** blends the complete result with the prepared source; it does not scale material parameters. **Prepared source** means decoded, geometrically aligned input before simulated camera exposure and processing, not the Input viewer raster or an automatically inverted negative.
 
 ## Product decisions
 
@@ -19,7 +19,7 @@ The chosen design reuses existing material controls and adds only final output m
 | Make colors heavier/lighter | Do not add Color Density | The ambiguous appearance request does not justify new material-color coordinates |
 | Color different tonal regions | Keep global filtration and independently filtered preflash | No three-region print toning; these controls are not claimed to replace arbitrary split toning |
 | Set readout endpoints | Keep medium-specific Scanner points | No duplicate generic Levels or measured-density/display-endpoint conflation |
-| Reduce the complete effect | Add Overall effect amount | Zero on a negative capture is still a negative |
+| Reduce the complete effect | Add Simulation blend | Zero on a negative capture is still a negative |
 | Compress final lightness | Retire the standalone Output lightness operation | No hidden replacement in gamut handling |
 | Control optical softness, material grain, scan appearance | Preserve distinct existing mechanisms and correct optical ordering | Similar final appearance does not make different physical stages interchangeable |
 
@@ -59,7 +59,7 @@ A diagnostic injection without a source branch must reject amounts below 1 for f
 
 Retain MAIN, FILM, PRINT, ADVANCED, and CONFIG, existing section menus, and existing material-control ownership. Do not add Digital response panels or a Reproduction section. MAIN Enlarger exposes existing print exposure, M/Y filtration, and preflash with its independent filter controls. Preflash help describes photographic-paper highlight use and loss-of-white/color risks without renaming it HighLight Recovery or promising equivalence to a digital compressor.
 
-Film and Print chemistry remain distinct from optical exposure. Existing developer exhaustion stays a model-specific development control, not a universal high-dynamic-range slider. Profile and route capability feedback must identify inactive controls without clearing values or fabricating support. Existing Scanner points retain medium-specific meanings. MAIN Output exposes Overall effect amount with the existing Output section menu and identifies the negative-source endpoint when applicable. Existing gamut controls must not be duplicated across pages.
+Film and Print chemistry remain distinct from optical exposure. Existing developer exhaustion stays a model-specific development control, not a universal high-dynamic-range slider. Profile and route capability feedback must identify inactive controls without clearing values or fabricating support. Existing Scanner points retain medium-specific meanings. MAIN Output exposes Simulation blend with the existing Output section menu and identifies the negative-source endpoint when applicable. Existing gamut controls must not be duplicated across pages.
 
 Reset and section presets retain their current ownership: no new response reset or preset section. The existing Output section owns mix reset to 1; Enlarger reset follows its existing scope. [Presets](../presets/spec.md) owns version migration and complete look capture. [CLI parameters](../cli/spec.md) owns canonical paths, sparse edits, discovery, and inactive-edit feedback.
 

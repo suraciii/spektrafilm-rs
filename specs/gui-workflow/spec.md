@@ -50,7 +50,7 @@ FILM and PRINT must retain their existing chemistry and development controls. De
 
 Material edits must use existing scanner calibration, inverse reconstruction, and automatic setup semantics. The GUI must not promise creative-reference isolation or add separate baseline and effective reference controls. Resets and section presets must retain existing ownership without new response resets or preset sections.
 
-MAIN Output must expose Overall effect amount as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Overall effect amount returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
+MAIN Output must expose Simulation blend as the full-result/prepared-source blend under [Output mix](../output-mix/spec.md#output-mix), with its existing section menu. Existing output gamut algorithm and chroma-knee controls remain available without duplicate editable copies. Output must not expose standalone lightness compression, an Output response section or preset, or a new Finished RGB output-processing switch. A negative-capture source must state that zero Simulation blend returns the prepared negative, not a positive interpretation. Input/Output viewing remains independent from rendered effect amount.
 
 Loading retired settings must follow [Output boundary and retirement](../output-mix/spec.md#output-boundary-and-retirement). A rejected document must identify the exact offending path and leave the source document, active controls, accepted render identity, and retained output unchanged. The GUI must require explicit removal of a retired numeric lightness triplet without suggesting withdrawn response groups or automatically substituting preflash or chemistry. Withdrawn draft response groups and cyan-shift paths must fail normal unknown-field validation without aliases or migration.
 
@@ -72,7 +72,7 @@ FILM owns the film material. It holds Chemistry for film, Film base, Halation, C
 
 PRINT owns the print material. It holds Chemistry for print, Print base, Glare, and Enlarger diffusion.
 
-ADVANCED owns processing controls that most sessions never change. It holds Spectral upsampling, Magazine print color, Input gamut compress, and Output gamut compress.
+ADVANCED owns processing controls that most sessions never change. It holds Spectral upsampling, Magazine finish, Input gamut compress, and Output gamut compress.
 
 CONFIG owns session configuration. It holds Diagnostics, GUI parameters, and Display.
 

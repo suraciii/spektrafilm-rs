@@ -30,7 +30,7 @@ Built-in looks enable their film profile's adaptation surface by default. See th
 
 ## Portable identities and name resolution
 
-Preset names are their portable identities. Core reads schema v1 and v2 documents and exports schema v3. V1 drops its old `id`. Older complete looks acquire the full Overall effect amount, while section documents stay sparse.
+Preset names are their portable identities. Core reads schema v1 and v2 documents and exports schema v3. V1 drops its old `id`. Older complete looks acquire the full Simulation blend, while section documents stay sparse.
 
 User documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in. `user:` and `built-in:` select one group.
 

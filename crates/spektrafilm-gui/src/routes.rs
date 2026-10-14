@@ -61,7 +61,7 @@ pub(crate) fn tooltip() -> &'static str {
             .join(", ");
         format!(
             "Which path the image takes through the pipeline: {routes}. \
-             Magazine print can be enabled independently for every workflow."
+             Magazine finish can be enabled independently for every workflow."
         )
     });
     &TOOLTIP

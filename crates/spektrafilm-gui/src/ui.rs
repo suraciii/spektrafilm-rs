@@ -171,7 +171,7 @@ impl App {
             if ui
                 .checkbox(
                     &mut self.params.magazine_print_color.active,
-                    "Magazine print",
+                    "Magazine finish",
                 )
                 .on_hover_text("Apply a magazine print appearance after the selected workflow.")
                 .changed()
@@ -681,7 +681,7 @@ impl App {
             GuiTab::Advanced => {
                 for section in [
                     "Spectral upsampling",
-                    "Magazine print color",
+                    "Magazine finish color",
                     "Input gamut compress",
                     "Output gamut compress",
                     "Experimental",
