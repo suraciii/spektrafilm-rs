@@ -42,6 +42,7 @@ fn nullable_inner(path: &str) -> Option<&'static str> {
         | "film_render.grain.v2_chroma"
         | "film_render.grain.v2_resolution_factor" => "f32",
         "taps.inject" | "taps.collect" => "String",
+        "neutral_print_filters_protected" => "[bool; 3]",
         _ => return None,
     })
 }
