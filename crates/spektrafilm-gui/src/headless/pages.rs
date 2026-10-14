@@ -303,10 +303,11 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
     });
 }
 
-// ADVANCED page: spectral upsampling, Magazine finish strength and the
+// ADVANCED + PRINT pages: spectral upsampling, Magazine finish strength and the
 // input/output gamut compression strengths (never their algorithm selectors).
 #[test]
-fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_through_save_load() {
+fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_through_save_load()
+ {
     let mut s = session();
     let h = &mut s.harness;
     click(h, "ADVANCED");

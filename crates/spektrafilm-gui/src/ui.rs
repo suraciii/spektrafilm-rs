@@ -74,33 +74,11 @@ impl App {
 
     fn state_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Save current to file").clicked()
-                && let Some(path) = self.chooser.save_file(
-                    self.file_dialog("state")
-                        .set_file_name("gui_state.json")
-                        .add_filter("JSON", &["json"]),
-                )
-            {
-                self.remember_dialog("state", &path);
-                let result = self.current_state().and_then(|s| s.save(&path));
-                self.status = match result {
-                    Ok(()) => format!("Saved GUI state to {}", path.display()),
-                    Err(e) => format!("State save error: {e:#}"),
-                };
+            if ui.button("Save current to file").clicked() {
+                self.save_state_with_dialog();
             }
-            if ui.button("Load from file").clicked()
-                && let Some(path) = self
-                    .chooser
-                    .pick_file(self.file_dialog("state").add_filter("JSON", &["json"]))
-            {
-                let result = state::GuiState::load(&path).and_then(|s| self.apply_state(s));
-                self.status = match result {
-                    Ok(()) => {
-                        self.remember_dialog("state", &path);
-                        format!("Loaded GUI state from {}", path.display())
-                    }
-                    Err(e) => format!("State load error: {e:#}"),
-                };
+            if ui.button("Load from file").clicked() {
+                self.load_state_with_dialog();
             }
             if ui.button("Save current as default").clicked() {
                 let result = self
@@ -259,7 +237,7 @@ impl App {
         if let Some(error) = self.last_export_error.clone() {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("Export failed: {error}"))
+                    egui::RichText::new(format!("{error}"))
                         .color(theme::ERROR)
                         .small(),
                 );
