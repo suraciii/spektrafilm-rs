@@ -110,7 +110,7 @@ class ExperimentalDesktop(X11):
         self.tab('MAIN')
         if self.locate('exposure compensation ev'):
             self.section('Camera')
-        if self.locate('print auto compensation'):
+        if self.locate('print exposure mode'):
             self.section('Enlarger')
         if self.locate('saving color space'):
             self.section('Output')
@@ -237,7 +237,7 @@ class ExperimentalDesktop(X11):
             for label in FORBIDDEN:
                 require(not any(words(' '.join(w[0] for w in line)) == words(label)
                                 for line in sidebar), f'{tab}: obsolete section {label}')
-            for label in ['Auto preview', 'black and white correction', 'Workflow', 'PREVIEW', 'SCAN', 'SAVE']:
+            for label in ['Auto preview', 'white and black correction', 'Workflow', 'PREVIEW', 'SCAN', 'SAVE']:
                 require(self.locate(label, bottom=True), f'{tab}: fixed action {label} missing')
             self.snap('topology-' + tab, image, lines)
             self.records.append({'topology': tab, 'sections': expected, 'observed_y': seen,

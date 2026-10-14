@@ -465,11 +465,11 @@ impl Pipeline {
         // `captured_rgb.is_none()` conjunct in `stages::scanning` is always
         // true here).
         let n2p_requested = self.params.scanner.scan_output == "negative_to_positive";
-        let reference_mode = self.params.scanner.positive_interpretation
-            == crate::params::PositiveInterpretation::DigitalReference;
+        let reference_mode = self.params.scanner.negative_conversion_method
+            == crate::params::NegativeConversionMethod::DigitalReference;
         let density_reading = n2p_requested
-            && self.params.scanner.positive_interpretation
-                == crate::params::PositiveInterpretation::Density;
+            && self.params.scanner.negative_conversion_method
+                == crate::params::NegativeConversionMethod::Density;
 
         // Both acquisition replacements blur the transmitted light inside
         // the acquisition (density domain and optical capture domain), so
@@ -622,7 +622,7 @@ impl Pipeline {
             })
         };
         let color_ref = receiver_reference.as_ref().unwrap_or(color_ref);
-        // Per-frame scanner setup (`positive_density_ev`/`balance_ev`/
+        // Per-frame scanner setup (`conversion_brightness_ev`/`balance_ev`/
         // `contrast`) is part of the scan parameters the per-stage route
         // hands to the scan stage, so the scanner fences run the same ones.
         let scan_params_cow = self.scan_params();
@@ -632,9 +632,9 @@ impl Pipeline {
         // the acquisition in `scan_acquisition_cpu_stage`.
         let n2p_capture_method = n2p_requested
             && matches!(
-                self.params.scanner.positive_interpretation,
-                crate::params::PositiveInterpretation::Separable
-                    | crate::params::PositiveInterpretation::Coupled
+                self.params.scanner.negative_conversion_method,
+                crate::params::NegativeConversionMethod::Separable
+                    | crate::params::NegativeConversionMethod::Coupled
             );
         // A fenced CPU stage executes inside the resident chain, so it must
         // keep the executor observations the per-stage route publishes
@@ -940,7 +940,7 @@ impl Pipeline {
             scan_normalization: scan_norm,
             scan_xyz_to_rgb: &scan_xyz_to_rgb,
             scan_output_space,
-            bw_xyz_remap: if scan_tail_cpu_stage.is_some() {
+            white_black_xyz_remap: if scan_tail_cpu_stage.is_some() {
                 None
             } else {
                 color_ref.xyz_remap()
@@ -1070,7 +1070,7 @@ mod tests {
     /// Parameters for the negative-to-positive acquisition-replacement
     /// fences. Scanner lens blur is on: both interpretations blur inside
     /// the acquisition, so a second blur after the fence would show up.
-    fn n2p_fence_params(interpretation: crate::params::PositiveInterpretation) -> RuntimeParams {
+    fn n2p_fence_params(interpretation: crate::params::NegativeConversionMethod) -> RuntimeParams {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.io.scan_film = true;
@@ -1081,10 +1081,10 @@ mod tests {
         params.io.output_cctf_encoding = false;
         params.film_render.grain.active = false;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.positive_interpretation = interpretation;
+        params.scanner.negative_conversion_method = interpretation;
         params.scanner.lens_blur = 1.0;
         params.scanner.unsharp_mask = [0.0, 0.0];
-        if interpretation == crate::params::PositiveInterpretation::DigitalReference {
+        if interpretation == crate::params::NegativeConversionMethod::DigitalReference {
             params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
             params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
             params.scanner.finish = crate::params::ScannerFinish::Neutral;
@@ -1670,7 +1670,8 @@ mod tests {
         params.io.output_gamut_compress.algorithm = "off".into();
         params.film_render.grain.active = false;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Separable;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::Separable;
 
         let pipeline = Pipeline::new_with_spectral(film, print, params, &dir).unwrap();
         assert!(matches!(
@@ -2001,7 +2002,7 @@ mod tests {
         let pipeline = Pipeline::new_with_spectral(
             film.clone(),
             print.clone(),
-            n2p_fence_params(crate::params::PositiveInterpretation::Density),
+            n2p_fence_params(crate::params::NegativeConversionMethod::Density),
             &dir,
         )
         .unwrap();
@@ -2027,7 +2028,7 @@ mod tests {
         // The reading changes the image (a direct scan of the same negative
         // is the baseline), and it is the density reading rather than a
         // capture interpretation: both must be visible.
-        let mut direct = n2p_fence_params(crate::params::PositiveInterpretation::Density);
+        let mut direct = n2p_fence_params(crate::params::NegativeConversionMethod::Density);
         direct.scanner.scan_output = "direct_scan".into();
         let baseline =
             Pipeline::new_with_spectral(film.clone(), print.clone(), direct, &dir).unwrap();
@@ -2043,7 +2044,7 @@ mod tests {
         let separable = Pipeline::new_with_spectral(
             film,
             print,
-            n2p_fence_params(crate::params::PositiveInterpretation::Separable),
+            n2p_fence_params(crate::params::NegativeConversionMethod::Separable),
             &dir,
         )
         .unwrap();
@@ -2071,7 +2072,7 @@ mod tests {
         let pipeline = Pipeline::new_with_spectral(
             film.clone(),
             print.clone(),
-            n2p_fence_params(crate::params::PositiveInterpretation::DigitalReference),
+            n2p_fence_params(crate::params::NegativeConversionMethod::DigitalReference),
             &dir,
         )
         .unwrap();
@@ -2097,7 +2098,8 @@ mod tests {
         // Reference Exposure scales the response, so a one-stop variant must
         // move the image; that also proves the reference conversion ran
         // rather than a capture interpretation.
-        let mut shifted = n2p_fence_params(crate::params::PositiveInterpretation::DigitalReference);
+        let mut shifted =
+            n2p_fence_params(crate::params::NegativeConversionMethod::DigitalReference);
         shifted.scanner.reference_exposure_ev += 1.0;
         let brighter =
             Pipeline::new_with_spectral(film.clone(), print.clone(), shifted, &dir).unwrap();
@@ -2113,7 +2115,7 @@ mod tests {
         let density = Pipeline::new_with_spectral(
             film,
             print,
-            n2p_fence_params(crate::params::PositiveInterpretation::Density),
+            n2p_fence_params(crate::params::NegativeConversionMethod::Density),
             &dir,
         )
         .unwrap();
@@ -2174,8 +2176,8 @@ mod tests {
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
         let image = n2p_comparison_image(8);
         for interpretation in [
-            crate::params::PositiveInterpretation::Density,
-            crate::params::PositiveInterpretation::DigitalReference,
+            crate::params::NegativeConversionMethod::Density,
+            crate::params::NegativeConversionMethod::DigitalReference,
         ] {
             let pipeline = Pipeline::new_with_spectral(
                 film.clone(),
@@ -2300,8 +2302,8 @@ mod tests {
                 {
                     let mut params = resident_parity_params(8);
                     params.scanner.scan_output = "negative_to_positive".into();
-                    params.scanner.positive_interpretation =
-                        crate::params::PositiveInterpretation::Separable;
+                    params.scanner.negative_conversion_method =
+                        crate::params::NegativeConversionMethod::Separable;
                     params
                 },
             ),

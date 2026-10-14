@@ -136,9 +136,9 @@ fn scan_spectral_via_lut(
                 10.0f64.powf(log_xyz[1]),
                 10.0f64.powf(log_xyz[2]),
             ];
-            // B&W/slide luminance remap on the pre-CAT scan XYZ (Python's
-            // black_white_xyz_correction). Scalar scale from the Y channel;
-            // no-op when color_ref has no remap.
+            // Scanner white and black correction luminance remap on the
+            // pre-CAT scan XYZ (Python's black_white_xyz_correction). Scalar
+            // scale from the Y channel; no-op when color_ref has no remap.
             let scale = color_ref.xyz_scale(xyz[1]);
             if scale != 1.0 {
                 xyz[0] *= scale;

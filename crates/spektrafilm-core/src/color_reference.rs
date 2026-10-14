@@ -1,4 +1,4 @@
-//! Black & white / slide-film scanner exposure correction.
+//! Scanner white and black correction (slide and print paths).
 //!
 //! Port of Python `runtime/services/color_reference.py`. Gated behind
 //! `scanner.white_correction` / `black_correction` (a complete no-op
@@ -506,7 +506,7 @@ mod parity_tests {
     /// (kodak_portra_400 → kodak_portra_endura); they agree to ~1e-7, the
     /// residual being the f32 storage of the scanner white/black levels.
     #[test]
-    fn print_bw_correction_matches_python() {
+    fn print_white_black_correction_matches_python() {
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();

@@ -74,7 +74,7 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
         h.state().params.scanner.black_correction,
         h.state().params.print_render.glare.active,
     );
-    click(h, "black and white correction");
+    click(h, "white and black correction");
     assert!(h.state().params.scanner.white_correction);
     assert!(h.state().params.scanner.black_correction);
     assert!(!h.state().params.print_render.glare.active);
@@ -89,7 +89,7 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
     assert!(saved["rust"].get("scan_for_print_snapshot").is_none());
     assert!(saved["simulation"].get("workflow").is_none());
     assert!(saved["rust"]["runtime"]["workflow"].get("route").is_none());
-    click(h, "black and white correction");
+    click(h, "white and black correction");
     assert_eq!(
         (
             h.state().params.scanner.white_correction,
@@ -98,14 +98,14 @@ fn scan_for_print_checkbox_restores_and_clears_transient_snapshot() {
         ),
         before
     );
-    click(h, "black and white correction");
+    click(h, "white and black correction");
     script(h, chooser::ChooserResult::Scripted(path));
     click(h, "Load from file");
     assert!(h.state().scan_for_print_snapshot.is_none());
     assert!(h.state().params.scanner.white_correction);
     assert!(h.state().params.scanner.black_correction);
     assert!(!h.state().params.print_render.glare.active);
-    click(h, "black and white correction");
+    click(h, "white and black correction");
     choose(h, "workflow", "Finished RGB");
     assert!(h.state().scan_for_print_snapshot.is_none());
     assert!(h.state().params.scanner.white_correction);

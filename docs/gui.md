@@ -33,11 +33,11 @@ The GUI shows scanner controls for the scanned medium:
 - Negatives expose scan polarity; negative conversion controls appear on `input > film > scan` and `input > convert-film > scan`.
 - Slides and negative conversion outside Digital Reference expose film-scan points.
 
-Selecting positive interpretation clears incompatible capture-correction flags. State files and scanner section presets retain point values. See [scanning](scanning.md) for scanner mode semantics.
+Selecting the negative conversion method clears incompatible capture-correction flags. State files and scanner section presets retain point values. See [scanning](scanning.md) for scanner mode semantics.
 
 **MAIN → Output → Overall effect amount** blends the complete result with the decoded, geometrically aligned source in linear output RGB. Amount `1` keeps the complete result. Amount `0` returns the prepared source before virtual camera exposure. A negative capture stays negative at zero. Preview, Scan, Export, and complete source-to-output LUTs share this operation. Segmented LUTs require amount `1`. See [the output mix specification](../specs/output-mix/spec.md#output-mix) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 
-**MAIN → Enlarger → Preflash** retains independent Yellow/Magenta flash filtration. Exposure is a linear multiplier, not EV. On photographic paper, it can change weak highlight differences, but it may lower white, add fog, and shift color. It cannot recover absent detail. Routes without printing retain these values without applying them. See [the output mix specification](../specs/output-mix/spec.md#preflash) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
+**MAIN → Enlarger → Print exposure mode** selects `auto` or `manual`. `auto` normalizes the print exposure and follows camera exposure compensation, like a color analyzer or minilab. `manual` applies the print exposure time alone, like a test strip. **MAIN → Enlarger → Preflash** retains independent Yellow/Magenta flash filtration. Exposure is a linear multiplier, not EV. On photographic paper, it can change weak highlight differences, but it may lower white, add fog, and shift color. It cannot recover absent detail. Routes without printing retain these values without applying them. See [the output mix specification](../specs/output-mix/spec.md#preflash) and [the GUI workflow specification](../specs/gui-workflow/spec.md#material-controls-and-output-composition) for the control semantics.
 
 The GUI has no standalone Output lightness-compression control. See [presets](presets.md) for the versioned state document rule.
 
@@ -127,7 +127,7 @@ Legacy states without an explicit export format preserve 8-bit as PNG and 16/32-
 
 The GUI remembers the preset browser selection and layout independently of startup controls. An ordinary restart restores that metadata and recomputes the applied, modified, or missing marker. It does not apply the preset again. Loading an explicit GUI state uses that file's browser metadata. Use **Save current as default** to change startup controls.
 
-A failed preset application preserves the current controls and temporary black/white correction state. See [presets](presets.md) for library and composition rules. The [presets specification](../specs/presets/spec.md) owns the preset contract.
+A failed preset application preserves the current controls and temporary white/black correction state. See [presets](presets.md) for library and composition rules. The [presets specification](../specs/presets/spec.md) owns the preset contract.
 
 ## Diagnostics
 

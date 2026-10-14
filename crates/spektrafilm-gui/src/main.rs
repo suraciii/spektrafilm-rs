@@ -908,7 +908,7 @@ mod telemetry_lifecycle_tests {
             initial, source_setup,
             "new chromatic source must change measured scanner setup"
         );
-        app.params.scanner.positive_density_ev += 1.0;
+        app.params.scanner.conversion_brightness_ev += 1.0;
         app.parameter_revision = app.parameter_revision.wrapping_add(1);
         let edited = app.render_snapshot(app.params.clone());
         assert!(!Arc::ptr_eq(source.scanner_setup(), edited.scanner_setup()));
@@ -932,8 +932,8 @@ mod telemetry_lifecycle_tests {
             .unwrap()
             .with_scanner_setup(edited_setup);
         assert_eq!(
-            edited_runtime.params().scanner.positive_density_ev
-                - source_runtime.params().scanner.positive_density_ev,
+            edited_runtime.params().scanner.conversion_brightness_ev
+                - source_runtime.params().scanner.conversion_brightness_ev,
             1.0
         );
         let before = source_runtime
@@ -1139,7 +1139,7 @@ mod telemetry_lifecycle_tests {
         let revision = app.parameter_revision;
         let mut invalid = app.current_state().unwrap();
         invalid.sections["simulation"]["film_stock"] = "fujifilm_provia_100f".into();
-        invalid.sections["scanner"]["positive_interpretation"] = "coupled".into();
+        invalid.sections["scanner"]["negative_conversion_method"] = "coupled".into();
         invalid.sections["scanner"]["auto_setup"] = "per_frame".into();
         invalid.sections["scanner"]["finish"] = "lab_scan".into();
         let error = app.apply_state(invalid).unwrap_err();

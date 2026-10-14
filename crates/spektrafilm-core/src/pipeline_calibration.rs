@@ -3,7 +3,7 @@ use std::path::Path;
 use spektrafilm_math::spectral::TcLut;
 
 use crate::enlarger;
-use crate::params::RuntimeParams;
+use crate::params::{PrintExposureEvTracking, PrintExposureMode, RuntimeParams};
 use crate::profile::Profile;
 use crate::spectral_service::{self, select_illuminant, select_illuminant_f64};
 
@@ -27,8 +27,8 @@ struct SpectralControlsKey {
 #[derive(Debug, Clone, PartialEq)]
 struct CalibrationControlsKey {
     exposure_compensation_ev: f32,
-    print_exposure_compensation: bool,
-    normalize_print_exposure: bool,
+    print_exposure_mode: PrintExposureMode,
+    print_exposure_ev_tracking: PrintExposureEvTracking,
     illuminant: String,
     y_filter_shift: f32,
     m_filter_shift: f32,
@@ -53,8 +53,8 @@ pub(crate) fn calibration_changed(old: &RuntimeParams, new: &RuntimeParams) -> b
 fn calibration_controls_key(params: &RuntimeParams) -> CalibrationControlsKey {
     CalibrationControlsKey {
         exposure_compensation_ev: params.camera.exposure_compensation_ev,
-        print_exposure_compensation: params.enlarger.print_exposure_compensation,
-        normalize_print_exposure: params.enlarger.normalize_print_exposure,
+        print_exposure_mode: params.enlarger.print_exposure_mode,
+        print_exposure_ev_tracking: params.settings.print_exposure_ev_tracking,
         illuminant: params.enlarger.illuminant.clone(),
         y_filter_shift: params.enlarger.y_filter_shift,
         m_filter_shift: params.enlarger.m_filter_shift,
@@ -557,10 +557,14 @@ pub(crate) fn build(
     // candidate factors:
     //   * `factor_midgray`     = 1 / geomean(raw_midgray)
     //   * `factor_midgray_comp`= 1 / geomean(raw_midgray_with_neg_EV)
-    // and four flag combinations of
-    // `enlarger.normalize_print_exposure` × `enlarger.print_exposure_compensation`.
+    // selected by `enlarger.print_exposure_mode` and
+    // `settings.print_exposure_ev_tracking`. The legacy boolean pair
+    // `normalize_print_exposure` × `print_exposure_compensation` maps
+    // one-to-one onto the two enums: (true, true) → auto/follow_mode,
+    // (true, false) → auto/never, (false, false) → manual/follow_mode,
+    // (false, true) → manual/always.
     //
-    // With both flags ON (defaults) and no EV compensation,
+    // With the defaults (auto/follow_mode) and no EV compensation,
     // Python returns `factor_midgray_comp == 1.0`. Rust used to
     // unconditionally apply `factor_midgray` here, which biased
     // the print exposure by ~3% on every render and was the root
@@ -570,35 +574,41 @@ pub(crate) fn build(
         &print_illuminant,
         &print_sensitivity,
     );
-    // Python builds `density_spectral_midgray_comp` whenever
-    // `print_exposure_compensation` is on — even when EV == 0, in
-    // which case `rgb_midgray_comp = rgb_midgray * 2^0` and so
+    // Python builds `density_spectral_midgray_comp` whenever EV
+    // tracking is on — even when EV == 0, in which case
+    // `rgb_midgray_comp = rgb_midgray * 2^0` and so
     // `factor_midgray_comp == factor_midgray`. We have to mirror
     // that (NOT short-circuit to 1.0) because the
     // `factor_midgray_comp` branch is what gets returned by default.
-    let factor_midgray_comp = if !params.enlarger.print_exposure_compensation {
-        1.0
-    } else if params.camera.exposure_compensation_ev == 0.0 {
-        factor_midgray
-    } else {
-        // Python: `rgb_midgray_comp = rgb_midgray * 2 ** exposure_compensation_ev`.
-        let scale = 2.0f64.powf(params.camera.exposure_compensation_ev as f64);
-        let density_spectral_midgray_comp =
-            enlarger::midgray_density_spectral_from_raw(midgray_raw(scale), &film, &params);
-        enlarger::compute_exposure_factor(
-            &density_spectral_midgray_comp,
-            &print_illuminant,
-            &print_sensitivity,
-        )
-    };
+    let factor_midgray_comp =
+        if params.settings.print_exposure_ev_tracking == PrintExposureEvTracking::Never {
+            1.0
+        } else if params.camera.exposure_compensation_ev == 0.0 {
+            factor_midgray
+        } else {
+            // Python: `rgb_midgray_comp = rgb_midgray * 2 ** exposure_compensation_ev`.
+            let scale = 2.0f64.powf(params.camera.exposure_compensation_ev as f64);
+            let density_spectral_midgray_comp =
+                enlarger::midgray_density_spectral_from_raw(midgray_raw(scale), &film, &params);
+            enlarger::compute_exposure_factor(
+                &density_spectral_midgray_comp,
+                &print_illuminant,
+                &print_sensitivity,
+            )
+        };
     let print_exposure_factor = match (
-        params.enlarger.normalize_print_exposure,
-        params.enlarger.print_exposure_compensation,
+        params.enlarger.print_exposure_mode,
+        params.settings.print_exposure_ev_tracking,
     ) {
-        (true, true) => factor_midgray_comp,
-        (true, false) => factor_midgray,
-        (false, true) => factor_midgray_comp / factor_midgray,
-        (false, false) => 1.0,
+        // `always` in `auto` folds onto the default tracked behavior;
+        // `never` in `manual` folds onto the default untracked behavior.
+        // They exist to carry the legacy mixed states.
+        (PrintExposureMode::Auto, PrintExposureEvTracking::Never) => factor_midgray,
+        (PrintExposureMode::Auto, _) => factor_midgray_comp,
+        (PrintExposureMode::Manual, PrintExposureEvTracking::Always) => {
+            factor_midgray_comp / factor_midgray
+        }
+        (PrintExposureMode::Manual, _) => 1.0,
     };
 
     tracing::info!(

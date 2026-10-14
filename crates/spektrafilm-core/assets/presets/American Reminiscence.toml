@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 name = "American Reminiscence"
 author = "SpektraFilm"
 description = "Warm highlights and soft print tonality from Kodak Gold 200 and Portra Endura. Virtual exposure +0.5 EV with metering off."
@@ -22,8 +22,7 @@ auto_exposure_method = "center_weighted"
 [parameters.enlarger]
 illuminant = "TH-KG3"
 print_exposure = 1.0
-print_exposure_compensation = true
-normalize_print_exposure = true
+print_exposure_mode = "auto"
 y_filter_shift = -3.0
 m_filter_shift = 0.0
 y_filter_neutral = 55.59830093383789
@@ -49,7 +48,7 @@ bloom_size = 1.0
 
 [parameters.scanner]
 receiver_profile = "legacy_colorimetric"
-positive_interpretation = "density"
+negative_conversion_method = "density"
 auto_setup = "off"
 finish = "neutral"
 finish_strength = 1.0
@@ -73,14 +72,14 @@ white_point = [
     1.0,
     1.0,
 ]
-positive_density_ev = 0.8781766618
-positive_balance_ev = [
+conversion_brightness_ev = 0.8781766618
+conversion_balance_ev = [
     0.0,
     0.0,
     0.0,
 ]
-positive_contrast = 0.7355140005821664
-positive_dmax = 1.5625841465572565
+conversion_contrast = 0.7355140005821664
+conversion_dmax = 1.5625841465572565
 reference_exposure_ev = 0.0
 reference_balance_ev = [
     0.0,
