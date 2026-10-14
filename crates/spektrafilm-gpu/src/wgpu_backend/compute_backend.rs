@@ -1,6 +1,9 @@
 //! ComputeBackend trait implementation for WgpuBackend.
 //! Extracted from mod.rs to separate the trait contract from dispatch infrastructure.
 
+use super::film_chain::{
+    explicit_resource_error, required_buffer_exceeds_limits, required_chain_buffers,
+};
 use super::*;
 
 impl ComputeBackend for WgpuBackend {
@@ -682,6 +685,24 @@ impl ComputeBackend for WgpuBackend {
         &self,
         params: &crate::FilmChainParams<'_>,
     ) -> Result<Option<ImageBuf>, String> {
+        // Bounded-execution preflight: compare the arithmetically required
+        // buffer sizes with the device limits before any allocation, so an
+        // oversized request is an identified failure instead of an
+        // uncaptured wgpu-core validation error.
+        let required = required_chain_buffers(params);
+        if let Some(reason) =
+            required_buffer_exceeds_limits(required.largest(), &self.device.limits())
+        {
+            if self.explicit_gpu_request() {
+                return Err(explicit_resource_error(&reason));
+            }
+            tracing::info!(
+                execution = "per_stage_cpu",
+                reason = %reason,
+                "using per-stage path because a resident buffer exceeds the device resource limits"
+            );
+            return Ok(None);
+        }
         if !params.gpu_blurs_supported() {
             tracing::info!(
                 execution = "per_stage_cpu_blur",

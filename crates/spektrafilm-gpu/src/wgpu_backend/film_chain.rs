@@ -1211,3 +1211,314 @@ impl WgpuBackend {
         Ok(out)
     }
 }
+
+// ── Bounded-execution preflight (pure, device-free) ──────────────────────────
+//
+// The chain allocates the image buffers straight from `n_pixels` and binds
+// every buffer with `as_entire_binding()`, so an oversized request would
+// otherwise surface as an uncaptured wgpu-core validation error. These
+// helpers derive the required byte sizes arithmetically so the resident
+// chain entry can compare them with the device limits before any allocation.
+
+/// Conservative bound for the small fixed-size buffers the chain creates
+/// besides the image and lookup buffers: the std140 param uniforms
+/// (largest is the 272-byte `MagazineParams`), the FIR kernels (≤ 513
+/// taps under `MAX_BLUR_RADIUS`), and the grain resolution-weight sets.
+const MAX_FIXED_AUX_BYTES: u64 = 4 * 1024;
+
+/// Device buffer sizes the resident chain will allocate, derived from the
+/// parameters without touching a device.
+pub(super) struct RequiredChainBuffers {
+    /// One image-sized buffer: the `img_a`/`img_b` ping-pong pair, the
+    /// readback buffer, and every stage scratch buffer (blur, halation,
+    /// DIR, glare, unsharp, grain) is created at this size or smaller.
+    pub(super) image_bytes: u64,
+    /// Largest static buffer: the f32-narrowed lookup tables (spectral
+    /// densities, density curves, front-pass LUT, gamut `C_max`) plus the
+    /// fixed-size param uniforms and kernels.
+    pub(super) static_bytes: u64,
+}
+
+impl RequiredChainBuffers {
+    /// The largest single buffer the chain will create.
+    pub(super) fn largest(&self) -> u64 {
+        self.image_bytes.max(self.static_bytes)
+    }
+}
+
+/// Derives the required device buffer sizes from the chain parameters.
+/// Sizes mirror `run_film_chain_inner`: every lookup value is narrowed to
+/// one f32 on upload, so `n` f64 samples become `4n` bytes and an
+/// `[[f64; 3]]` table of `n` rows becomes `12n`.
+pub(super) fn required_chain_buffers(p: &crate::FilmChainParams<'_>) -> RequiredChainBuffers {
+    let f32s = |count: usize| (count as u64).saturating_mul(4);
+    let table = |rows: usize| f32s(rows).saturating_mul(3);
+    let image_bytes = (u64::from(p.image.width) * u64::from(p.image.height)).saturating_mul(3 * 4);
+    // `scan_cd`/`scan_bd` feed from the film or the print spectral data,
+    // matching the `scan_film` selection in `run_film_chain_inner`.
+    let scan_wavelengths = if p.scan_film {
+        p.film_channel_density.len()
+    } else {
+        p.print_channel_density.len()
+    };
+    let tc_lut_bytes = match &p.front {
+        crate::FrontPass::Hanatos2025 { tc_lut, .. } => f32s(tc_lut.data.len()),
+        crate::FrontPass::Mallett2019 { .. } => 0,
+    };
+    let dir_log_bytes = p.dir_couplers.map_or(0, |dp| f32s(dp.log_exposure.len()));
+    let dir_curves_bytes = p
+        .dir_couplers
+        .map_or(0, |dp| table(dp.density_curves_0.len()));
+    let cmax_bytes = p.gamut.map_or(0, |gp| f32s(gp.cmax.len()));
+    let static_bytes = [
+        f32s(p.film_log_exposure.len()),
+        table(p.film_density_curves_normalized.len()),
+        table(p.film_channel_density.len()),
+        f32s(p.film_channel_density.len()),
+        f32s(p.print_illuminant.len()),
+        table(p.print_sensitivity.len()),
+        f32s(p.print_log_exposure.len()),
+        table(p.print_density_curves.len()),
+        table(scan_wavelengths),
+        f32s(scan_wavelengths),
+        f32s(p.viewing_illuminant.len()),
+        f32s(spektrafilm_math::spectral::N_WAVELENGTHS), // cmf_x/y/z
+        tc_lut_bytes,
+        dir_log_bytes,
+        dir_curves_bytes,
+        cmax_bytes,
+        MAX_FIXED_AUX_BYTES,
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0);
+    RequiredChainBuffers {
+        image_bytes,
+        static_bytes,
+    }
+}
+
+/// Compares one required buffer size with the device limits. Every chain
+/// binding is `as_entire_binding()`, so the size is checked against both
+/// the absolute buffer limit and the storage binding limit; returns a
+/// human-readable reason on violation.
+pub(super) fn required_buffer_exceeds_limits(
+    required_bytes: u64,
+    limits: &wgpu::Limits,
+) -> Option<String> {
+    if required_bytes > limits.max_buffer_size {
+        return Some(format!(
+            "required buffer of {required_bytes} bytes exceeds max_buffer_size ({} bytes)",
+            limits.max_buffer_size
+        ));
+    }
+    if required_bytes > u64::from(limits.max_storage_buffer_binding_size) {
+        return Some(format!(
+            "required buffer of {required_bytes} bytes exceeds max_storage_buffer_binding_size \
+             ({} bytes)",
+            limits.max_storage_buffer_binding_size
+        ));
+    }
+    None
+}
+
+/// The failure an explicit GPU request gets when the chain exceeds the
+/// device resource limits: identified, with the CPU route named.
+pub(super) fn explicit_resource_error(reason: &str) -> String {
+    format!(
+        "explicit GPU request exceeds the device resource limits ({reason}); retry with an \
+         explicit CPU request"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FilmChainParams, FrontPass};
+    use spektrafilm_math::image::ImageBuf;
+
+    const MAT3: [[f64; 3]; 3] = [[0.0; 3]; 3];
+
+    /// Minimal chain params: empty lookup tables, no optional stages. The
+    /// image is borrowed so oversized geometries cost no allocation.
+    fn params(image: &ImageBuf) -> FilmChainParams<'_> {
+        FilmChainParams {
+            image,
+            front: FrontPass::Mallett2019 { matrix: MAT3 },
+            film_log_exposure: &[],
+            film_density_curves_normalized: &[],
+            film_gamma: 1.0,
+            film_channel_density: &[],
+            film_base_density: &[],
+            print_illuminant: &[],
+            print_sensitivity: &[],
+            print_normalization_factor: 1.0,
+            print_exposure_scale: 1.0,
+            print_log_exposure: &[],
+            print_density_curves: &[],
+            print_gamma: 1.0,
+            print_channel_density: &[],
+            print_base_density: &[],
+            preflash: [0.0; 3],
+            viewing_illuminant: &[],
+            scan_normalization: 1.0,
+            scan_xyz_to_rgb: &MAT3,
+            white_black_xyz_remap: None,
+            scan_film: false,
+            halation: None,
+            dir_couplers: None,
+            glare: None,
+            gamut: None,
+            unsharp: None,
+            grain_v2: None,
+            scan_output_space: &spektrafilm_math::colorspace::SRGB,
+            camera_lens_blur_px: None,
+            scanner_lens_blur_px: None,
+            highlight_boost: None,
+            density_cpu_stage: None,
+            scan_tail_cpu_stage: None,
+            scan_acquisition_cpu_stage: None,
+            print_acquisition_cpu_stage: None,
+            camera_diffusion_cpu_stage: None,
+            output_transfer: None,
+            magazine: None,
+        }
+    }
+
+    fn synthetic_limits(
+        max_buffer_size: u64,
+        max_storage_buffer_binding_size: u32,
+    ) -> wgpu::Limits {
+        wgpu::Limits {
+            max_buffer_size,
+            max_storage_buffer_binding_size,
+            ..wgpu::Limits::default()
+        }
+    }
+
+    #[test]
+    fn required_buffer_exceeds_limits_accepts_a_comfortable_bound() {
+        let limits = synthetic_limits(1 << 30, 1 << 28);
+        assert_eq!(required_buffer_exceeds_limits(1 << 20, &limits), None);
+    }
+
+    #[test]
+    fn required_buffer_exceeds_limits_rejects_an_oversized_image() {
+        // 20000×20000 → 4.8 GB of image buffers; a synthetic tiny
+        // `max_buffer_size` must reject that before any allocation.
+        let image = ImageBuf {
+            width: 20_000,
+            height: 20_000,
+            data: vec![],
+        };
+        let required = required_chain_buffers(&params(&image));
+        assert_eq!(required.image_bytes, 20_000u64 * 20_000 * 12);
+        assert_eq!(required.largest(), required.image_bytes);
+        let limits = synthetic_limits(1 << 20, u32::MAX);
+        let reason =
+            required_buffer_exceeds_limits(required.largest(), &limits).expect("oversized image");
+        assert!(reason.contains("max_buffer_size"));
+        assert!(reason.contains(&required.largest().to_string()));
+    }
+
+    #[test]
+    fn required_buffer_exceeds_limits_rejects_a_tighter_binding_limit() {
+        // 512×512 → 3 MiB of image buffers: fine for the buffer limit but
+        // over a 1 MiB storage binding limit.
+        let image = ImageBuf {
+            width: 512,
+            height: 512,
+            data: vec![],
+        };
+        let required = required_chain_buffers(&params(&image));
+        assert!(required.largest() > (1 << 20));
+        let limits = synthetic_limits(u64::MAX, 1 << 20);
+        let reason = required_buffer_exceeds_limits(required.largest(), &limits)
+            .expect("tight binding limit");
+        assert!(reason.contains("max_storage_buffer_binding_size"));
+    }
+
+    #[test]
+    fn explicit_resource_error_carries_the_required_wording() {
+        let image = ImageBuf {
+            width: 20_000,
+            height: 20_000,
+            data: vec![],
+        };
+        let required = required_chain_buffers(&params(&image));
+        let limits = synthetic_limits(1 << 20, u32::MAX);
+        let reason = required_buffer_exceeds_limits(required.largest(), &limits).unwrap();
+        let message = explicit_resource_error(&reason);
+        assert!(message.contains("explicit GPU request"));
+        assert!(message.contains("resource"));
+        assert!(message.contains("retry with an explicit CPU request"));
+        // The offending quantity rides along in the reason.
+        assert!(message.contains(&required.largest().to_string()));
+    }
+
+    /// The resident entry must decline before any allocation when a required
+    /// buffer exceeds the device limits: the automatic route falls back to the
+    /// per-stage path, and an explicit request fails with the resource reason
+    /// instead of an uncaptured wgpu-core validation error.
+    #[test]
+    fn oversized_geometry_declines_the_automatic_route_and_fails_an_explicit_request() {
+        use crate::ComputeBackend;
+        let _lock = super::super::observation::TEST_DEVICE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // 20k x 20k x 12 B = 4.8 GB declared: beyond any device limit and never
+        // allocated, because the preflight runs before the first allocation.
+        let image = ImageBuf {
+            width: 20_000,
+            height: 20_000,
+            data: vec![],
+        };
+        let params = params(&image);
+        let automatic = WgpuBackend::new().expect("gpu adapter");
+        assert!(
+            automatic
+                .try_run_film_chain(&params)
+                .expect("the automatic route declines, it does not error")
+                .is_none(),
+            "the automatic route must decline instead of allocating 4.8 GB"
+        );
+        let explicit = WgpuBackend::new_explicit().expect("gpu adapter");
+        let error = explicit
+            .try_run_film_chain(&params)
+            .expect_err("an explicit request must fail");
+        assert!(error.contains("explicit GPU request"), "{error}");
+        assert!(error.contains("resource"), "{error}");
+        assert!(
+            error.contains("retry with an explicit CPU request"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn required_chain_buffers_mirror_the_chain_arithmetic() {
+        let image = ImageBuf {
+            width: 8,
+            height: 4,
+            data: vec![],
+        };
+        let log_exp = [0.0f64; 5];
+        let tc_lut = spektrafilm_math::spectral::TcLut {
+            size: 16,
+            channels: 3,
+            data: vec![0.0; 2048],
+        };
+        let p = FilmChainParams {
+            front: FrontPass::Hanatos2025 {
+                tc_lut: &tc_lut,
+                rgb_to_adapted_xyz: MAT3,
+            },
+            film_log_exposure: &log_exp,
+            ..params(&image)
+        };
+        let required = required_chain_buffers(&p);
+        assert_eq!(required.image_bytes, 8u64 * 4 * 12);
+        // The 2048-entry f64 LUT narrows to 2048 f32 = 8 KiB, beating both
+        // the 5-point log exposure (20 bytes) and the fixed aux bound.
+        assert_eq!(required.static_bytes, 2048u64 * 4);
+    }
+}
