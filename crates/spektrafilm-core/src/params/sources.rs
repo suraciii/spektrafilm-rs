@@ -1483,6 +1483,29 @@ mod tests {
     }
 
     #[test]
+    fn renamed_conversion_paths_keep_the_negative_to_positive_condition() {
+        use super::effects::conditions;
+        for path in [
+            "scanner.negative_conversion_method",
+            "scanner.conversion_brightness_ev",
+            "scanner.conversion_balance_ev",
+            "scanner.conversion_contrast",
+            "scanner.conversion_dmax",
+        ] {
+            let found = conditions(path);
+            assert!(
+                found
+                    .iter()
+                    .any(|c| c.description() == "scanner.scan_output = negative_to_positive"),
+                "missing NegativeToPositive condition for {path}: {:?}",
+                found.iter().map(|c| c.description()).collect::<Vec<_>>()
+            );
+        }
+        // The retired prefix carries no activation condition (hard cut).
+        assert!(conditions("scanner.positive_density_ev").is_empty());
+    }
+
+    #[test]
     fn legacy_conversion_rejections_leave_documents_unchanged() {
         // A mixed print-exposure pair needs the settings group; a non-object
         // there must fail before any mutation instead of panicking.

@@ -667,6 +667,42 @@ mod tests {
     }
 
     #[test]
+    fn print_exposure_factor_folds_degenerate_tracking_onto_the_mode_default() {
+        use crate::params::{PrintExposureEvTracking, PrintExposureMode};
+        use crate::test_support::data_dir;
+        use PrintExposureEvTracking::{Always, FollowMode, Never};
+        use PrintExposureMode::{Auto, Manual};
+        let dir = data_dir();
+        let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
+        let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
+        let factor = |mode: PrintExposureMode, tracking: PrintExposureEvTracking| {
+            let mut params = RuntimeParams::default();
+            params.enlarger.print_exposure_mode = mode;
+            params.settings.print_exposure_ev_tracking = tracking;
+            params.camera.exposure_compensation_ev = 0.5;
+            super::build(film.clone(), print.clone(), params, &dir)
+                .unwrap()
+                .print_exposure_factor
+        };
+        let auto_follow = factor(Auto, FollowMode);
+        let auto_never = factor(Auto, Never);
+        let auto_always = factor(Auto, Always);
+        let manual_follow = factor(Manual, FollowMode);
+        let manual_never = factor(Manual, Never);
+        let manual_always = factor(Manual, Always);
+        // The degenerate tracking choices fold exactly onto the mode
+        // default; they only carry the legacy mixed states.
+        assert_eq!(auto_always, auto_follow);
+        assert_eq!(manual_never, manual_follow);
+        // The manual default applies the print exposure alone.
+        assert_eq!(manual_follow, 1.0);
+        // The tracked branches stay distinct at nonzero camera EV ...
+        assert_ne!(auto_follow, auto_never);
+        // ... and manual+always carries exactly the tracking ratio.
+        assert!((manual_always * auto_never - auto_follow).abs() < 1e-12);
+    }
+
+    #[test]
     fn negative_to_positive_route_rejects_print_and_accepts_direct_film_scan() {
         let mut params = RuntimeParams::default();
         params.scanner.scan_output = "negative_to_positive".into();
