@@ -20,6 +20,19 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     numeric(ui, label, value, min, max, step, decimals, tooltip)
 }
 
+pub(crate) fn param_slider<T>(ui: &mut Ui, value: &mut T, path: &str, tooltip: &str) -> bool
+where
+    T: egui::emath::Numeric,
+{
+    let (min, max, _step, _decimals) = editor_range_for(path);
+    ui.add(egui::Slider::new(
+        value,
+        T::from_f64(min)..=T::from_f64(max),
+    ))
+    .on_hover_text(tooltip)
+    .changed()
+}
+
 /// `param_numeric` whose effective maximum is additionally capped at
 /// `max_cap`; the sublayer-share editor keeps the authored total at one.
 pub(crate) fn param_numeric_capped<T: egui::emath::Numeric>(

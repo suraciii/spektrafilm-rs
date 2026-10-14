@@ -524,6 +524,53 @@ fn diagnostics_gui_modes_capture_reports_select_saved_reports_and_cancel_save() 
     assert!(!canceled.exists());
 }
 
+/// A user-selected report row must stay selected across subsequent renders.
+/// The `user_selected` flag in `retain()` prevents auto-jump from the newest
+/// report to a row the user has explicitly inspected.
+#[test]
+fn diagnostics_user_selected_report_survives_later_renders() {
+    let mut s = session();
+    let h = &mut s.harness;
+    let published = s.directory.path().join("published-reports");
+    std::fs::create_dir(&published).unwrap();
+    h.state_mut()
+        .diagnostics
+        .publish_completed_to(published.clone());
+
+    click(h, "CONFIG");
+    choose_diagnostics_mode(h, "Summary");
+    click(h, "MAIN");
+    render(h, "PREVIEW");
+    click(h, "CONFIG");
+
+    let reports = report_paths(&published);
+    assert_eq!(reports.len(), 1);
+    let first_id = read_report(&reports[0])["operation"]["id"]
+        .as_u64()
+        .unwrap();
+
+    // The single report is auto-selected.
+    assert_eq!(h.state().diagnostics.selected_report_id(), Some(first_id));
+
+    // Simulate the user clicking the older report row (sets user_selected = true).
+    click(h, &format!("#{} {} · {}", first_id, "preview", "succeeded"));
+    assert_eq!(
+        h.state().diagnostics.selected_report_id(),
+        Some(first_id),
+        "user click must preserve the selection"
+    );
+
+    // Trigger another render; the user's selection must survive.
+    click(h, "MAIN");
+    render(h, "PREVIEW");
+    click(h, "CONFIG");
+    assert_eq!(
+        h.state().diagnostics.selected_report_id(),
+        Some(first_id),
+        "selection must persist across a subsequent render"
+    );
+}
+
 fn save_test_png(path: &Path, width: u32, height: u32, value: f64) {
     let image = ImageBuf {
         width,

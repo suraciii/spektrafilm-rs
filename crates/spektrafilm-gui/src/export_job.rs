@@ -157,6 +157,7 @@ impl App {
                 "Export destination already exists: {}. Choose that exact filename to confirm replacement.",
                 out_path.display()
             );
+            self.last_export_error = Some(self.status.clone());
             operation.issue(IssueCategory::Publication, IssueBoundary::Operation);
             self.diagnostics.finish(operation, Outcome::Failed);
             return;
@@ -168,6 +169,7 @@ impl App {
             Ok(params) => params,
             Err(error) => {
                 self.status = format!("Export state error: {error:#}");
+                self.last_export_error = Some(self.status.clone());
                 operation.issue(IssueCategory::Configuration, IssueBoundary::Operation);
                 self.diagnostics.finish(operation, Outcome::Failed);
                 return;
