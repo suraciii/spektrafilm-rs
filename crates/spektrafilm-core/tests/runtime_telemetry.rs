@@ -251,9 +251,7 @@ fn active_v3_field_fence_reports_its_cpu_stage_reason() {
     // assembled density fence: the render stays on the resident chain, the
     // field's CPU stage keeps its published reason, and the fence is not a
     // resident decline.
-    let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-        return;
-    };
+    let gpu = spektrafilm_gpu::test_support::adapter();
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.camera.auto_exposure = false;
@@ -316,9 +314,7 @@ fn gpu_timing_collection_survives_a_host_fence() {
     // the submission that follows the fence must not see a mapped buffer
     // (wgpu rejects that submit with a validation error), and the collected
     // passes stay complete.
-    let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-        return;
-    };
+    let gpu = spektrafilm_gpu::test_support::adapter();
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.camera.auto_exposure = false;
@@ -425,9 +421,7 @@ fn active_fotufilm_engine_reports_its_cpu_stage_reason() {
 
 #[test]
 fn slide_reference_batches_are_calibration_not_image_work() {
-    let Some(backend) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-        return;
-    };
+    let backend = spektrafilm_gpu::test_support::adapter();
     let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();

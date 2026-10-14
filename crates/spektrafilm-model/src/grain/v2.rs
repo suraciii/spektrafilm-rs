@@ -957,9 +957,7 @@ mod tests {
     }
     #[test]
     fn gpu_matches_cpu_reference_when_adapter_is_available() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let image = ImageBuf::from_data(
             37,
             19,

@@ -121,9 +121,7 @@ mod tests {
     /// misses by orders of magnitude on this image).
     #[test]
     fn resident_positive_slide_matches_cpu_per_stage() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -151,9 +149,7 @@ mod tests {
     /// applies them after the acquisition, matching the per-stage order.
     #[test]
     fn active_slide_points_stay_resident_and_match_cpu() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -196,9 +192,7 @@ mod tests {
     /// fallback existed to avoid.
     #[test]
     fn luminance_correction_matches_cpu_on_the_resident_route() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -245,9 +239,7 @@ mod tests {
     /// fence carries it, under the print-route budget.
     #[test]
     fn luminance_correction_matches_cpu_on_the_print_route() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -298,9 +290,7 @@ mod tests {
     fn scanner_lut_acquisition_fence_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -352,9 +342,7 @@ mod tests {
     fn scanner_receiver_acquisition_fence_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -407,9 +395,7 @@ mod tests {
     fn scanner_receiver_luminance_correction_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -476,9 +462,7 @@ mod tests {
     fn enlarger_lut_print_fence_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -532,9 +516,7 @@ mod tests {
     fn enlarger_diffusion_print_fence_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -592,9 +574,7 @@ mod tests {
     fn negative_to_positive_capture_fence_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -656,9 +636,7 @@ mod tests {
     fn spektra_grain_resident_fence_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -716,9 +694,7 @@ mod tests {
     /// resolves to the delivered raster.
     #[test]
     fn dye_grain_density_fence_matches_cpu() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -778,9 +754,7 @@ mod tests {
     /// resident route renders the grain-free reference.
     #[test]
     fn spatial_deactivation_bypasses_the_dye_density_fence() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -837,9 +811,7 @@ mod tests {
     fn input_transfer_decoding_resident_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -881,9 +853,7 @@ mod tests {
     fn langmuir_dir_non_default_donor_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -924,9 +894,7 @@ mod tests {
     /// transmission-domain blur inside the acquisition).
     #[test]
     fn n2p_density_reading_fence_matches_cpu() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -993,9 +961,7 @@ mod tests {
     /// spectral assets; the resident chain runs it as the same fence.
     #[test]
     fn digital_reference_fence_matches_cpu() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1100,9 +1066,7 @@ mod tests {
         };
         // A fresh backend starts with empty caches: this render is the
         // per-frame baseline every render paid before the static cache existed.
-        let Some(fresh) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let fresh = spektrafilm_gpu::test_support::adapter();
         let (first_out, cold_count, cold_bytes, cold_uploads, cold_readbacks, cold_ms) =
             render(&fresh, image.clone());
         let (second_out, warm_count, warm_bytes, warm_uploads, warm_readbacks, warm_ms) =
@@ -1144,9 +1108,7 @@ mod tests {
     #[test]
     fn static_cache_does_not_serve_stale_data_after_a_configuration_change() {
         use spektrafilm_gpu::telemetry::{CollectionMode, ObservationContext};
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let build = |film: &str| {
             let pipeline = Pipeline::new_with_spectral(
@@ -1193,9 +1155,7 @@ mod tests {
     /// `luminance_correction_matches_cpu_on_the_resident_route` demonstrates.
     #[test]
     fn explicit_gpu_request_fails_on_the_scanner_correction_fence() {
-        let Some(gpu) = spektrafilm_gpu::test_support::explicit_adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_ektachrome_100").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1223,9 +1183,7 @@ mod tests {
     /// instead of running the replacement on the host silently.
     #[test]
     fn explicit_gpu_request_fails_on_the_n2p_acquisition_fences() {
-        let Some(gpu) = spektrafilm_gpu::test_support::explicit_adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1262,9 +1220,7 @@ mod tests {
     /// `*_fence_matches_cpu` tests hold that side.
     #[test]
     fn explicit_gpu_request_fails_for_every_fenced_stage() {
-        let Some(gpu) = spektrafilm_gpu::test_support::explicit_adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let dir = data_dir();
         let portra = || crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let ektachrome =
@@ -1398,9 +1354,7 @@ mod tests {
     /// requesting it with an explicit backend errors before publication.
     #[test]
     fn explicit_gpu_request_fails_on_capability_gap() {
-        let Some(gpu) = spektrafilm_gpu::test_support::explicit_adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1436,9 +1390,7 @@ mod tests {
     fn camera_diffusion_fence_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1494,9 +1446,7 @@ mod tests {
     fn output_transfer_encode_pipe_tail_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1543,9 +1493,7 @@ mod tests {
     fn output_transfer_decode_pipe_tail_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1594,9 +1542,7 @@ mod tests {
     fn magazine_pipe_tail_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1646,9 +1592,7 @@ mod tests {
     fn procedural_grain_linear_export_with_magazine_matches_cpu() {
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();
@@ -1699,9 +1643,7 @@ mod tests {
 
     #[test]
     fn resident_negative_matches_cpu_per_stage() {
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();
         let print = crate::profile::load_profile_by_name(&dir, "kodak_portra_endura").unwrap();

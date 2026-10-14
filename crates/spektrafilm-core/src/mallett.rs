@@ -601,9 +601,7 @@ mod parity_tests {
         use spektrafilm_math::image::ImageBuf;
         use spektrafilm_math::precision::from_f64;
 
-        let Some(gpu) = spektrafilm_gpu::test_support::adapter_or_skip() else {
-            return;
-        };
+        let gpu = spektrafilm_gpu::test_support::adapter();
 
         let dir = data_dir();
         let film = crate::profile::load_profile_by_name(&dir, "kodak_portra_400").unwrap();

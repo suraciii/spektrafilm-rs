@@ -1354,12 +1354,10 @@ mod tests {
             data: vec![],
         };
         let params = params(&image);
-        let (Some(automatic), Some(explicit)) = (
-            crate::test_support::adapter_or_skip(),
-            crate::test_support::explicit_adapter_or_skip(),
-        ) else {
-            return;
-        };
+        let (automatic, explicit) = (
+            crate::test_support::adapter(),
+            crate::test_support::explicit_adapter(),
+        );
         assert!(
             automatic
                 .try_run_film_chain(&params)

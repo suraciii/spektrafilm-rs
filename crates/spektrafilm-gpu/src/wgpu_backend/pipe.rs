@@ -499,7 +499,7 @@ mod tests {
         let guard = DEVICE_IN_USE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        crate::test_support::adapter_or_skip().map(|b| (guard, b))
+        Some((guard, crate::test_support::adapter()))
     }
 
     const COLORSPACE_SHADER: &str =
