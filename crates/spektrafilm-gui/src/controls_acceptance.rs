@@ -5,7 +5,7 @@ fn scanner_params() -> RuntimeParams {
     let mut params = RuntimeParams::default();
     params.workflow.route = "input > film > scan".into();
     params.scanner.scan_output = "negative_to_positive".into();
-    params.scanner.positive_density_ev = 0.0;
+    params.scanner.conversion_brightness_ev = 0.0;
     params
 }
 
@@ -46,19 +46,19 @@ mod headless {
         let after_event = harness.state().scanner.clone();
         harness.run();
         assert_eq!(
-            harness.state().scanner.positive_density_ev,
-            after_event.positive_density_ev
+            harness.state().scanner.conversion_brightness_ev,
+            after_event.conversion_brightness_ev
         );
         assert_eq!(
-            harness.state().scanner.positive_balance_ev,
-            after_event.positive_balance_ev
+            harness.state().scanner.conversion_balance_ev,
+            after_event.conversion_balance_ev
         );
     }
 
     #[test]
     fn scanner_keyboard_enter_invalid_blur_and_tuple_channels() {
         let mut harness = Harness::new_ui_state(scanner, scanner_params());
-        let input = harness.get_by_label("positive density ev");
+        let input = harness.get_by_label("brightness");
         assert_eq!(input.role(), egui::accesskit::Role::TextInput);
         assert_eq!(
             harness
@@ -67,57 +67,41 @@ mod headless {
             egui::accesskit::Role::ComboBox
         );
         let id = input.id();
-        replace(&mut harness, "positive density ev", "-");
-        assert_eq!(harness.state().scanner.positive_density_ev, 0.0);
+        replace(&mut harness, "brightness", "-");
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, 0.0);
         assert_eq!(
-            harness
-                .get_by_label("positive density ev")
-                .value()
-                .as_deref(),
+            harness.get_by_label("brightness").value().as_deref(),
             Some("-")
         );
-        harness
-            .get_by_label("positive density ev")
-            .type_text("0.25");
+        harness.get_by_label("brightness").type_text("0.25");
         harness.run();
-        harness
-            .get_by_label("positive density ev")
-            .key_press(Key::Enter);
+        harness.get_by_label("brightness").key_press(Key::Enter);
         harness.run();
-        assert_eq!(harness.state().scanner.positive_density_ev, -0.25);
-        assert!(!harness.get_by_label("positive density ev").is_focused());
-        assert_eq!(harness.get_by_label("positive density ev").id(), id);
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, -0.25);
+        assert!(!harness.get_by_label("brightness").is_focused());
+        assert_eq!(harness.get_by_label("brightness").id(), id);
 
-        replace(&mut harness, "positive density ev", "NaN");
-        assert_eq!(harness.state().scanner.positive_density_ev, -0.25);
+        replace(&mut harness, "brightness", "NaN");
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, -0.25);
         assert_eq!(
-            harness
-                .get_by_label("positive density ev")
-                .value()
-                .as_deref(),
+            harness.get_by_label("brightness").value().as_deref(),
             Some("NaN")
         );
         harness.get_by_label("Lens blur (readout optics)").focus();
         harness.run();
         assert_eq!(
-            harness
-                .get_by_label("positive density ev")
-                .value()
-                .as_deref(),
+            harness.get_by_label("brightness").value().as_deref(),
             Some("-0.250")
         );
 
-        replace(&mut harness, "positive balance ev 1", "0.5");
-        harness
-            .get_by_label("positive balance ev 1")
-            .key_press(Key::Enter);
+        replace(&mut harness, "balance 1", "0.5");
+        harness.get_by_label("balance 1").key_press(Key::Enter);
         harness.run();
-        assert_eq!(harness.state().scanner.positive_balance_ev, [0.0, 0.5, 0.0]);
-        for label in [
-            "positive balance ev 0",
-            "positive balance ev 1",
-            "positive balance ev 2",
-        ] {
+        assert_eq!(
+            harness.state().scanner.conversion_balance_ev,
+            [0.0, 0.5, 0.0]
+        );
+        for label in ["balance 0", "balance 1", "balance 2"] {
             assert_eq!(
                 harness.get_by_label(label).role(),
                 egui::accesskit::Role::TextInput
@@ -128,29 +112,25 @@ mod headless {
     #[test]
     fn scanner_wheel_steps_consumes_scroll_and_preserves_boundaries() {
         let mut harness = Harness::new_ui_state(scanner, scanner_params());
-        wheel(&mut harness, "positive density ev", 120.0);
-        assert!((harness.state().scanner.positive_density_ev - 0.05).abs() < 1e-6);
-        wheel(&mut harness, "positive density ev", -120.0);
-        assert!(harness.state().scanner.positive_density_ev.abs() < 1e-6);
-        replace(&mut harness, "positive density ev", "100");
-        harness
-            .get_by_label("positive density ev")
-            .key_press(Key::Enter);
+        wheel(&mut harness, "brightness", 120.0);
+        assert!((harness.state().scanner.conversion_brightness_ev - 0.05).abs() < 1e-6);
+        wheel(&mut harness, "brightness", -120.0);
+        assert!(harness.state().scanner.conversion_brightness_ev.abs() < 1e-6);
+        replace(&mut harness, "brightness", "100");
+        harness.get_by_label("brightness").key_press(Key::Enter);
         harness.run();
-        assert_eq!(harness.state().scanner.positive_density_ev, 16.0);
-        wheel(&mut harness, "positive density ev", 120.0);
-        assert_eq!(harness.state().scanner.positive_density_ev, 16.0);
-        replace(&mut harness, "positive density ev", "-100");
-        harness
-            .get_by_label("positive density ev")
-            .key_press(Key::Enter);
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        wheel(&mut harness, "brightness", 120.0);
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, 16.0);
+        replace(&mut harness, "brightness", "-100");
+        harness.get_by_label("brightness").key_press(Key::Enter);
         harness.run();
-        wheel(&mut harness, "positive density ev", -120.0);
-        assert_eq!(harness.state().scanner.positive_density_ev, -16.0);
-        wheel(&mut harness, "positive balance ev 2", 120.0);
-        assert!((harness.state().scanner.positive_balance_ev[2] - 0.05).abs() < 1e-6);
-        assert_eq!(harness.state().scanner.positive_balance_ev[0], 0.0);
-        assert_eq!(harness.state().scanner.positive_balance_ev[1], 0.0);
+        wheel(&mut harness, "brightness", -120.0);
+        assert_eq!(harness.state().scanner.conversion_brightness_ev, -16.0);
+        wheel(&mut harness, "balance 2", 120.0);
+        assert!((harness.state().scanner.conversion_balance_ev[2] - 0.05).abs() < 1e-6);
+        assert_eq!(harness.state().scanner.conversion_balance_ev[0], 0.0);
+        assert_eq!(harness.state().scanner.conversion_balance_ev[1], 0.0);
     }
 }
 
@@ -187,19 +167,19 @@ mod layout_snapshots {
             assert_eq!(image.height(), (size.y * dpi) as u32);
             let labels = [
                 "scan output",
-                "positive density ev",
-                "positive balance ev 0",
-                "positive balance ev 1",
-                "positive balance ev 2",
-                "positive contrast",
-                "positive dmax",
+                "brightness",
+                "balance 0",
+                "balance 1",
+                "balance 2",
+                "contrast",
+                "maximum density",
                 "Lens blur (readout optics)",
-                "black point 0",
-                "black point 1",
-                "black point 2",
-                "white point 0",
-                "white point 1",
-                "white point 2",
+                "film-scan black point 0",
+                "film-scan black point 1",
+                "film-scan black point 2",
+                "film-scan white point 0",
+                "film-scan white point 1",
+                "film-scan white point 2",
                 "Unsharp mask (digital sharpening) 0",
                 "Unsharp mask (digital sharpening) 1",
             ];

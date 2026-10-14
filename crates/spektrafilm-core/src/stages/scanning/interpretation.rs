@@ -219,7 +219,8 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::Coupled;
         for receiver in [
             crate::params::ReceiverProfile::LegacyColorimetric,
             crate::params::ReceiverProfile::LabScanApprox,
@@ -288,7 +289,8 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Coupled;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::Coupled;
         params.scanner.unsharp_mask = [0.0; 2];
         params.io.output_cctf_encoding = false;
         params.settings.use_scanner_lut = false;

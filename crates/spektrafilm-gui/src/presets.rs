@@ -992,8 +992,8 @@ mod tests {
         app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Coupled;
         app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.dirty = false;
@@ -1006,8 +1006,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LegacyColorimetric
         );
         assert_eq!(
-            app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Density
+            app.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Density
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1032,8 +1032,8 @@ mod tests {
         assert_eq!(app.parameter_revision, revision);
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Coupled;
         app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.select_film_profile("kodak_ektachrome_100".into());
@@ -1044,8 +1044,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Density
+            app.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Density
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1107,8 +1107,8 @@ mod tests {
         app.params.scanner.scan_output = "negative_to_positive".into();
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LabScanApprox;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Coupled;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Coupled;
         app.params.scanner.auto_setup = spektrafilm_core::params::ScannerAutoSetup::PerFrame;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::LabScan;
         app.params.scanner.finish_strength = 0.0;
@@ -1137,8 +1137,8 @@ mod tests {
         app.params.scanner.white_point = [1.0; 3];
         app.params.scanner.receiver_profile =
             spektrafilm_core::params::ReceiverProfile::LegacyColorimetric;
-        app.params.scanner.positive_interpretation =
-            spektrafilm_core::params::PositiveInterpretation::Separable;
+        app.params.scanner.negative_conversion_method =
+            spektrafilm_core::params::NegativeConversionMethod::Separable;
         app.params.scanner.finish = spektrafilm_core::params::ScannerFinish::Neutral;
         app.params.scanner.finish_strength = 1.0;
         app.params.scanner.scan_output = "direct_scan".into();
@@ -1150,8 +1150,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            app.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Coupled
+            app.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Coupled
         );
         assert_eq!(
             app.params.scanner.auto_setup,
@@ -1180,8 +1180,8 @@ mod tests {
             spektrafilm_core::params::ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            restarted.params.scanner.positive_interpretation,
-            spektrafilm_core::params::PositiveInterpretation::Coupled
+            restarted.params.scanner.negative_conversion_method,
+            spektrafilm_core::params::NegativeConversionMethod::Coupled
         );
         assert_eq!(
             restarted.params.scanner.auto_setup,

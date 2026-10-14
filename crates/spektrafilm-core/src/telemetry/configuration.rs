@@ -234,8 +234,9 @@ pub enum ScanOutput {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PositiveInterpretation {
+pub enum NegativeConversionMethod {
     #[default]
+    Density,
     Separable,
     Coupled,
     DigitalReference,
@@ -277,7 +278,7 @@ pub struct RenderConfiguration {
     #[serde(default)]
     pub scan_output: ScanOutput,
     #[serde(default)]
-    pub positive_interpretation: PositiveInterpretation,
+    pub negative_conversion_method: NegativeConversionMethod,
     #[serde(default)]
     pub receiver: ReceiverConfiguration,
     #[serde(default)]
@@ -332,13 +333,18 @@ impl RenderConfiguration {
             } else {
                 ScanOutput::DirectScan
             },
-            positive_interpretation: match params.scanner.positive_interpretation {
-                crate::params::PositiveInterpretation::Separable => {
-                    PositiveInterpretation::Separable
+            negative_conversion_method: match params.scanner.negative_conversion_method {
+                crate::params::NegativeConversionMethod::Density => {
+                    NegativeConversionMethod::Density
                 }
-                crate::params::PositiveInterpretation::Coupled => PositiveInterpretation::Coupled,
-                crate::params::PositiveInterpretation::DigitalReference => {
-                    PositiveInterpretation::DigitalReference
+                crate::params::NegativeConversionMethod::Separable => {
+                    NegativeConversionMethod::Separable
+                }
+                crate::params::NegativeConversionMethod::Coupled => {
+                    NegativeConversionMethod::Coupled
+                }
+                crate::params::NegativeConversionMethod::DigitalReference => {
+                    NegativeConversionMethod::DigitalReference
                 }
             },
             receiver: ReceiverConfiguration {

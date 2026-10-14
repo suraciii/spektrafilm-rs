@@ -273,9 +273,10 @@ impl WgpuBackend {
         );
 
         let s = scan_xyz_to_rgb;
-        // B&W/slide luminance remap (m, q); z=1 enables it in the shader.
-        // Preserve floating range before gamut compression and destination encoding.
-        let bw = match p.bw_xyz_remap {
+        // Scanner white and black correction luminance remap (m, q); z=1
+        // enables it in the shader. Preserve floating range before gamut
+        // compression and destination encoding.
+        let white_black = match p.white_black_xyz_remap {
             Some((m, q)) => [m as f32, q as f32, 1.0, 0.0],
             None => [1.0, 0.0, 0.0, 0.0],
         };
@@ -287,7 +288,7 @@ impl WgpuBackend {
             col0: [s[0][0] as f32, s[1][0] as f32, s[2][0] as f32, 0.0],
             col1: [s[0][1] as f32, s[1][1] as f32, s[2][1] as f32, 0.0],
             col2: [s[0][2] as f32, s[1][2] as f32, s[2][2] as f32, 0.0],
-            bw,
+            bw: white_black,
         };
         let scan_params_buf = mk_uniform("scan_params", bytemuck::bytes_of(&scan_params));
 

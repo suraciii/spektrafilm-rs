@@ -215,9 +215,11 @@ impl Pipeline {
         let spectral_changed = crate::pipeline_calibration::spectral_changed(&self.params, &params);
         let calibration_changed =
             crate::pipeline_calibration::calibration_changed(&self.params, &params);
-        if self.params.scanner.positive_interpretation != params.scanner.positive_interpretation {
-            self.digital_reference = if params.scanner.positive_interpretation
-                == crate::params::PositiveInterpretation::DigitalReference
+        if self.params.scanner.negative_conversion_method
+            != params.scanner.negative_conversion_method
+        {
+            self.digital_reference = if params.scanner.negative_conversion_method
+                == crate::params::NegativeConversionMethod::DigitalReference
             {
                 Some(Arc::new(
                     crate::digital_reference::DigitalReference::prepare(
@@ -376,8 +378,8 @@ impl Pipeline {
             params.film_render.development_time,
         );
         let calibrated = crate::pipeline_calibration::build(film, print, params, data_dir)?;
-        let digital_reference = if calibrated.params.scanner.positive_interpretation
-            == crate::params::PositiveInterpretation::DigitalReference
+        let digital_reference = if calibrated.params.scanner.negative_conversion_method
+            == crate::params::NegativeConversionMethod::DigitalReference
         {
             Some(Arc::new(
                 crate::digital_reference::DigitalReference::prepare(&calibrated.film, data_dir)?,
@@ -1683,8 +1685,8 @@ mod spectral_invalidation_tests {
         let mut params = baseline.params.clone();
         params.scanner.scan_output = "negative_to_positive".into();
         params.scanner.receiver_profile = crate::params::ReceiverProfile::DigitalReference;
-        params.scanner.positive_interpretation =
-            crate::params::PositiveInterpretation::DigitalReference;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::DigitalReference;
         let reference = baseline.clone().with_params(params).unwrap();
         let image = ImageBuf::from_data(3, 1, vec![from_f64(0.18); 9]);
         let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;

@@ -63,7 +63,7 @@ pub fn expose(
     tc_lut: Option<&TcLut>,
     mallett_core: Option<&[[f64; 3]; 3]>,
     front_illuminant: &[f32],
-    bw_filming_correction: f64,
+    white_black_filming_correction: f64,
     pixel_size_um: f64,
     ae_ev: f64,
 ) -> ImageBuf {
@@ -198,10 +198,10 @@ pub fn expose(
         );
     }
 
-    // B&W / slide scanner exposure correction (Python applies this last,
-    // before the log10). No-op at factor 1.0.
-    if bw_filming_correction != 1.0 {
-        let f = from_f64(bw_filming_correction);
+    // Scanner white and black correction — filming exposure half (Python
+    // applies this last, before the log10). No-op at factor 1.0.
+    if white_black_filming_correction != 1.0 {
+        let f = from_f64(white_black_filming_correction);
         raw.data.par_iter_mut().for_each(|v| *v *= f);
     }
 

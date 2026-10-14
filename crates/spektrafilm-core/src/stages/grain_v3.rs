@@ -59,8 +59,8 @@ pub fn validate_cell_spectral(params: &RuntimeParams) -> Result<bool, String> {
     if !enabled {
         return Ok(false);
     }
-    if params.scanner.positive_interpretation
-        == crate::params::PositiveInterpretation::DigitalReference
+    if params.scanner.negative_conversion_method
+        == crate::params::NegativeConversionMethod::DigitalReference
     {
         return Err(format!(
             "{CELL_SPECTRAL_ENV} does not support Digital Reference; disable the exact-cell diagnostic"

@@ -26,17 +26,133 @@ pub fn non_settable_leaves() -> &'static [(&'static str, &'static str)] {
 /// Rejection leaves the supplied document unchanged. Current complete documents
 /// and sparse sources must use their strict boundary without normalization.
 pub fn normalize_legacy_complete_params(value: &mut Value) -> Result<(), String> {
-    let Some(retired) = value.pointer("/io/output_gamut_compress/lightness_compression") else {
+    // Reject the retired leaf before renaming anything so a rejected
+    // document stays byte-identical.
+    let has_retired = match value.pointer("/io/output_gamut_compress/lightness_compression") {
+        Some(retired) if !retired.is_null() => return Err(retired_lightness_error()),
+        Some(_) => true,
+        None => false,
+    };
+    normalize_legacy_conversion_paths(value, true)?;
+    if has_retired {
+        value
+            .pointer_mut("/io/output_gamut_compress")
+            .and_then(Value::as_object_mut)
+            .expect("retired field belongs to an object")
+            .remove("lightness_compression");
+    }
+    Ok(())
+}
+
+/// Map the pre-v4 conversion-control paths of a complete runtime document
+/// onto their canonical names: the five renamed `scanner` leaves and the
+/// legacy `enlarger` print-exposure pair onto `enlarger.print_exposure_mode`
+/// with `settings.print_exposure_ev_tracking` for the two mixed states.
+/// `settings_allowed` must be false for single-section payloads, which cannot
+/// carry a `settings` group. Only versioned legacy documents may run this
+/// mapping; current documents must fail unknown-field validation instead.
+/// The mapping is idempotent and preserves rendered pixels.
+pub fn normalize_legacy_conversion_paths(
+    value: &mut Value,
+    settings_allowed: bool,
+) -> Result<(), String> {
+    const SCANNER_RENAMES: &[(&str, &str)] = &[
+        ("positive_interpretation", "negative_conversion_method"),
+        ("positive_density_ev", "conversion_brightness_ev"),
+        ("positive_balance_ev", "conversion_balance_ev"),
+        ("positive_contrast", "conversion_contrast"),
+        ("positive_dmax", "conversion_dmax"),
+    ];
+    let Some(object) = value.as_object_mut() else {
         return Ok(());
     };
-    if !retired.is_null() {
-        return Err(retired_lightness_error());
+    // Validate every conflict before mutating so a rejected document stays
+    // byte-identical.
+    if let Some(scanner) = object.get("scanner").and_then(Value::as_object) {
+        for (old, new) in SCANNER_RENAMES {
+            if scanner.contains_key(*old) && scanner.contains_key(*new) {
+                return Err(format!(
+                    "legacy complete params carry both scanner.{old} and scanner.{new}"
+                ));
+            }
+        }
     }
-    value
-        .pointer_mut("/io/output_gamut_compress")
-        .and_then(Value::as_object_mut)
-        .expect("retired field belongs to an object")
-        .remove("lightness_compression");
+    let mut mixed_state = None;
+    if let Some(enlarger) = object.get("enlarger").and_then(Value::as_object) {
+        let has_legacy = enlarger.contains_key("normalize_print_exposure")
+            || enlarger.contains_key("print_exposure_compensation");
+        if has_legacy && enlarger.contains_key("print_exposure_mode") {
+            return Err(
+                "legacy complete params carry both the print exposure pair and \
+                 enlarger.print_exposure_mode; keep exactly one spelling"
+                    .into(),
+            );
+        }
+        if has_legacy {
+            let leaf = |value: Option<&Value>| -> Result<bool, String> {
+                match value {
+                    None => Ok(true),
+                    Some(Value::Bool(b)) => Ok(*b),
+                    Some(_) => Err("legacy enlarger print exposure leaves must be booleans".into()),
+                }
+            };
+            let normalize = leaf(enlarger.get("normalize_print_exposure"))?;
+            let compensation = leaf(enlarger.get("print_exposure_compensation"))?;
+            mixed_state = Some(match (normalize, compensation) {
+                (true, true) => ("auto", None),
+                (false, false) => ("manual", None),
+                (true, false) => ("auto", Some("never")),
+                (false, true) => ("manual", Some("always")),
+            });
+        }
+    }
+    if let Some((_, tracking)) = mixed_state
+        && tracking.is_some()
+        && !settings_allowed
+    {
+        return Err(
+            "the legacy enlarger print exposure pair mixes normalization and \
+             compensation; this document cannot carry \
+             settings.print_exposure_ev_tracking, so set \
+             enlarger.print_exposure_mode explicitly"
+                .into(),
+        );
+    }
+    // A mixed pair writes into `settings`; an existing non-object there
+    // cannot carry the leaf, and this must fail before any mutation.
+    if let Some((_, tracking)) = mixed_state
+        && tracking.is_some()
+        && matches!(object.get("settings"), Some(value) if !value.is_object())
+    {
+        return Err("the legacy enlarger print exposure pair needs the \
+             settings.print_exposure_ev_tracking leaf, but settings is not an \
+             object"
+            .into());
+    }
+    if let Some(scanner) = object.get_mut("scanner").and_then(Value::as_object_mut) {
+        for (old, new) in SCANNER_RENAMES {
+            if let Some(v) = scanner.remove(*old) {
+                scanner.insert((*new).into(), v);
+            }
+        }
+    }
+    if let Some((mode, tracking)) = mixed_state {
+        let enlarger = object
+            .get_mut("enlarger")
+            .and_then(Value::as_object_mut)
+            .expect("legacy pair belongs to the enlarger object");
+        enlarger.remove("normalize_print_exposure");
+        enlarger.remove("print_exposure_compensation");
+        enlarger.insert("print_exposure_mode".into(), mode.into());
+        if let Some(tracking) = tracking {
+            object
+                .entry("settings")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                .as_object_mut()
+                .expect("settings group is an object")
+                .insert("print_exposure_ev_tracking".into(), tracking.into());
+        }
+    }
     Ok(())
 }
 
@@ -872,6 +988,7 @@ mod fotufilm_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::params::{NegativeConversionMethod, PrintExposureMode};
 
     #[test]
     fn scanner_point_sources_reject_bad_channels_and_validate_composed_pairs() {
@@ -1261,6 +1378,84 @@ mod tests {
     }
 
     #[test]
+    fn legacy_conversion_paths_rename_and_preserve_the_four_states() {
+        let scanner_old = serde_json::json!({
+            "positive_interpretation": "coupled",
+            "positive_density_ev": 0.5,
+            "positive_balance_ev": [0.1, 0.0, -0.1],
+            "positive_contrast": 0.9,
+            "positive_dmax": 1.2,
+        });
+        for (pair, mode, tracking) in [
+            (
+                serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": true}),
+                "auto",
+                "follow_mode",
+            ),
+            (
+                serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": false}),
+                "manual",
+                "follow_mode",
+            ),
+            (
+                serde_json::json!({"normalize_print_exposure": true, "print_exposure_compensation": false}),
+                "auto",
+                "never",
+            ),
+            (
+                serde_json::json!({"normalize_print_exposure": false, "print_exposure_compensation": true}),
+                "manual",
+                "always",
+            ),
+            // Sparse legacy documents default each absent leaf to true.
+            (
+                serde_json::json!({"normalize_print_exposure": false}),
+                "manual",
+                "always",
+            ),
+            (
+                serde_json::json!({"print_exposure_compensation": false}),
+                "auto",
+                "never",
+            ),
+        ] {
+            let mut value = serde_json::json!({
+                "scanner": scanner_old.clone(),
+                "enlarger": pair,
+            });
+            normalize_legacy_complete_params(&mut value).unwrap();
+            let params: RuntimeParams = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                params.scanner.negative_conversion_method,
+                NegativeConversionMethod::Coupled
+            );
+            assert_eq!(params.scanner.conversion_brightness_ev, 0.5);
+            assert_eq!(params.scanner.conversion_balance_ev, [0.1, 0.0, -0.1]);
+            assert_eq!(params.scanner.conversion_contrast, 0.9);
+            assert_eq!(params.scanner.conversion_dmax, 1.2);
+            assert_eq!(params.enlarger.print_exposure_mode.as_str(), mode);
+            assert_eq!(
+                params.settings.print_exposure_ev_tracking.as_str(),
+                tracking
+            );
+        }
+        // Idempotent on already-canonical documents.
+        let mut canonical = serde_json::to_value(RuntimeParams::default()).unwrap();
+        normalize_legacy_complete_params(&mut canonical).unwrap();
+        let round: RuntimeParams = serde_json::from_value(canonical).unwrap();
+        assert_eq!(round.enlarger.print_exposure_mode, PrintExposureMode::Auto);
+        // Both spellings together are a hard error, not a silent overwrite.
+        let mut both = serde_json::json!({
+            "enlarger": {
+                "normalize_print_exposure": true,
+                "print_exposure_compensation": false,
+                "print_exposure_mode": "auto",
+            }
+        });
+        assert!(normalize_legacy_complete_params(&mut both).is_err());
+    }
+
+    #[test]
     fn retired_lightness_migration_is_explicit_and_atomic() {
         for algorithm in ["off", "aces_rgc", "oklch"] {
             for retired in [serde_json::json!([0.95, 1.0, 1.6]), Value::Null] {
@@ -1285,6 +1480,32 @@ mod tests {
         assert!(
             ParameterEdits::parse("io.output_gamut_compress.lightness_compression=null").is_err()
         );
+    }
+
+    #[test]
+    fn legacy_conversion_rejections_leave_documents_unchanged() {
+        // A mixed print-exposure pair needs the settings group; a non-object
+        // there must fail before any mutation instead of panicking.
+        let mut value = serde_json::json!({
+            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": false},
+            "settings": 42
+        });
+        let original = value.clone();
+        let error = normalize_legacy_conversion_paths(&mut value, true).unwrap_err();
+        assert!(error.contains("settings"), "{error}");
+        assert_eq!(value, original);
+
+        // Combining legacy conversion paths with a rejected retired lightness
+        // leaf must fail atomically, before any rename.
+        let mut both = serde_json::json!({
+            "scanner": {"positive_density_ev": 0.4},
+            "enlarger": {"normalize_print_exposure": true, "print_exposure_compensation": true},
+            "io": {"output_gamut_compress": {"lightness_compression": [0.95, 1.0, 1.6]}}
+        });
+        let original = both.clone();
+        let error = normalize_legacy_complete_params(&mut both).unwrap_err();
+        assert!(error.contains("lightness_compression"), "{error}");
+        assert_eq!(both, original);
     }
 
     #[test]

@@ -229,8 +229,8 @@ pub(crate) fn cmd_fit(args: &FitArgs, matches: &clap::ArgMatches) -> Result<()> 
         let path = args.out_overlay.as_ref().expect("checked before the fit");
         let overlay = json!({
             "scanner": {
-                "positive_density_ev": fitted_tone.positive_density_ev,
-                "positive_balance_ev": fitted_tone.positive_balance_ev,
+                "conversion_brightness_ev": fitted_tone.conversion_brightness_ev,
+                "conversion_balance_ev": fitted_tone.conversion_balance_ev,
             }
         });
         write_json(path, &overlay)?;

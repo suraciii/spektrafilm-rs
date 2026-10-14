@@ -131,14 +131,22 @@
     ],
     "gamma_interlayer_g_to_rb": [
       0.2227,
-      0.4340
+      0.434
     ],
     "gamma_interlayer_b_to_rg": [
       0.1829,
       0.1799
     ],
-    "langmuir_donor_k_rgb": [1.0, 1.0, 1.0],
-    "langmuir_receiver_k_rgb": [1.0, 1.0, 1.0],
+    "langmuir_donor_k_rgb": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "langmuir_receiver_k_rgb": [
+      1.0,
+      1.0,
+      1.0
+    ],
     "diffusion_size_um": 20.0,
     "diffusion_tail_um": 200.0,
     "diffusion_tail_weight": 0.03
@@ -246,20 +254,28 @@
     "black_correction": false,
     "white_level": 0.98,
     "black_level": 0.01,
-    "black_point": [0.0, 0.0, 0.0],
-    "white_point": [1.0, 1.0, 1.0],
-    "unsharp_mask": [
-      0.7,
-      0.7
-    ],
-    "positive_density_ev": 0.8781766618,
-    "positive_balance_ev": [
+    "black_point": [
       0.0,
       0.0,
       0.0
     ],
-    "positive_contrast": 0.7355140005821664,
-    "positive_dmax": 1.5625841465572565
+    "white_point": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "unsharp_mask": [
+      0.7,
+      0.7
+    ],
+    "conversion_brightness_ev": 0.8781766618,
+    "conversion_balance_ev": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "conversion_contrast": 0.7355140005821664,
+    "conversion_dmax": 1.5625841465572565
   },
   "input_gamut_compress": {
     "active": true,
@@ -324,7 +340,7 @@
     "output_interpolation": "spline36"
   },
   "rust": {
-    "version": 2,
+    "version": 3,
     "save_bit_depth": 8,
     "export_format": "png",
     "jpeg_quality": 95,

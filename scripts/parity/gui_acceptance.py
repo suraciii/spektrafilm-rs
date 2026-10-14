@@ -1587,7 +1587,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
         baseline_state = json.loads(scan_before.read_text())
         baseline_scan = {'scanner': baseline_state.get('scanner', {}),
                          'glare': baseline_state.get('glare', {})}
-        driver.click('black and white correction')
+        driver.click('white and black correction')
         driver.rendered('scan-for-print-on')
         scan_on = root / 'scan-for-print-on.json'
         driver.state_action('Save current to file', scan_on, True)
@@ -1599,7 +1599,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                 enabled_scan['scanner'].get('black_correction') is True and
                 enabled_scan['glare'].get('active') is False,
                 'Scan-for-print did not force correction/glare settings')
-        driver.click('black and white correction')
+        driver.click('white and black correction')
         driver.rendered('scan-for-print-off')
         scan_after = root / 'scan-for-print-after.json'
         driver.state_action('Save current to file', scan_after, True)
@@ -1616,7 +1616,7 @@ def accept_gui(gui, exporter, source, raw, evidence, environment):
                                'restored': restored_scan})
         driver.state_action('Load from file', scan_on)
         driver.rendered('scan-for-print-loaded-state')
-        driver.click('black and white correction')
+        driver.click('white and black correction')
         driver.rendered('scan-for-print-loaded-toggle')
         loaded_toggle = root / 'scan-for-print-loaded-toggle.json'
         driver.state_action('Save current to file', loaded_toggle, True)

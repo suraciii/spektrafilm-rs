@@ -18,7 +18,7 @@
 //! `settings` and `debug` contain all the switching logic for the digesting.
 
 use crate::neutral_filters::NeutralFilters;
-use crate::params::RuntimeParams;
+use crate::params::{PrintExposureEvTracking, RuntimeParams};
 use crate::profile::Profile;
 
 type HalationPreset = ((&'static str, &'static str), ([f64; 3], [f64; 3]));
@@ -117,7 +117,7 @@ fn apply_debug_constraints(params: &mut RuntimeParams) {
         // exposure control
         params.camera.auto_exposure = false;
         params.camera.exposure_compensation_ev = 0.0;
-        params.enlarger.print_exposure_compensation = false;
+        params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Never;
         params.enlarger.print_exposure = 1.0;
         // Highlight boost normalizes by the image-wide max (np.max(x)), so it
         // is an image-global transform — the same input value maps to
@@ -459,7 +459,7 @@ mod tests {
         params.camera.auto_exposure = true;
         params.camera.exposure_compensation_ev = 2.5;
         params.enlarger.print_exposure = 3.0;
-        params.enlarger.print_exposure_compensation = true;
+        params.settings.print_exposure_ev_tracking = PrintExposureEvTracking::Always;
         params.film_render.halation.boost_ev = 1.5;
         params.scanner.white_correction = true;
         params.scanner.black_correction = true;
@@ -486,7 +486,10 @@ mod tests {
         );
         assert!(!d.camera.auto_exposure);
         assert_eq!(d.camera.exposure_compensation_ev, 0.0);
-        assert!(!d.enlarger.print_exposure_compensation);
+        assert_eq!(
+            d.settings.print_exposure_ev_tracking,
+            PrintExposureEvTracking::Never
+        );
         assert_eq!(d.enlarger.print_exposure, 1.0);
         assert_eq!(d.film_render.halation.boost_ev, 0.0);
         assert!(!d.scanner.white_correction);

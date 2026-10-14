@@ -13,7 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Numerical model revision shared by image, recipe and LUT provenance.
-pub const MODEL_VERSION: &str = "material_controls_optical_v1";
+/// `conversion_language_v1` renames the conversion-control paths
+/// (`scanner.negative_conversion_method`, `scanner.conversion_*`,
+/// `enlarger.print_exposure_mode`, `settings.print_exposure_ev_tracking`)
+/// without changing rendered pixels.
+pub const MODEL_VERSION: &str = "conversion_language_v1";
 
 /// Last-call wall-clock timings exposed by the runtime facade.
 pub type Timings = BTreeMap<String, f64>;
@@ -656,7 +660,7 @@ mod tests {
     #[test]
     fn per_frame_setup_accepts_small_valid_positive_density() {
         let mut params = scanner_params();
-        params.scanner.positive_dmax = 1e-18;
+        params.scanner.conversion_dmax = 1e-18;
         let runtime = Runtime::from_stocks(
             "kodak_portra_400",
             "kodak_portra_endura",

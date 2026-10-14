@@ -76,7 +76,7 @@ impl Condition {
             Self::NegativeToPositive => "scanner.scan_output = negative_to_positive",
             Self::LabScanFinish => "scanner.finish = lab_scan",
             Self::FilmScan => "film-scan route",
-            Self::DigitalReference => "scanner.positive_interpretation = digital_reference",
+            Self::DigitalReference => "scanner.negative_conversion_method = digital_reference",
             Self::MagazineActive => "magazine_print_color.active = true",
             Self::MagazineStrength => "magazine_print_color.strength > 0",
             Self::FilmDevelopment => {
@@ -141,8 +141,8 @@ impl Condition {
             Self::LabScanFinish => p.scanner.finish == crate::params::ScannerFinish::LabScan,
             Self::FilmScan => p.io.scan_film || p.workflow.route == "input > convert-film > scan",
             Self::DigitalReference => {
-                p.scanner.positive_interpretation
-                    == crate::params::PositiveInterpretation::DigitalReference
+                p.scanner.negative_conversion_method
+                    == crate::params::NegativeConversionMethod::DigitalReference
             }
             Self::MagazineActive => p.magazine_print_color.active,
             Self::MagazineStrength => p.magazine_print_color.strength > 0.0,

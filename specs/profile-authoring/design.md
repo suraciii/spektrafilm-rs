@@ -32,13 +32,13 @@ One evaluation renders the assembled chart image through a calibrated runtime an
 The optimizer is a bounded least-squares solver over the residual vector of the objective.
 
 - Finite-difference Jacobian, forward differences, step `0.05` for surface coefficients and `0.01` for tone coefficients.
-- Trust-region behavior over a bounded parameter box: surface coefficients in `[-40, 40]`, `positive_density_ev` in `[-4, 4]`, `positive_balance_ev` entries in `[-2, 2]`.
+- Trust-region behavior over a bounded parameter box: surface coefficients in `[-40, 40]`, `conversion_brightness_ev` in `[-4, 4]`, `conversion_balance_ev` entries in `[-2, 2]`.
 - At most 15 accepted parameter vectors; the iteration count is the number of accepted vectors. The command must report the iteration and evaluation counts.
 - Finite differences are independent and may run in parallel on the rayon pool. Parallelism must not change the result.
 
 ## Tone gauge
 
-The negative-conversion offset of every channel is `positive_density_ev + positive_balance_ev[channel]`. A common offset added to `positive_density_ev` and subtracted from every `positive_balance_ev` channel therefore leaves the scan unchanged, and the four tone values are redundant by one degree of freedom. A tone fit pins `positive_balance_ev[1]` to its resolved value, so the fitted tone is the unique representative of its equivalence class, and records the pinned channel and value in the report.
+The negative-conversion offset of every channel is `conversion_brightness_ev + conversion_balance_ev[channel]`. A common offset added to `conversion_brightness_ev` and subtracted from every `conversion_balance_ev` channel therefore leaves the scan unchanged, and the four tone values are redundant by one degree of freedom. A tone fit pins `conversion_balance_ev[1]` to its resolved value, so the fitted tone is the unique representative of its equivalence class, and records the pinned channel and value in the report.
 
 ## Cross validation
 

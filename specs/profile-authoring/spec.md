@@ -31,9 +31,9 @@ A fit must fail with an actionable error when the two patch tables differ in len
 `--fit <GROUPS>` selects the parameter groups to fit. Groups are comma-separated and applied together in one optimization.
 
 - `surface`: the `surface_terms` leading non-constant terms of every layer of the film profile's `hanatos2025_adaptation_surface_params`, that is `layers * terms` values. The fit replaces the whole surface: the fitted terms carry the fitted values and every other term is zero. The fit must not use the profile's stored surface values as a starting surface.
-- `tone`: `scanner.positive_density_ev` and the three `scanner.positive_balance_ev` values. `scanner.positive_contrast` and `scanner.positive_dmax` keep the values of the chain configuration.
+- `tone`: `scanner.conversion_brightness_ev` and the three `scanner.conversion_balance_ev` values. `scanner.conversion_contrast` and `scanner.conversion_dmax` keep the values of the chain configuration.
 
-A common offset added to `positive_density_ev` and subtracted from every `positive_balance_ev` channel leaves the converted image unchanged, so the four values are redundant by one degree of freedom. The fit must pin `positive_balance_ev[1]` to its resolved value and search only the other three, and the report must record the pinned channel and its value. Without the pin, identical data would fit equivalent but different tones.
+A common offset added to `conversion_brightness_ev` and subtracted from every `conversion_balance_ev` channel leaves the converted image unchanged, so the four values are redundant by one degree of freedom. The fit must pin `conversion_balance_ev[1]` to its resolved value and search only the other three, and the report must record the pinned channel and its value. Without the pin, identical data would fit equivalent but different tones.
 
 The default is `surface`. `--surface-terms <N>` sets the term count of the surface group and defaults to 9.
 
