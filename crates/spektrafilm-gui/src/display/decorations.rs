@@ -1,6 +1,7 @@
 //! Nine-layer Polaroid development animation and the pinned virtual paper
 //! back: watermark lattice, rotation and seed-zero paper glare.
 use super::raster::DisplayRaster;
+use rayon::prelude::*;
 /// Prepared nine-layer chemical development, using the pinned Python formulas.
 pub struct PolaroidState {
     size: [usize; 2],
@@ -15,22 +16,35 @@ impl PolaroidState {
         };
         let density: Vec<[f32; 3]> = image
             .rgb
-            .iter()
+            .par_iter()
             .map(|p| p.map(|v| (-(v / divisor).clamp(1e-4, 1.0).powf(2.2).ln()).clamp(0.0, 6.0)))
             .collect();
-        let mut dmax = [0.0_f32; 3];
-        let mut cmax = [0.0_f32; 3];
-        let mut nmax = 0.0_f32;
-        for d in &density {
-            let n = d.iter().copied().fold(f32::INFINITY, f32::min);
-            nmax = nmax.max(n);
-            for c in 0..3 {
-                dmax[c] = dmax[c].max(d[c]);
-                cmax[c] = cmax[c].max(d[c] - n);
-            }
-        }
+        let (dmax, cmax, nmax) = density
+            .par_iter()
+            .fold(
+                || ([0.0_f32; 3], [0.0_f32; 3], 0.0_f32),
+                |(mut dmax, mut cmax, mut nmax), d| {
+                    let n = d.iter().copied().fold(f32::INFINITY, f32::min);
+                    nmax = nmax.max(n);
+                    for c in 0..3 {
+                        dmax[c] = dmax[c].max(d[c]);
+                        cmax[c] = cmax[c].max(d[c] - n);
+                    }
+                    (dmax, cmax, nmax)
+                },
+            )
+            .reduce(
+                || ([0.0_f32; 3], [0.0_f32; 3], 0.0_f32),
+                |(dmax, cmax, nmax), (dmax_other, cmax_other, nmax_other)| {
+                    (
+                        std::array::from_fn(|c| dmax[c].max(dmax_other[c])),
+                        std::array::from_fn(|c| cmax[c].max(cmax_other[c])),
+                        nmax.max(nmax_other),
+                    )
+                },
+            );
         let layers = density
-            .iter()
+            .par_iter()
             .map(|d| {
                 let n = d.iter().copied().fold(f32::INFINITY, f32::min);
                 let ch = d.map(|v| v - n);
@@ -71,9 +85,9 @@ impl PolaroidState {
     }
     pub fn frame(&self, t: f32) -> DisplayRaster {
         let k = layer_coefficients(t);
-        let rgb = self
+        let rgb: Vec<[f32; 3]> = self
             .layers
-            .iter()
+            .par_iter()
             .map(|l| {
                 std::array::from_fn(|c| {
                     let d = (0..9).map(|i| k[i] * l[i][c]).sum::<f32>().clamp(0.0, 8.0);
@@ -83,7 +97,7 @@ impl PolaroidState {
             .collect();
         DisplayRaster {
             size: self.size,
-            rgb,
+            rgb: rgb.into(),
         }
     }
 }
@@ -447,4 +461,39 @@ pub(crate) fn virtual_paper_back_without_watermark(size: [usize; 2]) -> DisplayR
         })
         .collect();
     DisplayRaster { size, rgb }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the output bits of the nine development frames. The nine-layer
+    /// formulas are the pinned Python ones, and the parallel iteration in
+    /// `PolaroidState` must not move a single float, so this hash fails on any
+    /// numerical drift in the layers, the coefficients, or the frame.
+    #[test]
+    fn development_frames_keep_the_pinned_formulas() {
+        let (w, h) = (301usize, 197usize);
+        let rgb: Vec<[f32; 3]> = (0..w * h)
+            .map(|i| {
+                let v = (i % 251) as f32 / 255.0;
+                [v, (v * 0.83).fract(), 1.0 - v]
+            })
+            .collect();
+        let raster = DisplayRaster::new([w, h], rgb).unwrap();
+        let state = PolaroidState::new(&raster);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for step in 0..=8 {
+            let frame = state.frame(step as f32 / 8.0);
+            assert_eq!(frame.size, [w, h]);
+            for pixel in frame.rgb.iter() {
+                for channel in pixel {
+                    for byte in channel.to_bits().to_le_bytes() {
+                        hash = (hash ^ byte as u64).wrapping_mul(0x1000_0000_01b3);
+                    }
+                }
+            }
+        }
+        assert_eq!(hash, 0x520f_1920_404c_129f);
+    }
 }
