@@ -303,10 +303,11 @@ fn print_page_chemistry_base_glare_and_diffusion_controls_accept_edits_and_persi
     });
 }
 
-// ADVANCED page: spectral upsampling, Magazine finish strength and the
+// ADVANCED + PRINT pages: spectral upsampling, Magazine finish strength and the
 // input/output gamut compression strengths (never their algorithm selectors).
 #[test]
-fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_through_save_load() {
+fn advanced_and_print_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_through_save_load()
+ {
     let mut s = session();
     let h = &mut s.harness;
     click(h, "ADVANCED");
@@ -331,11 +332,6 @@ fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_t
     assert_eq!(h.state().params.settings.spectral_gaussian_blur, 2.5);
     click(h, "Spectral upsampling");
 
-    click(h, "Magazine finish color");
-    edit(h, "strength", "0.75");
-    assert_eq!(h.state().params.magazine_print_color.strength, 0.75);
-    click(h, "Magazine finish color");
-
     click(h, "Input gamut compress");
     let compress_active = h.state().params.io.input_gamut_compress.active;
     click(h, "active");
@@ -358,6 +354,12 @@ fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_t
     assert_eq!(h.state().params.io.output_gamut_compress.knee[2], 4.5);
     click(h, "Output gamut compress");
 
+    click(h, "PRINT");
+    click(h, "Magazine finish color");
+    edit(h, "strength", "0.75");
+    assert_eq!(h.state().params.magazine_print_color.strength, 0.75);
+    click(h, "Magazine finish color");
+
     click(h, "Magazine finish color");
     let before_reject = h.state().params.clone();
     edit(h, "strength", "not-a-number");
@@ -366,7 +368,7 @@ fn advanced_page_spectral_magazine_and_gamut_controls_accept_edits_and_persist_t
     click(h, "Magazine finish color");
 
     save_mutate_and_reload(&mut s, "advanced-page.json", |h| {
-        click(h, "ADVANCED");
+        click(h, "PRINT");
         click(h, "Magazine finish color");
         edit(h, "strength", "0.25");
         assert_eq!(h.state().params.magazine_print_color.strength, 0.25);
