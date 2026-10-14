@@ -16,6 +16,7 @@ pub(crate) fn sections(
                 flags.runtime_changed |= param_slider(ui, &mut params.print_render.glare.percent, "print_render.glare.percent", "Percentage of the glare light (typically 0.1-0.25)");
                 flags.runtime_changed |= param_numeric(ui, "roughness", &mut params.print_render.glare.roughness, "print_render.glare.roughness", "Roughness of the glare light (0-1)");
                 flags.runtime_changed |= param_slider(ui, &mut params.print_render.glare.roughness, "print_render.glare.roughness", "Roughness of the glare light (0-1)");
+                flags.runtime_changed |= param_numeric(ui, "blur", &mut params.print_render.glare.blur, "print_render.glare.blur", "Sigma of gaussian blur in pixels for the glare");
             });
         });
     }
