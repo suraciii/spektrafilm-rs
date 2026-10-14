@@ -61,7 +61,7 @@ pub(super) fn build_halation_state(
     // ── Scatter blurs (core → buf_c, tail → buf_d) ─────────────────────
     let scatter_blurs = vec![
         blur::make_blur_job(
-            device,
+            backend,
             hp.scatter_core_px,
             width,
             height,
@@ -73,7 +73,7 @@ pub(super) fn build_halation_state(
             &blur_pipe_v,
         ),
         blur::make_blur_job(
-            device,
+            backend,
             hp.scatter_tail_px,
             width,
             height,
@@ -182,7 +182,7 @@ pub(super) fn build_halation_state(
     for (k, &wk) in decay.iter().enumerate() {
         let sigma_k = hp.halation_first_sigma_px * ((k as f32) + 1.0).sqrt();
         halation_blurs.push(blur::make_blur_job(
-            device,
+            backend,
             sigma_k,
             width,
             height,

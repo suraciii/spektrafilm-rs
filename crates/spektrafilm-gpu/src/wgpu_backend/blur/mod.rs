@@ -53,7 +53,7 @@ pub(super) struct BlurJob {
 /// params buffer, and bind groups.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn make_blur_job(
-    device: &ObservedDevice,
+    backend: &WgpuBackend,
     sigma: f32,
     width: u32,
     height: u32,
@@ -64,14 +64,19 @@ pub(super) fn make_blur_job(
     blur_pipe_h: &CachedPipelineRef,
     blur_pipe_v: &CachedPipelineRef,
 ) -> BlurJob {
+    let device = &backend.device;
     let sigma = sigma.max(0.01);
     let (radius, kernel_f32) = gaussian_kernel(sigma);
 
-    let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{label}_blur_kernel")),
-        contents: bytemuck::cast_slice(&kernel_f32),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    // The weights depend only on sigma, so the kernel comes from the pipe's
+    // cross-frame cache and every frame after the first reuses it (pipe
+    // architecture F3a). The params carry the image size, so they stay
+    // per-frame.
+    let kernel_buf = backend.pipe.static_buffer(
+        &format!("{label}_blur_kernel"),
+        bytemuck::cast_slice(&kernel_f32),
+        wgpu::BufferUsages::STORAGE,
+    );
     let params = BlurParams {
         width,
         height,
@@ -172,7 +177,7 @@ pub(super) fn build_simple_blur_state(
     let blur_pipe_v = backend.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), &BLUR_LAYOUT);
 
     let blur = make_blur_job(
-        device,
+        backend,
         sigma,
         width,
         height,
@@ -263,16 +268,7 @@ impl WgpuBackend {
         let h_pipe = self.cached_pipeline(include_str!("gaussian_blur_h.wgsl"), &BLUR_LAYOUT);
         let v_pipe = self.cached_pipeline(include_str!("gaussian_blur_v.wgsl"), &BLUR_LAYOUT);
         let blur = make_blur_job(
-            &self.device,
-            sigma,
-            w,
-            h,
-            &buf_in,
-            &buf_mid,
-            &buf_out,
-            "blur",
-            &h_pipe,
-            &v_pipe,
+            self, sigma, w, h, &buf_in, &buf_mid, &buf_out, "blur", &h_pipe, &v_pipe,
         );
 
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -379,7 +375,7 @@ impl WgpuBackend {
             .enumerate()
             .map(|(i, &sigma)| {
                 make_blur_job(
-                    &self.device,
+                    self,
                     sigma,
                     w,
                     h,

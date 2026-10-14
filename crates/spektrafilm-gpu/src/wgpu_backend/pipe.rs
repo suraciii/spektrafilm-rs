@@ -34,11 +34,92 @@ struct ReadbackPool {
 /// accumulate device memory across frames.
 const READBACK_POOL_MAX_BUFFERS: usize = 8;
 
+/// Cap the cross-frame static-resource cache so a parameter sweep (every frame
+/// a new configuration) cannot grow device memory or the host-side content
+/// copies without bound. Coldest entries are evicted first; eviction is safe
+/// because wgpu keeps a buffer alive while a submitted command buffer still
+/// uses it.
+const STATIC_CACHE_MAX_ENTRIES: usize = 64;
+const STATIC_CACHE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+struct StaticEntry {
+    key: u64,
+    contents: Vec<u8>,
+    buffer: wgpu::Buffer,
+}
+
+/// Cross-frame cache for device buffers whose contents depend only on the
+/// configuration, never on the frame or the image: spectral lookups, density
+/// curves, uniform blocks. The key hashes the usage flags and the contents, and
+/// a hit additionally compares the bytes, so a hash collision cannot serve a
+/// wrong buffer. Owned by the pipe, so derived backends that share the pipe
+/// share these buffers too (pipe architecture F3a).
+#[derive(Default)]
+pub(super) struct StaticBufferCache {
+    entries: Mutex<Vec<StaticEntry>>,
+}
+
+impl StaticBufferCache {
+    fn key(usage: wgpu::BufferUsages, contents: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        usage.bits().hash(&mut hasher);
+        contents.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Return a device buffer holding `contents`. `label` applies to the miss
+    /// that creates the buffer; a later hit keeps the first label.
+    pub(super) fn get_or_create(
+        &self,
+        device: &ObservedDevice,
+        label: &str,
+        contents: &[u8],
+        usage: wgpu::BufferUsages,
+    ) -> wgpu::Buffer {
+        let key = Self::key(usage, contents);
+        let mut entries = self.entries.lock();
+        if let Some(position) = entries
+            .iter()
+            .position(|entry| entry.key == key && entry.contents == contents)
+        {
+            let entry = entries.remove(position);
+            let buffer = entry.buffer.clone();
+            entries.insert(0, entry);
+            return buffer;
+        }
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents,
+            usage,
+        });
+        entries.insert(
+            0,
+            StaticEntry {
+                key,
+                contents: contents.to_vec(),
+                buffer: buffer.clone(),
+            },
+        );
+        while entries.len() > STATIC_CACHE_MAX_ENTRIES
+            || entries
+                .iter()
+                .map(|entry| entry.contents.len() as u64)
+                .sum::<u64>()
+                > STATIC_CACHE_MAX_BYTES
+        {
+            entries.pop();
+        }
+        buffer
+    }
+}
+
 pub(super) struct GpuPipe {
     device: ObservedDevice,
     queue: ObservedQueue,
     cache: std::sync::Arc<PipelineCache>,
     pool: std::sync::Arc<Mutex<ReadbackPool>>,
+    static_cache: std::sync::Arc<StaticBufferCache>,
 }
 
 impl GpuPipe {
@@ -52,20 +133,36 @@ impl GpuPipe {
             queue,
             cache,
             pool: std::sync::Arc::new(Mutex::new(ReadbackPool::default())),
+            static_cache: std::sync::Arc::new(StaticBufferCache::default()),
         }
     }
 
-    /// Derive an observed pipe sharing this pipe's pipeline cache and
-    /// buffer pool. Observed stage instances rebind the backend per stage;
-    /// sharing the pool keeps readback buffers reusable across those
-    /// rebinds and across frames (pipe architecture S5).
+    /// Derive an observed pipe sharing this pipe's pipeline cache, buffer pool,
+    /// and cross-frame static-resource cache. Observed stage instances rebind
+    /// the backend per stage; sharing them keeps readback buffers reusable
+    /// across those rebinds and across frames, and keeps configuration-invariant
+    /// device buffers resident (pipe architecture S5/F3a).
     pub(super) fn with_observed(&self, device: ObservedDevice, queue: ObservedQueue) -> Self {
         Self {
             device,
             queue,
             cache: std::sync::Arc::clone(&self.cache),
             pool: std::sync::Arc::clone(&self.pool),
+            static_cache: std::sync::Arc::clone(&self.static_cache),
         }
+    }
+
+    /// A device buffer holding configuration-invariant contents, reused across
+    /// frames (and across every backend that shares this pipe) when the same
+    /// bytes were uploaded before.
+    pub(super) fn static_buffer(
+        &self,
+        label: &str,
+        contents: &[u8],
+        usage: wgpu::BufferUsages,
+    ) -> wgpu::Buffer {
+        self.static_cache
+            .get_or_create(&self.device, label, contents, usage)
     }
 
     /// Host-image dispatch for the per-stage route. Semantics, including

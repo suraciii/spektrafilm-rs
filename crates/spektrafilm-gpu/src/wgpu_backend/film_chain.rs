@@ -112,22 +112,16 @@ impl WgpuBackend {
             })
         };
 
-        // Static (LUT) buffers — uploaded once.
+        // Static (LUT) buffers — configuration-invariant, so they are served
+        // from the pipe's cross-frame cache: uploaded once per configuration
+        // instead of once per frame (pipe architecture F3a).
         let mk_storage = |label: &str, bytes: &[u8]| {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(label),
-                    contents: bytes,
-                    usage: wgpu::BufferUsages::STORAGE,
-                })
+            self.pipe
+                .static_buffer(label, bytes, wgpu::BufferUsages::STORAGE)
         };
         let mk_uniform = |label: &str, bytes: &[u8]| {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(label),
-                    contents: bytes,
-                    usage: wgpu::BufferUsages::UNIFORM,
-                })
+            self.pipe
+                .static_buffer(label, bytes, wgpu::BufferUsages::UNIFORM)
         };
 
         // ── Pre-compute every static GPU-side buffer ─────────────────────

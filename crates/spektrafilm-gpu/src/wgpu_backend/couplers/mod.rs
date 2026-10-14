@@ -173,7 +173,7 @@ pub(super) fn build_dir_state(
     // horizontal mid buffer, free once the matmul has run.
     let make_blur = |sigma: f32, src: &wgpu::Buffer, out: &wgpu::Buffer, label: &str| -> BlurJob {
         blur::make_blur_job(
-            device,
+            backend,
             sigma,
             width,
             height,

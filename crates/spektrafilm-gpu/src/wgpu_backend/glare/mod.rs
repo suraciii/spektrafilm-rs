@@ -97,7 +97,7 @@ pub(super) fn build_glare_state(
     );
     let blur = (gp.blur_px > 0.0).then(|| {
         blur::make_blur_job(
-            device,
+            backend,
             gp.blur_px.max(0.01),
             width,
             height,

@@ -43,8 +43,9 @@ pixelpipe. The mappings are:
   design holds one `wgpu::ComputePipeline` per shader identity for the process
   lifetime.
 - darktable reuses pixelpipe buffers across runs through its state-hashed
-  cache. This design reuses a bounded buffer pool across frames. Hash-keyed
-  stage caching is a separate later revision, not part of this design.
+  cache. This design reuses a bounded cross-frame cache for
+  configuration-invariant buffers. Hash-keyed stage caching is a separate later
+  revision, not part of this design.
 
 Two darktable mechanisms are not adopted.
 
@@ -62,11 +63,18 @@ parameter snapshot per operation, so commit-style layering adds no safety.
 ### Pipe object
 
 `GpuPipe` lives in `spektrafilm-gpu` and is the internal execution carrier. It
-owns a bounded buffer pool of ping-pong image buffers plus staged lookup and
-uniform buffers, reused across frames and invalidated on image revision or
-device change per the existing cache-identity rules. It owns the ordered stage
-list for one operation, assembled per run from the resolved parameters. It owns
-the only host transfer points: input upload, fences, and the final readback.
+owns a bounded readback buffer pool and a bounded cross-frame cache of
+configuration-invariant device buffers: spectral lookups, density curves,
+uniform blocks, and blur kernels. Cache identity is the buffer content together
+with its usage, so a changed configuration misses and re-uploads instead of
+reusing a stale buffer. The pipe owns the cache, so the device frees it. It
+owns the ordered stage list for one operation, assembled per run from the
+resolved parameters. It owns the only host transfer points: input upload,
+fences, and the final readback.
+
+Intermediate image storage is allocated per operation. Pooling it requires a
+measurement that shows allocation or zero-initialization dominating the render
+budget.
 
 The pipe is internal to the WGPU backend and runtime. It is not a public
 effect graph, adds no public API surface, and introduces no second parameter
@@ -112,9 +120,8 @@ to host orchestration. It is not an image fence.
 
 One `wgpu::ComputePipeline` per shader identity is created lazily and held for
 the process lifetime. Per-call pipeline construction is eliminated. Device
-buffers are pooled and reused. Buffer lifetime must continue to respect
-command-completion rules. Intermediate storage is reused only after its
-commands complete.
+buffers are reused through the pipe's pools and cross-frame cache. Buffer
+lifetime must continue to respect command-completion rules.
 
 ## Decline reclassification
 

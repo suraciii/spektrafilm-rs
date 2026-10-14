@@ -61,7 +61,7 @@ pub(super) fn build_unsharp_state(
         mapped_at_creation: false,
     });
     let blur = blur::make_blur_job(
-        device,
+        backend,
         up.sigma_px.max(0.01),
         width,
         height,
