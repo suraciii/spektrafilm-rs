@@ -703,7 +703,65 @@ impl ComputeBackend for WgpuBackend {
         self.explicit
     }
 
+    fn with_explicit_request(&self) -> Option<Box<dyn ComputeBackend>> {
+        Some(Box::new(self.derived_explicit()))
+    }
+
     fn name(&self) -> &str {
         &self.name
+    }
+}
+
+/// The derivation a frontend uses to turn an already selected GPU backend into
+/// an explicit request: same device, same pipeline cache, `explicit` flipped so
+/// the assembly-time guards apply.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spektrafilm_math::image::ImageBuf;
+
+    #[test]
+    fn derived_explicit_request_reuses_the_device_and_pipeline_cache() {
+        // The software Vulkan driver is not safe under concurrent device use
+        // in one process; hold the shared lock for the whole test.
+        let device_guard = super::super::observation::TEST_DEVICE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(base) = WgpuBackend::new() else {
+            eprintln!("no GPU adapter available; skipping");
+            return;
+        };
+        assert!(!base.explicit_gpu_request());
+        let derived = base
+            .with_explicit_request()
+            .expect("a WGPU backend derives an explicit request");
+        assert!(derived.explicit_gpu_request());
+        assert!(derived.is_gpu());
+        assert_eq!(derived.name(), base.name());
+        assert_eq!(
+            derived.adapter_description().map(|adapter| adapter.name),
+            base.adapter_description().map(|adapter| adapter.name)
+        );
+
+        // A kernel compiled through the base backend must be a pipeline-cache
+        // hit for the derived backend; otherwise the frontend opened a second
+        // device and recompiled everything.
+        let matrix = [[1.0f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let image = ImageBuf::new(4, 4);
+        let base_context = ObservationContext::new(CollectionMode::Summary);
+        let observed = base.with_observation_context(base_context).unwrap();
+        let _ = observed.colorspace_convert(&image, &matrix);
+
+        let derived_context = ObservationContext::new(CollectionMode::Summary);
+        let observed = derived
+            .with_observation_context(derived_context.clone())
+            .unwrap();
+        let _ = observed.colorspace_convert(&image, &matrix);
+        assert_eq!(
+            derived_context.snapshot().totals.pipeline_cache_hit_count,
+            Some(1),
+            "the derived backend did not reuse the base pipeline cache"
+        );
+        drop(device_guard);
     }
 }

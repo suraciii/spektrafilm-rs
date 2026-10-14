@@ -193,13 +193,40 @@ impl WgpuBackend {
     }
 
     /// Construct an explicitly requested backend
-    /// (`SPEKTRAFILM_BACKEND=wgpu`): capability-missing stages must fail
-    /// at assembly instead of silently demoting the route to CPU.
+    /// (`SPEKTRAFILM_BACKEND=wgpu`, the CLI `--backend gpu` flag, or the GUI
+    /// export "GPU" selection): capability-missing stages must fail at
+    /// assembly instead of silently demoting the route to CPU.
     pub fn new_explicit() -> Option<Self> {
         Self::new().map(|mut b| {
             b.explicit = true;
             b
         })
+    }
+
+    /// Derive an explicitly requested backend sharing this backend's device,
+    /// queue, pipeline cache, and readback pool. A frontend that already
+    /// holds a selected GPU backend (the GUI preview backend) uses this for
+    /// an explicit export request instead of opening a second device and
+    /// recompiling every pipeline.
+    pub fn derived_explicit(&self) -> Self {
+        let device = ObservedDevice {
+            raw: self.device.raw.clone(),
+            context: self.device.context.clone(),
+            batch: None,
+        };
+        let queue = ObservedQueue {
+            raw: self.queue.raw.clone(),
+            context: self.queue.context.clone(),
+        };
+        Self {
+            pipe: self.pipe.with_observed(device.clone(), queue.clone()),
+            device,
+            queue,
+            pipeline_cache: std::sync::Arc::clone(&self.pipeline_cache),
+            name: self.name.clone(),
+            adapter: self.adapter.clone(),
+            explicit: true,
+        }
     }
 
     /// Generic GPU compute dispatch helper.
