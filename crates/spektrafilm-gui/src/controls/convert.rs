@@ -46,38 +46,45 @@ fn calibration_to_string(matrix: &[[f64; 3]; 3]) -> String {
         .join(" ")
 }
 
-/// Parse the calibration string into a 3x3 matrix (identity on invalid input).
-fn calibration_from_string(text: &str) -> [[f64; 3]; 3] {
+/// Parse the calibration string into a 3x3 matrix.
+/// Returns `None` if the text is invalid (non-numeric, non-finite, or wrong count).
+fn calibration_from_string(text: &str) -> Option<[[f64; 3]; 3]> {
     let values: Vec<f64> = text
         .split(|c: char| c.is_ascii_whitespace() || matches!(c, ',' | ';' | '[' | ']' | '(' | ')'))
         .filter(|part| !part.is_empty())
-        .filter_map(|part| part.parse::<f64>().ok())
-        .collect();
-    if values.len() == 9 {
-        [
-            [values[0], values[1], values[2]],
-            [values[3], values[4], values[5]],
-            [values[6], values[7], values[8]],
-        ]
-    } else {
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        .map(|part| part.parse::<f64>())
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if values.len() != 9 {
+        return None;
     }
+    if values.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    Some([
+        [values[0], values[1], values[2]],
+        [values[3], values[4], values[5]],
+        [values[6], values[7], values[8]],
+    ])
 }
 
 /// 3x3 grid editor for the calibration matrix. Each cell is a numeric field;
 /// the matrix is serialized to the calibration string on every edit.
+/// Returns `false` (no change) if the current text is invalid.
 fn calibration_matrix(ui: &mut Ui, calibration: &mut String) -> bool {
-    let mut matrix = calibration_from_string(calibration);
+    let Some(mut matrix) = calibration_from_string(calibration) else {
+        return false;
+    };
     let mut changed = false;
-    for row in 0..3 {
+    for row in matrix.iter_mut() {
         ui.horizontal(|ui| {
-            for col in 0..3 {
-                let mut value = matrix[row][col];
+            for cell in row.iter_mut() {
+                let mut value = *cell;
                 if ui
                     .add(egui::DragValue::new(&mut value).speed(0.01))
                     .changed()
                 {
-                    matrix[row][col] = value;
+                    *cell = value;
                     changed = true;
                 }
             }

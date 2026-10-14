@@ -20,12 +20,17 @@ pub(crate) fn param_numeric<T: egui::emath::Numeric>(
     numeric(ui, label, value, min, max, step, decimals, tooltip)
 }
 
-pub(crate) fn param_slider<T: egui::emath::Numeric>(
-    ui: &mut Ui,
-    value: &mut T,
-    range: std::ops::RangeInclusive<T>,
-) -> bool {
-    ui.add(egui::Slider::new(value, range)).changed()
+pub(crate) fn param_slider<T>(ui: &mut Ui, value: &mut T, path: &str, tooltip: &str) -> bool
+where
+    T: egui::emath::Numeric,
+{
+    let (min, max, _step, _decimals) = editor_range_for(path);
+    ui.add(egui::Slider::new(
+        value,
+        T::from_f64(min)..=T::from_f64(max),
+    ))
+    .on_hover_text(tooltip)
+    .changed()
 }
 
 /// `param_numeric` whose effective maximum is additionally capped at

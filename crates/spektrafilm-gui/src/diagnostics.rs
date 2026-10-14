@@ -78,6 +78,16 @@ impl Diagnostics {
         }
         self.history.push_front(report);
         self.history.truncate(20);
+        // If the selected report aged out of history, resume auto-follow.
+        if self.user_selected
+            && !self
+                .history
+                .iter()
+                .any(|r| Some(r.operation.id) == self.selected)
+        {
+            self.user_selected = false;
+            self.selected = self.history.front().map(|r| r.operation.id);
+        }
     }
 
     #[cfg(test)]
