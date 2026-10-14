@@ -976,7 +976,7 @@ impl eframe::App for App {
                 // Divider line
                 painter.line_segment(
                     [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                    egui::Stroke::new(2.0, theme::ACCENT),
+                    egui::Stroke::new(2.0_f32, theme::ACCENT),
                 );
                 // Labels
                 painter.text(

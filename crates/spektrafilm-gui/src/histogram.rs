@@ -52,9 +52,9 @@ impl HistogramData {
         for y in 0..image.height {
             for x in 0..image.width {
                 let i = (y * image.width + x) as usize * 3;
-                let r = srgb_encode_f64(image.data[i] as f64).max(0.0).min(1.0);
-                let g = srgb_encode_f64(image.data[i + 1] as f64).max(0.0).min(1.0);
-                let b = srgb_encode_f64(image.data[i + 2] as f64).max(0.0).min(1.0);
+                let r = srgb_encode_f64(image.data[i] as f64).clamp(0.0, 1.0);
+                let g = srgb_encode_f64(image.data[i + 1] as f64).clamp(0.0, 1.0);
+                let b = srgb_encode_f64(image.data[i + 2] as f64).clamp(0.0, 1.0);
                 let r_bin = (r * scale).round() as usize;
                 let g_bin = (g * scale).round() as usize;
                 let b_bin = (b * scale).round() as usize;
@@ -111,9 +111,9 @@ impl HistogramData {
         ] {
             let mut points = Vec::with_capacity(BINS + 2);
             points.push(Pos2::new(rect.left(), rect.bottom()));
-            for i in 0..BINS {
+            for (i, bin) in bins.iter().enumerate() {
                 let x = rect.left() + i as f32 * bin_w;
-                let y = rect.bottom() - bins[i] * h;
+                let y = rect.bottom() - bin * h;
                 points.push(Pos2::new(x, y));
             }
             points.push(Pos2::new(rect.right(), rect.bottom()));
@@ -207,11 +207,6 @@ impl HistogramStrip {
             );
         });
         height + 14.0
-    }
-
-    /// Toggle visibility.
-    pub fn toggle(&mut self) {
-        self.visible = !self.visible;
     }
 }
 

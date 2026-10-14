@@ -27,12 +27,8 @@ pub const FG: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xe8);
 pub const FG_SECONDARY: Color32 = Color32::from_rgb(0xa0, 0xa0, 0xa8);
 /// Muted text for hints and metadata.
 pub const FG_MUTED: Color32 = Color32::from_rgb(0x6a, 0x6a, 0x72);
-/// Success green.
-pub const SUCCESS: Color32 = Color32::from_rgb(0x6a, 0xbf, 0x69);
 /// Error red.
 pub const ERROR: Color32 = Color32::from_rgb(0xe0, 0x55, 0x55);
-/// Info blue.
-pub const INFO: Color32 = Color32::from_rgb(0x6a, 0x9a, 0xd4);
 
 /// Apply the dark warm-accent theme to an egui context.
 pub fn apply(ctx: &egui::Context) {
@@ -43,23 +39,23 @@ pub fn apply(ctx: &egui::Context) {
     visuals.extreme_bg_color = BG;
     visuals.faint_bg_color = SURFACE2;
     visuals.widgets.noninteractive.bg_fill = SURFACE2;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, FG_SECONDARY);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, FG_SECONDARY);
     visuals.widgets.inactive.bg_fill = SURFACE3;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, FG_SECONDARY);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, FG_SECONDARY);
     visuals.widgets.hovered.bg_fill = SURFACE3;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT_DIM);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, FG);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT_DIM);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, FG);
     visuals.widgets.active.bg_fill = ACCENT;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::BLACK);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::BLACK);
     visuals.widgets.open.bg_fill = SURFACE2;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, BORDER_ACTIVE);
-    visuals.selection.bg_fill = Rgba::from(ACCENT).multiply(0.25).into();
-    visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, BORDER_ACTIVE);
+    visuals.selection.bg_fill = Rgba::from(ACCENT).multiply(0.25_f32).into();
+    visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
     visuals.hyperlink_color = ACCENT;
-    visuals.window_stroke = Stroke::new(1.0, BORDER);
+    visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
     visuals.window_corner_radius = CornerRadius::same(8);
     visuals.menu_corner_radius = CornerRadius::same(6);
     visuals.window_shadow = Shadow {
