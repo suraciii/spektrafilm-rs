@@ -365,19 +365,19 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     choose(h, "workflow", "input > film > scan");
     click(h, "Scanner");
     choose(h, "scan output", "Preserve medium polarity");
-    assert!(h.query_by_label("positive density ev").is_none());
+    assert!(h.query_by_label("brightness").is_none());
     let direct = render(h, "PREVIEW");
     assert_eq!((direct.width, direct.height), (128, 64));
     choose(h, "scan output", "Negative to positive");
     assert_eq!(h.state().params.scanner.scan_output, "negative_to_positive");
     choose(h, "Negative conversion method", "separable");
     assert_eq!(
-        h.state().params.scanner.positive_interpretation,
-        spektrafilm_core::params::PositiveInterpretation::Separable
+        h.state().params.scanner.negative_conversion_method,
+        spektrafilm_core::params::NegativeConversionMethod::Separable
     );
     choose(h, "Negative conversion method", "density");
-    assert!(h.query_by_label("positive density ev").is_some());
-    edit(h, "positive density ev", "0");
+    assert!(h.query_by_label("brightness").is_some());
+    edit(h, "brightness", "0");
     let positive = render(h, "PREVIEW");
     assert!(
         edge_difference(&direct) < -0.01,
@@ -387,25 +387,25 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
         edge_difference(&positive) > 0.01,
         "negative conversion must restore ramp polarity"
     );
-    edit(h, "positive density ev", "1");
-    assert_eq!(h.state().params.scanner.positive_density_ev, 1.0);
+    edit(h, "brightness", "1");
+    assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
     let brighter = render(h, "PREVIEW");
     assert!(mean(&brighter) > mean(&positive) + 0.01);
-    edit(h, "positive balance ev 0", "0.25");
-    edit(h, "positive balance ev 1", "-0.125");
-    edit(h, "positive balance ev 2", "0.5");
+    edit(h, "balance 0", "0.25");
+    edit(h, "balance 1", "-0.125");
+    edit(h, "balance 2", "0.5");
     assert_eq!(
-        h.state().params.scanner.positive_balance_ev,
+        h.state().params.scanner.conversion_balance_ev,
         [0.25, -0.125, 0.5]
     );
-    edit(h, "white point 0", "0.95");
-    edit(h, "black point 0", "0.025");
+    edit(h, "film-scan white point 0", "0.95");
+    edit(h, "film-scan black point 0", "0.025");
     assert_eq!(h.state().params.scanner.white_point, [0.95, 1.0, 1.0]);
     assert_eq!(h.state().params.scanner.black_point, [0.025, 0.0, 0.0]);
-    edit(h, "positive density ev", "not-a-number");
-    assert_eq!(h.state().params.scanner.positive_density_ev, 1.0);
+    edit(h, "brightness", "not-a-number");
+    assert_eq!(h.state().params.scanner.conversion_brightness_ev, 1.0);
     assert_eq!(
-        h.get_by_label("positive density ev").value().as_deref(),
+        h.get_by_label("brightness").value().as_deref(),
         Some("1.000")
     );
     let preset = spektrafilm_core::presets::Preset::capture_section(
@@ -613,9 +613,9 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     );
     assert_eq!(restored.params.workflow.route, "input > film > scan");
     assert_eq!(restored.params.scanner.scan_output, "negative_to_positive");
-    assert_eq!(restored.params.scanner.positive_density_ev, 1.0);
+    assert_eq!(restored.params.scanner.conversion_brightness_ev, 1.0);
     assert_eq!(
-        restored.params.scanner.positive_balance_ev,
+        restored.params.scanner.conversion_balance_ev,
         [0.25, -0.125, 0.5]
     );
     assert_eq!(restored.film_name, "kodak_portra_400");
@@ -624,7 +624,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     eframe::App::on_exit(&mut restored, None);
     choose(h, "workflow", "Finished RGB");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
-    assert!(h.query_by_label("positive density ev").is_none());
+    assert!(h.query_by_label("brightness").is_none());
 }
 
 #[test]
@@ -826,7 +826,7 @@ mod layout_snapshots {
 
 #[test]
 fn digital_reference_real_app_selection_render_transactions_and_outputs() {
-    use spektrafilm_core::params::{PositiveInterpretation, ReceiverProfile, ScannerAutoSetup};
+    use spektrafilm_core::params::{NegativeConversionMethod, ReceiverProfile, ScannerAutoSetup};
     let mut s = session();
     let h = &mut s.harness;
     click(h, "Profiles");
@@ -836,9 +836,9 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     click(h, "Scanner");
     choose(h, "scan output", "Negative to positive");
     choose(h, "scanner auto setup", "per_frame");
-    edit(h, "positive density ev", "1");
-    edit(h, "positive contrast", "1.5");
-    edit(h, "black point 0", "0.05");
+    edit(h, "brightness", "1");
+    edit(h, "contrast", "1.5");
+    edit(h, "film-scan black point 0", "0.05");
     choose(
         h,
         "Negative conversion method",
@@ -846,16 +846,19 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     );
     let scanner = &h.state().params.scanner;
     assert_eq!(
-        scanner.positive_interpretation,
-        PositiveInterpretation::DigitalReference
+        scanner.negative_conversion_method,
+        NegativeConversionMethod::DigitalReference
     );
     assert_eq!(scanner.receiver_profile, ReceiverProfile::DigitalReference);
     assert_eq!(scanner.auto_setup, ScannerAutoSetup::Off);
     assert_eq!(scanner.black_point, [0.0; 3]);
     assert_eq!(scanner.white_point, [1.0; 3]);
     let defaults = spektrafilm_core::params::ScannerParams::default();
-    assert_eq!(scanner.positive_density_ev, defaults.positive_density_ev);
-    assert_eq!(scanner.positive_contrast, defaults.positive_contrast);
+    assert_eq!(
+        scanner.conversion_brightness_ev,
+        defaults.conversion_brightness_ev
+    );
+    assert_eq!(scanner.conversion_contrast, defaults.conversion_contrast);
     assert!(
         h.query_by_label("Reference Exposure: 18% neutral (fixed)")
             .is_some()
@@ -863,12 +866,12 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     for label in [
         "receiver profile",
         "scanner auto setup",
-        "positive density ev",
-        "positive balance ev 0",
-        "positive contrast",
-        "positive dmax",
-        "black point 0",
-        "white point 0",
+        "brightness",
+        "balance 0",
+        "contrast",
+        "maximum density",
+        "film-scan black point 0",
+        "film-scan white point 0",
     ] {
         assert!(
             h.query_by_label(label).is_none(),
@@ -895,7 +898,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         ("receiver_profile", serde_json::json!("legacy_colorimetric")),
         ("auto_setup", serde_json::json!("per_frame")),
         ("black_point", serde_json::json!([0.1, 0.0, 0.0])),
-        ("positive_contrast", serde_json::json!(1.5)),
+        ("conversion_contrast", serde_json::json!(1.5)),
     ] {
         let mut invalid = accepted.sections.clone();
         invalid["scanner"][key] = value;
@@ -955,7 +958,7 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     let mut extension_only = accepted.sections.clone();
     for key in [
         "receiver_profile",
-        "positive_interpretation",
+        "negative_conversion_method",
         "reference_exposure_ev",
         "reference_balance_ev",
     ] {
@@ -1029,8 +1032,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     );
     choose(h, "workflow", "input > convert-film > scan");
     assert_eq!(
-        h.state().params.scanner.positive_interpretation,
-        PositiveInterpretation::Density
+        h.state().params.scanner.negative_conversion_method,
+        NegativeConversionMethod::Density
     );
     assert_eq!(
         h.state().params.scanner.receiver_profile,
@@ -1054,8 +1057,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "workflow", "Finished RGB");
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert_eq!(
-        h.state().params.scanner.positive_interpretation,
-        PositiveInterpretation::Density
+        h.state().params.scanner.negative_conversion_method,
+        NegativeConversionMethod::Density
     );
     assert_eq!(
         h.state().params.scanner.receiver_profile,
@@ -1078,8 +1081,8 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
     choose(h, "film profile", slide.info.name.as_deref().unwrap());
     assert_eq!(h.state().params.scanner.scan_output, "direct_scan");
     assert_eq!(
-        h.state().params.scanner.positive_interpretation,
-        PositiveInterpretation::Density
+        h.state().params.scanner.negative_conversion_method,
+        NegativeConversionMethod::Density
     );
     assert_eq!(
         h.state().params.scanner.receiver_profile,

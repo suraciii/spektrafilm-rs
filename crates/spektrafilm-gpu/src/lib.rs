@@ -324,11 +324,12 @@ pub struct FilmChainParams<'a> {
     pub viewing_illuminant: &'a [f64],
     pub scan_normalization: f64,
     pub scan_xyz_to_rgb: &'a [[f64; 3]; 3],
-    /// B&W/slide scanner luminance remap `(m, q)` applied per-pixel on the
-    /// scan XYZ (`clip(m·Y+q, 0, 1)/(Y+1e-10)`). `None` is identity. The
-    /// filming/printing exposure halves of the correction are folded by the
-    /// caller into `rgb_to_adapted_xyz` / `print_normalization_factor`.
-    pub bw_xyz_remap: Option<(f64, f64)>,
+    /// Scanner white and black correction luminance remap `(m, q)` applied
+    /// per-pixel on the scan XYZ (`clip(m·Y+q, 0, 1)/(Y+1e-10)`). `None` is
+    /// identity. The filming/printing exposure halves of the correction are
+    /// folded by the caller into `rgb_to_adapted_xyz` /
+    /// `print_normalization_factor`.
+    pub white_black_xyz_remap: Option<(f64, f64)>,
     /// Scan the developed film directly instead of printing onto paper.
     /// When true the print_spectral + print density-curve passes are
     /// skipped and scan_spectral runs on the film density buffer using the
@@ -380,8 +381,8 @@ pub struct FilmChainParams<'a> {
     /// negative-to-positive conversion, and the LabScan finish; pipe
     /// architecture, capability class). Receives the acquisition RGB and
     /// returns the interpreted image, which is written back in place. When
-    /// present, `bw_xyz_remap` must be `None`: the fence owns the remap in
-    /// the faithful order, after optical blur and glare.
+    /// present, `white_black_xyz_remap` must be `None`: the fence owns the
+    /// remap in the faithful order, after optical blur and glare.
     pub scan_tail_cpu_stage: Option<CpuStageFn<'a>>,
     /// Optional CPU stage replacing the GPU scan spectral pass whenever the
     /// CPU route acquires differently: the PCHIP scanner LUT (the slide

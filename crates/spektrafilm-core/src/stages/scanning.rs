@@ -224,13 +224,13 @@ fn positive_tone(
     points: &PointMap,
     params: &RuntimeParams,
 ) -> (f64, f64) {
-    let contrast = params.scanner.positive_contrast;
-    let dmax = params.scanner.positive_dmax;
+    let contrast = params.scanner.conversion_contrast;
+    let dmax = params.scanner.conversion_dmax;
     let denominator = -(-std::f64::consts::LN_10 * dmax).exp_m1();
     let log_e = points.apply(log_e, channel);
     let e = log_e / std::f64::consts::LOG10_2 - interpretation::camera_ev(params)
-        + params.scanner.positive_density_ev
-        + params.scanner.positive_balance_ev[channel];
+        + params.scanner.conversion_brightness_ev
+        + params.scanner.conversion_balance_ev[channel];
     let z = contrast * e;
     let t = if z >= 0.0 {
         1.0 / (1.0 + (-z).exp())
@@ -438,13 +438,14 @@ fn prepare_exposure_calibration(
     base: &[f64],
     forward: &ForwardCapture<'_>,
 ) -> Result<ExposureCalibration, String> {
-    if params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density {
+    if params.scanner.negative_conversion_method == crate::params::NegativeConversionMethod::Density
+    {
         return Ok(ExposureCalibration::Density(
             interpretation::DensityCalibration::prepare(profile)?,
         ));
     }
     let cpu = spektrafilm_gpu::cpu_backend::CpuBackend;
-    if params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Coupled
+    if params.scanner.negative_conversion_method == crate::params::NegativeConversionMethod::Coupled
         && !profile.is_bw()
     {
         Ok(ExposureCalibration::Coupled(
@@ -462,8 +463,8 @@ fn prepare_exposure_calibration(
         )?;
         Ok(
             if profile.is_bw()
-                && params.scanner.positive_interpretation
-                    == crate::params::PositiveInterpretation::Coupled
+                && params.scanner.negative_conversion_method
+                    == crate::params::NegativeConversionMethod::Coupled
             {
                 ExposureCalibration::Monochrome(c)
             } else {
@@ -833,8 +834,8 @@ fn scan_with_reference(
     reference: Option<&crate::digital_reference::DigitalReference>,
 ) -> Result<ImageBuf, String> {
     let negative_to_positive = negative_to_positive_requested(params);
-    let reference_mode = params.scanner.positive_interpretation
-        == crate::params::PositiveInterpretation::DigitalReference;
+    let reference_mode = params.scanner.negative_conversion_method
+        == crate::params::NegativeConversionMethod::DigitalReference;
     if reference_mode {
         params.validate()?;
         crate::pipeline_calibration::validate_scan_output(params, profile)?;
@@ -849,7 +850,8 @@ fn scan_with_reference(
     // receiver correction it feeds are skipped entirely. Where a capture does
     // arrive, `density` behaves as `separable`.
     let density_reading = negative_to_positive
-        && params.scanner.positive_interpretation == crate::params::PositiveInterpretation::Density
+        && params.scanner.negative_conversion_method
+            == crate::params::NegativeConversionMethod::Density
         && captured_rgb.is_none();
     let slide_points = params.io.scan_film && profile.is_positive() && points_active(params);
     let _negative_to_positive = negative_to_positive.then(|| {
@@ -1161,7 +1163,8 @@ pub(crate) fn apply_scan_readout_interpretation(
     // endpoint inversion. The density reading ran above, where it blurred
     // transmitted light record by record instead.
     if negative_to_positive && !density_reading && !reference_mode {
-        if params.scanner.positive_interpretation != crate::params::PositiveInterpretation::Coupled
+        if params.scanner.negative_conversion_method
+            != crate::params::NegativeConversionMethod::Coupled
         {
             // `separable`, and `density` where the incoming image is a
             // capture: the capture converts to density per channel before
@@ -1336,7 +1339,8 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.io.scan_film = true;
         params.scanner.scan_output = "negative_to_positive".into();
-        params.scanner.positive_interpretation = crate::params::PositiveInterpretation::Density;
+        params.scanner.negative_conversion_method =
+            crate::params::NegativeConversionMethod::Density;
         params.scanner.receiver_profile = crate::params::ReceiverProfile::LegacyColorimetric;
         let legacy = scan_with_capture(
             &density, &profile, &params, &backend, &color_ref, &gamut, None, true, None,
@@ -1373,11 +1377,11 @@ mod tests {
         let input = ImageBuf::from_data(1, 1, vec![from_f64(0.1); 3]);
         let mut params = RuntimeParams::default();
         let baseline = interpret_negative_capture(input.clone(), &calibration(), &params).unwrap();
-        params.scanner.positive_density_ev += 1.0;
+        params.scanner.conversion_brightness_ev += 1.0;
         let brighter = interpret_negative_capture(input.clone(), &calibration(), &params).unwrap();
         assert!(brighter.data.iter().zip(&baseline.data).all(|(a, b)| a > b));
-        params.scanner.positive_density_ev -= 1.0;
-        params.scanner.positive_balance_ev = [1.0, 0.0, -1.0];
+        params.scanner.conversion_brightness_ev -= 1.0;
+        params.scanner.conversion_balance_ev = [1.0, 0.0, -1.0];
         let balanced = interpret_negative_capture(input, &calibration(), &params).unwrap();
         assert!(balanced.data[0] > baseline.data[0]);
         assert_eq!(balanced.data[1], baseline.data[1]);
@@ -1387,7 +1391,7 @@ mod tests {
     #[test]
     fn very_small_output_density_stays_finite_and_ordered() {
         let mut params = RuntimeParams::default();
-        params.scanner.positive_dmax = 1e-18;
+        params.scanner.conversion_dmax = 1e-18;
         let input = ImageBuf::from_data(
             2,
             1,

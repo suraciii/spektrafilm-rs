@@ -6,7 +6,7 @@ mod validator;
 
 pub use configuration::{
     BitDepth, ColorSpaceRole, Compression, GamutAlgorithm, GrainConfiguration, GrainEngine,
-    GrainMode, OutputFormat, PositiveInterpretation, ReceiverConfiguration, RenderConfiguration,
+    GrainMode, NegativeConversionMethod, OutputFormat, ReceiverConfiguration, RenderConfiguration,
     RgbToRawAlgorithm, SavingConfiguration, SpatialConfiguration, StockId, WorkflowRoute,
 };
 pub use operation::Operation;

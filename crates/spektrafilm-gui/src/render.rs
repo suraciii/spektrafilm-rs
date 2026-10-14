@@ -376,13 +376,13 @@ mod tests {
         assert_eq!(recovered.data, expected.data);
 
         let mut failed_update = snapshot.clone();
-        failed_update.params.scanner.positive_density_ev = f64::NAN;
+        failed_update.params.scanner.conversion_brightness_ev = f64::NAN;
         assert!(
             cache
                 .prepare_observed(&failed_update, false, input, &context)
                 .err()
                 .unwrap()
-                .contains("scanner.positive_density_ev")
+                .contains("scanner.conversion_brightness_ev")
         );
         assert!(cache.entry.is_none());
         let rebuilt = cache

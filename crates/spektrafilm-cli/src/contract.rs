@@ -9,8 +9,9 @@ use std::path::Path;
 
 pub const IMPLEMENTATION: &str = "spektrafilm-rs";
 pub const ADAPTER_VERSION: &str = "spektrafilm-rs-adapter-1";
-pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-2";
-const LEGACY_PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-1";
+pub const PARAMETER_SCHEMA_VERSION: &str = "spektrafilm-rs-params-3";
+const LEGACY_PARAMETER_SCHEMA_VERSIONS: &[&str] =
+    &["spektrafilm-rs-params-1", "spektrafilm-rs-params-2"];
 pub const FORK_REFERENCE: &str = "suraciii/spektrafilm-rs";
 pub const FINISHED_JPEG_QUALITY: u8 = 85;
 pub const MAX_EDGE: u32 = 9568;
@@ -83,10 +84,9 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     if let Some(seed) = recipe.seed {
         validate_seed(seed)?;
     }
-    if !matches!(
-        recipe.schema_version.as_str(),
-        PARAMETER_SCHEMA_VERSION | LEGACY_PARAMETER_SCHEMA_VERSION
-    ) {
+    if !matches!(recipe.schema_version.as_str(), PARAMETER_SCHEMA_VERSION)
+        && !LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&recipe.schema_version.as_str())
+    {
         bail!("unsupported recipe schema {}", recipe.schema_version);
     }
     if recipe.film_profile.trim().is_empty() {
@@ -94,7 +94,7 @@ pub fn read_recipe(path: &Path) -> Result<RenderRecipe> {
     }
     validate_output(&recipe.output)?;
     let mut parameters = canonical_parameters(recipe.parameters.clone())?;
-    if recipe.schema_version == LEGACY_PARAMETER_SCHEMA_VERSION {
+    if LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&recipe.schema_version.as_str()) {
         spektrafilm_core::params::sources::normalize_legacy_complete_params(&mut parameters)
             .map_err(anyhow::Error::msg)?;
     }
@@ -318,7 +318,9 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("recipe.json");
-        for version in [LEGACY_PARAMETER_SCHEMA_VERSION, PARAMETER_SCHEMA_VERSION] {
+        let mut versions: Vec<&str> = LEGACY_PARAMETER_SCHEMA_VERSIONS.to_vec();
+        versions.push(PARAMETER_SCHEMA_VERSION);
+        for version in versions {
             for retired in [None, Some(Value::Null), Some(json!([0.95, 1.0, 1.6]))] {
                 let mut parameters = serde_json::to_value(RuntimeParams::default()).unwrap();
                 if let Some(value) = &retired {
@@ -329,7 +331,8 @@ mod tests {
                 std::fs::write(&path, &source).unwrap();
                 let result = read_recipe(&path);
                 if retired.is_none()
-                    || (version == LEGACY_PARAMETER_SCHEMA_VERSION && retired == Some(Value::Null))
+                    || (LEGACY_PARAMETER_SCHEMA_VERSIONS.contains(&version)
+                        && retired == Some(Value::Null))
                 {
                     let accepted = result.unwrap();
                     assert_eq!(accepted.schema_version, PARAMETER_SCHEMA_VERSION);

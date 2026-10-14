@@ -4,8 +4,8 @@ use crate::numeric::{numeric, numeric_field, numeric_field_validated};
 use egui::Ui;
 use serde_json::{Map, Value};
 use spektrafilm_core::params::{
-    PositiveInterpretation, PrintCurvesMorphParams, ReceiverProfile, RuntimeParams,
-    ScannerAutoSetup, ScannerFinish,
+    NegativeConversionMethod, PrintCurvesMorphParams, PrintExposureMode, ReceiverProfile,
+    RuntimeParams, ScannerAutoSetup, ScannerFinish,
     diffusion::DiffusionFilterParams,
     grain::{FotufilmMaterial, GrainEngine, GrainV2FilmType, GrainV2Mode},
 };
@@ -87,14 +87,14 @@ pub(crate) fn scan_medium(film: &Profile) -> ScanMedium {
 /// Normalize only GUI transitions; imported states and recipes retain validation errors.
 pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medium: ScanMedium) {
     let medium = film_medium.for_route(&params.workflow.route);
-    if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference
+    if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference
         && (film_medium != ScanMedium::Negative
             || params.workflow.route != "input > film > scan"
             || params.scanner.scan_output != "negative_to_positive")
     {
-        params.scanner.positive_interpretation = PositiveInterpretation::default();
+        params.scanner.negative_conversion_method = NegativeConversionMethod::default();
     }
-    if params.scanner.positive_interpretation != PositiveInterpretation::DigitalReference {
+    if params.scanner.negative_conversion_method != NegativeConversionMethod::DigitalReference {
         if params.scanner.receiver_profile == ReceiverProfile::DigitalReference {
             params.scanner.receiver_profile = ReceiverProfile::LegacyColorimetric;
         }
@@ -108,7 +108,7 @@ pub(crate) fn normalize_scanner_selections(params: &mut RuntimeParams, film_medi
         params.scanner.scan_output = "direct_scan".into();
     }
     if params.scanner.scan_output != "negative_to_positive" {
-        params.scanner.positive_interpretation = PositiveInterpretation::default();
+        params.scanner.negative_conversion_method = NegativeConversionMethod::default();
         params.scanner.auto_setup = ScannerAutoSetup::Off;
         params.scanner.finish = ScannerFinish::Neutral;
     }
@@ -290,7 +290,10 @@ pub(crate) fn show(
             }
             ui.add_enabled_ui(print_active, |ui| {
                 flags.runtime_changed |= param_numeric(ui, "print exposure", &mut params.enlarger.print_exposure, "enlarger.print_exposure", "Changes the exposure time set in the virtual enlarger");
-                flags.runtime_changed |= toggle(ui, "print auto compensation", &mut params.enlarger.print_exposure_compensation, "Auto adjust the print exposure for the camera exposure compensation ev");
+                flags.runtime_changed |= enum_choice(ui, "print exposure mode", &mut params.enlarger.print_exposure_mode, &[
+                    (PrintExposureMode::Auto, "auto"),
+                    (PrintExposureMode::Manual, "manual"),
+                ], "Auto normalizes the print exposure so the developed midgray density prints to the paper midgray and follows camera exposure compensation, like a color analyzer or minilab. Manual applies the print exposure time alone, like a test strip.");
                 flags.runtime_changed |= param_numeric(ui, "print y filter shift", &mut params.enlarger.y_filter_shift, "enlarger.y_filter_shift", "Y filter shift of the color enlarger from a neutral position, in Kodak CC units");
                 flags.runtime_changed |= param_numeric(ui, "print m filter shift", &mut params.enlarger.m_filter_shift, "enlarger.m_filter_shift", "M filter shift of the color enlarger from a neutral position, in Kodak CC units");
                 preflash_controls(ui, params, &mut flags);
@@ -304,7 +307,7 @@ pub(crate) fn show(
                     return;
                 }
                 if matches!(medium, ScanMedium::Slide | ScanMedium::Negative)
-                    && params.scanner.positive_interpretation != PositiveInterpretation::DigitalReference
+                    && params.scanner.negative_conversion_method != NegativeConversionMethod::DigitalReference
                 {
                     flags.runtime_changed |= enum_choice(ui, "receiver profile", &mut params.scanner.receiver_profile, &[
                         (ReceiverProfile::LegacyColorimetric, "legacy colorimetric"),
@@ -331,29 +334,29 @@ pub(crate) fn show(
                 }
                 if positive_route && params.scanner.scan_output == "negative_to_positive" {
                     let methods = [
-                        (PositiveInterpretation::Density, "density"),
-                        (PositiveInterpretation::Separable, "separable"),
-                        (PositiveInterpretation::Coupled, "coupled"),
-                        (PositiveInterpretation::DigitalReference, "Digital Reference (modeled)"),
+                        (NegativeConversionMethod::Density, "density"),
+                        (NegativeConversionMethod::Separable, "separable"),
+                        (NegativeConversionMethod::Coupled, "coupled"),
+                        (NegativeConversionMethod::DigitalReference, "Digital Reference (modeled)"),
                     ];
                     let methods = &methods[..if params.workflow.route == "input > film > scan" { 4 } else { 3 }];
-                    if enum_choice(ui, "Negative conversion method", &mut params.scanner.positive_interpretation, methods,
+                    if enum_choice(ui, "Negative conversion method", &mut params.scanner.negative_conversion_method, methods,
                         "Density, separable and coupled reconstruct the selected film. Digital Reference uses a common modeled receiver and fixed positive response to preserve stock differences.") {
-                        if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
+                        if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
                             let defaults = spektrafilm_core::params::ScannerParams::default();
                             params.scanner.receiver_profile = ReceiverProfile::DigitalReference;
                             params.scanner.auto_setup = ScannerAutoSetup::Off;
                             params.scanner.black_point = [0.0; 3];
                             params.scanner.white_point = [1.0; 3];
-                            params.scanner.positive_density_ev = defaults.positive_density_ev;
-                            params.scanner.positive_balance_ev = defaults.positive_balance_ev;
-                            params.scanner.positive_contrast = defaults.positive_contrast;
-                            params.scanner.positive_dmax = defaults.positive_dmax;
+                            params.scanner.conversion_brightness_ev = defaults.conversion_brightness_ev;
+                            params.scanner.conversion_balance_ev = defaults.conversion_balance_ev;
+                            params.scanner.conversion_contrast = defaults.conversion_contrast;
+                            params.scanner.conversion_dmax = defaults.conversion_dmax;
                         }
                         normalize_scanner_selections(params, film_medium);
                         flags.runtime_changed = true;
                     }
-                    if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
+                    if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
                         ui.label("Reference Exposure: 18% neutral (fixed)")
                             .on_hover_text("Common Kodak Endura spectral receiver sensitivity and fixed Kodak Portra 400 dye basis. One reference exposure and clear-film reading normalize each stock; no frame histogram or selected-film inverse is used.");
                     } else {
@@ -369,28 +372,28 @@ pub(crate) fn show(
                     if params.scanner.finish == ScannerFinish::LabScan {
                         flags.runtime_changed |= param_numeric(ui, "finish strength", &mut params.scanner.finish_strength, "scanner.finish_strength", "Scanner finish strength. Zero returns the calibrated scan before finishing.");
                     }
-                    if params.scanner.positive_interpretation == PositiveInterpretation::DigitalReference {
+                    if params.scanner.negative_conversion_method == NegativeConversionMethod::DigitalReference {
                         flags.runtime_changed |= param_numeric(ui, "Reference exposure EV", &mut params.scanner.reference_exposure_ev, "scanner.reference_exposure_ev", "Output exposure in stops after the fixed reference response. Zero is neutral; +1 doubles linear light.");
                         flags.runtime_changed |= param_tuple(ui, "Reference balance EV", &mut params.scanner.reference_balance_ev, "scanner.reference_balance_ev", "Independent linear-sRGB red, green and blue output gains in stops after the fixed reference response. All zero is neutral.");
                     } else {
-                        flags.runtime_changed |= param_numeric(ui, "positive density ev", &mut params.scanner.positive_density_ev, "scanner.positive_density_ev", "Negative conversion brightness offset in stops.");
-                        flags.runtime_changed |= param_tuple(ui, "positive balance ev", &mut params.scanner.positive_balance_ev, "scanner.positive_balance_ev", "Independent red, green, and blue negative conversion exposure offsets in stops.");
-                        flags.runtime_changed |= param_numeric(ui, "positive contrast", &mut params.scanner.positive_contrast, "scanner.positive_contrast", "Negative conversion logistic contrast; strictly positive.");
-                        flags.runtime_changed |= param_numeric(ui, "positive dmax", &mut params.scanner.positive_dmax, "scanner.positive_dmax", "Negative conversion maximum density; strictly positive.");
+                        flags.runtime_changed |= param_numeric(ui, "brightness", &mut params.scanner.conversion_brightness_ev, "scanner.conversion_brightness_ev", "Negative conversion brightness offset in stops.");
+                        flags.runtime_changed |= param_tuple(ui, "balance", &mut params.scanner.conversion_balance_ev, "scanner.conversion_balance_ev", "Independent red, green, and blue negative conversion exposure offsets in stops.");
+                        flags.runtime_changed |= param_numeric(ui, "contrast", &mut params.scanner.conversion_contrast, "scanner.conversion_contrast", "Negative conversion logistic contrast; strictly positive.");
+                        flags.runtime_changed |= param_numeric(ui, "maximum density", &mut params.scanner.conversion_dmax, "scanner.conversion_dmax", "Negative conversion maximum density; strictly positive.");
                     }
                 }
                 if medium == ScanMedium::Slide
                     || (positive_route && params.scanner.scan_output == "negative_to_positive"
-                        && params.scanner.positive_interpretation != PositiveInterpretation::DigitalReference)
+                        && params.scanner.negative_conversion_method != NegativeConversionMethod::DigitalReference)
                 {
                     flags.runtime_changed |= scan_points(ui, &mut params.scanner.black_point, &mut params.scanner.white_point);
                 }
                 flags.runtime_changed |= param_numeric(ui, "Lens blur (readout optics)", &mut params.scanner.lens_blur, "scanner.lens_blur", "Gaussian sigma in pixels on linear transmitted or reflected readout light, before negative conversion, points, correction, finishing, gamut processing, sharpening and encoding. Identity points retain this optical order.");
                 if medium.correction_eligible() {
-                    flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable white point correction applied to the scanner output.");
-                    flags.runtime_changed |= param_numeric(ui, "white level", &mut params.scanner.white_level, "scanner.white_level", "Target white level applied when white correction is enabled.");
-                    flags.runtime_changed |= toggle(ui, "black correction", &mut params.scanner.black_correction, "Enable black point correction applied to the scanner output.");
-                    flags.runtime_changed |= param_numeric(ui, "black level", &mut params.scanner.black_level, "scanner.black_level", "Target black level applied when black correction is enabled.");
+                    flags.runtime_changed |= toggle(ui, "white correction", &mut params.scanner.white_correction, "Enable the scanner white correction applied to the scan output.");
+                    flags.runtime_changed |= param_numeric(ui, "white level", &mut params.scanner.white_level, "scanner.white_level", "Target white level the scanned medium's white reference luminance maps to when white correction is enabled.");
+                    flags.runtime_changed |= toggle(ui, "black correction", &mut params.scanner.black_correction, "Enable the scanner black correction applied to the scan output.");
+                    flags.runtime_changed |= param_numeric(ui, "black level", &mut params.scanner.black_level, "scanner.black_level", "Target black level the scanned medium's black reference luminance maps to when black correction is enabled.");
                 }
                 flags.runtime_changed |= param_tuple(ui, "Unsharp mask (digital sharpening)", &mut params.scanner.unsharp_mask, "scanner.unsharp_mask", "Digital scan sharpening after interpretation, scanner finish and output gamut processing: [sigma in pixels, amount].");
             });
@@ -928,15 +931,21 @@ fn fotufilm_sublayer_shares(ui: &mut Ui, shares: &mut [f64; 4]) -> bool {
 }
 
 fn scan_points(ui: &mut Ui, black: &mut [f64; 3], white: &mut [f64; 3]) -> bool {
-    point_tuple(ui, "black point", black, white, true, "scanner.black_point")
-        | point_tuple(
-            ui,
-            "white point",
-            white,
-            black,
-            false,
-            "scanner.white_point",
-        )
+    point_tuple(
+        ui,
+        "film-scan black point",
+        black,
+        white,
+        true,
+        "scanner.black_point",
+    ) | point_tuple(
+        ui,
+        "film-scan white point",
+        white,
+        black,
+        false,
+        "scanner.white_point",
+    )
 }
 
 fn point_tuple(
@@ -1105,6 +1114,7 @@ pub fn extra_bool_tip(
 }
 
 // UI helpers keep their existing parameter interfaces.
+#[allow(clippy::too_many_arguments)]
 fn extra_number(
     ui: &mut Ui,
     extras: &mut Value,
@@ -1294,8 +1304,8 @@ mod tests {
             ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            params.scanner.positive_interpretation,
-            PositiveInterpretation::Coupled
+            params.scanner.negative_conversion_method,
+            NegativeConversionMethod::Coupled
         );
         assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::PerFrame);
         assert_eq!(params.scanner.finish, ScannerFinish::LabScan);
@@ -1306,7 +1316,7 @@ mod tests {
         let mut params = RuntimeParams::default();
         params.workflow.route = "input > film > scan".into();
         params.scanner.receiver_profile = ReceiverProfile::LabScanApprox;
-        params.scanner.positive_interpretation = PositiveInterpretation::Coupled;
+        params.scanner.negative_conversion_method = NegativeConversionMethod::Coupled;
         params.scanner.auto_setup = ScannerAutoSetup::PerFrame;
         params.scanner.finish = ScannerFinish::LabScan;
         params.scanner.finish_strength = 0.0;
@@ -1316,8 +1326,8 @@ mod tests {
             ReceiverProfile::LabScanApprox
         );
         assert_eq!(
-            params.scanner.positive_interpretation,
-            PositiveInterpretation::Density
+            params.scanner.negative_conversion_method,
+            NegativeConversionMethod::Density
         );
         assert_eq!(params.scanner.auto_setup, ScannerAutoSetup::Off);
         assert_eq!(params.scanner.finish, ScannerFinish::Neutral);

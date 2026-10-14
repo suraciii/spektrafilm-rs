@@ -15,7 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const PRESET_SCHEMA_VERSION: u32 = 3;
+pub const PRESET_SCHEMA_VERSION: u32 = 4;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRef {
@@ -103,6 +103,8 @@ pub struct LookSettingsParams {
     pub spectral_gaussian_blur: f32,
     #[serde(default = "default_true")]
     pub use_cat16: bool,
+    #[serde(default)]
+    pub print_exposure_ev_tracking: crate::params::PrintExposureEvTracking,
 }
 impl Default for LookSettingsParams {
     fn default() -> Self {
@@ -111,6 +113,7 @@ impl Default for LookSettingsParams {
             apply_hanatos2025_adaptation_surface: false,
             spectral_gaussian_blur: 0.0,
             use_cat16: true,
+            print_exposure_ev_tracking: crate::params::PrintExposureEvTracking::default(),
         }
     }
 }
@@ -173,6 +176,7 @@ impl LookParameters {
                     .apply_hanatos2025_adaptation_surface,
                 spectral_gaussian_blur: params.settings.spectral_gaussian_blur,
                 use_cat16: params.settings.use_cat16,
+                print_exposure_ev_tracking: params.settings.print_exposure_ev_tracking,
             },
         }
     }
@@ -219,6 +223,7 @@ impl LookSettingsParams {
         settings.apply_hanatos2025_adaptation_surface = self.apply_hanatos2025_adaptation_surface;
         settings.spectral_gaussian_blur = self.spectral_gaussian_blur;
         settings.use_cat16 = self.use_cat16;
+        settings.print_exposure_ev_tracking = self.print_exposure_ev_tracking;
     }
 }
 impl Preset {
@@ -255,41 +260,62 @@ impl Preset {
             parameters: Value,
             provenance: Provenance,
         }
-        if matches!(value["schema_version"].as_u64(), Some(1 | 2)) {
+        if matches!(value["schema_version"].as_u64(), Some(1..=3)) {
             let version = value["schema_version"].as_u64().unwrap();
             let object = value.as_object_mut().ok_or("preset must be an object")?;
             if version == 1 {
                 object.remove("id");
             }
-            if object
-                .get("parameters")
-                .and_then(|p| p.get("output_mix"))
-                .is_some()
-            {
-                return Err(
-                    "legacy preset parameters.output_mix is unknown; use schema_version 3".into(),
-                );
+            if version <= 2 {
+                if object
+                    .get("parameters")
+                    .and_then(|p| p.get("output_mix"))
+                    .is_some()
+                {
+                    return Err(
+                        "legacy preset parameters.output_mix is unknown; use schema_version 4"
+                            .into(),
+                    );
+                }
+                if object
+                    .get("parameters")
+                    .and_then(|p| p.get("camera"))
+                    .is_some()
+                {
+                    return Err(
+                        "legacy preset parameters.camera is unknown; use schema_version 4".into(),
+                    );
+                }
+                if object.get("film_profile").is_some_and(|v| !v.is_null())
+                    || object.get("print_profile").is_some_and(|v| !v.is_null())
+                {
+                    let parameters = object
+                        .get_mut("parameters")
+                        .and_then(Value::as_object_mut)
+                        .ok_or("preset parameters must be an object")?;
+                    parameters.insert(
+                        "output_mix".into(),
+                        serde_json::to_value(OutputMixParams::default())
+                            .map_err(|e| e.to_string())?,
+                    );
+                }
             }
-            if object
-                .get("parameters")
-                .and_then(|p| p.get("camera"))
-                .is_some()
-            {
-                return Err(
-                    "legacy preset parameters.camera is unknown; use schema_version 3".into(),
-                );
-            }
-            if object.get("film_profile").is_some_and(|v| !v.is_null())
-                || object.get("print_profile").is_some_and(|v| !v.is_null())
-            {
+            // Version 3 to 4: rename the conversion-control paths. A look
+            // payload (multiple parameter groups) may carry the tracking
+            // setting for the legacy mixed states; a single-section payload
+            // may not and fails with an explicit error instead.
+            if version <= 3 {
+                let settings_allowed = object
+                    .get("parameters")
+                    .and_then(Value::as_object)
+                    .is_some_and(|parameters| parameters.len() > 1);
                 let parameters = object
                     .get_mut("parameters")
-                    .and_then(Value::as_object_mut)
                     .ok_or("preset parameters must be an object")?;
-                parameters.insert(
-                    "output_mix".into(),
-                    serde_json::to_value(OutputMixParams::default()).map_err(|e| e.to_string())?,
-                );
+                crate::params::sources::normalize_legacy_conversion_paths(
+                    parameters,
+                    settings_allowed,
+                )?;
             }
             object.insert("schema_version".into(), PRESET_SCHEMA_VERSION.into());
         }
@@ -424,12 +450,12 @@ impl Preset {
         let default_route = workflow_default(&film);
         params.workflow.route = default_route.clone();
         params.io.scan_film = film.is_positive();
-        if params.scanner.positive_interpretation
-            == crate::params::PositiveInterpretation::DigitalReference
+        if params.scanner.negative_conversion_method
+            == crate::params::NegativeConversionMethod::DigitalReference
             && (film.is_positive() || params.workflow.route != "input > film > scan")
         {
-            params.scanner.positive_interpretation =
-                crate::params::PositiveInterpretation::default();
+            params.scanner.negative_conversion_method =
+                crate::params::NegativeConversionMethod::default();
             params.scanner.receiver_profile = crate::params::ReceiverProfile::default();
             params.scanner.reference_exposure_ev = 0.0;
             params.scanner.reference_balance_ev = [0.0; 3];
@@ -441,8 +467,8 @@ impl Preset {
             )
         {
             params.scanner.scan_output = "direct_scan".into();
-            params.scanner.positive_interpretation =
-                crate::params::PositiveInterpretation::default();
+            params.scanner.negative_conversion_method =
+                crate::params::NegativeConversionMethod::default();
             params.scanner.auto_setup = crate::params::ScannerAutoSetup::default();
             params.scanner.finish = crate::params::ScannerFinish::default();
             if params.scanner.receiver_profile == crate::params::ReceiverProfile::DigitalReference {

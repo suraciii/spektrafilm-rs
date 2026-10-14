@@ -153,7 +153,7 @@ impl App {
             controls::extra_bool_tip(ui, &mut self.gui_state.sections, "simulation", "auto_preview", "auto preview", true, "trigger the preview after every change of gui parameters, use mouse scrollwheel on parameters field, read preview tooltip for details");
             if self.film_medium.for_route(&self.params.workflow.route).correction_eligible() {
                 let mut scan_for_print = self.scan_for_print_snapshot.is_some();
-                if ui.checkbox(&mut scan_for_print, "black and white correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
+                if ui.checkbox(&mut scan_for_print, "white and black correction").on_hover_text("White and black correction of the scanner are active, and glare is deactivated.").changed() {
                     self.toggle_scan_for_print();
                 }
             }

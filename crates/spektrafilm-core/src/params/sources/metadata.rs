@@ -362,7 +362,7 @@ fn conditions(path: &str) -> Vec<String> {
     }
     if path == "scanner.receiver_profile" {
         out.push("film scans only; legacy_colorimetric preserves CIE spectral-to-output acquisition; lab_scan_approx is an approximate uncalibrated Fotufilm narrow-band receiver (630/545/465 nm, sigma 8.5/14/9.5 nm), version fotufilm_lab_scan_approx_v1".into());
-    } else if path == "scanner.positive_interpretation" {
+    } else if path == "scanner.negative_conversion_method" {
         out.push("density reads record densities and acquires no receiver capture, so its output is receiver-independent; separable and coupled interpret a receiver capture and apply to a real negative capture or the exact-cell scan path; density behaves as separable where the incoming image is a capture".into());
         out.push("digital_reference pairs its modeled receiver on input > film > scan only; Reference Exposure requires auto_setup off, identity points and default reconstruction controls; fixed Kodak Endura receiver and Portra400 dye basis, equal-energy light and fixed 18% response".into());
     } else if path == "scanner.scan_output" {
