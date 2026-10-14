@@ -76,6 +76,9 @@ fn tone_eval(l: f32) -> f32 {
     if l != l || abs(l) > 1.0e30 {
         return tone_out(0u);
     }
+    if l <= tone_in(0u) {
+        return tone_out(0u);
+    }
     if l >= tone_in(9u) {
         return tone_out(9u);
     }

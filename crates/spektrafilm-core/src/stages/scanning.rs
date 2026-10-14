@@ -1175,7 +1175,10 @@ pub(crate) fn apply_scan_readout_interpretation(
                 base_density,
                 scan_context,
             )?;
-            *rgb = interpret_negative_capture(rgb.clone(), &calibration, params)?;
+            // The capture is consumed by the inverse, so move the buffer out
+            // instead of cloning the whole scan image.
+            let capture = std::mem::replace(rgb, ImageBuf::new(0, 0));
+            *rgb = interpret_negative_capture(capture, &calibration, params)?;
         } else {
             let forward = ForwardCapture::prepare(
                 profile,

@@ -98,8 +98,12 @@ fn main() -> Result<(), String> {
                 let mut p = base.clone();
                 p.io.output_color_space = space.into();
                 p.io.output_cctf_encoding = encoded;
-                let resident_expected =
-                    !matches!(case, "diffusion" | "decode" | "spectral_lut" | "wide_blur");
+                // Every case except the FIR blur-support limit keeps the
+                // resident route: the capability-class stages the per-stage
+                // route used to own (camera diffusion, input transfer
+                // decoding, scanner/enlarger LUT acquisition) now run as
+                // assembled fences inside the chain.
+                let resident_expected = !matches!(case, "wide_blur");
                 match case {
                     "scan" => p.io.scan_film = true,
                     "geometry" => {
@@ -208,19 +212,24 @@ fn main() -> Result<(), String> {
         p.film_render.grain.active = true;
         p.film_render.grain.sublayers_active = layered;
         let pipeline = Pipeline::new_with_spectral(film.clone(), print.clone(), p, &dir)?;
-        if pipeline.process_resident_borrowed(&input, &gpu)?.is_some() {
-            return Err(format!(
-                "grain layered={layered}: expected faithful CPU sampler fallback"
-            ));
-        }
+        // Spektra grain distribution runs as the assembled density fence, so
+        // the route stays resident instead of falling back to the CPU
+        // sampler route.
+        let resident = pipeline
+            .process_resident_borrowed(&input, &gpu)?
+            .ok_or("grain: expected the resident density fence")?;
         let reference = pipeline.process_with_taps(input.clone(), &cpu, None, None)?;
         let routed = pipeline.process(input.clone(), &gpu)?;
         let (max, mean) = difference(&reference, &routed)?;
+        let (resident_max, resident_mean) = difference(&reference, &resident)?;
         println!(
-            "grain layered={layered} execution=cpu_sampler max_abs={max:.9e} mean_abs={mean:.9e}"
+            "grain layered={layered} execution=resident_fence max_abs={max:.9e} mean_abs={mean:.9e} \
+             resident_max_abs={resident_max:.9e} resident_mean_abs={resident_mean:.9e}"
         );
-        if max > BUDGET {
-            return Err(format!("grain CPU fallback drift {max}"));
+        if max > BUDGET || resident_max > BUDGET {
+            return Err(format!(
+                "grain resident fence drift max={max} resident_max={resident_max}"
+            ));
         }
     }
     Ok(())

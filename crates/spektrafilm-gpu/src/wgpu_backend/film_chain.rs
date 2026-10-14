@@ -17,8 +17,12 @@ impl WgpuBackend {
     /// mallett matmul), highlight boost, camera lens blur, halation,
     /// density curves, DIR, print spectral, scan spectral, glare,
     /// gamut compression, scanner lens blur,
-    /// and unsharp as a single command buffer with ping-pong image storage.
-    /// Only one upload at the start and one readback at the end.
+    /// and unsharp as one assembled stage list over ping-pong image
+    /// storage. Consecutive device passes share a command buffer; an
+    /// assembled CPU fence (grain distribution, acquisition replacement,
+    /// readout interpretation, optical diffusion, output transfer,
+    /// magazine) flushes the submission, runs the host stage, and the
+    /// remaining passes continue on the device.
     fn run_film_chain_inner(&self, p: &crate::FilmChainParams<'_>) -> Result<ImageBuf, String> {
         let t_start = std::time::Instant::now();
         // Pull all references into locals so the existing body below
