@@ -13,7 +13,12 @@ With grain on, the rendered grain texture diverges per pixel by design, matching
 Budgets apply to different measurements:
 
 - Reference f64 arithmetic uses a **1e-6** maximum absolute-error budget against the pinned matrix.
-- CPU-f32/GPU arithmetic must report its measured maximum and mean error independently. It has no approved universal budget yet.
+- CPU-f32/GPU arithmetic is measured by `just parity-backend` against the CPU
+  reference over the color-space, control, fence and grain matrix. Both
+  precisions use a **5e-3** maximum absolute-error budget. Measured worst cases:
+  f64 grain fence **4.1e-4**, f32 controls path **1.0e-4**; the budget keeps an
+  order of magnitude of headroom while still failing the 2.9e-1 input-CCTF
+  double-decode regression it was introduced to catch.
 - Stochastic appearance uses a provisional **1 % mean / 5 % standard deviation** relative-error budget, not per-pixel equality.
 - The spatial **0.005** hotspot limit guards the faithful diffusion fallback. It does not approve a GPU blur approximation.
 
@@ -52,3 +57,4 @@ Grain Procedural uses its resident GPU shader when the rest of the resident-chai
 - [Baseline evidence](parity/baseline_evidence.md)
 - [Parity matrix](parity/parity_matrix.md)
 - [Differential harness](../scripts/parity/README.md)
+- [CPU-vs-GPU parity](../Justfile) — `just parity-backend`

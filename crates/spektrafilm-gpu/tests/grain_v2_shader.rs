@@ -8,6 +8,11 @@ fn grain_v2_shader_compiles() {
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()));
     let Some(adapter) = adapter else {
+        assert!(
+            !spektrafilm_gpu::test_support::require_gpu(),
+            "SPEKTRAFILM_REQUIRE_GPU is set but no WGPU adapter is available; \
+             install a Vulkan driver or unset the variable"
+        );
         eprintln!(
             "Grain Procedural GPU smoke skipped: no WGPU adapter; CPU behavior tests remain available"
         );

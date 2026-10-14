@@ -3,6 +3,7 @@ pub mod telemetry;
 pub use observed_backend::{bind_backend, bind_cpu_fallback};
 pub mod cpu_backend;
 mod gpu_helpers;
+pub mod test_support;
 pub mod timing;
 #[cfg(feature = "wgpu-backend")]
 pub mod wgpu_backend;

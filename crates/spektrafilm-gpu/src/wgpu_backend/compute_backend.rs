@@ -748,8 +748,7 @@ mod tests {
         let device_guard = super::super::observation::TEST_DEVICE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(base) = WgpuBackend::new() else {
-            eprintln!("no GPU adapter available; skipping");
+        let Some(base) = crate::test_support::adapter_or_skip() else {
             return;
         };
         assert!(!base.explicit_gpu_request());

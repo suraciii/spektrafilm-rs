@@ -1,5 +1,6 @@
-// Run after integrating geometry and central color semantics.
-// cargo run -p spektrafilm-core --example backend_parity --features precision-f64 -- data
+//! Differential CPU-vs-GPU parity over the color-space, control, fence and
+//! grain matrix. Run with `just parity-backend`; the recipe builds the f64
+//! binary and passes the data directory.
 use spektrafilm_core::{
     params::{RuntimeParams, Tap},
     pipeline::Pipeline,
@@ -12,7 +13,11 @@ use spektrafilm_math::{
 };
 use std::path::PathBuf;
 
-const BUDGET: f64 = 0.005; // Provisional smoke limit, report actual errors independently.
+/// CPU-reference vs GPU maximum absolute error. Measured worst cases are the
+/// f64 grain fence (4.1e-4) and the f32 controls path (1.0e-4); the budget
+/// keeps an order of magnitude of headroom while still failing the 2.9e-1
+/// input-CCTF double-decode regression. See docs/parity.md.
+const BUDGET: f64 = 5e-3;
 
 fn difference(a: &ImageBuf, b: &ImageBuf) -> Result<(f64, f64), String> {
     if (a.width, a.height) != (b.width, b.height) {
@@ -39,7 +44,7 @@ fn main() -> Result<(), String> {
     let gpu = WgpuBackend::new().ok_or("WGSL adapter unavailable; no GPU pass recorded")?;
     let cpu = CpuBackend;
     println!(
-        "backend={} cpu={} reference=3bb2c2d provisional_max_abs_budget={BUDGET}",
+        "backend={} cpu={} reference=3bb2c2d max_abs_budget={BUDGET}",
         gpu.name(),
         cpu.name()
     );
@@ -179,7 +184,7 @@ fn main() -> Result<(), String> {
                     );
                     if max > BUDGET {
                         return Err(format!(
-                            "{space}/{encoded}/{case}/{label}: {max} exceeds provisional {BUDGET}"
+                            "{space}/{encoded}/{case}/{label}: {max} exceeds {BUDGET}"
                         ));
                     }
                     if range.1 - range.0 < 1e-6 {
