@@ -356,7 +356,7 @@ pub fn choice_tip(
 
 /// Selector over an iterator of `(value, label)` pairs, so callers can render a
 /// table that also carries per-choice descriptions without building a slice.
-pub(crate) fn choice_tip_entries<'a>(
+pub fn choice_tip_entries<'a>(
     ui: &mut Ui,
     label: &str,
     value: &mut String,
