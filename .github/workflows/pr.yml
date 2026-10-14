@@ -64,6 +64,9 @@ jobs:
       OPENBLAS_NUM_THREADS: '1'
       RAYON_NUM_THREADS: '2'
       CARGO_INCREMENTAL: '0'
+      # The software Vulkan adapter is installed below; a missing adapter must
+      # fail the gate instead of reporting a vacuous pass for the GPU tests.
+      SPEKTRAFILM_REQUIRE_GPU: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

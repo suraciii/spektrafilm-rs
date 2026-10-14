@@ -48,7 +48,14 @@ fn fresh_backend(
             "software Vulkan adapter is required for telemetry acceptance"
         );
     }
-    let adapter = adapter?;
+    let adapter = match adapter {
+        Some(adapter) => adapter,
+        None if crate::test_support::require_gpu() => panic!(
+            "SPEKTRAFILM_REQUIRE_GPU is set but no WGPU adapter is available (fresh_backend); \
+             install a Vulkan driver or unset the variable"
+        ),
+        None => return None,
+    };
     let supported = adapter.features();
     if cfg!(target_os = "linux") {
         assert!(
