@@ -236,11 +236,7 @@ impl App {
         });
         if let Some(error) = self.last_export_error.clone() {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(format!("{error}"))
-                        .color(theme::ERROR)
-                        .small(),
-                );
+                ui.label(egui::RichText::new(error).color(theme::ERROR).small());
                 if ui.button("Dismiss").clicked() {
                     self.last_export_error = None;
                 }
