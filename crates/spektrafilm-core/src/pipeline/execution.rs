@@ -1,4 +1,5 @@
 //! Pipeline render entry points.
+use crate::WorkflowRoute;
 
 use super::*;
 
@@ -159,7 +160,7 @@ impl Pipeline {
         crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
-        if self.params.workflow.route == "input" {
+        if self.params.workflow.route_enum() == WorkflowRoute::Input {
             let (working, _) = crate::resizing::crop_and_rescale(
                 &image,
                 &self.params.io,
@@ -249,9 +250,9 @@ impl Pipeline {
             context
                 .decline_resident(spektrafilm_gpu::telemetry::ResidentDeclineReason::WorkflowRoute);
         }
-        let route = self.params.workflow.route.as_str();
-        let print_after_convert = route == "input > convert-film > print > scan";
-        let scan_minus_base = route == "input > convert-film > scan-minus-base";
+        let route = self.params.workflow.route_enum();
+        let print_after_convert = route == WorkflowRoute::ConvertFilmPrintScan;
+        let scan_minus_base = route == WorkflowRoute::ConvertFilmScanMinusBase;
         let mut converting = crate::stages::StageObservation::cpu(
             backend,
             "converting",

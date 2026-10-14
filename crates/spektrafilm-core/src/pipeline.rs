@@ -5,6 +5,7 @@
 ///   2. Process virtual gray card through filming to get midgray spectral density
 ///   3. Compute print exposure normalization factor from midgray spectral density
 ///   4. Pass all calibration data to the pipeline stages
+use crate::WorkflowRoute;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{
@@ -144,7 +145,7 @@ impl Pipeline {
         measurement.params.scanner.auto_setup = crate::params::ScannerAutoSetup::Off;
         measurement.scanner_setup = None;
         let color_ref = measurement.color_reference(&backend);
-        let converting = self.params.workflow.route == "input > convert-film > scan";
+        let converting = self.params.workflow.route_enum() == WorkflowRoute::ConvertFilmScan;
         let density = if converting {
             crate::stages::converting::process(full_input, &measurement.film, &measurement.params)?
         } else {
