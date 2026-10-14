@@ -529,8 +529,20 @@ impl GuiState {
             let order = s["special"][name]
                 .as_array()
                 .context("Channel swap must be an array")?;
-            if order.len() != 3 || order.iter().any(|v| v.as_u64().is_none_or(|x| x > 2)) {
-                bail!("{name} must contain three channel indices in 0..2");
+            if order.len() != 3 || order.iter().any(|v| v.as_u64().is_none_or(|x| x > 2)) || {
+                let mut seen = [false; 3];
+                let mut duplicate = false;
+                for v in order {
+                    let idx = v.as_u64().unwrap_or(0) as usize;
+                    if seen[idx] {
+                        duplicate = true;
+                        break;
+                    }
+                    seen[idx] = true;
+                }
+                duplicate
+            } {
+                bail!("{name} must be a permutation of [0, 1, 2]");
             }
         }
         if !matches!(

@@ -9,8 +9,8 @@ use spektrafilm_core::profile;
 /// to the stock id when missing.
 #[derive(Debug, Clone)]
 pub(super) struct ProfileEntry {
-    stock: String,
-    display: String,
+    pub(super) stock: String,
+    pub(super) display: String,
 }
 
 /// Find the data directory. Probes, in order:

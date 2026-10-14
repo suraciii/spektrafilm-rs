@@ -10,6 +10,8 @@ A **parameter override** is a sparse set of explicit edits to runtime controls f
 
 The parameter contract owns the added command syntax. Preset document fields and carriers belong to the [preset specification](../presets/spec.md). Field names, units, bounds, and conditional effect behavior belong to their parameter model and capability specifications. Help, data-directory selection, command status, and human feedback belong to the [workflow contract](#workflow-contract).
 
+`film_channel_swap` and `print_channel_swap` are profile-data diagnostics. They reorder which density row feeds each RGB channel and exist to diagnose a profile whose channel assignment is wrong. They are not photographic controls and must not appear in the GUI. The CLI `--film-channel-swap` and `--print-channel-swap` flags are the only public surface. A swap value must be a permutation of `[0, 1, 2]`; the command must reject a non-permutation before rendering.
+
 ## Process syntax
 
 The command must accept these forms:

@@ -27,11 +27,13 @@ mod chooser;
 mod controls;
 mod diagnostics;
 mod display;
+mod editor_ranges;
 mod embedded_bundle;
 mod export;
 mod export_job;
 #[cfg(test)]
 mod headless;
+mod histogram;
 mod numeric;
 mod platform;
 mod presets;
@@ -40,6 +42,7 @@ mod render;
 mod render_worker;
 mod routes;
 mod state;
+mod theme;
 mod ui;
 use backend::{gui_backend, gui_renderer};
 use calibration::CalibrationJob;
@@ -154,6 +157,7 @@ fn main() -> eframe::Result<()> {
         "spektrafilm",
         options,
         Box::new(|_cc| {
+            theme::apply(&_cc.egui_ctx);
             Ok(Box::new(App::new(
                 backend,
                 initial_image,
@@ -244,6 +248,10 @@ struct App {
     calibration_job: Option<CalibrationJob>,
     calibration_epoch: u64,
     parameter_revision: u64,
+    histogram: histogram::HistogramStrip,
+    right_panel_mode: Option<String>,
+    compare_active: bool,
+    compare_split: f32,
 }
 
 impl App {
@@ -389,6 +397,10 @@ impl App {
             calibration_job: None,
             calibration_epoch: 0,
             parameter_revision: 0,
+            histogram: histogram::HistogramStrip::new(),
+            right_panel_mode: None,
+            compare_active: false,
+            compare_split: 0.5,
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);
