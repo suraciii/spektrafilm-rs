@@ -276,13 +276,13 @@ impl ExportDialog {
                 enum_choice(ui, "Backend", &mut draft.backend, &[
                     (ExportBackend::Cpu, cpu_label),
                     (ExportBackend::Gpu, "GPU (WGPU f32)"),
-                ], "Select the rendering backend.");
+                ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
                 enum_choice(ui, "Format", &mut draft.format, &[
                     (ExportFormat::Jpeg, "JPEG"),
                     (ExportFormat::Png, "PNG"),
                     (ExportFormat::Tiff, "TIFF"),
                     (ExportFormat::Exr, "EXR"),
-                ], "Select the image format.");
+                ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit ZIP. EXR: 16/32-bit linear for compositing.");
                 draft.normalize();
                 let depth_choices: &[(BitDepth, &str)] = match draft.format {
                     ExportFormat::Jpeg | ExportFormat::Png => &[(BitDepth::Eight, "8 bit")],
@@ -305,7 +305,14 @@ impl ExportDialog {
                     ], "Select the TIFF compression method.");
                 }
                 let spaces = if draft.format == ExportFormat::Exr { EXR_COLOR_SPACES } else { COLOR_SPACES };
-                egui::ComboBox::from_label("Saving color space").selected_text(&draft.saving_color_space).show_ui(ui, |ui| {
+                egui::ComboBox::from_label("Saving color space")
+                    .selected_text(&draft.saving_color_space)
+                    .show_ui(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("sRGB for web · Adobe RGB for print · ACES2065-1 for archival")
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
                     for &space in spaces {
                         ui.selectable_value(&mut draft.saving_color_space, space.to_owned(), space);
                     }

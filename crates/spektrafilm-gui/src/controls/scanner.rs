@@ -198,6 +198,13 @@ pub(crate) fn sections(
         egui::CollapsingHeader::new("Experimental")
             .default_open(false)
             .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "Internal testing features. Not recommended for production.",
+                    )
+                    .small()
+                    .color(egui::Color32::GRAY),
+                );
                 flags.runtime_changed |= choice_tip(
                     ui,
                     "print illuminant",

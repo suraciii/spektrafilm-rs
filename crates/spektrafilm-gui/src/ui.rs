@@ -736,11 +736,11 @@ impl App {
                 for section in ["Print base", "Glare", "Enlarger diffusion"] {
                     self.parameter_section(ui, section);
                 }
+                self.parameter_section(ui, "Magazine finish color");
             }
             GuiTab::Advanced => {
                 for section in [
                     "Spectral upsampling",
-                    "Magazine finish color",
                     "Input gamut compress",
                     "Output gamut compress",
                     "Experimental",

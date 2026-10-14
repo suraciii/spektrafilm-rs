@@ -323,8 +323,12 @@ impl Viewer {
             .on_hover_text("Apply the display transform to the viewer output only; saved and exported pixels are unchanged.");
         ui.checkbox(&mut self.settings.gray_18_canvas, "gray 18% canvas")
             .on_hover_text(
-                "Use neutral 18% gray as backgroung to judge the exposure and neutral colors",
+                "Use neutral 18% gray as background to judge the exposure and neutral colors",
             );
+        ui.checkbox(&mut self.settings.reveal, "reveal transition")
+            .on_hover_text("Animate a wipe reveal when switching from input to output view.");
+        ui.checkbox(&mut self.settings.crossfade, "crossfade transition")
+            .on_hover_text("Animate a crossfade between the previous and current output frame.");
         let tooltip = "Expand the white border layer around the normalized preview frame, expressed as a fraction of the image long edge.";
         crate::controls::param_numeric(
             ui,

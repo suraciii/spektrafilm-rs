@@ -28,7 +28,7 @@ pub(crate) const CHOICES: [RouteChoice; 6] = [
     RouteChoice {
         value: "input > film > print > scan",
         label: "input > film > print > scan",
-        description: "full chain",
+        description: "expose film and print through the full capture chain",
     },
     RouteChoice {
         value: "input > convert-film > print > scan",
