@@ -281,7 +281,7 @@ impl App {
             self.params.print_render.glare.active = glare;
         }
         self.params.io.scan_film = self.params.workflow.route == "input > film > scan";
-        normalize_scan_output(&mut self.params, self.film_medium);
+        normalize_scanner_selections(&mut self.params, self.film_medium);
         self.invalidate_look_render();
     }
 
@@ -309,7 +309,7 @@ impl App {
         self.params.workflow.route = workflow_default(&film);
         self.params.io.scan_film = film.is_positive();
         self.params.scanner.scan_output = "direct_scan".into();
-        normalize_scan_output(&mut self.params, self.film_medium);
+        normalize_scanner_selections(&mut self.params, self.film_medium);
         self.invalidate_look_render();
     }
 
