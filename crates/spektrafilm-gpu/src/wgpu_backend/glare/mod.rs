@@ -101,6 +101,69 @@ pub(super) fn build_glare_state(
             gp.blur_px.max(0.01),
             width,
             height,
+<<<<<<< HEAD
+            radius,
+            _pad: 0,
+        };
+        let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("glare_blur_params"),
+            contents: bytemuck::bytes_of(&params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glare_blur_h_bg"),
+            layout: &blur_pipe_h.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: scratch.as_entire_binding(),
+                }, // src (read)
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kernel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buf_a.as_entire_binding(),
+                }, // mid
+            ],
+        });
+        let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glare_blur_v_bg"),
+            layout: &blur_pipe_v.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buf_a.as_entire_binding(),
+                }, // mid (read)
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: kernel_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: scratch.as_entire_binding(),
+                }, // back into scratch (separate pass — no aliasing)
+            ],
+        });
+        Some(BlurJob {
+            _kernel_buf: kernel_buf,
+            _params_buf: params_buf,
+            bind_group_h,
+            bind_group_v,
+        })
+    } else {
+        None
+    };
+=======
             &scratch,
             buf_a,
             &scratch,
@@ -109,6 +172,7 @@ pub(super) fn build_glare_state(
             &blur_pipe_v,
         )
     });
+>>>>>>> origin/main-0.3.4
 
     // ── Apply: image[c] += glare_amount * rgb_offset[c] ───────────────
     let apply_pipe = backend.cached_pipeline(
@@ -198,7 +262,7 @@ impl GlareState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &b.bg_h, &[]);
+                pass.set_bind_group(0, &b.bind_group_h, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
             {
@@ -207,7 +271,7 @@ impl GlareState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &b.bg_v, &[]);
+                pass.set_bind_group(0, &b.bind_group_v, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
         }

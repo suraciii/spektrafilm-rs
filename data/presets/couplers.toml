@@ -51,6 +51,15 @@ gamma_interlayer_g_to_rb = [0.2227, 0.4340]
 gamma_interlayer_b_to_rg = [0.1829, 0.1799]
 
 
+# --- color negative
+# Inherit the 500T tungsten DIR prior without changing this stock's use class.
+# These are model priors, not measured Cs41 coupler coefficients.
+[cinestill_800t_cs41_approx]
+gamma_samelayer_rgb = [0.4601, 0.4433, 0.4414]
+gamma_interlayer_r_to_gb = [0.4313, 0.3157]
+gamma_interlayer_g_to_rb = [0.3145, 0.3890]
+gamma_interlayer_b_to_rg = [0.2423, 0.2506]
+
 # --- color positive
 [fujifilm_velvia_100]
 gamma_samelayer_rgb = [0.2398, 0.0662, 0.1440]

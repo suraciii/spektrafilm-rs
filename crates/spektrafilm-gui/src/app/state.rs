@@ -1,4 +1,9 @@
+<<<<<<< HEAD
+//! App state ownership: construction, applied GUI state and persisted
+//! browser/session state.
+=======
 //! App state ownership: construction, applied GUI state and persisted browser/session state.
+>>>>>>> origin/main-0.3.4
 use crate::*;
 
 pub(crate) struct App {
@@ -59,7 +64,10 @@ pub(crate) struct App {
     pub(crate) last_preview_ms: f32,
     pub(crate) last_worker_total_ms: f32,
     pub(crate) status: String,
+<<<<<<< HEAD
+=======
     pub(crate) last_export_error: Option<String>,
+>>>>>>> origin/main-0.3.4
     /// Controls changed since the latest submitted render snapshot.
     pub(crate) dirty: bool,
     pub(crate) dirty_since: Option<Instant>,
@@ -82,10 +90,13 @@ pub(crate) struct App {
     pub(crate) calibration_job: Option<CalibrationJob>,
     pub(crate) calibration_epoch: u64,
     pub(crate) parameter_revision: u64,
+<<<<<<< HEAD
+=======
     pub(crate) histogram: histogram::HistogramStrip,
     pub(crate) right_panel_mode: Option<String>,
     pub(crate) compare_active: bool,
     pub(crate) compare_split: f32,
+>>>>>>> origin/main-0.3.4
 }
 
 impl App {
@@ -225,17 +236,23 @@ impl App {
             render_worker: RenderWorker::new(),
             export_job: None,
             status: startup_error.unwrap_or_else(|| String::from("Load an image to start.")),
+<<<<<<< HEAD
+=======
             last_export_error: None,
+>>>>>>> origin/main-0.3.4
             dirty: false,
             #[cfg(target_os = "macos")]
             metal_colorspace_tagged: false,
             calibration_job: None,
             calibration_epoch: 0,
             parameter_revision: 0,
+<<<<<<< HEAD
+=======
             histogram: histogram::HistogramStrip::new(),
             right_panel_mode: None,
             compare_active: false,
             compare_split: 0.5,
+>>>>>>> origin/main-0.3.4
         };
         app.viewer.settings =
             display::DisplaySettings::from_json(&app.gui_state.sections["display"]);

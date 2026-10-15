@@ -511,7 +511,7 @@ pub fn readout(
         expectation = resolved.expectation,
         "film grain Dye: field readout on CPU"
     );
-    v3::apply(source, source_pitch_um, grid, &resolved)
+    v3::transform(source, source_pitch_um, grid, &resolved)
 }
 
 /// Read linear route response with the same formed field and exact cell overlaps.
@@ -532,7 +532,7 @@ pub fn readout_with_response(
         spektrafilm_gpu::telemetry::CpuReason::GrainV3FieldCpu,
     );
     let backend = observation.backend(backend);
-    v3::apply_with_response(source, source_pitch_um, grid, &resolved, |cells| {
+    v3::transform_with_response(source, source_pitch_um, grid, &resolved, |cells| {
         response(cells, backend)
     })
 }
@@ -708,7 +708,7 @@ mod tests {
             width: 8,
             height: 6,
         };
-        let formed_cells = v3::apply(&source, cell * 2.0, fine_grid, &model).unwrap();
+        let formed_cells = v3::transform(&source, cell * 2.0, fine_grid, &model).unwrap();
         let color = crate::color_reference::ColorReference::identity();
         let gamut = crate::gamut_compression::OutputGamutCompress::identity();
         let illuminant =
@@ -730,7 +730,7 @@ mod tests {
             let fine = expose(&formed_cells).unwrap();
             let expected = block_average_linear(&fine, 4);
             let actual =
-                v3::apply_with_response(&source, cell * 2.0, coarse_grid, &model, expose).unwrap();
+                v3::transform_with_response(&source, cell * 2.0, coarse_grid, &model, expose).unwrap();
             assert!(max_abs_diff(&actual, &expected) < read_tolerance());
         }
         params.io.scan_film = true;
@@ -743,7 +743,7 @@ mod tests {
             let fine_capture = capture(&formed_cells).unwrap();
             let expected = block_average_linear(&fine_capture, 4);
             let actual =
-                v3::apply_with_response(&source, cell * 2.0, coarse_grid, &model, capture).unwrap();
+                v3::transform_with_response(&source, cell * 2.0, coarse_grid, &model, capture).unwrap();
             assert!(max_abs_diff(&actual, &expected) < read_tolerance());
             let finish = |rgb| {
                 super::super::scanning::finish_capture(
@@ -759,7 +759,7 @@ mod tests {
                 ..coarse_grid
             };
             let cropped =
-                v3::apply_with_response(&source, cell * 2.0, crop_grid, &model, capture).unwrap();
+                v3::transform_with_response(&source, cell * 2.0, crop_grid, &model, capture).unwrap();
             assert!(max_abs_diff_at(&actual, &cropped, 2, 1) < read_tolerance());
         }
     }
@@ -1002,8 +1002,8 @@ mod tests {
         assert_eq!((keep.x, keep.y, keep.width, keep.height), (2, 2, 8, 8));
         let film = load("kodak_portra_800");
         let resolved = resolve(&film, &params).unwrap();
-        let full = v3::apply(&source, 2.0, grid, &resolved).unwrap();
-        let crop = v3::apply(&source, 2.0, requested.grid(), &resolved).unwrap();
+        let full = v3::transform(&source, 2.0, grid, &resolved).unwrap();
+        let crop = v3::transform(&source, 2.0, requested.grid(), &resolved).unwrap();
         assert!(max_abs_diff_at(&full, &crop, keep.x, keep.y) <= read_tolerance());
     }
 
@@ -1015,7 +1015,7 @@ mod tests {
         // Fractional source-to-field footprints, across two output bands.
         let pitch = 3.1;
         let source = density_target(96, 160);
-        let full = v3::apply(
+        let full = v3::transform(
             &source,
             pitch,
             ReadoutGrid {
@@ -1027,7 +1027,7 @@ mod tests {
             &resolved,
         )
         .unwrap();
-        let crop = v3::apply(
+        let crop = v3::transform(
             &source,
             pitch,
             ReadoutGrid {
@@ -1066,8 +1066,8 @@ mod tests {
         expected_a.expectation = true;
         let mut expected_b = expected_a.clone();
         expected_b.event_area_um2 = expected_a.event_area_um2 * 10.0;
-        let a = v3::apply(&source, pitch, grid, &expected_a).unwrap();
-        let b = v3::apply(&source, pitch, grid, &expected_b).unwrap();
+        let a = v3::transform(&source, pitch, grid, &expected_a).unwrap();
+        let b = v3::transform(&source, pitch, grid, &expected_b).unwrap();
         let mean_diff = max_abs_diff(&a, &b);
         assert!(
             mean_diff <= 1e-5,
@@ -1077,8 +1077,8 @@ mod tests {
         // Realized field: the same support, different statistical strength.
         let mut realized_b = coarser.clone();
         realized_b.event_area_um2 *= 10.0;
-        let ra = v3::apply(&source, pitch, grid, &coarser).unwrap();
-        let rb = v3::apply(&source, pitch, grid, &realized_b).unwrap();
+        let ra = v3::transform(&source, pitch, grid, &coarser).unwrap();
+        let rb = v3::transform(&source, pitch, grid, &realized_b).unwrap();
         let noise_diff = max_abs_diff(&ra, &rb);
         assert!(
             noise_diff > 1e-4,
@@ -1139,14 +1139,14 @@ mod tests {
                 width: 16,
                 height: 8,
             };
-            let all = v3::apply(&target, q, full, &model).unwrap();
+            let all = v3::transform(&target, q, full, &model).unwrap();
             for x in [0, 8] {
                 let tile = ReadoutGrid {
                     origin_um: [(10 + x) as f64 * q, 8.0 * q],
                     width: 8,
                     ..full
                 };
-                let part = v3::apply(&target, q, tile, &model).unwrap();
+                let part = v3::transform(&target, q, tile, &model).unwrap();
                 assert!(max_abs_diff_at(&all, &part, x, 0) <= read_tolerance());
             }
             let crop = ReadoutGrid {
@@ -1155,7 +1155,7 @@ mod tests {
                 height: 4,
                 ..full
             };
-            let part = v3::apply(&target, q, crop, &model).unwrap();
+            let part = v3::transform(&target, q, crop, &model).unwrap();
             assert!(max_abs_diff_at(&all, &part, 3, 2) <= read_tolerance());
         }
     }

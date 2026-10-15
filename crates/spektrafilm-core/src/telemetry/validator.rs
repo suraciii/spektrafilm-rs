@@ -291,7 +291,7 @@ fn validate_counter_overflow(report: &Report) -> Result<(), ValidationError> {
     }
     let mut names = HashSet::new();
     for field in &report.coverage.counter_overflow_fields {
-        let Some(value) = report.measurements.work.named_value(field) else {
+        let Some(value) = report.measurements.work.counter(field) else {
             return Err(ValidationError::PrivacyField);
         };
         if value.is_some() || !names.insert(field.as_str()) {

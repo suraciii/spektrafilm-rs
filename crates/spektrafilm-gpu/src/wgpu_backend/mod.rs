@@ -18,6 +18,9 @@ mod cache;
 #[cfg(feature = "wgpu-backend")]
 mod film_chain;
 #[cfg(feature = "wgpu-backend")]
+<<<<<<< HEAD
+use cache::{CachedPipelineRef, CacheHit, PipelineCache};
+=======
 use cache::{CachedPipelineRef, PipelineCache};
 #[cfg(feature = "wgpu-backend")]
 mod pipe;
@@ -27,6 +30,7 @@ use pipe::GpuPipe;
 mod params;
 #[cfg(feature = "wgpu-backend")]
 use params::{DensityParams, FrontParams, ScanParams};
+>>>>>>> origin/main-0.3.4
 
 /// FIR Gaussian-blur half-width `ceil(3σ)`, hard-capped so a pathological σ
 /// can never build a multi-thousand-tap kernel that hangs the GPU (a
@@ -243,8 +247,89 @@ impl WgpuBackend {
         output_idx: usize,
         name: &'static str,
     ) -> Vec<f32> {
+<<<<<<< HEAD
+        let binding_types: Vec<wgpu::BufferBindingType> =
+            bindings.iter().map(|b| b.binding_type).collect();
+        let (cached, hit) =
+            self.pipeline_cache
+                .pipeline_for(&self.device, shader_source, &binding_types);
+        if self.device.context.enabled() {
+            let mut work = WorkCounters::default();
+            match hit {
+                CacheHit::Hit => work.pipeline_cache_hit_count = Some(1),
+                CacheHit::Miss => work.pipeline_cache_miss_count = Some(1),
+            }
+            self.device.context.record_work(&work);
+        }
+        let pipeline = &cached.pipeline;
+        let bind_group_layout = &cached.layout;
+
+        // Create GPU buffers
+        let gpu_buffers: Vec<wgpu::Buffer> = bindings
+            .iter()
+            .enumerate()
+            .map(|(index, b)| {
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(if index == 1 {
+                            "image_input"
+                        } else if index == output_idx {
+                            "scratch_init"
+                        } else {
+                            "spectral_resource"
+                        }),
+                        contents: &b.data,
+                        usage: b.usage,
+                    })
+            })
+            .collect();
+
+        let bind_entries: Vec<wgpu::BindGroupEntry> = gpu_buffers
+            .iter()
+            .enumerate()
+            .map(|(i, buf)| wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: buf.as_entire_binding(),
+            })
+            .collect();
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("compute_bind_group"),
+            layout: bind_group_layout,
+            entries: &bind_entries,
+        });
+
+        // Readback buffer
+        let output_size = bindings[output_idx].data.len() as u64;
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Dispatch
+        // Linear kernels flatten a two-dimensional workgroup grid in WGSL.
+
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(name),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            dispatch_linear(&mut pass, n_pixels);
+        }
+        encoder.copy_buffer_to_buffer(&gpu_buffers[output_idx], 0, &readback, 0, output_size);
+        self.queue.submit(Some(encoder.finish()));
+
+        // Read back
+        self.read_mapped_f32(&readback, output_size)
+=======
         self.pipe
             .dispatch_host(shader_source, bindings, n_pixels, output_idx, name)
+>>>>>>> origin/main-0.3.4
     }
 
     /// The one readback protocol: map `buffer`, wait for the GPU, record the
@@ -261,13 +346,12 @@ impl WgpuBackend {
     ) -> CachedPipelineRef {
         let (cached, hit) =
             self.pipeline_cache
-                .get_or_compile(&self.device.raw, shader_source, binding_types);
+                .pipeline_for(&self.device.raw, shader_source, binding_types);
         if self.device.context.enabled() {
             let mut w = WorkCounters::default();
-            if hit {
-                w.pipeline_cache_hit_count = Some(1)
-            } else {
-                w.pipeline_cache_miss_count = Some(1)
+            match hit {
+                CacheHit::Hit => w.pipeline_cache_hit_count = Some(1),
+                CacheHit::Miss => w.pipeline_cache_miss_count = Some(1),
             }
             self.device.context.record_work(&w);
         }

@@ -151,11 +151,11 @@ fn observe_sampler(
 
 /// Apply grain to a CMY density image.
 ///
-/// Port of Python `apply_grain_to_density` (the composite-density path,
+/// Port of Python `transform_grain_to_density` (the composite-density path,
 /// `grain.sublayers_active == false`). Upstream never passes `use_fast_stats`
 /// on this path, so it always samples the scipy regime.
 #[allow(clippy::too_many_arguments)]
-pub fn apply_grain_to_density(
+pub fn transform_grain_to_density(
     density_cmy: &ImageBuf,
     pixel_size_um: f64,
     particle_area_um2: f64,
@@ -339,6 +339,27 @@ fn apply_multiplicative_unsharp_mask(
     out
 }
 
+<<<<<<< HEAD
+/// Apply layered (per-sublayer) grain to a CMY density image.
+///
+/// Port of Python `transform_grain_to_density_layers` (the
+/// `grain.sublayers_active == true` path). `density_cmy_layers` holds the
+/// per-sublayer densities from `interp_density_cmy_layers` as
+/// `[sublayer][channel]` planes and `density_max_layers` the per-sublayer
+/// curve maxima (`np.nanmax(density_curves_layers, axis=0)`) in the same
+/// `[sublayer][channel]` layout.
+///
+/// Per sublayer: the density maximum splits into fractions that scale both
+/// the per-layer `density_min` offset and the particle count
+/// (`pixel_area · fraction / (particle_area · scale · scale_layer)`), each
+/// layer samples its own Poisson-binomial field seeded `ch + sl·10` (0 for
+/// every channel when `monochrome`), and the dye-cloud blur runs inside the
+/// particle model at `blur_particle · sqrt(od_particle)`. The summed layers
+/// are multiplied by the lognormal micro-structure, offset by the base
+/// `density_min`, and finally blurred by `grain_blur` (gated `> 0`, unlike
+/// the composite path's `> 0.4`).
+=======
+>>>>>>> origin/main-0.3.4
 /// Derive the coarsest-sub-layer particle area from the datasheet RMS
 /// granularity, matching the upstream multilayer peak calculation.
 pub fn particle_area_from_rms_granularity(
@@ -402,7 +423,7 @@ pub fn particle_area_from_rms_granularity(
 /// `density_min`, and finally blurred by `grain_blur` (gated `> 0`, unlike
 /// the composite path's `> 0.4`).
 #[allow(clippy::too_many_arguments)]
-pub fn apply_grain_to_density_layers(
+pub fn transform_grain_to_density_layers(
     density_cmy_layers: &[[Vec<Scalar>; 3]; 3],
     density_max_layers: &[[f64; 3]; 3],
     width: u32,
@@ -583,7 +604,7 @@ mod tests {
         pixel_size_um: f64,
         use_fast_stats: bool,
     ) -> ImageBuf {
-        apply_grain_to_density_layers(
+        transform_grain_to_density_layers(
             &uniform_layers(d),
             &split_max_layers(),
             3,
@@ -720,7 +741,7 @@ mod tests {
         // decorrelates them.
         let layers = uniform_layers([0.9; 3]);
         let run = |monochrome: bool| {
-            apply_grain_to_density_layers(
+            transform_grain_to_density_layers(
                 &layers,
                 &split_max_layers(),
                 3,
@@ -760,7 +781,7 @@ mod tests {
             }
         }
         let run = |seed| {
-            apply_grain_to_density(
+            transform_grain_to_density(
                 &img,
                 12.0,
                 0.2,

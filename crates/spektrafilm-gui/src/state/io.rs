@@ -1,10 +1,17 @@
+<<<<<<< HEAD
+//! GUI state file IO: startup defaults, load and save.
+=======
 //! State file loading, saving, and startup defaults.
+>>>>>>> origin/main-0.3.4
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 use super::GuiState;
+<<<<<<< HEAD
+=======
 
+>>>>>>> origin/main-0.3.4
 impl GuiState {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
@@ -12,7 +19,10 @@ impl GuiState {
         Self::from_value(serde_json::from_str(&text).context("Invalid GUI state JSON")?)
     }
     pub fn save(&self, path: &Path) -> Result<()> {
+<<<<<<< HEAD
+=======
         self.validate()?;
+>>>>>>> origin/main-0.3.4
         self.runtime_params()?;
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;

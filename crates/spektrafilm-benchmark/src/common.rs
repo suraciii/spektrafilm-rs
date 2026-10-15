@@ -201,7 +201,7 @@ pub fn dump(path: &Path, value: &Value) -> Result<()> {
     output.write_all(b"\n")?;
     Ok(())
 }
-pub fn destination_exists(path: &Path) -> Error {
+pub fn destination_exists_error(path: &Path) -> Error {
     Error::new(
         "destination_exists",
         format!(
@@ -319,7 +319,7 @@ impl Drop for Progress<'_> {
 
 pub fn create_destination(path: &Path) -> Result<()> {
     if fs::symlink_metadata(path).is_ok() {
-        return Err(destination_exists(path));
+        return Err(destination_exists_error(path));
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

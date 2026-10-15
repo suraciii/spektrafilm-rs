@@ -5,11 +5,19 @@ use super::*;
 /// Pre-built DIR coupler passes — owns scratch buffers, kernel buffers,
 /// and bind groups so they live for the encoder.
 ///
+<<<<<<< HEAD
+/// CPU equivalent: `spektrafilm_model::couplers::transform_density_correction`.
+/// Encodes per-pixel matmul → two Gaussian blurs of the correction →
+/// weighted lerp via `add_scaled` → in-place subtract from log_raw via
+/// `add_scaled(scale=-1)` → re-interpolation of `density_curves_0`.
+#[cfg(feature = "wgpu-backend")]
+=======
 /// CPU equivalent: `spektrafilm_model::couplers::apply_density_correction`.
 /// Encodes: per-pixel matmul (silver flip + donor Langmuir) → Gaussian
 /// blur of the correction → weighted lerp of the 3-Gaussian exponential
 /// tail → in-place subtract from log_raw with the receiver Langmuir →
 /// re-interpolation of `density_curves_0`.
+>>>>>>> origin/main-0.3.4
 pub(super) struct DirState {
     _buf_correction: wgpu::Buffer, // raw matmul output (blur source)
     _buf_gaussian: wgpu::Buffer,   // blur scratch / gaussian_part
@@ -159,9 +167,118 @@ pub(super) fn build_dir_state(
     };
 
     // ── 2. Two Gaussian blurs of the correction ───────────────────────
+<<<<<<< HEAD
+    let blur_layout = &[
+        wgpu::BufferBindingType::Uniform,
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: true },
+        wgpu::BufferBindingType::Storage { read_only: false },
+    ];
+    let blur_pipe_h =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_h.wgsl"), blur_layout);
+    let blur_pipe_v =
+        backend.cached_pipeline(include_str!("../blur/gaussian_blur_v.wgsl"), blur_layout);
+
+    // Blur reads `buf_correction`, uses `buf_a` as mid (free after matmul),
+    // writes to `output`. Two blurs: gaussian → buf_correction (overwrite),
+    // tail → buf_acc. Wait — we can't blur buf_correction in-place because
+    // the V pass reads mid, and our first blur uses buf_a as mid, output to
+    // … hmm we'd need a 3rd buffer or sequential reuse.
+    //
+    // Sequential reuse: blur1 reads buf_correction → writes mid into buf_a
+    // → writes output into buf_acc. Then buf_correction is still untouched
+    // and ready for blur2. Blur2 reads buf_correction → mid into buf_a →
+    // output into… we already wrote buf_acc. Solution: swap roles. The
+    // gaussian part can go into buf_acc, tail into buf_correction
+    // (overwriting the matmul output — fine, we don't need it after both
+    // blurs are done).
+    //
+    // After blur2 buf_acc = gaussian_part, buf_correction = tail_part.
+    // The weighted lerp writes the result into buf_acc (`buf_acc *=
+    // (1-w)` then `buf_acc += w * buf_correction`).
+    let make_blur_job =
+        |sigma: f32, src: &wgpu::Buffer, out: &wgpu::Buffer, label: &str| -> BlurJob {
+            let sigma = sigma.max(0.01);
+            let (radius, kernel_f32) = gaussian_kernel(sigma);
+
+            let kernel_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("dir_blur_kernel_{label}")),
+                contents: bytemuck::cast_slice(&kernel_f32),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let params = BlurParams {
+                width,
+                height,
+                radius,
+                _pad: 0,
+            };
+            let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("dir_blur_params_{label}")),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("dir_blur_h_{label}")),
+                layout: &blur_pipe_h.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: src.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: kernel_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: buf_a.as_entire_binding(),
+                    }, // mid
+                ],
+            });
+            let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("dir_blur_v_{label}")),
+                layout: &blur_pipe_v.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buf_a.as_entire_binding(),
+                    }, // mid
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: kernel_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: out.as_entire_binding(),
+                    },
+                ],
+            });
+            BlurJob {
+                _kernel_buf: kernel_buf,
+                _params_buf: params_buf,
+                bind_group_h,
+                bind_group_v,
+            }
+        };
+    // Blur1: correction → buf_gaussian (gaussian_part)
+    let blur_gaussian = make_blur_job(
+        dp.diffusion_size_px,
+        &buf_correction,
+        &buf_gaussian,
+        "gaussian",
+=======
     let blur_pipe_h = backend.cached_pipeline(
         include_str!("../blur/gaussian_blur_h.wgsl"),
         &blur::BLUR_LAYOUT,
+>>>>>>> origin/main-0.3.4
     );
     let blur_pipe_v = backend.cached_pipeline(
         include_str!("../blur/gaussian_blur_v.wgsl"),
@@ -488,7 +605,7 @@ impl DirState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_h.pipeline);
-                pass.set_bind_group(0, &job.bg_h, &[]);
+                pass.set_bind_group(0, &job.bind_group_h, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
             {
@@ -497,7 +614,7 @@ impl DirState {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.blur_pipe_v.pipeline);
-                pass.set_bind_group(0, &job.bg_v, &[]);
+                pass.set_bind_group(0, &job.bind_group_v, &[]);
                 pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
             }
         };

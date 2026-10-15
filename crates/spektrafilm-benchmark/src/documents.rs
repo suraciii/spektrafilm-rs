@@ -67,7 +67,7 @@ fn finite(v: &Value) -> Result<()> {
         _ => Ok(()),
     }
 }
-fn hash_text(x: &str) -> bool {
+fn is_sha256_hex_lower(x: &str) -> bool {
     x.len() == 64
         && x.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
@@ -283,7 +283,7 @@ fn file_record(v: &Value, doc: &Path) -> Result<()> {
     let o = obj(v)?;
     let p = text(o, "path")?;
     let h = text(o, "sha256")?;
-    if !hash_text(h) {
+    if !is_sha256_hex_lower(h) {
         return Err(err(
             "invalid_hash",
             "SHA-256 requires 64 lowercase hexadecimal digits",

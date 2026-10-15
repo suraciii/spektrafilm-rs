@@ -42,8 +42,8 @@ pub(super) fn gaussian_kernel(sigma: f32) -> (u32, Vec<f32>) {
 pub(super) struct BlurJob {
     pub(super) _kernel_buf: wgpu::Buffer,
     pub(super) _params_buf: wgpu::Buffer,
-    pub(super) bg_h: wgpu::BindGroup,
-    pub(super) bg_v: wgpu::BindGroup,
+    pub(super) bind_group_h: wgpu::BindGroup,
+    pub(super) bind_group_v: wgpu::BindGroup,
 }
 
 /// Build a single H/V blur job from source → output, using `mid` as scratch.
@@ -88,7 +88,7 @@ pub(super) fn make_blur_job(
         contents: bytemuck::bytes_of(&params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let bg_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group_h = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(&format!("{label}_blur_h_bg")),
         layout: &blur_pipe_h.layout,
         entries: &[
@@ -110,7 +110,7 @@ pub(super) fn make_blur_job(
             },
         ],
     });
-    let bg_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group_v = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(&format!("{label}_blur_v_bg")),
         layout: &blur_pipe_v.layout,
         entries: &[
@@ -191,7 +191,16 @@ pub(super) fn build_simple_blur_state(
 
     SimpleBlurState {
         _dst: dst,
+<<<<<<< HEAD
+        blur: BlurJob {
+            _kernel_buf: kernel_buf,
+            _params_buf: params_buf,
+            bind_group_h,
+            bind_group_v,
+        },
+=======
         blur,
+>>>>>>> origin/main-0.3.4
         blur_pipe_h,
         blur_pipe_v,
         n_bytes,
@@ -211,7 +220,7 @@ impl SimpleBlurState {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.blur_pipe_h.pipeline);
-            pass.set_bind_group(0, &self.blur.bg_h, &[]);
+            pass.set_bind_group(0, &self.blur.bind_group_h, &[]);
             pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
         }
         {
@@ -220,7 +229,7 @@ impl SimpleBlurState {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.blur_pipe_v.pipeline);
-            pass.set_bind_group(0, &self.blur.bg_v, &[]);
+            pass.set_bind_group(0, &self.blur.bind_group_v, &[]);
             pass.dispatch_workgroups(wg_xy.0, wg_xy.1, 1);
         }
         encoder.copy_buffer_to_buffer(&self._dst, 0, dst_main, 0, self.n_bytes);
@@ -374,6 +383,83 @@ impl WgpuBackend {
             .iter()
             .enumerate()
             .map(|(i, &sigma)| {
+<<<<<<< HEAD
+                let (radius, kernel_f32) = gaussian_kernel(sigma);
+
+                let kernel_buf =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some(&format!("blur_multi_kernel_{i}")),
+                            contents: bytemuck::cast_slice(&kernel_f32),
+                            usage: wgpu::BufferUsages::STORAGE,
+                        });
+
+                let params = BlurParams {
+                    width: w,
+                    height: h,
+                    radius,
+                    _pad: 0,
+                };
+                let params_buf =
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some(&format!("blur_multi_params_{i}")),
+                            contents: bytemuck::bytes_of(&params),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+
+                let bind_group_h = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("bg_blur_multi_h_{i}")),
+                    layout: &h_pipe.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: params_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: buf_in.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: kernel_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: buf_mid.as_entire_binding(),
+                        },
+                    ],
+                });
+                let bind_group_v = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("bg_blur_multi_v_{i}")),
+                    layout: &v_pipe.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: params_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: buf_mid.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: kernel_buf.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: bufs_out[i].as_entire_binding(),
+                        },
+                    ],
+                });
+
+                BlurJob {
+                    _kernel_buf: kernel_buf,
+                    _params_buf: params_buf,
+                    bind_group_h,
+                    bind_group_v,
+                }
+=======
                 make_blur_job(
                     self,
                     sigma,
@@ -386,6 +472,7 @@ impl WgpuBackend {
                     &h_pipe,
                     &v_pipe,
                 )
+>>>>>>> origin/main-0.3.4
             })
             .collect();
 
@@ -413,7 +500,7 @@ impl WgpuBackend {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&h_pipe.pipeline);
-                pass.set_bind_group(0, &ps.bg_h, &[]);
+                pass.set_bind_group(0, &ps.bind_group_h, &[]);
                 pass.dispatch_workgroups(wg_x, wg_y, 1);
             }
             {
@@ -422,7 +509,7 @@ impl WgpuBackend {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&v_pipe.pipeline);
-                pass.set_bind_group(0, &ps.bg_v, &[]);
+                pass.set_bind_group(0, &ps.bind_group_v, &[]);
                 pass.dispatch_workgroups(wg_x, wg_y, 1);
             }
             encoder.copy_buffer_to_buffer(&bufs_out[i], 0, &readbacks[i], 0, img_bytes as u64);

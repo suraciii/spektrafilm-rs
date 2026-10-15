@@ -86,6 +86,10 @@ fn flatten(source: &Value, groups: &[&str]) -> Value {
     }
     flat
 }
+<<<<<<< HEAD
+
+=======
+>>>>>>> origin/main-0.3.4
 fn canonicalize_grain_state(section: &mut Value) {
     let Some(object) = section.as_object_mut() else {
         return;
@@ -277,12 +281,15 @@ impl GuiState {
         }
         Ok(state)
     }
+<<<<<<< HEAD
+=======
     /// Reject a state the runtime cannot accept. Load, import and save each
     /// call this once; [`Self::runtime_params`] is a pure projection that no
     /// longer re-validates.
     pub fn validate(&self) -> Result<()> {
         validate_state_parameters(&mut self.sections.clone(), None)
     }
+>>>>>>> origin/main-0.3.4
     pub fn film(&self) -> &str {
         self.sections["simulation"]["film_stock"]
             .as_str()
@@ -298,6 +305,8 @@ impl GuiState {
             .as_bool()
             .unwrap_or(true)
     }
+<<<<<<< HEAD
+=======
     pub fn display_profile(&self) -> Option<&str> {
         self.sections["rust"]["display_profile"].as_str()
     }
@@ -317,6 +326,7 @@ impl GuiState {
     pub fn dialog_dirs(&self) -> &Value {
         &self.sections["rust"]["dialog_dirs"]
     }
+>>>>>>> origin/main-0.3.4
 }
 
 #[cfg(test)]

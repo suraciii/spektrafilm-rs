@@ -303,12 +303,25 @@ pub(crate) fn enum_values(path: &str) -> Option<Vec<String>> {
         .iter()
         .map(|v| (*v).into())
         .collect(),
+<<<<<<< HEAD
+        "scanner.positive_interpretation" => [
+            "density",
+            "separable",
+            "coupled",
+            "digital_reference",
+            "density_direct",
+        ]
+        .iter()
+        .map(|v| (*v).into())
+        .collect(),
+=======
         "scanner.negative_conversion_method" => {
             ["density", "separable", "coupled", "digital_reference"]
                 .iter()
                 .map(|v| (*v).into())
                 .collect()
         }
+>>>>>>> origin/main-0.3.4
         "scanner.auto_setup" => ["off", "per_frame"].iter().map(|v| (*v).into()).collect(),
         "scanner.finish" => ["neutral", "lab_scan"]
             .iter()
@@ -422,7 +435,7 @@ pub(crate) fn validate_enum_value(path: &str, value: &str) -> Result<(), String>
         ),
         "scanner.negative_conversion_method" => matches!(
             value,
-            "density" | "separable" | "coupled" | "digital_reference"
+            "density" | "separable" | "coupled" | "digital_reference" | "density_direct"
         ),
         "scanner.auto_setup" => matches!(value, "off" | "per_frame"),
         "scanner.finish" => matches!(value, "neutral" | "lab_scan"),
@@ -691,6 +704,10 @@ pub(super) fn validate(params: &RuntimeParams) -> Result<(), String> {
             (
                 "scanner.negative_conversion_method=coupled",
                 scanner.negative_conversion_method == super::NegativeConversionMethod::Coupled,
+            ),
+            (
+                "scanner.positive_interpretation=density_direct",
+                scanner.positive_interpretation == super::PositiveInterpretation::DensityDirect,
             ),
             (
                 "scanner.auto_setup=per_frame",

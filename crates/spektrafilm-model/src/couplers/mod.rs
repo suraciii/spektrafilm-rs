@@ -149,7 +149,7 @@ pub fn compute_exposure_correction(
     result
 }
 /// Backend-neutral DIR inputs derived once from the film profile and
-/// controls. Both the per-stage CPU path ([`apply_density_correction`]) and
+/// controls. Both the per-stage CPU path ([`transform_density_correction`]) and
 /// the GPU-resident chain builder consume this so the matrix scaling, the
 /// "curves before DIR" inversion, and the Langmuir chemistry cannot drift
 /// apart.
@@ -323,7 +323,7 @@ fn curves_before_dir_langmuir(
 ///
 /// Port of Python `apply_density_correction_dir_couplers`.
 #[allow(clippy::too_many_arguments)]
-pub fn apply_density_correction(
+pub fn transform_density_correction(
     density_cmy: &ImageBuf,
     log_raw: &ImageBuf,
     pixel_size_um: f32,

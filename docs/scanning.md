@@ -35,6 +35,8 @@ The following command bypasses printing. It selects the receiver, inverse, autom
 
 `scanner.negative_conversion_method` selects the method. `density`, the default, reads record densities as described here. It ignores `scanner.receiver_profile`. `separable` and `coupled` interpret the receiver capture instead. `coupled` uses a three-channel inverse sampled from the resolved film, receiver, and output response.
 
+`density_direct` reads the same record densities into the scanner's own positive response without inverting the film's characteristic curves, so the film's tone and colour stay visible in the result. Use it when the picture should show the film rather than a reconstruction of the scene; its black and white points, brightness, balance and contrast are yours to dial, exactly as the controls above describe. A real photograph has no detectable black or white point, so set them by eye on the frame you are converting.
+
 These controls apply to direct negative-film scans and the `input > convert-film > scan` route. Print-paper and scan-minus-base routes retain their existing route semantics. The displayed result interprets film density. It is not a measurement of the film or a match guarantee for a processed reference JPEG. Hold profile, exposure, white balance, scan illuminant, and scan settings fixed when comparing results.
 
 For a real negative scanner capture on `input > convert-film > scan`, disable virtual camera metering with `camera.auto_exposure=false`. Supply input transfer and color interpretation. Supply the matching `film_render.convert.scan_illuminant`. Convert-film estimates the record densities that the negative converter reads.
@@ -78,6 +80,16 @@ Points stretch the shared relative log-exposure range for negatives. They stretc
 The material profile computes developed dye amounts and spectral density before printing or scanning. It does not provide measured CineStill spectral sensitivity, dye spectra, grain, or halation. Keep grain disabled for material comparisons. Compare halation separately.
 
 The model exposure origin does not establish absolute ISO. It does not prove that the manufacturer's reference is an 18% gray exposure. Metadata records the sources, approximations, and attribution. The derivative retains Andrea Volpato's CC BY-SA 4.0 asset license.
+
+The stock-specific entry in [coupler initialization data](../data/presets/couplers.toml) gives 800T the 500T tungsten DIR gamma coefficients during ordinary stock selection. These coefficients are inherited model priors, not measured Cs41 coupler data. Explicit user controls retain precedence. This does not change the stock's `still` classification, grain, halation, or DIR diffusion defaults, and does not require a creative preset.
+
+### Portra Endura print baseline
+
+The `kodak_portra_endura` / `TH-KG3` / `cinestill_800t_cs41_approx` entry in the [print-filter database](../data/filters/neutral_print_filters.json) supplies the default C/M/Y pack for this combination. Explicit filter controls override the corresponding database axes. Other papers retain their own entries.
+
+This pack is an empirical reference-appearance baseline, not a measured neutral-filtration specification. The controlled material comparison fixes exposure, paper response, and the inherited DIR coefficients, with spatial and stochastic effects disabled. It uses the native product direct scan and standard sRGB output, without an external paper-white transform. The pack is nondominated on unrounded objectives among the compared configurations, but not when the Lab and color-error objectives are rounded to 0.01 bins. It remains a conservative baseline without an additional Cs41 curve correction, not a robust or global optimum. Some individual patches become less accurate.
+
+The pack does not change film response curves, paper profiles, exposure controls, color-space conversion, or scanner readout. The comparison does not validate other papers, arbitrary scanner or look settings, or a unique physical film response. It does not introduce a creative preset or a per-patch correction surface.
 
 ## Experimental CineStill 800T Cs41 look
 

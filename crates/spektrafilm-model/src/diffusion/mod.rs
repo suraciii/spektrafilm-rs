@@ -7,7 +7,7 @@ use spektrafilm_math::precision::{Scalar, from_f64};
 // ===========================================================================
 // Lens diffusion filter (Black Pro Mist family).
 //
-// Faithful port of `spektrafilm/model/diffusion.py::apply_diffusion_filter_um`
+// Faithful port of `spektrafilm/model/diffusion.py::transform_diffusion_filter_um`
 // (v0.3.2). The PSF is a per-channel sum of 2D isotropic exponentials in
 // three groups {core, halo, bloom}; the halo is colour-tinted by an
 // energy-conserving "warmth" redistribution across its sub-components. The
@@ -29,6 +29,9 @@ struct GroupCfg {
     alpha: f64,
 }
 
+/// Weight coefficients for the core (w_c), halo (w_h), and bloom (w_b)
+/// groups. These scale the relative contribution of each diffusion
+/// component.
 #[derive(Clone, Copy)]
 struct FamilyShape {
     core: GroupCfg,
@@ -180,7 +183,7 @@ pub const VALID_FAMILIES: [&str; 4] = ["glimmerglass", "black_pro_mist", "pro_mi
 /// Python 0.3.4 raises
 /// `ValueError(f"Unknown diffusion filter family: {family!r}; "
 ///            f"available: {list(_DIFFUSION_FILTER_SHAPES)}")`
-/// from `apply_diffusion_filter_um`; this mirrors it for the Result-based
+/// from `transform_diffusion_filter_um`; this mirrors it for the Result-based
 /// Rust API so a malformed family can never silently pass through as a
 /// no-op.
 pub fn validate_family(family: &str) -> Result<(), String> {
@@ -411,12 +414,12 @@ fn diffusion_filter_psf(
 }
 
 /// Apply a lens diffusion-filter PSF to an RGB image. Port of Python's
-/// `apply_diffusion_filter_um`. Returns the input unchanged when the filter
+/// `transform_diffusion_filter_um`. Returns the input unchanged when the filter
 /// is effectively a no-op (strength/spatial_scale ≤ 0 or p_s ≤ 0); an
 /// unknown family is an `Err` — Python 0.3.4 raises `ValueError` there
 /// instead of silently passing the image through. `pixel_size_um` is the
 /// image-plane sampling pitch.
-pub fn apply_diffusion_filter_um(
+pub fn transform_diffusion_filter_um(
     image: &ImageBuf,
     df: &DiffusionFilter,
     pixel_size_um: f64,
@@ -463,8 +466,8 @@ pub fn apply_diffusion_filter_um(
 /// The former downsampled sum-of-Gaussians approximation changed the source
 /// sampling, finite PSF normalisation, and boundary handling. Until a backend
 /// implements the same discrete PSF and reflect convolution, previews use
-/// `apply_diffusion_filter_um`, matching the CPU export path.
-pub fn apply_diffusion_filter_blur(
+/// `transform_diffusion_filter_um`, matching the CPU export path.
+pub fn transform_diffusion_filter_blur(
     image: &ImageBuf,
     df: &DiffusionFilter,
     pixel_size_um: f64,
@@ -475,7 +478,7 @@ pub fn apply_diffusion_filter_blur(
         family = df.family,
         "diffusion filter: using faithful CPU PSF fallback"
     );
-    apply_diffusion_filter_um(image, df, pixel_size_um)
+    transform_diffusion_filter_um(image, df, pixel_size_um)
 }
 
 #[cfg(test)]
@@ -536,9 +539,9 @@ mod family_tests {
         // Python 0.3.4 raises ValueError for an effective filter with an
         // unknown family — the image must NOT come back unchanged.
         let img = ramp(32);
-        let e = apply_diffusion_filter_um(&img, &df("black_promist", 0.5), 10.0).unwrap_err();
+        let e = transform_diffusion_filter_um(&img, &df("black_promist", 0.5), 10.0).unwrap_err();
         assert!(e.contains("Unknown diffusion filter family"));
-        let e = apply_diffusion_filter_blur(
+        let e = transform_diffusion_filter_blur(
             &img,
             &df("black_promist", 0.5),
             10.0,
@@ -554,11 +557,11 @@ mod family_tests {
         // strength/spatial_scale ≤ 0 — a bogus name must not error there.
         let img = ramp(32);
         let mut f = df("black_promist", 0.0);
-        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+        let out = transform_diffusion_filter_um(&img, &f, 10.0).unwrap();
         assert_eq!(out.data.len(), img.data.len());
         f.strength = 0.5;
         f.spatial_scale = 0.0;
-        let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+        let out = transform_diffusion_filter_um(&img, &f, 10.0).unwrap();
         assert_eq!(out.data.len(), img.data.len());
     }
 
@@ -567,7 +570,7 @@ mod family_tests {
         let img = ramp(32);
         let mut outputs = Vec::new();
         for family in VALID_FAMILIES {
-            let out = apply_diffusion_filter_um(&img, &df(family, 1.0), 10.0)
+            let out = transform_diffusion_filter_um(&img, &df(family, 1.0), 10.0)
                 .unwrap_or_else(|e| panic!("{family}: {e}"));
             // The filter must actually scatter: at least some pixel moves.
             let max_shift = out
@@ -617,7 +620,7 @@ mod family_tests {
         for family in VALID_FAMILIES {
             let mut f = df(family, 1.0);
             f.spatial_scale = 0.02;
-            let out = apply_diffusion_filter_um(&img, &f, 10.0).unwrap();
+            let out = transform_diffusion_filter_um(&img, &f, 10.0).unwrap();
             let max_diff = out
                 .data
                 .iter()
@@ -665,7 +668,7 @@ mod preview_parity_tests {
             bloom_size: 1.0,
         };
         let preview =
-            apply_diffusion_filter_blur(&img, &df, 10.0, &spektrafilm_gpu::cpu_backend::CpuBackend)
+            transform_diffusion_filter_blur(&img, &df, 10.0, &spektrafilm_gpu::cpu_backend::CpuBackend)
                 .unwrap();
         // (x, y, RGB): dark/hot corners, both sides of the hotspot boundary,
         // its inner corner (the former approximation's maximum-error pixel),

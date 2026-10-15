@@ -1,7 +1,10 @@
 //! Nine-layer Polaroid development animation and the pinned virtual paper
 //! back: watermark lattice, rotation and seed-zero paper glare.
 use super::raster::DisplayRaster;
+<<<<<<< HEAD
+=======
 use rayon::prelude::*;
+>>>>>>> origin/main-0.3.4
 /// Prepared nine-layer chemical development, using the pinned Python formulas.
 pub struct PolaroidState {
     size: [usize; 2],
@@ -16,6 +19,24 @@ impl PolaroidState {
         };
         let density: Vec<[f32; 3]> = image
             .rgb
+<<<<<<< HEAD
+            .iter()
+            .map(|p| p.map(|v| (-(v / divisor).clamp(1e-4, 1.0).powf(2.2).ln()).clamp(0.0, 6.0)))
+            .collect();
+        let mut dmax = [0.0_f32; 3];
+        let mut cmax = [0.0_f32; 3];
+        let mut nmax = 0.0_f32;
+        for d in &density {
+            let n = d.iter().copied().fold(f32::INFINITY, f32::min);
+            nmax = nmax.max(n);
+            for c in 0..3 {
+                dmax[c] = dmax[c].max(d[c]);
+                cmax[c] = cmax[c].max(d[c] - n);
+            }
+        }
+        let layers = density
+            .iter()
+=======
             .par_iter()
             .map(|p| p.map(|v| (-(v / divisor).clamp(1e-4, 1.0).powf(2.2).ln()).clamp(0.0, 6.0)))
             .collect();
@@ -45,6 +66,7 @@ impl PolaroidState {
             );
         let layers = density
             .par_iter()
+>>>>>>> origin/main-0.3.4
             .map(|d| {
                 let n = d.iter().copied().fold(f32::INFINITY, f32::min);
                 let ch = d.map(|v| v - n);
@@ -85,9 +107,15 @@ impl PolaroidState {
     }
     pub fn frame(&self, t: f32) -> DisplayRaster {
         let k = layer_coefficients(t);
+<<<<<<< HEAD
+        let rgb = self
+            .layers
+            .iter()
+=======
         let rgb: Vec<[f32; 3]> = self
             .layers
             .par_iter()
+>>>>>>> origin/main-0.3.4
             .map(|l| {
                 std::array::from_fn(|c| {
                     let d = (0..9).map(|i| k[i] * l[i][c]).sum::<f32>().clamp(0.0, 8.0);
@@ -97,7 +125,11 @@ impl PolaroidState {
             .collect();
         DisplayRaster {
             size: self.size,
+<<<<<<< HEAD
+            rgb,
+=======
             rgb: rgb.into(),
+>>>>>>> origin/main-0.3.4
         }
     }
 }
@@ -330,6 +362,8 @@ pub fn virtual_paper_back(size: [usize; 2]) -> DisplayRaster {
         .collect();
     DisplayRaster { size, rgb }
 }
+<<<<<<< HEAD
+=======
 
 #[cfg(test)]
 pub(crate) fn virtual_paper_back_without_watermark(size: [usize; 2]) -> DisplayRaster {
@@ -497,3 +531,4 @@ mod tests {
         assert_eq!(hash, 0x520f_1920_404c_129f);
     }
 }
+>>>>>>> origin/main-0.3.4

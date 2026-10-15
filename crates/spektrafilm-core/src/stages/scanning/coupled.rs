@@ -103,14 +103,14 @@ impl Index {
 #[derive(Clone, Debug)]
 struct Tetra {
     origin: V3,
-    inverse: [V3; 3],
+    transform: [V3; 3],
     density: V3,
     edges: [V3; 3],
 }
 impl Tetra {
     fn weights(&self, point: V3) -> V3 {
         let delta = sub(point, self.origin);
-        self.inverse.map(|row| dot(row, delta))
+        self.transform.map(|row| dot(row, delta))
     }
     fn density(&self, point: V3) -> V3 {
         let w = self.weights(point);
@@ -252,7 +252,7 @@ impl CoupledInverse {
                         }
                         tetras.push(Tetra {
                             origin: p[0],
-                            inverse,
+                            transform: inverse,
                             density: d[0],
                             edges: density_edges,
                         });

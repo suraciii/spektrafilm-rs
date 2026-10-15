@@ -1,5 +1,8 @@
 //! Pipeline render entry points.
+<<<<<<< HEAD
+=======
 use crate::WorkflowRoute;
+>>>>>>> origin/main-0.3.4
 
 use super::*;
 
@@ -71,12 +74,36 @@ impl Pipeline {
                 timings,
             );
         }
+<<<<<<< HEAD
+        let cpu_fallback = if self.params.scanner.scan_output == "negative_to_positive" {
+            backend
+                .observation_context()
+                .filter(|context| context.enabled())
+                .map(|context| {
+                    if backend.is_gpu() {
+                        context.decline_resident(
+                            spektrafilm_gpu::telemetry::ResidentDeclineReason::NegativeToPositiveOutput,
+                        );
+                    }
+                    spektrafilm_gpu::bind_cpu_fallback(
+                        context.clone(),
+                        spektrafilm_gpu::telemetry::CpuReason::NegativeToPositiveOutput,
+                    )
+                })
+        } else {
+            None
+        };
+        let backend = cpu_fallback
+            .as_deref()
+            .unwrap_or_else(|| self.effective_backend(backend));
+=======
         // Negative-to-positive interpretation is part of the resident
         // decision: the capture methods run as the assembled scanner readout
         // fence and the density reading and Digital Reference replace the
         // acquisition as the assembled acquisition fence (pipe
         // architecture, capability class). `resident_decision` is the sole
         // authority, so no whole-route demotion happens here.
+>>>>>>> origin/main-0.3.4
         let collect = match collect {
             Some(tap) => tap,
             None => self
@@ -160,7 +187,11 @@ impl Pipeline {
         crate::stages::grain_v3::validate_supported(&self.film, &self.params)?;
         crate::stages::grain_fotufilm::validate_supported(&self.film, &self.params)?;
         self.check_cancelled()?;
+<<<<<<< HEAD
+        if self.params.workflow.route == "input" {
+=======
         if self.params.workflow.route_enum() == WorkflowRoute::Input {
+>>>>>>> origin/main-0.3.4
             let (working, _) = crate::resizing::crop_and_rescale(
                 &image,
                 &self.params.io,
@@ -250,9 +281,15 @@ impl Pipeline {
             context
                 .decline_resident(spektrafilm_gpu::telemetry::ResidentDeclineReason::WorkflowRoute);
         }
+<<<<<<< HEAD
+        let route = self.params.workflow.route.as_str();
+        let print_after_convert = route == "input > convert-film > print > scan";
+        let scan_minus_base = route == "input > convert-film > scan-minus-base";
+=======
         let route = self.params.workflow.route_enum();
         let print_after_convert = route == WorkflowRoute::ConvertFilmPrintScan;
         let scan_minus_base = route == WorkflowRoute::ConvertFilmScanMinusBase;
+>>>>>>> origin/main-0.3.4
         let mut converting = crate::stages::StageObservation::cpu(
             backend,
             "converting",
@@ -347,6 +384,17 @@ impl Pipeline {
         // selects a per-stage path through `resident_decision`.
         if (self.tc_lut.is_some() || self.mallett_core.is_some())
             && let Some(out) =
+<<<<<<< HEAD
+                self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)
+        {
+            tracing::info!("pipeline: gpu-resident fast path complete");
+            let _post = crate::stages::StageObservation::cpu(
+                backend,
+                "post_scan",
+                spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+            );
+            return Ok(self.apply_post_scan(out, backend));
+=======
                 self.try_gpu_resident(&image, backend, &color_ref, pixel_size_um, ae_ev)?
         {
             tracing::info!("pipeline: gpu-resident fast path complete");
@@ -354,6 +402,7 @@ impl Pipeline {
             // as pipe-tail passes; the readback is final (pipe
             // architecture, S4).
             return Ok(out);
+>>>>>>> origin/main-0.3.4
         }
         if let Some(context) = backend.observation_context() {
             context.set_path(if backend.is_gpu() {
@@ -461,6 +510,23 @@ impl Pipeline {
             context.set_working_dimensions(working.width, working.height);
         }
         let color_ref = self.color_reference(backend);
+<<<<<<< HEAD
+        let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0) {
+            Some(out) => out,
+            None => return Ok(None),
+        };
+        let _post = crate::stages::StageObservation::cpu(
+            backend,
+            "post_scan",
+            spektrafilm_gpu::telemetry::CpuReason::BackendDefault,
+        );
+        Ok(Some(self.compose_output_mix(
+            self.apply_post_scan(out, backend),
+            source,
+            backend,
+            None,
+        )?))
+=======
         let out = match self.try_gpu_resident(&working, backend, &color_ref, pixel_size_um, 0.0)? {
             Some(out) => out,
             None => return Ok(None),
@@ -468,5 +534,6 @@ impl Pipeline {
         // Post-scan finishing already ran as pipe-tail passes on the
         // resident chain (pipe architecture, S4); the readback is final.
         Ok(Some(self.compose_output_mix(out, source, backend, None)?))
+>>>>>>> origin/main-0.3.4
     }
 }

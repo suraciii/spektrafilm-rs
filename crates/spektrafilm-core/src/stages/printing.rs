@@ -131,8 +131,13 @@ fn enlarger_lut_bounds(film: &Profile, params: &RuntimeParams) -> ([f64; 3], [f6
 /// Mirrors Python's `printing.expose` *exactly*, including the
 /// double-log roundtrip:
 ///   log_raw_print = log10(max(raw_p * factor_midgray + preflash, 0) + 1e-10)
+<<<<<<< HEAD
+///   raw           = 10^log_raw_print * print_exposure * bw_correction
+///   raw           = transform_diffusion_filter_um(raw, ...)   // no-op when inactive
+=======
 ///   raw           = 10^log_raw_print * print_exposure * white_black_correction
 ///   raw           = apply_diffusion_filter_um(raw, ...)   // no-op when inactive
+>>>>>>> origin/main-0.3.4
 ///   return         log10(max(raw, 0) + 1e-10)
 /// The +1e-10 floor is applied at *both* log10s — collapsing them to a
 /// single log10 of `max(raw_p * factor_midgray * print_exposure, 0) + 1e-10`
@@ -238,7 +243,7 @@ pub fn expose_calibrated(
         // `Pipeline::new_with_spectral` before any stage runs; reaching
         // this point with an unknown family is a programming error.
         lin = if backend.is_gpu() {
-            spektrafilm_model::diffusion::apply_diffusion_filter_blur(
+            spektrafilm_model::diffusion::transform_diffusion_filter_blur(
                 &lin,
                 &dm,
                 pixel_size_um,
@@ -246,7 +251,7 @@ pub fn expose_calibrated(
             )
             .expect("enlarger diffusion filter family validated at pipeline entry")
         } else {
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&lin, &dm, pixel_size_um)
+            spektrafilm_model::diffusion::transform_diffusion_filter_um(&lin, &dm, pixel_size_um)
                 .expect("enlarger diffusion filter family validated at pipeline entry")
         };
         lin.data.par_iter_mut().for_each(|v| {
@@ -445,7 +450,7 @@ mod diffusion_flash_tests {
         let n = 9u32;
         let flash = 0.37f64;
         let image = ImageBuf::from_data(n, n, vec![from_f64(flash); (n * n * 3) as usize]);
-        let out = spektrafilm_model::diffusion::apply_diffusion_filter_um(
+        let out = spektrafilm_model::diffusion::transform_diffusion_filter_um(
             &image,
             &configured_diffusion(),
             10.0,
@@ -491,14 +496,14 @@ mod diffusion_flash_tests {
         let zero = ImageBuf::from_data(n, n, vec![from_f64(0.0); (n * n * 3) as usize]);
         let filter = configured_diffusion();
         let scene_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&scene, &filter, 10.0).unwrap();
+            spektrafilm_model::diffusion::transform_diffusion_filter_um(&scene, &filter, 10.0).unwrap();
         let flash_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&flash, &filter, 10.0).unwrap();
+            spektrafilm_model::diffusion::transform_diffusion_filter_um(&flash, &filter, 10.0).unwrap();
         let combined_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&combined, &filter, 10.0)
+            spektrafilm_model::diffusion::transform_diffusion_filter_um(&combined, &filter, 10.0)
                 .unwrap();
         let zero_out =
-            spektrafilm_model::diffusion::apply_diffusion_filter_um(&zero, &filter, 10.0).unwrap();
+            spektrafilm_model::diffusion::transform_diffusion_filter_um(&zero, &filter, 10.0).unwrap();
         let max_error = combined_out
             .data
             .iter()

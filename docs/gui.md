@@ -41,10 +41,15 @@ Selecting the negative conversion method clears incompatible capture-correction 
 
 The GUI has no standalone Output lightness-compression control. See [presets](presets.md) for the versioned state document rule.
 
+<<<<<<< HEAD
+
+The **Magazine finish** checkbox next to the workflow selector applies the bundled appearance to the selected workflow. **ADVANCED → Magazine finish color** sets Strength from 0 to 1. Strength 0 is a no-op. Photographic print controls remain separate.
+=======
 ### Magazine finish
 The **Magazine finish** checkbox next to the workflow selector applies the bundled appearance to the selected workflow. **PRINT → Magazine finish color** sets Strength from 0 to 1. Strength 0 is a no-op. Photographic print controls remain separate.
 
 The optional finishing treatment applies a bundled RGB appearance to any supported base workflow, including a scanned negative or a finished RGB input. It runs after the base workflow and its scanner-domain effects. It adds warm paper/highlights, compressed print contrast, cyan-biased shadows, and smooth chroma compression.
+>>>>>>> origin/main-0.3.4
 
 `magazine_print_color.active` and one appearance Strength from 0 to 1 enable the treatment independently of the base workflow. There is no magazine route. The treatment remains RGB-only. It does not generate CMYK or halftone output.
 

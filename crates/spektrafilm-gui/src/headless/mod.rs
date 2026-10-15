@@ -487,7 +487,7 @@ fn scanner_ui_real_preview_scan_persistence_save_and_export() {
     )
     .unwrap();
     spektrafilm_core::presets::PresetLibrary::new(s.directory.path().join("presets"))
-        .save_new(&preset, &data_dir())
+        .save_unique(&preset, &data_dir())
         .unwrap();
     click(h, "▶");
     click(h, "Refresh");
@@ -1156,6 +1156,44 @@ fn digital_reference_real_app_selection_render_transactions_and_outputs() {
         ReceiverProfile::LegacyColorimetric
     );
     render(h, "PREVIEW");
+}
+
+#[test]
+fn record_density_conversion_selection_keeps_the_point_controls() {
+    use spektrafilm_core::params::PositiveInterpretation;
+    let mut s = session();
+    let h = &mut s.harness;
+    click(h, "Profiles");
+    let profile = profile::load_profile_by_name(&data_dir(), "kodak_portra_400").unwrap();
+    choose(h, "film profile", profile.info.name.as_deref().unwrap());
+    choose(h, "workflow", "input > film > scan");
+    click(h, "Scanner");
+    choose(h, "scan output", "Negative to positive");
+    choose(h, "Negative conversion method", "density_direct");
+    assert_eq!(
+        h.state().params.scanner.positive_interpretation,
+        PositiveInterpretation::DensityDirect
+    );
+    for label in [
+        "scanner auto setup",
+        "positive density ev",
+        "positive balance ev 0",
+        "positive contrast",
+        "positive dmax",
+        "black point 0",
+        "white point 0",
+    ] {
+        assert!(
+            h.query_all_by_label(label).next().is_some(),
+            "density_direct must keep the calibration control {label}"
+        );
+    }
+    edit(h, "black point 0", "0.1");
+    edit(h, "white point 0", "0.8");
+    assert_eq!(h.state().params.scanner.black_point[0], 0.1);
+    assert_eq!(h.state().params.scanner.white_point[0], 0.8);
+    let output = render(h, "PREVIEW");
+    assert!(output.data.iter().all(|value| value.is_finite()));
 }
 
 #[test]
