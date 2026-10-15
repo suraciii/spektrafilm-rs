@@ -278,10 +278,10 @@ impl ExportDialog {
                     (ExportBackend::Gpu, "GPU (WGPU f32)"),
                 ], "CPU: highest precision, slower. GPU: faster, f32 precision.");
                 enum_choice(ui, "Format", &mut draft.format, &[
-                    (ExportFormat::Jpeg, "JPEG"),
-                    (ExportFormat::Png, "PNG"),
-                    (ExportFormat::Tiff, "TIFF"),
-                    (ExportFormat::Exr, "EXR"),
+                    (ExportFormat::Jpeg, ExportFormat::Jpeg.label()),
+                    (ExportFormat::Png, ExportFormat::Png.label()),
+                    (ExportFormat::Tiff, ExportFormat::Tiff.label()),
+                    (ExportFormat::Exr, ExportFormat::Exr.label()),
                 ], "JPEG: lossy 8-bit for web. PNG: lossless 8-bit. TIFF: 8/16-bit ZIP. EXR: 16/32-bit linear for compositing.");
                 draft.normalize();
                 let depth_choices: &[(BitDepth, &str)] = match draft.format {
@@ -327,12 +327,7 @@ impl ExportDialog {
                     BitDepth::Sixteen => "16 bit",
                     BitDepth::ThirtyTwo => "32 bit",
                 };
-                let format_label = match draft.format {
-                    ExportFormat::Jpeg => "JPEG",
-                    ExportFormat::Png => "PNG",
-                    ExportFormat::Tiff => "TIFF",
-                    ExportFormat::Exr => "EXR",
-                };
+                let format_label = draft.format.label();
                 let summary = match draft.format {
                     ExportFormat::Exr => format!("{format_label} · {depth_label} · {} · linear · ZIP", draft.saving_color_space),
                     ExportFormat::Jpeg => format!("{format_label} · 8 bit · {} · quality {} · {}", draft.saving_color_space, draft.jpeg_quality, draft.jpeg_subsampling.as_str()),
