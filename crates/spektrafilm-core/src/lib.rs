@@ -36,7 +36,9 @@ pub mod stages;
 mod suggest;
 pub mod telemetry;
 pub use telemetry::WorkflowRoute;
+pub use error::{SpektraError, SpektraErrorCode, SpektraResult};
 
 pub mod math;
+pub mod error;
 #[cfg(test)]
 pub(crate) mod test_support;
