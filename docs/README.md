@@ -2,7 +2,7 @@
 
 These pages explain how to build, run and evaluate SpektraFilm. They describe the product as it is used; they do not define product contracts.
 
-Contracts live in [../specs/](../specs/README.md). Domain terms live in [../CONTEXT.md](../CONTEXT.md). Engineering practices live in [../eng/](../eng/).
+Contracts live in [../specs/](../specs/). Domain terms live in [../CONTEXT.md](../CONTEXT.md). Engineering practices live in [../eng/](../eng/).
 
 ## Guides
 

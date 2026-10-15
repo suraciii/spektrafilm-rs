@@ -59,7 +59,7 @@ Procedural restores the recovered RGBA content hash, sine permutation, gradient 
 
 CPU/WGSL share portable trigonometry. Random realizations can differ from vendor device arithmetic. Amount and tone controls use the reference effective-control polynomial. This includes its nonzero intercept at zero. Disable Grain with `active: false` for an exact bypass.
 
-The unmasked photo path implements no overscan/damage-mask input or device-specific virtual-texture cap. See [grain research notes](dehancer-grain-reverse-engineering.md) for measured evidence and coverage limits.
+The unmasked photo path implements no overscan/damage-mask input or device-specific virtual-texture cap.
 
 Noise is a single-pass image-resolution path. It does not consume Film Resolution output. Analogue additionally samples the original encoded source for its virtual grain texture. It composes over the Analogue Film Resolution result.
 
