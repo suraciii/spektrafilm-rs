@@ -29,8 +29,10 @@
 //! itself. Two GPU tests cover the equation directly: a placed probe that
 //! compares the device's trial states, verdicts and rejection values at frozen
 //! boundaries against an independent f64 factorial oracle, and a control law
-//! that keeps the replaced equation and whose counts the pooled screen must
-//! reject at [`DYE_MAX_RATE`].
+//! that keeps the replaced equation and must be exposed at [`DYE_MAX_RATE`]:
+//! by the pooled counts wherever the adapter's arithmetic rounds the cancelled
+//! arrangement's threshold error into them, by its word consumption otherwise
+//! (see `the_original_cancellation_is_exposed_at_the_top_rate`).
 //!
 //! The supported rate range is a measured claim, not an integer-domain one:
 //! [`DYE_MAX_RATE`] is where the f32 realization of this law still passes those
@@ -97,8 +99,9 @@ const CONTROL_SHADER: &str = concat!(
 
 /// The rejection-equation control: the shared words and trial body, the same
 /// count law, and the pre-repair rejection equation in place of `ptrs_rhs`.
-/// The pooled screen must reject its counts at [`DYE_MAX_RATE`]. Only tests
-/// compile it.
+/// At [`DYE_MAX_RATE`] it must be exposed by the pooled counts or by its word
+/// consumption, whichever the adapter's arithmetic permits; the control test
+/// owns that requirement. Only tests compile it.
 #[cfg(test)]
 const CANCELLED_SHADER: &str = concat!(
     include_str!("dye_count.wgsl"),
@@ -739,6 +742,34 @@ mod tests {
         words.iter().map(|&w| f64::from(w)).sum::<f64>() / words.len() as f64
     }
 
+    /// The per-case word-consumption difference between a control run and the
+    /// production law over the same case set: the mean, its standard error,
+    /// and how many cases disagree. The rejection equation's verdict decides
+    /// whether a case draws another pair, so an equation that is wrong about
+    /// the boundary changes this even where its counts stay inside the bands.
+    struct WordsDelta {
+        mean: f64,
+        se: f64,
+        differing: usize,
+    }
+
+    fn words_delta(control: &[u32], law: &[u32]) -> WordsDelta {
+        let n = control.len() as f64;
+        let delta = |index: usize| control[index] as f64 - law[index] as f64;
+        let mean = (0..control.len()).map(delta).sum::<f64>() / n;
+        let variance = (0..control.len())
+            .map(|index| (delta(index) - mean).powi(2))
+            .sum::<f64>()
+            / (n - 1.0);
+        WordsDelta {
+            mean,
+            se: (variance / n).sqrt(),
+            differing: (0..control.len())
+                .filter(|&index| control[index] != law[index])
+                .count(),
+        }
+    }
+
     /// Mean, the unbiased sample variance `s^2 = n m2/(n-1)`, the sample
     /// skewness `m3/m2^(3/2)` about the sample mean, and the empty-cell rate
     /// of one realized sample: the printed evidence, and the numbers the
@@ -1355,50 +1386,98 @@ mod tests {
         );
     }
 
+    /// The pre-repair control's pooled variance on the certified adapter
+    /// (`RADV RAPHAEL_MENDOCINO`) at 3,000,000 draws, per
+    /// `specs/film-grain/v3/design.md`. The gap between it and the pooled
+    /// band's top is the screen's calibrated catch.
+    const CERTIFIED_CANCELLED_VARIANCE: f64 = 66100.5493;
+
     /// The pooled screen has to be able to reject the equation this repair
     /// replaced, or the certification above proves only that the bands are
     /// wide. The control law keeps the pre-repair rejection equation and
-    /// changes nothing else; its counts at the top rate are the first hardware
-    /// acceptance run's, whose five n=300k replicates pooled to variance
-    /// `66141.6` against the pooled band's `66065.8` top -- about eight
-    /// standard errors -- while every per-replicate band held. Ten replicates
-    /// are run here so the rejection does not sit at the screen's edge, and
-    /// the variance band must fire.
+    /// changes nothing else. What the cancelled arrangement costs depends on
+    /// the adapter's arithmetic: its threshold error is the arrangement's own
+    /// f32 rounding plus the adapter `log`'s per-value error multiplied by
+    /// `k`, and the total is signed, so the same equation distorts different
+    /// adapters differently.
+    ///
+    /// The certified adapter's error is positive: its counts are drawn
+    /// systematically high and its ten pooled replicates reach the recorded
+    /// variance `66100.5493`, above the `65910.6` top of the band at this
+    /// sample size, so the screen rejects them. The software adapter
+    /// (llvmpipe)'s error is negative: its count distortion stays inside the
+    /// bands (`65553.0` measured) and the equation is exposed through what its
+    /// verdicts cost -- 2.4% of the same cases draw a different number of
+    /// words than the production law, `+0.0286` per case.
+    ///
+    /// The test requires the exposure the adapter permits. The pooled band
+    /// must stay narrower than the certified distortion, and the control must
+    /// either leave those bands or consume words differently from the
+    /// production law over the same cases by more than one screening width.
     #[test]
-    fn the_pooled_screen_rejects_the_original_cancellation_at_the_top_rate() {
+    fn the_original_cancellation_is_exposed_at_the_top_rate() {
         const REPLICATES: usize = 10;
         let (_guard, backend) = locked_adapter();
         eprintln!("dye count cancellation-control adapter: {}", backend.name());
         let top = RATES.iter().position(|&r| r == DYE_MAX_RATE).unwrap();
         let mut pooled = Vec::new();
         let mut pooled_words = Vec::new();
+        let mut law_words = Vec::new();
         for replicate in 0..REPLICATES {
-            let (counts, words) = run_rate(
-                &backend,
-                CANCELLED_SHADER,
-                replicate * RATES.len() + top,
-                DYE_MAX_RATE,
-            );
+            let seed_index = replicate * RATES.len() + top;
+            let (counts, words) = run_rate(&backend, CANCELLED_SHADER, seed_index, DYE_MAX_RATE);
+            // The production law on the same case set: the control's decision
+            // consumption is compared against what the law spends, so the
+            // comparison carries no case-selection noise. The production
+            // equation's own error is bounded against the f64 oracle by the
+            // placed probe.
+            let (_, law) = run_rate(&backend, DECISION_SHADER, seed_index, DYE_MAX_RATE);
             pooled.extend_from_slice(&counts);
             pooled_words.extend_from_slice(&words);
+            law_words.extend_from_slice(&law);
         }
+        let n = pooled.len() as f64;
         let broken = distribution_violations(DYE_MAX_RATE, &pooled);
         let m = moments(&pooled);
+        let variance_band = SCREENING_SIGMA
+            * (DYE_MAX_RATE / n + 2.0 * DYE_MAX_RATE * DYE_MAX_RATE / (n - 1.0)).sqrt();
+        let delta = words_delta(&pooled_words, &law_words);
         eprintln!(
             "G1 cancelled pooled lambda={DYE_MAX_RATE} n={} mean={:.8} variance={:.8} \
-             skewness={:.8} p0={:.8} mean_words={:.4}",
+             skewness={:.8} p0={:.8} mean_words={:.4} variance_band=+-{variance_band:.2} \
+             violations={}",
             pooled.len(),
             m.mean,
             m.variance,
             m.skewness,
             m.p0,
-            mean_words(&pooled_words)
+            mean_words(&pooled_words),
+            broken.len()
+        );
+        eprintln!(
+            "G1 cancelled decision consumption: {:+.6} words per case ({:+.2} screening \
+             widths), {} of {} cases differ",
+            delta.mean,
+            delta.mean / delta.se,
+            delta.differing,
+            pooled.len()
         );
         assert!(
-            broken.iter().any(|v| v.kind == "variance"),
-            "the pooled screen did not reject the pre-repair cancellation at lambda \
-             {DYE_MAX_RATE}:\n  {}",
-            render(&broken)
+            DYE_MAX_RATE + variance_band < CERTIFIED_CANCELLED_VARIANCE,
+            "the pooled variance band tops out at {:.2}, at or above the certified adapter's \
+             recorded cancellation variance {CERTIFIED_CANCELLED_VARIANCE}: the screen is too \
+             wide to reject the equation it exists for",
+            DYE_MAX_RATE + variance_band
+        );
+        let rejected = broken.iter().any(|v| v.kind == "variance");
+        let widths = delta.mean / delta.se;
+        assert!(
+            rejected || widths.abs() > SCREENING_SIGMA,
+            "the cancelled expression left no top-rate band ({} violations) and its word \
+             consumption matched the production law's ({:+.6} per case, {widths:+.2} screening \
+             widths): the control proves nothing on this adapter",
+            broken.len(),
+            delta.mean
         );
     }
 

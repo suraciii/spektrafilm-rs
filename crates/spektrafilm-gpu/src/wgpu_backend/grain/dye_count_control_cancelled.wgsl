@@ -8,7 +8,9 @@
 // range that form loses the rejection signal to f32 cancellation -- the
 // observed systematic variance bias of the first hardware acceptance run --
 // so the placed probe must measure its decisions against an independent f64
-// oracle and the pooled screen must reject its counts.
+// oracle, and the top-rate control test must see the equation exposed: by the
+// pooled counts where the adapter's arithmetic rounds the cancellation into a
+// systematic count bias, by its word consumption where it does not.
 //
 // This module is concatenated after `dye_count.wgsl` (whose words and trial
 // body it draws from and whose real `count_of` it never calls). It is not part

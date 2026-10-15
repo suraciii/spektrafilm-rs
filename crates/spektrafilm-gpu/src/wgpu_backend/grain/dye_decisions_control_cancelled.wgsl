@@ -4,9 +4,9 @@
 //
 // The three files concatenate as `dye_count.wgsl`,
 // `dye_count_control_cancelled.wgsl`, then this one (`CANCELLED_SHADER` in
-// `dye_decisions.rs`). Only tests compile it: it exists so the pooled
-// five-replicate screen can be shown to reject the equation the repair
-// replaced, at the top of the rate range.
+// `dye_decisions.rs`). Only tests compile it: it exists so the equation the
+// repair replaced can be shown to be exposed at the top of the rate range
+// (`the_original_cancellation_is_exposed_at_the_top_rate`).
 
 /// Must match `dispatch_linear`'s assumption in `wgpu_backend/mod.rs`; a
 /// smaller size silently computes only a fraction of the cases.
