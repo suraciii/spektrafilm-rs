@@ -113,14 +113,14 @@ The readout must derive from the retained output. It must not require a second r
 
 An empty or absent output must present an explicit empty state instead of a blank or broken readout.
 
-## Deleted surfaces
+## Experimental controls
 
-The GUI must not expose these controls. Their parameters remain valid document fields where a specification owns them.
+The GUI exposes these controls with an `(experimental)` suffix on their labels. They are placed in their semantic sections, not grouped in a separate Experimental section. Their parameters remain valid document fields where a specification owns them.
 
-- The `print illuminant` selector. The GUI fixes the print illuminant to the bundled value. The parameter remains a document field.
-- The input gamut-compression algorithm selector. The GUI fixes the input algorithm to `xy`. The parameter remains a document field.
-- The Spektra `rms granularity` control. The Spektra stage does not read it.
-- The `Experimental` section, including its channel-swap controls. A channel swap is a quality-control operation, not a GUI control.
+- The `print illuminant` selector, placed in MAIN → Enlarger. The GUI fixes the print illuminant to the bundled value by default; the control is exposed for experimental override.
+- The input gamut-compression algorithm selector. The GUI fixes the input algorithm to `xy` by default; the control is exposed for experimental override.
+- The Spektra `rms granularity` control, placed in FILM → Grain. The Spektra stage does not read it; the control is exposed for experimental diagnosis.
+- The `film_channel_swap` and `print_channel_swap` controls, placed in FILM → Convert. A channel swap is a quality-control operation, not a photographic control; the controls are exposed for experimental diagnosis.
 
 The channel-swap validator must reject a non-permutation. A value such as `[0, 0, 0]` currently passes validation and silently duplicates one density channel while dropping the other two. The shared renderer applies the swap to `profile.data.channel_density`, so a non-permutation corrupts the profile at render time. The validator must require exactly three indices in `0..2` that form a permutation of `0, 1, 2`.
 - A `reveal` or `crossfade` editor.
